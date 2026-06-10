@@ -10,7 +10,7 @@ A self-hiding card that renders ONLY when the user has a tier-related action to 
 
 - **On a mirror chain**: shows "VPFI staking is managed on {canonical}. Switch chains to stake or check your tier." + a one-click "Switch to {canonical}" button (uses `useWallet().switchToChain`). Without this, a user landing on a mirror with no stake had no on-ramp to staking — they had to manually find the chain switcher in the topbar.
 
-- **On the canonical chain, no stake yet**: shows "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Tier 1 starts at 100 VPFI." + a "Stake VPFI now" CTA linking to the Buy VPFI page (where the existing buy + deposit-to-vault flow lives).
+- **On the canonical chain, no stake yet**: shows "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the Buy VPFI page." + a "Stake VPFI now" CTA linking to the Buy VPFI page (where the existing buy + deposit-to-vault flow lives + the live tier table is rendered).
 
 - **On the canonical chain, tier waiting to propagate (min-history pending)**: shows "Tier update pending propagation" notice + a "Push my tier to mirrors now" button wired to `pokeMyTier()`. The button:
   - Fires the contract call via wagmi `useWalletClient().writeContract`.

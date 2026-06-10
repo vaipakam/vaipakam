@@ -64,8 +64,7 @@ export function StakeVPFICTA() {
   const lenderAddr = (address ?? null) as `0x${string}` | null;
   const { data: tierData, reload: reloadTier } =
     useVPFIDiscountTier(lenderAddr);
-  const { enabled: consentEnabled, reload: reloadConsent } =
-    useVPFIDiscountConsent();
+  const { reload: reloadConsent } = useVPFIDiscountConsent();
 
   // Codex round-2 P2 #2 — the consent + tier hooks are local-state
   // reads; toggling consent in the sibling VPFIDiscountConsentCard
@@ -107,17 +106,23 @@ export function StakeVPFICTA() {
     setRecentlyPoked(false);
   }, [address, walletChainId]);
 
-  // Codex round-1 P2 #4 — the poke button is USEFUL once the user
-  // has a NON-ZERO effective tier (post-min-history) and wants to
-  // ensure mirrors got the update. During the min-history window
-  // itself, poking just re-rolls a tier-0 broadcast that doesn't
-  // help the user. The button now surfaces when:
-  //   - The user has a settled effective tier (> 0).
-  //   - Consent is on (else the broadcast pushes 0 anyway).
-  //   - The user is on the canonical chain (the wallet AND read
-  //     contexts both line up, see `canPokeHere`).
-  const tierReadyToBroadcast =
-    (tierData?.tier ?? 0) > 0 && consentEnabled === true;
+  // Codex round-1 P2 #4 + round-5 P2 — the poke button is useful in
+  // BOTH directions:
+  //   - Consent on + trackedTier > 0: push the user's current
+  //     non-zero tier so mirrors reflect the post-min-history
+  //     activation.
+  //   - Consent off + trackedTier > 0: push (0, 0) to mirrors to
+  //     clear a stale cached tier. (The contract's
+  //     `setVPFIDiscountConsent(false)` deliberately does NOT
+  //     broadcast — anti-drain — and the docs ask the dapp to
+  //     surface this poke chained after the consent toggle.)
+  //
+  // The minimal unified condition is `trackedTier > 0` — the user
+  // has staked enough to qualify for a tier; whether they currently
+  // have consent on or off, a fresh broadcast keeps mirrors in sync.
+  // The on-chain de-dup gate in `ProtocolBroadcastFacet` suppresses
+  // no-op repeats, so this is safe to surface broadly.
+  const tierReadyToBroadcast = (tierData?.trackedTier ?? 0) > 0;
 
   // Codex round-1 P2 #2 — the poke writeContract goes to the wallet's
   // CURRENT chain. We must only show the button when the wallet and
