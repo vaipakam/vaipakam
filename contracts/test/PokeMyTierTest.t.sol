@@ -7,6 +7,9 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /// @title PokeMyTierTest
 /// @notice T-087 Sub 4 — verifies the balance-mutation-free
@@ -92,6 +95,25 @@ contract PokeMyTierTest is SetupTest {
         vm.prank(bob);
         _f().pokeMyTier();
         // No revert.
+    }
+
+    /// @notice #494 Card B — pokeMyTier is a Tier-1 entry point per
+    ///         CLAUDE.md retail-deploy policy. A sanctioned caller
+    ///         must revert before any rollup/broadcast work.
+    function test_PokeMyTier_SanctionedCaller_Reverts() public {
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(alice, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector,
+                alice
+            )
+        );
+        vm.prank(alice);
+        _f().pokeMyTier();
     }
 
     function test_PokeMyTier_RevertsWhenPaused() public {

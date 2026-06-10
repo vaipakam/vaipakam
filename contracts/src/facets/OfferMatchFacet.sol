@@ -141,6 +141,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
         returns (uint256 loanId)
     {
+        // #494 Card A — Tier-1 sanctions gate on the matcher.
+        // matchOffers pays the matcher a 1% LIF kickback (per the
+        // range-orders design); paying a sanctioned matcher is the
+        // exact thing the OFAC screen exists to prevent. The two
+        // offer creators were already sanctions-checked at offer-
+        // create time, so this single check covers the matcher.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.partialFillEnabled) {
             // Master kill-switch: matching infra dormant until governance

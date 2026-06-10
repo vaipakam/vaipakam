@@ -99,6 +99,18 @@ library LibKeeperReward {
             emit KeeperRewardSkipped(keeper, actionKind, "no-gas");
             return 0;
         }
+        // #494 Card C — soft sanctions gate. The library's no-revert
+        // contract is load-bearing for housekeeping (the rollup / sweep
+        // / accrual / catchup call must complete regardless of the
+        // reward outcome), so a sanctioned keeper is SKIPPED rather
+        // than reverted. The housekeeping work still lands; the
+        // sanctioned address just gets no payout. Mirrors the
+        // existing "soft skip" pattern used for the other
+        // preconditions in this function.
+        if (LibVaipakam.isSanctionedAddress(keeper)) {
+            emit KeeperRewardSkipped(keeper, actionKind, "sanctioned-keeper");
+            return 0;
+        }
         if (s.vpfiToken == address(0)) {
             emit KeeperRewardSkipped(keeper, actionKind, "no-vpfi-token");
             return 0;

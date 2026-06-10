@@ -5,6 +5,9 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
  * @title MatchOffersScaffoldTest
@@ -118,6 +121,27 @@ contract MatchOffersScaffoldTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSignature("FunctionDisabled(uint8)", uint8(3))
         );
+        OfferMatchFacet(address(diamond)).matchOffers(0, 0);
+    }
+
+    /// @notice #494 Card A — a sanctioned matcher must revert
+    ///         `SanctionedAddress(matcher)` BEFORE matchOffers does
+    ///         any of the partial-fill or offer-existence work.
+    ///         Tests just the gate; doesn't need real offers.
+    function test_matchOffers_sanctionedMatcher_reverts() public {
+        MockSanctionsList oracle = new MockSanctionsList();
+        address sanctionedMatcher = makeAddr("sanctionedMatcher");
+        oracle.setFlagged(sanctionedMatcher, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector,
+                sanctionedMatcher
+            )
+        );
+        vm.prank(sanctionedMatcher);
         OfferMatchFacet(address(diamond)).matchOffers(0, 0);
     }
 }
