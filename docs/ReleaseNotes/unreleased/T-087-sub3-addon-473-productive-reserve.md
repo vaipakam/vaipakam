@@ -57,8 +57,8 @@ Mock Aave V3 Pool + Mock Lido staking simulate the venue side. Cap math is exerc
 
 ### Out of scope (deferred)
 
-- **Lido withdrawal queue auto-management**: Phase 0 supports stake (`submit`) but not auto-unstake. Operator uses Lido's withdrawal queue manually until Phase 1.
-- **Yield harvest tracking**: a separate `harvestTreasuryYield` method that pulls accrued interest back to the diamond + emits — sketched but not in scope. Operator calls `withdrawTreasuryYield(token, currentExternalBalance)` to harvest manually until Phase 1.
+- **Lido path entirely** (Codex round-1 P1): `deployTreasuryYield` for a `LIDO_STETH`-configured token reverts `LidoVenueNotYetSupported` in Phase 0. The native-ETH submit path needs a WETH-unwrap leg the diamond doesn't yet have; wiring it without that leg would silently debit `treasuryBalances[token]` while no ETH actually reaches Lido. Phase 1 wires the WETH→ETH unwrap + the Lido withdrawal queue interaction. The venue enum + setters remain reserved.
+- **Yield harvest tracking** (Codex round-1 P2 #2): `treasuryDeployedExternal[token]` tracks principal only. As Aave interest accrues, the diamond's aToken balance grows above this counter. Phase 0 does NOT include a separate `harvestTreasuryInterest(token)` method that pulls only the interest delta — the admin can withdraw up to the recorded principal, and accrued interest stays at the venue until Phase 1 adds the harvest path. Operator can full-withdraw + re-deploy to realise interest in the meantime.
 - **Phase 1 — `VAIPAKAM_INTERNAL` venue**: shifts portion to Vaipakam itself after $50M+ TVL. Tracked separately.
 
 ### Verification

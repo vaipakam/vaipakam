@@ -1069,6 +1069,15 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error TreasuryYieldBpsOutOfBounds(uint16 bps, uint16 maxAllowed);
     error TreasuryYieldVenueInvalid(uint8 venue);
     error TreasuryYieldVenueAddressNotContract(address candidate);
+    /// @notice Codex round-1 P2 #1 — venue change rejected because
+    ///         `treasuryDeployedExternal[token] > 0`. The principal
+    ///         must be fully withdrawn from the OLD venue first,
+    ///         otherwise the new-venue withdraw path would route to
+    ///         the wrong contract (or revert) and strand the
+    ///         principal.
+    error TreasuryYieldVenueChangeWithDeployedPrincipal(
+        address token, uint256 currentlyDeployed
+    );
 
     /// @custom:event-category informational/config
     event TreasuryYieldVenueSet(address indexed token, uint8 venue);
@@ -1091,7 +1100,22 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         if (venue > LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
             revert TreasuryYieldVenueInvalid(venue);
         }
-        LibVaipakam.storageSlot().cfgTreasuryYieldVenue[token] = venue;
+        // Codex round-1 P2 #1 — reject venue change while principal
+        // is deployed. A change to NONE or LIDO would route the
+        // subsequent withdraw to the wrong contract (or revert) and
+        // strand the principal in the original Aave position. Admin
+        // must withdraw the full deployed amount first.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint8 currentVenue = s.cfgTreasuryYieldVenue[token];
+        if (currentVenue != venue) {
+            uint256 deployed = s.treasuryDeployedExternal[token];
+            if (deployed != 0) {
+                revert TreasuryYieldVenueChangeWithDeployedPrincipal(
+                    token, deployed
+                );
+            }
+        }
+        s.cfgTreasuryYieldVenue[token] = venue;
         emit TreasuryYieldVenueSet(token, venue);
     }
 

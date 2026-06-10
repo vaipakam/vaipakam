@@ -217,6 +217,45 @@ contract TreasuryYieldTest is SetupTest {
         _t().withdrawTreasuryYield(address(wbtc), 200e8);
     }
 
+    // ─── Round-1 P1 — Lido deferred ───────────────────────────────
+
+    function test_LidoDeploy_RevertWhen_PhaseZeroDeferral() public {
+        address ethSentinel = makeAddr("ethSentinel");
+        _t().setTreasuryYieldVenue(ethSentinel, LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH);
+        _t().setLidoStaking(address(lido));
+        vm.expectRevert(LibTreasuryYield.LidoVenueNotYetSupported.selector);
+        _t().deployTreasuryYield(ethSentinel, 1 ether);
+    }
+
+    // ─── Round-1 P2 #1 — Venue change blocked while deployed ─────
+
+    function test_SetTreasuryYieldVenue_RevertWhen_DeployedPrincipalExists() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+
+        // Attempt to switch the venue — should revert because principal is deployed.
+        vm.expectRevert();
+        _t().setTreasuryYieldVenue(
+            address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_NONE
+        );
+
+        // Same-venue write (idempotent) is allowed.
+        _t().setTreasuryYieldVenue(
+            address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3
+        );
+
+        // After withdrawing everything, change is allowed.
+        _t().withdrawTreasuryYield(address(wbtc), 100e8);
+        _t().setTreasuryYieldVenue(
+            address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_NONE
+        );
+        assertEq(
+            _t().getTreasuryYieldVenue(address(wbtc)),
+            LibVaipakam.TREASURY_YIELD_VENUE_NONE
+        );
+    }
+
     function test_CapEnforced_AfterPartialDeploy() public {
         _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
         _t().setAaveV3Pool(address(aave));

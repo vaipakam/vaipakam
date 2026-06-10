@@ -53,6 +53,12 @@ library LibTreasuryYield {
 
     /// @notice The configured venue for the token is NONE.
     error VenueNotConfigured(address token);
+    /// @notice Codex Sub 3 add-on #473 round-1 P1 — the Lido venue
+    ///         is configured but Phase 0 doesn't implement the
+    ///         WETH-unwrap + native-ETH-submit path. Until Phase 1
+    ///         wires that, calling `deployTreasuryYield` for a
+    ///         Lido-configured token reverts.
+    error LidoVenueNotYetSupported();
     /// @notice The configured venue doesn't match the operation:
     ///         e.g., `supplyToAave` called for a Lido-configured
     ///         token or vice-versa.
@@ -127,6 +133,13 @@ library LibTreasuryYield {
         if (venue == LibVaipakam.TREASURY_YIELD_VENUE_NONE) {
             revert VenueNotConfigured(token);
         }
+        if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
+            // Codex round-1 P1 — Phase 0 deferral; fail fast before
+            // any accounting changes so the operator gets a clean
+            // error surface instead of a hard-to-trace silent
+            // misbehaviour.
+            revert LidoVenueNotYetSupported();
+        }
 
         // ── Ceiling check ───────────────────────────────────────────
         uint256 treasuryBal = s.treasuryBalances[token];
@@ -155,13 +168,13 @@ library LibTreasuryYield {
             IERC20(token).forceApprove(pool, amount);
             IAaveV3Pool(pool).supply(token, amount, address(this), 0);
         } else if (venue == LibVaipakam.TREASURY_YIELD_VENUE_LIDO_STETH) {
-            address staking = s.cfgLidoStaking;
-            if (staking == address(0)) revert VenueAddressNotSet(venue);
-            // Lido takes ETH via msg.value, not an ERC20 transfer.
-            // The diamond must hold native ETH for this path; the
-            // `token` argument is treated as the WETH / ETH sentinel
-            // by the operator (informational only).
-            ILidoStaking(staking).submit{value: amount}(address(0));
+            // Codex Sub 3 add-on #473 round-1 P1 — the Lido path
+            // requires WETH unwrap + native ETH `submit{value: ...}`
+            // plumbing the diamond doesn't yet have. Reverting before
+            // the accounting moves prevents the silently-broken
+            // failure mode where treasuryBalances debits but no ETH
+            // is staked. Phase 1 wires the unwrap path.
+            revert LidoVenueNotYetSupported();
         }
 
         emit TreasuryYieldDeployed(token, venue, amount);
