@@ -290,23 +290,25 @@ Borrower VPFI discount UX:
 - the VPFI discount-status table belongs on `/app/buy-vpfi` near the purchase / deposit decision, while the shared fee-discount consent toggle remains on `Dashboard`
 - the discount-status table should render only for connected wallets and should link users back to `Dashboard` when consent is disabled
 - the Phase 1 `30,000 VPFI` user cap is a per-chain cap, not a protocol-wide global cap across all chains
-- VPFI deposited / staked in the user's Vaipakam Vault on one chain should count only toward fee-discount tiers for loans initiated on that same chain
+- VPFI discount tiers should follow the canonical Base-resolved model: the user stakes on Base, Base computes the effective tier, and mirror chains apply the latest authenticated cache when loans settle there
 - the UI should expose a single common platform-level user setting for consenting to the use of Vault-held VPFI for fee discounts
 - that shared fee-discount consent control should live inside the connected app and be shown on `Dashboard`
 - the consent control should not be treated as a `Buy VPFI`-page-only setting
 - offer-level or loan-level consent toggles are not required for VPFI fee discounts once that common platform-level setting is enabled
-- the connected app should show the user's Vault-held VPFI balance, the implied discount tier, and the fact that Vault-held VPFI also counts as staked for the `5% APR` staking model
+- the connected app should show the user's canonical Vault-held VPFI balance, raw tier qualification, effective tier, min-history state, and the fact that Vault-held VPFI also counts as staked for the `5% APR` staking model
 - on `/app/buy-vpfi`, the `Your VPFI discount status` area should provide a chain selector rather than only showing the currently inferred chain name in the title / balance label
-- that chain selector should let the user inspect chain-specific Vault-held VPFI, discount-tier status, and discount eligibility because those values are local to the selected lending chain
+- that chain selector should let the user inspect the canonical Base tier alongside each mirror chain's cached tier status, cache age, and discount eligibility
 - VPFI tier thresholds should display in token units rather than raw 1e18-scaled base units across discount-status cards, tier tables, tooltip placeholders, and consent copy
 - borrower and lender fee-discount messaging should follow the tiered model from `docs/TokenomicsTechSpec.md`, not a single flat `25%` discount
 - app pages such as `Create Offer` and `Loan Details` may still link users into this `Buy VPFI` flow as secondary shortcuts when the borrower discount is relevant
 - if a `Buy VPFI` app action fails, the page should show a clean error card with secondary actions such as `Report on GitHub` and `Dismiss` aligned consistently and visibly as one grouped action area rather than appearing visually misaligned
-- borrower VPFI-discount copy must follow the Phase 5 model: users pay the full `0.1%` LIF up front in VPFI, earn the discount time-weighted during the loan, and receive any earned rebate through the borrower claim on proper close
-- the Offer Book accept-review modal should explain the up-front VPFI payment plus time-weighted rebate model before the user accepts a loan through the VPFI path
+- borrower VPFI-discount copy must follow the effective-tier model: users pay the full `0.1%` LIF up front in VPFI, receive any earned effective-tier rebate through the borrower claim on proper close, and lose the rebate on default or HF liquidation
+- the Offer Book accept-review modal should explain the up-front VPFI payment plus effective-tier rebate model before the user accepts a loan through the VPFI path
 - borrower-facing shortcut copy may say `earn up to a 24% VPFI rebate`, but should not describe the up-front fee itself as reduced
 - the Claim Center should show a visible VPFI rebate line when a borrower claim includes a pending rebate
 - VPFI vault deposit from `/app/buy-vpfi` or related app surfaces may use Permit2 when supported, with fallback to the classic approve-plus-deposit flow
+- when a user's canonical stake has satisfied the min-history gate but a mirror chain has not yet received the updated tier, the app should surface a manual `Push my tier to mirrors now` action wired to the tier-poke path; this should be presented as an edge-case refresh, not a normal required sync step
+- if the connected wallet is on a mirror chain and needs to stake or change the canonical tier, the app should guide the user to the Base staking action rather than implying that mirror-local staking changes the discount tier directly
 
 Alerts and notification preferences:
 
@@ -323,9 +325,9 @@ Reward-claiming UX:
 - users should be able to claim two reward types directly on the chain where they are actively lending, borrowing, or renting NFTs:
   - `Staking Rewards` earned automatically when VPFI is held in the user's Vaipakam Vault
   - `Platform Interaction Rewards` earned from lending and borrowing activity using the tiered and time-weighted logic defined in `docs/TokenomicsTechSpec.md`
-- rewards should be calculated and minted locally on the user's currently connected chain
-- no cross-chain messaging or mandatory network switching should be required during the claim flow itself
-- the user's protocol-tracked Vault-held VPFI balance on that chain should be treated as the staked balance for reward purposes
+- reward claims should remain chain-local where the underlying reward type is earned locally, while fee-discount tier status should follow the canonical Base-plus-mirror-cache model
+- no mandatory network switching should be required during ordinary reward claim flows themselves
+- the user's protocol-tracked canonical Vault-held VPFI balance should be treated as the discount-tier stake, while chain-local reward balances should be displayed according to the reward type being claimed
 - if the user wants to move claimed VPFI elsewhere afterward, bridging should remain optional
 - reward surfaces should be split by user intent rather than combined into one `Rewards` page:
   - `Staking Rewards` should be claimed from `/app/buy-vpfi`'s `Deposit / Stake` card, with a compact mirror on Dashboard discount status
@@ -378,7 +380,7 @@ Activity and local log-index requirements:
 
 Unstaking VPFI:
 
-- because VPFI held in the user's Vaipakam Vault is automatically treated as staked, users should be able to unstake by moving VPFI from the Vault back to their wallet on the same chain
+- because VPFI held in the user's canonical Vaipakam Vault is automatically treated as staked for discount-tier purposes, users should be able to unstake by moving VPFI from the canonical Vault back to their wallet
 - the UI should provide a clear and prominent `Withdraw / Unstake VPFI` action on `/app/buy-vpfi`
 - the unstake action should show the user's current Vault-held VPFI balance and the maximum amount available to unstake
 - when the user selects `Unstake VPFI`, the UI should:
@@ -388,7 +390,7 @@ Unstaking VPFI:
     - amount being unstaked
     - impact on the current discount tier
     - impact on future `5% APR` staking rewards
-- after confirmation, the VPFI should move from the user's Vaipakam Vault to their wallet on the same chain
+- after confirmation, the VPFI should move from the user's canonical Vaipakam Vault to their wallet
 - after a successful unstake, the UI should refresh Vaipakam Vault balance, wallet balance, reward estimates, and discount tier in real time
 - unstaking should be treated as instant with no lock-up period
 - users should still be allowed to unstake while they have active loans, but the UI must clearly warn them about the immediate reduction in discount tier and staking rewards
@@ -472,8 +474,8 @@ Governance-configuration visibility:
 - `/admin` should include internal-match liquidation controls in the Risk category: read-only enablement state, per-tier liquidation thresholds, external-liquidation priority window, per-leg matcher incentive, and latest keeper readiness. Admin viewers may compose Safe transactions for the internal-match switch and bounded configuration changes.
 - the internal-match editor must validate threshold floors / ceilings, cross-tier ordering, priority-window bounds, and incentive caps before proposal. It should show a default-off state on fresh deployments and a runbook-gated ready state only after keeper deployment and audit prerequisites are met.
 - each loan-detail page should include a `Lender Discount` card for the current lender when lender discount data is relevant
-- the `Lender Discount` card should show the effective time-weighted VPFI discount computed from the current open-loan window and the on-chain discount curve
-- this effective discount may be computed client-side by extrapolating the open-loan window against on-chain discount-curve data
+- the `Lender Discount` card should show the effective VPFI discount returned by the protocol for the current lender: canonical Base effective tier on Base, or authenticated mirror-cache tier on mirror chains
+- the card should not reconstruct discount bps client-side from an open-loan window; it should use the protocol's effective-discount read and may show min-history or mirror-cache freshness state around it
 - the frontend should expose a shared hook for reading the protocol fallback-split configuration
 - fallback-split data should be available as lender / borrower split values so pages can read it without custom one-off contract calls
 - user-facing constants, thresholds, and percentages should flow from live protocol config reads rather than hardcoded locale strings where they can change through governance or redeploy

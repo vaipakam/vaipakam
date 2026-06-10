@@ -288,7 +288,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 - **For ERC-20 Tokens:**
   - Specify the desired ERC-20 asset and amount, maximum acceptable interest rate, offered collateral (type and amount), and loan duration.
   - The frontend must clearly disclose that when an ERC-20 loan is actually initiated, a `Loan Initiation Fee` equal to `0.1%` of the lending-asset amount will be charged to treasury before the lending asset is delivered to the borrower. In other words, if the matched lending amount is `1000 USDC`, the borrower receives `999 USDC` and `1 USDC` is routed to treasury at initiation.
-  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce a time-weighted borrower rebate on proper close, as defined in `docs/TokenomicsTechSpec.md`.
+  - If the borrower uses the VPFI fee path, the borrower receives `100%` of the requested lending asset and pays the full `0.1%` fee equivalent in VPFI up front. That VPFI is held by the protocol until settlement and may produce an effective-tier borrower rebate on proper close, as defined in `docs/FunctionalSpecs/TokenomicsTechSpec.md`.
   - Lock the collateral in the Vaipakam smart contract upon offer submission.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the desired NFT (or type of NFT), maximum acceptable daily rental charge, the ERC-20 token to be used for prepayment (rental fees + 5% buffer), and rental duration.
@@ -1444,8 +1444,8 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
 ### Treasury and Revenue Sharing
 
 - **Treasury Collection:** Treasury continues to collect protocol fees according to the live protocol rules, including the `0.1%` `Loan Initiation Fee` on ERC-20 loans, the `Yield Fee` on accrued interest / rental-fee earnings, the `1%` late-fee intake, and any other explicitly documented treasury charges such as liquidation-handling or fallback treasury entitlements.
-- **Lender Yield Fee Discount:** Lenders who maintain sufficient VPFI in their user vault on the respective lending chain are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
-  - The lender discount is measured as a time-weighted average over the life of the loan, not from only the VPFI balance present at the final claim moment.
+- **Lender Yield Fee Discount:** Lenders who maintain sufficient canonical VPFI stake are eligible for the tiered `Yield Fee` discount schedule defined by the tokenomics spec.
+  - The lender discount applied at settlement is the current effective discount: Base resolves it from the canonical TWA tier accumulator, while mirror chains read the authenticated mirror cache.
   - Vault-held VPFI automatically counts as staked under the unified vault-based staking model.
   - The active tier schedule is:
     | Tier | Vaulted VPFI Balance | Discount | Lender Effective Yield Fee |
@@ -1460,7 +1460,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - This consent should be a common user preference rather than an offer-level or loan-level toggle.
   - Only when that platform-level consent is active and sufficient VPFI is available in vault should the system automatically deduct the discounted fee amount in VPFI from vault and transfer it to treasury.
 
-- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient VPFI in their user vault on the respective lending chain are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
+- **Borrower Loan Initiation Fee Discount:** Borrowers who maintain sufficient canonical VPFI stake are eligible for the tiered borrower-side `Loan Initiation Fee` discount schedule defined by the tokenomics spec.
   - Vault-held VPFI also counts as staked under the unified vault-based staking model.
   - The active tier schedule is:
     | Tier | Vaulted VPFI Balance | Discount | Borrower Effective Initiation Fee |
@@ -1474,7 +1474,7 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - Offer-level or loan-level consent is not required for the borrower discount once the platform-level setting has been enabled.
   - Only when that platform-level consent is active, the lending asset is liquid, and sufficient VPFI is available should the system deduct the full `0.1%` fee equivalent in VPFI from the borrower's vault.
   - The deducted VPFI is held in protocol custody for the life of the loan rather than sent immediately to Treasury.
-  - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns a time-weighted rebate based on the discount tiers actually held during the loan window. The rebate is paid in VPFI alongside the ordinary borrower claim.
+  - On proper close through normal repayment, borrower preclose, or refinance, the borrower earns an effective-tier rebate based on the current Base tier or active mirror cache at settlement. The rebate is paid in VPFI alongside the ordinary borrower claim.
   - On default or HF-based liquidation, the rebate is forfeited and the full held VPFI becomes Treasury's share.
   - The borrower-side acquisition and rebate flow is defined in `docs/TokenomicsTechSpec.md`.
 
@@ -1487,12 +1487,12 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - if canonical-chain or bridge infrastructure is used under the hood, that complexity should be abstracted from the user-facing purchase flow
   - if the purchase path settles through a Base-chain receiver, VPFI must be minted or released only after that receiver actually receives ETH, and the amount delivered must be based on actual received ETH rather than a quoted amount
   - moving VPFI from wallet to user vault should remain an explicit user-initiated action, with the connected app facilitating that step after purchase
-  - that vault action should be presented as `Deposit / Stake VPFI`, because vault-held VPFI earns the staking APR as well as counting toward local fee-discount tiers
+  - that vault action should be presented as `Deposit / Stake VPFI`, because vault-held VPFI earns the staking APR as well as feeding the canonical fee-discount tier model
   - staking is open to any VPFI holder; an existing loan is not required, and the user's vault can be created on first deposit
-  - the Phase 1 `30,000 VPFI` wallet cap is a per-chain cap, not one shared global wallet cap across every chain
-  - VPFI moved into user vault on a given chain should count toward fee-discount eligibility only for loans initiated on that same chain
+  - the Phase 1 `30,000 VPFI` wallet cap is a per-chain buy cap, not one shared global wallet cap across every chain
+  - fee-discount eligibility is based on canonical Base staking state and mirror-cache propagation, not on independent local discount tiers per lending chain
   - the shared platform-level consent for using vaulted VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the `Buy VPFI` flow
-- **Vault-Based Staking:** Any VPFI held in a user's vault on a lending chain should be treated as staked for tokenomics purposes and should accrue the vault-based `5% APR` staking rewards defined in the tokenomics spec. That vault balance also counts toward tiered fee discounts only for loans initiated on that same chain.
+- **Vault-Based Staking:** VPFI held in the user's canonical Vaipakam Vault should be treated as staked for tokenomics purposes and should accrue the vault-based `5% APR` staking rewards defined in the tokenomics spec. That canonical stake is also the source for Base-resolved fee-discount tiers that can apply on mirrors after propagation.
 - **Reward Claim Surfaces:** Staking rewards should be claimed from the `Buy VPFI` staking card, platform-interaction rewards should be claimed from `Claim Center`, and `Dashboard` may summarize both streams without becoming the canonical claim route for either one.
 - **VPFI Received From Protocol-Fee Flows:** VPFI received through protocol-fee utility paths should be handled as:
   - `38%` converted into ETH through the configured on-chain swap-aggregator proxy
@@ -2159,8 +2159,8 @@ Vaipakam is committed to operating in a compliant manner within the evolving reg
     - **NFT Renting:** The _total rental value_ (daily rate \* duration, converted through the same Chainlink-led numeraire path) determines the transaction value.
     - The platform stores KYC tier thresholds in active-numeraire units and compares them directly against active-numeraire asset values returned by `OracleFacet.getAssetPrice`.
 - **Implementation Timing:** Real KYC/AML enforcement is not part of the effective Phase 1 launch behavior. Phase 1 keeps KYC checks in pass-through mode under the Phase 1 flag, while later governance or admin decisions may choose to activate the retained KYC framework.
-- **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, or pay protocol incentives to the caller must revert for a flagged wallet. This includes vault creation, offer creation / acceptance, VPFI buy / deposit / withdraw flows, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, and claims by the flagged recipient.
-- **Sanctions Wind-Down Carve-Out:** Debt-closing and safety paths required to protect an unflagged counterparty should remain available even when the target borrower is flagged. Repayment, time-based default, and HF-based liquidation against a flagged borrower are wind-down / recovery paths; they must not let the flagged actor receive fresh protocol value, but they should allow existing lender security interests to be made whole. If the lender or other recipient is flagged, their own claim path may still be blocked because the protocol would otherwise transfer value to a sanctioned wallet.
+- **Address-Level Sanctions Screening:** Where a supported on-chain sanctions oracle is configured for the active chain, the protocol should screen retail entry points as well as any future industrial deployment. Tier-1 actions that create fresh state for the caller, accept deposits, route new value, trigger protocol-funded broadcasts, or pay protocol incentives to the caller must revert for a flagged wallet. This includes vault creation, offer creation / acceptance, permissionless offer matching, VPFI buy / deposit / withdraw flows, user-initiated tier-poke broadcasts, liquidation initiation, loan-sale / obligation-transfer / refinance entry points, and claims by the flagged recipient.
+- **Sanctions Wind-Down Carve-Out:** Debt-closing and safety paths required to protect an unflagged counterparty should remain available even when the target borrower is flagged. Repayment, time-based default, and HF-based liquidation against a flagged borrower are wind-down / recovery paths; they must not let the flagged actor receive fresh protocol value, but they should allow existing lender security interests to be made whole. If the lender or other recipient is flagged, their own claim path may still be blocked because the protocol would otherwise transfer value to a sanctioned wallet. Keeper housekeeping should also preserve liveness: when a sanctioned keeper would otherwise receive a VPFI reward, the reward should be skipped without reverting the housekeeping work.
 - **Sanctions UX:** The frontend should surface sanctions messages only when the connected wallet or a relevant counterparty is flagged. Copy should clearly distinguish blocked actions, permitted close-out paths, and external recourse through the sanctions-data provider; clean wallets should not see general-purpose sanctions warnings on marketing or legal pages beyond the Terms prohibited-use clause.
 - **Sanctions Oracle Availability:** Sanctions oracle configuration is per chain and optional. Chains without a configured oracle should behave as no-op for this check. Oracle read failures should fail open rather than bricking all protocol actions during a vendor outage.
 - **Terms Acceptance Gate:** App routes may be gated behind a versioned on-chain Terms of Service acceptance. `currentTosVersion == 0` represents a disabled/testnet state. Once activated, users must accept the current Terms version and content hash before using `/app` routes; version bumps or hash changes invalidate prior acceptances.
