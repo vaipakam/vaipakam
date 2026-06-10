@@ -168,8 +168,15 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // Cap sanity. maxNewExpiry == 0 is allowed when disabled
             // (it's just a marker); when enabled it must be a future
             // timestamp. maxRateBps == 0 is permitted — a borrower
-            // may legitimately consent only to a 0% refinance.
+            // may legitimately consent only to a 0% refinance. But
+            // values above the protocol's MAX_INTEREST_BPS ceiling
+            // make the cap meaningless (no valid offer can exceed
+            // it), so reject them — protects against Codex round-3
+            // P2 the borrower-believes-cap-binds vs. it-doesn't case.
             if (maxNewExpiry <= block.timestamp) revert InvalidCaps();
+            if (uint256(maxRateBps) > LibVaipakam.MAX_INTEREST_BPS) {
+                revert InvalidCaps();
+            }
         }
         LibVaipakam.storageSlot().defaultAutoRefinanceCaps[msg.sender] =
             LibVaipakam.AutoRefinanceCaps({
@@ -217,8 +224,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requireBorrowerNftOwner(loan);
 
         if (enabled) {
-            // maxRateBps == 0 permitted — borrower may consent only to a 0% refinance.
+            // maxRateBps == 0 permitted — borrower may consent only
+            // to a 0% refinance. But values above MAX_INTEREST_BPS
+            // make the cap meaningless; reject them.
             if (maxNewExpiry <= block.timestamp) revert InvalidCaps();
+            if (uint256(maxRateBps) > LibVaipakam.MAX_INTEREST_BPS) {
+                revert InvalidCaps();
+            }
         }
         s.autoRefinanceCaps[loanId] = LibVaipakam.AutoRefinanceCaps({
             enabled: enabled,
@@ -347,8 +359,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // Codex round-1 P3 — zero rate is a valid rate (OfferCreate
         // accepts 0%); both bounds may be zero so a borrower can
         // consent only to a free extension. The structural rule is
-        // that min ≤ max + the expiry must be in the future.
+        // that min ≤ max + the expiry must be in the future + max
+        // does not exceed the protocol's MAX_INTEREST_BPS ceiling
+        // (Codex round-3 P2 — otherwise the cap is meaningless).
         if (minRateBps > maxRateBps || maxNewExpiry <= block.timestamp) {
+            revert InvalidCaps();
+        }
+        if (uint256(maxRateBps) > LibVaipakam.MAX_INTEREST_BPS) {
             revert InvalidCaps();
         }
     }
