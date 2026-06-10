@@ -654,23 +654,32 @@ contract VPFIDiscountFacet is
         nonReentrant
         whenNotPaused
     {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bool prev = s.vpfiDiscountConsent[msg.sender];
-        s.vpfiDiscountConsent[msg.sender] = enabled;
+        // T-087 Sub 4 round-4 P1s — the round-3 attempt to also
+        // trigger a rollup-broadcast here was reverted:
+        //
+        //  1. Budget-exhausted revert: with `rewardMessenger` set,
+        //     the rollup cascades into `protocolBroadcastTierUpdate`,
+        //     which fail-closes when the protocol broadcast budget
+        //     can't quote the CCIP fee. That would block a
+        //     security-motivated `setVPFIDiscountConsent(false)`
+        //     simply because protocol funds were temporarily low.
+        //  2. Budget-drain via toggling: the de-dup gate only
+        //     suppresses identical re-pushes, so toggling ON/OFF
+        //     repeatedly DOES fire fresh broadcasts because the
+        //     tier value flips each time. A user could intentionally
+        //     drain the protocol broadcast budget by toggling at
+        //     no on-chain cost beyond their own gas.
+        //
+        // The broadcast-facet consent gate (added in round-3)
+        // still applies: the NEXT legitimate rollup (deposit /
+        // withdraw / `pokeMyTier`) will push the consent-gated
+        // (0, 0) and clear mirror caches. The dapp's consent UI
+        // should chain a `pokeMyTier()` after `setVPFIDiscountConsent(false)`
+        // to give the user an immediate cache clear (user pays
+        // their own tx gas; protocol pays one broadcast, exactly
+        // the same cost surface as any other balance mutation).
+        LibVaipakam.storageSlot().vpfiDiscountConsent[msg.sender] = enabled;
         emit VPFIDiscountConsentChanged(msg.sender, enabled);
-        // T-087 Sub 4 round-3 P2 #2 — broadcast the new (consent-
-        // gated) tier to mirrors whenever consent flips. The
-        // accumulator rollup is the cheapest path: it re-stamps at
-        // the current tracked balance (no-op for the canonical
-        // state) and cascades into `protocolBroadcastTierUpdate`,
-        // which the broadcast facet now zeroes out under
-        // !vpfiDiscountConsent. So disabling triggers a (0, 0)
-        // push to mirrors; enabling triggers a push of the actual
-        // current tier. Skipped when value didn't actually change.
-        if (prev != enabled) {
-            uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
-            LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
-        }
     }
 
     // ─── Public views ────────────────────────────────────────────────────────
