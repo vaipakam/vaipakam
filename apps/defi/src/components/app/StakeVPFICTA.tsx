@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useWalletClient } from 'wagmi';
 import { Coins, Clock, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -51,7 +51,23 @@ export function StakeVPFICTA() {
   const lenderAddr = (address ?? null) as `0x${string}` | null;
   const { data: tierData, reload: reloadTier } =
     useVPFIDiscountTier(lenderAddr);
-  const { enabled: consentEnabled } = useVPFIDiscountConsent();
+  const { enabled: consentEnabled, reload: reloadConsent } =
+    useVPFIDiscountConsent();
+
+  // Codex round-2 P2 #2 — the consent + tier hooks are local-state
+  // reads; toggling consent in the sibling VPFIDiscountConsentCard
+  // doesn't propagate back to this hook instance. Poll on a short
+  // interval while mounted so the CTA reflects consent / tier
+  // changes from elsewhere on the page without the user having to
+  // refresh. 5s is the same cadence the wallet+chain context uses.
+  useEffect(() => {
+    if (!address) return;
+    const id = window.setInterval(() => {
+      void reloadConsent();
+      void reloadTier();
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [address, reloadConsent, reloadTier]);
 
   const { data: walletClient } = useWalletClient();
   const publicClient = useDiamondPublicClient();
@@ -82,12 +98,15 @@ export function StakeVPFICTA() {
     walletChainId === canonicalChain.chainId;
 
   // The card surfaces only when there's something for the user to do.
-  // If they're on canonical with consent OK and a settled tier, the
-  // card stays hidden so the dashboard isn't cluttered.
+  // Codex round-2 P2 #1 — additionally gate on `address != null` so
+  // a disconnected dashboard stays hidden (matches the release-note
+  // promise; without this the no-stake branch would always fire
+  // because `trackedBal ?? 0n === 0n` while no read happens).
   const showCard =
-    !isCanonical
+    address != null &&
+    (!isCanonical
       || (canPokeHere && tierReadyToBroadcast)
-      || (tierData?.trackedBal ?? 0n) === 0n;
+      || (tierData?.trackedBal ?? 0n) === 0n);
 
   if (!showCard) return null;
 
@@ -142,7 +161,7 @@ export function StakeVPFICTA() {
           </div>
           <button
             type="button"
-            className="btn primary"
+            className="btn btn-primary"
             onClick={switchToBase}
             style={{ marginTop: 8 }}
           >
@@ -161,7 +180,7 @@ export function StakeVPFICTA() {
           </div>
           <Link
             to="/buy-vpfi"
-            className="btn primary"
+            className="btn btn-primary"
             style={{ marginTop: 8, display: 'inline-block' }}
           >
             {t('stakeVpfiCta.stakeNowLabel')}
