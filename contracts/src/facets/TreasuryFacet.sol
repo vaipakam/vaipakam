@@ -1231,6 +1231,28 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     /// @custom:event-category informational/config
     event KeeperRewardTwapMaxAgeSecSet(uint32 secs);
 
+    // Codex round-1 P3 — re-declare the LibKeeperReward events on
+    // TreasuryFacet so they appear in the published per-facet ABI.
+    // The events are emitted from the Diamond address (libraries
+    // emit through the calling facet's address); without these
+    // declarations the indexer can't decode KeeperRewardPaid /
+    // KeeperRewardSkipped via the standard `@vaipakam/contracts/abis`
+    // bundle. Same event signatures as LibKeeperReward.
+    /// @custom:event-category state-change/keeper-reward
+    event KeeperRewardPaid(
+        address indexed keeper,
+        bytes32 indexed actionKind,
+        uint256 gasUsed,
+        uint256 ethEquivalent,
+        uint256 vpfiPaid
+    );
+    /// @custom:event-category informational/keeper-reward
+    event KeeperRewardSkipped(
+        address indexed keeper,
+        bytes32 indexed actionKind,
+        string reason
+    );
+
     /// @notice Admin: multiplier on `gasUsed * tx.gasprice`. 20000 bps
     ///         = 2x. Bounded [10000, 100000] (1x..10x) anti-fat-finger.
     function setKeeperRewardMultBps(uint32 bps)

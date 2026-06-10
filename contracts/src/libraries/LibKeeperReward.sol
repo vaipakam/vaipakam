@@ -28,9 +28,15 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 library LibKeeperReward {
     using SafeERC20 for IERC20;
 
-    /// @dev Phase 0 fixed rate: 1 VPFI = 0.001 ETH (1e15 wei).
-    ///      Same rate as `cfgVpfiBuyRate` for parity with the buy flow.
+    /// @dev Phase 0 fixed rate: 1 VPFI (in 18-dec base units) costs
+    ///      0.001 ETH = 1e15 wei. So `vpfiUnits = weiAmount * 1e18 /
+    ///      RATE`. Same rate as `cfgVpfiBuyRate` for parity with the
+    ///      buy flow.
     uint256 internal constant FIXED_VPFI_PER_ETH_RATE_WEI = 1e15;
+    /// @dev Codex round-1 P1 — VPFI scaling factor (18 decimals). The
+    ///      conversion `(wei * VPFI_DECIMALS_SCALE) / RATE` produces
+    ///      raw VPFI base units (1e18 per VPFI).
+    uint256 internal constant VPFI_DECIMALS_SCALE = 1e18;
     /// @dev Default multiplier: 2x gas (20000 bps). uint32 because
     ///      the 100000-bps upper bound exceeds uint16 max.
     uint32 internal constant DEFAULT_KEEPER_REWARD_MULT_BPS = 20_000;
@@ -98,9 +104,11 @@ library LibKeeperReward {
         // multiplier (e.g., 2x). The multiplier is bounded to
         // [1x, 10x] by the setter, so no risk of catastrophic overpay.
         uint256 ethEquivalent = (gasUsed * tx.gasprice * uint256(multBps)) / uint256(BPS_DENOM);
-        // Phase 0 fixed-rate conversion: VPFI = ethEquivalent / rate.
-        // rate is `wei per VPFI`, so VPFI count = wei / rate.
-        uint256 vpfiAmount = ethEquivalent / FIXED_VPFI_PER_ETH_RATE_WEI;
+        // Codex round-1 P1 — scale by 1e18 so VPFI ends up in raw
+        // 18-decimal units. Without the scale, a 0.012-ETH gas cost
+        // (1.2e16 wei) divided by 1e15 = 12 raw units instead of the
+        // intended 12e18 (12 VPFI tokens).
+        uint256 vpfiAmount = (ethEquivalent * VPFI_DECIMALS_SCALE) / FIXED_VPFI_PER_ETH_RATE_WEI;
         if (vpfiAmount == 0) {
             emit KeeperRewardSkipped(keeper, actionKind, "below-min-vpfi");
             return 0;
@@ -118,7 +126,24 @@ library LibKeeperReward {
         }
 
         s.keeperRewardBudget = budget - vpfiAmount;
-        IERC20(s.vpfiToken).safeTransfer(keeper, vpfiAmount);
+
+        // Codex round-1 P2 — defensive transfer. The library is
+        // documented as never reverting, but `safeTransfer` can
+        // bubble a revert if VPFI is paused, the diamond's actual
+        // balance is below the accounted budget, or the token
+        // rejects the destination. In those states a housekeeping
+        // facet that calls us at the end would revert the whole
+        // tx, breaking the no-revert contract. Use a low-level call
+        // and on failure: restore the budget, emit Skipped, return 0.
+        (bool ok, bytes memory ret) = s.vpfiToken.call(
+            abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
+        );
+        bool returnedTrue = ret.length == 0 || abi.decode(ret, (bool));
+        if (!ok || !returnedTrue) {
+            s.keeperRewardBudget = budget; // restore the debit
+            emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
+            return 0;
+        }
 
         emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, vpfiAmount);
         return vpfiAmount;
