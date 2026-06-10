@@ -11,7 +11,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "caps",
         "type": "tuple",
         "internalType": "struct LibVaipakam.AutoExtendCaps",
         "components": [
@@ -34,6 +34,11 @@
             "name": "maxNewExpiry",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "setter",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -52,7 +57,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "caps",
         "type": "tuple",
         "internalType": "struct LibVaipakam.AutoExtendCaps",
         "components": [
@@ -75,6 +80,11 @@
             "name": "maxNewExpiry",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "setter",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -131,7 +141,7 @@
     ],
     "outputs": [
       {
-        "name": "",
+        "name": "caps",
         "type": "tuple",
         "internalType": "struct LibVaipakam.AutoRefinanceCaps",
         "components": [
@@ -149,6 +159,11 @@
             "name": "maxNewExpiry",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "setter",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -185,6 +200,11 @@
             "name": "maxNewExpiry",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "setter",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -525,6 +545,17 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

@@ -82,15 +82,22 @@ contract AutoLifecycleFacetTest is SetupTest {
         vm.expectRevert(AutoLifecycleFacet.InvalidCaps.selector);
         vm.prank(user);
         _f().setDefaultAutoRefinanceCaps(true, 1500, uint64(block.timestamp - 1));
+    }
 
-        // zero rate
-        vm.expectRevert(AutoLifecycleFacet.InvalidCaps.selector);
+    function test_SetDefaultAutoRefinanceCaps_ZeroRateIsValid() public {
+        // Codex round-1 P3 — a borrower may legitimately want to
+        // consent only to a 0% refinance. The setter must accept it.
+        address user = makeAddr("user");
         vm.prank(user);
         _f().setDefaultAutoRefinanceCaps(
             true,
             0,
             uint64(block.timestamp + 90 days)
         );
+        LibVaipakam.AutoRefinanceCaps memory caps =
+            _f().getDefaultAutoRefinanceCaps(user);
+        assertTrue(caps.enabled);
+        assertEq(caps.maxRateBps, 0);
     }
 
     function test_SetDefaultAutoRefinanceCaps_DisabledAllowsZero() public {

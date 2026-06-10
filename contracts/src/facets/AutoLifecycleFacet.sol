@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 
@@ -165,17 +166,20 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (enabled) {
             // Cap sanity. maxNewExpiry == 0 is allowed when disabled
-            // (it's just a marker); when enabled, it must be a future
-            // timestamp.
-            if (maxRateBps == 0 || maxNewExpiry <= block.timestamp) {
-                revert InvalidCaps();
-            }
+            // (it's just a marker); when enabled it must be a future
+            // timestamp. maxRateBps == 0 is permitted — a borrower
+            // may legitimately consent only to a 0% refinance.
+            if (maxNewExpiry <= block.timestamp) revert InvalidCaps();
         }
         LibVaipakam.storageSlot().defaultAutoRefinanceCaps[msg.sender] =
             LibVaipakam.AutoRefinanceCaps({
                 enabled: enabled,
                 maxRateBps: maxRateBps,
-                maxNewExpiry: maxNewExpiry
+                maxNewExpiry: maxNewExpiry,
+                // The default-template's setter field is unused by the
+                // per-loan staleness fence; the per-loan slot gets its
+                // own setter stamp at copy time in LoanFacet's hook.
+                setter: msg.sender
             });
         emit DefaultAutoRefinanceCapsChanged(
             msg.sender, enabled, maxRateBps, maxNewExpiry
@@ -213,14 +217,14 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         LibAuth.requireBorrowerNftOwner(loan);
 
         if (enabled) {
-            if (maxRateBps == 0 || maxNewExpiry <= block.timestamp) {
-                revert InvalidCaps();
-            }
+            // maxRateBps == 0 permitted — borrower may consent only to a 0% refinance.
+            if (maxNewExpiry <= block.timestamp) revert InvalidCaps();
         }
         s.autoRefinanceCaps[loanId] = LibVaipakam.AutoRefinanceCaps({
             enabled: enabled,
             maxRateBps: maxRateBps,
-            maxNewExpiry: maxNewExpiry
+            maxNewExpiry: maxNewExpiry,
+            setter: msg.sender
         });
         emit AutoRefinanceCapsChanged(
             loanId, msg.sender, enabled, maxRateBps, maxNewExpiry
@@ -230,9 +234,18 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     function getAutoRefinanceCaps(uint256 loanId)
         external
         view
-        returns (LibVaipakam.AutoRefinanceCaps memory)
+        returns (LibVaipakam.AutoRefinanceCaps memory caps)
     {
-        return LibVaipakam.storageSlot().autoRefinanceCaps[loanId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        caps = s.autoRefinanceCaps[loanId];
+        // Staleness fence: if the borrower position NFT has changed
+        // hands since `setter` set these caps, treat the slot as
+        // disabled. Prevents an old borrower's pre-approved terms
+        // being applied to the new owner's loan obligation. The new
+        // owner can explicitly re-set caps to reactivate.
+        if (caps.enabled && !_isCurrentBorrowerNft(s.loans[loanId], caps.setter)) {
+            caps.enabled = false;
+        }
     }
 
     // ─── Auto-extend (BOTH-side per-loan caps) ───────────────────────
@@ -263,7 +276,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             enabled: enabled,
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
-            maxNewExpiry: maxNewExpiry
+            maxNewExpiry: maxNewExpiry,
+            setter: msg.sender
         });
         emit AutoExtendBorrowerCapsChanged(
             loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry
@@ -273,9 +287,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     function getAutoExtendBorrowerCaps(uint256 loanId)
         external
         view
-        returns (LibVaipakam.AutoExtendCaps memory)
+        returns (LibVaipakam.AutoExtendCaps memory caps)
     {
-        return LibVaipakam.storageSlot().autoExtendBorrowerCaps[loanId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        caps = s.autoExtendBorrowerCaps[loanId];
+        if (caps.enabled && !_isCurrentBorrowerNft(s.loans[loanId], caps.setter)) {
+            caps.enabled = false;
+        }
     }
 
     /// @notice Lender side: set per-loan extend caps. Only the current
@@ -299,7 +317,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             enabled: enabled,
             minRateBps: minRateBps,
             maxRateBps: maxRateBps,
-            maxNewExpiry: maxNewExpiry
+            maxNewExpiry: maxNewExpiry,
+            setter: msg.sender
         });
         emit AutoExtendLenderCapsChanged(
             loanId, msg.sender, enabled, minRateBps, maxRateBps, maxNewExpiry
@@ -309,9 +328,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     function getAutoExtendLenderCaps(uint256 loanId)
         external
         view
-        returns (LibVaipakam.AutoExtendCaps memory)
+        returns (LibVaipakam.AutoExtendCaps memory caps)
     {
-        return LibVaipakam.storageSlot().autoExtendLenderCaps[loanId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        caps = s.autoExtendLenderCaps[loanId];
+        if (caps.enabled && !_isCurrentLenderNft(s.loans[loanId], caps.setter)) {
+            caps.enabled = false;
+        }
     }
 
     function _validateExtendCaps(
@@ -321,13 +344,35 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint64 maxNewExpiry
     ) internal view {
         if (!enabled) return; // disabled caps don't need to be sensible
-        if (
-            minRateBps == 0 ||
-            maxRateBps == 0 ||
-            minRateBps > maxRateBps ||
-            maxNewExpiry <= block.timestamp
-        ) {
+        // Codex round-1 P3 — zero rate is a valid rate (OfferCreate
+        // accepts 0%); both bounds may be zero so a borrower can
+        // consent only to a free extension. The structural rule is
+        // that min ≤ max + the expiry must be in the future.
+        if (minRateBps > maxRateBps || maxNewExpiry <= block.timestamp) {
             revert InvalidCaps();
         }
+    }
+
+    /// @dev Staleness fence helpers. The per-loan cap getters fall the
+    ///      slot back to disabled when the position NFT has changed
+    ///      hands since the original setter wrote it — prevents an
+    ///      old owner's pre-approved terms applying to a new owner's
+    ///      loan. The new owner must explicitly re-set caps. Reads
+    ///      `ownerOf` via the embedded LibERC721 storage to avoid a
+    ///      cross-facet hop in a view.
+    function _isCurrentBorrowerNft(
+        LibVaipakam.Loan storage loan,
+        address setter
+    ) internal view returns (bool) {
+        if (setter == address(0)) return true; // default-template carry-over; no fence
+        return LibERC721.ownerOf(loan.borrowerTokenId) == setter;
+    }
+
+    function _isCurrentLenderNft(
+        LibVaipakam.Loan storage loan,
+        address setter
+    ) internal view returns (bool) {
+        if (setter == address(0)) return true;
+        return LibERC721.ownerOf(loan.lenderTokenId) == setter;
     }
 }

@@ -3834,11 +3834,15 @@ library LibVaipakam {
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
     /// @dev Storage occupant for `autoRefinanceCaps[loanId]` and
-    ///      `defaultAutoRefinanceCaps[user]`.
+    ///      `defaultAutoRefinanceCaps[user]`. `setter` is recorded so
+    ///      the reader can return enabled=false when the position NFT
+    ///      has changed hands since the cap was set (per-loan slots
+    ///      only — `defaultAutoRefinanceCaps[user]` ignores it).
     struct AutoRefinanceCaps {
         bool enabled;        // borrower opted this loan into auto-refinance
-        uint16 maxRateBps;   // ceiling on the new offer's interest rate
+        uint16 maxRateBps;   // ceiling on the new offer's interest rate (0 = allow any rate, including 0%)
         uint64 maxNewExpiry; // ceiling on the new loan's end time (unix)
+        address setter;      // who set this; reader fences caps when NFT has transferred
     }
 
     /// @notice T-092 — per-loan per-side extend caps. Lender's and
@@ -3849,6 +3853,7 @@ library LibVaipakam {
         uint16 minRateBps;   // borrower stores a max; lender stores a min — the executor enforces minLender ≤ newRate ≤ maxBorrower
         uint16 maxRateBps;   //
         uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
+        address setter;      // same NFT-transfer-staleness fence as AutoRefinanceCaps
     }
 
     /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.

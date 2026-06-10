@@ -276,6 +276,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             LibVaipakam.AutoRefinanceCaps memory defs =
                 s.defaultAutoRefinanceCaps[initiatedLoan.borrower];
             if (defs.enabled) {
+                // Stamp setter to the borrower so the per-loan
+                // staleness fence works even when these caps land via
+                // the convenience-flag copy (rather than a direct
+                // setAutoRefinanceCaps call).
+                defs.setter = initiatedLoan.borrower;
                 s.autoRefinanceCaps[loanId] = defs;
             }
         }
