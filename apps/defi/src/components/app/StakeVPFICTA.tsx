@@ -4,7 +4,7 @@ import { Coins, Clock, ArrowRight, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond';
-import { getCanonicalVPFIChain } from '../../contracts/config';
+import { CHAIN_REGISTRY } from '../../contracts/config';
 import {
   useVPFIDiscountConsent,
   useVPFIDiscountTier,
@@ -40,13 +40,26 @@ export function StakeVPFICTA() {
   const { address, chainId: walletChainId, switchToChain } = useWallet();
   const chain = useReadChain();
   const isCanonical = chain.isCanonicalVPFI === true;
-  // Codex round-1 P2 #1 — pick the canonical preference (mainnet vs
-  // testnet) from the user's CURRENT read chain, not from
-  // DEFAULT_CHAIN. On a mainnet-default build a user reading from
-  // Sepolia would otherwise be told to switch to Base mainnet.
-  const canonicalChain = getCanonicalVPFIChain(
-    chain.testnet ? 'testnet' : 'mainnet',
-  );
+  // Codex round-1 P2 #1 + round-3 P2 — pick a canonical that is
+  // BOTH the right network AND actually deployed. The stock
+  // `getCanonicalVPFIChain` doesn't filter by `diamondAddress`, so
+  // on a wallet currently on a mainnet without a deployed Diamond
+  // (e.g. Ethereum mainnet in a testnet-only build), the helper
+  // would still return Base mainnet — switching the user to a chain
+  // where staking can't work.
+  //
+  // Resolve inline: filter the registry by canonical + deployed,
+  // prefer the same testnet/mainnet network as the read chain, fall
+  // back to ANY deployed canonical so the CTA always has a target.
+  const canonicalChain = (() => {
+    const deployedCanonicals = Object.values(CHAIN_REGISTRY).filter(
+      (c) => c.isCanonicalVPFI && c.diamondAddress !== null,
+    );
+    const matchingNetwork = deployedCanonicals.find(
+      (c) => c.testnet === chain.testnet,
+    );
+    return matchingNetwork ?? deployedCanonicals[0] ?? null;
+  })();
 
   const lenderAddr = (address ?? null) as `0x${string}` | null;
   const { data: tierData, reload: reloadTier } =
@@ -73,6 +86,19 @@ export function StakeVPFICTA() {
   const publicClient = useDiamondPublicClient();
   const [poking, setPoking] = useState(false);
   const [pokeError, setPokeError] = useState<string | null>(null);
+  // Codex round-3 P3 #2 — after a successful poke, none of the
+  // tier-related values change (tier was already > 0 — that was
+  // the whole point of the broadcast). Without this flag the CTA
+  // would stay visible and the user would keep firing no-op pokes
+  // that burn protocol broadcast budget. Hide the CTA for 60s
+  // after a success; after that the user can re-poke if they want
+  // to ensure a fresh broadcast.
+  const [recentlyPoked, setRecentlyPoked] = useState(false);
+  useEffect(() => {
+    if (!recentlyPoked) return;
+    const id = window.setTimeout(() => setRecentlyPoked(false), 60_000);
+    return () => window.clearTimeout(id);
+  }, [recentlyPoked]);
 
   // Codex round-1 P2 #4 — the poke button is USEFUL once the user
   // has a NON-ZERO effective tier (post-min-history) and wants to
@@ -98,15 +124,22 @@ export function StakeVPFICTA() {
     walletChainId === canonicalChain.chainId;
 
   // The card surfaces only when there's something for the user to do.
-  // Codex round-2 P2 #1 — additionally gate on `address != null` so
-  // a disconnected dashboard stays hidden (matches the release-note
-  // promise; without this the no-stake branch would always fire
-  // because `trackedBal ?? 0n === 0n` while no read happens).
+  // Codex round-2 P2 #1 — `address != null` so a disconnected
+  // dashboard stays hidden.
+  // Codex round-3 P3 #1 — only show the no-stake CTA AFTER
+  // `useVPFIDiscountTier` has loaded (i.e., `tierData != null`).
+  // Otherwise the canonical-chain branch fires for every connected
+  // user during the initial RPC roundtrip, flashing the wrong CTA
+  // for users who do have a stake.
+  // Codex round-3 P3 #2 — suppress the poke branch when
+  // `recentlyPoked` so a successful poke hides the CTA instead of
+  // inviting a no-op repeat.
+  const showNoStakeBranch =
+    isCanonical && tierData != null && tierData.trackedBal === 0n;
+  const showPokeBranch =
+    canPokeHere && tierReadyToBroadcast && !recentlyPoked;
   const showCard =
-    address != null &&
-    (!isCanonical
-      || (canPokeHere && tierReadyToBroadcast)
-      || (tierData?.trackedBal ?? 0n) === 0n);
+    address != null && (!isCanonical || showNoStakeBranch || showPokeBranch);
 
   if (!showCard) return null;
 
@@ -135,6 +168,7 @@ export function StakeVPFICTA() {
       if (receipt.status !== 'success') {
         throw new Error('Transaction reverted on-chain');
       }
+      setRecentlyPoked(true);
       await reloadTier();
     } catch (e) {
       setPokeError(
@@ -173,7 +207,7 @@ export function StakeVPFICTA() {
         </div>
       )}
 
-      {isCanonical && (tierData?.trackedBal ?? 0n) === 0n && (
+      {showNoStakeBranch && (
         <div style={{ marginTop: 8 }}>
           <div className="card-subtitle">
             {t('stakeVpfiCta.noStakeYetBody')}
@@ -189,7 +223,7 @@ export function StakeVPFICTA() {
         </div>
       )}
 
-      {canPokeHere && tierReadyToBroadcast && (
+      {showPokeBranch && (
         <div style={{ marginTop: 8 }}>
           <div
             className="alert alert-info"
