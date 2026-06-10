@@ -23,13 +23,15 @@ The library is storage-aware (tracks `s.treasuryDeployedExternal[token]`) and tr
 - `deployTreasuryYield(token, amount)` + `withdrawTreasuryYield(token, amount)` — ADMIN-gated wrappers.
 - Public reads: `getTreasuryYieldVenue`, `getTreasuryDeployedExternal`, `getTreasuryExternalYieldMaxBps`, `getAaveV3Pool`, `getLidoStaking`.
 
-### Counterparty-risk floor
+### Counterparty-risk gate (deploy-time only)
 
-`cfgTreasuryExternalYieldMaxBps` bounds how much of a token's treasury can be deployed externally:
+`cfgTreasuryExternalYieldMaxBps` is a **deploy-time gate**, not an ongoing invariant. At the moment a `deployTreasuryYield` call lands, it ensures the cumulative externally-deployed amount doesn't exceed the configured BPS share of the total addressable treasury (`treasuryBalance + alreadyDeployed`). After deployment, other treasury debit paths (`claimTreasuryFees`, `convertTreasuryAsset`, payroll funding, buyback `creditBuybackBudget`) can still consume `treasuryBalances[token]` — the "30% liquid floor" is NOT a continuously-enforced invariant; it is the state guaranteed at the moment of deployment.
 
-- Default 7000bps → max 70% externally deployed; min 30% liquid in the diamond.
+- Default 7000bps → at deploy-time, max 70% externally deployed; ≥30% in-diamond at that moment.
 - Hard upper bound 8000bps → governance can raise the ceiling but never above 80%.
-- Denominator is `treasuryBalance + alreadyDeployed` (the total addressable treasury for that token). Cap holds across multiple deployment calls — after a partial deploy, the next call's allowable amount accounts for what's already external.
+- Denominator is `treasuryBalance + alreadyDeployed` (the total addressable treasury for that token).
+
+Operators monitoring the floor in production are advised to either (a) re-deploy only what fits the cap when the in-diamond balance drops below the desired floor, or (b) treat the cap as a per-deploy gate with the understanding that subsequent treasury debits may drop the in-diamond portion below 30%.
 
 ### Storage additions (append-only)
 
@@ -58,7 +60,7 @@ Mock Aave V3 Pool + Mock Lido staking simulate the venue side. Cap math is exerc
 ### Out of scope (deferred)
 
 - **Lido path entirely** (Codex round-1 P1): `deployTreasuryYield` for a `LIDO_STETH`-configured token reverts `LidoVenueNotYetSupported` in Phase 0. The native-ETH submit path needs a WETH-unwrap leg the diamond doesn't yet have; wiring it without that leg would silently debit `treasuryBalances[token]` while no ETH actually reaches Lido. Phase 1 wires the WETH→ETH unwrap + the Lido withdrawal queue interaction. The venue enum + setters remain reserved.
-- **Yield harvest tracking** (Codex round-1 P2 #2): `treasuryDeployedExternal[token]` tracks principal only. As Aave interest accrues, the diamond's aToken balance grows above this counter. Phase 0 does NOT include a separate `harvestTreasuryInterest(token)` method that pulls only the interest delta — the admin can withdraw up to the recorded principal, and accrued interest stays at the venue until Phase 1 adds the harvest path. Operator can full-withdraw + re-deploy to realise interest in the meantime.
+- **Yield harvest tracking** (Codex round-1 P2 #2 + round-2 P2): `treasuryDeployedExternal[token]` tracks principal only. As Aave interest accrues, the diamond's aToken balance grows above this counter. Phase 0 does NOT include a separate `harvestTreasuryInterest(token)` method that pulls only the interest delta — the admin can withdraw up to the recorded principal, and accrued interest stays at the venue until Phase 1 adds the harvest path. The previously-suggested "full-withdraw + re-deploy" workaround is INVALID: withdraws are capped at recorded principal, so the surplus aTokens stay at the venue regardless of how many re-deployments happen. Operators wanting interest before Phase 1 must use Aave's UI / direct contract call to withdraw the surplus aTokens (the diamond's `address(this)` holds them as the aToken balance grows above principal). That bypasses our accounting — the diamond's treasury slot won't automatically reflect the interest. Phase 1's harvest method will close this gap.
 - **Phase 1 — `VAIPAKAM_INTERNAL` venue**: shifts portion to Vaipakam itself after $50M+ TVL. Tracked separately.
 
 ### Verification

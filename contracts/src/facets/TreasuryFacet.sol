@@ -1078,6 +1078,11 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error TreasuryYieldVenueChangeWithDeployedPrincipal(
         address token, uint256 currentlyDeployed
     );
+    /// @notice Codex round-2 P1 #1 — Aave pool rotation rejected
+    ///         because at least one token still has principal in
+    ///         the OLD pool. Operator must withdraw all positions
+    ///         first.
+    error AavePoolRotationWithDeployedPrincipal(uint256 tokensDeployed);
 
     /// @custom:event-category informational/config
     event TreasuryYieldVenueSet(address indexed token, uint8 venue);
@@ -1141,7 +1146,16 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     {
         if (pool == address(0)) revert InvalidAddress();
         if (pool.code.length == 0) revert TreasuryYieldVenueAddressNotContract(pool);
-        LibVaipakam.storageSlot().cfgAaveV3Pool = pool;
+        // Codex round-2 P1 #1 — reject rotation while any token
+        // has Aave-deployed principal. The old pool still custodies
+        // those aTokens; switching the address would route the
+        // subsequent withdraw to the wrong pool. Same-pool write
+        // (idempotent) is allowed.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.cfgAaveV3Pool != pool && s.aaveDeployedTokenCount != 0) {
+            revert AavePoolRotationWithDeployedPrincipal(s.aaveDeployedTokenCount);
+        }
+        s.cfgAaveV3Pool = pool;
         emit AaveV3PoolSet(pool);
     }
 

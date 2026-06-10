@@ -3758,6 +3758,15 @@ library LibVaipakam {
         uint16 cfgTreasuryExternalYieldMaxBps;
         address cfgAaveV3Pool;
         address cfgLidoStaking;
+        // T-087 Sub 3 add-on #473 round-2 P1 #1 — count of tokens
+        // with NON-ZERO Aave principal deployed. `setAaveV3Pool`
+        // refuses to rotate the pool address while this is > 0,
+        // because the old pool would still hold the existing
+        // aTokens / principal. Incremented when a token's deployed
+        // amount transitions 0 → >0 via `deployTreasuryYield`;
+        // decremented when it transitions >0 → 0 via
+        // `withdrawTreasuryYield`.
+        uint256 aaveDeployedTokenCount;
     }
 
     /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.

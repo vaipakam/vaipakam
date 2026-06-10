@@ -227,6 +227,28 @@ contract TreasuryYieldTest is SetupTest {
         _t().deployTreasuryYield(ethSentinel, 1 ether);
     }
 
+    // ─── Round-2 P1 #1 — Aave pool rotation blocked while deployed ──
+
+    function test_SetAaveV3Pool_RevertWhen_RotationWithDeployedPrincipal() public {
+        _t().setTreasuryYieldVenue(address(wbtc), LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3);
+        _t().setAaveV3Pool(address(aave));
+        _t().deployTreasuryYield(address(wbtc), 100e8);
+
+        // Try to rotate to a new pool — should revert.
+        MockAavePool newAave = new MockAavePool();
+        vm.expectRevert();
+        _t().setAaveV3Pool(address(newAave));
+
+        // Same-pool write (idempotent) is allowed.
+        _t().setAaveV3Pool(address(aave));
+        assertEq(_t().getAaveV3Pool(), address(aave));
+
+        // Withdraw frees the rotation.
+        _t().withdrawTreasuryYield(address(wbtc), 100e8);
+        _t().setAaveV3Pool(address(newAave));
+        assertEq(_t().getAaveV3Pool(), address(newAave));
+    }
+
     // ─── Round-1 P2 #1 — Venue change blocked while deployed ─────
 
     function test_SetTreasuryYieldVenue_RevertWhen_DeployedPrincipalExists() public {

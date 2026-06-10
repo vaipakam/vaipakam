@@ -160,6 +160,16 @@ library LibTreasuryYield {
         // ── Debit treasury balance ──────────────────────────────────
         s.treasuryBalances[token] = treasuryBal - amount;
         s.treasuryDeployedExternal[token] = alreadyDeployed + amount;
+        // Codex round-2 P1 #1 — bump the Aave-deployed-tokens
+        // counter when this token transitions from 0 to >0
+        // deployed. `setAaveV3Pool` consults this counter to
+        // refuse rotation while existing principal is live.
+        if (
+            venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3
+                && alreadyDeployed == 0
+        ) {
+            s.aaveDeployedTokenCount += 1;
+        }
 
         // ── Venue routing ───────────────────────────────────────────
         if (venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3) {
@@ -206,8 +216,17 @@ library LibTreasuryYield {
         if (amount > deployed) {
             revert InsufficientDeployedBalance(amount, deployed);
         }
-        s.treasuryDeployedExternal[token] = deployed - amount;
+        uint256 newDeployed = deployed - amount;
+        s.treasuryDeployedExternal[token] = newDeployed;
         s.treasuryBalances[token] += amount;
+        // Codex round-2 P1 #1 — decrement counter if Aave-side
+        // principal drops to 0 for this token.
+        if (
+            venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3
+                && newDeployed == 0
+        ) {
+            s.aaveDeployedTokenCount -= 1;
+        }
 
         if (venue == LibVaipakam.TREASURY_YIELD_VENUE_AAVE_V3) {
             address pool = s.cfgAaveV3Pool;
