@@ -1015,4 +1015,51 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         require(ok && ret.length == 32, "lop ds");
         return abi.decode(ret, (bytes32));
     }
+
+    // ─── T-087 Sub 3 add-on #472 — priority router config ────────────
+
+    /// @custom:event-category informational/config
+    event RewardEmissionsTopUpTargetSet(uint256 target);
+    /// @custom:event-category informational/config
+    event KeeperRewardTopUpTargetSet(uint256 target);
+
+    /// @notice Admin: top-up target for the reward emissions budget.
+    ///         Buyback proceeds cascade up to this floor first; the
+    ///         excess flows to keepers + staking. Pass `0` to disable
+    ///         the reward step entirely (cascade skips straight to
+    ///         keepers).
+    function setRewardEmissionsTopUpTarget(uint256 target)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgRewardEmissionsTopUpTarget = target;
+        emit RewardEmissionsTopUpTargetSet(target);
+    }
+
+    function getRewardEmissionsTopUpTarget() external view returns (uint256) {
+        return LibVaipakam.storageSlot().cfgRewardEmissionsTopUpTarget;
+    }
+
+    function getRewardEmissionsBudget() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardEmissionsBudget;
+    }
+
+    /// @notice Admin: top-up target for the keeper reward budget.
+    ///         Second step of the priority cascade. Pass `0` to
+    ///         disable the keeper step entirely.
+    function setKeeperRewardTopUpTarget(uint256 target)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().cfgKeeperRewardTopUpTarget = target;
+        emit KeeperRewardTopUpTargetSet(target);
+    }
+
+    function getKeeperRewardTopUpTarget() external view returns (uint256) {
+        return LibVaipakam.storageSlot().cfgKeeperRewardTopUpTarget;
+    }
+
+    function getKeeperRewardBudget() external view returns (uint256) {
+        return LibVaipakam.storageSlot().keeperRewardBudget;
+    }
 }

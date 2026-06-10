@@ -3724,6 +3724,22 @@ library LibVaipakam {
         // seconds (30 min); admin-bounded per the design card to
         // 600..3600.
         uint32 cfgBuybackTwapMaxWindowSec;
+
+        // T-087 Sub 3 add-on #472 round-1 P1 #1 — APPENDED here
+        // (after every prior storage slot) so the diamond's storage
+        // layout for pre-existing slots is unchanged on upgrade.
+        // Priority router destination budgets + their top-up
+        // targets. When a buyback fill delivers VPFI, the proceeds
+        // cascade:
+        //   1. rewardEmissionsBudget (offsets fresh-mint inflation)
+        //   2. keeperRewardBudget (operational keeper incentives)
+        //   3. stakingPoolBuybackBudget (overflow → staker yield)
+        // Each step claims up to `(target - current_budget)`; the
+        // remainder cascades. Zero target disables the step.
+        uint256 rewardEmissionsBudget;
+        uint256 keeperRewardBudget;
+        uint256 cfgRewardEmissionsTopUpTarget;
+        uint256 cfgKeeperRewardTopUpTarget;
     }
 
     /// @notice T-087 Sub 3.B — per-buyback-order state.
