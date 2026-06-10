@@ -49,7 +49,7 @@ This means the most recent week's behaviour dominates, but isn't the whole story
 
 ### 3.3 Min-history gate
 
-A brand-new staker doesn't immediately get the discount. They must hold qualifying VPFI for at least `cfgTwaMinStakedDaysEffective` days (default 3) before the EFFECTIVE_TIER unlocks. Reasoning: prevents a 1-block "deposit-claim-withdraw" gaming pattern.
+A brand-new staker doesn't immediately get the discount. They must hold qualifying VPFI for at least `cfgTwaMinStakedDaysEffective` days (default 3, set via `setTwaMinStakedDays`) before the EFFECTIVE_TIER unlocks. Reasoning: prevents a 1-block "deposit-claim-withdraw" gaming pattern.
 
 During the min-history window:
 - The accumulator records the daily balance.
@@ -88,19 +88,19 @@ User-facing flow:
 4. User takes a loan on a mirror → mirror reads `userTierCache[user]` → applies the cached tier as the discount at settlement.
 
 The mirror's cache has staleness gates:
-- `cfgMirrorTierMaxAgeSec` — cache discount applies only if `now - cacheWrittenAt < maxAge`.
-- `currentTierTableVersion` — if governance bumps the canonical tier table and the cached version is older, mirror falls back to no discount until a fresh push.
+- `cfgMirrorTierMaxAgeSec` — cache discount applies only if `now - cacheWrittenAt < maxAge` (default 60 days; min-floor 30 days).
+- `currentTierTableVersion` — if governance bumps the canonical tier table via `setVpfiTierThresholds` / `setVpfiTierDiscountBps`, the version on Base increments. Mirrors holding a stale version fall back to no discount until a fresh push lands.
 
 ## 5. Governance levers
 
 Tier system parameters are governance-controlled via the diamond's admin role (eventually a timelocked multisig):
 
-- `setVpfiTierThresholds(t1, t2, t3, t3Ceiling)` — VPFI floors and Tier-3 ceiling.
-- `setVpfiTierDiscountBps(t1Bps, t2Bps, t3Bps, t4Bps)` — discount basis points per tier.
-- `setCfgTwaMinStakedDaysEffective(days)` — min-history days (currently 3).
-- `setCfgMirrorTierMaxAgeSec(seconds)` — mirror cache staleness threshold.
+- `setVpfiTierThresholds(t1, t2, t3, t3Ceiling)` — VPFI floors and Tier-3 ceiling. Bumps `tierTableVersion`.
+- `setVpfiTierDiscountBps(t1Bps, t2Bps, t3Bps, t4Bps)` — discount basis points per tier. Bumps `tierTableVersion`.
+- `setTwaMinStakedDays(days)` — min-history days (default 3). Does NOT bump `tierTableVersion`; new aging behaviour takes effect on next read.
+- `setMirrorTierMaxAgeSec(seconds)` — mirror cache staleness threshold (default 60 days; min-floor 30 days). Does NOT bump `tierTableVersion`; takes effect on next read.
 
-Any change bumps the on-chain `tierTableVersion` so mirrors know to refresh.
+Only the first two (threshold / BPS) invalidate mirror caches via the version bump.
 
 ## 6. Anti-gaming + anti-drain measures
 
