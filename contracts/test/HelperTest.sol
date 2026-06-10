@@ -991,7 +991,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](24);
+        selectors = new bytes4[](25);
         selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -1032,6 +1032,8 @@ contract HelperTest {
         // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS
         // getter for the dapp's lender-discount preview hook.
         selectors[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        // T-087 Sub 4 — balance-mutation-free tier rollup.
+        selectors[24] = VPFIDiscountFacet.pokeMyTier.selector;
         return selectors;
     }
 

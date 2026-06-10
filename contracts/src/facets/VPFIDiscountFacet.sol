@@ -887,6 +887,49 @@ contract VPFIDiscountFacet is
         return LibVPFIDiscount.effectiveTierAndBps(user);
     }
 
+    /// @custom:event-category state-change/vpfi-discount
+    /// @notice T-087 Sub 4 — emitted when a user (or the protocol on
+    ///         their behalf) triggers a balance-mutation-free rollup.
+    event TierPoked(address indexed user, uint256 trackedBalance);
+
+    /**
+     * @notice T-087 Sub 4 — trigger a balance-mutation-free rollup of
+     *         the caller's VPFI-discount accumulator.
+     *
+     * @dev Use case: time-only EFFECTIVE_TIER activation. Once a
+     *      user's stake has aged past `cfgTwaMinStakedDaysEffective`,
+     *      their on-chain tier becomes claimable without any balance
+     *      mutation needed. `pokeMyTier()` lets them surface that
+     *      tier to mirror chains via the protocol-funded broadcast
+     *      path (T-087 Sub 2.D) without having to make a tiny
+     *      deposit / withdraw round-trip.
+     *
+     *      The function is fully permissionless and idempotent: it
+     *      re-reads the caller's tracked balance and re-stamps the
+     *      accumulator at that same balance. If the tier hasn't
+     *      changed, no broadcast fires (the broadcast path
+     *      short-circuits on equal tier). If the tier HAS changed —
+     *      e.g., the user just crossed the min-history boundary —
+     *      the broadcast pushes the new tier to every configured
+     *      mirror chain.
+     *
+     *      Gated by `whenNotPaused` so emergency pause halts pokes
+     *      (consistent with the deposit/withdraw paths). NOT gated
+     *      by `vpfiDiscountConsent` — a user who hasn't opted in
+     *      can still poke; the broadcast will carry their current
+     *      tier (which is `(0, 0)` while consent is off, so the
+     *      mirror cache reflects "no discount" correctly).
+     */
+    function pokeMyTier() external nonReentrant whenNotPaused {
+        // Codex would flag this as accruing zero work for a non-staker.
+        // The trackedVpfiBalance read is the same one every settlement
+        // path uses; for a user with no stake history it returns 0 and
+        // the rollup is essentially a no-op at the accumulator level.
+        uint256 trackedBal = LibVPFIDiscount.trackedVpfiBalance(msg.sender);
+        LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
+        emit TierPoked(msg.sender, trackedBal);
+    }
+
     /**
      * @notice Current VPFI buy-side config + running totals.
      * @dev    `globalCap` and `perWalletCap` are returned as EFFECTIVE
