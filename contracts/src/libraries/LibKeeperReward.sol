@@ -152,16 +152,33 @@ library LibKeeperReward {
         // facet that calls us at the end would revert the whole
         // tx, breaking the no-revert contract. Use a low-level call
         // and on failure: restore the budget, emit Skipped, return 0.
+        //
+        // Codex round-3 P2 — snapshot keeper's VPFI balance BEFORE
+        // the call; verify it grew by `vpfiAmount` AFTER. This
+        // guards against a misconfigured `vpfiToken` whose fallback
+        // returns `(true, "")` without actually moving balance —
+        // the keeper would otherwise see `KeeperRewardPaid` while
+        // receiving nothing.
+        uint256 keeperBalanceBefore = IERC20(s.vpfiToken).balanceOf(keeper);
         (bool ok, bytes memory ret) = s.vpfiToken.call(
             abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
         );
-        // Codex round-2 P2 #1 — guard against malformed return data
-        // (non-standard tokens / proxies returning < 32 bytes).
-        // `abi.decode(ret, (bool))` would itself revert on a
-        // short response, defeating the no-revert contract.
-        bool returnedTrue = ret.length == 0
-            || (ret.length >= 32 && abi.decode(ret, (bool)));
-        if (!ok || !returnedTrue) {
+        // Codex round-2/3 P2 — parse the return word manually
+        // (any nonzero counts as "truthy"). `abi.decode(ret, (bool))`
+        // reverts when the 32-byte word isn't strict 0/1, defeating
+        // the no-revert contract on quirky proxies.
+        bool returnedTrue;
+        if (ret.length == 0) {
+            returnedTrue = true;
+        } else if (ret.length >= 32) {
+            bytes32 word;
+            assembly { word := mload(add(ret, 32)) }
+            returnedTrue = uint256(word) != 0;
+        }
+        // Verify the keeper's balance actually grew.
+        uint256 keeperBalanceAfter = IERC20(s.vpfiToken).balanceOf(keeper);
+        bool balanceMoved = keeperBalanceAfter >= keeperBalanceBefore + vpfiAmount;
+        if (!ok || !returnedTrue || !balanceMoved) {
             s.keeperRewardBudget = budget; // restore the debit
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
             return 0;
