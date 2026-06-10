@@ -145,6 +145,19 @@ contract BuybackValidatedCommitTest is SetupTest {
         );
     }
 
+    function test_CommitValidated_RevertWhen_ZeroMinVpfiOut() public {
+        // Codex round-2 P2 #2 — minVpfiOut must be positive.
+        _seedBaseBudget(AMOUNT);
+        uint64 expiresAt = uint64(block.timestamp + 30 minutes);
+        (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
+            _buildTemplate(expiresAt, 0);
+
+        vm.expectRevert(LibTreasuryBuyback.BuybackZeroAmount.selector);
+        _t().commitBuybackIntentValidated(
+            orderHash, tpl, AMOUNT, 0, expiresAt
+        );
+    }
+
     function test_CommitValidated_RevertWhen_TwapWindowExceeded() public {
         _seedBaseBudget(AMOUNT);
         // Window > 30 min default.
@@ -256,7 +269,7 @@ contract BuybackValidatedCommitTest is SetupTest {
     function test_Expire_AfterPartial_ReleasesOnlyUnconsumed() public {
         _seedBaseBudget(AMOUNT);
         uint64 expiresAt = uint64(block.timestamp + 30 minutes);
-        uint128 minVpfiOut = 0; // floor disabled for simplicity
+        uint128 minVpfiOut = 1; // smallest positive floor (round-2 P2 #2)
         (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
             _buildTemplate(expiresAt, minVpfiOut);
 
@@ -310,10 +323,10 @@ contract BuybackValidatedCommitTest is SetupTest {
         _seedBaseBudget(AMOUNT);
         uint64 expiresAt = uint64(block.timestamp + 30 minutes);
         (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
-            _buildTemplate(expiresAt, 0);
+            _buildTemplate(expiresAt, 1);
 
         _t().commitBuybackIntentValidated(
-            orderHash, tpl, AMOUNT, 0, expiresAt
+            orderHash, tpl, AMOUNT, 1, expiresAt
         );
 
         // Full fill.

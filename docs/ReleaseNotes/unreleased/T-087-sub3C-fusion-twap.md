@@ -30,7 +30,7 @@ Sub 3.B's strict `consumed != amountIn` rejection becomes partial-fill aware:
 
 - `postInteractionImpl` tracks `s.buybackConsumedSoFar[orderHash]` across multiple fills.
 - Each partial settles a portion: releases proportional reservation + LOP allowance + credits the per-partial VPFI delta to `stakingPoolBuybackBudget`.
-- Per-fill minVpfiOut floor is pro-rata: `actualVpfi >= (info.minVpfiOut * consumed) / info.amountIn`.
+- Cumulative pro-rata minVpfiOut floor (round-1 P2): `s.buybackVpfiDeliveredSoFar[orderHash]` tracks total delivered VPFI; each partial enforces `cumulativeVpfi >= floor(info.minVpfiOut * consumedSoFar / info.amountIn)`. Catches rounding-loss compounding across many tiny partials (per-partial floor-division could otherwise round to zero on each fill and the order could settle below `minVpfiOut`). Early over-delivery can subsidise a later under-delivery; the invariant holds on the cumulative side.
 - Order flips Filled only when `consumedSoFar == amountIn`. Earlier partials leave status Pending so subsequent fills re-enter through the dispatcher.
 - New event `BuybackIntentClosed(orderHash, token, totalAmountIn)` fires once per orderHash on the FINAL partial. Indexer treats it as the terminal-fill signal.
 - The intermediate `BuybackIntentFilled` event now reports per-partial consumed + per-partial actualVpfi (vs. cumulative in Sub 3.B).
@@ -39,7 +39,8 @@ Sub 3.B's strict `consumed != amountIn` rejection becomes partial-fill aware:
 ### Storage additions (append-only)
 
 - `mapping(bytes32 => bool) buybackValidated` — Sub 3.C validation flag.
-- `mapping(bytes32 => uint128) buybackConsumedSoFar` — partial-fill accumulator.
+- `mapping(bytes32 => uint128) buybackConsumedSoFar` — partial-fill source-token accumulator.
+- `mapping(bytes32 => uint128) buybackVpfiDeliveredSoFar` — partial-fill VPFI delivered accumulator (cumulative floor enforcement; added round-1 P2).
 - `uint32 cfgBuybackTwapMaxWindowSec` — TWAP window upper bound (default 1800 when 0).
 
 ### Producer artifacts

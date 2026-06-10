@@ -912,6 +912,16 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+        // ── 0. Codex Sub 3.C round-2 P2 #2 — minVpfiOut > 0.
+        //    1inch LOP rejects fills where the computed taking
+        //    amount is zero, so a minVpfiOut == 0 order would have
+        //    its source tokens reserved on-chain but never settle.
+        //    Force a positive floor to prevent the stranded-budget
+        //    failure mode.
+        if (minVpfiOut == 0) {
+            revert LibTreasuryBuyback.BuybackZeroAmount();
+        }
+
         // ── 1. TWAP window bound ────────────────────────────────────
         uint32 maxWindow = s.cfgBuybackTwapMaxWindowSec == 0
             ? DEFAULT_BUYBACK_TWAP_WINDOW_SEC

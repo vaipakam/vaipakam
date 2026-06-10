@@ -475,10 +475,68 @@ async function preflightCommitOnChain(
     if (!foundBuyback) {
       return { kind: 'reject', reason: 'orderhash-not-validated-on-chain' };
     }
-    // Buyback orders are admin-committed; the order template was
-    // recomputed on-chain by `commitBuybackIntentValidated`, so we
-    // skip the per-field on-chain recheck the swap-to-repay path
-    // does. Pass.
+    // T-087 Sub 3.C round-2 P2 #1 — even though the on-chain
+    // `commitBuybackIntentValidated` recomputed the orderHash from
+    // the template at commit-time, the agent's caller might submit
+    // a DIFFERENT order body alongside that valid orderHash (a
+    // mutated body wouldn't change the on-chain check but would
+    // pollute the Fusion solver pool with an unfillable order +
+    // burn our 1inch quota). The swap-to-repay path defends with a
+    // per-field on-chain recheck; do the same for buyback by
+    // reading the on-chain ledger entry and verifying the submitted
+    // makerAsset + takerAsset + amounts match.
+    try {
+      const onchain = await client.readContract({
+        address: expectedDiamond as `0x${string}`,
+        abi: [
+          {
+            type: 'function',
+            name: 'getBuybackOrder',
+            stateMutability: 'view',
+            inputs: [{ name: 'orderHash', type: 'bytes32' }],
+            outputs: [
+              {
+                type: 'tuple',
+                components: [
+                  { name: 'token', type: 'address' },
+                  { name: 'amountIn', type: 'uint96' },
+                  { name: 'minVpfiOut', type: 'uint128' },
+                  { name: 'expiresAt', type: 'uint64' },
+                  { name: 'status', type: 'uint8' },
+                ],
+              },
+            ],
+          },
+        ] as const,
+        functionName: 'getBuybackOrder',
+        args: [parsed.orderHash],
+      });
+      const fields = onchain as {
+        token: `0x${string}`;
+        amountIn: bigint;
+        minVpfiOut: bigint;
+        expiresAt: bigint;
+        status: number;
+      };
+      if (fields.token.toLowerCase() !== parsed.order.makerAsset.toLowerCase()) {
+        return { kind: 'reject', reason: 'buyback-makerAsset-mismatch' };
+      }
+      if (BigInt(parsed.order.makerAmount) !== fields.amountIn) {
+        return { kind: 'reject', reason: 'buyback-makerAmount-mismatch' };
+      }
+      if (BigInt(parsed.order.takerAmount) !== fields.minVpfiOut) {
+        return { kind: 'reject', reason: 'buyback-takerAmount-mismatch' };
+      }
+    } catch (err) {
+      console.warn(
+        '[intent/fusion/post] buyback ledger read RPC degraded; proceeding',
+        err,
+      );
+      // RPC degradation: fall through. The on-chain commit is still
+      // the source of truth; a mutated body sent to Fusion would
+      // just fail the ERC-1271 binding at fill time and waste
+      // resolver gas instead of ours.
+    }
     return { kind: 'ok' };
   }
   // ─── swap-to-repay path (default / legacy) ────────────────────
