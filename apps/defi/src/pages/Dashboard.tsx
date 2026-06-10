@@ -40,6 +40,7 @@ import { PrincipalCell } from '../components/app/PrincipalCell';
 import { bpsToPercent } from '../lib/format';
 import { HealthFactorChip, LTVChip } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
+import { StakeVPFICTA } from '../components/app/StakeVPFICTA';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -353,6 +354,13 @@ export default function Dashboard() {
           and links into Buy VPFI via the rewards-summary chevron
           below for users who want to inspect their tier status. */}
       <VPFIDiscountConsentCard />
+
+      {/* T-087 Sub 4 phase 2 — chain-agnostic Stake VPFI CTA.
+          On mirrors: switch-to-Base button.
+          On Base, no stake: "Stake VPFI now" CTA.
+          On Base, min-history pending tier: "Push tier" button.
+          Hides itself when none of the above applies. */}
+      <StakeVPFICTA />
 
       {/* Aspirational rewards summary — combined view of pending +
           lifetime-claimed across both reward streams (staking yield
