@@ -926,11 +926,16 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         uint32 maxWindow = s.cfgBuybackTwapMaxWindowSec == 0
             ? DEFAULT_BUYBACK_TWAP_WINDOW_SEC
             : s.cfgBuybackTwapMaxWindowSec;
-        if (expiresAt <= block.timestamp
-                || uint256(expiresAt) - block.timestamp > uint256(maxWindow)) {
-            revert BuybackTwapWindowOutOfBounds(
-                uint256(expiresAt) - block.timestamp, uint256(maxWindow)
-            );
+        // Codex Sub 3.C round-3 P3 — guard the subtraction so the
+        // "expiry-in-past" branch reverts with the documented
+        // BuybackTwapWindowOutOfBounds error instead of a generic
+        // 0.8 arithmetic panic from uint underflow.
+        if (expiresAt <= block.timestamp) {
+            revert BuybackTwapWindowOutOfBounds(0, uint256(maxWindow));
+        }
+        uint256 window = uint256(expiresAt) - block.timestamp;
+        if (window > uint256(maxWindow)) {
+            revert BuybackTwapWindowOutOfBounds(window, uint256(maxWindow));
         }
 
         // ── 2. Recompute orderHash on-chain + field validation ──────

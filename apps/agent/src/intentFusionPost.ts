@@ -475,18 +475,30 @@ async function preflightCommitOnChain(
     if (!foundBuyback) {
       return { kind: 'reject', reason: 'orderhash-not-validated-on-chain' };
     }
-    // T-087 Sub 3.C round-2 P2 #1 — even though the on-chain
+    // T-087 Sub 3.C round-2 P2 #1 + round-3 P2 #1/#2 — even though
     // `commitBuybackIntentValidated` recomputed the orderHash from
-    // the template at commit-time, the agent's caller might submit
-    // a DIFFERENT order body alongside that valid orderHash (a
-    // mutated body wouldn't change the on-chain check but would
-    // pollute the Fusion solver pool with an unfillable order +
-    // burn our 1inch quota). The swap-to-repay path defends with a
-    // per-field on-chain recheck; do the same for buyback by
-    // reading the on-chain ledger entry and verifying the submitted
-    // makerAsset + takerAsset + amounts match.
+    // the template at commit-time, the agent's caller might:
+    //   (a) submit a mutated `order` body alongside a valid
+    //       orderHash (round-2 P2 #1, round-3 P2 #2 — partial check
+    //       on asset+amounts wasn't enough; takerAsset / salt /
+    //       makerTraits / extension could still differ from the
+    //       validated template);
+    //   (b) replay a tx hash AFTER the order has Filled or Expired,
+    //       since `getBuybackOrder` retains the historical fields
+    //       (round-3 P2 #1).
+    //
+    // Defence: read the on-chain ledger entry, verify status ==
+    // Pending + expiresAt > now, AND verify the diamond's
+    // `isBuybackValidated(orderHash)` still returns true (the flag
+    // clears on terminal). Then bind asset+amount fields. Field-
+    // level mutation on takerAsset / salt / makerTraits / extension
+    // would alter the orderHash recomputation; isValidSignature
+    // would already block such a mutated body at fill time, but
+    // dropping it here saves our 1inch quota from being burned on
+    // an unfillable order.
     try {
-      const onchain = await client.readContract({
+      const orderHashCheck = parsed.orderHash;
+      const orderField = await client.readContract({
         address: expectedDiamond as `0x${string}`,
         abi: [
           {
@@ -509,15 +521,23 @@ async function preflightCommitOnChain(
           },
         ] as const,
         functionName: 'getBuybackOrder',
-        args: [parsed.orderHash],
+        args: [orderHashCheck],
       });
-      const fields = onchain as {
+      const fields = orderField as {
         token: `0x${string}`;
         amountIn: bigint;
         minVpfiOut: bigint;
         expiresAt: bigint;
         status: number;
       };
+      // status 1 = PENDING.
+      if (fields.status !== 1) {
+        return { kind: 'reject', reason: 'buyback-not-pending' };
+      }
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      if (fields.expiresAt <= nowSec) {
+        return { kind: 'reject', reason: 'buyback-expired' };
+      }
       if (fields.token.toLowerCase() !== parsed.order.makerAsset.toLowerCase()) {
         return { kind: 'reject', reason: 'buyback-makerAsset-mismatch' };
       }
@@ -526,6 +546,26 @@ async function preflightCommitOnChain(
       }
       if (BigInt(parsed.order.takerAmount) !== fields.minVpfiOut) {
         return { kind: 'reject', reason: 'buyback-takerAmount-mismatch' };
+      }
+      // Also assert isBuybackValidated still true (the diamond
+      // clears it at terminal; covers Filled/Expired states the
+      // status check above already catches but defence-in-depth).
+      const validated = (await client.readContract({
+        address: expectedDiamond as `0x${string}`,
+        abi: [
+          {
+            type: 'function',
+            name: 'isBuybackValidated',
+            stateMutability: 'view',
+            inputs: [{ name: 'orderHash', type: 'bytes32' }],
+            outputs: [{ type: 'bool' }],
+          },
+        ] as const,
+        functionName: 'isBuybackValidated',
+        args: [orderHashCheck],
+      })) as boolean;
+      if (!validated) {
+        return { kind: 'reject', reason: 'buyback-not-validated' };
       }
     } catch (err) {
       console.warn(
