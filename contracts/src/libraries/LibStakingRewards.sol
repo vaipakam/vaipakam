@@ -129,9 +129,15 @@ library LibStakingRewards {
         uint256 pending = s.userStakingPendingReward[user];
         if (pending == 0) return 0;
         uint256 paidOut = s.stakingPoolPaidOut;
-        uint256 remaining = LibVaipakam.VPFI_STAKING_POOL_CAP > paidOut
-            ? LibVaipakam.VPFI_STAKING_POOL_CAP - paidOut
-            : 0;
+        // T-087 Sub 3 add-on #472 round-1 P1 #2 — the effective cap
+        // widens by `stakingPoolBuybackBudget`. Buyback overflow that
+        // cascades into this slot becomes claimable on top of the
+        // original `VPFI_STAKING_POOL_CAP`. Without this widening,
+        // overflow would accumulate in the slot but never reach
+        // stakers once the original cap is paid out.
+        uint256 effectiveCap = LibVaipakam.VPFI_STAKING_POOL_CAP
+            + s.stakingPoolBuybackBudget;
+        uint256 remaining = effectiveCap > paidOut ? effectiveCap - paidOut : 0;
         if (remaining == 0) return 0;
         payable_ = pending > remaining ? remaining : pending;
         s.userStakingPendingReward[user] = pending - payable_;
@@ -139,12 +145,12 @@ library LibStakingRewards {
     }
 
     /// @notice Remaining VPFI reservable from the staking pool.
-    /// @return Remaining VPFI wei the pool can still pay out (`cap - paidOut`).
+    /// @return Remaining VPFI wei the pool can still pay out.
     function poolRemaining() internal view returns (uint256) {
-        uint256 paidOut = LibVaipakam.storageSlot().stakingPoolPaidOut;
-        return
-            LibVaipakam.VPFI_STAKING_POOL_CAP > paidOut
-                ? LibVaipakam.VPFI_STAKING_POOL_CAP - paidOut
-                : 0;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 paidOut = s.stakingPoolPaidOut;
+        uint256 effectiveCap = LibVaipakam.VPFI_STAKING_POOL_CAP
+            + s.stakingPoolBuybackBudget;
+        return effectiveCap > paidOut ? effectiveCap - paidOut : 0;
     }
 }
