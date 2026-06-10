@@ -1,3 +1,12 @@
+# Release Notes — 2026-06-11
+
+Today's headline: **sanctions-gate audit + close-out paperwork following yesterday's T-087 close.** The single contract change is #494's keeper-side sanctions audit (PR #495): three Tier-1 entry points (`OfferMatchFacet.matchOffers`, `VPFIDiscountFacet.pokeMyTier`) plus `LibKeeperReward.payVpfiReward` now sanctions-screen their caller, closing concrete leaks where a flagged matcher could receive 1% LIF kickback, a flagged user could drive a protocol-funded broadcast, or — once #489 wires up Sub 2.D housekeeping — a flagged external keeper could draw VPFI rewards.
+
+Alongside the contract change, today's operational paperwork:
+
+- **#492 operator-activation umbrella tracker** filed as the single-stop index for every post-T-087 activation step + Phase-1 follow-up. Six new focused sub-cards (#486 Lido WETH-unwrap, #487 Aave interest harvest, #488 LP v3 TWAP pricing for keeper rewards, #489 per-facet keeper-reward wiring, #490 rewards distributor reads `rewardEmissionsBudget`, #491 staking distributor + buyback budget verification) cover the Phase-1 contract deferrals from yesterday's Sub 3 add-ons. PR #493 added banner references from `DeploymentRunbook.md` + `CcipCutoverRunbook.md` so future operators land on #492 first.
+- **#496 (T-091 — NFT-holder claim path) closed as superseded.** Scout against `ClaimFacet` confirmed every claim sub-path already (a) gates the caller to the current NFT holder via `LibAuth.requireLenderNftOwner` / `requireBorrowerNftOwner`, (b) delivers funds directly to the holder's wallet so a fresh holder needs no vault, and (c) auto-provisions the original party's vault on-demand inside `VaultFactoryFacet.vaultWithdrawERC20:397`. The `yetToPromote` ToDo entry pre-dated the current infrastructure. PR #497 updated `docs/ToDo.md` accordingly.
+
 ## Thread — Sanctions gate on keeper-callable paths (#494)
 
 Closes the keeper-side gap in the retail-deploy sanctions policy (CLAUDE.md "Retail-deploy policy — sanctions ON; KYC / country-pair OFF"). Three Tier-1 entry points + one library now sanctions-screen their caller.
