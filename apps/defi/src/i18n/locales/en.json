@@ -262,6 +262,17 @@
     "minHistoryPendingTitle": "Your tier is aging — almost there",
     "minHistoryPendingBody": "You have VPFI staked, but the protocol needs a minimum staking history before it activates your tier. Once the window completes, your effective tier will switch on automatically. No action needed; you can keep using the protocol normally."
   },
+  "stakeVpfiCta": {
+    "title": "Stake VPFI",
+    "managedOnBaseSubtitle": "VPFI staking is managed on {{canonicalName}}. Switch chains to stake or check your tier.",
+    "switchToBaseLabel": "Switch to {{canonicalName}}",
+    "noStakeYetBody": "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Tier 1 starts at 100 VPFI.",
+    "stakeNowLabel": "Stake VPFI now",
+    "tierPendingTitle": "Tier update pending propagation",
+    "tierPendingBody": "Your stake qualifies for a tier, but mirror chains haven't been notified yet. Click below to push the update; the protocol pays the cross-chain fee.",
+    "pokeButtonIdle": "Push my tier to mirrors now",
+    "pokeButtonPending": "Pushing…"
+  },
   "vpfiTokenCard": {
     "title": "VPFI Token (this chain)",
     "chainBadge": "{{chain}} · chainId {{chainId}}",
