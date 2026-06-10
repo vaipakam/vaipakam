@@ -1272,7 +1272,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](49);
+        s = new bytes4[](57);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1327,6 +1327,15 @@ contract DeployDiamond is Script {
         s[46] = TreasuryFacet.getTreasuryExternalYieldMaxBps.selector;
         s[47] = TreasuryFacet.getAaveV3Pool.selector;
         s[48] = TreasuryFacet.getLidoStaking.selector;
+        // T-087 Sub 3 add-on #474 — keeper VPFI rewards config.
+        s[49] = TreasuryFacet.setKeeperRewardMultBps.selector;
+        s[50] = TreasuryFacet.getKeeperRewardMultBps.selector;
+        s[51] = TreasuryFacet.setKeeperRewardCashOutSpreadBps.selector;
+        s[52] = TreasuryFacet.getKeeperRewardCashOutSpreadBps.selector;
+        s[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
+        s[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
+        s[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
+        s[56] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {
