@@ -21,6 +21,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 
 /**
  * @title RefinanceFacet
@@ -69,6 +70,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidRefinanceOffer();
     error OfferNotAccepted();
+    /// @notice T-092 Phase 2 (#502) — keeper-driven refinance attempted
+    ///         on a loan whose borrower never opted-in / opted-out / or
+    ///         whose per-loan caps are stale (NFT transferred since
+    ///         setter). The borrower-NFT-owner direct path bypasses
+    ///         this check entirely.
+    error AutoRefinanceCapsRequired();
+    /// @notice T-092 Phase 2 — new offer's interest rate exceeds the
+    ///         borrower's pre-approved `autoRefinanceCaps.maxRateBps`.
+    error AutoRefinanceRateExceedsCap();
+    /// @notice T-092 Phase 2 — new loan's end time exceeds the
+    ///         borrower's pre-approved `autoRefinanceCaps.maxNewExpiry`.
+    error AutoRefinanceExpiryExceedsCap();
 
     /**
      * @notice Completes refinancing after alice's Borrower Offer has been accepted by Lender B.
@@ -138,11 +151,20 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
 
-        // Validate: must be a Borrower offer created by alice, already accepted
+        // Validate: must be a Borrower offer created by alice, already accepted.
+        // T-092 Phase 2 (#502) — auth model fix. Previously this checked
+        // `offer.creator != msg.sender`, which silently broke the
+        // `KEEPER_ACTION_REFINANCE` path (msg.sender is the KEEPER in
+        // that mode, but the offer was created by the borrower-NFT
+        // owner). Resolve the current borrower-NFT owner once and bind
+        // the offer to THAT identity, mirroring how `LibAuth.requireKeeperFor`
+        // already authorises the call.
+        address currentBorrowerNftOwner =
+            LibERC721.ownerOf(oldLoan.borrowerTokenId);
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (
             offer.offerType != LibVaipakam.OfferType.Borrower ||
-            offer.creator != msg.sender
+            offer.creator != currentBorrowerNftOwner
         ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
@@ -169,6 +191,31 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (newLoanId == 0) revert InvalidRefinanceOffer();
         LibVaipakam.Loan storage newLoan = s.loans[newLoanId];
         address newLender = newLoan.lender;
+
+        // ── T-092 Phase 2 (#502) — autoRefinanceCaps enforcement on the
+        // keeper-driven path ──────────────────────────────────────────────
+        // Direct calls by the current borrower-NFT owner are exempt
+        // (the borrower is acting in their own interest; caps don't
+        // apply). Keeper calls must produce a new loan whose terms are
+        // within the borrower's pre-approved caps. The staleness fence
+        // (NFT-owner identity vs. cap setter) is enforced inline so an
+        // old owner's pre-approved caps can't bind a new owner.
+        if (msg.sender != currentBorrowerNftOwner) {
+            LibVaipakam.AutoRefinanceCaps storage caps = s.autoRefinanceCaps[oldLoanId];
+            bool capsFresh =
+                caps.setter == address(0) || caps.setter == currentBorrowerNftOwner;
+            if (!caps.enabled || !capsFresh) revert AutoRefinanceCapsRequired();
+            if (newLoan.interestRateBps > caps.maxRateBps) {
+                revert AutoRefinanceRateExceedsCap();
+            }
+            // Loan struct stores (startTime, durationDays); compute
+            // the implied end time on the fly.
+            uint256 newLoanEndTime =
+                uint256(newLoan.startTime) + newLoan.durationDays * 1 days;
+            if (caps.maxNewExpiry != 0 && newLoanEndTime > caps.maxNewExpiry) {
+                revert AutoRefinanceExpiryExceedsCap();
+            }
+        }
 
         // ── Repay old lender ──────────────────────────────────────────────
         // alice already received new principal from Lender B (via acceptOffer).

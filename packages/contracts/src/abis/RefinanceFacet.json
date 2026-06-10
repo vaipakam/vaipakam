@@ -79,6 +79,21 @@
   },
   {
     "type": "error",
+    "name": "AutoRefinanceCapsRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoRefinanceExpiryExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoRefinanceRateExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
   },
