@@ -78,7 +78,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     function test_DeployDiamond_RoutesEveryFacetSelector() public {
         _populateRoutedSet();
 
-        string[50] memory facets = cutFacetNames();
+        string[51] memory facets = cutFacetNames();
         uint256 missing;
         for (uint256 i; i < facets.length; ++i) {
             string memory name = facets[i];
@@ -108,7 +108,7 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
     ///         4-byte selector — such a collision makes `diamondCut`
     ///         revert and the Diamond undeployable.
     function test_NoSelectorCollisionAcrossFacets() public {
-        string[50] memory facets = cutFacetNames();
+        string[51] memory facets = cutFacetNames();
         uint256 collisions;
         for (uint256 i; i < facets.length; ++i) {
             collisions += _recordAndCountCollisions(facets[i]);
@@ -216,6 +216,8 @@ contract SelectorCoverageTest is Test, DeployDiamond, DiamondFacetNames {
         _addAll(_getProtocolBroadcastSelectors());
         // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
         _addAll(_getIntentDispatchFacetSelectors());
+        // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
+        _addAll(_getAutoLifecycleFacetSelectors());
         _addAll(_getStakingRewardsSelectors());
         _addAll(_getInteractionRewardsSelectors());
         _addAll(_getRewardReporterSelectors());

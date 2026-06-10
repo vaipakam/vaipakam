@@ -27,6 +27,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -606,6 +607,27 @@ contract HelperTest {
         selectors[0] = IntentDispatchFacet.preInteraction.selector;
         selectors[1] = IntentDispatchFacet.postInteraction.selector;
         selectors[2] = IntentDispatchFacet.isValidSignature.selector;
+    }
+
+    /// @notice T-092 Phase 1 (#499) — AutoLifecycleFacet selectors.
+    function getAutoLifecycleFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](12);
+        selectors[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
+        selectors[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
+        selectors[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
+        selectors[3] = AutoLifecycleFacet.getAutoOptInOnNewLoan.selector;
+        selectors[4] = AutoLifecycleFacet.setDefaultAutoRefinanceCaps.selector;
+        selectors[5] = AutoLifecycleFacet.getDefaultAutoRefinanceCaps.selector;
+        selectors[6] = AutoLifecycleFacet.setAutoRefinanceCaps.selector;
+        selectors[7] = AutoLifecycleFacet.getAutoRefinanceCaps.selector;
+        selectors[8] = AutoLifecycleFacet.setAutoExtendBorrowerCaps.selector;
+        selectors[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
+        selectors[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
+        selectors[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
     }
 
     function getDefaultedFacetSelectors()

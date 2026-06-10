@@ -21,6 +21,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -73,6 +74,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
+import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -218,6 +220,8 @@ contract SetupTest is Test {
     // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
     SwapToRepayIntentFacet swapToRepayIntentFacet;
     IntentDispatchFacet intentDispatchFacet;
+    // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
+    AutoLifecycleFacet autoLifecycleFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -311,6 +315,7 @@ contract SetupTest is Test {
         swapToRepayFacet = new SwapToRepayFacet();
         swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         intentDispatchFacet = new IntentDispatchFacet();
+        autoLifecycleFacet = new AutoLifecycleFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -374,7 +379,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](51);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](52);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -674,6 +679,12 @@ contract SetupTest is Test {
             facetAddress: address(intentDispatchFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getIntentDispatchFacetSelectors()
+        });
+        // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
+        cuts[51] = IDiamondCut.FacetCut({
+            facetAddress: address(autoLifecycleFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAutoLifecycleFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

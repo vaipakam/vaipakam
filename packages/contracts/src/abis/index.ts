@@ -17,6 +17,7 @@ import SwapToRepayFacetABI from './SwapToRepayFacet.json';
 import SwapToRepayIntentFacetABI from './SwapToRepayIntentFacet.json';
 // T-087 Sub 3.B — 1inch LOP v4 callback dispatcher.
 import IntentDispatchFacetABI from './IntentDispatchFacet.json';
+import AutoLifecycleFacetABI from './AutoLifecycleFacet.json';
 import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
@@ -92,6 +93,7 @@ export {
   SwapToRepayFacetABI,
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
+  AutoLifecycleFacetABI,
   IntentConfigFacetABI,
   DefaultedFacetABI,
   RiskFacetABI,
@@ -154,6 +156,7 @@ export const DIAMOND_ABI = [
   ...SwapToRepayFacetABI,
   ...SwapToRepayIntentFacetABI,
   ...IntentDispatchFacetABI,
+  ...AutoLifecycleFacetABI,
   ...IntentConfigFacetABI,
   ...DefaultedFacetABI,
   ...RiskFacetABI,
