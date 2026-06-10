@@ -2053,17 +2053,20 @@ Without local consent, even with VPFI staked on Base + a
 fresh cached tier on the mirror, the mirror fee path
 charges the full yield-fee.
 
-When you disable consent later, mirror caches DON'T
-automatically clear (anti-drain measure — see below). The
-dapp prompts you to follow the consent toggle with a manual
-`pokeMyTier()` to push the (tier, bps) = (0, 0) update to
-mirrors immediately. Alternatively, the next time you do a
-deposit or withdrawal, the rollup-and-broadcast fires
-automatically. (Settling a loan does NOT trigger this —
-with consent off, the settlement discount path gates out
-before calling the accumulator rollup, so mirror caches
-stay stale until pokeMyTier or a vault-balance mutation
-forces the broadcast.)
+When you disable consent on the CANONICAL chain (Base),
+mirror caches DON'T automatically clear (anti-drain measure
+— see below). The dapp prompts you to follow the canonical-
+chain consent toggle with a manual `pokeMyTier()` ON THE
+CANONICAL CHAIN — that's the one that pushes (tier, bps) =
+(0, 0) to mirrors. (`pokeMyTier()` called on a mirror is
+useless for cache clearing; only the canonical chain runs
+the broadcast logic.)
+
+When you disable consent on a MIRROR chain, the mirror's
+local fee path stops applying the discount immediately — no
+broadcast or cache change involved. The cached tier on the
+mirror still says whatever Base last pushed; the mirror just
+ignores it because local consent is off.
 
 ### Tier upgrades and unstakes
 
@@ -2134,9 +2137,12 @@ system without surprises.
   updates to this mirror. The MirrorTierReceiverFacet reads
   `s.rewardMessenger` at delivery time; without this set,
   every inbound tier push is rejected.
-- `RewardReporterFacet.setBaseChainId(chainId)` — CCIP
-  source-chain ID gate. Pushes from any other chain ID are
-  rejected by the receiver.
+- `RewardReporterFacet.setBaseChainId(chainId)` — the
+  canonical EVM `block.chainid` of the source chain (Base
+  mainnet: 8453; Base Sepolia: 84532). The CCIP adapter
+  normalises Chainlink selectors through its own table, so
+  use the EVM chain ID here, NOT Base's Chainlink CCIP chain
+  selector.
 - `ConfigFacet.setMirrorTierMaxAgeSec(seconds)` — cache
   staleness threshold (default 60 days; setter rejects
   values below 30 days). Higher = mirror applies stale
