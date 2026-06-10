@@ -338,6 +338,11 @@ cd ops/hf-watcher && npx wrangler tail --format=pretty
 
 ### T-087 — Cross-chain VPFI discount post-deploy activation
 
+> Tracked under the post-T-087 operator-activation umbrella card
+> [#492](https://github.com/vaipakam/vaipakam/issues/492) (single
+> index for every operator-gated activation step + Phase-1
+> follow-up; sub-cards #486–#491 cover the Phase-1 contract work).
+
 The VPFI tier + discount system (T-087, shipped across 5 sub-cards
 by 2026-06-10) needs explicit post-deploy configuration. Without
 these calls the accumulator runs but the cross-chain discount
