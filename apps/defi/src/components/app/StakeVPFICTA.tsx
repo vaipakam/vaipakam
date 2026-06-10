@@ -37,12 +37,16 @@ import { L as Link } from '../L';
  */
 export function StakeVPFICTA() {
   const { t } = useTranslation();
-  const { address, switchToChain } = useWallet();
+  const { address, chainId: walletChainId, switchToChain } = useWallet();
   const chain = useReadChain();
   const isCanonical = chain.isCanonicalVPFI === true;
-  // Defaults to the testnet/mainnet bucket aligned with the
-  // configured DEFAULT_CHAIN. Works on both prod + dev builds.
-  const canonicalChain = getCanonicalVPFIChain();
+  // Codex round-1 P2 #1 — pick the canonical preference (mainnet vs
+  // testnet) from the user's CURRENT read chain, not from
+  // DEFAULT_CHAIN. On a mainnet-default build a user reading from
+  // Sepolia would otherwise be told to switch to Base mainnet.
+  const canonicalChain = getCanonicalVPFIChain(
+    chain.testnet ? 'testnet' : 'mainnet',
+  );
 
   const lenderAddr = (address ?? null) as `0x${string}` | null;
   const { data: tierData, reload: reloadTier } =
@@ -54,20 +58,36 @@ export function StakeVPFICTA() {
   const [poking, setPoking] = useState(false);
   const [pokeError, setPokeError] = useState<string | null>(null);
 
-  // A user is in "min-history pending" if they've staked through the
-  // tracked-balance path (trackedTier > 0) AND consent is on AND
-  // effective tier is still 0. The poke CTA fires `pokeMyTier()`
-  // which forces a rollup + broadcast.
-  const minHistoryPending =
-    (tierData?.trackedTier ?? 0) > 0 &&
-    (tierData?.tier ?? 0) === 0 &&
-    consentEnabled === true;
+  // Codex round-1 P2 #4 — the poke button is USEFUL once the user
+  // has a NON-ZERO effective tier (post-min-history) and wants to
+  // ensure mirrors got the update. During the min-history window
+  // itself, poking just re-rolls a tier-0 broadcast that doesn't
+  // help the user. The button now surfaces when:
+  //   - The user has a settled effective tier (> 0).
+  //   - Consent is on (else the broadcast pushes 0 anyway).
+  //   - The user is on the canonical chain (the wallet AND read
+  //     contexts both line up, see `canPokeHere`).
+  const tierReadyToBroadcast =
+    (tierData?.tier ?? 0) > 0 && consentEnabled === true;
+
+  // Codex round-1 P2 #2 — the poke writeContract goes to the wallet's
+  // CURRENT chain. We must only show the button when the wallet and
+  // the read context both agree on the canonical chain; otherwise
+  // the user would dispatch the tx on a mirror Diamond that doesn't
+  // have `pokeMyTier`, OR the receipt-wait would target the wrong
+  // chain.
+  const canPokeHere =
+    isCanonical &&
+    canonicalChain != null &&
+    walletChainId === canonicalChain.chainId;
 
   // The card surfaces only when there's something for the user to do.
   // If they're on canonical with consent OK and a settled tier, the
   // card stays hidden so the dashboard isn't cluttered.
   const showCard =
-    !isCanonical || minHistoryPending || (tierData?.trackedBal ?? 0n) === 0n;
+    !isCanonical
+      || (canPokeHere && tierReadyToBroadcast)
+      || (tierData?.trackedBal ?? 0n) === 0n;
 
   if (!showCard) return null;
 
@@ -87,7 +107,15 @@ export function StakeVPFICTA() {
         functionName: 'pokeMyTier',
         args: [],
       });
-      await publicClient.waitForTransactionReceipt({ hash });
+      // Codex round-1 P2 #3 — viem's waitForTransactionReceipt
+      // resolves on inclusion regardless of `status`. A reverted
+      // poke (paused diamond / broadcast budget exhausted / etc.)
+      // would otherwise silently fall through to reloadTier() and
+      // leave the user with no error feedback. Surface the revert.
+      const receipt = await publicClient.waitForTransactionReceipt({ hash });
+      if (receipt.status !== 'success') {
+        throw new Error('Transaction reverted on-chain');
+      }
       await reloadTier();
     } catch (e) {
       setPokeError(
@@ -142,7 +170,7 @@ export function StakeVPFICTA() {
         </div>
       )}
 
-      {isCanonical && minHistoryPending && (
+      {canPokeHere && tierReadyToBroadcast && (
         <div style={{ marginTop: 8 }}>
           <div
             className="alert alert-info"
