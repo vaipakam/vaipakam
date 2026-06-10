@@ -800,10 +800,13 @@ owns your accumulator state. When you act on a different chain
 a *cached* copy of your tier. The cache is kept fresh by a
 cross-chain push: when your effective tier on Base changes,
 your NEXT Base-side action broadcasts a CCIP message to every
-mirror chain you might act on. There is no manual "sync my
-tier" button to press — the push rides on every regular Base
-action — but you do need to take that next action for the
-push to fire (see "tier maturation" below).
+mirror chain you might act on. The push rides on every regular
+Base action — and as of T-087 Sub 4 the Dashboard also exposes
+a "Push my tier to mirrors now" button (which calls
+`pokeMyTier()`) so you can force the push without a vault
+mutation. See "How VPFI Discounts Work" below for the full
+walkthrough including local consent + local VPFI requirements
+on mirror chains.
 
 Two things to know:
 
@@ -814,8 +817,9 @@ Two things to know:
   silent-skips. Once the period elapses, the gate releases on
   Base immediately, but mirrors don't learn until your NEXT
   rollup-bearing Base action (any deposit, withdrawal, loan
-  action — anything that mutates your vault on Base) triggers
-  a push. A 1-wei top-up is enough.
+  action — anything that mutates your vault on Base) OR a
+  Dashboard "Push my tier to mirrors now" click (Sub 4) triggers
+  a push. A 1-wei top-up also works.
 - **Propagation time.** Once a push is dispatched, it
   typically lands on the mirror within minutes via CCIP. Until
   it does, the mirror still honours your prior cached tier —
@@ -1960,20 +1964,22 @@ you need:
 - **Cached Base tier** — propagates automatically via CCIP
   to the mirror's `userTierCache`. You don't trigger this;
   it happens when you stake / mutate on Base.
-- **VPFI in the mirror vault** — `tryApplyYieldFee` checks
-  the local chain's user vault for VPFI; without it the
-  discount falls through to the full fee.
+- **VPFI in the mirror vault** — at least the QUOTED
+  REQUIRED amount. The settlement path computes the
+  required VPFI for your discount tier and falls back to
+  the full fee when your local mirror balance is below
+  that amount. A token of VPFI in the mirror vault is
+  NOT sufficient.
 - **Local consent toggle** — `setVPFIDiscountConsent(true)`
   must be called on EACH chain you want the discount on;
   the fee path reads the LOCAL consent flag, not Base's.
 
-So in practice: stake on Base once for the accumulator, and
-keep some VPFI + toggle consent on each chain you actually
-take loans on. The protocol doesn't force you to mirror-stake
-the same amount everywhere — the cached BASE tier is what
-determines the discount BPS, and a smaller mirror-chain
-holding is enough to satisfy the local fee path's "has VPFI"
-check.
+So in practice: stake on Base for the tier, and keep enough
+VPFI in the mirror vault to cover the quoted requirement +
+toggle consent on each chain you actually take loans on.
+The cached BASE tier is what determines the discount BPS;
+the mirror-vault holding needs to clear the quoted floor for
+the discount to engage.
 
 ### Min-history gate
 

@@ -60,11 +60,11 @@ During the aging window:
 
 ### 3.4 Time-only activation
 
-Once the min-history threshold is crossed, the effective tier activates on the canonical chain automatically — no transaction needed. The next on-chain read of the user's effective tier returns the new value, and the next fee path that touches the user applies the discount.
+Once the min-history threshold is crossed, the effective tier activates on the canonical chain automatically — no transaction needed. The next on-chain READ of the user's effective tier returns the new value, and the next fee path that touches the user applies the discount.
 
-**But time alone doesn't push the new tier to mirrors.** Mirror caches get refreshed by the canonical chain's broadcast path, which is triggered by:
+**But time alone doesn't broadcast the new tier to mirrors.** The broadcast happens only on a state-mutating call to the accumulator. No transaction is invoked just because the calendar advances. Mirror caches get refreshed when the canonical chain's broadcast path runs, which requires:
 - Any canonical-chain vault mutation by the user (deposit / withdrawal).
-- An explicit pokeMyTier — a permissionless, balance-mutation-free call the user makes on the canonical chain.
+- An explicit a permissionless tier-push call — a permissionless, balance-mutation-free call the user makes on the canonical chain.
 
 Until one of those fires, the cached tier on every mirror stays at whatever was last broadcast (typically the (0, 0) the user's first deposit pushed during the aging window).
 
@@ -74,17 +74,17 @@ The discount surface is OPT-IN. The user must enable a consent flag for the prot
 
 When consent is OFF on the canonical chain:
 - The canonical read of the user's effective tier returns (0, 0) regardless of stake.
-- A pokeMyTier on the canonical chain pushes (0, 0) to mirrors — clearing the cached tier.
+- A a permissionless tier-push call on the canonical chain pushes (0, 0) to mirrors — clearing the cached tier.
 
 When consent is OFF on a mirror chain:
 - The mirror's local fee path skips the discount regardless of cached tier.
 - This is a LOCAL opt-out — no broadcast, no cache change. The cached tier on the mirror still says whatever Base last pushed; the mirror just doesn't consult it.
 
-A canonical-chain consent toggle does NOT automatically push (0, 0) to mirrors (anti-drain — see §6). The dapp UI surfaces a manual pokeMyTier prompt on the canonical chain after a consent-off so the user can immediately clear mirror caches.
+A canonical-chain consent toggle does NOT automatically push (0, 0) to mirrors (anti-drain — see §6). The dapp UI surfaces a manual a permissionless tier-push call prompt on the canonical chain after a consent-off so the user can immediately clear mirror caches.
 
 ## 4. Mirror-chain lifecycle
 
-The mirror chain doesn't run the accumulator. It holds a per-user `userTierCache` slot that the canonical chain populates by CCIP message. See [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md) for the transport details.
+The mirror chain doesn't run the accumulator. It holds a per-user `per-user cached tier` slot that the canonical chain populates by CCIP message. See [`CrossChainTierPropagation.md`](CrossChainTierPropagation.md) for the transport details.
 
 User-facing flow for a discounted mirror-chain loan:
 
@@ -95,9 +95,9 @@ User-facing flow for a discounted mirror-chain loan:
    - The mirror's cached tier is fresh (not staleness-expired).
    - The cached tier table version matches the mirror's current version.
    - The user's local consent flag on the mirror is ON.
-   - The user holds VPFI in the mirror's local user vault (the fee path checks local VPFI before applying the cached BPS — without local VPFI, the discount falls through to the full fee).
+   - The user holds AT LEAST the QUOTED REQUIRED amount of VPFI in the mirror's local user vault (the fee path computes the required VPFI for the discount tier and falls back to the full fee when the local balance is below it — a small mirror-vault balance below the quoted requirement is NOT enough).
 
-In practice: the cached BASE tier is what determines the DISCOUNT BPS — the mirror doesn't re-compute against a mirror-local table. But the user still needs some VPFI in the mirror vault + a local consent toggle for the discount to actually apply.
+In practice: the cached BASE tier is what determines the DISCOUNT BPS — the mirror doesn't re-compute against a mirror-local table. But the user still needs ENOUGH VPFI in the mirror vault to cover the quoted requirement + a local consent toggle for the discount to actually apply.
 
 ## 5. Governance levers
 
@@ -105,7 +105,10 @@ Tier-system parameters are governance-controlled on the canonical chain:
 
 - **Tier thresholds** — VPFI floors per tier + the Tier-3 ceiling.
 - **Tier discount BPS** — discount BPS per tier.
-- **Min-history days** — aging gate (currently 3).
+- **Min-history days** — aging gate (default 3).
+- **TWA window length** — total ring-buffer span in days (default 30).
+- **TWA recent-day count** — how many days at the head of the window count as "recent" (default 7).
+- **TWA recent-day weight** — the multiplier applied to recent days vs. older days in the weighted average (default 3, vs. older-day weight 1).
 - **Mirror cache staleness threshold** — how long a cached tier is honoured before falling back to (0, 0).
 
 Only the first two (thresholds + BPS) bump the canonical tier-table version + emit a version-bump event. Mirrors learn the new version when they receive an inbound tier-update or version-bump message from the canonical chain — until that arrives, old-version caches at mirrors keep applying at the OLD BPS. Operators should expect a sync delay after a governance change; ideally pair it with a manual broadcast wave to force-refresh mirrors.
@@ -117,8 +120,8 @@ Min-history and mirror staleness changes don't bump the version. The min-history
 - **TWA window** — top-up-then-unstake doesn't work. The 30-day weighted average smooths the user's effective stake.
 - **Min-tier-observed clamp** — temporary dips below a floor capture the lower tier, blocking a "stake briefly to game the TWA" pattern.
 - **Min-history gate** — 3-day delay before effective tier activates.
-- **Consent-toggle doesn't itself broadcast** — A consent toggle is a flag flip with no CCIP cost. Otherwise a user could toggle on/off to drain the protocol's CCIP broadcast budget. The dapp lets the user chain a manual pokeMyTier on the canonical chain for an immediate mirror clear if they want it.
-- **Protocol-funded broadcasts are budget-gated** — `protocolBroadcastBudget` is a finite ETH pool the operator tops up. When the budget can't cover the CCIP fee for the NEXT non-deduped broadcast, the broadcast facet reverts; the calling rollup bubbles that revert. So a non-deduped broadcast — any of: tier change, BPS change, expiry change, version bump — BLOCKS the underlying canonical-chain mutation (deposit / withdrawal / poke / settlement that would re-rollup the user). The operator must monitor budget burn-rate and top up before exhaustion to avoid user-facing reverts. The combination of de-dup gating (no-op pushes don't burn budget) + per-user mutation frequency means the budget isn't easily drained by a single user, but it IS finite and the failure mode is hard-fail.
+- **Consent-toggle doesn't itself broadcast** — A consent toggle is a flag flip with no CCIP cost. Otherwise a user could toggle on/off to drain the protocol's CCIP broadcast budget. The dapp lets the user chain a manual a permissionless tier-push call on the canonical chain for an immediate mirror clear if they want it.
+- **Protocol-funded broadcasts are budget-gated** — the protocol broadcast budget is a finite ETH pool the operator tops up. When the budget can't cover the CCIP fee for the NEXT non-deduped broadcast, the broadcast facet reverts; the calling rollup bubbles that revert. So a non-deduped broadcast — any of: tier change, BPS change, expiry change, version bump — BLOCKS the underlying canonical-chain mutation (deposit / withdrawal / poke / settlement that would re-rollup the user). The operator must monitor budget burn-rate and top up before exhaustion to avoid user-facing reverts. The combination of de-dup gating (no-op pushes don't burn budget) + per-user mutation frequency means the budget isn't easily drained by a single user, but it IS finite and the failure mode is hard-fail.
 - **De-dup gate** — the broadcast facet compares the FULL `(tier, bps, expiry, version)` tuple against the last-pushed snapshot. Repeated no-op pokes don't cost protocol budget, but a same-tier mutation that changes the projected expiry (or a post-governance version bump) DOES count as non-deduped and gets dispatched.
 
 ## 7. Two flavours of "discount"
@@ -127,7 +130,7 @@ The VPFI discount surface gates TWO distinct fee paths:
 
 1. **Lender yield-fee discount** — applied at loan settlement on the protocol's treasury cut of the lender's accrued interest. The lender's effective tier (read at settlement time) determines the BPS off the standard yield-fee. NOT every settlement triggers a rollup: when the lender has consent off OR no applicable VPFI on the settlement chain, the fee path bails before invoking the accumulator. So a settlement on the canonical chain doesn't ALWAYS re-broadcast the user's tier to mirrors — it does only when the discount path actually engages.
 
-2. **Borrower Loan Initiation Fee (LIF) rebate** — at loan accept time, the borrower pays the full 0.1% LIF equivalent in VPFI from their vault into protocol custody. At proper-close settlement, the custodied VPFI is split into a borrower rebate (sized by the borrower's effective tier over the loan window) and a treasury share; the rebate is claimable by the borrower. At default / HF-liquidation, the full custodied VPFI forwards to treasury — no rebate.
+2. **Borrower Loan Initiation Fee (LIF) rebate** — at loan accept time, the borrower pays the full 0.1% LIF equivalent in VPFI from their vault into protocol custody. At proper-close settlement, the custodied VPFI is split into a borrower rebate (sized by the borrower's effective tier read AT SETTLEMENT TIME — T-087 Sub 1B replaced the previous loan-window averaging with an instant read) and a treasury share; the rebate is claimable by the borrower. At default / HF-liquidation, the full custodied VPFI forwards to treasury — no rebate.
 
 Both flavours use the SAME effective tier resolution path. The user's tier + opted-in consent + on-chain VPFI on the settling chain gate both.
 
