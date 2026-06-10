@@ -4,6 +4,7 @@ import type { TFunction } from 'i18next';
 import { useLoanLenderDiscount } from '../../hooks/useLoanLenderDiscount';
 import { useVPFIDiscountConsent, useVPFIDiscountTier } from '../../hooks/useVPFIDiscount';
 import { useProtocolConfig } from '../../hooks/useProtocolConfig';
+import { useReadChain } from '../../contracts/useDiamond';
 import { L as Link } from '../L';
 
 interface Props {
@@ -49,6 +50,7 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   //   (b) the lender HAS VPFI but is still in the min-history window
   //       → "your tier will activate soon" CTA + the poke button.
   const { data: discountTierData } = useVPFIDiscountTier(lenderAddr);
+  const chain = useReadChain();
 
   if (!loanIdBig || !lenderAddr) return null;
   if (isLoading && !data) return null;
@@ -66,26 +68,37 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // gate but is handled defensively). Showing "missing" while loading
   // would flash the wrong banner on first paint, so we wait.
   const showConsentMissing = consentEnabled === false;
-  // T-087 Sub 4 — distinguish "no stake at all" from "stake aging in
-  // the min-history window". When `discountTierData` hasn't loaded
-  // yet we fall back to the legacy "no-vpfi" branch to avoid a
-  // banner-flicker on first paint.
-  const lenderHasStake =
-    (discountTierData?.vaultBal ?? 0n) > 0n;
+  // T-087 Sub 4 round-1 P2 #1 — use the RAW tier (balance-based,
+  // pre-min-history gate) as the qualifying signal for "min-history
+  // pending". `rawTier > 0` means the balance is at-or-above a tier
+  // threshold; the effective tier being 0 then says "the time gate
+  // hasn't released yet, but it will." For sub-tier balances
+  // (e.g. dust below the Tier-1 floor), rawTier is 0 too, so we
+  // correctly fall back to the "no eligible VPFI" copy.
+  //
+  // T-087 Sub 4 round-1 P2 #3 — gate by isCanonicalVPFI. On a
+  // mirror chain `getEffectiveDiscount` returns 0 not only during
+  // the min-history window but also when the cached tier slot is
+  // missing/expired/at-the-wrong-version. The signal is unambiguous
+  // only on the canonical chain; on mirrors we fall back to the
+  // generic "no eligible VPFI" copy so we don't promise an
+  // automatic activation that may never come.
+  const isCanonical = chain.isCanonicalVPFI === true;
+  const lenderQualifiesByBalance = (discountTierData?.rawTier ?? 0) > 0;
   const showConsentEnabledNoVpfi =
     consentEnabled === true &&
     data.effectiveAvgBps === 0 &&
     data.stampedBpsAtPreviousRollup === 0 &&
-    !lenderHasStake;
-  // Min-history pending = consent on + zero discount + the lender
-  // DOES hold VPFI in the vault. The on-chain accumulator hasn't
-  // released the tier yet because it's still under the min-history
-  // window; time alone will activate it.
+    !(isCanonical && lenderQualifiesByBalance);
+  // Min-history pending = canonical chain + consent on + zero
+  // effective discount + raw tier > 0. Only the time gate is
+  // preventing activation; it will switch on automatically.
   const showMinHistoryPending =
+    isCanonical &&
     consentEnabled === true &&
     data.effectiveAvgBps === 0 &&
     data.stampedBpsAtPreviousRollup === 0 &&
-    lenderHasStake;
+    lenderQualifiesByBalance;
   const treasuryFeePct = protocolConfig
     ? (protocolConfig.treasuryFeeBps / 100).toFixed(
         protocolConfig.treasuryFeeBps % 100 === 0 ? 0 : 2,

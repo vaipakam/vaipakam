@@ -921,7 +921,18 @@ contract VPFIDiscountFacet is
      *      mirror cache reflects "no discount" correctly).
      */
     function pokeMyTier() external nonReentrant whenNotPaused {
-        // Codex would flag this as accruing zero work for a non-staker.
+        // Codex Sub 4 round-1 P2 #2 — respect consent. Without this
+        // gate the rollup would cascade into
+        // `ProtocolBroadcastFacet.protocolBroadcastTierUpdate`, which
+        // reads `effectiveTierAndBps` (the un-gated internal helper)
+        // rather than `getEffectiveDiscount` (the consent-gated public
+        // surface). A consent-off user would broadcast their RAW
+        // tier to mirrors — putting the mirror cache out of sync with
+        // what the user can actually claim on-chain. Gate at entry.
+        if (!LibVaipakam.storageSlot().vpfiDiscountConsent[msg.sender]) {
+            emit TierPokeSkippedNoConsent(msg.sender);
+            return;
+        }
         // The trackedVpfiBalance read is the same one every settlement
         // path uses; for a user with no stake history it returns 0 and
         // the rollup is essentially a no-op at the accumulator level.
@@ -929,6 +940,13 @@ contract VPFIDiscountFacet is
         LibVPFIDiscount.rollupUserDiscount(msg.sender, trackedBal);
         emit TierPoked(msg.sender, trackedBal);
     }
+
+    /// @custom:event-category informational/vpfi-discount
+    /// @notice T-087 Sub 4 round-1 P2 #2 — emitted when `pokeMyTier`
+    ///         was called by a user whose `vpfiDiscountConsent` is
+    ///         off. The rollup is skipped to avoid broadcasting a
+    ///         tier the user can't claim.
+    event TierPokeSkippedNoConsent(address indexed user);
 
     /**
      * @notice Current VPFI buy-side config + running totals.

@@ -288,8 +288,15 @@ export function useVPFIDiscountQuote(
 }
 
 export interface VPFIDiscountTier {
-  /** 0..4. 0 means no discount. */
+  /** Effective tier (post-min-history-gate). 0..4. 0 = no discount. */
   tier: number;
+  /** T-087 Sub 4 round-1 P2 #1 — RAW tier computed purely from
+   *  vault balance (`tierOf(vaultBal)`), pre-min-history gate.
+   *  Used by LenderDiscountCard to distinguish "balance too low
+   *  for any tier" from "balance qualifies but still in the min-
+   *  history window" — the latter is the only case where the tier
+   *  will activate automatically over time. */
+  rawTier: number;
   /** User's current VPFI vault balance (18-dec). */
   vaultBal: bigint;
   /** Discount basis points (e.g. 1000 = 10% off the normal fee). */
@@ -317,7 +324,7 @@ export function useVPFIDiscountTier(user: string | null) {
 
   const load = useCallback(async () => {
     if (!user) {
-      setData({ tier: 0, vaultBal: 0n, discountBps: 0 });
+      setData({ tier: 0, rawTier: 0, vaultBal: 0n, discountBps: 0 });
       return;
     }
     setLoading(true);
@@ -337,14 +344,15 @@ export function useVPFIDiscountTier(user: string | null) {
         }) as Promise<readonly [bigint, bigint, bigint]>,
       ]);
       const [effTier, effBps] = effective;
-      const [, vaultBal] = raw;
+      const [rawTier, vaultBal] = raw;
       setData({
         tier: Number(effTier),
+        rawTier: Number(rawTier),
         vaultBal,
         discountBps: Number(effBps),
       });
     } catch {
-      setData({ tier: 0, vaultBal: 0n, discountBps: 0 });
+      setData({ tier: 0, rawTier: 0, vaultBal: 0n, discountBps: 0 });
     } finally {
       setLoading(false);
     }

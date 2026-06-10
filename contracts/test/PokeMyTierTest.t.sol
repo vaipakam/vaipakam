@@ -49,6 +49,11 @@ contract PokeMyTierTest is SetupTest {
     // ─── Happy path ──────────────────────────────────────────────
 
     function test_PokeMyTier_HappyPath_WithStake() public {
+        // Sub 4 round-1 P2 #2 — consent must be ON for the poke to
+        // actually rollup. Enable it for this user first.
+        vm.prank(alice);
+        _f().setVPFIDiscountConsent(true);
+
         // Stake a Tier-2 amount + warp past min-history.
         _deposit(alice, 1_500 ether);
         // PreCheck: the user's tier is fresh just deposited.
@@ -62,6 +67,20 @@ contract PokeMyTierTest is SetupTest {
         // revert and the state shouldn't regress.
         (uint8 tierAfter,) = _f().getEffectiveDiscount(alice);
         assertEq(tierAfter, tierBefore, "tier preserved after idempotent poke");
+    }
+
+    function test_PokeMyTier_SkipsWhenNoConsent() public {
+        // Codex Sub 4 round-1 P2 #2 — when consent is OFF, pokeMyTier
+        // emits TierPokeSkippedNoConsent and returns without
+        // triggering the rollup / broadcast. Prevents the user's RAW
+        // tier from being pushed to mirrors while the canonical fee
+        // path would zero it out at the consent gate.
+        _deposit(alice, 1_500 ether);
+        // Consent stays OFF (default).
+        vm.expectEmit(true, false, false, false);
+        emit VPFIDiscountFacet.TierPokeSkippedNoConsent(alice);
+        vm.prank(alice);
+        _f().pokeMyTier();
     }
 
     function test_PokeMyTier_HappyPath_NonStaker() public {

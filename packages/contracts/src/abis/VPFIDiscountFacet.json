@@ -572,6 +572,19 @@
   },
   {
     "type": "event",
+    "name": "TierPokeSkippedNoConsent",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "TierPoked",
     "inputs": [
       {
