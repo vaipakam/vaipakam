@@ -725,7 +725,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](38);
+        selectors = new bytes4[](49);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -768,6 +768,18 @@ contract HelperTest {
         selectors[35] = TreasuryFacet.setKeeperRewardTopUpTarget.selector;
         selectors[36] = TreasuryFacet.getKeeperRewardTopUpTarget.selector;
         selectors[37] = TreasuryFacet.getKeeperRewardBudget.selector;
+        // T-087 Sub 3 add-on #473 — productive treasury reserve.
+        selectors[38] = TreasuryFacet.setTreasuryYieldVenue.selector;
+        selectors[39] = TreasuryFacet.setTreasuryExternalYieldMaxBps.selector;
+        selectors[40] = TreasuryFacet.setAaveV3Pool.selector;
+        selectors[41] = TreasuryFacet.setLidoStaking.selector;
+        selectors[42] = TreasuryFacet.deployTreasuryYield.selector;
+        selectors[43] = TreasuryFacet.withdrawTreasuryYield.selector;
+        selectors[44] = TreasuryFacet.getTreasuryYieldVenue.selector;
+        selectors[45] = TreasuryFacet.getTreasuryDeployedExternal.selector;
+        selectors[46] = TreasuryFacet.getTreasuryExternalYieldMaxBps.selector;
+        selectors[47] = TreasuryFacet.getAaveV3Pool.selector;
+        selectors[48] = TreasuryFacet.getLidoStaking.selector;
         return selectors;
     }
 

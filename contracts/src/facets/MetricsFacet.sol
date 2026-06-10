@@ -229,7 +229,15 @@ contract MetricsFacet {
             if (l.prepayAsset != address(0)) n = _pushUnique(assets, n, l.prepayAsset);
         }
         for (uint256 k = 0; k < n; k++) {
-            treasuryBalanceNumeraire += _priceAmount(assets[k], s.treasuryBalances[assets[k]]);
+            // T-087 Sub 3 add-on #473 round-3 P2 — include externally-
+            // deployed treasury so the dashboard reflects the
+            // diamond's TOTAL economic position, not just the
+            // in-diamond portion. Without this, deploying to Aave /
+            // Lido would silently drop the displayed treasury balance
+            // even though the principal is still owned by the diamond.
+            uint256 totalForAsset = s.treasuryBalances[assets[k]]
+                + s.treasuryDeployedExternal[assets[k]];
+            treasuryBalanceNumeraire += _priceAmount(assets[k], totalForAsset);
         }
         totalFeesCollectedNumeraire = s.cumulativeFeesNumeraire;
         uint256 since24h = block.timestamp > 1 days ? block.timestamp - 1 days : 0;
