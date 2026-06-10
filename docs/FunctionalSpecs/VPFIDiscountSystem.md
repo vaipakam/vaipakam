@@ -40,12 +40,16 @@ The user deposits VPFI into their per-user vault on the canonical chain via `dep
 
 ### 3.2 Time-weighted average (TWA)
 
-The accumulator maintains a 30-day ring buffer of daily-closing balances per user. The "effective" tier is derived from the TWA of those days, with a TWAP weighting:
+The accumulator maintains a 30-day ring buffer of daily-closing balances per user. The "effective" tier is derived in TWO steps:
 
-- Last 7 days × 3.
-- Previous 23 days × 1.
+1. **TWA tier** — weighted average across the ring buffer:
+   - Last 7 days × 3.
+   - Previous 23 days × 1.
+2. **Min-tier clamp** — `effectiveTierAndBps` clamps the TWA-derived tier against the MINIMUM tier observed in the ring buffer (`_computeRingBufferMinTier`). This captures same-day lows (a user who briefly dipped below a tier floor during the window) and cross-floor unstakes.
 
-This means the most recent week's behaviour dominates, but isn't the whole story. A user who topped up right before a loan settles gets the discount weighted by the time they actually held VPFI in the window.
+So `effectiveTier = min(tierOf(TWA), minTierObservedInWindow)`. This means:
+- A "top-up right before a loan settles" doesn't immediately bump your tier — the topped-up amount accumulates slowly through the TWA.
+- A partial unstake that drops below the current tier's floor downgrades IMMEDIATELY on the next read — the min-tier clamp captures the new lower floor.
 
 ### 3.3 Min-history gate
 
@@ -89,7 +93,7 @@ User-facing flow:
 
 The mirror's cache has staleness gates:
 - `cfgMirrorTierMaxAgeSec` — cache discount applies only if `now - cacheWrittenAt < maxAge` (default 60 days; min-floor 30 days).
-- `currentTierTableVersion` — if governance bumps the canonical tier table via `setVpfiTierThresholds` / `setVpfiTierDiscountBps`, the version on Base increments. Mirrors holding a stale version fall back to no discount until a fresh push lands.
+- `currentTierTableVersion` — if governance bumps the canonical tier table via `setVpfiTierThresholds` / `setVpfiTierDiscountBps`, Base's `s.tierTableVersion` increments AND `TierTableVersionBumped` emits. But mirrors don't see this bump until they receive a `TierUpdated` or `VersionBumped` inbound message from Base. Until then, old-version caches on mirrors continue to apply at the OLD discount values. Operators changing thresholds / BPS should expect a sync delay until the next per-user mutation triggers a broadcast.
 
 ## 5. Governance levers
 

@@ -31,8 +31,8 @@ Inserted before the existing "Treasury Buyback Flywheel" section in `apps/www/sr
 
 Plus an "Operator runbook — discount system maintenance" sub-section enumerating the post-deploy actions required for the cross-chain surface to actually work in production:
 
-- Canonical: `setCanonicalVPFIChain(true)` (the Sub 1.C round-3 P2 #2 deferral that many fork operators trip on), broadcast budget top-up.
-- Mirrors: `setBaseAuthorizedMessenger`, `setBaseChainId`, `setCfgMirrorTierMaxAgeSec`.
+- Canonical: `VPFITokenFacet.setCanonicalVPFIChain(true)` (the Sub 1.C round-3 P2 #2 deferral that many fork operators trip on), broadcast budget top-up via `ProtocolBroadcastFacet.topUpBroadcastBudget()`.
+- Mirrors: `RewardReporterFacet.setRewardMessenger`, `RewardReporterFacet.setBaseChainId`, `ConfigFacet.setMirrorTierMaxAgeSec`.
 - Governance: expected broadcast burst on tier-table changes; pre-emptive budget top-up.
 
 ### Producer artifacts

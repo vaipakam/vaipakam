@@ -1974,12 +1974,21 @@ During this aging window:
 - Your dashboard shows "Your tier is aging — almost there".
 - Loans that SETTLE before the window passes pay the FULL
   yield-fee (no discount applies). The discount is read at
-  settlement time from your CURRENT effective BPS — so a loan
-  you open during the aging window but settle AFTER aging
-  completes WILL get the discount it qualifies for at that
-  settlement moment.
-- Once the window passes, the discount activates
-  automatically — no transaction needed.
+  settlement time from your CURRENT effective BPS — so a
+  loan you open during the aging window but settle AFTER
+  aging completes WILL get the discount it qualifies for at
+  that settlement moment.
+- Once the window passes, the discount activates on the
+  canonical chain (Base) automatically — no transaction
+  needed. BUT cross-chain mirrors are NOT automatically
+  notified just by time passing: the initial deposit's
+  rollup already pushed `(0, 0)` to mirrors (or got de-duped
+  because there was nothing to push). To surface your
+  newly-activated tier on a mirror you either:
+  - Click "Push my tier to mirrors now" in the dashboard
+    (calls `pokeMyTier()`), OR
+  - Make any vault mutation on Base (deposit / withdraw),
+    which triggers a fresh rollup-and-broadcast.
 
 ### Time-weighted, not snapshot
 
@@ -1991,8 +2000,13 @@ window, with the LAST 7 days weighted 3× and the previous
 - A "top-up right before a loan settles" doesn't immediately
   bump your tier — the topped-up amount only fully counts
   after time accumulates.
-- A partial unstake doesn't immediately drop your tier
-  either — the historical staked-amount is averaged in.
+- A partial unstake that stays WITHIN the current tier
+  doesn't immediately drop your tier — the historical
+  staked-amount is averaged in. A partial unstake that
+  crosses BELOW the current tier's floor DOES drop the
+  effective tier immediately (the accumulator's same-day
+  minimum captures the new lower floor — see "Tier upgrades
+  and unstakes" below).
 
 ### Cross-chain tier propagation
 
@@ -2071,7 +2085,7 @@ system without surprises.
 
 **Canonical chain (Base):**
 
-- `ConfigFacet.setCanonicalVPFIChain(true)` — REQUIRED
+- `VPFITokenFacet.setCanonicalVPFIChain(true)` — REQUIRED
   post-deploy on Base. Without this, the accumulator runs
   but the broadcast facet sees `s.isCanonicalVpfiChain ==
   false` and silently skips every push. Sub 1.C round-3 P2
@@ -2081,7 +2095,12 @@ system without surprises.
   `ProtocolBroadcastFacet.topUpBroadcastBudget()` (payable).
   Monitor `BroadcastBudgetToppedUp` /
   `ProtocolTierBroadcastSent` events. When the budget drops
-  below the expected per-month burn rate, top up again.
+  below the expected per-month burn rate, top up again —
+  **the protocol fails CLOSED when the budget is exhausted**
+  (`rollupUserDiscount` reverts with `ProtocolBudgetExhausted`
+  when a non-deduped broadcast can't pay the CCIP fee), so
+  a stale budget blocks deposits / withdrawals / settlements
+  that would change a user's tier.
 
 **Mirror chains:**
 
@@ -2101,15 +2120,22 @@ system without surprises.
 **Governance changes:**
 
 - Only `setVpfiTierThresholds` and `setVpfiTierDiscountBps`
-  on the canonical chain bump `tierTableVersion`. Operators
-  changing those should expect a burst of broadcasts as
-  users' next mutations re-sync mirrors — pre-empt by
-  topping up the broadcast budget first.
-- `setTwaMinStakedDays` and `setMirrorTierMaxAgeSec` change
-  their config slots WITHOUT bumping `tierTableVersion`.
-  Mirrors won't invalidate their caches; the new aging /
-  staleness behaviour takes effect on next read / next
-  rollup respectively.
+  on the canonical chain bump Base's local `tierTableVersion`
+  + emit `TierTableVersionBumped`. Mirrors don't see this
+  bump until they receive a `TierUpdated` or `VersionBumped`
+  inbound message from Base — until that arrives, old-version
+  caches on mirrors continue to apply. Operators changing
+  tier thresholds / BPS should pre-empt by topping up the
+  broadcast budget first AND consider triggering a manual
+  protocol broadcast wave to force-refresh mirrors.
+- `setTwaMinStakedDays` changes the aging gate WITHOUT
+  bumping `tierTableVersion`; the new value takes effect on
+  the next read.
+- `setMirrorTierMaxAgeSec` is read DIRECTLY by mirror
+  discount reads (`_mirrorEffectiveTierAndBps` calls
+  `cfgMirrorTierMaxAgeSecEffective()`). Lowering the
+  threshold can invalidate cached mirror discounts
+  immediately on next read — no rollup or push needed.
 
 ## Treasury Buyback Flywheel
 
