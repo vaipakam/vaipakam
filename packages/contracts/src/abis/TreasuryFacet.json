@@ -1479,6 +1479,17 @@
   },
   {
     "type": "error",
+    "name": "AavePoolRotationWithDeployedPrincipal",
+    "inputs": [
+      {
+        "name": "tokensDeployed",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
       {
@@ -2050,6 +2061,11 @@
   },
   {
     "type": "error",
+    "name": "LidoVenueNotYetSupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LiquidationFailed",
     "inputs": []
   },
@@ -2464,6 +2480,22 @@
         "name": "candidate",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "TreasuryYieldVenueChangeWithDeployedPrincipal",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "currentlyDeployed",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
