@@ -266,7 +266,7 @@
     "title": "Stake VPFI",
     "managedOnBaseSubtitle": "VPFI staking is managed on {{canonicalName}}. Switch chains to stake or check your tier.",
     "switchToBaseLabel": "Switch to {{canonicalName}}",
-    "noStakeYetBody": "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Tier 1 starts at 100 VPFI.",
+    "noStakeYetBody": "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the Buy VPFI page.",
     "stakeNowLabel": "Stake VPFI now",
     "tierPendingTitle": "Tier update pending propagation",
     "tierPendingBody": "Your stake qualifies for a tier, but mirror chains haven't been notified yet. Click below to push the update; the protocol pays the cross-chain fee.",

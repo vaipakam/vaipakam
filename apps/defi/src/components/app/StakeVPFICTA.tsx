@@ -99,6 +99,13 @@ export function StakeVPFICTA() {
     const id = window.setTimeout(() => setRecentlyPoked(false), 60_000);
     return () => window.clearTimeout(id);
   }, [recentlyPoked]);
+  // Codex round-4 P3 #1 — reset the cooldown when the user switches
+  // wallet account or chain. Otherwise a second account connected
+  // within the 60s window wouldn't see the CTA even though it has
+  // never poked.
+  useEffect(() => {
+    setRecentlyPoked(false);
+  }, [address, walletChainId]);
 
   // Codex round-1 P2 #4 — the poke button is USEFUL once the user
   // has a NON-ZERO effective tier (post-min-history) and wants to
@@ -134,8 +141,23 @@ export function StakeVPFICTA() {
   // Codex round-3 P3 #2 — suppress the poke branch when
   // `recentlyPoked` so a successful poke hides the CTA instead of
   // inviting a no-op repeat.
+  // Codex round-4 P2 #1 — gate no-stake CTA on a DEPLOYED diamond
+  // (`chain.diamondAddress != null`). Otherwise on a canonical
+  // chain without a deployment in this bundle (e.g. Base mainnet
+  // in a testnet-only build), the CTA would invite users to stake
+  // on a non-existent Diamond.
+  // Codex round-4 P2 #2 — also gate on the wallet ACTUALLY being
+  // on a supported (read-chain-equal) chain. When the wallet is on
+  // an unregistered network, `useReadChain` falls back to
+  // DEFAULT_CHAIN; the user needs the switch CTA, not the stake
+  // CTA.
+  const walletOnReadChain = walletChainId === chain.chainId;
   const showNoStakeBranch =
-    isCanonical && tierData != null && tierData.trackedBal === 0n;
+    isCanonical &&
+    chain.diamondAddress != null &&
+    walletOnReadChain &&
+    tierData != null &&
+    tierData.trackedBal === 0n;
   const showPokeBranch =
     canPokeHere && tierReadyToBroadcast && !recentlyPoked;
   const showCard =
