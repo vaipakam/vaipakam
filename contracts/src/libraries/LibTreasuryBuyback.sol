@@ -156,6 +156,21 @@ library LibTreasuryBuyback {
         address indexed token,
         uint96 amountIn
     );
+    /// @custom:event-category state-change/buyback-intent
+    /// @notice T-087 Sub 3.C — emitted ONCE per orderHash, on the
+    ///         FINAL partial fill that completes the TWAP order.
+    ///         Indexer treats this as the terminal-fill signal.
+    event BuybackIntentClosed(
+        bytes32 indexed orderHash,
+        address indexed token,
+        uint96 totalAmountIn
+    );
+    /// @custom:event-category state-change/buyback-intent
+    /// @notice T-087 Sub 3.C — set when the operator's order
+    ///         template passed `LibBuybackOrderValidation`. The
+    ///         dispatcher's `isValidSignature` returns the ERC-1271
+    ///         magic value only for orderHashes with this flag.
+    event BuybackIntentValidated(bytes32 indexed orderHash);
 
     // ─── Lifecycle ───────────────────────────────────────────────────
 
@@ -282,6 +297,18 @@ library LibTreasuryBuyback {
     uint256 private constant SRC_BASELINE_KEY =
         uint256(keccak256("vaipakam.buyback.src.baseline"));
 
+    /// @notice T-087 Sub 3.C — set the Sub-3.C "validated against
+    ///         the canonical Fusion order template" flag. Called
+    ///         from `TreasuryFacet.commitBuybackIntentValidated`
+    ///         after `LibBuybackOrderValidation.validateBuybackOrder`
+    ///         returns clean. The dispatcher's `isValidSignature`
+    ///         returns the ERC-1271 magic value only when this flag
+    ///         is set AND the order is still Pending.
+    function markValidated(bytes32 orderHash) internal {
+        LibVaipakam.storageSlot().buybackValidated[orderHash] = true;
+        emit BuybackIntentValidated(orderHash);
+    }
+
     function preInteractionImpl(bytes32 orderHash) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (msg.sender != s.cfgFusionLimitOrderProtocol) {
@@ -334,14 +361,19 @@ library LibTreasuryBuyback {
         if (block.timestamp >= info.expiresAt) {
             revert BuybackPastDeadline(info.expiresAt, block.timestamp);
         }
-        // Codex round-2 P2 #2 — partial fills not supported in Sub
-        // 3.B. The operator must commit Fusion orders with
-        // allowPartialFills:false + allowMultipleFills:false.
-        // Detect: LOP's `consumed` (makingAmount) must equal the
-        // full reservation.
-        if (consumed != info.amountIn) {
-            revert BuybackPartialFill(consumed, info.amountIn);
+
+        // T-087 Sub 3.C — partial-fill aware. TWAP buyback orders
+        // (`allowPartialFills=true`, `allowMultipleFills=true`) can
+        // fire postInteraction multiple times against the same
+        // orderHash; each fill consumes part of the makerAmount.
+        // Track `consumedSoFar`; reject overflow; mark Filled only
+        // when the cumulative consumed amount reaches `amountIn`.
+        uint256 consumedSoFarBefore = uint256(s.buybackConsumedSoFar[orderHash]);
+        uint256 remaining = uint256(info.amountIn) - consumedSoFarBefore;
+        if (consumed == 0 || consumed > remaining) {
+            revert BuybackPartialFill(consumed, remaining);
         }
+        uint256 consumedSoFarAfter = consumedSoFarBefore + consumed;
 
         // Codex round-1 P1 #2 + round-2 P1 #3 — measure VPFI
         // delivered via balance delta against the preInteraction
@@ -362,27 +394,48 @@ library LibTreasuryBuyback {
         uint256 actualVpfi =
             IERC20(s.vpfiToken).balanceOf(address(this)) - vpfiBaseline;
 
-        // Codex round-3 P1 #1 — actual VPFI must clear the
-        // operator-pinned floor. Catches misquoted Fusion orders
-        // that would otherwise settle with too little (or zero)
-        // VPFI for the source amount.
-        if (actualVpfi < info.minVpfiOut) {
-            revert BuybackBelowMinVpfiOut(actualVpfi, info.minVpfiOut);
+        // T-087 Sub 3.C round-1 P2 — cumulative pro-rata floor. A
+        // pure per-partial floor with floor-division (`floor(minVpfiOut
+        // * consumed / amountIn)`) lets rounding loss compound: many
+        // tiny fills each round their share down to 0 and the order
+        // can settle with total delivered VPFI below minVpfiOut.
+        // Compare cumulative actual VPFI (tracked in
+        // `stakingPoolBuybackBudget` delta against the start-of-order
+        // snapshot taken at commit-time) against cumulative required.
+        //
+        // Trick: we only need to track *cumulative delivered VPFI per
+        // order* across partials. We could persist it as another
+        // mapping, but we can derive it inline using the order's
+        // stakingPoolBuybackBudget contribution. The simplest correct
+        // approach is to require, on every partial: cumulative
+        // required <= cumulative delivered. Cumulative delivered =
+        // prior delivered + actualVpfi (where prior delivered is
+        // tracked in `s.buybackVpfiDeliveredSoFar[orderHash]`).
+        uint256 priorVpfiDelivered =
+            uint256(s.buybackVpfiDeliveredSoFar[orderHash]);
+        uint256 cumulativeVpfi = priorVpfiDelivered + actualVpfi;
+        uint256 cumulativeRequiredVpfi =
+            (uint256(info.minVpfiOut) * consumedSoFarAfter) / uint256(info.amountIn);
+        if (cumulativeVpfi < cumulativeRequiredVpfi) {
+            revert BuybackBelowMinVpfiOut(
+                cumulativeVpfi, uint128(cumulativeRequiredVpfi)
+            );
         }
+        s.buybackVpfiDeliveredSoFar[orderHash] = uint128(cumulativeVpfi);
 
         // Codex round-3 P1 #2 — verify `info.token` actually left
-        // the diamond. A colliding orderHash on a different maker
-        // asset would have the diamond's `info.token` balance
-        // unchanged (LOP pulled the other token instead). Require
-        // `srcBaseline - balance >= info.amountIn`.
+        // the diamond. Per-partial check: source delta must >=
+        // `consumed`. A colliding orderHash on a different maker
+        // asset would leave the diamond's `info.token` balance
+        // unchanged.
         uint256 srcNow = IERC20(info.token).balanceOf(address(this));
         uint256 srcSpent = srcBaseline > srcNow ? srcBaseline - srcNow : 0;
-        if (srcSpent < info.amountIn) {
-            revert BuybackSourceTokenNotSpent(info.amountIn, srcSpent);
+        if (srcSpent < consumed) {
+            revert BuybackSourceTokenNotSpent(consumed, srcSpent);
         }
 
-        // Release the reservation.
-        s.baseBuybackReserved[info.token] -= info.amountIn;
+        // Release the proportional reservation.
+        s.baseBuybackReserved[info.token] -= consumed;
 
         // Credit the delivered VPFI to the staking-pool buyback
         // budget — Sub 3 add-on #472 will later split between
@@ -393,7 +446,7 @@ library LibTreasuryBuyback {
         // allowance + re-apply the cap so an in-flight commit on
         // the same token still has a valid pull-through.
         address lop = s.cfgFusionLimitOrderProtocol;
-        s.intentAggregateAllowance[info.token] -= info.amountIn;
+        s.intentAggregateAllowance[info.token] -= consumed;
         IERC20(info.token).forceApprove(lop, 0);
         if (s.intentAggregateAllowance[info.token] != 0) {
             IERC20(info.token).forceApprove(
@@ -401,20 +454,42 @@ library LibTreasuryBuyback {
             );
         }
 
-        // Codex round-2 P1 #1 — decrement the shared live-commit
-        // counter so LOP rotation is unblocked when this was the
-        // last in-flight intent.
-        s.intentLiveCommitCount -= 1;
+        // Persist the partial-fill accumulator.
+        s.buybackConsumedSoFar[orderHash] = uint128(consumedSoFarAfter);
 
-        // Mark Filled + clear the kind discriminator so any later
-        // replay against this orderHash is rejected.
-        s.buybackOrders[orderHash].status =
-            LibVaipakam.BUYBACK_ORDER_STATUS_FILLED;
-        delete s.orderHashKind[orderHash];
-
-        emit BuybackIntentFilled(
-            orderHash, info.token, info.amountIn, actualVpfi
-        );
+        // Final partial settles the order — flip Filled + clear the
+        // kind discriminator + release the live-commit slot. Earlier
+        // partials leave Pending status intact so subsequent fills
+        // re-enter through the dispatcher.
+        bool isFinal = consumedSoFarAfter == uint256(info.amountIn);
+        if (isFinal) {
+            // Codex round-2 P1 #1 — release the shared live-commit
+            // counter only on the FINAL partial.
+            s.intentLiveCommitCount -= 1;
+            s.buybackOrders[orderHash].status =
+                LibVaipakam.BUYBACK_ORDER_STATUS_FILLED;
+            delete s.orderHashKind[orderHash];
+            // Validation flag clears at terminal so re-stamping a
+            // historic orderHash cannot re-enable its old magic.
+            delete s.buybackValidated[orderHash];
+            // Clear the partial-fill accumulators so they don't
+            // strand storage; preserves the gas-refund pattern for
+            // settled orders.
+            delete s.buybackConsumedSoFar[orderHash];
+            delete s.buybackVpfiDeliveredSoFar[orderHash];
+            // Final partial event uses the cumulative actualVpfi
+            // total — but we only have this partial's delta. Emit
+            // `BuybackIntentFilled` with the per-partial figure and
+            // also `BuybackIntentClosed` summarising the order.
+            emit BuybackIntentFilled(
+                orderHash, info.token, uint96(consumed), actualVpfi
+            );
+            emit BuybackIntentClosed(orderHash, info.token, info.amountIn);
+        } else {
+            emit BuybackIntentFilled(
+                orderHash, info.token, uint96(consumed), actualVpfi
+            );
+        }
     }
 
     /**
@@ -436,21 +511,30 @@ library LibTreasuryBuyback {
             revert BuybackNotYetExpired(info.expiresAt, block.timestamp);
         }
 
-        // Roll the reservation back to the spendable budget.
-        s.baseBuybackReserved[info.token] -= info.amountIn;
-        s.baseBuybackBudget[info.token] += info.amountIn;
+        // T-087 Sub 3.C — release ONLY the unconsumed portion. Any
+        // amount already swapped via partial fills has already been
+        // released proportionally in `postInteractionImpl`.
+        uint256 consumedSoFar = uint256(s.buybackConsumedSoFar[orderHash]);
+        uint256 unconsumed = uint256(info.amountIn) - consumedSoFar;
 
-        // Roll the LOP allowance back via the shared aggregate
-        // counter so the dispatcher's invariants hold for any
-        // other in-flight commits on the same token.
-        address lop = s.cfgFusionLimitOrderProtocol;
-        s.intentAggregateAllowance[info.token] -= info.amountIn;
-        if (lop != address(0)) {
-            IERC20(info.token).forceApprove(lop, 0);
-            if (s.intentAggregateAllowance[info.token] != 0) {
-                IERC20(info.token).forceApprove(
-                    lop, s.intentAggregateAllowance[info.token]
-                );
+        if (unconsumed > 0) {
+            // Roll the unconsumed reservation back to the spendable
+            // budget.
+            s.baseBuybackReserved[info.token] -= unconsumed;
+            s.baseBuybackBudget[info.token] += unconsumed;
+
+            // Roll the LOP allowance back via the shared aggregate
+            // counter so the dispatcher's invariants hold for any
+            // other in-flight commits on the same token.
+            address lop = s.cfgFusionLimitOrderProtocol;
+            s.intentAggregateAllowance[info.token] -= unconsumed;
+            if (lop != address(0)) {
+                IERC20(info.token).forceApprove(lop, 0);
+                if (s.intentAggregateAllowance[info.token] != 0) {
+                    IERC20(info.token).forceApprove(
+                        lop, s.intentAggregateAllowance[info.token]
+                    );
+                }
             }
         }
 
@@ -460,7 +544,12 @@ library LibTreasuryBuyback {
         s.buybackOrders[orderHash].status =
             LibVaipakam.BUYBACK_ORDER_STATUS_EXPIRED;
         delete s.orderHashKind[orderHash];
+        // Validation flag clears on terminal to prevent ghost-magic.
+        delete s.buybackValidated[orderHash];
+        // Clear partial-fill accumulators.
+        delete s.buybackConsumedSoFar[orderHash];
+        delete s.buybackVpfiDeliveredSoFar[orderHash];
 
-        emit BuybackIntentExpired(orderHash, info.token, info.amountIn);
+        emit BuybackIntentExpired(orderHash, info.token, uint96(unconsumed));
     }
 }

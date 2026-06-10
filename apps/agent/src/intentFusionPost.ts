@@ -55,6 +55,15 @@ const SWAP_TO_REPAY_INTENT_COMMITTED_TOPIC0 = keccak256(
   ),
 );
 
+// T-087 Sub 3.C — keccak256 of the buyback validation event signature.
+// `commitBuybackIntentValidated` emits `BuybackIntentValidated(bytes32)`
+// after the on-chain Fusion-order-template validation passes. The
+// agent preflights against this topic instead of the swap-to-repay
+// topic when `kind === 'buyback'`.
+const BUYBACK_INTENT_VALIDATED_TOPIC0 = keccak256(
+  toBytes('BuybackIntentValidated(bytes32)'),
+);
+
 // T-090 v1.2 #428 — per-chain RPC binding lookup. Mirror of the
 // pattern used in `buyWatchdog.ts`; reuses the same secrets the
 // other agent handlers read from.
@@ -117,8 +126,14 @@ const FUSION_SUPPORTED_CHAIN_IDS = new Set<number>([
 
 /// Request body shape — matches the structured order projection
 /// the indexer's `GET /loans/:id` returns as `payload.swapToRepayIntent`.
+///
+/// T-087 Sub 3.C — the `kind` discriminator selects the on-chain
+/// preflight: 'swap_to_repay' (default; legacy) matches
+/// `SwapToRepayIntentCommitted` event topic; 'buyback' matches
+/// `BuybackIntentValidated`.
 interface IntentFusionPostRequest {
   chainId: number;
+  kind?: 'swap_to_repay' | 'buyback';
   orderHash: `0x${string}`;
   order: {
     maker: `0x${string}`;
@@ -433,10 +448,138 @@ async function preflightCommitOnChain(
     return { kind: 'reject', reason: 'commit-tx-not-successful' };
   }
 
-  // 2. Find a matching `SwapToRepayIntentCommitted` log emitted
-  //    by the canonical diamond, with `topic[2]` (indexed
-  //    orderHash) matching the body.
+  // 2. Find the expected event topic for the commit's kind.
+  //    T-087 Sub 3.C — `'buyback'` matches `BuybackIntentValidated(bytes32)`
+  //    emitted by `commitBuybackIntentValidated` after the on-chain
+  //    Fusion-order-template validation passes; the default
+  //    `'swap_to_repay'` matches the existing T-090 event.
   const expectedOrderHashTopic = parsed.orderHash.toLowerCase();
+  const kind = parsed.kind ?? 'swap_to_repay';
+  if (kind === 'buyback') {
+    // For buyback, the event is single-topic (topic[1] = orderHash).
+    // Just verify it landed under our diamond + the orderHash matches.
+    let foundBuyback = false;
+    for (const log of receipt.logs) {
+      if (
+        log.address.toLowerCase() !== expectedDiamond ||
+        log.topics[0]?.toLowerCase() !==
+          BUYBACK_INTENT_VALIDATED_TOPIC0.toLowerCase()
+      ) {
+        continue;
+      }
+      if (log.topics[1]?.toLowerCase() === expectedOrderHashTopic) {
+        foundBuyback = true;
+        break;
+      }
+    }
+    if (!foundBuyback) {
+      return { kind: 'reject', reason: 'orderhash-not-validated-on-chain' };
+    }
+    // T-087 Sub 3.C round-2 P2 #1 + round-3 P2 #1/#2 — even though
+    // `commitBuybackIntentValidated` recomputed the orderHash from
+    // the template at commit-time, the agent's caller might:
+    //   (a) submit a mutated `order` body alongside a valid
+    //       orderHash (round-2 P2 #1, round-3 P2 #2 — partial check
+    //       on asset+amounts wasn't enough; takerAsset / salt /
+    //       makerTraits / extension could still differ from the
+    //       validated template);
+    //   (b) replay a tx hash AFTER the order has Filled or Expired,
+    //       since `getBuybackOrder` retains the historical fields
+    //       (round-3 P2 #1).
+    //
+    // Defence: read the on-chain ledger entry, verify status ==
+    // Pending + expiresAt > now, AND verify the diamond's
+    // `isBuybackValidated(orderHash)` still returns true (the flag
+    // clears on terminal). Then bind asset+amount fields. Field-
+    // level mutation on takerAsset / salt / makerTraits / extension
+    // would alter the orderHash recomputation; isValidSignature
+    // would already block such a mutated body at fill time, but
+    // dropping it here saves our 1inch quota from being burned on
+    // an unfillable order.
+    try {
+      const orderHashCheck = parsed.orderHash;
+      const orderField = await client.readContract({
+        address: expectedDiamond as `0x${string}`,
+        abi: [
+          {
+            type: 'function',
+            name: 'getBuybackOrder',
+            stateMutability: 'view',
+            inputs: [{ name: 'orderHash', type: 'bytes32' }],
+            outputs: [
+              {
+                type: 'tuple',
+                components: [
+                  { name: 'token', type: 'address' },
+                  { name: 'amountIn', type: 'uint96' },
+                  { name: 'minVpfiOut', type: 'uint128' },
+                  { name: 'expiresAt', type: 'uint64' },
+                  { name: 'status', type: 'uint8' },
+                ],
+              },
+            ],
+          },
+        ] as const,
+        functionName: 'getBuybackOrder',
+        args: [orderHashCheck],
+      });
+      const fields = orderField as {
+        token: `0x${string}`;
+        amountIn: bigint;
+        minVpfiOut: bigint;
+        expiresAt: bigint;
+        status: number;
+      };
+      // status 1 = PENDING.
+      if (fields.status !== 1) {
+        return { kind: 'reject', reason: 'buyback-not-pending' };
+      }
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      if (fields.expiresAt <= nowSec) {
+        return { kind: 'reject', reason: 'buyback-expired' };
+      }
+      if (fields.token.toLowerCase() !== parsed.order.makerAsset.toLowerCase()) {
+        return { kind: 'reject', reason: 'buyback-makerAsset-mismatch' };
+      }
+      if (BigInt(parsed.order.makerAmount) !== fields.amountIn) {
+        return { kind: 'reject', reason: 'buyback-makerAmount-mismatch' };
+      }
+      if (BigInt(parsed.order.takerAmount) !== fields.minVpfiOut) {
+        return { kind: 'reject', reason: 'buyback-takerAmount-mismatch' };
+      }
+      // Also assert isBuybackValidated still true (the diamond
+      // clears it at terminal; covers Filled/Expired states the
+      // status check above already catches but defence-in-depth).
+      const validated = (await client.readContract({
+        address: expectedDiamond as `0x${string}`,
+        abi: [
+          {
+            type: 'function',
+            name: 'isBuybackValidated',
+            stateMutability: 'view',
+            inputs: [{ name: 'orderHash', type: 'bytes32' }],
+            outputs: [{ type: 'bool' }],
+          },
+        ] as const,
+        functionName: 'isBuybackValidated',
+        args: [orderHashCheck],
+      })) as boolean;
+      if (!validated) {
+        return { kind: 'reject', reason: 'buyback-not-validated' };
+      }
+    } catch (err) {
+      console.warn(
+        '[intent/fusion/post] buyback ledger read RPC degraded; proceeding',
+        err,
+      );
+      // RPC degradation: fall through. The on-chain commit is still
+      // the source of truth; a mutated body sent to Fusion would
+      // just fail the ERC-1271 binding at fill time and waste
+      // resolver gas instead of ours.
+    }
+    return { kind: 'ok' };
+  }
+  // ─── swap-to-repay path (default / legacy) ────────────────────
   let loanIdTopic: string | undefined;
   for (const log of receipt.logs) {
     if (
@@ -626,8 +769,24 @@ function validateBody(raw: unknown): IntentFusionPostRequest | null {
       order.deadline <= 0)
     return null;
 
+  // T-087 Sub 3.C round-1 P1 — preserve the kind discriminator
+  // (defaults to 'swap_to_repay' for backwards compat). Without
+  // this the preflight always falls into the swap-to-repay branch
+  // and buyback commits get rejected with
+  // `orderhash-not-in-commit-tx` even though they validated on
+  // chain.
+  let kind: 'swap_to_repay' | 'buyback' | undefined;
+  if (o.kind === 'swap_to_repay' || o.kind === 'buyback') {
+    kind = o.kind;
+  } else if (o.kind !== undefined) {
+    // Unknown kind string — reject the request rather than silently
+    // routing it to the default branch.
+    return null;
+  }
+
   return {
     chainId: o.chainId,
+    kind,
     orderHash: o.orderHash as `0x${string}`,
     commitTxHash: o.commitTxHash as `0x${string}`,
     order: order as IntentFusionPostRequest['order'],

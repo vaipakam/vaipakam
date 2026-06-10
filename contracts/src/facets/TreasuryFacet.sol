@@ -15,6 +15,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ICrossChainMessenger} from "../crosschain/ICrossChainMessenger.sol";
 import {LibTreasuryBuyback} from "../libraries/LibTreasuryBuyback.sol";
+import {LibBuybackOrderValidation} from "../libraries/LibBuybackOrderValidation.sol";
 
 /**
  * @title TreasuryFacet
@@ -871,5 +872,147 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     ///         budget.
     function getStakingPoolBuybackBudget() external view returns (uint256) {
         return LibVaipakam.storageSlot().stakingPoolBuybackBudget;
+    }
+
+    // ─── T-087 Sub 3.C — validated buyback commit ────────────────────
+
+    /// @dev Default TWAP window upper bound (seconds). Effective when
+    ///      `s.cfgBuybackTwapMaxWindowSec` reads 0.
+    uint32 internal constant DEFAULT_BUYBACK_TWAP_WINDOW_SEC = 1800;
+    /// @dev Lower bound enforced by `setBuybackTwapMaxWindowSec`.
+    uint32 internal constant MIN_BUYBACK_TWAP_WINDOW_SEC = 600;
+    /// @dev Upper bound enforced by `setBuybackTwapMaxWindowSec`.
+    uint32 internal constant MAX_BUYBACK_TWAP_WINDOW_SEC = 3600;
+
+    error BuybackTwapWindowOutOfBounds(uint256 windowSec, uint256 maxAllowed);
+    /// @custom:event-category informational/config
+    event BuybackTwapMaxWindowSecSet(uint32 windowSec);
+
+    /**
+     * @notice Commit a buyback intent against a fully validated
+     *         Fusion order template. The diamond recomputes the LOP
+     *         v4 orderHash on-chain (EIP-712), validates every field
+     *         against the canonical buyback shape, marks the order
+     *         "validated", and reserves the source token through
+     *         `LibTreasuryBuyback.commitBuyback`.
+     *         `IntentDispatchFacet.isValidSignature` returns the
+     *         ERC-1271 magic value ONLY for validated orderHashes.
+     */
+    function commitBuybackIntentValidated(
+        bytes32 orderHash,
+        LibBuybackOrderValidation.BuybackOrderTemplate calldata tpl,
+        uint256 amountIn,
+        uint256 minVpfiOut,
+        uint64 expiresAt
+    )
+        external
+        nonReentrant
+        whenNotPaused
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // ── 0. Codex Sub 3.C round-2 P2 #2 — minVpfiOut > 0.
+        //    1inch LOP rejects fills where the computed taking
+        //    amount is zero, so a minVpfiOut == 0 order would have
+        //    its source tokens reserved on-chain but never settle.
+        //    Force a positive floor to prevent the stranded-budget
+        //    failure mode.
+        if (minVpfiOut == 0) {
+            revert LibTreasuryBuyback.BuybackZeroAmount();
+        }
+
+        // ── 1. TWAP window bound ────────────────────────────────────
+        uint32 maxWindow = s.cfgBuybackTwapMaxWindowSec == 0
+            ? DEFAULT_BUYBACK_TWAP_WINDOW_SEC
+            : s.cfgBuybackTwapMaxWindowSec;
+        // Codex Sub 3.C round-3 P3 — guard the subtraction so the
+        // "expiry-in-past" branch reverts with the documented
+        // BuybackTwapWindowOutOfBounds error instead of a generic
+        // 0.8 arithmetic panic from uint underflow.
+        if (expiresAt <= block.timestamp) {
+            revert BuybackTwapWindowOutOfBounds(0, uint256(maxWindow));
+        }
+        uint256 window = uint256(expiresAt) - block.timestamp;
+        if (window > uint256(maxWindow)) {
+            revert BuybackTwapWindowOutOfBounds(window, uint256(maxWindow));
+        }
+
+        // ── 2. Recompute orderHash on-chain + field validation ──────
+        bytes32 lopDomainSeparator = _fetchLopDomainSeparator(
+            s.cfgFusionLimitOrderProtocol
+        );
+        LibBuybackOrderValidation.validateBuybackOrder(
+            orderHash,
+            tpl,
+            address(this),     // expected maker = receiver = diamond
+            tpl.makerAsset,    // expected makerAsset
+            s.vpfiToken,       // expected takerAsset = VPFI
+            amountIn,
+            minVpfiOut,
+            expiresAt,
+            lopDomainSeparator
+        );
+
+        // ── 3. Reserve + record ledger entry ───────────────────────
+        LibTreasuryBuyback.commitBuyback(
+            orderHash, tpl.makerAsset, amountIn, minVpfiOut, uint256(expiresAt)
+        );
+
+        // ── 4. Mark validated so isValidSignature returns magic ─────
+        LibTreasuryBuyback.markValidated(orderHash);
+    }
+
+    /// @notice T-087 Sub 3.C — exposed canonical extension bytes the
+    ///         off-chain agent must use when constructing the Fusion
+    ///         order template. Mirrors the swap-to-repay
+    ///         `canonicalExtension()` view.
+    function canonicalBuybackExtension() external view returns (bytes memory) {
+        return LibBuybackOrderValidation.canonicalBuybackExtension(address(this));
+    }
+
+    /// @notice T-087 Sub 3.C — admin: set the TWAP window upper
+    ///         bound (seconds). 0 means "use the default 1800".
+    ///         Bounded to MIN..MAX.
+    function setBuybackTwapMaxWindowSec(uint32 windowSec)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (windowSec != 0 && (
+            windowSec < MIN_BUYBACK_TWAP_WINDOW_SEC
+                || windowSec > MAX_BUYBACK_TWAP_WINDOW_SEC
+        )) {
+            revert BuybackTwapWindowOutOfBounds(
+                uint256(windowSec), uint256(MAX_BUYBACK_TWAP_WINDOW_SEC)
+            );
+        }
+        LibVaipakam.storageSlot().cfgBuybackTwapMaxWindowSec = windowSec;
+        emit BuybackTwapMaxWindowSecSet(windowSec);
+    }
+
+    function getBuybackTwapMaxWindowSec() external view returns (uint32) {
+        uint32 v = LibVaipakam.storageSlot().cfgBuybackTwapMaxWindowSec;
+        return v == 0 ? DEFAULT_BUYBACK_TWAP_WINDOW_SEC : v;
+    }
+
+    function isBuybackValidated(bytes32 orderHash) external view returns (bool) {
+        return LibVaipakam.storageSlot().buybackValidated[orderHash];
+    }
+
+    function getBuybackConsumedSoFar(bytes32 orderHash)
+        external
+        view
+        returns (uint128)
+    {
+        return LibVaipakam.storageSlot().buybackConsumedSoFar[orderHash];
+    }
+
+    /// @dev Fetch the LOP's EIP-712 DOMAIN_SEPARATOR via staticcall.
+    function _fetchLopDomainSeparator(address lop) private view returns (bytes32) {
+        (bool ok, bytes memory ret) = lop.staticcall(
+            abi.encodeWithSignature("DOMAIN_SEPARATOR()")
+        );
+        require(ok && ret.length == 32, "lop ds");
+        return abi.decode(ret, (bytes32));
     }
 }
