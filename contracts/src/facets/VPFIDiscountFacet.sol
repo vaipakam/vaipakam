@@ -948,6 +948,14 @@ contract VPFIDiscountFacet is
      *      return without rolling up.
      */
     function pokeMyTier() external nonReentrant whenNotPaused {
+        // #494 Card B — Tier-1 sanctions gate on the caller. pokeMyTier
+        // is a state-mutating entry point that drives a protocol-funded
+        // CCIP broadcast; per CLAUDE.md "Retail-deploy policy" every
+        // Tier-1 entry-creator path reverts SanctionedAddress for
+        // listed callers. The other Sub 4 user-initiated paths
+        // (depositVPFIToVault / withdrawVPFIFromVault / setConsent) are
+        // already gated; this closes the matching gap on poke.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         // The trackedVpfiBalance read is the same one every settlement
         // path uses; for a user with no stake history it returns 0 and
         // the rollup is essentially a no-op at the accumulator level.
