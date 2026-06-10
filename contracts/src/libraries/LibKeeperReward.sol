@@ -157,85 +157,92 @@ library LibKeeperReward {
         // the balance-delta is the only signal that survives all the
         // failure modes Codex enumerated.
         uint256 keeperBalanceBefore = _safeBalanceOf(s.vpfiToken, keeper);
-        // Fire-and-check transfer; ignore the return data. A token
-        // whose `transfer` reverts will leave `ok = false`, and our
-        // balance-delta check below will see no movement.
-        (bool ok, ) = s.vpfiToken.call(
-            abi.encodeWithSelector(IERC20.transfer.selector, keeper, vpfiAmount)
-        );
+        // Codex round-6 P2 #3 — fire-and-check transfer with bounded
+        // return data (retSize=0; we ignore the return). A hostile
+        // token returning oversized data can't OOG us — assembly's
+        // call() never materialises returndata that we didn't ask
+        // for into memory.
+        bool ok = _safeTransfer(s.vpfiToken, keeper, vpfiAmount);
         uint256 keeperBalanceAfter = _safeBalanceOf(s.vpfiToken, keeper);
-        // Codex round-5 P2 #1 — compute delta without overflow.
-        // `keeperBalanceBefore + vpfiAmount` would revert if a
-        // hostile token returns near-max-uint256 from balanceOf.
-        // Use comparison-only arithmetic.
+        // Codex round-5 P2 #1 — overflow-safe delta. A hostile token
+        // returning near-max-uint256 from balanceOf could otherwise
+        // overflow `keeperBalanceBefore + vpfiAmount`.
         uint256 actuallyMoved = 0;
         if (keeperBalanceAfter > keeperBalanceBefore) {
             unchecked { actuallyMoved = keeperBalanceAfter - keeperBalanceBefore; }
         }
-        // Codex round-5 P2 #2 — credit what actually moved, not all
-        // or nothing. A deflationary / fee-on-transfer token may
-        // credit the keeper less than `vpfiAmount`; in that case the
-        // diamond's VPFI HAS left even if not in full. Re-credit the
-        // unmoved portion to the budget, debit the moved portion,
-        // and emit Paid for the actual amount. Keeps accounting in
-        // sync with on-chain reality regardless of token quirks.
+        // Codex round-6 P2 #2 — fee-on-transfer correctness. The
+        // diamond's balance dropped by the FULL `vpfiAmount`
+        // regardless of what the keeper received (the token took
+        // any fee from the diamond's side). Debit the full
+        // requested amount from the budget so future rewards
+        // don't double-spend the missing fee. Emit Paid for what
+        // the keeper actually received, so the indexer sees the
+        // truth.
         if (!ok || actuallyMoved == 0) {
-            s.keeperRewardBudget = budget; // nothing left; restore
+            s.keeperRewardBudget = budget; // nothing moved; restore
             emit KeeperRewardSkipped(keeper, actionKind, "transfer-failed");
             return 0;
         }
-        if (actuallyMoved < vpfiAmount) {
-            // Refund the budget for the unmoved portion.
-            unchecked {
-                s.keeperRewardBudget = budget - actuallyMoved;
-            }
-            emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, actuallyMoved);
-            return actuallyMoved;
-        }
 
-        emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, vpfiAmount);
-        return vpfiAmount;
+        // Emit Paid with `actuallyMoved` (what the keeper got) — the
+        // budget was already debited by the full `vpfiAmount` above.
+        emit KeeperRewardPaid(keeper, actionKind, gasUsed, ethEquivalent, actuallyMoved);
+        return actuallyMoved;
     }
 
-    /// @dev Codex round-4/5 P2 — low-level balanceOf that never
-    ///      reverts AND bounds returndata to 32 bytes. A malformed
-    ///      or hostile VPFI token (fallback only / reverting
-    ///      balanceOf / oversized-returndata griefing) would
-    ///      otherwise bubble a revert / OOG before the transfer
-    ///      path can emit KeeperRewardSkipped.
+    /// @dev Codex round-4..6 — low-level balanceOf that never
+    ///      reverts AND bounds returndata to 32 bytes.
     ///
-    ///      Inline assembly bounds the return data: `staticcall`
-    ///      with `retSize == 32` only copies at most 32 bytes back
-    ///      into memory. A hostile `balanceOf` returning a 100 KB
-    ///      byte array materializes only those 32 bytes, no OOG.
+    ///      Build calldata in Solidity (canonical
+    ///      `abi.encodeWithSelector(...)`) so the selector + arg
+    ///      packing is guaranteed correct regardless of compiler
+    ///      bytes4-on-stack convention. Only the staticcall + the
+    ///      return-data read use assembly, for the bounded retSize.
     function _safeBalanceOf(address token, address who)
         private
         view
         returns (uint256 bal)
     {
-        bytes4 selector = IERC20.balanceOf.selector;
+        bytes memory data = abi.encodeWithSelector(IERC20.balanceOf.selector, who);
         assembly {
-            let scratch := mload(0x40)
-            // calldata: selector (4) + who (32) = 36 bytes
-            mstore(scratch, selector)
-            mstore(add(scratch, 0x04), who)
-            // staticcall with returnSize=32 — caps the copy regardless
-            // of the callee's returndatasize().
+            // staticcall with returnSize=32 — caps the copy
+            // regardless of the callee's actual returndatasize().
+            // Write the (at most 32 bytes) return to scratch slot 0.
             let ok := staticcall(
                 gas(),
                 token,
-                scratch,
-                36,
-                scratch,  // write return into the same scratch slot
+                add(data, 32),   // skip the 32-byte length prefix
+                mload(data),     // the actual data length
+                0,
                 32
             )
-            // Accept any return ≥ 32 bytes; the staticcall's retSize=32
-            // capped the copy regardless of the callee's actual
-            // returndatasize(), so oversized griefing returns don't
-            // cost us memory.
             if and(ok, gt(returndatasize(), 31)) {
-                bal := mload(scratch)
+                bal := mload(0)
             }
+        }
+    }
+
+    /// @dev Codex round-6 P2 #3 — low-level transfer with returndata
+    ///      copy disabled (retSize=0). A hostile token returning
+    ///      oversized data can't OOG the housekeeping path. We don't
+    ///      read the return — the balance-delta in the caller is
+    ///      the authoritative success signal.
+    function _safeTransfer(address token, address to, uint256 amount)
+        private
+        returns (bool ok)
+    {
+        bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
+        assembly {
+            ok := call(
+                gas(),
+                token,
+                0,               // no ETH
+                add(data, 32),
+                mload(data),
+                0,
+                0                // returnSize=0 — don't copy returndata
+            )
         }
     }
 }
