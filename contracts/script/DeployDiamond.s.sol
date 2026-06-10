@@ -1489,7 +1489,7 @@ contract DeployDiamond is Script {
     }
 
     function _getVpfiDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](25);
+        s = new bytes4[](26);
         s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
         s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
         s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
@@ -1529,6 +1529,10 @@ contract DeployDiamond is Script {
         // EFFECTIVE_TIER activations to mirror chains without
         // requiring a tiny deposit/withdraw round-trip.
         s[24] = VPFIDiscountFacet.pokeMyTier.selector;
+        // T-087 Sub 4 round-2 P2 — public tracked-balance getter so
+        // the dapp can distinguish direct-transfer vault dust from
+        // staking-path balance.
+        s[25] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {

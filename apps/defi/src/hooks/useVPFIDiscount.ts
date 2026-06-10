@@ -295,10 +295,22 @@ export interface VPFIDiscountTier {
    *  Used by LenderDiscountCard to distinguish "balance too low
    *  for any tier" from "balance qualifies but still in the min-
    *  history window" — the latter is the only case where the tier
-   *  will activate automatically over time. */
+   *  will activate automatically over time.
+   *
+   *  T-087 Sub 4 round-2 P2 — this is derived from the RAW vault
+   *  balance, which can include direct-transfer dust the accumulator
+   *  doesn't count. The card's min-history-pending check should
+   *  use `trackedTier` (derived from the protocol-tracked balance)
+   *  to avoid falsely promising auto-activation for dust. */
   rawTier: number;
   /** User's current VPFI vault balance (18-dec). */
   vaultBal: bigint;
+  /** T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance. The
+   *  accumulator clamps to this; direct-transfer dust is EXCLUDED.
+   *  When `trackedBal == 0n` even with `vaultBal > 0n`, the user
+   *  hasn't actually staked through the proper path and `pokeMyTier`
+   *  would be a no-op. */
+  trackedBal: bigint;
   /** Discount basis points (e.g. 1000 = 10% off the normal fee). */
   discountBps: number;
 }
@@ -324,12 +336,12 @@ export function useVPFIDiscountTier(user: string | null) {
 
   const load = useCallback(async () => {
     if (!user) {
-      setData({ tier: 0, rawTier: 0, vaultBal: 0n, discountBps: 0 });
+      setData({ tier: 0, rawTier: 0, vaultBal: 0n, trackedBal: 0n, discountBps: 0 });
       return;
     }
     setLoading(true);
     try {
-      const [effective, raw] = await Promise.all([
+      const [effective, raw, trackedBal] = await Promise.all([
         publicClient.readContract({
           address: diamondAddress,
           abi: DIAMOND_ABI,
@@ -342,6 +354,12 @@ export function useVPFIDiscountTier(user: string | null) {
           functionName: 'getVPFIDiscountTier',
           args: [user as Address],
         }) as Promise<readonly [bigint, bigint, bigint]>,
+        publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getTrackedVPFIBalance',
+          args: [user as Address],
+        }) as Promise<bigint>,
       ]);
       const [effTier, effBps] = effective;
       const [rawTier, vaultBal] = raw;
@@ -349,10 +367,11 @@ export function useVPFIDiscountTier(user: string | null) {
         tier: Number(effTier),
         rawTier: Number(rawTier),
         vaultBal,
+        trackedBal,
         discountBps: Number(effBps),
       });
     } catch {
-      setData({ tier: 0, rawTier: 0, vaultBal: 0n, discountBps: 0 });
+      setData({ tier: 0, rawTier: 0, vaultBal: 0n, trackedBal: 0n, discountBps: 0 });
     } finally {
       setLoading(false);
     }

@@ -914,11 +914,14 @@ contract VPFIDiscountFacet is
      *      mirror chain.
      *
      *      Gated by `whenNotPaused` so emergency pause halts pokes
-     *      (consistent with the deposit/withdraw paths). NOT gated
-     *      by `vpfiDiscountConsent` — a user who hasn't opted in
-     *      can still poke; the broadcast will carry their current
-     *      tier (which is `(0, 0)` while consent is off, so the
-     *      mirror cache reflects "no discount" correctly).
+     *      (consistent with the deposit/withdraw paths). ALSO
+     *      gated by `vpfiDiscountConsent` (Codex round-1 P2 #2):
+     *      a consent-off user's RAW tier would otherwise leak to
+     *      mirrors via the un-gated `effectiveTierAndBps` path in
+     *      `ProtocolBroadcastFacet`, putting the mirror cache out
+     *      of sync with the consent-gated canonical fee path.
+     *      Consent-off pokes emit `TierPokeSkippedNoConsent` and
+     *      return without rolling up.
      */
     function pokeMyTier() external nonReentrant whenNotPaused {
         // Codex Sub 4 round-1 P2 #2 — respect consent. Without this
@@ -947,6 +950,24 @@ contract VPFIDiscountFacet is
     ///         off. The rollup is skipped to avoid broadcasting a
     ///         tier the user can't claim.
     event TierPokeSkippedNoConsent(address indexed user);
+
+    /**
+     * @notice T-087 Sub 4 round-2 P2 — protocol-tracked VPFI balance
+     *         for `user`. This is the balance the discount
+     *         accumulator uses, which CAN be less than the raw
+     *         `vaultVpfiBalance(user)` if the user transferred VPFI
+     *         directly into their vault instead of going through
+     *         `depositVPFIToVault`. The dapp's tier-display surface
+     *         reads this getter when deciding whether to surface
+     *         the "min-history pending" promise — using
+     *         `getVPFIDiscountTier` instead would mislabel direct-
+     *         transfer dust as "will activate automatically", when
+     *         in fact `pokeMyTier()` would not activate it because
+     *         the accumulator sees zero tracked balance.
+     */
+    function getTrackedVPFIBalance(address user) external view returns (uint256) {
+        return LibVPFIDiscount.trackedVpfiBalance(user);
+    }
 
     /**
      * @notice Current VPFI buy-side config + running totals.

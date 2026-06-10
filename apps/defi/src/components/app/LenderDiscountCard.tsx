@@ -84,7 +84,16 @@ export function LenderDiscountCard({ loanId, lender }: Props) {
   // generic "no eligible VPFI" copy so we don't promise an
   // automatic activation that may never come.
   const isCanonical = chain.isCanonicalVPFI === true;
-  const lenderQualifiesByBalance = (discountTierData?.rawTier ?? 0) > 0;
+  // T-087 Sub 4 round-2 P2 — require BOTH `rawTier > 0` AND
+  // `trackedBal > 0`. Without the tracked-balance check, direct-
+  // transfer dust (VPFI sent to the vault address bypassing
+  // `depositVPFIToVault`) would surface a non-zero rawTier but
+  // would NOT activate via `pokeMyTier()` — the accumulator
+  // ignores untracked balance. We'd promise an automatic
+  // activation that never lands.
+  const lenderQualifiesByBalance =
+    (discountTierData?.rawTier ?? 0) > 0 &&
+    (discountTierData?.trackedBal ?? 0n) > 0n;
   const showConsentEnabledNoVpfi =
     consentEnabled === true &&
     data.effectiveAvgBps === 0 &&
