@@ -1272,7 +1272,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](32);
+        s = new bytes4[](38);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1308,6 +1308,13 @@ contract DeployDiamond is Script {
         s[29] = TreasuryFacet.getBuybackTwapMaxWindowSec.selector;
         s[30] = TreasuryFacet.isBuybackValidated.selector;
         s[31] = TreasuryFacet.getBuybackConsumedSoFar.selector;
+        // T-087 Sub 3 add-on #472 — priority router config.
+        s[32] = TreasuryFacet.setRewardEmissionsTopUpTarget.selector;
+        s[33] = TreasuryFacet.getRewardEmissionsTopUpTarget.selector;
+        s[34] = TreasuryFacet.getRewardEmissionsBudget.selector;
+        s[35] = TreasuryFacet.setKeeperRewardTopUpTarget.selector;
+        s[36] = TreasuryFacet.getKeeperRewardTopUpTarget.selector;
+        s[37] = TreasuryFacet.getKeeperRewardBudget.selector;
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {

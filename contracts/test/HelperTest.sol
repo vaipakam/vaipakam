@@ -725,7 +725,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](32);
+        selectors = new bytes4[](38);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -761,6 +761,13 @@ contract HelperTest {
         selectors[29] = TreasuryFacet.getBuybackTwapMaxWindowSec.selector;
         selectors[30] = TreasuryFacet.isBuybackValidated.selector;
         selectors[31] = TreasuryFacet.getBuybackConsumedSoFar.selector;
+        // T-087 Sub 3 add-on #472 — priority router config.
+        selectors[32] = TreasuryFacet.setRewardEmissionsTopUpTarget.selector;
+        selectors[33] = TreasuryFacet.getRewardEmissionsTopUpTarget.selector;
+        selectors[34] = TreasuryFacet.getRewardEmissionsBudget.selector;
+        selectors[35] = TreasuryFacet.setKeeperRewardTopUpTarget.selector;
+        selectors[36] = TreasuryFacet.getKeeperRewardTopUpTarget.selector;
+        selectors[37] = TreasuryFacet.getKeeperRewardBudget.selector;
         return selectors;
     }
 

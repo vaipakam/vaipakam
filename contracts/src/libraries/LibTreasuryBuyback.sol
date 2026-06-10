@@ -172,6 +172,19 @@ library LibTreasuryBuyback {
     ///         magic value only for orderHashes with this flag.
     event BuybackIntentValidated(bytes32 indexed orderHash);
 
+    /// @custom:event-category state-change/buyback-priority-router
+    /// @notice T-087 Sub 3 add-on #472 — emitted per partial fill,
+    ///         after the priority cascade. `delivered` is the total
+    ///         VPFI delta; `toRewards` + `toKeepers` + `toStaking`
+    ///         sum to `delivered`. Indexer uses this to attribute
+    ///         the buyback proceeds to each destination budget.
+    event BuybackPrioritySplit(
+        uint256 delivered,
+        uint256 toRewards,
+        uint256 toKeepers,
+        uint256 toStaking
+    );
+
     // ─── Lifecycle ───────────────────────────────────────────────────
 
     /**
@@ -437,10 +450,16 @@ library LibTreasuryBuyback {
         // Release the proportional reservation.
         s.baseBuybackReserved[info.token] -= consumed;
 
-        // Credit the delivered VPFI to the staking-pool buyback
-        // budget — Sub 3 add-on #472 will later split between
-        // rewards-budget + keeper-budget + staking-pool.
-        s.stakingPoolBuybackBudget += actualVpfi;
+        // T-087 Sub 3 add-on #472 — priority router. Cascade the
+        // delivered VPFI through:
+        //   1. rewardEmissionsBudget (target-bounded; offsets
+        //      fresh-mint emissions)
+        //   2. keeperRewardBudget (target-bounded; funds keeper
+        //      operational rewards)
+        //   3. stakingPoolBuybackBudget (final overflow → stakers)
+        // Each step claims up to its (target - current) gap; the
+        // remainder cascades. Zero target disables the step.
+        _routePriority(s, actualVpfi);
 
         // Codex round-1 P1 #3 — decrement the shared aggregate
         // allowance + re-apply the cap so an in-flight commit on
@@ -551,5 +570,62 @@ library LibTreasuryBuyback {
         delete s.buybackVpfiDeliveredSoFar[orderHash];
 
         emit BuybackIntentExpired(orderHash, info.token, uint96(unconsumed));
+    }
+
+    /**
+     * @dev T-087 Sub 3 add-on #472 — priority router. Cascade
+     *      `delivered` VPFI through the destination budgets in
+     *      priority order. Each step claims up to the gap between
+     *      its target and its current budget; the remainder
+     *      cascades. A zero target effectively disables the step
+     *      (the gap evaluates to 0 in that branch).
+     *
+     *      Sum invariant: `toRewards + toKeepers + toStaking == delivered`.
+     */
+    function _routePriority(LibVaipakam.Storage storage s, uint256 delivered)
+        private
+    {
+        uint256 remaining = delivered;
+        uint256 toRewards = 0;
+        uint256 toKeepers = 0;
+
+        // ── Step 1: rewardEmissionsBudget ──────────────────────────
+        uint256 rewardsTarget = s.cfgRewardEmissionsTopUpTarget;
+        uint256 currentRewards = s.rewardEmissionsBudget;
+        if (rewardsTarget > currentRewards) {
+            uint256 rewardsGap;
+            unchecked {
+                rewardsGap = rewardsTarget - currentRewards;
+            }
+            toRewards = remaining < rewardsGap ? remaining : rewardsGap;
+            s.rewardEmissionsBudget = currentRewards + toRewards;
+            unchecked {
+                remaining -= toRewards;
+            }
+        }
+
+        // ── Step 2: keeperRewardBudget ─────────────────────────────
+        if (remaining != 0) {
+            uint256 keepersTarget = s.cfgKeeperRewardTopUpTarget;
+            uint256 currentKeepers = s.keeperRewardBudget;
+            if (keepersTarget > currentKeepers) {
+                uint256 keepersGap;
+                unchecked {
+                    keepersGap = keepersTarget - currentKeepers;
+                }
+                toKeepers = remaining < keepersGap ? remaining : keepersGap;
+                s.keeperRewardBudget = currentKeepers + toKeepers;
+                unchecked {
+                    remaining -= toKeepers;
+                }
+            }
+        }
+
+        // ── Step 3: staking pool — final overflow ──────────────────
+        if (remaining != 0) {
+            s.stakingPoolBuybackBudget += remaining;
+        }
+
+        emit BuybackPrioritySplit(delivered, toRewards, toKeepers, remaining);
     }
 }
