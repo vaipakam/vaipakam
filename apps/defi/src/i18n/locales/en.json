@@ -489,6 +489,23 @@
     "actionsNone": "none",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
   },
+  "autoLifecycleLoanCaps": {
+    "title": "Auto-lifecycle caps for this loan",
+    "body": "Pre-approve keeper-driven refinance and in-place extension on this loan. The protocol enforces these caps; outside them, the actions revert.",
+    "refinanceTitle": "Auto-refinance (borrower side)",
+    "refinanceHint": "When enabled, a keeper may refinance this loan if a matching offer fits below the rate ceiling and within the expiry cap.",
+    "extendBorrowerTitle": "Auto-extend (borrower side)",
+    "extendBorrowerHint": "Your half of the consent to extend this loan in place. The lender must also opt in for the extension to fire.",
+    "extendLenderTitle": "Auto-extend (lender side)",
+    "extendLenderHint": "Your half of the consent to extend this loan in place. The borrower must also opt in for the extension to fire.",
+    "enabled": "Enabled",
+    "minRatePct": "Min rate (%)",
+    "maxRatePct": "Max rate (%)",
+    "maxExpiryDate": "Max new expiry",
+    "actionSave": "Save",
+    "statePending": "Saving...",
+    "stateActive": "Active"
+  },
   "autoLifecycleSettings": {
     "title": "Auto-lifecycle",
     "body": "Opt in to the keeper-driven auto-lend, auto-refinance, and auto-extend surfaces. The protocol matches your standing offers and refinances or extends your loans automatically when the criteria you set are met.",
