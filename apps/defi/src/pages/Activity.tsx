@@ -46,6 +46,8 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   CollateralAdded: 'Collateral added',
   LoanSold: 'Lender position sold',
   LoanObligationTransferred: 'Borrower position transferred',
+  // T-092 Phase 3 (#503).
+  LoanExtended: 'Loan extended in place',
   LoanSettlementBreakdown: 'Settlement breakdown',
   LiquidationFallback: 'Liquidation fallback',
   LiquidationFallbackSplit: 'Fallback collateral split',
@@ -85,6 +87,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   CollateralAdded: 'info',
   LoanSold: 'info',
   LoanObligationTransferred: 'info',
+  LoanExtended: 'info',
   LoanSettlementBreakdown: 'success',
   LiquidationFallback: 'failure',
   LiquidationFallbackSplit: 'failure',
@@ -169,6 +172,7 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'LoanInitiated',
   'LoanSold',
   'LoanObligationTransferred',
+  'LoanExtended',
   'OfferAccepted',
   'CollateralAdded',
   'LenderFundsClaimed',
@@ -343,7 +347,14 @@ export default function Activity() {
       // key.
       if (
         (ev.kind === 'LoanDefaulted' ||
-          ev.kind === 'SwapToRepayIntentForceCancelled') &&
+          ev.kind === 'SwapToRepayIntentForceCancelled' ||
+          // T-092 Phase 3 (#503) — `LoanExtended` participants
+          // contain only the `caller` (the keeper, or the borrower-
+          // NFT owner). The borrower + lender wallets are NOT in
+          // event args. Fall back to loan-membership the same way
+          // LoanDefaulted does so both parties see the extension on
+          // their per-wallet activity feed.
+          ev.kind === 'LoanExtended') &&
         typeof ev.args.loanId === 'string'
       ) {
         return userLoanIds.has(ev.args.loanId);

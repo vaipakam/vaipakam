@@ -75,6 +75,10 @@ const OFFER_CANCELED_DETAILS_TOPIC0 = id(
 // captured into a parallel `events[]` stream so Activity can render a
 // per-user on-chain history without hitting the RPC again.
 const LOAN_REPAID_TOPIC0 = id('LoanRepaid(uint256,address,uint256,uint256)');
+// T-092 Phase 3 (#503) — auto-extend in place lifecycle event.
+const LOAN_EXTENDED_TOPIC0 = id(
+  'LoanExtended(uint256,address,uint256,uint256,uint64,uint64,uint256,uint256,uint256)',
+);
 const LOAN_DEFAULTED_TOPIC0 = id('LoanDefaulted(uint256,bool)');
 const LENDER_CLAIMED_TOPIC0 = id(
   'LenderFundsClaimed(uint256,address,address,uint256)',
@@ -341,6 +345,8 @@ export type ActivityEventKind =
   | 'CollateralAdded'
   | 'LoanSold'
   | 'LoanObligationTransferred'
+  // T-092 Phase 3 (#503) — auto-extend in place lifecycle event.
+  | 'LoanExtended'
   | 'LoanSettlementBreakdown'
   | 'LiquidationFallback'
   | 'LiquidationFallbackSplit'
@@ -1360,6 +1366,12 @@ async function runScan(
             SWAP_TO_REPAY_INTENT_FILLED_TOPIC0,
             SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0,
             SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0,
+            // T-092 Phase 3 (#503) Codex round-9 P2 — co-located in
+            // the secondary scan to keep the bulk topics[0] OR-list
+            // under publicnode/free-tier's silent-drop threshold.
+            // Same naming as the existing intent topics: lifecycle-
+            // scoped, not strictly SwapToRepay.
+            LOAN_EXTENDED_TOPIC0,
           ],
         ],
         fromBlock: cursor,
@@ -1585,6 +1597,38 @@ async function runScan(
           // malformed — keep defaults
         }
         addEvent('LoanRepaid', [repayer], { loanId, repayer, interestPaid, lateFeePaid });
+      } else if (topic0 === LOAN_EXTENDED_TOPIC0) {
+        // T-092 Phase 3 (#503) — `LoanExtended(uint256 indexed loanId,
+        // address indexed caller, uint256 oldRateBps, uint256 newRateBps,
+        // uint64 oldStartTime, uint64 newStartTime, uint256 oldDurationDays,
+        // uint256 newDurationDays, uint256 accruedInterest)`.
+        if (topics.length < 3) continue;
+        const loanId = BigInt(topics[1]).toString();
+        const caller = ('0x' + topics[2].slice(26)).toLowerCase();
+        let newRateBps = '0';
+        let newStartTime = '0';
+        let newDurationDays = '0';
+        let accruedInterest = '0';
+        try {
+          const decoded = decodeAbiParameters(
+            parseAbiParameters('uint256, uint256, uint64, uint64, uint256, uint256, uint256'),
+            event.data,
+          );
+          newRateBps = (decoded[1] as bigint).toString();
+          newStartTime = (decoded[3] as bigint).toString();
+          newDurationDays = (decoded[5] as bigint).toString();
+          accruedInterest = (decoded[6] as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('LoanExtended', [caller], {
+          loanId,
+          caller,
+          newRateBps,
+          newStartTime,
+          newDurationDays,
+          accruedInterest,
+        });
       } else if (topic0 === LOAN_DEFAULTED_TOPIC0) {
         if (topics.length < 2) continue;
         const loanId = BigInt(topics[1]).toString();

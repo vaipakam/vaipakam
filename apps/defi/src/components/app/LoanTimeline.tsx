@@ -61,6 +61,8 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   CollateralAdded: 'loanTimeline.collateralAdded',
   LoanSold: 'loanTimeline.lenderSold',
   LoanObligationTransferred: 'loanTimeline.borrowerTransferred',
+  // T-092 Phase 3 (#503).
+  LoanExtended: 'loanTimeline.loanExtended',
   LoanSettlementBreakdown: 'loanTimeline.settlementBreakdown',
   LiquidationFallback: 'loanTimeline.liquidationFallback',
   LiquidationFallbackSplit: 'loanTimeline.liquidationFallbackSplit',
@@ -101,6 +103,7 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   CollateralAdded: 'info',
   LoanSold: 'info',
   LoanObligationTransferred: 'info',
+  LoanExtended: 'info',
   LoanSettlementBreakdown: 'success',
   LiquidationFallback: 'warn',
   LiquidationFallbackSplit: 'warn',
@@ -152,6 +155,7 @@ function iconForKind(kind: ActivityEventKind) {
       return ArrowUpCircle;
     case 'LoanSold':
     case 'LoanObligationTransferred':
+    case 'LoanExtended':
       return Repeat;
     case 'LoanSettlementBreakdown':
       return ListChecks;

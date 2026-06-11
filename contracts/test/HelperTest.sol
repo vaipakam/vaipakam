@@ -615,7 +615,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         selectors[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         selectors[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -628,6 +628,8 @@ contract HelperTest {
         selectors[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
         selectors[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
         selectors[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
+        // T-092 Phase 3 (#503) — extendLoanInPlace executor.
+        selectors[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
     }
 
     function getDefaultedFacetSelectors()

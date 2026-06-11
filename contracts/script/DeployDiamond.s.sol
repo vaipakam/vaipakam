@@ -1218,7 +1218,7 @@ contract DeployDiamond is Script {
     ///         Setters + readers for auto-lend / auto-opt-in / per-loan
     ///         refinance caps + per-loan + per-side extend caps.
     function _getAutoLifecycleFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](13);
         s[0] = AutoLifecycleFacet.setAutoLendConsent.selector;
         s[1] = AutoLifecycleFacet.getAutoLendConsent.selector;
         s[2] = AutoLifecycleFacet.setAutoOptInOnNewLoan.selector;
@@ -1231,6 +1231,8 @@ contract DeployDiamond is Script {
         s[9] = AutoLifecycleFacet.getAutoExtendBorrowerCaps.selector;
         s[10] = AutoLifecycleFacet.setAutoExtendLenderCaps.selector;
         s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
+        // T-092 Phase 3 (#503) — extendLoanInPlace executor.
+        s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

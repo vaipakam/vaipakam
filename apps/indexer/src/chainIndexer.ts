@@ -1661,6 +1661,37 @@ async function processLoanLogs(
       );
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, oldLoanId);
+    } else if (log.eventName === 'LoanExtended') {
+      // T-092 Phase 3 (#503) — `extendLoanInPlace` mutates
+      // `loan.startTime`, `interestRateBps`, and `durationDays` in
+      // place. No NFT or status change. The event carries the
+      // post-state values for all three so we can update the row
+      // without a follow-up `getLoanDetails` read.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `UPDATE loans
+            SET interest_rate_bps = ?,
+                start_time = ?,
+                duration_days = ?,
+                updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          Number(a.newRateBps as bigint),
+          Number(a.newStartTime as bigint),
+          Number(a.newDurationDays as bigint),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          loanId,
+        )
+        .run();
+      // Codex round-3 P2 — the contract calls
+      // `LibPrepayCleanup.clearActiveListing` on extension, but that
+      // helper does NOT emit `PrepayListingCanceled`, so this branch
+      // is the only place the projection learns the listing is dead.
+      // Without this, `/loans/:id/prepayListing` would keep serving
+      // a stale listing row after the extend.
+      await _deletePrepayListing(env, chainId, loanId);
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.
@@ -2777,6 +2808,19 @@ function pluckActivityRefs(
     case 'PartialRepaid':
       return {
         actor: null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-092 Phase 3 (#503) Codex round-4 P2 — `caller` is the
+    // address that initiated the extension (the keeper, or the
+    // borrower-NFT owner extending directly). Indexed on-chain so
+    // `pluckActivityRefs` can return it as the activity actor.
+    // Without this, `?actor=...` filters would miss direct
+    // borrower self-extensions because `DecodedLog` doesn't store
+    // `msg.sender`.
+    case 'LoanExtended':
+      return {
+        actor: (args.caller as string)?.toLowerCase() ?? null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };

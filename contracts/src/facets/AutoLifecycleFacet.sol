@@ -4,8 +4,18 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title AutoLifecycleFacet
@@ -113,6 +123,90 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     error InvalidCaps();
     /// @notice Returned when the loan isn't Active.
     error LoanNotActive();
+    /// @notice T-092 Phase 3 (#503) — extendLoanInPlace called on a
+    ///         loan with a non-None periodic-interest cadence. Same
+    ///         reasoning as `RefinanceFacet`'s settle-first guard:
+    ///         the executor must NOT roll the start time forward
+    ///         while an unsettled periodic obligation exists.
+    error PeriodicCadenceMustSettleFirst();
+    /// @notice T-092 Phase 3 — extendLoanInPlace can only modify
+    ///         ERC20 loans (NFT rental extension would require NFT
+    ///         custody changes; out of scope for Phase 3).
+    error UnsupportedAssetTypeForExtend();
+    /// @notice T-092 Phase 3 — neither side has consented to auto-
+    ///         extend, or the cap was set by a non-current NFT
+    ///         holder (staleness fence). The new NFT owner must
+    ///         explicitly re-set caps before a keeper can extend.
+    error BothSideAutoExtendRequired();
+    /// @notice T-092 Phase 3 — the keeper-proposed rate falls
+    ///         outside `[lender.minRateBps, min(lender.maxRateBps,
+    ///         borrower.maxRateBps)]`.
+    error AutoExtendRateOutOfBand();
+    /// @notice T-092 Phase 3 — the new loan end time exceeds the
+    ///         intersection of `borrower.maxNewExpiry` and
+    ///         `lender.maxNewExpiry`.
+    error AutoExtendExpiryExceedsCap();
+    /// @notice T-092 Phase 3 — `newDurationDays` is zero or exceeds the
+    ///         protocol's `cfgMaxOfferDurationDays` ceiling. Mirrors
+    ///         the duration bound `OfferCreateFacet` enforces on
+    ///         fresh offers; without this an extension could bypass
+    ///         the long-duration interest-formula invariant that the
+    ///         duration cap exists to protect.
+    error AutoExtendDurationOutOfRange();
+    /// @notice T-092 Phase 3 — extend called before at least one
+    ///         full day has elapsed since `loan.startTime`. Codex
+    ///         round-1 P1 — without this guard, `accruedInterestToTime`
+    ///         (which floors to whole days) returns 0 and the post-
+    ///         extension `startTime` reset would let a borrower
+    ///         repeatedly extend just before the daily boundary to
+    ///         erase all accrual.
+    error AutoExtendTooSoonAfterStart();
+    /// @notice T-092 Phase 3 — `block.timestamp + newDurationDays *
+    ///         1 days` overflows `uint64`. Without this check the
+    ///         explicit cast would silently truncate, letting a
+    ///         keeper-proposed duration wrap past the cap.
+    error AutoExtendEndTimeOverflow();
+    /// @notice Codex round-4 P1 — loan is past its
+    ///         `oldEndTime + gracePeriod(durationDays)` window, which
+    ///         is the point at which `DefaultedFacet.triggerDefault`
+    ///         is the intended resolution. Extension at this point
+    ///         would let an authorised keeper undo a defaultable
+    ///         state and salvage a loan the lender is owed a default
+    ///         payout on.
+    error ExtensionGraceExpired();
+    /// @notice Codex round-4 P2 — proposed `newEndTime` is not
+    ///         strictly after `oldEndTime`. An "extension" that
+    ///         shortens the loan would let a compromised keeper turn
+    ///         an extend consent into an early-maturity / default
+    ///         vector.
+    error ExtensionMustExtend();
+
+    /// @notice T-092 Phase 3 — emitted on a successful in-place
+    ///         loan extension. The position NFTs are untouched; only
+    ///         the loan row's `startTime`, `interestRateBps`, and
+    ///         `durationDays` change. `accruedInterest` is the
+    ///         interest charged for the just-elapsed window (paid
+    ///         from the borrower's vault to the lender's vault, with
+    ///         the configured treasury cut applied).
+    /// @dev    `caller` is the address that initiated the extension
+    ///         (the keeper, or the borrower-NFT owner when extending
+    ///         directly). Indexed so per-keeper / per-borrower
+    ///         activity filters work without per-row args parsing.
+    ///         Added in Codex round-4 P2 — without this field the
+    ///         indexer can't denormalise an `actor` for the
+    ///         `?actor=...` activity filter on direct extensions.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanExtended(
+        uint256 indexed loanId,
+        address indexed caller,
+        uint256 oldRateBps,
+        uint256 newRateBps,
+        uint64 oldStartTime,
+        uint64 newStartTime,
+        uint256 oldDurationDays,
+        uint256 newDurationDays,
+        uint256 accruedInterest
+    );
 
     // ─── Auto-lend (per-user flag; no contract enforcement) ──────────
 
@@ -346,6 +440,387 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         caps = s.autoExtendLenderCaps[loanId];
         if (caps.enabled && !_isCurrentLenderNft(s.loans[loanId], caps.setter)) {
             caps.enabled = false;
+        }
+    }
+
+    // ─── extendLoanInPlace — T-092 Phase 3 (#503) executor ───────────
+
+    /// @notice Extend an active loan in place: roll `startTime` forward
+    ///         to `block.timestamp`, replace `interestRateBps` with
+    ///         `newRateBps`, and replace `durationDays` with
+    ///         `newDurationDays`. No NFT mint / burn — both position
+    ///         NFTs continue to represent the same loanId.
+    /// @dev    Auth: Tier-1 sanctions check on the keeper AND on both
+    ///         current NFT owners. `KEEPER_ACTION_EXTEND` bit gates
+    ///         the borrower-side call; the lender-side consent is
+    ///         carried by the lender's per-loan caps (a keeper-driven
+    ///         extend doesn't directly require a lender-side keeper
+    ///         bit since the lender's `autoExtendLenderCaps[loanId]`
+    ///         enablement IS their consent surface).
+    ///
+    ///         Fund flow: accrued interest from `loan.startTime` to
+    ///         `block.timestamp` is computed via
+    ///         {LibEntitlement.proRataInterest}, withdrawn from the
+    ///         current borrower-NFT-owner's vault (so the keeper-
+    ///         driven path doesn't require any allowance from the
+    ///         borrower's wallet), then split 99% / 1% to the lender
+    ///         vault / treasury per the standard interest accrual
+    ///         policy.
+    ///
+    ///         Keeper reward: paid via
+    ///         {LibKeeperReward.payVpfiReward} on the gas-based
+    ///         housekeeping path. No matcher-style LIF kickback —
+    ///         this isn't a "match" event, it's a lifecycle update.
+    function extendLoanInPlace(
+        uint256 loanId,
+        uint16 newRateBps,
+        uint256 newDurationDays
+    ) external nonReentrant whenNotPaused {
+        uint256 gasStart = gasleft();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        if (loan.status != LibVaipakam.LoanStatus.Active) {
+            revert LoanNotActive();
+        }
+        // ERC20 principal only — NFT rentals would need a custody
+        // change conversation; out of scope for Phase 3.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedAssetTypeForExtend();
+        }
+        // Mirrors RefinanceFacet's settle-first guard. A loan with an
+        // unsettled periodic interest cadence can't have its start
+        // time rolled forward without erasing the old lender's
+        // outstanding period claim.
+        if (loan.periodicInterestCadence !=
+            LibVaipakam.PeriodicInterestCadence.None) {
+            revert PeriodicCadenceMustSettleFirst();
+        }
+        // Codex round-1 P2 — block extension while a swap-to-repay
+        // intent has the loan's collateral committed. Mirrors the
+        // same guard used by RepayFacet / RefinanceFacet / PrecloseFacet
+        // / collateral-mutation paths.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // Codex round-1 P2 — duration must be in
+        // `[1, cfgMaxOfferDurationDays()]`. Otherwise extension could
+        // bypass the long-duration interest-formula invariant that
+        // the duration cap exists to protect (OfferCreateFacet
+        // enforces the same bound on fresh offers).
+        uint256 maxDurationDays = LibVaipakam.cfgMaxOfferDurationDays();
+        if (
+            newDurationDays == 0 ||
+            (maxDurationDays != 0 && newDurationDays > maxDurationDays)
+        ) {
+            revert AutoExtendDurationOutOfRange();
+        }
+        // Codex round-1 P1 — the executor resets `loan.startTime` to
+        // `block.timestamp` at the end. If less than a full day has
+        // elapsed since the previous start, `accruedInterestToTime`
+        // floors to zero accrued interest and a borrower could
+        // repeatedly extend just before the daily boundary to roll
+        // the obligation forward without ever paying interest. Refuse
+        // extension within the first day so accrual always lands.
+        if (block.timestamp < uint256(loan.startTime) + LibVaipakam.ONE_DAY) {
+            revert AutoExtendTooSoonAfterStart();
+        }
+
+        // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_EXTEND,
+            loan,
+            /* lenderSide */ false
+        );
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
+        address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);
+        LibVaipakam._assertNotSanctioned(borrowerNftOwner);
+        LibVaipakam._assertNotSanctioned(lenderNftOwner);
+
+        // ── Both-side cap consent + staleness fence ──────────────────
+        LibVaipakam.AutoExtendCaps storage borrowerCaps =
+            s.autoExtendBorrowerCaps[loanId];
+        LibVaipakam.AutoExtendCaps storage lenderCaps =
+            s.autoExtendLenderCaps[loanId];
+        bool borrowerFresh = borrowerCaps.setter == address(0) ||
+            borrowerCaps.setter == borrowerNftOwner;
+        bool lenderFresh = lenderCaps.setter == address(0) ||
+            lenderCaps.setter == lenderNftOwner;
+        if (
+            !borrowerCaps.enabled || !lenderCaps.enabled ||
+            !borrowerFresh || !lenderFresh
+        ) {
+            revert BothSideAutoExtendRequired();
+        }
+
+        // ── Cap intersection check ───────────────────────────────────
+        // Rate must satisfy `lender.minRateBps <= newRate <=
+        // min(lender.maxRateBps, borrower.maxRateBps)`. The lender's
+        // floor protects them from a keeper accepting a 0% extension;
+        // the borrower's ceiling protects them from a keeper
+        // accepting an above-market rate. The intersection guarantees
+        // both halves of consent bind.
+        uint16 ceiling = lenderCaps.maxRateBps < borrowerCaps.maxRateBps
+            ? lenderCaps.maxRateBps
+            : borrowerCaps.maxRateBps;
+        if (newRateBps < lenderCaps.minRateBps || newRateBps > ceiling) {
+            revert AutoExtendRateOutOfBand();
+        }
+        // Codex round-1 P1 — compare expiry as uint256 BEFORE casting
+        // down to uint64. Otherwise an arithmetically-overflowing
+        // `block.timestamp + newDurationDays * 1 days` would silently
+        // wrap past the cap.
+        uint256 newEndTimeUint = block.timestamp + newDurationDays * 1 days;
+        if (newEndTimeUint > type(uint64).max) {
+            revert AutoExtendEndTimeOverflow();
+        }
+        uint64 expiryCap = lenderCaps.maxNewExpiry < borrowerCaps.maxNewExpiry
+            ? lenderCaps.maxNewExpiry
+            : borrowerCaps.maxNewExpiry;
+        if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
+            revert AutoExtendExpiryExceedsCap();
+        }
+        // Codex round-4 P2 — refuse to SHORTEN the loan. Without
+        // this, a compromised keeper could pass `newDurationDays = 1`
+        // and turn the borrower's auto-extend consent into an early-
+        // maturity / default vector. An "extension" must strictly
+        // extend the loan's end time.
+        uint256 oldEndTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+        if (newEndTimeUint <= oldEndTime) revert ExtensionMustExtend();
+        // Codex round-4 P1 — refuse extension once the loan is past
+        // its default grace window. At that point
+        // `DefaultedFacet.triggerDefault` is the lender's intended
+        // resolution and extension would let an authorised keeper
+        // salvage a defaultable state. Mirrors the late-fee check
+        // below but using the grace-aware threshold.
+        if (
+            block.timestamp >
+            oldEndTime + LibVaipakam.gracePeriod(loan.durationDays)
+        ) {
+            revert ExtensionGraceExpired();
+        }
+
+        // ── Accrued-interest math + treasury / lender split ──────────
+        // Codex round-1 P1 — honor `loan.useFullTermInterest`. When
+        // the loan was contracted with the full-term coupon, that's
+        // what the lender is owed even at mid-loan settlement.
+        // Otherwise (the common pro-rata case) Codex round-2 P2 needs
+        // SECONDS-based accrual rather than the days-flooring used by
+        // `LibEntitlement.accruedInterestToTime`: extension at
+        // `startTime + 1d + 23h` should pay the full 1d23h, not just 1d
+        // (otherwise a borrower-controlled keeper could repeatedly
+        // extend just before the daily boundary and erase ~23h of
+        // accrual on every cycle).
+        uint256 accruedInterest;
+        if (loan.useFullTermInterest) {
+            accruedInterest = LibEntitlement.fullTermInterest(
+                loan.principal,
+                loan.interestRateBps,
+                loan.durationDays
+            );
+        } else {
+            uint256 elapsedSeconds = block.timestamp - uint256(loan.startTime);
+            accruedInterest =
+                (loan.principal * loan.interestRateBps * elapsedSeconds) /
+                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        }
+        // Codex round-2 P1 — if the loan is past its end time, a
+        // borrower extending is morally a late-rescue. The late fee
+        // that `RepayFacet` charges via `LibVaipakam.calculateLateFee`
+        // must apply here too — otherwise a keeper-driven extension
+        // becomes a way to escape both the late fee AND the default
+        // path. Late fees go 100% to the lender (no treasury cut),
+        // matching RepayFacet. (`oldEndTime` is shadowed-removed
+        // here — the same value computed at the cap-intersection
+        // block above.)
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, oldEndTime);
+        if (accruedInterest + lateFee > 0) {
+            // Codex round-1 P2 — use the protocol's
+            // `cfgTreasuryFeeBps` (resolved via `splitTreasury`)
+            // rather than the hardcoded `TREASURY_FEE_BPS`. Codex
+            // round-6 P2 — split `interest + lateFee` so late fees
+            // participate in the treasury cut, matching
+            // `LibSettlement.computeRepayment` (`treasuryShare +
+            // lenderShare == interest + lateFee`).
+            uint256 totalInterestLike = accruedInterest + lateFee;
+            (uint256 treasuryShare, uint256 lenderShare) =
+                LibEntitlement.splitTreasury(totalInterestLike);
+            // Codex round-4 P2 — if the original lender has VPFI yield-
+            // fee consent + sufficient vault VPFI, pay the treasury cut
+            // in VPFI from the lender's vault and route 100% of the
+            // interest+lateFee to the lender in the lending asset.
+            // Mirrors RepayFacet / PrecloseFacet / RefinanceFacet.
+            // Codex round-5 P1 — guard on `s.vpfiDiscountConsent[lender]`.
+            // Codex round-6 P1 — also guard on `lenderNftOwner ==
+            // loan.lender`. `tryApplyYieldFee` debits VPFI from
+            // `loan.lender`'s vault internally; if the NFT has been
+            // transferred to a new holder, the original lender would
+            // be paying treasury for interest the new owner is
+            // receiving — a mis-aligned charge. When the NFT changed
+            // hands, fall back to the standard 1% split in the
+            // lending asset (no VPFI debit).
+            if (
+                treasuryShare > 0 &&
+                s.vpfiDiscountConsent[loan.lender] &&
+                lenderNftOwner == loan.lender
+            ) {
+                (bool yieldApplied, ) =
+                    LibVPFIDiscount.tryApplyYieldFee(loan, totalInterestLike);
+                if (yieldApplied) {
+                    lenderShare = totalInterestLike;
+                    treasuryShare = 0;
+                }
+            }
+            _routeInterest(
+                loan.principalAsset,
+                borrowerNftOwner,
+                lenderNftOwner,
+                lenderShare,
+                treasuryShare
+            );
+        }
+        // Codex round-2 P1 — clear any active prepay-collateral
+        // Seaport listing BEFORE the loan row is mutated. Mirrors
+        // RefinanceFacet's `LibPrepayCleanup.clearActiveListing` call
+        // pattern. Without this, an old listing could still be filled
+        // at the post-extension state where the executor's zone
+        // would re-pay an already-settled interest leg.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
+
+        // ── Update the loan row IN PLACE ─────────────────────────────
+        uint256 oldRateBps = loan.interestRateBps;
+        uint64 oldStartTime = loan.startTime;
+        uint256 oldDurationDays = loan.durationDays;
+        // Codex round-6 P2 — `LibInteractionRewards.registerLoan`
+        // snapshots `(interestRateBps, durationDays)` into the per-
+        // day reward accumulators at loan-init. Mutating them
+        // without closing + re-registering would leave the old
+        // accrual schedule running on a loan with new terms (wrong
+        // per-day numeraire, wrong end day). Settle the old entry
+        // as-of today and reopen with the new terms.
+        //
+        // Codex round-7 P2 — `borrowerClean` is true when extension
+        // happens IN-TERM (before the original end time). In that
+        // case the borrower paid all accrued interest as part of
+        // this extension and keeps their accrued reward. After
+        // `oldEndTime` (late but in-grace), `borrowerClean = false`
+        // forfeits the borrower's accrued reward — matching the
+        // `LibInteractionRewards.closeLoan` semantic for terminal
+        // late-cure paths.
+        //
+        // Codex round-7 P2 — re-register against the CURRENT NFT
+        // owners (borrowerNftOwner / lenderNftOwner), not the
+        // original `loan.lender` / `loan.borrower`. After an NFT
+        // transfer the new holders are the parties earning the
+        // post-extension reward accrual.
+        bool inTermExtension = block.timestamp <= oldEndTime;
+        LibInteractionRewards.closeLoan(
+            loanId,
+            /* borrowerClean */ inTermExtension,
+            /* lenderForfeit */ false
+        );
+        loan.startTime = uint64(block.timestamp);
+        loan.interestRateBps = newRateBps;
+        loan.durationDays = newDurationDays;
+        // Codex round-8 P2 — only re-register when the extension is
+        // in-term. After `oldEndTime`, the borrower side is forfeited
+        // and `loanBorrowerEntryId[loanId]` must stay pointed at the
+        // closed entry so `sweepForfeitedInteractionRewards` can
+        // route the abandoned rewards to treasury. `registerLoan`
+        // overwrites both pointers — calling it on a late-extension
+        // loan would break the sweep. Lender side is symmetric for
+        // consistency (the lender wasn't forfeited, but skipping
+        // the re-register simply means no extension-period rewards
+        // for either side once the loan was in late territory — a
+        // conservative outcome).
+        if (inTermExtension) {
+            LibInteractionRewards.registerLoan(
+                loanId,
+                lenderNftOwner,
+                borrowerNftOwner,
+                loan.principalAsset,
+                loan.principal,
+                uint256(newRateBps),
+                newDurationDays
+            );
+        }
+
+        emit LoanExtended(
+            loanId,
+            msg.sender,
+            oldRateBps,
+            uint256(newRateBps),
+            oldStartTime,
+            uint64(block.timestamp),
+            oldDurationDays,
+            newDurationDays,
+            accruedInterest
+        );
+
+        // ── Keeper reward ────────────────────────────────────────────
+        // Gas-based housekeeping reward — sanctions soft-skip applies
+        // via the #494 audit's `LibKeeperReward.payVpfiReward` gate.
+        // Never reverts; if the keeper is sanctioned the loan extends
+        // but no payout lands.
+        //
+        // Codex round-3 P2 — skip the payout when the caller IS the
+        // borrower-NFT owner extending their own loan. The keeper
+        // reward exists to compensate THIRD-PARTY housekeeping; a
+        // self-extension isn't a keeper service and would otherwise
+        // let a borrower drain the 2x gas multiplier in VPFI on every
+        // self-driven extend.
+        if (msg.sender != borrowerNftOwner) {
+            LibKeeperReward.payVpfiReward(
+                msg.sender,
+                keccak256("extendLoanInPlace"),
+                gasStart - gasleft()
+            );
+        }
+    }
+
+    /// @dev Moves accrued interest from the borrower-NFT owner's vault
+    ///      to the lender-NFT owner's vault + treasury. Factored out
+    ///      so {extendLoanInPlace} stays under viaIR's stack budget.
+    function _routeInterest(
+        address principalAsset,
+        address borrowerNftOwner,
+        address lenderNftOwner,
+        uint256 lenderShare,
+        uint256 treasuryShare
+    ) internal {
+        // 1. Withdraw the full accrued interest from the borrower's
+        //    vault to the diamond itself.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                borrowerNftOwner,
+                principalAsset,
+                address(this),
+                lenderShare + treasuryShare
+            ),
+            IVaipakamErrors.VaultWithdrawFailed.selector
+        );
+        // 2. Forward treasury share + record accrual.
+        if (treasuryShare > 0) {
+            SafeERC20.safeTransfer(
+                IERC20(principalAsset),
+                LibFacet.getTreasury(),
+                treasuryShare
+            );
+            LibFacet.recordTreasuryAccrual(principalAsset, treasuryShare);
+        }
+        // 3. Push lender share into the lender's vault.
+        address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
+        if (lenderShare > 0) {
+            SafeERC20.safeTransfer(
+                IERC20(principalAsset),
+                lenderVault,
+                lenderShare
+            );
+            LibVaipakam.recordVaultDeposit(
+                lenderNftOwner,
+                principalAsset,
+                lenderShare
+            );
         }
     }
 
