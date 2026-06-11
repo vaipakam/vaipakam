@@ -60,6 +60,7 @@ import {
   AutoLifecycleFacetABI,
   LoanFacetABI,
   MetricsFacetABI,
+  OfferCancelFacetABI,
 } from '@vaipakam/contracts/abis';
 import { erc721Abi } from 'viem';
 import type { ChainConfig, Env } from './env';
@@ -74,6 +75,10 @@ import { sendPush } from './push';
 
 const METRICS_ABI: Abi = MetricsFacetABI as Abi;
 const AUTO_LIFECYCLE_ABI: Abi = AutoLifecycleFacetABI as Abi;
+/** T-092 #547 — `getOffer` (offer hydration) lives on
+ *  OfferCancelFacet post the EIP-170 facet split. Used to read the
+ *  active offer book for the viable-counterparty pre-check. */
+const OFFER_CANCEL_ABI: Abi = OfferCancelFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 
 const SCAN_PAGE = 200n;
@@ -101,6 +106,25 @@ interface LoanDetails {
   durationDays: bigint;
   principalAsset: Address;
   principal: bigint;
+  collateralAsset: Address;
+  assetType: number;
+  collateralAssetType: number;
+}
+
+/** T-092 #547 — minimal Offer shape for the viable-counterparty
+ *  pre-check. Only the fields needed for matching against a loan's
+ *  refinance shape are listed; the full Offer struct has 20+ fields
+ *  but the matcher's `previewMatch` does the deeper validation and
+ *  we want to keep this scan cheap. */
+interface OfferRow {
+  offerType: number; // 0 = Lender, 1 = Borrower
+  accepted: boolean;
+  lendingAsset: Address;
+  collateralAsset: Address;
+  assetType: number;
+  collateralAssetType: number;
+  amount: bigint;
+  amountMax: bigint;
 }
 
 export async function runPreGraceWatcher(env: Env): Promise<void> {
@@ -172,6 +196,19 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
     subs.map((s) => [s.wallet.toLowerCase(), s]),
   );
 
+  // T-092 #547 — pull the active offer book once per tick + filter
+  // to lender offers. The viable-counterparty pre-check uses this
+  // cache to skip the pre-grace warning when at least one in-book
+  // lender offer would match the loan's refinance shape. Cuts
+  // false-positive notifications without paying for `previewMatch`
+  // simulation per loan. Soft-capped via `OFFER_SCAN_CAP` so a
+  // chain with a runaway order book can't blow the per-tick budget.
+  const lenderOffers = await _scanLenderOfferBook(
+    publicClient,
+    diamond,
+    chain.id,
+  );
+
   const nowSec = Math.floor(Date.now() / 1000);
 
   for (const loanIdBig of loanIds) {
@@ -183,6 +220,7 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
         diamond,
         loanIdBig,
         subsByWallet,
+        lenderOffers,
         nowSec,
       );
     } catch (err) {
@@ -193,6 +231,132 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
   }
 }
 
+/** T-092 #547 — soft cap on offers hydrated per tick per chain.
+ *  Beyond this the viable-counterparty pre-check is disabled and
+ *  all loans get the pre-grace warning (conservative-safe — we
+ *  over-warn rather than miss). */
+const OFFER_SCAN_CAP = 500;
+
+/**
+ * Scan the active offer book and return the lender offers (the
+ * candidate counterparties for a refinance-tagged borrower offer).
+ * Soft-capped at OFFER_SCAN_CAP; returns null beyond the cap so
+ * callers know to fall back to unconditional warning.
+ */
+async function _scanLenderOfferBook(
+  publicClient: PublicClient,
+  diamond: Address,
+  chainId: number,
+): Promise<OfferRow[] | null> {
+  let total: bigint;
+  try {
+    total = (await publicClient.readContract({
+      address: diamond,
+      abi: METRICS_ABI,
+      functionName: 'getActiveOffersCount',
+    })) as bigint;
+  } catch (err) {
+    console.warn(
+      `[keeper] preGraceWatcher offer-count failed chain=${chainId}: ${String(err).slice(0, 200)}`,
+    );
+    return null;
+  }
+  if (total === 0n) return [];
+  if (total > BigInt(OFFER_SCAN_CAP)) {
+    console.log(
+      `[keeper] preGraceWatcher offer book too large for pre-check chain=${chainId} count=${total} cap=${OFFER_SCAN_CAP}`,
+    );
+    return null;
+  }
+
+  const offerIds: bigint[] = [];
+  for (let cursor = 0n; cursor < total; cursor += SCAN_PAGE) {
+    const limit =
+      cursor + SCAN_PAGE > total ? total - cursor : SCAN_PAGE;
+    try {
+      const page = (await publicClient.readContract({
+        address: diamond,
+        abi: METRICS_ABI,
+        functionName: 'getActiveOffersPaginated',
+        args: [cursor, limit],
+      })) as bigint[];
+      offerIds.push(...page);
+    } catch (err) {
+      console.warn(
+        `[keeper] preGraceWatcher offer-page failed chain=${chainId}: ${String(err).slice(0, 200)}`,
+      );
+      return null;
+    }
+  }
+
+  const lenderOffers: OfferRow[] = [];
+  for (const offerIdBig of offerIds) {
+    try {
+      const o = (await publicClient.readContract({
+        address: diamond,
+        abi: OFFER_CANCEL_ABI,
+        functionName: 'getOffer',
+        args: [offerIdBig],
+      })) as Record<string, unknown>;
+      // Only lender offers that haven't already accepted are
+      // candidates for matching a refinance-tagged borrower offer.
+      if (
+        Number(o.offerType) === 0 /* Lender */ &&
+        !o.accepted
+      ) {
+        lenderOffers.push({
+          offerType: Number(o.offerType),
+          accepted: Boolean(o.accepted),
+          lendingAsset: o.lendingAsset as Address,
+          collateralAsset: o.collateralAsset as Address,
+          assetType: Number(o.assetType),
+          collateralAssetType: Number(o.collateralAssetType),
+          amount: o.amount as bigint,
+          amountMax: o.amountMax as bigint,
+        });
+      }
+    } catch (err) {
+      // Hydration of a single offer failing isn't fatal; continue
+      // with the rest.
+      console.log(
+        `[keeper] preGraceWatcher offer-hydrate skipped offerId=${offerIdBig}: ${String(err).slice(0, 120)}`,
+      );
+    }
+  }
+  return lenderOffers;
+}
+
+/**
+ * Heuristic compatibility check: at least one in-book lender offer
+ * matches the loan's lending + collateral asset pair + can cover
+ * the loan's principal. Doesn't simulate previewMatch (would cost
+ * gas-equivalent eth_calls per loan); the matcher pass itself
+ * does the deeper validation when it actually tries to match.
+ * False negatives possible (HF may fail, caps may reject) — the
+ * borrower still gets the warning in those cases.
+ */
+function _hasViableLenderForLoan(
+  loan: LoanDetails,
+  lenderOffers: OfferRow[],
+): boolean {
+  for (const o of lenderOffers) {
+    if (o.assetType !== loan.assetType) continue;
+    if (o.collateralAssetType !== loan.collateralAssetType) continue;
+    if (
+      o.lendingAsset.toLowerCase() !== loan.principalAsset.toLowerCase()
+    )
+      continue;
+    if (
+      o.collateralAsset.toLowerCase() !== loan.collateralAsset.toLowerCase()
+    )
+      continue;
+    const ceiling = o.amountMax > 0n ? o.amountMax : o.amount;
+    if (ceiling < loan.principal) continue;
+    return true;
+  }
+  return false;
+}
+
 async function checkLoan(
   env: Env,
   chain: ChainConfig,
@@ -200,6 +364,7 @@ async function checkLoan(
   diamond: Address,
   loanIdBig: bigint,
   subsByWallet: Map<string, { wallet: string; tg_chat_id: string | null; push_channel: string | null; locale: string }>,
+  lenderOffers: OfferRow[] | null,
   nowSec: number,
 ): Promise<void> {
   // Auto-refinance caps — skip when not enabled (no opt-in → no
@@ -225,6 +390,16 @@ async function checkLoan(
   const endTime = Number(loan.startTime + loan.durationDays * 86400n);
   if (endTime <= nowSec) return; // already past natural end
   if (endTime - nowSec > PRE_GRACE_WINDOW_SECONDS) return; // too early
+
+  // T-092 #547 — viable-counterparty pre-check. When the offer book
+  // scan succeeded (lenderOffers !== null) AND a compatible lender
+  // offer exists for this loan, skip the warning — the matcher will
+  // likely fire on the next tick. When the scan failed or the book
+  // exceeded OFFER_SCAN_CAP, we fall back to unconditional warning
+  // (lenderOffers === null) — conservative-safe.
+  if (lenderOffers !== null && _hasViableLenderForLoan(loan, lenderOffers)) {
+    return;
+  }
 
   // Resolve borrower-NFT owner. The Diamond IS the ERC721 collection
   // for position NFTs.
