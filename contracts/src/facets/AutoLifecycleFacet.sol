@@ -645,7 +645,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // RepayFacet / PrecloseFacet / RefinanceFacet pattern.
             // `tryApplyYieldFee` is a silent fallback — if the lender
             // doesn't have enough VPFI, the standard 1% split applies.
-            if (treasuryShare > 0) {
+            // Codex round-5 P1 — guard on `s.vpfiDiscountConsent[lender]`
+            // exactly like the sibling settlement paths do.
+            // `tryApplyYieldFee` itself does NOT check consent — it
+            // would silently withdraw VPFI from any lender with a
+            // quoteable tier whose vault has enough VPFI, even if
+            // they never consented.
+            if (treasuryShare > 0 && s.vpfiDiscountConsent[loan.lender]) {
                 (bool yieldApplied, ) =
                     LibVPFIDiscount.tryApplyYieldFee(loan, accruedInterest);
                 if (yieldApplied) {
