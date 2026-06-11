@@ -45,7 +45,8 @@ export type KnobCategory =
   | 'rangeOrders'
   | 'periodicInterest'
   | 'kyc'
-  | 'matching';
+  | 'matching'
+  | 'autoLifecycle';
 
 export type KnobUnit =
   | 'bps' // basis points (1bp = 0.01%) — display as percent
@@ -806,6 +807,90 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     infoAnchor: 'periodic-interest-payment-pre-notify',
     hasNumericRange: true,
   },
+
+  // ─── T-092 (#508) — auto-lifecycle admin kill switches ──────────
+  // All three default `false` on a fresh deploy. Once governance
+  // flips them on, the matching keeper-driven path is reachable;
+  // flipping back to `false` is the break-glass without disabling
+  // the rest of the diamond.
+  {
+    id: 'cfgAutoLendEnabled',
+    label: 'Auto-lend kill switch',
+    short:
+      'Master flag. When false, AutoLifecycleFacet rejects new auto-lend opt-ins (existing consents stay, can be revoked).',
+    category: 'autoLifecycle',
+    unit: 'bool',
+    hardMin: '0',
+    hardMax: '1',
+    safeMin: '0',
+    safeMax: '1',
+    midMin: '0',
+    midMax: '1',
+    getter: {
+      facet: 'AdminFacet',
+      fn: 'getAutoLendEnabled',
+      returns: 'bool',
+    },
+    setter: {
+      facet: 'AdminFacet',
+      fn: 'setAutoLendEnabled',
+      args: [{ name: 'enabled', type: 'bool' }],
+    },
+    infoAnchor: 't-092-auto-lifecycle-kill-switches',
+    hasNumericRange: false,
+  },
+  {
+    id: 'cfgAutoRefinanceEnabled',
+    label: 'Auto-refinance kill switch',
+    short:
+      'Master flag. When false, the keeper-driven RefinanceFacet path reverts; borrower-direct refinance still works.',
+    category: 'autoLifecycle',
+    unit: 'bool',
+    hardMin: '0',
+    hardMax: '1',
+    safeMin: '0',
+    safeMax: '1',
+    midMin: '0',
+    midMax: '1',
+    getter: {
+      facet: 'AdminFacet',
+      fn: 'getAutoRefinanceEnabled',
+      returns: 'bool',
+    },
+    setter: {
+      facet: 'AdminFacet',
+      fn: 'setAutoRefinanceEnabled',
+      args: [{ name: 'enabled', type: 'bool' }],
+    },
+    infoAnchor: 't-092-auto-lifecycle-kill-switches',
+    hasNumericRange: false,
+  },
+  {
+    id: 'cfgAutoExtendEnabled',
+    label: 'Auto-extend kill switch',
+    short:
+      'Master flag. When false, both keeper-driven AND borrower-direct extendLoanInPlace calls revert.',
+    category: 'autoLifecycle',
+    unit: 'bool',
+    hardMin: '0',
+    hardMax: '1',
+    safeMin: '0',
+    safeMax: '1',
+    midMin: '0',
+    midMax: '1',
+    getter: {
+      facet: 'AdminFacet',
+      fn: 'getAutoExtendEnabled',
+      returns: 'bool',
+    },
+    setter: {
+      facet: 'AdminFacet',
+      fn: 'setAutoExtendEnabled',
+      args: [{ name: 'enabled', type: 'bool' }],
+    },
+    infoAnchor: 't-092-auto-lifecycle-kill-switches',
+    hasNumericRange: false,
+  },
 ];
 
 /** Order in which categories appear on the dashboard. */
@@ -818,6 +903,10 @@ export const KNOB_CATEGORY_ORDER: KnobCategory[] = [
   'rangeOrders',
   'periodicInterest',
   'matching',
+  // T-092 (#508) — admin kill switches for the auto-lifecycle
+  // surface. Sits near the bottom because it's a break-glass
+  // section, not a routinely-tuned set.
+  'autoLifecycle',
   'kyc',
 ];
 
@@ -832,6 +921,7 @@ export const KNOB_CATEGORY_LABELS: Record<KnobCategory, string> = {
   rangeOrders: 'Range Orders Flags',
   periodicInterest: 'Periodic Interest Payment',
   matching: 'Order Matching',
+  autoLifecycle: 'Auto-Lifecycle Kill Switches',
   kyc: 'KYC / Sanctions',
 };
 
