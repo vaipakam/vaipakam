@@ -92,6 +92,14 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @custom:event-category informational/config
     event KYCEnforcementSet(bool enforced);
 
+    /// @notice T-092 (#508) — auto-lifecycle admin kill switches.
+    /// @custom:event-category informational/config
+    event AutoLendEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
+    event AutoRefinanceEnabledSet(bool enabled);
+    /// @custom:event-category informational/config
+    event AutoExtendEnabledSet(bool enabled);
+
     /// @notice Emitted when an individual asset is paused. Creation paths
     ///         touching this asset will revert `AssetPaused`; exit paths
     ///         (repay / liquidate / claim / withdraw) remain callable.
@@ -421,6 +429,68 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.kycEnforcementEnabled = enforced;
         emit KYCEnforcementSet(enforced);
+    }
+
+    /// ─── T-092 (#508) — auto-lifecycle admin kill switches ──────────
+    /// All three default `false` on a fresh deploy. Setters live on
+    /// AdminFacet (not ConfigFacet) because ConfigFacet's runtime
+    /// bytecode is already near the EIP-170 24,576-byte ceiling.
+
+    /// @notice Toggle whether users may opt INTO auto-lend
+    ///         (`AutoLifecycleFacet.setAutoLendConsent(true)`).
+    ///         When `false`, attempting to enable consent reverts;
+    ///         already-consented users stay consented but the dapp
+    ///         gates the auto-post behaviour on this flag too.
+    function setAutoLendEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.cfgAutoLendEnabled = enabled;
+        emit AutoLendEnabledSet(enabled);
+    }
+
+    /// @notice Toggle whether the keeper-driven path of
+    ///         `RefinanceFacet.refinanceLoan` is open. When `false`,
+    ///         keeper invocations revert; borrower-NFT-owner direct
+    ///         calls still succeed (the borrower acts in their own
+    ///         interest, no kill-switch protection needed).
+    function setAutoRefinanceEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.cfgAutoRefinanceEnabled = enabled;
+        emit AutoRefinanceEnabledSet(enabled);
+    }
+
+    /// @notice Toggle the whole `AutoLifecycleFacet.extendLoanInPlace`
+    ///         entry point. When `false`, both keeper-driven AND
+    ///         borrower-direct extension calls revert — the executor
+    ///         IS the only entry point, so the kill switch covers
+    ///         both invocation modes.
+    function setAutoExtendEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.cfgAutoExtendEnabled = enabled;
+        emit AutoExtendEnabledSet(enabled);
+    }
+
+    /// @notice Codex round-1 P2 — getter trio so the dapp + keeper
+    ///         bots can decide whether to surface / submit the
+    ///         relevant auto-lifecycle action. Matches the
+    ///         `getPartialFillEnabled` precedent (write-only flags
+    ///         would force consumers to simulate failed sends to
+    ///         discover state).
+    function getAutoLendEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoLendEnabled;
+    }
+
+    function getAutoRefinanceEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoRefinanceEnabled;
+    }
+
+    function getAutoExtendEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoExtendEnabled;
     }
 
     /// @notice Returns whether KYC enforcement is currently active.

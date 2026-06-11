@@ -1046,6 +1046,22 @@ library LibVaipakam {
         // 25%) at the `ConfigFacet.setMaxSwapToRepaySlippageBps`
         // setter — same ceiling that guards the liquidation knob.
         uint16 maxSwapToRepaySlippageBps; // 0 ⇒ default
+
+        // ── T-092 (#508) — auto-lifecycle admin kill switches ─────────
+        // Three break-glass toggles for the auto-lend / auto-
+        // refinance / auto-extend surfaces. All default `false` on
+        // a fresh deploy (per-user consent flags + the feature
+        // setters still work, but the actual auto-paths revert).
+        // Admin flips to `true` post-deploy after the testnet bake.
+        // Mirrors the `rangeAmountEnabled` / `partialFillEnabled` /
+        // `cfgKeeperRewardEnabled` pattern: feature ships off,
+        // governance turns on, governance can break-glass off
+        // again if a bug surfaces. Setters live on `ConfigFacet`
+        // (admin-only; migrates to `TimelockController` on the
+        // governance handover path).
+        bool cfgAutoLendEnabled;
+        bool cfgAutoRefinanceEnabled;
+        bool cfgAutoExtendEnabled;
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.

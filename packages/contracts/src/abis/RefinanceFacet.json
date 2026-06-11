@@ -79,6 +79,11 @@
   },
   {
     "type": "error",
+    "name": "AutoRefinanceDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
   },

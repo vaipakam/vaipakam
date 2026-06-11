@@ -86,6 +86,7 @@ contract ConfigFacet is DiamondAccessControl {
     /// Issue #164 — borrower-side collateral range master flag.
     /// @custom:event-category informational/config
     event RangeCollateralEnabledSet(bool enabled);
+    // T-092 (#508) — kill-switch events declared on AdminFacet.
 
     // ── T-044 — admin-configurable loan-default grace schedule ──────────
     /// @custom:event-category informational/config
@@ -1097,6 +1098,11 @@ contract ConfigFacet is DiamondAccessControl {
         LibVaipakam.storageSlot().protocolCfg.partialFillEnabled = enabled;
         emit PartialFillEnabledSet(enabled);
     }
+
+    // T-092 (#508) — auto-lifecycle admin kill switches live on
+    // AdminFacet (not here) so ConfigFacet stays under EIP-170.
+    // See AdminFacet.setAutoLendEnabled / setAutoRefinanceEnabled /
+    // setAutoExtendEnabled.
 
     /// @notice Issue #164 — toggle whether borrower offers may carry a
     ///         collateral range (`collateralAmountMax > collateralAmount`).

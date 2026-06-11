@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
@@ -18,6 +19,13 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 contract AutoLifecycleFacetTest is SetupTest {
     function setUp() public {
         setupHelper();
+        // T-092 (#508) — kill switches default false. Enable for
+        // every test so the existing Phase 1 / Phase 3 happy paths
+        // pass without changes. Per-test overrides exercise the
+        // disabled paths.
+        AdminFacet(address(diamond)).setAutoLendEnabled(true);
+        AdminFacet(address(diamond)).setAutoRefinanceEnabled(true);
+        AdminFacet(address(diamond)).setAutoExtendEnabled(true);
     }
 
     function _f() internal view returns (AutoLifecycleFacet) {
@@ -140,6 +148,34 @@ contract AutoLifecycleFacetTest is SetupTest {
     // SelectorCoverageTest proving the selector is cut into the
     // diamond. The full behavioural test lands alongside the
     // Phase 2 redesign integration test.
+
+    // ─── T-092 #508 — admin kill switches ─────────────────────────────
+
+    function test_AutoLendKillSwitch_BlocksEnable() public {
+        // Disable + try to opt in → reverts.
+        AdminFacet(address(diamond)).setAutoLendEnabled(false);
+        address user = makeAddr("kskUser");
+        vm.expectRevert(AutoLifecycleFacet.AutoLendDisabled.selector);
+        vm.prank(user);
+        _f().setAutoLendConsent(true);
+    }
+
+    function test_AutoLendKillSwitch_AllowsRevocation() public {
+        // Enable, consent, then disable feature, then revoke → succeeds.
+        address user = makeAddr("kskRevoke");
+        vm.prank(user);
+        _f().setAutoLendConsent(true);
+        AdminFacet(address(diamond)).setAutoLendEnabled(false);
+        vm.prank(user);
+        _f().setAutoLendConsent(false);
+        assertFalse(_f().getAutoLendConsent(user));
+    }
+
+    function test_AutoExtendKillSwitch_BlocksExecutor() public {
+        AdminFacet(address(diamond)).setAutoExtendEnabled(false);
+        vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);
+        _f().extendLoanInPlace(1, 500, 30);
+    }
 
     function test_ExtendLoanInPlace_ErrorSelectorsExist() public {
         // Compile-time guardrail — these error selectors are part of
