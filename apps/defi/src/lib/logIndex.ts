@@ -1245,7 +1245,6 @@ async function runScan(
             OFFER_ACCEPTED_TOPIC0,
             OFFER_CANCELED_TOPIC0,
             LOAN_REPAID_TOPIC0,
-            LOAN_EXTENDED_TOPIC0,
             LOAN_DEFAULTED_TOPIC0,
             LENDER_CLAIMED_TOPIC0,
             BORROWER_CLAIMED_TOPIC0,
@@ -1367,6 +1366,12 @@ async function runScan(
             SWAP_TO_REPAY_INTENT_FILLED_TOPIC0,
             SWAP_TO_REPAY_INTENT_CANCELLED_TOPIC0,
             SWAP_TO_REPAY_INTENT_FORCE_CANCELLED_TOPIC0,
+            // T-092 Phase 3 (#503) Codex round-9 P2 — co-located in
+            // the secondary scan to keep the bulk topics[0] OR-list
+            // under publicnode/free-tier's silent-drop threshold.
+            // Same naming as the existing intent topics: lifecycle-
+            // scoped, not strictly SwapToRepay.
+            LOAN_EXTENDED_TOPIC0,
           ],
         ],
         fromBlock: cursor,
