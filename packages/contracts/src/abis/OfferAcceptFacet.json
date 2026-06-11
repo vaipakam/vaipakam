@@ -243,6 +243,11 @@
   },
   {
     "type": "error",
+    "name": "AtomicRefinanceFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BaseChainIdNotSet",
     "inputs": []
   },

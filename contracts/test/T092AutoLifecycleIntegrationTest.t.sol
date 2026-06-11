@@ -484,4 +484,23 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(params);
     }
+
+    function test_T092H_AtomicRefinanceFailedSelectorExists() public {
+        // T-092-H (#539) — structural guardrail. The
+        // AtomicRefinanceFailed error is the selector
+        // `LibFacet.crossFacetCall` raises when the chained
+        // refinance reverts inside `_acceptOffer`. A rename in
+        // OfferAcceptFacet would silently break the dapp's
+        // refinance-specific error copy; this assertion catches it
+        // at the test compile step.
+        //
+        // The full happy-path integration test (accept-and-refinance
+        // in a single tx with real ERC20 allowances + new lender
+        // vault) is tracked as a follow-up — it needs a more
+        // complete fixture than the current SetupTest provides for
+        // the new-lender allowance/vault dance.
+        assertTrue(
+            OfferAcceptFacet.AtomicRefinanceFailed.selector != bytes4(0)
+        );
+    }
 }

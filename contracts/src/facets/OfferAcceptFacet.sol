@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -154,6 +155,16 @@ contract OfferAcceptFacet is
     error InvalidOffer();
     error InvalidAssetType();
     error OfferAlreadyAccepted();
+    /// @notice T-092-H (#539) — the atomic accept-and-refinance
+    ///         chain inside `_acceptOffer` reverted inside
+    ///         `RefinanceFacet.refinanceLoan`. The whole tx
+    ///         rolls back (the new loan is undone alongside the
+    ///         old one's refinance attempt). Surfaces here as the
+    ///         distinct error so the dapp can render a
+    ///         refinance-specific copy ("the refinance check failed
+    ///         — caps tightened? sanctions list? grace expired?")
+    ///         rather than a generic accept failure.
+    error AtomicRefinanceFailed();
     /// @notice T-086 Round-8 (#358) §19.7b — raised when accept is
     ///         attempted against an offer whose parallel-sale already
     ///         filled (Scenario A — buyer-side won the race). Parallel-
@@ -1100,6 +1111,47 @@ contract OfferAcceptFacet is
             effFilled,
             offer.accepted
         );
+
+        // T-092-H (#539) — atomic accept-and-refinance. When the
+        // accepted offer is a refinance-tagged Borrower offer
+        // (`refinanceTargetLoanId != 0`, persisted at offer-create
+        // by `OfferCreateFacet._writeOfferFields`), chain into
+        // `RefinanceFacet.refinanceLoan` in the SAME transaction.
+        //
+        // Closes the race-condition window between Tx 2 (accept,
+        // principal lands in borrower wallet) and Tx 3 (refinance,
+        // wallet drained to pay old loan). Pre-#539 the window
+        // could be drained by a competing dapp interaction, a
+        // borrower-side spend, or an MEV front-run — the
+        // operational loan netting (PR #538 documentation) relied
+        // on a best-effort assumption. With this chain, the netting
+        // becomes structurally atomic: either both loans transition
+        // (old → Repaid, new → Active) or the whole tx reverts.
+        //
+        // Keeper auth handled by `LibAuth.requireKeeperFor`'s
+        // built-in `msg.sender == address(this)` bypass (LibAuth:99
+        // — "internal calls always allowed"). The Phase 2a sanctions
+        // gate + kill-switch check inside refinanceLoan still fire
+        // on the current borrower-NFT owner, exactly as on the
+        // standalone keeper-driven path.
+        //
+        // Only fires for Borrower-typed refinance-tagged offers —
+        // the create-time gate (#510) already rejects refinance
+        // tags on Lender offers, but the defensive check here
+        // mirrors that invariant.
+        if (
+            offer.refinanceTargetLoanId != 0 &&
+            offer.offerType == LibVaipakam.OfferType.Borrower
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    RefinanceFacet.refinanceLoan.selector,
+                    offer.refinanceTargetLoanId,
+                    offerId
+                ),
+                AtomicRefinanceFailed.selector
+            );
+        }
     }
 
 
