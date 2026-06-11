@@ -245,7 +245,8 @@ contract BaseSepoliaPartialFlows is Script {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.stopBroadcast();
@@ -299,7 +300,8 @@ contract BaseSepoliaPartialFlows is Script {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.stopBroadcast();
@@ -366,7 +368,8 @@ contract BaseSepoliaPartialFlows is Script {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
         });
     }
 
@@ -396,7 +399,8 @@ contract BaseSepoliaPartialFlows is Script {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
         });
     }
 }

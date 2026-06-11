@@ -763,6 +763,11 @@
             "name": "allowsPrepayListing",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "interestSettled",
+            "type": "uint128",
+            "internalType": "uint128"
           }
         ]
       }

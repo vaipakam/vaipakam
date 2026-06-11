@@ -243,7 +243,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);
@@ -283,7 +284,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             expiresAt: 0,
             // T-092 Phase 2b — refinance-tagged offers MUST be Aon.
             fillMode: LibVaipakam.FillMode.Aon,
-            refinanceTargetLoanId: targetLoanId
+            refinanceTargetLoanId: targetLoanId,
+            useFullTermInterest: false
         });
     }
 
@@ -447,7 +449,8 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);

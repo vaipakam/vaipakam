@@ -1049,7 +1049,8 @@ contract VPFIDiscountFacetTest is SetupTest {
                     periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                     expiresAt: 0,
                     fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
                 })
             );
     }

@@ -743,7 +743,8 @@ contract RiskFacetTest is Test {
                     .None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1046,7 +1047,8 @@ contract RiskFacetTest is Test {
                     .None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);
@@ -1816,7 +1818,8 @@ contract RiskFacetTest is Test {
                     .None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);

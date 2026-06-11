@@ -1303,6 +1303,21 @@ contract OfferCreateFacet is
         offer.allowsParallelSale = params.allowsParallelSale;
         // T-092 Phase 2b (#506) — refinance target.
         offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
+        // #408 / #410 / #413 floor-model foundation (2026-06-12) —
+        // copy the lender's interest-model election from params into
+        // the offer. `LoanFacet.initiateLoan:792` then snapshots this
+        // into `Loan.useFullTermInterest`, which `LibEntitlement.
+        // settlementInterest` reads at every settlement to decide
+        // whether to apply the full-term floor (true, the default at
+        // the dapp builder layer) or fall back to pure pro-rata-elapsed
+        // (false, the lender opt-out for a "borrower pays only for
+        // time used" offer). Pre-#408 the field was unreachable dead
+        // code: `Offer.useFullTermInterest` existed in storage but
+        // was never written, so `Loan.useFullTermInterest` was
+        // always false and `settlementInterest` always returned
+        // pro-rata regardless of the lender's intent. This wiring
+        // line activates the entire flag-driven branch.
+        offer.useFullTermInterest = params.useFullTermInterest;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.

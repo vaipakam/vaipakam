@@ -1196,6 +1196,37 @@ library LibVaipakam {
         // obligation than they pre-approved. Default 0 = standard
         // borrower offer (no refinance intent).
         uint256 refinanceTargetLoanId;
+        // ── #408 / #410 / #413 (2026-06-12) — `useFullTermInterest`
+        //    flag for the floor-model interest settlement ──────────
+        // When `true` (default at the dapp builder layer), every
+        // borrower-initiated ERC20 settlement on the resulting loan
+        // applies the FULL-TERM FLOOR:
+        //   owed = proRataInterest(principal, rate, max(elapsedDays,
+        //                                                durationDays))
+        //          - interestSettled
+        //
+        // - Early repay (elapsed < duration) → max = duration →
+        //   full-term floor. Lender made whole.
+        // - At maturity → identical to full-term.
+        // - In grace (elapsed > duration) → max = elapsed → keeps
+        //   accruing past full-term. Late fee + treasury split
+        //   stay additive and unchanged.
+        //
+        // When `false` (lender opt-out), the floor collapses to 0
+        // → pure pro-rata-elapsed (borrower pays only for time
+        // used). Both branches still accrue through grace.
+        //
+        // This field carries through `OfferCreateFacet._writeOfferPrincipalFields`
+        // into the corresponding `Offer.useFullTermInterest` field
+        // (which already exists in storage but was unreachable
+        // dead code — never set, always read as false). The loan
+        // copy `LoanFacet.initiateLoan` snapshots `offer.useFullTermInterest`
+        // into `Loan.useFullTermInterest`, which is then read by
+        // `LibEntitlement.settlementInterest` on every settlement.
+        //
+        // Append-only field (preserves the ABI tuple for existing
+        // CreateOfferParams encoders).
+        bool useFullTermInterest;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -1570,6 +1601,32 @@ library LibVaipakam {
         // THIS field (not the offer's) — once the loan is initialized
         // the relevant consent is fixed-at-loan-init.
         bool allowsPrepayListing;
+        // ── #408 / #410 / #413 (2026-06-12) — `interestSettled`
+        //    cumulative accumulator ────────────────────────────────────
+        // Cumulative interest already paid toward this loan via:
+        //   - `RepayFacet.repayPartial` (each partial payment's
+        //     interest portion).
+        //   - `RepayFacet.settlePeriodicInterest` (each period's
+        //     interest forwarded to the lender).
+        //
+        // Read at every settlement to credit-against the unified
+        // `settlementInterest(loan, now)` gross owed value, so the
+        // borrower never re-pays interest already paid. Removes the
+        // #413 double-charge on `precloseDirect` after partial /
+        // periodic settlement by construction.
+        //
+        // Append-only field (storage layout discipline). Currently
+        // zero on every existing loan at deploy time — the
+        // accumulator only mutates via the new credit hooks added
+        // in the floor-model implementation PRs.
+        //
+        // `uint128` is sufficient: max interest is bounded by
+        // `principal * rateBps * maxDurationDays / (BPS * 365)`;
+        // even with principal = type(uint128).max the product fits
+        // a uint128 with the protocol's bps and duration caps.
+        // Using uint128 over uint256 reserves the upper slot for
+        // future appends.
+        uint128 interestSettled;
     }
 
     /**

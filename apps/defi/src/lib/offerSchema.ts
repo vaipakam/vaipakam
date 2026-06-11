@@ -114,6 +114,17 @@ export interface OfferFormState {
    *  accept. Only valid on Borrower offers; the form auto-hides on
    *  Lender. */
   refinanceTargetLoanId: string;
+  /** #408 / #410 / #413 floor-model foundation (2026-06-12) — lender
+   *  election for the interest settlement model on the resulting
+   *  loan. When `true` (the dapp default), every borrower-initiated
+   *  ERC20 settlement applies the FULL-TERM FLOOR: early repay still
+   *  charges full-term interest (lender made whole at their
+   *  ceiling); pre-#408 the lender lost the unused-time interest on
+   *  every early repay. When `false`, falls back to pro-rata-elapsed
+   *  (borrower pays only for time used — a lender opt-out for
+   *  "soft" loans). Both branches still accrue through grace + add
+   *  late fee. */
+  useFullTermInterest: boolean;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -140,6 +151,7 @@ export const initialOfferForm: OfferFormState = {
   periodicInterestCadence: 0, // None
   allowsParallelSale: false, // T-086 Round-8 #358 — explicit opt-in
   refinanceTargetLoanId: '', // T-092 #511 sub (#523) — standard offer; non-empty enables refinance-tagged flow
+  useFullTermInterest: true, // #408 floor-model foundation — default true; lenders opt OUT for soft pro-rata loans
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -214,6 +226,12 @@ export interface CreateOfferPayload {
    *  Standard create flow passes `0n`; the keeper-driven auto-
    *  refinance UX sets this when constructing the offer. */
   refinanceTargetLoanId: bigint;
+  /** #408 / #410 / #413 floor-model foundation (2026-06-12) —
+   *  lender's interest-model election. See `OfferFormState.
+   *  useFullTermInterest` for full semantics; the form value
+   *  carries through unchanged to the on-chain
+   *  `CreateOfferParams.useFullTermInterest` field. */
+  useFullTermInterest: boolean;
 }
 
 /**
@@ -478,6 +496,8 @@ export function toCreateOfferPayload(
       s.refinanceTargetLoanId !== ''
         ? BigInt(s.refinanceTargetLoanId)
         : 0n,
+    // #408 foundation — carry the form's election unchanged.
+    useFullTermInterest: s.useFullTermInterest,
   };
 }
 
