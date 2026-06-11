@@ -694,6 +694,11 @@
   },
   {
     "type": "error",
+    "name": "AutoExtendDisabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AutoExtendDurationOutOfRange",
     "inputs": []
   },
@@ -715,6 +720,11 @@
   {
     "type": "error",
     "name": "AutoExtendTooSoonAfterStart",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoLendDisabled",
     "inputs": []
   },
   {

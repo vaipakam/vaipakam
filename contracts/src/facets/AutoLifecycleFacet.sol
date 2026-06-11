@@ -180,6 +180,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         an extend consent into an early-maturity / default
     ///         vector.
     error ExtensionMustExtend();
+    /// @notice T-092 #508 — admin kill switches.
+    error AutoLendDisabled();
+    error AutoExtendDisabled();
 
     /// @notice T-092 Phase 3 — emitted on a successful in-place
     ///         loan extension. The position NFTs are untouched; only
@@ -222,7 +225,16 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         whenNotPaused
     {
         LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam.storageSlot().autoLendConsent[msg.sender] = enabled;
+        // T-092 #508 — admin kill switch. While
+        // `cfgAutoLendEnabled` is false, users may revoke (disable)
+        // their consent but not opt IN. Existing `true` flags stay
+        // in storage so re-enabling the feature doesn't force every
+        // user to re-consent.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (enabled && !s.protocolCfg.cfgAutoLendEnabled) {
+            revert AutoLendDisabled();
+        }
+        s.autoLendConsent[msg.sender] = enabled;
         emit AutoLendConsentChanged(msg.sender, enabled);
     }
 
@@ -479,6 +491,11 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 gasStart = gasleft();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // T-092 #508 — admin kill switch covers both keeper-driven
+        // AND borrower-direct extensions because this executor is
+        // the only entry point.
+        if (!s.protocolCfg.cfgAutoExtendEnabled) revert AutoExtendDisabled();
 
         if (loan.status != LibVaipakam.LoanStatus.Active) {
             revert LoanNotActive();

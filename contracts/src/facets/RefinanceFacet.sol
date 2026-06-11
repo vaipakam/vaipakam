@@ -21,6 +21,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 
 /**
  * @title RefinanceFacet
@@ -69,6 +70,9 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidRefinanceOffer();
     error OfferNotAccepted();
+    /// @notice T-092 #508 — admin kill switch for the keeper-driven
+    ///         refinance path. Borrower-direct refinance ignores this.
+    error AutoRefinanceDisabled();
 
     /**
      * @notice Completes refinancing after alice's Borrower Offer has been accepted by Lender B.
@@ -110,6 +114,26 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
         if (oldLoan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+        // T-092 Phase 2a (#505) — resolve the current borrower-NFT
+        // owner once at the top + Tier-1 sanctions check it. A
+        // keeper-driven path admitted by requireKeeperFor uses
+        // currentBorrowerNftOwner as the actual fund source, so
+        // their sanctions status must be screened too. Without this
+        // gate, a sanctioned borrower could use an unsanctioned
+        // keeper to complete refinance — bypassing OFAC screening
+        // on the fund-receiving wallet.
+        address currentBorrowerNftOwner =
+            LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        if (currentBorrowerNftOwner != msg.sender) {
+            LibVaipakam._assertNotSanctioned(currentBorrowerNftOwner);
+            // T-092 #508 — admin kill switch only fires on the
+            // KEEPER-DRIVEN path. The borrower-NFT owner calling
+            // directly is acting in their own interest; the kill
+            // switch exists to protect against keeper-path bugs.
+            if (!s.protocolCfg.cfgAutoRefinanceEnabled) {
+                revert AutoRefinanceDisabled();
+            }
+        }
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
@@ -138,11 +162,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             }
         }
 
-        // Validate: must be a Borrower offer created by alice, already accepted
+        // Validate: must be a Borrower offer created by the current
+        // borrower-NFT owner, already accepted. T-092 Phase 2a — the
+        // creator check binds to the current NFT holder, not
+        // msg.sender, so a keeper-driven invocation succeeds when
+        // the borrower (NFT owner) created the offer.
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (
             offer.offerType != LibVaipakam.OfferType.Borrower ||
-            offer.creator != msg.sender
+            offer.creator != currentBorrowerNftOwner
         ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
@@ -222,9 +250,16 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // to the old lender's vault) replace the prior pull-and-
         // split pattern. Treasury share skipped entirely if the
         // VPFI-discount path satisfied it.
+        // T-092 Phase 2a — fund-source is the CURRENT borrower-NFT
+        // owner (not msg.sender) so a keeper-driven invocation
+        // doesn't debit the keeper's wallet for the borrower's
+        // old-payoff. Requires the borrower (NFT holder) to have
+        // approved the diamond for `oldLoan.principalAsset` —
+        // standard prerequisite for a refinance, surfaced by the
+        // dapp as part of the consent flow.
         if (treasuryFee > 0) {
             IERC20(oldLoan.principalAsset).safeTransferFrom(
-                msg.sender,
+                currentBorrowerNftOwner,
                 LibFacet.getTreasury(),
                 treasuryFee
             );
@@ -234,12 +269,12 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Route lender's share to old lender's vault via the cross-
         // payer chokepoint so the protocolTrackedVaultBalance
         // counter ticks under the old lender (the vault owner)
-        // while the borrower remains the payer.
+        // while the current borrower-NFT owner remains the payer.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultDepositERC20From.selector,
-                msg.sender,         // payer — borrower
-                oldLoan.lender,     // user — old lender's vault
+                currentBorrowerNftOwner, // payer — current borrower NFT holder
+                oldLoan.lender,          // user — old lender's vault
                 oldLoan.principalAsset,
                 lenderDue
             ),
@@ -279,17 +314,22 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
         // ── Release old collateral ────────────────────────────────────────
-        // The borrower's vault currently holds the old collateral deposited
-        // when the original loan was opened. We must refund it back to the borrower.
+        // T-092 Phase 2a — old collateral lives in the current
+        // borrower-NFT owner's vault (auto-provisioned if absent via
+        // `getOrCreateUserVault` inside `vaultWithdrawERC20`) and is
+        // released back to the same owner. Using msg.sender here
+        // (the pre-Phase-2a behaviour) would mis-route on the
+        // keeper-driven path — the keeper's vault doesn't hold the
+        // collateral, and the keeper isn't the rightful recipient.
         if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             uint256 oldCol = oldLoan.collateralAmount;
             if (oldCol > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        msg.sender,
+                        currentBorrowerNftOwner,
                         oldLoan.collateralAsset,
-                        msg.sender,
+                        currentBorrowerNftOwner,
                         oldCol
                     ),
                     VaultWithdrawFailed.selector
@@ -299,10 +339,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    msg.sender,
+                    currentBorrowerNftOwner,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
-                    msg.sender
+                    currentBorrowerNftOwner
                 ),
                 VaultWithdrawFailed.selector
             );
@@ -310,11 +350,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    msg.sender,
+                    currentBorrowerNftOwner,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     oldLoan.collateralQuantity,
-                    msg.sender
+                    currentBorrowerNftOwner
                 ),
                 VaultWithdrawFailed.selector
             );

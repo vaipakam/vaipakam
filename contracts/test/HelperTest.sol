@@ -337,7 +337,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](31);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -370,6 +370,10 @@ contract HelperTest {
         selectors[25] = AdminFacet.getSushiswapV2Factory.selector;
         selectors[26] = AdminFacet.setPancakeswapV2Factory.selector;
         selectors[27] = AdminFacet.getPancakeswapV2Factory.selector;
+        // T-092 (#508) — auto-lifecycle admin kill switches.
+        selectors[28] = AdminFacet.setAutoLendEnabled.selector;
+        selectors[29] = AdminFacet.setAutoRefinanceEnabled.selector;
+        selectors[30] = AdminFacet.setAutoExtendEnabled.selector;
         return selectors;
     }
 
