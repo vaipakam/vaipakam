@@ -91,10 +91,59 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      * @param oldLoanId The current loan ID to refinance.
      * @param borrowerOfferId The Borrower Offer ID that alice created and Lender B accepted.
      */
+    /// @notice T-092-H (#549) — `msg.sender == address(this)` gate.
+    ///         Used by {refinanceLoanFromAccept} so the atomic chain
+    ///         from `OfferAcceptFacet` + `OfferMatchFacet` is the
+    ///         ONLY way to reach the internal entry; an external EOA
+    ///         cannot call it directly.
+    error OnlyDiamondInternal();
+    /// @dev Extracted modifier body — same shape as VaultFactoryFacet's
+    ///      `_checkDiamondInternal`. Keeps the modifier a thin wrapper
+    ///      so each call site inlines one function call.
+    function _checkDiamondInternal() private view {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+    }
+    modifier onlyDiamondInternal() {
+        _checkDiamondInternal();
+        _;
+    }
+
+    /// @notice External entry — preserves the existing public API +
+    ///         reentrancy guard for external callers (keeper EOAs,
+    ///         borrower-direct path). Delegates to the shared private
+    ///         logic.
     function refinanceLoan(
         uint256 oldLoanId,
         uint256 borrowerOfferId
     ) external nonReentrant whenNotPaused {
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
+    }
+
+    /// @notice T-092-H (#549) — atomic accept-and-refinance entry.
+    ///         Callable only via `LibFacet.crossFacetCall` from
+    ///         `OfferAcceptFacet._acceptOffer` + `OfferMatchFacet`'s
+    ///         dust-close branch, AFTER `offer.accepted = true` is
+    ///         set. No `nonReentrant` here — the outer `acceptOffer`
+    ///         / `matchOffers` `nonReentrant` lock covers the whole
+    ///         tx (see design doc §3.2 "Reentrancy analysis").
+    ///         `whenNotPaused` retained — pause should freeze the
+    ///         chain as well as the direct external path.
+    function refinanceLoanFromAccept(
+        uint256 oldLoanId,
+        uint256 borrowerOfferId
+    ) external onlyDiamondInternal whenNotPaused {
+        _refinanceLoanLogic(oldLoanId, borrowerOfferId);
+    }
+
+    /// @dev Shared body for both external entries. Was the body of
+    ///      `refinanceLoan` pre-T-092-H; extracted into a private so
+    ///      both `refinanceLoan` (external nonReentrant) and
+    ///      `refinanceLoanFromAccept` (external onlyDiamondInternal,
+    ///      no nonReentrant) can share it.
+    function _refinanceLoanLogic(
+        uint256 oldLoanId,
+        uint256 borrowerOfferId
+    ) private {
         // T-090 v1.1 (#389) §5.8 — refinance withdraws old
         // collateral from `loan.borrower`'s vault before flipping
         // the old loan to Repaid; block while a v1.1 commit is live.

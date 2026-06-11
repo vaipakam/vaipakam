@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -1018,6 +1019,44 @@ contract OfferAcceptFacet is
             // The metrics hook stays tightly coupled to the accept-flip
             // so the two state changes can't drift.
             LibMetricsHooks.onOfferAccepted(offerId);
+
+            // T-092-H (#549) — atomic accept-and-refinance, DIRECT
+            // path. When the accepted offer is a refinance-tagged
+            // Borrower offer (`refinanceTargetLoanId != 0`,
+            // persisted by `OfferCreateFacet._writeOfferFields`),
+            // chain into `RefinanceFacet.refinanceLoanFromAccept`
+            // in the SAME tx via the dedicated diamond-internal
+            // entry. The chain inherits the outer `acceptOffer`'s
+            // `nonReentrant` lock; the inner entry has no
+            // `nonReentrant` of its own (Codex round-1 P1 on the
+            // closed PR #542 was that nested guards revert).
+            //
+            // Error bubble: empty fallback selector lets the inner
+            // revert payload pass through verbatim — the dapp's
+            // `autoLifecycleErrors.ts` decoder already handles the
+            // typed errors (`RefinanceCapsRequired`,
+            // `SanctionedAddress`, etc.). Wrapping with a synthetic
+            // `AtomicRefinanceFailed` was abandoned (Codex round-1
+            // P3 — `LibRevert.bubbleOnFailureTyped` only synthesizes
+            // on empty revert).
+            //
+            // Matched-path companion lives in OfferMatchFacet's
+            // dust-close branch (see design doc §3.3.2) — runs
+            // there because `partialFillEnabled == true` defers the
+            // `accepted = true` flip out of this if-block.
+            if (
+                offer.refinanceTargetLoanId != 0 &&
+                offer.offerType == LibVaipakam.OfferType.Borrower
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        RefinanceFacet.refinanceLoanFromAccept.selector,
+                        offer.refinanceTargetLoanId,
+                        offerId
+                    ),
+                    bytes4(0)
+                );
+            }
         }
 
         // Phase 5: record the Diamond-held VPFI against the loan once
