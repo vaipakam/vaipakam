@@ -341,6 +341,8 @@ export type ActivityEventKind =
   | 'CollateralAdded'
   | 'LoanSold'
   | 'LoanObligationTransferred'
+  // T-092 Phase 3 (#503) — auto-extend in place lifecycle event.
+  | 'LoanExtended'
   | 'LoanSettlementBreakdown'
   | 'LiquidationFallback'
   | 'LiquidationFallbackSplit'

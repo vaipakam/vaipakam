@@ -1023,6 +1023,7 @@
     "collateralAdded": "Collateral added",
     "lenderSold": "Lender position sold",
     "borrowerTransferred": "Borrower position transferred",
+    "loanExtended": "Loan extended in place",
     "settlementBreakdown": "Settlement breakdown",
     "liquidationFallback": "Liquidation fallback (swap reverted)",
     "liquidationFallbackSplit": "Fallback collateral split",

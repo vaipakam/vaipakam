@@ -696,11 +696,26 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // without closing + re-registering would leave the old
         // accrual schedule running on a loan with new terms (wrong
         // per-day numeraire, wrong end day). Settle the old entry
-        // as-of today (not borrower-clean — loan didn't close) and
-        // reopen with the new terms so future accrual matches.
+        // as-of today and reopen with the new terms.
+        //
+        // Codex round-7 P2 — `borrowerClean` is true when extension
+        // happens IN-TERM (before the original end time). In that
+        // case the borrower paid all accrued interest as part of
+        // this extension and keeps their accrued reward. After
+        // `oldEndTime` (late but in-grace), `borrowerClean = false`
+        // forfeits the borrower's accrued reward — matching the
+        // `LibInteractionRewards.closeLoan` semantic for terminal
+        // late-cure paths.
+        //
+        // Codex round-7 P2 — re-register against the CURRENT NFT
+        // owners (borrowerNftOwner / lenderNftOwner), not the
+        // original `loan.lender` / `loan.borrower`. After an NFT
+        // transfer the new holders are the parties earning the
+        // post-extension reward accrual.
+        bool inTermExtension = block.timestamp <= oldEndTime;
         LibInteractionRewards.closeLoan(
             loanId,
-            /* borrowerClean */ false,
+            /* borrowerClean */ inTermExtension,
             /* lenderForfeit */ false
         );
         loan.startTime = uint64(block.timestamp);
@@ -708,8 +723,8 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.durationDays = newDurationDays;
         LibInteractionRewards.registerLoan(
             loanId,
-            loan.lender,
-            loan.borrower,
+            lenderNftOwner,
+            borrowerNftOwner,
             loan.principalAsset,
             loan.principal,
             uint256(newRateBps),
