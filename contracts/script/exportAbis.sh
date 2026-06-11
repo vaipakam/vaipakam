@@ -76,6 +76,8 @@ FACETS=(
   "OfferCancelFacet"  # getOffer (offer hydration in offerMatcher detector — moved from OfferFacet in EIP-170 split)
   "OfferMatchFacet"   # previewMatch, matchOffers — current home of the matcher selectors after the facet split
   "ConfigFacet"       # getInternalMatchConfigBundle — kill-switch + tunables read by the internalMatcher detector
+  "AdminFacet"        # T-092 #518 — getAutoExtendEnabled (admin kill switch read by autoExtendDetector)
+  "AutoLifecycleFacet" # T-092 #518 — getAutoExtendBorrowerCaps / getAutoExtendLenderCaps / extendLoanInPlace (autoExtendDetector)
 )
 
 echo "Exporting ABIs to $OUT_DIR"
