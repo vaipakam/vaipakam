@@ -11,6 +11,14 @@
 
 ---
 
+- [ ] **T-093** `yetToPromote`: How do we allow aggregaters like Yearn Finance to use our platform? and the keepers from Aave, Uniswap to do something like Automated Market Maker? also is it better to provide intent layer, also check if there are any open cards filed for it, if not create one, so that we can start working on it by scouting the code, designing and then codeing appropriately by using the existing code if possible and if its right to do it. what do you say? whats your take? is there a better approach?
+
+---
+
+- [x] **T-092** — CLOSED 2026-06-11 as DONE ([Issue #499](https://github.com/vaipakam/vaipakam/issues/499) closed). Five PRs shipped covering the full auto-lifecycle surface: Phase 1 (#501) consent storage + setters + per-loan caps; Phase 2a (#509) refinance fund-routing through current borrower-NFT owner + borrower sanctions check + three admin kill switches (`cfgAutoLendEnabled`/`cfgAutoRefinanceEnabled`/`cfgAutoExtendEnabled` on AdminFacet); Phase 2b (#510) caps enforced at `OfferCreateFacet.createOffer` AND `OfferAcceptFacet._acceptOffer` via new `LibAutoRefinanceCheck` library + `Offer.refinanceTargetLoanId` field binding the offer to the loan it intends to refinance; Phase 3 (#507) `AutoLifecycleFacet.extendLoanInPlace` executor with both-side cap intersection + late-fee + treasury split + `LibInteractionRewards` refresh + `KEEPER_ACTION_EXTEND` keeper-action bit. Phase 2 first attempt (#504) closed without merging after Codex caught architectural P1s; the Phase 2a/2b redesign landed cleanly. Substantive follow-ups filed as new cards: dapp UI surface, keeper-bot integration, integration tests, optional Preclose Option 2/3 cap symmetry.
+
+---
+
 - [x] **T-091** — CLOSED 2026-06-11 as superseded ([Issue #496](https://github.com/vaipakam/vaipakam/issues/496) closed DONE). The scout against the current `ClaimFacet.claimAsLender` / `claimAsBorrower` (every sub-path: ERC20 principal, ERC721 / ERC1155 NFT collateral, held-for-lender rebate, NFT rental return) confirmed the desired behaviour is already in place: (1) `LibAuth.requireLenderNftOwner` (`ClaimFacet:220`) / `requireBorrowerNftOwner` (`ClaimFacet:443`) gates the caller to the current NFT holder — Option A semantics — so a sold position's claim rights correctly hand to the buyer; (2) `vaultWithdrawERC20(loan.lender, asset, msg.sender, amount)` delivers directly to the holder's WALLET, so the holder never needs their own vault; (3) `VaultFactoryFacet.vaultWithdrawERC20:397` auto-provisions the ORIGINAL party's vault on-demand via the unconditional `getOrCreateUserVault(user)` call. Tier-1 sanctions check on `msg.sender` (`ClaimFacet:189` / `416`) adds the OFAC screen. The original ToDo entry was authored before the claim infrastructure reached this state; no code change required.
 
 ---
