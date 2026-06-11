@@ -172,6 +172,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.offerType != LibVaipakam.OfferType.Borrower ||
             offer.creator != currentBorrowerNftOwner
         ) revert InvalidRefinanceOffer();
+        // T-092 Phase 2b (Codex round-1 P1) — when the offer was
+        // created with a refinance target, that target MUST match
+        // the `oldLoanId` being refinanced. Otherwise a keeper could
+        // accept an offer tagged for loan A and then call
+        // `refinanceLoan(B, offerA)`, bypassing the cap-check that
+        // was tied to loan A at accept time. Untagged offers
+        // (`refinanceTargetLoanId == 0`) still work — those are the
+        // legacy / borrower-direct path where caps don't apply.
+        if (
+            offer.refinanceTargetLoanId != 0 &&
+            offer.refinanceTargetLoanId != oldLoanId
+        ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy

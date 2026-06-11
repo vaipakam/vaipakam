@@ -571,12 +571,18 @@ contract OfferAcceptFacet is
             uint256 maxRateEffective = offer.interestRateBpsMax == 0
                 ? offer.interestRateBps
                 : offer.interestRateBpsMax;
+            uint256 maxAmountEffective = offer.amountMax == 0
+                ? offer.amount
+                : offer.amountMax;
             LibAutoRefinanceCheck.validate(
                 s,
                 offer.refinanceTargetLoanId,
                 offer.creator,
                 maxRateEffective,
-                offer.durationDays
+                offer.durationDays,
+                offer.lendingAsset,
+                offer.collateralAsset,
+                maxAmountEffective
             );
         }
 

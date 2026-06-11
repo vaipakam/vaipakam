@@ -43,6 +43,15 @@ library LibAutoRefinanceCheck {
     /// @notice The new loan's implied end time exceeds the borrower's
     ///         pre-approved `autoRefinanceCaps.maxNewExpiry`.
     error RefinanceExpiryExceedsCap();
+    /// @notice Codex round-1 P2 — the targeted old loan isn't
+    ///         refinance-compatible: NFT-rental loan (Refinance only
+    ///         supports ERC20), or the new offer's lending /
+    ///         collateral asset doesn't match the old loan's, or
+    ///         the offer's `amountMax` can't cover the old loan's
+    ///         principal. Failing fast at create rejects the offer
+    ///         BEFORE a lender can be enticed into accepting it
+    ///         (and getting the principal stranded mid-refinance).
+    error RefinanceTargetIncompatible();
 
     /// @notice Validate that the offer creator + terms satisfy the
     ///         per-loan auto-refinance caps stored under
@@ -62,7 +71,10 @@ library LibAutoRefinanceCheck {
         uint256 loanId,
         address offerCreator,
         uint256 offerMaxRate,
-        uint256 offerDurationDays
+        uint256 offerDurationDays,
+        address offerLendingAsset,
+        address offerCollateralAsset,
+        uint256 offerMaxAmount
     ) internal view {
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) {
@@ -75,6 +87,26 @@ library LibAutoRefinanceCheck {
             LibERC721.ownerOf(loan.borrowerTokenId);
         if (currentBorrowerNftOwner != offerCreator) {
             revert RefinanceTargetNotBorrower();
+        }
+        // Codex round-1 P2 — fail-fast on refinance-incompatible
+        // targets so a refinance-tagged offer can't pass create,
+        // attract a lender, and then strand the principal when
+        // `RefinanceFacet.refinanceLoan` rejects the mismatched
+        // shape. NFT-rental refinance is out of scope (Refinance
+        // gates on `loan.assetType == ERC20`); the asset pair must
+        // match the old loan's; the offer's amountMax must cover
+        // the old loan's principal.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert RefinanceTargetIncompatible();
+        }
+        if (
+            offerLendingAsset != loan.principalAsset ||
+            offerCollateralAsset != loan.collateralAsset
+        ) {
+            revert RefinanceTargetIncompatible();
+        }
+        if (offerMaxAmount < loan.principal) {
+            revert RefinanceTargetIncompatible();
         }
         LibVaipakam.AutoRefinanceCaps storage caps =
             s.autoRefinanceCaps[loanId];

@@ -846,6 +846,11 @@
   },
   {
     "type": "error",
+    "name": "RefinanceTargetIncompatible",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceTargetNotActive",
     "inputs": []
   },

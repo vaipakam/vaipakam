@@ -135,6 +135,11 @@ contract OfferCreateFacet is
         //    follow-up `getOffer` view-call. See
         //    {CreateOfferParams.allowsPrepayListing}.
         bool allowsPrepayListing;
+        // ── T-092 Phase 2b (#506) — refinance target. Carried on the
+        //    companion event so indexers can tell a refinance-tagged
+        //    Borrower offer from a standard one without a follow-up
+        //    `getOffer` read (Codex round-1 P2).
+        uint256 refinanceTargetLoanId;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -552,12 +557,17 @@ contract OfferCreateFacet is
                 params.interestRateBpsMax == 0
                     ? params.interestRateBps
                     : params.interestRateBpsMax;
+            uint256 maxAmountEffective =
+                params.amountMax == 0 ? params.amount : params.amountMax;
             LibAutoRefinanceCheck.validate(
                 s,
                 params.refinanceTargetLoanId,
                 creator,
                 maxRateEffective,
-                params.durationDays
+                params.durationDays,
+                params.lendingAsset,
+                params.collateralAsset,
+                maxAmountEffective
             );
         }
 
@@ -1080,6 +1090,11 @@ contract OfferCreateFacet is
         // merges can render the offer's "borrower may post a prepay
         // listing" decoration without a follow-up `getOffer` view-call.
         f.allowsPrepayListing = offer.allowsPrepayListing;
+        // T-092 Phase 2b (Codex round-1 P2) — carry the refinance
+        // target on the companion event so indexers + the dapp can
+        // distinguish refinance-tagged Borrower offers from standard
+        // ones without a follow-up `getOffer` view-call.
+        f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
 
         emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
