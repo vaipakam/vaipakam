@@ -41,6 +41,7 @@ import { bpsToPercent } from '../lib/format';
 import { HealthFactorChip, LTVChip } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { StakeVPFICTA } from '../components/app/StakeVPFICTA';
+import AutoLifecycleSettingsCard from '../components/app/AutoLifecycleSettingsCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -354,6 +355,12 @@ export default function Dashboard() {
           and links into Buy VPFI via the rewards-summary chevron
           below for users who want to inspect their tier status. */}
       <VPFIDiscountConsentCard />
+
+      {/* T-092 #511 sub (#520) — per-user auto-lifecycle toggles.
+          Hidden when the auto-lifecycle facet isn't readable on the
+          current chain (old testnet deploys); otherwise renders the
+          auto-lend + auto-opt-in-on-new-loan opt-ins. */}
+      <AutoLifecycleSettingsCard />
 
       {/* T-087 Sub 4 phase 2 — chain-agnostic Stake VPFI CTA.
           On mirrors: switch-to-Base button.

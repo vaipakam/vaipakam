@@ -489,6 +489,18 @@
     "actionsNone": "none",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
   },
+  "autoLifecycleSettings": {
+    "title": "Auto-lifecycle",
+    "body": "Opt in to the keeper-driven auto-lend, auto-refinance, and auto-extend surfaces. The protocol matches your standing offers and refinances or extends your loans automatically when the criteria you set are met.",
+    "adminDisabled": "Admin has temporarily disabled auto-lend on this chain. You can still disable an existing opt-in.",
+    "autoLendLabel": "Auto-lend my vaulted assets",
+    "autoLendHint": "Let the dapp post a standing offer when vault deposits land; keepers match it via the existing matcher.",
+    "optInLabel": "Auto-set refinance caps on every new loan",
+    "optInHint": "Borrower convenience. Every new loan auto-populates its refinance caps from your default cap settings.",
+    "actionEnable": "Enable",
+    "actionDisable": "Disable",
+    "statePending": "Pending..."
+  },
   "autoLifecycle": {
     "errors": {
       "AutoLendDisabled": "Auto-lend is disabled by admin. Try again later.",
