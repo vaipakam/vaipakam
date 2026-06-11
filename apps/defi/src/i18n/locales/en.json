@@ -489,6 +489,32 @@
     "actionsNone": "none",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
   },
+  "autoLifecycle": {
+    "errors": {
+      "AutoLendDisabled": "Auto-lend is disabled by admin. Try again later.",
+      "AutoRefinanceDisabled": "Keeper-driven refinance is disabled by admin.",
+      "AutoExtendDisabled": "Auto-extend is disabled by admin.",
+      "RefinanceTargetNotActive": "The loan you targeted is no longer active.",
+      "RefinanceTargetNotBorrower": "Only the current borrower can refinance this loan.",
+      "RefinanceCapsRequired": "You haven't pre-approved auto-refinance on this loan. Set caps first.",
+      "RefinanceRateExceedsCap": "This refinance rate exceeds your pre-approved ceiling.",
+      "RefinanceExpiryExceedsCap": "This refinance length exceeds your pre-approved cap.",
+      "RefinanceTargetIncompatible": "The loan being refinanced is incompatible with this offer's terms.",
+      "InvalidRefinanceTarget": "Refinance-tagged offers must be Borrower offers with AON fill mode.",
+      "BothSideAutoExtendRequired": "Auto-extend requires both you and the counterparty to set caps.",
+      "AutoExtendRateOutOfBand": "The proposed rate falls outside the agreed range.",
+      "AutoExtendExpiryExceedsCap": "The proposed extension exceeds the agreed cap.",
+      "AutoExtendDurationOutOfRange": "The proposed duration is zero or above the protocol cap.",
+      "AutoExtendTooSoonAfterStart": "Wait at least one full day after loan start before extending.",
+      "AutoExtendEndTimeOverflow": "The proposed end time overflows the contract's time format.",
+      "ExtensionGraceExpired": "Too late to extend — the grace window has expired.",
+      "ExtensionMustExtend": "An extension must move the loan's end time forward.",
+      "InvalidCaps": "Cap values are invalid (min > max, or expiry in the past).",
+      "LoanNotActive": "This action requires an active loan.",
+      "UnsupportedAssetTypeForExtend": "Extending NFT-rental loans isn't supported yet.",
+      "PeriodicCadenceMustSettleFirst": "Settle the loan's outstanding periodic interest before extending."
+    }
+  },
   "riskGauge": {
     "hfDanger": "Liquidation imminent: HF below 1.00.",
     "hfWarning": "HF below initiation minimum ({{init}}). Top up collateral to avoid liquidation at HF < {{liq}}.",
