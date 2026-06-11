@@ -99,6 +99,7 @@ import { runMatcher } from './matcher';
 import { runLiquidityConfidence } from './liquidityConfidence';
 import { runLiquidator } from './liquidator';
 import { runAutoLifecycle } from './autoLifecycle';
+import { runPreGraceWatcher } from './preGraceWatcher';
 
 export default {
   async scheduled(
@@ -152,6 +153,17 @@ export default {
       runAutoLifecycle(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runAutoLifecycle pass failed:', err);
+      }),
+    );
+    // T-092-C (#532) — pre-grace warning. For each loan with
+    // autoRefinanceCaps.enabled approaching its grace boundary,
+    // notify the borrower via Telegram + Push so they can repay
+    // manually if no compatible offer is in the book. Closes the
+    // "auto-refinance is best-effort" UX gap.
+    ctx.waitUntil(
+      runPreGraceWatcher(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runPreGraceWatcher pass failed:', err);
       }),
     );
   },
