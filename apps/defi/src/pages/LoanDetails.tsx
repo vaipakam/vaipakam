@@ -38,6 +38,7 @@ import { ErrorAlert } from "../components/app/ErrorAlert";
 import { bpsToPercent, formatDate } from "../lib/format";
 import { AddressDisplay } from "../components/app/AddressDisplay";
 import { PerThingKeeperToggles } from "../components/app/PerThingKeeperToggles";
+import AutoLifecycleLoanCapsCard from "../components/app/AutoLifecycleLoanCapsCard";
 import { HealthFactorGauge, LTVBar } from "../components/app/RiskGauge";
 import { LiquidationProjection } from "../components/app/LiquidationProjection";
 import { LenderDiscountCard } from "../components/app/LenderDiscountCard";
@@ -630,6 +631,19 @@ export default function LoanDetails() {
             lender={loan.lender}
           />
         </div>
+      )}
+
+      {/* T-092 #511 sub (#521) — per-loan auto-refinance + auto-extend
+          caps editor. Visible to the borrower-NFT owner (refinance +
+          extend-borrower caps) and the lender-NFT owner (extend-lender
+          caps). The card hides itself when the AutoLifecycle facet
+          isn't readable on the current chain. */}
+      {(isBorrower || isLender) && (
+        <AutoLifecycleLoanCapsCard
+          loanId={BigInt(loanId ?? '0')}
+          isBorrower={isBorrower}
+          isLender={isLender}
+        />
       )}
 
       {isBorrower && Number(loan.assetType) === AssetType.ERC20 && (
