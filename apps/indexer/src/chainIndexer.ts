@@ -1661,6 +1661,30 @@ async function processLoanLogs(
       );
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, oldLoanId);
+    } else if (log.eventName === 'LoanExtended') {
+      // T-092 Phase 3 (#503) — `extendLoanInPlace` mutates
+      // `loan.startTime`, `interestRateBps`, and `durationDays` in
+      // place. No NFT or status change. The event carries the
+      // post-state values for all three so we can update the row
+      // without a follow-up `getLoanDetails` read.
+      const loanId = Number(a.loanId as bigint);
+      await env.DB.prepare(
+        `UPDATE loans
+            SET interest_rate_bps = ?,
+                start_time = ?,
+                duration_days = ?,
+                updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          Number(a.newRateBps as bigint),
+          Number(a.newStartTime as bigint),
+          Number(a.newDurationDays as bigint),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          loanId,
+        )
+        .run();
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.

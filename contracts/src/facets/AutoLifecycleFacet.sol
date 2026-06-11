@@ -7,6 +7,7 @@ import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
+import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -556,21 +557,45 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         // ── Accrued-interest math + treasury / lender split ──────────
-        // Codex round-1 P1 — honor `loan.useFullTermInterest`. Using
-        // `LibEntitlement.settlementInterest` routes the full-term
-        // branch correctly: when the loan was contracted with the
-        // full-term coupon, that's what the lender is owed at every
-        // mid-loan settlement (otherwise an early extension would
-        // discard the lender's contracted coupon).
-        uint256 accruedInterest = LibEntitlement.settlementInterest(loan, block.timestamp);
-        if (accruedInterest > 0) {
+        // Codex round-1 P1 — honor `loan.useFullTermInterest`. When
+        // the loan was contracted with the full-term coupon, that's
+        // what the lender is owed even at mid-loan settlement.
+        // Otherwise (the common pro-rata case) Codex round-2 P2 needs
+        // SECONDS-based accrual rather than the days-flooring used by
+        // `LibEntitlement.accruedInterestToTime`: extension at
+        // `startTime + 1d + 23h` should pay the full 1d23h, not just 1d
+        // (otherwise a borrower-controlled keeper could repeatedly
+        // extend just before the daily boundary and erase ~23h of
+        // accrual on every cycle).
+        uint256 accruedInterest;
+        if (loan.useFullTermInterest) {
+            accruedInterest = LibEntitlement.fullTermInterest(
+                loan.principal,
+                loan.interestRateBps,
+                loan.durationDays
+            );
+        } else {
+            uint256 elapsedSeconds = block.timestamp - uint256(loan.startTime);
+            accruedInterest =
+                (loan.principal * loan.interestRateBps * elapsedSeconds) /
+                (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        }
+        // Codex round-2 P1 — if the loan is past its end time, a
+        // borrower extending is morally a late-rescue. The late fee
+        // that `RepayFacet` charges via `LibVaipakam.calculateLateFee`
+        // must apply here too — otherwise a keeper-driven extension
+        // becomes a way to escape both the late fee AND the default
+        // path. Late fees go 100% to the lender (no treasury cut),
+        // matching RepayFacet.
+        uint256 oldEndTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, oldEndTime);
+        if (accruedInterest + lateFee > 0) {
             // Codex round-1 P2 — use the protocol's
             // `cfgTreasuryFeeBps` (resolved via `splitTreasury`)
-            // rather than the hardcoded `TREASURY_FEE_BPS`. Otherwise
-            // any governance change to the treasury fee would silently
-            // bypass extension settlements.
-            (uint256 treasuryShare, uint256 lenderShare) =
+            // rather than the hardcoded `TREASURY_FEE_BPS`.
+            (uint256 treasuryShare, uint256 lenderInterestShare) =
                 LibEntitlement.splitTreasury(accruedInterest);
+            uint256 lenderShare = lenderInterestShare + lateFee;
             _routeInterest(
                 loan.principalAsset,
                 borrowerNftOwner,
@@ -579,6 +604,13 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
                 treasuryShare
             );
         }
+        // Codex round-2 P1 — clear any active prepay-collateral
+        // Seaport listing BEFORE the loan row is mutated. Mirrors
+        // RefinanceFacet's `LibPrepayCleanup.clearActiveListing` call
+        // pattern. Without this, an old listing could still be filled
+        // at the post-extension state where the executor's zone
+        // would re-pay an already-settled interest leg.
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
 
         // ── Update the loan row IN PLACE ─────────────────────────────
         uint256 oldRateBps = loan.interestRateBps;
