@@ -507,7 +507,9 @@
     "maxExpiryDate": "Max new expiry",
     "actionSave": "Save",
     "statePending": "Saving...",
-    "stateActive": "Active"
+    "stateActive": "Active",
+    "alertsSubscriptionCTA": "Set up Telegram or Push alerts so you'll be warned if no compatible refinance offer is found before your grace period ends.",
+    "alertsLinkText": "Go to Alerts →"
   },
   "autoLifecycleSettings": {
     "title": "Auto-lifecycle",

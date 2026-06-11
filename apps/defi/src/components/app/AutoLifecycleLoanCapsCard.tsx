@@ -195,6 +195,35 @@ export default function AutoLifecycleLoanCapsCard({
         />
       )}
 
+      {/* T-092 (#546) — alerts subscription CTA. When the borrower
+          has refinance caps enabled, surface a banner suggesting
+          they set up TG / Push alerts so the keeper's pre-grace
+          watcher (#532) can warn them if no match is found in
+          time. Mirrors the pre-grace warning banner above but
+          serves a different purpose: that one is a "your loan is
+          approaching grace now" alert; this one is a "set up your
+          notification channel so you'll be warned next time"
+          nudge.
+
+          Static for v1 — doesn't query actual subscription state
+          (would require an extra fetch to the apps/agent's
+          subscriptions endpoint). Future enhancement: hide the
+          banner when the user has already subscribed for this
+          chain. */}
+      {isBorrower && refinanceCaps?.enabled && (
+        <div
+          className="alert alert-info"
+          role="status"
+          style={{ marginTop: 12 }}
+        >
+          <AlertTriangle size={14} />
+          <div>
+            {t('autoLifecycleLoanCaps.alertsSubscriptionCTA')}{' '}
+            <a href="/alerts">{t('autoLifecycleLoanCaps.alertsLinkText')}</a>
+          </div>
+        </div>
+      )}
+
       {isLender && extendLenderCaps && (
         <ExtendCapsEditor
           loanId={loanId}
