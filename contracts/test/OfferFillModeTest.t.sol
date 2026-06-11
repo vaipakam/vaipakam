@@ -66,7 +66,8 @@ contract OfferFillModeTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
-            fillMode: fillMode
+            fillMode: fillMode,
+            refinanceTargetLoanId: 0
         });
     }
 
@@ -102,7 +103,8 @@ contract OfferFillModeTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
-            fillMode: fillMode
+            fillMode: fillMode,
+            refinanceTargetLoanId: 0
         });
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(p);

@@ -172,6 +172,31 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             offer.offerType != LibVaipakam.OfferType.Borrower ||
             offer.creator != currentBorrowerNftOwner
         ) revert InvalidRefinanceOffer();
+        // T-092 Phase 2b (Codex round-1 P1) — when the offer was
+        // created with a refinance target, that target MUST match
+        // the `oldLoanId` being refinanced. Otherwise a keeper could
+        // accept an offer tagged for loan A and then call
+        // `refinanceLoan(B, offerA)`, bypassing the cap-check that
+        // was tied to loan A at accept time. Untagged offers
+        // (`refinanceTargetLoanId == 0`) still work — those are the
+        // legacy / borrower-direct path where caps don't apply.
+        if (
+            offer.refinanceTargetLoanId != 0 &&
+            offer.refinanceTargetLoanId != oldLoanId
+        ) revert InvalidRefinanceOffer();
+        // T-092 Phase 2b round-3 P2 — when the keeper-driven path is
+        // taken, the offer MUST be refinance-tagged. Otherwise a
+        // keeper could pick any compatible borrower offer (e.g. a
+        // standard one the borrower posted for a fresh loan) and
+        // refinance through it — bypassing every cap-check in
+        // `LibAutoRefinanceCheck` because they only fire on tagged
+        // offers. The borrower-NFT owner direct path can use any
+        // offer (caps don't apply to them; they're acting in their
+        // own interest).
+        if (
+            msg.sender != currentBorrowerNftOwner &&
+            offer.refinanceTargetLoanId == 0
+        ) revert InvalidRefinanceOffer();
         if (!offer.accepted) revert OfferNotAccepted();
         // Range-aware amount check: legacy single-value offers satisfy
         // `amount == amountMax`; range offers satisfy

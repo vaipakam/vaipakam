@@ -742,7 +742,8 @@ contract RiskFacetTest is Test {
                     .PeriodicInterestCadence
                     .None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1044,7 +1045,8 @@ contract RiskFacetTest is Test {
                     .PeriodicInterestCadence
                     .None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.prank(borrower);
@@ -1813,7 +1815,8 @@ contract RiskFacetTest is Test {
                     .PeriodicInterestCadence
                     .None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.prank(borrower);

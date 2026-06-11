@@ -21,6 +21,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 
 /**
  * @title OfferCreateFacet
@@ -134,6 +135,11 @@ contract OfferCreateFacet is
         //    follow-up `getOffer` view-call. See
         //    {CreateOfferParams.allowsPrepayListing}.
         bool allowsPrepayListing;
+        // ── T-092 Phase 2b (#506) — refinance target. Carried on the
+        //    companion event so indexers can tell a refinance-tagged
+        //    Borrower offer from a standard one without a follow-up
+        //    `getOffer` read (Codex round-1 P2).
+        uint256 refinanceTargetLoanId;
     }
 
     /// @notice Companion to {OfferCreated} — full self-sufficient
@@ -239,6 +245,14 @@ contract OfferCreateFacet is
     // NotOfferCreator inherited from IVaipakamErrors
     error InsufficientAllowance();
     error LiquidityMismatch();
+    /// @notice T-092 Phase 2b (#506) — `refinanceTargetLoanId != 0`
+    ///         on a non-Borrower offer. The refinance-target flag is
+    ///         only meaningful for borrower-side offers; lender or
+    ///         other offer types with the field set are a creator
+    ///         mistake (likely re-using a struct without zeroing the
+    ///         field). The validator in `LibAutoRefinanceCheck`
+    ///         covers the Borrower-side semantic checks.
+    error InvalidRefinanceTarget();
     /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
     /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
     error OfferDurationExceedsCap(uint256 provided, uint256 cap);
@@ -528,6 +542,47 @@ contract OfferCreateFacet is
 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _writeOfferFields(offer, creator, offerId, params);
+
+        // T-092 Phase 2b (#506) — refinance-tagged offer must be a
+        // Borrower offer + creator must be the current borrower-NFT
+        // owner of the targeted loan + the proposed terms must fit
+        // within the borrower's `autoRefinanceCaps[loanId]`.
+        // Validation re-runs at accept time too (caps may be
+        // tightened or NFT may transfer between create + accept).
+        if (params.refinanceTargetLoanId != 0) {
+            if (params.offerType != LibVaipakam.OfferType.Borrower) {
+                revert InvalidRefinanceTarget();
+            }
+            // Codex round-2 P2 — partial-fill on a refinance-tagged
+            // offer would let it bind to multiple replacement loans
+            // (each match rewrites `offerIdToLoanId[offerId]`), so
+            // `RefinanceFacet.refinanceLoan` sees only the last
+            // match — earlier replacement loans get stranded. Force
+            // AON fill so the offer binds exactly once.
+            if (params.fillMode != LibVaipakam.FillMode.Aon) {
+                revert InvalidRefinanceTarget();
+            }
+            uint256 maxRateEffective =
+                params.interestRateBpsMax == 0
+                    ? params.interestRateBps
+                    : params.interestRateBpsMax;
+            uint256 maxAmountEffective =
+                params.amountMax == 0 ? params.amount : params.amountMax;
+            LibAutoRefinanceCheck.validate(
+                s,
+                params.refinanceTargetLoanId,
+                creator,
+                maxRateEffective,
+                params.durationDays,
+                params.lendingAsset,
+                params.collateralAsset,
+                params.assetType,
+                params.collateralAssetType,
+                params.prepayAsset,
+                params.amount,
+                maxAmountEffective
+            );
+        }
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
@@ -1048,6 +1103,11 @@ contract OfferCreateFacet is
         // merges can render the offer's "borrower may post a prepay
         // listing" decoration without a follow-up `getOffer` view-call.
         f.allowsPrepayListing = offer.allowsPrepayListing;
+        // T-092 Phase 2b (Codex round-1 P2) — carry the refinance
+        // target on the companion event so indexers + the dapp can
+        // distinguish refinance-tagged Borrower offers from standard
+        // ones without a follow-up `getOffer` view-call.
+        f.refinanceTargetLoanId = offer.refinanceTargetLoanId;
 
         emit OfferCreatedDetails(offerId, creator, offer.lendingAsset, f);
     }
@@ -1241,6 +1301,8 @@ contract OfferCreateFacet is
             }
         }
         offer.allowsParallelSale = params.allowsParallelSale;
+        // T-092 Phase 2b (#506) — refinance target.
+        offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.

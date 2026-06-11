@@ -270,7 +270,8 @@ contract PauseHandler is Test {
                 collateralAmountMax: collateralAmount,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             });
     }
 

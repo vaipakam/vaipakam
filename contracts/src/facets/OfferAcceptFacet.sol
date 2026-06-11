@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -557,6 +558,36 @@ contract OfferAcceptFacet is
         }
         if (LibVaipakam.isSanctionedAddress(offer.creator)) {
             revert ProfileFacet.SanctionedAddress(offer.creator);
+        }
+
+        // T-092 Phase 2b (#506) — re-check the borrower's per-loan
+        // refinance caps at accept time. Caps may have been
+        // tightened (or disabled) by the borrower between create +
+        // accept, or the borrower-NFT may have changed hands —
+        // either invalidates the create-time approval. Both at-
+        // create and at-accept callers route through the same
+        // `LibAutoRefinanceCheck.validate` helper.
+        if (offer.refinanceTargetLoanId != 0) {
+            uint256 maxRateEffective = offer.interestRateBpsMax == 0
+                ? offer.interestRateBps
+                : offer.interestRateBpsMax;
+            uint256 maxAmountEffective = offer.amountMax == 0
+                ? offer.amount
+                : offer.amountMax;
+            LibAutoRefinanceCheck.validate(
+                s,
+                offer.refinanceTargetLoanId,
+                offer.creator,
+                maxRateEffective,
+                offer.durationDays,
+                offer.lendingAsset,
+                offer.collateralAsset,
+                offer.assetType,
+                offer.collateralAssetType,
+                offer.prepayAsset,
+                offer.amount,
+                maxAmountEffective
+            );
         }
 
         // Per-asset pause: block accepts if either leg has been paused

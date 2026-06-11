@@ -79,7 +79,8 @@ contract PeriodicInterestCadenceTest is SetupTest {
             collateralAmountMax: 10 * amount,
             periodicInterestCadence: cadence,
             expiresAt: 0,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 

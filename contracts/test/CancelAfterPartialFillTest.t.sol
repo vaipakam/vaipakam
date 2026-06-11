@@ -124,7 +124,8 @@ contract CancelAfterPartialFillTest is SetupTest {
                 collateralAmountMax: collateralMax,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }
@@ -163,7 +164,8 @@ contract CancelAfterPartialFillTest is SetupTest {
                 collateralAmountMax: collateralRequired,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }

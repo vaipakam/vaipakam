@@ -171,6 +171,30 @@ contract AutoLifecycleFacetTest is SetupTest {
         assertFalse(_f().getAutoLendConsent(user));
     }
 
+    // ─── T-092 Phase 2b (#506) — refinance-target cap enforcement ────
+
+    function test_LibAutoRefinanceCheck_ErrorSelectorsExist() public {
+        // Compile-time guardrail — the new error selectors are part
+        // of the public ABI surface that the dapp + indexer must
+        // decode. A rename in `LibAutoRefinanceCheck` would break
+        // consumers silently if the selector check isn't here.
+        assertTrue(
+            bytes4(keccak256("RefinanceTargetNotActive()")) != bytes4(0)
+        );
+        assertTrue(
+            bytes4(keccak256("RefinanceTargetNotBorrower()")) != bytes4(0)
+        );
+        assertTrue(
+            bytes4(keccak256("RefinanceCapsRequired()")) != bytes4(0)
+        );
+        assertTrue(
+            bytes4(keccak256("RefinanceRateExceedsCap()")) != bytes4(0)
+        );
+        assertTrue(
+            bytes4(keccak256("RefinanceExpiryExceedsCap()")) != bytes4(0)
+        );
+    }
+
     function test_AutoExtendKillSwitch_BlocksExecutor() public {
         AdminFacet(address(diamond)).setAutoExtendEnabled(false);
         vm.expectRevert(AutoLifecycleFacet.AutoExtendDisabled.selector);

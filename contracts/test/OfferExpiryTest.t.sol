@@ -72,7 +72,8 @@ contract OfferExpiryTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 
@@ -108,7 +109,8 @@ contract OfferExpiryTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 
