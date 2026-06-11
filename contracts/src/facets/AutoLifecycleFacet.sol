@@ -636,11 +636,20 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // via the #494 audit's `LibKeeperReward.payVpfiReward` gate.
         // Never reverts; if the keeper is sanctioned the loan extends
         // but no payout lands.
-        LibKeeperReward.payVpfiReward(
-            msg.sender,
-            keccak256("extendLoanInPlace"),
-            gasStart - gasleft()
-        );
+        //
+        // Codex round-3 P2 — skip the payout when the caller IS the
+        // borrower-NFT owner extending their own loan. The keeper
+        // reward exists to compensate THIRD-PARTY housekeeping; a
+        // self-extension isn't a keeper service and would otherwise
+        // let a borrower drain the 2x gas multiplier in VPFI on every
+        // self-driven extend.
+        if (msg.sender != borrowerNftOwner) {
+            LibKeeperReward.payVpfiReward(
+                msg.sender,
+                keccak256("extendLoanInPlace"),
+                gasStart - gasleft()
+            );
+        }
     }
 
     /// @dev Moves accrued interest from the borrower-NFT owner's vault

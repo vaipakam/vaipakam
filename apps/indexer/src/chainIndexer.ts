@@ -1685,6 +1685,13 @@ async function processLoanLogs(
           loanId,
         )
         .run();
+      // Codex round-3 P2 — the contract calls
+      // `LibPrepayCleanup.clearActiveListing` on extension, but that
+      // helper does NOT emit `PrepayListingCanceled`, so this branch
+      // is the only place the projection learns the listing is dead.
+      // Without this, `/loans/:id/prepayListing` would keep serving
+      // a stale listing row after the extend.
+      await _deletePrepayListing(env, chainId, loanId);
     } else if (log.eventName === 'PartialRepaid') {
       // Partial repayment — loan stays Active, but `principal` shrinks.
       // The event carries the post-state `newPrincipal`, so mirror it.
@@ -2799,6 +2806,18 @@ function pluckActivityRefs(
         offerId: null,
       };
     case 'PartialRepaid':
+      return {
+        actor: null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
+    // T-092 Phase 3 (#503) — `LoanExtended` is keeper-driven (or
+    // borrower-NFT-owner direct), and the event doesn't carry a
+    // dedicated actor. Set `actor = null` so the unfiltered Activity
+    // feed walks `msg.sender` from the transaction envelope; the
+    // important denormalisation is `loanId` so `/activity?loanId=...`
+    // and the per-loan timeline surface the extension row.
+    case 'LoanExtended':
       return {
         actor: null,
         loanId: Number(args.loanId as bigint),
