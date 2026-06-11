@@ -4158,13 +4158,11 @@ library LibVaipakam {
     ///      shipped in Phase 1 stay forward-compatible.
     uint8 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
     /// @dev All actions — convenience for "grant everything" UX
-    ///      flows. T-092 Phase 1 intentionally keeps EXTEND OUT of
-    ///      this mask: users who approve a keeper with
-    ///      KEEPER_ACTION_ALL today must NOT implicitly auto-grant
-    ///      the EXTEND authority when Phase 3 lands. The mask widens
-    ///      to 0x3F together with the executor in the Phase 3 PR, so
-    ///      users see a fresh "approve EXTEND" prompt at that point.
-    uint8 internal constant KEEPER_ACTION_ALL = 0x1F;
+    ///      flows. T-092 Phase 3 (#503) widened this from 0x1F to
+    ///      0x3F at the same time the `extendLoanInPlace` executor
+    ///      landed, so a user granting "all actions" knows the
+    ///      EXTEND authority is included.
+    uint8 internal constant KEEPER_ACTION_ALL = 0x3F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.

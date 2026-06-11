@@ -4,8 +4,15 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title AutoLifecycleFacet
@@ -113,6 +120,50 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     error InvalidCaps();
     /// @notice Returned when the loan isn't Active.
     error LoanNotActive();
+    /// @notice T-092 Phase 3 (#503) — extendLoanInPlace called on a
+    ///         loan with a non-None periodic-interest cadence. Same
+    ///         reasoning as `RefinanceFacet`'s settle-first guard:
+    ///         the executor must NOT roll the start time forward
+    ///         while an unsettled periodic obligation exists.
+    error PeriodicCadenceMustSettleFirst();
+    /// @notice T-092 Phase 3 — extendLoanInPlace can only modify
+    ///         ERC20 loans (NFT rental extension would require NFT
+    ///         custody changes; out of scope for Phase 3).
+    error UnsupportedAssetTypeForExtend();
+    /// @notice T-092 Phase 3 — neither side has consented to auto-
+    ///         extend, or the cap was set by a non-current NFT
+    ///         holder (staleness fence). The new NFT owner must
+    ///         explicitly re-set caps before a keeper can extend.
+    error BothSideAutoExtendRequired();
+    /// @notice T-092 Phase 3 — the keeper-proposed rate falls
+    ///         outside `[lender.minRateBps, min(lender.maxRateBps,
+    ///         borrower.maxRateBps)]`.
+    error AutoExtendRateOutOfBand();
+    /// @notice T-092 Phase 3 — the new loan end time exceeds the
+    ///         intersection of `borrower.maxNewExpiry` and
+    ///         `lender.maxNewExpiry`.
+    error AutoExtendExpiryExceedsCap();
+    /// @notice T-092 Phase 3 — `newDurationDays` is zero.
+    error AutoExtendDurationZero();
+
+    /// @notice T-092 Phase 3 — emitted on a successful in-place
+    ///         loan extension. The position NFTs are untouched; only
+    ///         the loan row's `startTime`, `interestRateBps`, and
+    ///         `durationDays` change. `accruedInterest` is the
+    ///         interest charged for the just-elapsed window (paid
+    ///         from the borrower's vault to the lender's vault, with
+    ///         the 1% treasury cut applied).
+    /// @custom:event-category state-change/loan-mutation
+    event LoanExtended(
+        uint256 indexed loanId,
+        uint256 oldRateBps,
+        uint256 newRateBps,
+        uint64 oldStartTime,
+        uint64 newStartTime,
+        uint256 oldDurationDays,
+        uint256 newDurationDays,
+        uint256 accruedInterest
+    );
 
     // ─── Auto-lend (per-user flag; no contract enforcement) ──────────
 
@@ -346,6 +397,211 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         caps = s.autoExtendLenderCaps[loanId];
         if (caps.enabled && !_isCurrentLenderNft(s.loans[loanId], caps.setter)) {
             caps.enabled = false;
+        }
+    }
+
+    // ─── extendLoanInPlace — T-092 Phase 3 (#503) executor ───────────
+
+    /// @notice Extend an active loan in place: roll `startTime` forward
+    ///         to `block.timestamp`, replace `interestRateBps` with
+    ///         `newRateBps`, and replace `durationDays` with
+    ///         `newDurationDays`. No NFT mint / burn — both position
+    ///         NFTs continue to represent the same loanId.
+    /// @dev    Auth: Tier-1 sanctions check on the keeper AND on both
+    ///         current NFT owners. `KEEPER_ACTION_EXTEND` bit gates
+    ///         the borrower-side call; the lender-side consent is
+    ///         carried by the lender's per-loan caps (a keeper-driven
+    ///         extend doesn't directly require a lender-side keeper
+    ///         bit since the lender's `autoExtendLenderCaps[loanId]`
+    ///         enablement IS their consent surface).
+    ///
+    ///         Fund flow: accrued interest from `loan.startTime` to
+    ///         `block.timestamp` is computed via
+    ///         {LibEntitlement.proRataInterest}, withdrawn from the
+    ///         current borrower-NFT-owner's vault (so the keeper-
+    ///         driven path doesn't require any allowance from the
+    ///         borrower's wallet), then split 99% / 1% to the lender
+    ///         vault / treasury per the standard interest accrual
+    ///         policy.
+    ///
+    ///         Keeper reward: paid via
+    ///         {LibKeeperReward.payVpfiReward} on the gas-based
+    ///         housekeeping path. No matcher-style LIF kickback —
+    ///         this isn't a "match" event, it's a lifecycle update.
+    function extendLoanInPlace(
+        uint256 loanId,
+        uint16 newRateBps,
+        uint256 newDurationDays
+    ) external nonReentrant whenNotPaused {
+        uint256 gasStart = gasleft();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        if (loan.status != LibVaipakam.LoanStatus.Active) {
+            revert LoanNotActive();
+        }
+        // ERC20 principal only — NFT rentals would need a custody
+        // change conversation; out of scope for Phase 3.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            revert UnsupportedAssetTypeForExtend();
+        }
+        // Mirrors RefinanceFacet's settle-first guard. A loan with an
+        // unsettled periodic interest cadence can't have its start
+        // time rolled forward without erasing the old lender's
+        // outstanding period claim.
+        if (loan.periodicInterestCadence !=
+            LibVaipakam.PeriodicInterestCadence.None) {
+            revert PeriodicCadenceMustSettleFirst();
+        }
+        if (newDurationDays == 0) revert AutoExtendDurationZero();
+
+        // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
+        LibAuth.requireKeeperFor(
+            LibVaipakam.KEEPER_ACTION_EXTEND,
+            loan,
+            /* lenderSide */ false
+        );
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        address borrowerNftOwner = LibERC721.ownerOf(loan.borrowerTokenId);
+        address lenderNftOwner = LibERC721.ownerOf(loan.lenderTokenId);
+        LibVaipakam._assertNotSanctioned(borrowerNftOwner);
+        LibVaipakam._assertNotSanctioned(lenderNftOwner);
+
+        // ── Both-side cap consent + staleness fence ──────────────────
+        LibVaipakam.AutoExtendCaps storage borrowerCaps =
+            s.autoExtendBorrowerCaps[loanId];
+        LibVaipakam.AutoExtendCaps storage lenderCaps =
+            s.autoExtendLenderCaps[loanId];
+        bool borrowerFresh = borrowerCaps.setter == address(0) ||
+            borrowerCaps.setter == borrowerNftOwner;
+        bool lenderFresh = lenderCaps.setter == address(0) ||
+            lenderCaps.setter == lenderNftOwner;
+        if (
+            !borrowerCaps.enabled || !lenderCaps.enabled ||
+            !borrowerFresh || !lenderFresh
+        ) {
+            revert BothSideAutoExtendRequired();
+        }
+
+        // ── Cap intersection check ───────────────────────────────────
+        // Rate must satisfy `lender.minRateBps <= newRate <=
+        // min(lender.maxRateBps, borrower.maxRateBps)`. The lender's
+        // floor protects them from a keeper accepting a 0% extension;
+        // the borrower's ceiling protects them from a keeper
+        // accepting an above-market rate. The intersection guarantees
+        // both halves of consent bind.
+        uint16 ceiling = lenderCaps.maxRateBps < borrowerCaps.maxRateBps
+            ? lenderCaps.maxRateBps
+            : borrowerCaps.maxRateBps;
+        if (newRateBps < lenderCaps.minRateBps || newRateBps > ceiling) {
+            revert AutoExtendRateOutOfBand();
+        }
+        uint64 newEndTime = uint64(block.timestamp + newDurationDays * 1 days);
+        uint64 expiryCap = lenderCaps.maxNewExpiry < borrowerCaps.maxNewExpiry
+            ? lenderCaps.maxNewExpiry
+            : borrowerCaps.maxNewExpiry;
+        if (expiryCap != 0 && newEndTime > expiryCap) {
+            revert AutoExtendExpiryExceedsCap();
+        }
+
+        // ── Accrued-interest math + treasury / lender split ──────────
+        uint256 elapsedDays = block.timestamp <= loan.startTime
+            ? 0
+            : (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
+        uint256 accruedInterest = LibEntitlement.proRataInterest(
+            loan.principal,
+            loan.interestRateBps,
+            elapsedDays
+        );
+        if (accruedInterest > 0) {
+            uint256 treasuryShare =
+                (accruedInterest * LibVaipakam.TREASURY_FEE_BPS) /
+                LibVaipakam.BASIS_POINTS;
+            uint256 lenderShare = accruedInterest - treasuryShare;
+            _routeInterest(
+                loan.principalAsset,
+                borrowerNftOwner,
+                lenderNftOwner,
+                lenderShare,
+                treasuryShare
+            );
+        }
+
+        // ── Update the loan row IN PLACE ─────────────────────────────
+        uint256 oldRateBps = loan.interestRateBps;
+        uint64 oldStartTime = loan.startTime;
+        uint256 oldDurationDays = loan.durationDays;
+        loan.startTime = uint64(block.timestamp);
+        loan.interestRateBps = newRateBps;
+        loan.durationDays = newDurationDays;
+
+        emit LoanExtended(
+            loanId,
+            oldRateBps,
+            uint256(newRateBps),
+            oldStartTime,
+            uint64(block.timestamp),
+            oldDurationDays,
+            newDurationDays,
+            accruedInterest
+        );
+
+        // ── Keeper reward ────────────────────────────────────────────
+        // Gas-based housekeeping reward — sanctions soft-skip applies
+        // via the #494 audit's `LibKeeperReward.payVpfiReward` gate.
+        // Never reverts; if the keeper is sanctioned the loan extends
+        // but no payout lands.
+        LibKeeperReward.payVpfiReward(
+            msg.sender,
+            keccak256("extendLoanInPlace"),
+            gasStart - gasleft()
+        );
+    }
+
+    /// @dev Moves accrued interest from the borrower-NFT owner's vault
+    ///      to the lender-NFT owner's vault + treasury. Factored out
+    ///      so {extendLoanInPlace} stays under viaIR's stack budget.
+    function _routeInterest(
+        address principalAsset,
+        address borrowerNftOwner,
+        address lenderNftOwner,
+        uint256 lenderShare,
+        uint256 treasuryShare
+    ) internal {
+        // 1. Withdraw the full accrued interest from the borrower's
+        //    vault to the diamond itself.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                borrowerNftOwner,
+                principalAsset,
+                address(this),
+                lenderShare + treasuryShare
+            ),
+            IVaipakamErrors.VaultWithdrawFailed.selector
+        );
+        // 2. Forward treasury share + record accrual.
+        if (treasuryShare > 0) {
+            SafeERC20.safeTransfer(
+                IERC20(principalAsset),
+                LibFacet.getTreasury(),
+                treasuryShare
+            );
+            LibFacet.recordTreasuryAccrual(principalAsset, treasuryShare);
+        }
+        // 3. Push lender share into the lender's vault.
+        address lenderVault = LibFacet.getOrCreateVault(lenderNftOwner);
+        if (lenderShare > 0) {
+            SafeERC20.safeTransfer(
+                IERC20(principalAsset),
+                lenderVault,
+                lenderShare
+            );
+            LibVaipakam.recordVaultDeposit(
+                lenderNftOwner,
+                principalAsset,
+                lenderShare
+            );
         }
     }
 
