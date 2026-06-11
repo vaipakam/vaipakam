@@ -776,7 +776,10 @@ Master flag for the keeper-driven refinance path.
   `msg.sender != currentBorrowerNftOwner`). The borrower-direct
   refinance path (`msg.sender == currentBorrowerNftOwner`)
   remains permitted — a borrower can always refinance their own
-  loan even when the kill switch is off.
+  loan even when the kill switch is off. **Also blocks** the
+  T-092-H atomic chain (`refinanceLoanFromAccept`) for the same
+  reason — that entry shares the same Phase 2a sanctions +
+  kill-switch gating as the standalone keeper-driven path.
 - **When to flip on:** once governance has confirmed the cap-check
   surface (Phase 2b: `LibAutoRefinanceCheck.validate` at both
   offer-create AND offer-accept) is operationally sound and the
@@ -787,6 +790,44 @@ Master flag for the keeper-driven refinance path.
   the cap check (the Phase 2b round-3 P1 + P2 surface should
   catch every misuse pattern audited to date; this is the
   break-glass for unforeseen cases).
+
+#### T-092-H atomic accept-and-refinance (PR #553, 2026-06-11)
+
+Accepting a refinance-tagged Borrower offer (`offer.refinanceTargetLoanId != 0`)
+now chains into `RefinanceFacet.refinanceLoanFromAccept` inside
+the SAME transaction. Both `OfferAcceptFacet._acceptOffer` (direct
+accept + `matchOffers` with `partialFillEnabled` off) and
+`OfferMatchFacet.matchOffers`' dust-close branch (when
+`partialFillEnabled` is on) carry the chain hook.
+
+**Operational implication:** the old multi-tx race window between
+accept and refinance is closed. A borrower whose wallet held the
+new principal between transactions is no longer exposed to
+intermediate spends / MEV front-runs / approval revocations. The
+chain reverts the WHOLE tx when the refinance fails — both loans
+roll back atomically.
+
+**Kill-switch interaction:** flipping `cfgAutoRefinanceEnabled` off
+blocks the atomic chain too (the inner `refinanceLoanFromAccept`
+goes through the same sanctions + kill-switch gates as the
+external `refinanceLoan`). Borrowers who set a refinance-tagged
+offer during the kill-switch-off window will find the accept-side
+revert with `AutoRefinanceDisabled` until the flag flips back on.
+
+**Error surface:** the chain bubbles inner revert payloads
+verbatim (no synthetic wrapper). The dapp's `autoLifecycleErrors.ts`
+decoder already handles every typed inner error
+(`RefinanceCapsRequired`, `SanctionedAddress`, etc.). Codex
+review on PR #542 caught the wrapper-error misdesign in the first
+attempt; PR #553 (the design-doc-first re-attempt under
+[`docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md`](../DesignsAndPlans/T092AtomicAcceptAndRefinance.md))
+shipped without further findings.
+
+**Reentrancy:** `refinanceLoanFromAccept` is `onlyDiamondInternal`
+(`msg.sender == address(this)`) gated + has NO `nonReentrant`
+modifier — the outer `acceptOffer` / `matchOffers` `nonReentrant`
+lock covers the whole atomic tx. External EOAs cannot call the
+inner entry directly.
 
 ### `cfgAutoExtendEnabled`
 
