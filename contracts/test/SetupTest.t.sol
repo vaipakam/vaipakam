@@ -948,4 +948,115 @@ contract SetupTest is Test {
             true
         );
     }
+
+    // ─── T-092 #548 — fixture helpers for multi-actor integration tests ────
+    //
+    // The standard setUp gives us two actors (lender + borrower). Several
+    // T-092 follow-up scenarios (atomic accept-and-refinance, loan netting,
+    // pre-grace edge cases) need a THIRD actor — a "new lender" — with the
+    // full provisioning a real lender would have: wallet ERC20 balance,
+    // vault funded, vault approved to pull from wallet, and a standing
+    // approval to the Diamond on the principal asset.
+    //
+    // Extracted into reusable helpers so every test that needs this
+    // pattern doesn't duplicate the boilerplate (and so the next time the
+    // vault-funding incantation changes, there's one place to update).
+
+    /**
+     * @notice Provision an additional lender-like actor for integration
+     *         tests. Returns the actor address pre-funded with:
+     *           - `walletAmount` wei of `token` minted to their wallet.
+     *           - A diamond approval on `token` set to type(uint256).max
+     *             (mirrors the standing-approval pattern the dapp sets
+     *             at consent time).
+     *
+     * @dev    Does NOT pre-fund the vault — call {_fundActorVault}
+     *         after this if the test needs vault balance too. Keeping
+     *         the two steps separate so tests can exercise the
+     *         "wallet-only" + "vault-only" + "both" variants.
+     *
+     * @param  name           A human-readable seed for makeAddr — keep
+     *                        unique within a test contract to avoid
+     *                        address collisions across tests.
+     * @param  token          The ERC20 to mint + approve.
+     * @param  walletAmount   How much to mint to the wallet.
+     */
+    function _provisionFundedActor(
+        string memory name,
+        address token,
+        uint256 walletAmount
+    ) internal returns (address actor) {
+        actor = makeAddr(name);
+        ERC20Mock(token).mint(actor, walletAmount);
+        vm.prank(actor);
+        ERC20(token).approve(address(diamond), type(uint256).max);
+    }
+
+    /**
+     * @notice Pre-fund an actor's vault with `amount` of `token` using
+     *         the direct-transfer + counter-record pattern. Mirrors the
+     *         `_acceptBorrowerOffer` setup that RefinanceFacetTest uses
+     *         for `newLender`.
+     *
+     * @dev    The vault counter is ticked via
+     *         `recordVaultDepositERC20` so the subsequent
+     *         `vaultWithdrawERC20` calls don't underflow
+     *         `protocolTrackedVaultBalance`. The proxy receives the
+     *         tokens directly (not via `vaultDepositERC20From`) so the
+     *         actor doesn't need a separate approval to their own vault.
+     */
+    function _fundActorVault(
+        address actor,
+        address token,
+        uint256 amount
+    ) internal {
+        address proxy = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(actor);
+        ERC20Mock(token).mint(actor, amount);
+        vm.prank(actor);
+        ERC20(token).transfer(proxy, amount);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(
+            actor, token, amount
+        );
+    }
+
+    /**
+     * @notice Convenience wrapper for the most common atomic-refinance
+     *         integration test pattern: a "new lender" who can accept a
+     *         refinance-tagged Borrower offer with a single subsequent
+     *         `acceptOffer` call.
+     *
+     * @dev    Equivalent to `_provisionFundedActor` + `_fundActorVault`.
+     *         Returns the actor address with wallet AND vault funded
+     *         AND a standing diamond approval ready.
+     */
+    function _provisionFundedActorWithVault(
+        string memory name,
+        address token,
+        uint256 totalAmount
+    ) internal returns (address actor) {
+        // Half to wallet, half to vault — covers the "balance is split"
+        // case naturally. Tests that need a different split can call
+        // the two primitives directly.
+        uint256 wallet = totalAmount / 2;
+        uint256 vault = totalAmount - wallet;
+        actor = _provisionFundedActor(name, token, wallet);
+        if (vault > 0) {
+            _fundActorVault(actor, token, vault);
+        }
+    }
+
+    /**
+     * @notice Set a standing diamond approval on `token` for an EXISTING
+     *         actor. Useful when the test reuses one of the standard
+     *         actors (`lender` / `borrower`) but needs the approval
+     *         set independently of any other setup.
+     */
+    function _grantStandingApprovalToDiamond(
+        address actor,
+        address token
+    ) internal {
+        vm.prank(actor);
+        ERC20(token).approve(address(diamond), type(uint256).max);
+    }
 }
