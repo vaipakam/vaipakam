@@ -282,6 +282,23 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // approved the diamond for `oldLoan.principalAsset` —
         // standard prerequisite for a refinance, surfaced by the
         // dapp as part of the consent flow.
+        //
+        // T-092-A (#530) — operational loan netting is preserved
+        // via the existing wallet-pull path: `OfferAcceptFacet`
+        // routes the new lender's principal to the borrower's
+        // WALLET on accept (line 840 in OfferAcceptFacet), and the
+        // refinance immediately pulls from the same wallet to pay
+        // the old loan. The standing approval set at consent time
+        // means no Metamask popup at refinance time — the keeper-
+        // driven path works fully automatically. A vault-first
+        // optimisation was attempted in this PR but reverted (PR
+        // #538 round-1 Codex P2): `protocolTrackedVaultBalance` is
+        // an aggregate counter that includes funds locked in active
+        // lender offers (deposited via `OfferCreateFacet.
+        // _pullCreatorAssetsClassic`), so a vault-first netting
+        // could double-spend committed funds. True vault-first
+        // requires an invariant-preserving locked-balance tracking
+        // shape that's out of scope here.
         if (treasuryFee > 0) {
             IERC20(oldLoan.principalAsset).safeTransferFrom(
                 currentBorrowerNftOwner,

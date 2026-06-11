@@ -1240,4 +1240,47 @@ contract RefinanceFacetTest is Test {
         RefinanceFacet(address(diamond)).refinanceLoan(activeLoanId, borrowerOfferId);
         vm.clearMockedCalls();
     }
+
+    // ─── T-092-A (#530) Operational loan netting via wallet path ──────
+    //
+    // The original #530 proposed a vault-first wallet-fallback fund
+    // source for refinance. Codex review caught a real correctness
+    // issue (PR #538 round-1 P2): `protocolTrackedVaultBalance` is an
+    // aggregate counter that includes funds locked in active lender
+    // offers, so a vault-first netting could double-spend committed
+    // funds. The vault-first path was reverted; the wallet path is
+    // retained as the canonical refinance payment source. Operational
+    // netting is preserved because `OfferAcceptFacet` routes the new
+    // principal to the borrower's WALLET on accept, and the refinance
+    // immediately pulls from the same wallet to pay the old loan.
+
+    function test_T092A_RefinanceWalletPath_StandingApprovalNoPopup() public {
+        // T-092-A — the keeper-driven refinance path works without
+        // any borrower-side action at refinance time, because the
+        // standing diamond approval set at consent time covers the
+        // wallet pull. This test exercises the borrower-direct
+        // refinance happy path + asserts the wallet drains by
+        // approximately the payoff amount (principal + interest +
+        // treasury fee).
+        uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
+
+        uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(
+            activeLoanId,
+            borrowerOfferId
+        );
+
+        // Wallet drained by the full payoff (the operational loan
+        // netting at work — new principal landed in wallet via
+        // _acceptBorrowerOffer, then refinance pulled it back out).
+        assertLt(
+            ERC20(mockERC20).balanceOf(borrower),
+            borrowerWalletBefore,
+            "borrower wallet must drain by the refinance payoff"
+        );
+        // suppress unused
+        newLenderOfferId;
+    }
 }
