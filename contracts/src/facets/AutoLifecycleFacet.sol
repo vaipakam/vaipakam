@@ -9,6 +9,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -635,31 +636,40 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (accruedInterest + lateFee > 0) {
             // Codex round-1 P2 — use the protocol's
             // `cfgTreasuryFeeBps` (resolved via `splitTreasury`)
-            // rather than the hardcoded `TREASURY_FEE_BPS`.
-            (uint256 treasuryShare, uint256 lenderInterestShare) =
-                LibEntitlement.splitTreasury(accruedInterest);
+            // rather than the hardcoded `TREASURY_FEE_BPS`. Codex
+            // round-6 P2 — split `interest + lateFee` so late fees
+            // participate in the treasury cut, matching
+            // `LibSettlement.computeRepayment` (`treasuryShare +
+            // lenderShare == interest + lateFee`).
+            uint256 totalInterestLike = accruedInterest + lateFee;
+            (uint256 treasuryShare, uint256 lenderShare) =
+                LibEntitlement.splitTreasury(totalInterestLike);
             // Codex round-4 P2 — if the original lender has VPFI yield-
             // fee consent + sufficient vault VPFI, pay the treasury cut
             // in VPFI from the lender's vault and route 100% of the
-            // interest to the lender in the lending asset. Mirrors the
-            // RepayFacet / PrecloseFacet / RefinanceFacet pattern.
-            // `tryApplyYieldFee` is a silent fallback — if the lender
-            // doesn't have enough VPFI, the standard 1% split applies.
-            // Codex round-5 P1 — guard on `s.vpfiDiscountConsent[lender]`
-            // exactly like the sibling settlement paths do.
-            // `tryApplyYieldFee` itself does NOT check consent — it
-            // would silently withdraw VPFI from any lender with a
-            // quoteable tier whose vault has enough VPFI, even if
-            // they never consented.
-            if (treasuryShare > 0 && s.vpfiDiscountConsent[loan.lender]) {
+            // interest+lateFee to the lender in the lending asset.
+            // Mirrors RepayFacet / PrecloseFacet / RefinanceFacet.
+            // Codex round-5 P1 — guard on `s.vpfiDiscountConsent[lender]`.
+            // Codex round-6 P1 — also guard on `lenderNftOwner ==
+            // loan.lender`. `tryApplyYieldFee` debits VPFI from
+            // `loan.lender`'s vault internally; if the NFT has been
+            // transferred to a new holder, the original lender would
+            // be paying treasury for interest the new owner is
+            // receiving — a mis-aligned charge. When the NFT changed
+            // hands, fall back to the standard 1% split in the
+            // lending asset (no VPFI debit).
+            if (
+                treasuryShare > 0 &&
+                s.vpfiDiscountConsent[loan.lender] &&
+                lenderNftOwner == loan.lender
+            ) {
                 (bool yieldApplied, ) =
-                    LibVPFIDiscount.tryApplyYieldFee(loan, accruedInterest);
+                    LibVPFIDiscount.tryApplyYieldFee(loan, totalInterestLike);
                 if (yieldApplied) {
-                    lenderInterestShare = accruedInterest;
+                    lenderShare = totalInterestLike;
                     treasuryShare = 0;
                 }
             }
-            uint256 lenderShare = lenderInterestShare + lateFee;
             _routeInterest(
                 loan.principalAsset,
                 borrowerNftOwner,
@@ -680,9 +690,31 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         uint256 oldRateBps = loan.interestRateBps;
         uint64 oldStartTime = loan.startTime;
         uint256 oldDurationDays = loan.durationDays;
+        // Codex round-6 P2 — `LibInteractionRewards.registerLoan`
+        // snapshots `(interestRateBps, durationDays)` into the per-
+        // day reward accumulators at loan-init. Mutating them
+        // without closing + re-registering would leave the old
+        // accrual schedule running on a loan with new terms (wrong
+        // per-day numeraire, wrong end day). Settle the old entry
+        // as-of today (not borrower-clean — loan didn't close) and
+        // reopen with the new terms so future accrual matches.
+        LibInteractionRewards.closeLoan(
+            loanId,
+            /* borrowerClean */ false,
+            /* lenderForfeit */ false
+        );
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
+        LibInteractionRewards.registerLoan(
+            loanId,
+            loan.lender,
+            loan.borrower,
+            loan.principalAsset,
+            loan.principal,
+            uint256(newRateBps),
+            newDurationDays
+        );
 
         emit LoanExtended(
             loanId,
