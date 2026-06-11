@@ -140,6 +140,47 @@ export async function putNotifyState(
     .run();
 }
 
+/** T-092-C (#532) — read the last pre-grace warning timestamp for
+ *  a borrower's loan. Returns 0 when no warning has been sent yet
+ *  (new loan, or never reached the grace-approach window). The
+ *  caller compares against `now - WINDOW_SECONDS` to throttle. */
+export async function getPreGraceNotifyState(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+  loanId: number,
+): Promise<number> {
+  const res = await db
+    .prepare(
+      `SELECT last_sent_ts FROM pre_grace_notify_state
+       WHERE wallet = ? AND chain_id = ? AND loan_id = ?`,
+    )
+    .bind(wallet, chainId, loanId)
+    .first<{ last_sent_ts: number }>();
+  return res?.last_sent_ts ?? 0;
+}
+
+/** T-092-C (#532) — stamp the pre-grace warning timestamp. Upserts
+ *  the (wallet, chain_id, loan_id) triple. */
+export async function putPreGraceNotifyState(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+  loanId: number,
+  lastSentTs: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO pre_grace_notify_state
+         (wallet, chain_id, loan_id, last_sent_ts)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(wallet, chain_id, loan_id) DO UPDATE SET
+         last_sent_ts = excluded.last_sent_ts`,
+    )
+    .bind(wallet, chainId, loanId, lastSentTs)
+    .run();
+}
+
 /** 6-digit numeric Telegram handshake code with a 10-minute expiry.
  *  Collisions are exceedingly rare (1-in-10^6 per window) but we
  *  regenerate on ON CONFLICT just in case. */
