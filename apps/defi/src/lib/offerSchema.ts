@@ -197,6 +197,14 @@ export interface CreateOfferPayload {
    *  full semantics. Default `false` is the safe behaviour; the form
    *  has no UI for it yet (Round-8 deferred; future enhancement). */
   allowsPrepayListing: boolean;
+  /** T-092 Phase 2b (#506) — refinance-target loan id. When non-
+   *  zero, the offer is created with the intent to refinance the
+   *  named loan; the contract validates the offer's terms against
+   *  `autoRefinanceCaps[refinanceTargetLoanId]` at both create AND
+   *  accept. `0n` ⇒ standard borrower offer (no refinance intent).
+   *  Standard create flow passes `0n`; the keeper-driven auto-
+   *  refinance UX sets this when constructing the offer. */
+  refinanceTargetLoanId: bigint;
 }
 
 /**
@@ -453,6 +461,11 @@ export function toCreateOfferPayload(
     // to default missing keys.
     expiresAt: 0n,
     allowsPrepayListing: false,
+    // T-092 Phase 2b (#506) — standard create flow always passes
+    // `0n` (= no refinance target). The keeper-driven auto-refinance
+    // UX will set this explicitly when constructing the offer; this
+    // builder is the standard path only.
+    refinanceTargetLoanId: 0n,
   };
 }
 

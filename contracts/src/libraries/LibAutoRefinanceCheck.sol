@@ -74,6 +74,8 @@ library LibAutoRefinanceCheck {
         uint256 offerDurationDays,
         address offerLendingAsset,
         address offerCollateralAsset,
+        LibVaipakam.AssetType offerCollateralAssetType,
+        uint256 offerMinAmount,
         uint256 offerMaxAmount
     ) internal view {
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -99,13 +101,26 @@ library LibAutoRefinanceCheck {
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {
             revert RefinanceTargetIncompatible();
         }
+        // Codex round-2 P2 — collateral CONTRACT match alone isn't
+        // enough: an NFT contract can also serve as an ERC20-typed
+        // declaration in a refinance-tagged offer. Verify the asset
+        // TYPE matches too so a refinance-tagged offer can't sneak
+        // an NFT-collateralised loan past as ERC20 (or vice-versa).
         if (
             offerLendingAsset != loan.principalAsset ||
-            offerCollateralAsset != loan.collateralAsset
+            offerCollateralAsset != loan.collateralAsset ||
+            offerCollateralAssetType != loan.collateralAssetType
         ) {
             revert RefinanceTargetIncompatible();
         }
-        if (offerMaxAmount < loan.principal) {
+        // Codex round-2 P2 — RefinanceFacet's later check is
+        // `offer.amount <= oldLoan.principal <= offer.amountMax`.
+        // Both bounds must be on the right side of the old principal,
+        // otherwise the refinance-tagged offer can be accepted but
+        // can never satisfy the refinance path.
+        if (
+            offerMinAmount > loan.principal || offerMaxAmount < loan.principal
+        ) {
             revert RefinanceTargetIncompatible();
         }
         LibVaipakam.AutoRefinanceCaps storage caps =

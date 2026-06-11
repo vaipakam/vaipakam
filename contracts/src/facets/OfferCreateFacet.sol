@@ -553,6 +553,15 @@ contract OfferCreateFacet is
             if (params.offerType != LibVaipakam.OfferType.Borrower) {
                 revert InvalidRefinanceTarget();
             }
+            // Codex round-2 P2 — partial-fill on a refinance-tagged
+            // offer would let it bind to multiple replacement loans
+            // (each match rewrites `offerIdToLoanId[offerId]`), so
+            // `RefinanceFacet.refinanceLoan` sees only the last
+            // match — earlier replacement loans get stranded. Force
+            // AON fill so the offer binds exactly once.
+            if (params.fillMode != LibVaipakam.FillMode.Aon) {
+                revert InvalidRefinanceTarget();
+            }
             uint256 maxRateEffective =
                 params.interestRateBpsMax == 0
                     ? params.interestRateBps
@@ -567,6 +576,8 @@ contract OfferCreateFacet is
                 params.durationDays,
                 params.lendingAsset,
                 params.collateralAsset,
+                params.collateralAssetType,
+                params.amount,
                 maxAmountEffective
             );
         }
