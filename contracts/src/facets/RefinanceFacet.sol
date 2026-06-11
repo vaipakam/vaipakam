@@ -268,43 +268,115 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         }
         uint256 lenderDue = oldLoan.principal + lenderInterest;
 
-        // T-037 — pay each party directly from the borrower without
-        // the Diamond holding the asset between transfers. The
-        // borrower's prior `approve()` to the Diamond covers the
-        // total; two `safeTransferFrom` calls (one to treasury, one
-        // to the old lender's vault) replace the prior pull-and-
-        // split pattern. Treasury share skipped entirely if the
-        // VPFI-discount path satisfied it.
-        // T-092 Phase 2a — fund-source is the CURRENT borrower-NFT
-        // owner (not msg.sender) so a keeper-driven invocation
-        // doesn't debit the keeper's wallet for the borrower's
-        // old-payoff. Requires the borrower (NFT holder) to have
-        // approved the diamond for `oldLoan.principalAsset` —
-        // standard prerequisite for a refinance, surfaced by the
-        // dapp as part of the consent flow.
+        // T-092-A (#530) — loan netting with vault-first, wallet-
+        // fallback fund source. The borrower's payoff (treasury fee
+        // + interest + old principal) now consumes the borrower's
+        // VAULT balance first, then falls back to the borrower's
+        // WALLET (the legacy pre-#530 path) for any shortfall.
+        //
+        // Why: borrowers who deposit earnings into their vault (the
+        // common case — VPFI rewards + claim payouts + offer
+        // collateral release all land there) get auto-refinance
+        // without needing to maintain a separate wallet ERC20
+        // balance + standing diamond approval. The new lender's
+        // principal landed in the borrower's wallet during the
+        // offer-accept step; a borrower who routinely vault-deposits
+        // can have the whole refinance go through with zero wallet
+        // interactions. A borrower who keeps funds in the wallet
+        // (the legacy default) still works through the unchanged
+        // safeTransferFrom path — no UX regression.
+        //
+        // Applies UNIFORMLY across liquid + illiquid + NFT
+        // collateral types — the netting happens on the PRINCIPAL
+        // leg (always ERC20), not on the collateral side. Collateral
+        // handoff below is unchanged.
+        //
+        // Mixed case (vault has some, wallet has the rest) handled
+        // by computing the per-payment vault contribution before
+        // each transfer. The protocolTrackedVaultBalance counter
+        // governs the vault portion (so we never withdraw more than
+        // was tracked).
+        LibVaipakam.Storage storage stor = LibVaipakam.storageSlot();
+        uint256 vaultBalance = stor.protocolTrackedVaultBalance[
+            currentBorrowerNftOwner
+        ][oldLoan.principalAsset];
+
+        // ── Treasury fee leg ────────────────────────────────────────
         if (treasuryFee > 0) {
-            IERC20(oldLoan.principalAsset).safeTransferFrom(
-                currentBorrowerNftOwner,
-                LibFacet.getTreasury(),
-                treasuryFee
-            );
+            uint256 fromVault = vaultBalance >= treasuryFee
+                ? treasuryFee
+                : vaultBalance;
+            uint256 fromWallet = treasuryFee - fromVault;
+            if (fromVault > 0) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        currentBorrowerNftOwner,
+                        oldLoan.principalAsset,
+                        LibFacet.getTreasury(),
+                        fromVault
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+                vaultBalance -= fromVault;
+            }
+            if (fromWallet > 0) {
+                IERC20(oldLoan.principalAsset).safeTransferFrom(
+                    currentBorrowerNftOwner,
+                    LibFacet.getTreasury(),
+                    fromWallet
+                );
+            }
             LibFacet.recordTreasuryAccrual(oldLoan.principalAsset, treasuryFee);
         }
 
-        // Route lender's share to old lender's vault via the cross-
-        // payer chokepoint so the protocolTrackedVaultBalance
-        // counter ticks under the old lender (the vault owner)
-        // while the current borrower-NFT owner remains the payer.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20From.selector,
-                currentBorrowerNftOwner, // payer — current borrower NFT holder
-                oldLoan.lender,          // user — old lender's vault
-                oldLoan.principalAsset,
-                lenderDue
-            ),
-            VaultDepositFailed.selector
-        );
+        // ── Lender share leg ────────────────────────────────────────
+        // Vault portion: vault-to-vault transfer using the existing
+        // two-step `vaultWithdrawERC20` + `recordVaultDepositERC20`
+        // pattern (same shape as the Permit2 deposit flow). Wallet
+        // portion: the legacy `vaultDepositERC20From` cross-payer
+        // chokepoint (unchanged).
+        if (lenderDue > 0) {
+            uint256 fromVault = vaultBalance >= lenderDue
+                ? lenderDue
+                : vaultBalance;
+            uint256 fromWallet = lenderDue - fromVault;
+            if (fromVault > 0) {
+                address oldLenderVault = VaultFactoryFacet(address(this))
+                    .getOrCreateUserVault(oldLoan.lender);
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        currentBorrowerNftOwner,
+                        oldLoan.principalAsset,
+                        oldLenderVault,
+                        fromVault
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.recordVaultDepositERC20.selector,
+                        oldLoan.lender,
+                        oldLoan.principalAsset,
+                        fromVault
+                    ),
+                    VaultDepositFailed.selector
+                );
+            }
+            if (fromWallet > 0) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultDepositERC20From.selector,
+                        currentBorrowerNftOwner,
+                        oldLoan.lender,
+                        oldLoan.principalAsset,
+                        fromWallet
+                    ),
+                    VaultDepositFailed.selector
+                );
+            }
+        }
 
         // Record lender's claimable. heldForLender handled by ClaimFacet.
         s.lenderClaims[oldLoanId] = LibVaipakam.ClaimInfo({
