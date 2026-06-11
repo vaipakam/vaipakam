@@ -1511,8 +1511,12 @@ contract DeployDiamond is Script {
     }
 
     function _getRefinanceSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = RefinanceFacet.refinanceLoan.selector;
+        // T-092-H (#549) — atomic accept-and-refinance internal entry.
+        // Cut here so the diamond fallback routes the cross-facet call
+        // from OfferAcceptFacet / OfferMatchFacet into RefinanceFacet.
+        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
     }
 
     function _getVpfiTokenSelectors() internal pure returns (bytes4[] memory s) {

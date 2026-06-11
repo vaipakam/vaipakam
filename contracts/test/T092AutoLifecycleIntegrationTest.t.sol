@@ -10,6 +10,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -538,5 +539,78 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             type(uint256).max,
             "after grantStandingApproval, allowance should be max"
         );
+    }
+
+    // ─── T-092-H (#539) Atomic accept-and-refinance happy path ─────────
+
+    function test_T092H_AtomicAccept_DirectPath_ChainsInSameTx() public {
+        // T-092-H happy path. A new lender accepts a refinance-tagged
+        // Borrower offer via OfferAcceptFacet.acceptOffer; the chain
+        // inside _acceptOffer fires RefinanceFacet.refinanceLoanFromAccept
+        // in the same tx. Asserts both loans transitioned atomically.
+
+        // Step 1: build the active OLD loan via the standard fixture.
+        uint256 oldLoanId = _buildActiveLoan();
+
+        // Step 2: borrower sets refinance caps that the refinance
+        // attempt will satisfy.
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId,
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+
+        // Step 3: borrower creates the refinance-tagged offer.
+        vm.prank(borrower);
+        uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        // Step 4: provision a new lender with wallet + vault funded
+        // via the #548 fixture helpers.
+        address newLender = _provisionFundedActorWithVault(
+            "atomicNewLender",
+            mockERC20,
+            LOAN_PRINCIPAL * 4
+        );
+
+        // Step 5: borrower needs a standing diamond approval so the
+        // chained refinance can pull the old-payoff from their wallet.
+        // (Mirrors the dapp's consent-time approval set in #520.)
+        _grantStandingApprovalToDiamond(borrower, mockERC20);
+
+        // Step 6: SINGLE TX — accept fires the chain.
+        vm.prank(newLender);
+        uint256 newLoanId = OfferAcceptFacet(address(diamond))
+            .acceptOffer(refinanceOfferId, true);
+
+        // Step 7: assert both loans transitioned atomically.
+        LibVaipakam.Loan memory oldLoan = LoanFacet(address(diamond))
+            .getLoanDetails(oldLoanId);
+        assertEq(
+            uint8(oldLoan.status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan must be Repaid after atomic accept-and-refinance"
+        );
+        LibVaipakam.Loan memory newLoan = LoanFacet(address(diamond))
+            .getLoanDetails(newLoanId);
+        assertEq(
+            uint8(newLoan.status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "new loan must remain Active"
+        );
+    }
+
+    function test_T092H_RefinanceLoanFromAccept_RejectsExternalEOA() public {
+        // T-092-H — the new external entry is `onlyDiamondInternal`
+        // gated. A direct external EOA call must revert
+        // OnlyDiamondInternal — not bubble through to the refinance
+        // logic. Structural guardrail against accidentally exposing
+        // the no-nonReentrant entry to arbitrary callers.
+        address randoUser = makeAddr("randoExternalCaller");
+        vm.prank(randoUser);
+        vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
+        RefinanceFacet(address(diamond)).refinanceLoanFromAccept(1, 1);
     }
 }

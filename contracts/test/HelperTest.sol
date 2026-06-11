@@ -884,8 +884,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = RefinanceFacet.refinanceLoan.selector;
+        // T-092-H (#549) — atomic accept-and-refinance internal
+        // entry; cut so the diamond fallback can route the
+        // OfferAcceptFacet / OfferMatchFacet cross-facet calls.
+        selectors[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
         return selectors;
     }
 

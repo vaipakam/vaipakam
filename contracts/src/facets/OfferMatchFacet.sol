@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -444,6 +445,24 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                         ? OfferCloseReason.FullyFilled
                         : OfferCloseReason.Dust
                 );
+
+                // T-092-H (#549) — atomic accept-and-refinance,
+                // MATCHED path. Pairs the chain hook with the
+                // deferred `accepted = true` flip just set above.
+                // Without this hook the matched path would NOT
+                // atomic-chain (Codex round-1 P2 on closed PR
+                // #542). Mirrors the direct-path hook in
+                // OfferAcceptFacet._acceptOffer.
+                if (bm.refinanceTargetLoanId != 0) {
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            RefinanceFacet.refinanceLoanFromAccept.selector,
+                            bm.refinanceTargetLoanId,
+                            borrowerOfferId
+                        ),
+                        bytes4(0)
+                    );
+                }
             }
         }
         // §3.4 — borrower-side post-match snapshot.
