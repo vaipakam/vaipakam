@@ -98,6 +98,7 @@ import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
 import { runMatcher } from './matcher';
 import { runLiquidityConfidence } from './liquidityConfidence';
 import { runLiquidator } from './liquidator';
+import { runAutoLifecycle } from './autoLifecycle';
 
 export default {
   async scheduled(
@@ -140,6 +141,17 @@ export default {
       runLiquidator(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runLiquidator pass failed:', err);
+      }),
+    );
+    // T-092 #512 — auto-extend pass. Discovers loans with both-
+    // side `autoExtendCaps.enabled` and submits `extendLoanInPlace`
+    // within the consent intersection. Skipped chain-by-chain when
+    // `AdminFacet.getAutoExtendEnabled()` is false. Auto-refinance
+    // composition with the matcher is a follow-up.
+    ctx.waitUntil(
+      runAutoLifecycle(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runAutoLifecycle pass failed:', err);
       }),
     );
   },
