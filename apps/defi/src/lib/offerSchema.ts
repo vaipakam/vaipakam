@@ -151,7 +151,18 @@ export const initialOfferForm: OfferFormState = {
   periodicInterestCadence: 0, // None
   allowsParallelSale: false, // T-086 Round-8 #358 — explicit opt-in
   refinanceTargetLoanId: '', // T-092 #511 sub (#523) — standard offer; non-empty enables refinance-tagged flow
-  useFullTermInterest: true, // #408 floor-model foundation — default true; lenders opt OUT for soft pro-rata loans
+  // #408 floor-model foundation — DEFAULT FALSE in this PR. Per Codex
+  // round-1 P1: `LibEntitlement.settlementInterest`'s existing `true`
+  // branch returns `fullTermInterest(...)` directly (no floor / no
+  // grace accrual / no `interestSettled` credit), which is the broken
+  // pre-#408 behaviour. Flipping the dapp default to `true` here would
+  // immediately route every new offer into that broken branch.
+  //
+  // Once the math PR lands (LibEntitlement floor formula + LibSettlement
+  // interestSettled credit), this default flips to `true` (the design's
+  // intended UX). Until then, every new offer behaves pre-#408 (always
+  // false) — true zero behaviour change for the foundation PR.
+  useFullTermInterest: false,
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
