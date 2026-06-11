@@ -34,6 +34,8 @@ const ACTION_LABELS: Record<keyof typeof KEEPER_ACTION, string> = {
   INIT_EARLY_WITHDRAW: 'Init withdraw',
   INIT_PRECLOSE: 'Init preclose',
   REFINANCE: 'Refinance',
+  // T-092 Phase 3 (#503) — auto-extend in place toggle.
+  EXTEND: 'Auto-extend',
 };
 
 interface CommonProps {

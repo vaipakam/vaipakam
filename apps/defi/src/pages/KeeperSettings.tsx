@@ -20,13 +20,18 @@ export const KEEPER_ACTION = {
   INIT_EARLY_WITHDRAW: 0x04,
   INIT_PRECLOSE: 0x08,
   REFINANCE: 0x10,
+  // T-092 Phase 3 (#503) — activated when KEEPER_ACTION_ALL widened
+  // from 0x1F to 0x3F server-side. The dedicated toggle row below
+  // lets users opt in or out per-action.
+  EXTEND: 0x20,
 } as const;
 export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.COMPLETE_LOAN_SALE |
   KEEPER_ACTION.COMPLETE_OFFSET |
   KEEPER_ACTION.INIT_EARLY_WITHDRAW |
   KEEPER_ACTION.INIT_PRECLOSE |
-  KEEPER_ACTION.REFINANCE;
+  KEEPER_ACTION.REFINANCE |
+  KEEPER_ACTION.EXTEND;
 
 type ActionKey = keyof typeof KEEPER_ACTION;
 
@@ -55,6 +60,11 @@ const ACTION_ROWS: Array<{ key: ActionKey; labelKey: string; hintKey: string }> 
     key: "REFINANCE",
     labelKey: "keeperPicker.permissionInitiateRefinanceTitle",
     hintKey: "keeperPicker.permissionInitiateRefinanceDesc",
+  },
+  {
+    key: "EXTEND",
+    labelKey: "keeperPicker.permissionAutoExtendTitle",
+    hintKey: "keeperPicker.permissionAutoExtendDesc",
   },
 ];
 

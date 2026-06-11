@@ -2811,15 +2811,16 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
-    // T-092 Phase 3 (#503) — `LoanExtended` is keeper-driven (or
-    // borrower-NFT-owner direct), and the event doesn't carry a
-    // dedicated actor. Set `actor = null` so the unfiltered Activity
-    // feed walks `msg.sender` from the transaction envelope; the
-    // important denormalisation is `loanId` so `/activity?loanId=...`
-    // and the per-loan timeline surface the extension row.
+    // T-092 Phase 3 (#503) Codex round-4 P2 — `caller` is the
+    // address that initiated the extension (the keeper, or the
+    // borrower-NFT owner extending directly). Indexed on-chain so
+    // `pluckActivityRefs` can return it as the activity actor.
+    // Without this, `?actor=...` filters would miss direct
+    // borrower self-extensions because `DecodedLog` doesn't store
+    // `msg.sender`.
     case 'LoanExtended':
       return {
-        actor: null,
+        actor: (args.caller as string)?.toLowerCase() ?? null,
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };

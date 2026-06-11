@@ -8,6 +8,7 @@ import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibKeeperReward} from "../libraries/LibKeeperReward.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -164,6 +165,20 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         explicit cast would silently truncate, letting a
     ///         keeper-proposed duration wrap past the cap.
     error AutoExtendEndTimeOverflow();
+    /// @notice Codex round-4 P1 — loan is past its
+    ///         `oldEndTime + gracePeriod(durationDays)` window, which
+    ///         is the point at which `DefaultedFacet.triggerDefault`
+    ///         is the intended resolution. Extension at this point
+    ///         would let an authorised keeper undo a defaultable
+    ///         state and salvage a loan the lender is owed a default
+    ///         payout on.
+    error ExtensionGraceExpired();
+    /// @notice Codex round-4 P2 — proposed `newEndTime` is not
+    ///         strictly after `oldEndTime`. An "extension" that
+    ///         shortens the loan would let a compromised keeper turn
+    ///         an extend consent into an early-maturity / default
+    ///         vector.
+    error ExtensionMustExtend();
 
     /// @notice T-092 Phase 3 — emitted on a successful in-place
     ///         loan extension. The position NFTs are untouched; only
@@ -171,10 +186,18 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         `durationDays` change. `accruedInterest` is the
     ///         interest charged for the just-elapsed window (paid
     ///         from the borrower's vault to the lender's vault, with
-    ///         the 1% treasury cut applied).
+    ///         the configured treasury cut applied).
+    /// @dev    `caller` is the address that initiated the extension
+    ///         (the keeper, or the borrower-NFT owner when extending
+    ///         directly). Indexed so per-keeper / per-borrower
+    ///         activity filters work without per-row args parsing.
+    ///         Added in Codex round-4 P2 — without this field the
+    ///         indexer can't denormalise an `actor` for the
+    ///         `?actor=...` activity filter on direct extensions.
     /// @custom:event-category state-change/loan-mutation
     event LoanExtended(
         uint256 indexed loanId,
+        address indexed caller,
         uint256 oldRateBps,
         uint256 newRateBps,
         uint64 oldStartTime,
@@ -555,6 +578,25 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
             revert AutoExtendExpiryExceedsCap();
         }
+        // Codex round-4 P2 — refuse to SHORTEN the loan. Without
+        // this, a compromised keeper could pass `newDurationDays = 1`
+        // and turn the borrower's auto-extend consent into an early-
+        // maturity / default vector. An "extension" must strictly
+        // extend the loan's end time.
+        uint256 oldEndTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+        if (newEndTimeUint <= oldEndTime) revert ExtensionMustExtend();
+        // Codex round-4 P1 — refuse extension once the loan is past
+        // its default grace window. At that point
+        // `DefaultedFacet.triggerDefault` is the lender's intended
+        // resolution and extension would let an authorised keeper
+        // salvage a defaultable state. Mirrors the late-fee check
+        // below but using the grace-aware threshold.
+        if (
+            block.timestamp >
+            oldEndTime + LibVaipakam.gracePeriod(loan.durationDays)
+        ) {
+            revert ExtensionGraceExpired();
+        }
 
         // ── Accrued-interest math + treasury / lender split ──────────
         // Codex round-1 P1 — honor `loan.useFullTermInterest`. When
@@ -586,8 +628,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // must apply here too — otherwise a keeper-driven extension
         // becomes a way to escape both the late fee AND the default
         // path. Late fees go 100% to the lender (no treasury cut),
-        // matching RepayFacet.
-        uint256 oldEndTime = uint256(loan.startTime) + loan.durationDays * 1 days;
+        // matching RepayFacet. (`oldEndTime` is shadowed-removed
+        // here — the same value computed at the cap-intersection
+        // block above.)
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, oldEndTime);
         if (accruedInterest + lateFee > 0) {
             // Codex round-1 P2 — use the protocol's
@@ -595,6 +638,21 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             // rather than the hardcoded `TREASURY_FEE_BPS`.
             (uint256 treasuryShare, uint256 lenderInterestShare) =
                 LibEntitlement.splitTreasury(accruedInterest);
+            // Codex round-4 P2 — if the original lender has VPFI yield-
+            // fee consent + sufficient vault VPFI, pay the treasury cut
+            // in VPFI from the lender's vault and route 100% of the
+            // interest to the lender in the lending asset. Mirrors the
+            // RepayFacet / PrecloseFacet / RefinanceFacet pattern.
+            // `tryApplyYieldFee` is a silent fallback — if the lender
+            // doesn't have enough VPFI, the standard 1% split applies.
+            if (treasuryShare > 0) {
+                (bool yieldApplied, ) =
+                    LibVPFIDiscount.tryApplyYieldFee(loan, accruedInterest);
+                if (yieldApplied) {
+                    lenderInterestShare = accruedInterest;
+                    treasuryShare = 0;
+                }
+            }
             uint256 lenderShare = lenderInterestShare + lateFee;
             _routeInterest(
                 loan.principalAsset,
@@ -622,6 +680,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
 
         emit LoanExtended(
             loanId,
+            msg.sender,
             oldRateBps,
             uint256(newRateBps),
             oldStartTime,

@@ -642,6 +642,12 @@
         "internalType": "uint256"
       },
       {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "oldRateBps",
         "type": "uint256",
         "indexed": false,
@@ -730,6 +736,16 @@
   {
     "type": "error",
     "name": "EnforcedPause",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExtensionGraceExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ExtensionMustExtend",
     "inputs": []
   },
   {

@@ -483,6 +483,8 @@
     "permissionCompleteOffsetDesc": "Finalises the Option 3 offset flow after a new borrower takes on the obligation.",
     "permissionInitiateRefinanceTitle": "Initiate refinance",
     "permissionInitiateRefinanceDesc": "Triggers a refinance against a matching borrower offer.",
+    "permissionAutoExtendTitle": "Auto-extend in place",
+    "permissionAutoExtendDesc": "Extends an active loan in place when both you and the lender have pre-approved extend caps. Pays the accrued interest from your vault automatically.",
     "actionsLabel": "Actions:",
     "actionsNone": "none",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
