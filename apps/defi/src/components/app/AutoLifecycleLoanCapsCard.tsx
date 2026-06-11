@@ -23,6 +23,12 @@ interface Props {
   loanId: bigint;
   isBorrower: boolean;
   isLender: boolean;
+  /** T-092-B (#531) — when true, the loan's collateral is an NFT
+   *  (ERC721 / ERC1155). Default-time outcome is asymmetric: the
+   *  WHOLE NFT transfers to the lender, no swap, borrower loses
+   *  100%. The card surfaces a stark warning before enabling caps
+   *  so the user consciously consents to that tail-risk. */
+  collateralIsNft?: boolean;
 }
 
 /** Format unix-seconds to "yyyy-mm-dd" for the date input. */
@@ -74,6 +80,7 @@ export default function AutoLifecycleLoanCapsCard({
   loanId,
   isBorrower,
   isLender,
+  collateralIsNft = false,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondContract();
@@ -124,6 +131,17 @@ export default function AutoLifecycleLoanCapsCard({
       <p className="stat-label" style={{ margin: '0 0 12px' }}>
         {t('autoLifecycleLoanCaps.body')}
       </p>
+
+      {collateralIsNft && (
+        <div
+          className="alert alert-warning"
+          role="alert"
+          style={{ marginBottom: 12 }}
+        >
+          <AlertTriangle size={14} />
+          <div>{t('autoLifecycleLoanCaps.nftCollateralWarning')}</div>
+        </div>
+      )}
 
       {isBorrower && refinanceCaps && (
         <RefinanceCapsEditor
