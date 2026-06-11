@@ -1559,6 +1559,43 @@ export default function CreateOffer() {
                 </label>
               )}
 
+            {/* T-092 #511 sub (#523) — refinance-tagged offer flow.
+                Only valid on Borrower offers with ERC20 principal.
+                When non-empty, the form auto-forces Aon fill mode at
+                payload-build time (see `toCreateOfferPayload` in
+                offerSchema.ts) and the contract enforces the
+                borrower's per-loan `autoRefinanceCaps` at both create
+                AND accept. Leave the input empty for a standard
+                Borrower offer with no refinance intent. */}
+            {form.offerType === 'borrower' &&
+              form.assetType === 'erc20' && (
+                <label className="form-row" style={{ marginTop: 12, display: 'block' }}>
+                  <span style={{ display: 'block', marginBottom: 4 }}>
+                    {t('createOffer.refinanceTargetLabel')}
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    placeholder={t('createOffer.refinanceTargetPlaceholder')}
+                    value={form.refinanceTargetLoanId}
+                    onChange={(e) =>
+                      setField("refinanceTargetLoanId", e.target.value)
+                    }
+                    style={{ width: 160 }}
+                  />
+                  <small
+                    style={{
+                      display: 'block',
+                      opacity: 0.75,
+                      marginTop: 2,
+                    }}
+                  >
+                    {t('createOffer.refinanceTargetHint')}
+                  </small>
+                </label>
+              )}
+
             {/* T-034 — Periodic Interest Payment cadence dropdown.
                 Hidden entirely when the master kill-switch is off OR
                 either side is illiquid. The component handles the
