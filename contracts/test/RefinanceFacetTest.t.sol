@@ -1283,4 +1283,56 @@ contract RefinanceFacetTest is Test {
         // suppress unused
         newLenderOfferId;
     }
+
+    // ─── #411 — refinance over-pay fix (2026-06-12) ───────────────────
+    //
+    // Verifies the old lender receives EXACTLY principal + full-term
+    // interest with NO rate-shortfall addend, even when the new offer
+    // implies a strictly lower full-term yield than the old loan would
+    // have earned. Pre-#411 the math was
+    //   interestPortion = oldFullTermInterest + (oldFullTerm − newFullTerm)
+    // which over-compensated the exiting lender at borrower expense.
+    // Post-fix: interestPortion = oldFullTermInterest, full stop.
+    //
+    // Setup: old loan = PRINCIPAL @ 500 bps for 30 days.
+    //        borrower offer = PRINCIPAL @ 400 bps for 30 days (= lower
+    //        new full-term interest → would have triggered shortfall).
+
+    function test_411_RefinanceExitingLenderReceivesFullTermOnly() public {
+        uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
+        // Compute expected: old lender's full-term interest only.
+        uint256 oldFullTermInterest =
+            (PRINCIPAL * 500 * 30) / (10_000 * 365);
+        // Phase 5 treasury split — 1% of interest as treasury cut.
+        // splitTreasury rounds down on the treasury side, so:
+        uint256 expectedTreasuryCut = (oldFullTermInterest * 100) / 10_000;
+        uint256 expectedLenderInterest =
+            oldFullTermInterest - expectedTreasuryCut;
+        uint256 expectedLenderDue = PRINCIPAL + expectedLenderInterest;
+
+        // Snapshot old lender's vault balance before refinance.
+        address oldLenderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(lender);
+        uint256 oldLenderVaultBefore =
+            ERC20(mockERC20).balanceOf(oldLenderVault);
+
+        vm.prank(borrower);
+        RefinanceFacet(address(diamond)).refinanceLoan(
+            activeLoanId,
+            borrowerOfferId
+        );
+
+        uint256 oldLenderVaultAfter =
+            ERC20(mockERC20).balanceOf(oldLenderVault);
+        uint256 delta = oldLenderVaultAfter - oldLenderVaultBefore;
+
+        assertEq(
+            delta,
+            expectedLenderDue,
+            "old lender must receive EXACTLY principal + full-term interest (no shortfall addend) post-#411"
+        );
+
+        // suppress unused
+        newLenderOfferId;
+    }
 }
