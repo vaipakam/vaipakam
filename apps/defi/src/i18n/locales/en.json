@@ -493,6 +493,8 @@
     "title": "Auto-lifecycle caps for this loan",
     "body": "Pre-approve keeper-driven refinance and in-place extension on this loan. The protocol enforces these caps; outside them, the actions revert.",
     "nftCollateralWarning": "⚠️ This loan's collateral is an NFT. If no compatible refinance offer is found before the grace period ends, your NFT will transfer in full to the lender (no market swap, no surplus). Auto-refinance is best-effort, not a guarantee. Consider repaying directly instead.",
+    "bestEffortWarning": "⚠️ Auto-refinance and auto-extend are best-effort. If no compatible counterparty consent is found before this loan's grace period ends, the loan may be liquidated. You remain responsible for monitoring and repaying manually if needed.",
+    "preGraceWarning": "⚠️ This loan enters its grace period in ~{{hours}}h. Auto-refinance is best-effort — if no compatible lender offer is matched before grace expires, your loan will default. Repay manually or tighten your refinance caps if the market has moved.",
     "refinanceTitle": "Refinance offer posting (borrower side)",
     "refinanceHint": "When enabled, the dapp may post a refinance-tagged borrower offer on your behalf, and a keeper may then refinance this loan if a matching lender offer fits below your rate ceiling and within your expiry cap. If no compatible offer is found before grace, your loan defaults — review T-092-C pre-grace warnings.",
     "extendBorrowerTitle": "Auto-extend (borrower side)",
@@ -840,6 +842,7 @@
     "refinanceTargetLabel": "Refinance an existing loan (optional)",
     "refinanceTargetPlaceholder": "Loan ID",
     "refinanceTargetHint": "Tag this offer to refinance one of your existing active loans. The keeper-driven refinance path enforces the per-loan refinance caps you set on LoanDetails; the offer must satisfy your rate ceiling and the protocol auto-forces AON fill mode. Leave empty for a standard borrower offer.",
+    "refinanceTargetBestEffortWarning": "⚠️ Tagging this offer for refinance doesn't guarantee a match. If no compatible lender accepts before your existing loan's grace period ends, your loan will default. Auto-refinance is best-effort — review your caps on the LoanDetails page.",
     "periodicInterest": {
       "label": "Payment cadence",
       "disabledShort": "interval ≥ duration",

@@ -1593,6 +1593,19 @@ export default function CreateOffer() {
                   >
                     {t('createOffer.refinanceTargetHint')}
                   </small>
+                  {/* T-092 (#544) — best-effort warning when the
+                      refinance-tag input is non-empty. Surfaces the
+                      reality that tagging the offer for refinance
+                      doesn't guarantee a match in time. */}
+                  {form.refinanceTargetLoanId !== '' && (
+                    <div
+                      className="alert alert-warning"
+                      role="alert"
+                      style={{ marginTop: 8 }}
+                    >
+                      {t('createOffer.refinanceTargetBestEffortWarning')}
+                    </div>
+                  )}
                 </label>
               )}
 
