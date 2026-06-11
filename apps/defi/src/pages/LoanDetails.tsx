@@ -643,6 +643,14 @@ export default function LoanDetails() {
           loanId={BigInt(loanId ?? '0')}
           isBorrower={isBorrower}
           isLender={isLender}
+          // T-092-B (#531) — NFT collateral has asymmetric default
+          // outcome (full collateral transfer to lender on default,
+          // no swap). The card surfaces a stark warning so the
+          // borrower / lender consciously consents.
+          collateralIsNft={
+            Number(loan.collateralAssetType) === AssetType.ERC721 ||
+            Number(loan.collateralAssetType) === AssetType.ERC1155
+          }
         />
       )}
 

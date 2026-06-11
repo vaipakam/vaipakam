@@ -492,6 +492,7 @@
   "autoLifecycleLoanCaps": {
     "title": "Auto-lifecycle caps for this loan",
     "body": "Pre-approve keeper-driven refinance and in-place extension on this loan. The protocol enforces these caps; outside them, the actions revert.",
+    "nftCollateralWarning": "⚠️ This loan's collateral is an NFT. If no compatible refinance offer is found before the grace period ends, your NFT will transfer in full to the lender (no market swap, no surplus). Auto-refinance is best-effort, not a guarantee. Consider repaying directly instead.",
     "refinanceTitle": "Refinance offer posting (borrower side)",
     "refinanceHint": "When enabled, the dapp may post a refinance-tagged borrower offer on your behalf, and a keeper may then refinance this loan if a matching lender offer fits below your rate ceiling and within your expiry cap. If no compatible offer is found before grace, your loan defaults — review T-092-C pre-grace warnings.",
     "extendBorrowerTitle": "Auto-extend (borrower side)",

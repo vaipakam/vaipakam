@@ -354,6 +354,114 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         _f().extendLoanInPlace(loanId, 500, 30);
     }
 
+    function test_T092B_AutoOptInGate_PopulatesOnLiquidCollateral() public {
+        // T-092-B (#531) — borrower with autoOptInOnNewLoan + valid
+        // default caps initiates a loan whose collateral is liquid.
+        // The per-loan caps slot should be populated from the
+        // defaults (existing behaviour, retained).
+        vm.prank(borrower);
+        _f().setAutoOptInOnNewLoan(true);
+        vm.prank(borrower);
+        _f().setDefaultAutoRefinanceCaps(
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+        uint256 loanId = _buildActiveLoan(); // ERC20 + liquid collateral
+
+        LibVaipakam.AutoRefinanceCaps memory caps =
+            _f().getAutoRefinanceCaps(loanId);
+        assertTrue(
+            caps.enabled,
+            "auto-opt-in should populate caps on liquid-collateral loan"
+        );
+        assertEq(caps.maxRateBps, 600);
+    }
+
+    function test_T092B_AutoOptInGate_SkipsOnIlliquidCollateral() public {
+        // T-092-B (#531) — borrower with autoOptInOnNewLoan + valid
+        // default caps initiates a loan whose collateral is ILLIQUID.
+        // The per-loan caps slot must STAY UNPOPULATED. Borrower
+        // would need an explicit `setAutoRefinanceCaps` call to
+        // enroll this loan in the keeper-driven refinance path.
+        //
+        // Asymmetric default-loss risk: illiquid collateral on a
+        // defaulted loan goes WHOLE to the lender (no swap) — the
+        // borrower must consciously consent, not be silently
+        // enrolled via the convenience flag.
+        vm.prank(borrower);
+        _f().setAutoOptInOnNewLoan(true);
+        vm.prank(borrower);
+        _f().setDefaultAutoRefinanceCaps(
+            true,
+            600,
+            uint64(block.timestamp + 365 days)
+        );
+        // Re-mock so the collateral is now Illiquid for this loan.
+        mockOracleLiquidity(
+            mockCollateralERC20,
+            LibVaipakam.LiquidityStatus.Illiquid
+        );
+        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+        mockOracleLiquidity(
+            mockERC20,
+            LibVaipakam.LiquidityStatus.Liquid
+        );
+        mockOraclePrice(mockERC20, 1e8, 8);
+
+        // Build the loan inline so we control the mocked liquidity.
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        address borrowerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(borrower);
+        ERC20(mockCollateralERC20).approve(borrowerVault, type(uint256).max);
+
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: LOAN_PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: LOAN_COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: LOAN_PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: LOAN_COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
+            })
+        );
+        vm.prank(borrower);
+        uint256 loanId = OfferAcceptFacet(address(diamond))
+            .acceptOffer(offerId, true);
+
+        // The gate skipped the populate — caps stay default-empty.
+        LibVaipakam.AutoRefinanceCaps memory caps =
+            _f().getAutoRefinanceCaps(loanId);
+        assertFalse(
+            caps.enabled,
+            "auto-opt-in must NOT populate caps on illiquid-collateral loan"
+        );
+    }
+
     function test_RefinanceTaggedOffer_RejectsPartialFillMode() public {
         // Refinance-tagged offer with Partial fill mode → revert
         // InvalidRefinanceTarget (Codex Phase 2b round-2 P2). The

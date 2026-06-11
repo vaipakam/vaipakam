@@ -271,8 +271,26 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // caps explicitly on every new loan. See AutoLifecycleFacet
         // for the consent surface + Phase 2 keeper-driven refinance
         // wiring.
+        //
+        // T-092-B (#531) — GATE on liquid collateral. The auto-opt-in
+        // is silently SKIPPED when the loan's collateral is illiquid
+        // (`collateralLiquidity != Liquid`) — i.e., NFT collateral
+        // (no oracle), illiquid ERC20 (no Chainlink feed / no AMM
+        // depth), or temporary outage (sequencer down). Reason: the
+        // default-path outcome on those loans is asymmetric. Liquid
+        // collateral → DefaultedFacet swaps, borrower keeps surplus.
+        // Illiquid / NFT collateral → DefaultedFacet transfers the
+        // whole asset to the lender, borrower loses 100%. A novice
+        // borrower who toggles `setAutoOptInOnNewLoan(true)` for
+        // their everyday liquid loans must NOT be silently enrolled
+        // on this 100%-loss tail risk. Sophisticated borrowers can
+        // still call `setAutoRefinanceCaps(loanId, ...)` explicitly
+        // — that path is unchanged.
         LibVaipakam.Loan storage initiatedLoan = s.loans[loanId];
-        if (s.autoOptInOnNewLoan[initiatedLoan.borrower]) {
+        if (
+            s.autoOptInOnNewLoan[initiatedLoan.borrower] &&
+            collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid
+        ) {
             LibVaipakam.AutoRefinanceCaps memory defs =
                 s.defaultAutoRefinanceCaps[initiatedLoan.borrower];
             // Codex round-2 P3 — skip copying when the default-template
