@@ -1,6 +1,12 @@
 # Release Notes — 2026-06-11
 
-Today's headline: **T-092 (auto-lend / auto-refinance / auto-extend / consent-gated keeper actions) fully shipped end-to-end across contracts, off-chain keeper, dapp UI, and the public reference bot.** Twelve PRs landed in a single session covering every sub-card: contracts Phase 1/2a/2b/3 (#501, #507, #509, #510); integration tests (#516); apps/keeper auto-extend pass (#517); dapp UI surface (#519, #524, #525, #526, #527 — Protocol Console kill switches, per-user opt-ins on Dashboard, per-loan caps editor on LoanDetails, refinance-tagged offer flow on CreateOffer, friendly error i18n + decoder); plus the sibling [`vaipakam-keeper-bot` PR #7](https://github.com/vaipakam/vaipakam-keeper-bot/pull/7) and the export-script companion #528. Every card filed under the T-092 follow-up tree is either shipped or closed with a documented design rationale — #513 (optional Preclose Opt 2/3 cap symmetry) closed as won't-fix-for-now with full reasoning recorded.
+Today's headline: **T-092 (auto-lend / auto-refinance / auto-extend / consent-gated keeper actions) shipped END-TO-END across two sessions — the original feature + a full follow-up wave covering hardening, UX friction, atomicity, and notification refinements.** Across both sessions, 21 PRs total landed across contracts + dapp + keeper + the sibling reference bot. Every card filed under T-092 is either shipped or closed with documented design rationale.
+
+The second-session follow-up wave (later today) added: **#530** (loan netting fund-source review — wallet-pull retained as canonical; deeper vault-first deferred to the broadened **#407** Vault encumbrance sub-ledger); **#531** (default auto-refinance OFF for illiquid / NFT collateral — closes the silent enrollment of novice borrowers into 100%-loss tail risk); **#532** (`runPreGraceWatcher` keeper pass — sends pre-grace TG / Push warnings to borrowers with caps enabled when their loan approaches grace expiry); **#533** (dapp rename "auto-X" → "offer posting" — sets accurate expectations that the protocol posts offers, not magic auto-execution); **#537** (Dashboard two-step opt-in friction with persistent inline warning); **#543 / #544 / #545** (LoanDetails caps-editor friction + CreateOffer refinance-tag friction + LoanDetails in-grace-window warning banner); **#539** (atomic accept-and-refinance — closes the multi-tx race-condition window between accept and refinance via `refinanceLoanFromAccept` cross-facet entry + dual chain hooks); **#546 + #547** (alerts-subscription CTA on LoanDetails + viable-counterparty pre-check that suppresses pre-grace warnings when a compatible lender offer is already in the book).
+
+The first-session foundation (earlier today): contracts Phase 1/2a/2b/3 (#501, #507, #509, #510); integration tests (#516); apps/keeper auto-extend pass (#517); dapp UI surface (#519, #524, #525, #526, #527 — Protocol Console kill switches, per-user opt-ins on Dashboard, per-loan caps editor on LoanDetails, refinance-tagged offer flow on CreateOffer, friendly error i18n + decoder); plus the sibling [`vaipakam-keeper-bot` PR #7](https://github.com/vaipakam/vaipakam-keeper-bot/pull/7) and the export-script companion #528.
+
+Cards closed without code, with rationale logged: **#513** (Preclose Opt 2/3 cap symmetry — wontfix-for-now because the original lender constraint already binds the worst case); **#535** (vault-first extend — already implemented in Phase 3's `_routeInterest`); **PR #542** (closed; design-doc-first approach for #539 v2 caught the three Codex blockers upfront before they reached CI).
 
 Contract surface: Phase 1 (consent storage + per-loan caps + setters); Phase 2a (refinance fund-routing through current borrower-NFT owner + borrower sanctions check + three admin kill switches: `cfgAutoLendEnabled` / `cfgAutoRefinanceEnabled` / `cfgAutoExtendEnabled`); Phase 2b (caps enforced at `OfferCreateFacet.createOffer` AND `OfferAcceptFacet._acceptOffer` via new `LibAutoRefinanceCheck` library + `Offer.refinanceTargetLoanId` field binding the offer to the loan it intends to refinance, plus four rounds of Codex review hardening the cap-binding surface against partial-fill rotation, NFT-staleness, asset-pair mismatch, prepay-asset mismatch, and untagged-offer-on-keeper-path bypasses); Phase 3 (`AutoLifecycleFacet.extendLoanInPlace` executor with both-side cap intersection + late-fee + treasury split + `LibInteractionRewards` refresh + `KEEPER_ACTION_EXTEND` keeper-action bit). Off-chain: `apps/keeper` gained a sixth cron pass (`runAutoLifecycle`) and the public reference bot gained the symmetric `autoExtendDetector`. A 15-test integration suite (10 selector / kill-switch guardrails + 5 active-loan-backed scenarios) validates the entire T-092 surface end-to-end.
 
@@ -519,3 +525,411 @@ This was the last remaining sub-card under T-092 follow-up #511 in this monorepo
 ### Operator action
 
 None — works end-to-end with the existing diamond + dapp infrastructure. Borrowers see the new field on CreateOffer once the dapp deploys.
+
+## Thread — T-092-A: refinance fund-source review and design clarification (#530)
+
+#530 was originally framed as a vault-first wallet-fallback fund source for `RefinanceFacet.refinanceLoan`. Codex review on PR #538 caught a real correctness issue (round-1 P2): `protocolTrackedVaultBalance` is an aggregate counter that includes funds locked in active lender offers (which sit in the creator's own vault — `OfferCreateFacet._pullCreatorAssetsClassic`). A vault-first netting could double-spend committed funds, breaking downstream offer fills.
+
+**Decision:** revert the vault-first path. Keep the existing wallet-pull flow as the canonical refinance payment source.
+
+### Why this is OK
+
+The user's original concern — "wallet pull requires a Metamask popup, how is it automatic?" — was already addressed by the standing approval pattern. At consent time, the borrower calls `IERC20.approve(diamond, …)` once. Every later `safeTransferFrom(borrower, …)` operates on the existing allowance — no popup at refinance time. The keeper-driven path works fully automatically.
+
+Operational loan netting is preserved by the existing flow: `OfferAcceptFacet.sol:840` routes the new lender's principal to the borrower's WALLET on accept, and the refinance immediately pulls from the same wallet to pay the old loan. The new principal cycles in then out within a single tx — that's the same net outcome a vault-first design would have produced, just routed through the wallet allowance pathway.
+
+### Test addition
+
+A new positive-flow test `test_T092A_RefinanceWalletPath_StandingApprovalNoPopup` exercises the borrower-direct refinance happy path and asserts the wallet drains by approximately the payoff amount — documenting that operational netting is preserved via the wallet cycle. The two vault-first scenarios drafted earlier in this PR were removed alongside the contract revert.
+
+### True vault-first netting requires a deeper change
+
+A proper vault-first refinance netting would require invariant-preserving locked-balance tracking: a counter (or per-flow reservation) that distinguishes "free" vault funds from "committed to an active lender offer" funds. That's a meaningful architectural change touching `OfferCreate / OfferAccept / OfferCancel` and is out of scope for this PR. The wallet path is correct + audit-clean today.
+
+### Verification
+
+- forge build clean.
+- RefinanceFacetTest 35/35 (was 34, +1 new wallet-path positive scenario).
+- Deploy-sanity 12/12.
+- ABI re-export unchanged (no contract surface changes after revert).
+
+### What to do if vault-first netting becomes a requirement later
+
+File a follow-up card for **locked-balance tracking** as the prerequisite. Once the protocol has a clean separation between free + committed vault funds, vault-first refinance netting becomes a small surgical change.
+
+## Thread — T-092-B: default auto-refinance OFF for illiquid / NFT collateral (#531)
+
+Closes the asymmetric-tail-risk gap in the T-092 auto-opt-in flow. A novice borrower who toggles `setAutoOptInOnNewLoan(true)` for their everyday liquid loans was previously silently enrolled in auto-refinance on their NFT-backed loans too — with a 100%-loss tail risk they almost certainly didn't understand.
+
+### What's new
+
+**Contract gate** ([`LoanFacet.sol:285`](contracts/src/facets/LoanFacet.sol#L285)) — the auto-opt-in populate-on-init path now requires `collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid`. The check reuses the `collateralLiquidity` value already computed earlier in `initiateLoan` (line 202) — no extra `OracleFacet.checkLiquidity` round-trip.
+
+When the gate fires (illiquid ERC20 collateral, NFT collateral, or temporary sequencer outage), the per-loan caps slot stays unpopulated. The borrower can still manually call `setAutoRefinanceCaps(loanId, ...)` to enroll a specific loan in the keeper-driven path — the explicit setter is unchanged. Only the silent auto-enrollment is gated.
+
+### Why this asymmetry matters
+
+| Collateral type | If auto-refinance fires | If it doesn't fire (default path) |
+|---|---|---|
+| Liquid ERC20 | Smooth handoff | `DefaultedFacet` swaps → borrower keeps surplus above debt |
+| Illiquid ERC20 / NFT | Smooth handoff | **Lender takes whole collateral** ([`DefaultedFacet.sol:442-486`](contracts/src/facets/DefaultedFacet.sol#L442-L486)) — borrower loses 100% |
+
+The auto-refinance opt-in is best-effort: it only fires if a compatible new lender offer exists in the book at the right time. If no match, the loan defaults. For liquid collateral the borrower still gets the swap surplus; for illiquid / NFT the loss is total. A convenience flag must not silently enroll a user into the latter.
+
+### Dapp warning surface
+
+`AutoLifecycleLoanCapsCard` (on LoanDetails) now accepts a `collateralIsNft` prop. When true, a stark warning banner renders above the editor sections:
+
+> ⚠️ This loan's collateral is an NFT. If no compatible refinance offer is found before the grace period ends, your NFT will transfer in full to the lender (no market swap, no surplus). Auto-refinance is best-effort, not a guarantee. Consider repaying directly instead.
+
+LoanDetails wires the prop from `Number(loan.collateralAssetType) === ERC721 || ERC1155`. The dapp warning surfaces only for NFT collateral today; illiquid ERC20 collateral warning is deferred to a follow-up (requires an extra `OracleFacet.checkLiquidity` view call from the dapp).
+
+### Verification
+
+- forge build clean (`viaIR + optimizer=200`).
+- `T092AutoLifecycleIntegrationTest` 17/17 green (was 15, +2):
+  - `test_T092B_AutoOptInGate_PopulatesOnLiquidCollateral` — happy path still works.
+  - `test_T092B_AutoOptInGate_SkipsOnIlliquidCollateral` — new gate fires; caps stay unpopulated.
+- Deploy-sanity 12/12; broader RefinanceFacet + AutoLifecycle + LoanFacet 81/81 green.
+- `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
+- ABI re-export ran (`exportFrontendAbis.sh`).
+
+### Out of scope
+
+- Illiquid ERC20 collateral warning on the dapp — separate follow-up; needs the dapp to call `OracleFacet.checkLiquidity` for the loan's collateral, which adds an RPC call.
+- Manual setter (`setAutoRefinanceCaps`) is unchanged — sophisticated borrowers can still explicitly enroll any loan, including NFT-collateralised ones, by acknowledging the tail risk.
+
+## Thread — T-092-C: pre-grace notification + manual-fallback CTA (#532)
+
+Closes the "auto-refinance is best-effort, not a guarantee" UX gap. A borrower who enables refinance caps and assumes the protocol will guarantee a successful refinance gets a warning when their loan approaches the grace boundary AND no compatible offer has been matched yet.
+
+### What's new
+
+**New `apps/keeper/src/preGraceWatcher.ts` pass** — seventh `apps/keeper` cron pass (after watcher / daily oracle / matcher / liquidity confidence / liquidator / auto-lifecycle). Per chain:
+
+1. Walk active loans via `MetricsFacet.getActiveLoansPaginated`.
+2. For each loan: read `AutoLifecycleFacet.getAutoRefinanceCaps`. Skip if disabled.
+3. Read `LoanFacet.getLoanDetails`. Skip non-Active loans.
+4. Compute `endTime = startTime + durationDays * 86400`. Skip if more than 24h away OR already past endTime.
+5. Resolve the borrower-NFT owner via `ERC721.ownerOf`.
+6. Look up their TG / push subscription in the existing `user_thresholds` table (no separate opt-in surface needed — borrowers who subscribed for HF alerts get the pre-grace warning automatically).
+7. Throttle to 1 warning per 12 hours via the new `pre_grace_notify_state` D1 table.
+8. Dispatch a stark warning explaining auto-refinance is best-effort and listing three concrete actions (review terms, tighten caps, repay manually).
+
+**New D1 table** `pre_grace_notify_state` ([apps/indexer/migrations/0023_pre_grace_notify_state.sql](apps/indexer/migrations/0023_pre_grace_notify_state.sql)) — separate from `notify_state` (HF band hysteresis) so the two concerns can't trip over each other.
+
+**New db helpers** `getPreGraceNotifyState` / `putPreGraceNotifyState` in [apps/keeper/src/db.ts](apps/keeper/src/db.ts).
+
+**index.ts wired** — pass slotted in after `runAutoLifecycle`. Same `try/catch` per-pass safety net the rest of the scheduled handler uses.
+
+### Why a separate pass and not folded into runWatcher
+
+The HF watcher iterates the user's active loans via `getUserActiveLoans` (subscribed-user subset, HF-band-driven hysteresis). The pre-grace watcher cares about ALL active loans on the chain (auto-refinance caps can be set on any loan, by any borrower) and triggers on time-to-grace, not HF band. Mixing the two would muddy `notify_state.last_band` hysteresis. Splitting keeps each pass's invariant simple.
+
+### Out of scope
+
+- **"No compatible offer exists" check** — the v1 warning fires on any loan approaching grace with caps enabled, regardless of whether the matcher has a viable counterparty. Adding the offer-book scan is a refinement for v2 — the existing matcher's read surface (`MetricsFacet.getMatchEligibleLoans` + `OfferMatchFacet.previewMatch`) can be queried but adds cost per loan. v1 over-warns conservatively.
+- **Auto-subscribe on cap-set** — today a borrower who sets refinance caps but hasn't subscribed for HF alerts gets no pre-grace warning. Future enhancement: prompt subscription in the dapp's per-loan caps editor.
+- **Loan Details dapp surface** — the warning also belongs on the dapp page as an inline banner. Separate dapp PR.
+- **Atomic accept-and-refinance** ([#539](https://github.com/vaipakam/vaipakam/issues/539)) — eliminates the race condition between accept and refinance entirely. Pairs naturally with this pass.
+
+### Verification
+
+- `pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit` clean.
+- ABI imports route through the shared `@vaipakam/contracts/abis` bundle.
+
+### Operator action
+
+- Apply migration `0023_pre_grace_notify_state.sql` from `apps/indexer/` (per CLAUDE.md schema discipline):
+
+  ```bash
+  cd apps/indexer/
+  wrangler d1 migrations apply vaipakam-archive --remote
+  ```
+
+- No new secrets needed — reuses existing `TG_BOT_TOKEN` + `PUSH_CHANNEL_PK` + `DB` bindings.
+
+## Thread — T-092-D rename: "auto-lend / auto-refinance" → "auto-post lender / refinance offers" (#533)
+
+i18n + label-only rename on the dapp surface to set accurate expectations. The current "auto-lend" / "auto-refinance" copy implied the protocol AUTONOMOUSLY picked counterparties + terms — but the reality is the dapp POSTS offers under the user's caps; a separate matcher / new lender must accept for anything to fire.
+
+### What's new
+
+- **Dashboard `AutoLifecycleSettingsCard`** copy:
+  - "Auto-lend my vaulted assets" → "Auto-post lender offers when I deposit"
+  - "Auto-set refinance caps on every new loan" → "Auto-set refinance offer terms on every new loan"
+  - Body + hints reworded to clarify "posts offers + matcher matches" (not magic auto-execution).
+
+- **LoanDetails `AutoLifecycleLoanCapsCard`** section title:
+  - "Auto-refinance (borrower side)" → "Refinance offer posting (borrower side)"
+  - Hint extended with a pointer to the pre-grace warning that's coming with #532.
+
+- **Protocol Console knob labels**:
+  - "Auto-lend kill switch" → "Auto-lend offer posting kill switch"
+  - "Auto-refinance kill switch" → "Auto-refinance offer posting kill switch"
+  - **"Auto-extend kill switch" unchanged** — auto-extend genuinely auto-executes once both sides pre-consent + a keeper calls. The other two are offer-posting flows that need a separate party to accept.
+
+- **Revert error messages**:
+  - `AutoLendDisabled` → "Auto-lend offer posting is disabled..."
+  - `AutoRefinanceDisabled` → "Auto-refinance offer posting is disabled..."
+
+### Why the asymmetric treatment
+
+- `setAutoLendConsent` / `setAutoOptInOnNewLoan` are offer-posting consent — the dapp / protocol posts offers; the matcher matches them; the user retains effective control via caps.
+- `extendLoanInPlace` is the only T-092 mechanism that truly auto-executes — both sides consent up front, the executor fires when the keeper calls it, no third-party offer / accept round. Renaming THAT to "auto-extend offer posting" would be inaccurate.
+
+### On-chain ABIs unchanged
+
+All on-chain function selectors (`setAutoLendConsent`, `setAutoRefinanceCaps`, etc.) and the contract storage layout stay byte-identical. This is purely an i18n + label change.
+
+### Verification
+
+- `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
+
+## Thread — T-092-F: opt-in friction on Dashboard auto-lifecycle toggles (#537)
+
+Closes the "users silently enable auto-refinance and don't understand it's best-effort" gap. The two-step click-to-confirm pattern at every Enable surface ensures the borrower acknowledges the "best-effort, not guaranteed" reality before opting in.
+
+### What's new
+
+**Two-step toggle pattern on `AutoLifecycleSettingsCard`** (Dashboard). Both opt-in toggles (auto-lend, auto-opt-in-on-new-loan) now require a two-step click to enable:
+
+1. First click on "Enable" → button text changes to "I understand & enable" + inline warning banner renders:
+   > ⚠️ Auto-refinance is best-effort. If no compatible lender offer is found before your loan's grace period ends, the loan may be liquidated. You remain responsible for monitoring and repaying manually if needed.
+2. Second click on "I understand & enable" → submits `setAutoLendConsent(true)` / `setAutoOptInOnNewLoan(true)`.
+
+**Disabling never requires confirmation** — it's the safe direction.
+
+### Why inline (not modal)
+
+Modal dialogs train users to dismiss-without-reading. An inline persistent block that stays visible until the user clicks "I understand & enable" forces the eye to land on the text.
+
+### State machine
+
+```
+[Enable] (click)
+  → confirming = 'lend' | 'optIn'
+  → button label changes to "I understand & enable"
+  → warning banner renders
+[I understand & enable] (click)
+  → submit setter
+  → clear confirming
+```
+
+### Pairs with the earlier T-092 work
+
+- **#532 (pre-grace notification)** — borrowers now see the warning at OPT-IN time (this PR) AND get a notification when their loan actually approaches grace without a match.
+- **#533 (rename to "offer posting")** — the rename already set accurate expectations; this PR adds the friction so the expectation lands.
+- **#531 (default OFF for illiquid/NFT)** — the contract-side gate already silently skips NFT-collateral loans for auto-opt-in; this PR makes the user's CONSCIOUS opt-in for liquid loans more deliberate.
+
+### Out of scope
+
+- **LoanDetails `AutoLifecycleLoanCapsCard`** — the per-loan caps editor is a form with multiple inputs (enable checkbox, min/max rate, expiry). The two-step pattern doesn't directly fit; a separate friction model (e.g., a header banner that stays visible) would be needed. Deferred to a follow-up.
+- **CreateOffer refinance-tagged path** — the warning is already in the hint copy (set during #533). Folding the two-step pattern into the form's submit button is a larger refactor; deferred.
+
+### Verification
+
+- `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
+- Disabling path unchanged (no confirmation required for the safe direction).
+- Admin kill-switch state still gates the Enable button when applicable.
+
+## Thread — T-092-H v2: atomic accept-and-refinance (#539)
+
+Second attempt at #539. PR #542 was closed earlier today after Codex caught three blocking issues (P1 reentrancy nesting, P2 deferred-accept ordering, P3 misleading wrapper error). The [#549 design doc](docs/DesignsAndPlans/T092AtomicAcceptAndRefinance.md) specified the revised architecture; this PR implements it.
+
+### Contract changes
+
+#### `RefinanceFacet` — internal-callable variant
+
+Existing `refinanceLoan(uint256, uint256) external nonReentrant whenNotPaused` is preserved as the external API for keeper EOAs + borrower-direct callers. The body has been extracted into a private `_refinanceLoanLogic`. A new `refinanceLoanFromAccept(uint256, uint256) external onlyDiamondInternal whenNotPaused` exposes the same logic to cross-facet callers without the `nonReentrant` guard — the outer `acceptOffer` / `matchOffers` `nonReentrant` lock covers the whole tx.
+
+New error: `OnlyDiamondInternal` — fires when an external EOA tries to call `refinanceLoanFromAccept` directly. Mirrors the same shape used by `VaultFactoryFacet.onlyDiamondInternal`.
+
+#### `OfferAcceptFacet._acceptOffer` — direct-path chain hook
+
+After `offer.accepted = true` (inside the non-deferred `if (!deferAcceptFlip)` block at line 1010-1021), when the offer is a refinance-tagged Borrower offer, chain into `RefinanceFacet.refinanceLoanFromAccept` via `LibFacet.crossFacetCall`. The empty fallback selector (`bytes4(0)`) lets the inner revert payload bubble verbatim — the dapp's `autoLifecycleErrors.ts` decoder already handles the typed errors.
+
+This branch covers:
+- Direct `acceptOffer` calls.
+- Direct `acceptOfferWithPermit` calls (same function body).
+- `matchOffers` with `partialFillEnabled` OFF.
+
+#### `OfferMatchFacet.matchOffers` — matched-path chain hook
+
+In the borrower-side dust-close branch (after `bm.accepted = true` + `LibMetricsHooks.onOfferAccepted` + `OfferClosed` emit), when `bm.refinanceTargetLoanId != 0`, chain via the same `refinanceLoanFromAccept` selector. Closes the P2 gap that PR #542 had — the matched path with `partialFillEnabled` on now atomic-chains correctly.
+
+#### Selector registry
+
+Both `DeployDiamond.s.sol._getRefinanceSelectors()` and `HelperTest.getRefinanceFacetSelectors()` updated to include `refinanceLoanFromAccept` (2 selectors instead of 1).
+
+### Tests
+
+Two new tests in `T092AutoLifecycleIntegrationTest`:
+
+- `test_T092H_AtomicAccept_DirectPath_ChainsInSameTx` — happy path. Builds an active loan, sets caps, creates a refinance-tagged offer, then a new lender (provisioned via the #548 helpers) accepts the offer with a single `acceptOffer` call. Asserts both loans transitioned: old → `Repaid`, new → `Active`. **Atomic guarantee verified end-to-end.**
+- `test_T092H_RefinanceLoanFromAccept_RejectsExternalEOA` — structural guardrail. Asserts the `onlyDiamondInternal` modifier rejects direct external calls with `OnlyDiamondInternal` revert.
+
+### Verification
+
+- forge build clean.
+- T092AutoLifecycleIntegrationTest 21/21 (was 19, +2 atomic-chain tests).
+- Deploy-sanity 12/12 (selector registries updated; `SelectorCoverageTest` happy).
+- RefinanceFacetTest 34/34, OfferFillModeTest + OfferMutateFacetTest broader 46/46 — no regression on the existing external entry.
+- ABI re-export ran.
+
+### Operator action
+
+None. Pure contract change. The existing dapp surface (#523) sets `params.refinanceTargetLoanId` already; existing offers carrying the tag become atomic upon next accept.
+
+### Pairs with
+
+- **#530** — operational netting via wallet cycle is now structurally atomic (no multi-tx race window).
+- **#532 + #545** — pre-grace warnings still relevant for loans where the matcher hasn't found a counterparty yet; the atomic chain only fires once a counterparty accepts.
+- **#407** — vault encumbrance sub-ledger; once that lands, the refinance fund source can shift to vault-first without the locked-balance double-spend risk.
+
+## Thread — T-092 dapp friction + pre-grace banner (#543 / #544 / #545)
+
+Combined dapp PR closing three sibling cards that extend #537's opt-in friction pattern to the remaining dapp surfaces + mirror the keeper's #532 pre-grace notification on LoanDetails.
+
+### #543 — LoanDetails caps editor inline best-effort warning
+
+`AutoLifecycleLoanCapsCard` now renders a persistent inline warning whenever the user is transitioning the `enabled` checkbox from false → true on either editor (refinance caps or extend caps). The warning stays visible until the form submits (refreshes `current.enabled`) or the user un-checks the box.
+
+> ⚠️ Auto-refinance and auto-extend are best-effort. If no compatible counterparty consent is found before this loan's grace period ends, the loan may be liquidated. You remain responsible for monitoring and repaying manually if needed.
+
+Different shape from #537's Dashboard two-step button because the LoanDetails form has multiple inputs (rate, expiry, etc.); a persistent banner is the right friction model for that context.
+
+### #544 — CreateOffer refinance-tagged best-effort warning
+
+When the user fills the refinance-target loan id input on CreateOffer, an inline alert renders immediately below the field. Surfaces the reality that tagging an offer for refinance doesn't guarantee a match in time.
+
+> ⚠️ Tagging this offer for refinance doesn't guarantee a match. If no compatible lender accepts before your existing loan's grace period ends, your loan will default. Auto-refinance is best-effort — review your caps on the LoanDetails page.
+
+### #545 — LoanDetails pre-grace warning banner
+
+`AutoLifecycleLoanCapsCard` now also renders a stark danger banner near the top when:
+
+- The borrower has `refinanceCaps.enabled` (opted into the keeper-driven refinance path).
+- The loan's `endTime` is within 24h.
+
+> ⚠️ This loan enters its grace period in ~{{hours}}h. Auto-refinance is best-effort — if no compatible lender offer is matched before grace expires, your loan will default. Repay manually or tighten your refinance caps if the market has moved.
+
+Mirrors the keeper-side `runPreGraceWatcher` (#532) but in the dapp — anyone who opens LoanDetails sees the warning regardless of TG / push subscription state. Hours-to-end is computed live.
+
+The `loanEndTime` prop on `AutoLifecycleLoanCapsCard` is the new wire; `LoanDetails` passes the existing computed `endTime` (or 0 for non-active loans).
+
+### Reuse
+
+- `autoLifecycleLoanCaps.bestEffortWarning` + `autoLifecycleLoanCaps.preGraceWarning` i18n keys (new).
+- `createOffer.refinanceTargetBestEffortWarning` (new).
+- Existing `AlertTriangle` + `alert alert-warning/danger` styling.
+
+### Verification
+
+- `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
+
+### Out of scope
+
+- Auto-subscribe on cap-set (#546).
+- Offer-book scan in pre-grace watcher (#547).
+- Atomic accept-and-refinance design doc + implementation (#549 / #539).
+
+## Thread — T-092 pre-grace refinements (#546 + #547)
+
+Two small refinements to the pre-grace warning surface that landed earlier (#532 + #545). Combined PR since they touch related code paths.
+
+### #546 — Alerts subscription CTA on LoanDetails
+
+`AutoLifecycleLoanCapsCard` now surfaces an inline info banner suggesting borrowers set up Telegram / Push alerts whenever they have refinance caps enabled:
+
+> ⚠️ Set up Telegram or Push alerts so you'll be warned if no compatible refinance offer is found before your grace period ends. [Go to Alerts →]
+
+Static for v1 — doesn't query actual subscription state (would require an extra fetch to the apps/agent's subscriptions endpoint). A borrower who's already subscribed sees the same banner; future enhancement: hide when subscription exists.
+
+The CTA bridges the `runPreGraceWatcher` (#532) infrastructure with the user's mental model: "I enabled caps; now I need a notification channel so the protocol can tell me if the auto-refinance can't find a match."
+
+### #547 — Viable-counterparty pre-check in `runPreGraceWatcher`
+
+`apps/keeper/src/preGraceWatcher.ts` now scans the active offer book once per cron tick + filters to lender offers. Before dispatching the pre-grace warning for a loan, the watcher checks whether ANY in-book lender offer matches the loan's refinance shape:
+
+- Same `lendingAsset` and `collateralAsset`.
+- Same `assetType` and `collateralAssetType`.
+- `amountMax >= loan.principal` (capacity covers the principal).
+
+If at least one match exists, the matcher will likely fire in the next tick — the warning is suppressed to reduce notification noise. If no match exists OR the offer book exceeded `OFFER_SCAN_CAP` (500 offers per chain per tick), the warning fires unconditionally.
+
+**Heuristic, not exact** — doesn't simulate `previewMatch` (would cost gas-equivalent eth_calls per loan). False negatives possible: a match might fail at the deeper HF / caps / sanctions checks. The borrower still gets the warning in those cases on the next tick because the offer would be removed from the book on the failed match.
+
+False positives are also possible: a viable offer might NOT match in time (e.g., race with another keeper). That's the safe-conservative direction — we surface the warning if uncertain.
+
+### Why combined PR
+
+Both cards refine the same notification surface from different angles:
+- #546 ensures the user can RECEIVE warnings (subscription channel).
+- #547 ensures the warnings SENT are meaningful (no false positives).
+
+Together they make `runPreGraceWatcher` notifications actionable instead of noisy.
+
+### Verification
+
+- `pnpm --filter @vaipakam/defi exec tsc -b --noEmit` clean.
+- `pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit` clean.
+
+### Operator action
+
+None — both changes are dapp-side / off-chain only. No new D1 migration; no new contract surface.
+
+## Thread — T-092 #548: reusable integration test fixture helpers
+
+Foundation work for the upcoming #539 atomic accept-and-refinance integration test + future T-092 multi-actor scenarios. Extracted as its own PR to keep the #539 implementation diff focused on the contract change rather than test infrastructure.
+
+### What's new
+
+**Three internal helpers on `SetupTest`**, available to every test inheriting from it:
+
+| Helper | Purpose |
+|---|---|
+| `_provisionFundedActor(name, token, walletAmount)` | Provision a new actor with `walletAmount` wei minted to their wallet + a max diamond approval on `token`. Returns the actor address. |
+| `_fundActorVault(actor, token, amount)` | Direct-transfer + `recordVaultDepositERC20` pattern to fund an existing actor's vault. Mirrors the `_acceptBorrowerOffer` setup that RefinanceFacetTest uses for `newLender`. |
+| `_provisionFundedActorWithVault(name, token, totalAmount)` | Convenience: actor with wallet AND vault funded (50/50 split) + standing diamond approval. The most common shape for atomic-flow tests. |
+| `_grantStandingApprovalToDiamond(actor, token)` | Set a standing diamond approval on `token` for an existing actor (when the test reuses one of the standard fixture's actors but needs the approval set independently). |
+
+### Why this matters
+
+PR #542 (#539 first attempt) couldn't ship a happy-path integration test because the existing SetupTest fixture didn't carry the multi-actor allowance / vault dance needed. With these helpers any integration test can:
+
+```solidity
+function test_AtomicAcceptAndRefinance_HappyPath() public {
+    uint256 oldLoanId = _buildActiveLoan();
+    // ... borrower sets caps + creates refinance-tagged offer ...
+
+    // One-line setup for the new lender:
+    address newLender = _provisionFundedActorWithVault(
+        "atomicNewLender", mockERC20, LOAN_PRINCIPAL * 2
+    );
+
+    vm.prank(newLender);
+    OfferAcceptFacet(address(diamond)).acceptOffer(refinanceOfferId, true);
+
+    // Assertions on both loans' status ...
+}
+```
+
+### Smoke tests
+
+Two new tests in `T092AutoLifecycleIntegrationTest` exercise the helpers:
+
+- `test_T092Fixture_NewLenderProvisioning` — verifies wallet balance + vault proxy balance + max diamond approval after the 50/50 helper.
+- `test_T092Fixture_GrantStandingApproval` — verifies the standalone approval helper works on a fresh actor.
+
+### Verification
+
+- forge build clean.
+- T092AutoLifecycleIntegrationTest 19/19 green (was 17, +2 smoke tests).
+- Deploy-sanity 12/12.
+- RefinanceFacetTest 35/35 (no regression).
+
+### Out of scope
+
+- The full atomic-accept-and-refinance integration test that uses these helpers — that lands with #539 implementation.
+- Multi-collateral-type test variants (ERC721 / ERC1155 collateral scenarios) — separate follow-up.
