@@ -731,6 +731,111 @@ pair OFF on the retail deploy.
 
 ---
 
+## T-092 auto-lifecycle kill switches
+
+Three admin master flags gating the auto-lend / auto-refinance /
+auto-extend surface. All three default `false` on a fresh deploy.
+Each is an independent break-glass — flipping one off only stops
+the matching keeper-driven path; the per-user consent storage stays
+intact and users can still revoke their own opt-ins. Storage lives
+on `ProtocolConfig`, setters + getters on `AdminFacet`. Read in the
+dapp via the Protocol Console (`/admin`) under the **Auto-Lifecycle
+Kill Switches** category.
+
+### `cfgAutoLendEnabled`
+
+Master flag for the auto-lend opt-in.
+
+- **Getter:** `AdminFacet.getAutoLendEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoLendEnabled(bool)`
+- **What `false` blocks:** new opt-ins via
+  `AutoLifecycleFacet.setAutoLendConsent(true)` revert
+  `AutoLendDisabled`. Existing consent is unaffected; users can
+  still revoke (`setAutoLendConsent(false)` remains permitted) to
+  avoid trapping users in consent when the admin disables the
+  feature.
+- **When to flip on:** once governance has rehearsed an auto-lend
+  end-to-end cycle on a testnet and is satisfied the matcher's
+  composition with the auto-lend posting flow doesn't introduce
+  unexpected lender-side risk.
+- **When to flip off:** if a real-world scenario surfaces where
+  auto-lend posts standing offers under terms the lender wouldn't
+  have accepted manually (e.g., a mass-vault-deposit script gets
+  matched against the worst counterparties available). Flipping
+  off freezes new opt-ins; existing standing offers remain on the
+  book until cancelled or matched.
+
+### `cfgAutoRefinanceEnabled`
+
+Master flag for the keeper-driven refinance path.
+
+- **Getter:** `AdminFacet.getAutoRefinanceEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoRefinanceEnabled(bool)`
+- **What `false` blocks:** `RefinanceFacet.refinanceLoan` reverts
+  `AutoRefinanceDisabled` on the keeper-driven path (when
+  `msg.sender != currentBorrowerNftOwner`). The borrower-direct
+  refinance path (`msg.sender == currentBorrowerNftOwner`)
+  remains permitted — a borrower can always refinance their own
+  loan even when the kill switch is off.
+- **When to flip on:** once governance has confirmed the cap-check
+  surface (Phase 2b: `LibAutoRefinanceCheck.validate` at both
+  offer-create AND offer-accept) is operationally sound and the
+  keeper-bot is enforcing the per-loan
+  `autoRefinanceCaps[loanId]` correctly.
+- **When to flip off:** if a real-world scenario surfaces where
+  a keeper routes a borrower into worse refinance terms despite
+  the cap check (the Phase 2b round-3 P1 + P2 surface should
+  catch every misuse pattern audited to date; this is the
+  break-glass for unforeseen cases).
+
+### `cfgAutoExtendEnabled`
+
+Master flag for the in-place loan extension.
+
+- **Getter:** `AdminFacet.getAutoExtendEnabled() -> bool`
+- **Setter:** `AdminFacet.setAutoExtendEnabled(bool)`
+- **What `false` blocks:** BOTH keeper-driven AND borrower-direct
+  `AutoLifecycleFacet.extendLoanInPlace` revert `AutoExtendDisabled`.
+  Unlike `cfgAutoRefinanceEnabled`, the borrower-direct path is
+  ALSO blocked — there is no "manual extension" fallback when the
+  flag is off, because the executor is shared.
+- **When to flip on:** once governance has rehearsed an extend on
+  a testnet loan with both-side consent and validated the
+  per-side cap intersection logic (lender minimum, both-side
+  maxes, both-side expiry caps) and the
+  `LibInteractionRewards` schedule refresh.
+- **When to flip off:** if the executor's interest-accrual / fee
+  treatment surfaces an unexpected behaviour. Existing loans
+  continue with their original terms (no extension fired ⇒ no
+  state change); the next extension simply doesn't happen.
+
+### Independence from per-user consent
+
+The three flags are independent. Flipping `cfgAutoLendEnabled` off
+does NOT disable `cfgAutoExtendEnabled` — users with both-side
+extend caps set continue to benefit from the auto-extend pass even
+while auto-lend is paused. Each flag's `Set` event is indexed by
+the new value so an indexer can reconstruct the flip history
+without a state migration.
+
+### Recommended operational mode
+
+`(false, false, false)` on a fresh deploy. After audit + testnet
+rehearsal, flip in sequence:
+1. `cfgAutoExtendEnabled` first — the safest path because both
+   sides explicitly consent per-loan + the cap intersection logic
+   has the smallest attack surface.
+2. `cfgAutoRefinanceEnabled` second — the cap-check surface is
+   larger (Phase 2b's binding-by-loan-id + assetType + amount-range
+   + collateral + prepay matching), but the per-loan opt-in still
+   constrains it.
+3. `cfgAutoLendEnabled` last — touches the standing-offer book
+   directly, so flipping it on is the highest-impact change.
+
+Each flip is reversible at zero cost beyond gas.
+
+---
+
 ## Operational policy summary
 
 - **Default new chain bring-up**: every numeric knob defaults to a
