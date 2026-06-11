@@ -484,4 +484,59 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         OfferCreateFacet(address(diamond)).createOffer(params);
     }
+
+    // ─── T-092 #548 — fixture helpers smoke test ────────────────────────
+
+    function test_T092Fixture_NewLenderProvisioning() public {
+        // Smoke-test the new SetupTest fixture helpers. Verifies the
+        // actor provisioning shape that the upcoming #539 atomic-accept-
+        // and-refinance integration test will build on.
+        address newLender = _provisionFundedActorWithVault(
+            "smokeNewLender",
+            mockERC20,
+            200 ether
+        );
+
+        // Wallet got HALF the funds.
+        assertEq(
+            ERC20(mockERC20).balanceOf(newLender),
+            100 ether,
+            "actor wallet should hold half of totalAmount"
+        );
+
+        // Vault proxy got the other half.
+        address proxy = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(newLender);
+        assertEq(
+            ERC20(mockERC20).balanceOf(proxy),
+            100 ether,
+            "actor vault proxy should hold half of totalAmount"
+        );
+
+        // Diamond approval is at max.
+        assertEq(
+            ERC20(mockERC20).allowance(newLender, address(diamond)),
+            type(uint256).max,
+            "standing diamond approval should be max"
+        );
+    }
+
+    function test_T092Fixture_GrantStandingApproval() public {
+        // A fresh actor (not one of the standard fixture's prebuilt
+        // borrower/lender) starts with NO diamond approval. After
+        // _grantStandingApprovalToDiamond they have a max allowance —
+        // the same shape the dapp sets at consent time.
+        address freshUser = makeAddr("fixtureFreshUser");
+        assertEq(
+            ERC20(mockERC20).allowance(freshUser, address(diamond)),
+            0,
+            "fresh user should start without diamond approval"
+        );
+        _grantStandingApprovalToDiamond(freshUser, mockERC20);
+        assertEq(
+            ERC20(mockERC20).allowance(freshUser, address(diamond)),
+            type(uint256).max,
+            "after grantStandingApproval, allowance should be max"
+        );
+    }
 }
