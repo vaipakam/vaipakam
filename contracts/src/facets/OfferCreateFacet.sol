@@ -1304,20 +1304,27 @@ contract OfferCreateFacet is
         // T-092 Phase 2b (#506) — refinance target.
         offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
         // #408 / #410 / #413 floor-model foundation (2026-06-12) —
-        // copy the lender's interest-model election from params into
-        // the offer. `LoanFacet.initiateLoan:792` then snapshots this
-        // into `Loan.useFullTermInterest`, which `LibEntitlement.
-        // settlementInterest` reads at every settlement to decide
-        // whether to apply the full-term floor (true, the default at
-        // the dapp builder layer) or fall back to pure pro-rata-elapsed
-        // (false, the lender opt-out for a "borrower pays only for
-        // time used" offer). Pre-#408 the field was unreachable dead
-        // code: `Offer.useFullTermInterest` existed in storage but
-        // was never written, so `Loan.useFullTermInterest` was
-        // always false and `settlementInterest` always returned
-        // pro-rata regardless of the lender's intent. This wiring
-        // line activates the entire flag-driven branch.
-        offer.useFullTermInterest = params.useFullTermInterest;
+        // INTENTIONALLY DO NOT wire `offer.useFullTermInterest =
+        // params.useFullTermInterest` yet. Per Codex round-2 P1: the
+        // existing `LibEntitlement.settlementInterest` `true` branch
+        // returns `fullTermInterest(...)` directly (no floor, no
+        // grace accrual past duration, no `interestSettled` credit).
+        // Wiring the flag now would route every `true` offer into
+        // that broken pre-#408 branch and break grace accrual + the
+        // double-charge fix.
+        //
+        // The wiring activates in PR #2 of the cluster
+        // (LibEntitlement / LibSettlement floor formula + interestSettled
+        // credit). Until then `Offer.useFullTermInterest` stays at
+        // its storage default (false), preserving the existing
+        // behaviour byte-for-byte.
+        //
+        // `CreateOfferParams.useFullTermInterest` is intentionally
+        // accepted in calldata so the foundation PR is forward-
+        // compatible — once the math lands, only this comment block
+        // becomes a single live assignment (`offer.useFullTermInterest =
+        // params.useFullTermInterest`) and the broken branch is
+        // replaced by the floor formula in the same diff.
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
