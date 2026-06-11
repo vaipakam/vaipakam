@@ -1241,69 +1241,28 @@ contract RefinanceFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    // ─── T-092-A (#530) Loan netting — vault-first wallet-fallback ─────
+    // ─── T-092-A (#530) Operational loan netting via wallet path ──────
+    //
+    // The original #530 proposed a vault-first wallet-fallback fund
+    // source for refinance. Codex review caught a real correctness
+    // issue (PR #538 round-1 P2): `protocolTrackedVaultBalance` is an
+    // aggregate counter that includes funds locked in active lender
+    // offers, so a vault-first netting could double-spend committed
+    // funds. The vault-first path was reverted; the wallet path is
+    // retained as the canonical refinance payment source. Operational
+    // netting is preserved because `OfferAcceptFacet` routes the new
+    // principal to the borrower's WALLET on accept, and the refinance
+    // immediately pulls from the same wallet to pay the old loan.
 
-    function test_T092A_LoanNetting_VaultFundedFullyCoversPayoff() public {
-        // T-092-A — when the borrower's vault has enough principalAsset
-        // to cover the entire refinance payoff (treasury fee + lender
-        // share), the wallet should NOT be touched at all. Verifies the
-        // vault-first half of the hybrid fund-source.
+    function test_T092A_RefinanceWalletPath_StandingApprovalNoPopup() public {
+        // T-092-A — the keeper-driven refinance path works without
+        // any borrower-side action at refinance time, because the
+        // standing diamond approval set at consent time covers the
+        // wallet pull. This test exercises the borrower-direct
+        // refinance happy path + asserts the wallet drains by
+        // approximately the payoff amount (principal + interest +
+        // treasury fee).
         uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
-
-        // Pre-fund the borrower's vault with enough to cover the
-        // worst-case payoff (principal + 100% buffer for interest +
-        // fee). Same direct-to-proxy + counter-record pattern the
-        // existing fixture (_acceptBorrowerOffer) uses for newLender.
-        address borrowerVault =
-            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        vm.prank(borrower);
-        ERC20(mockERC20).transfer(borrowerVault, PRINCIPAL * 2);
-        vm.prank(address(diamond));
-        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(
-            borrower, mockERC20, PRINCIPAL * 2
-        );
-
-        uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
-        uint256 borrowerVaultBefore = ERC20(mockERC20).balanceOf(borrowerVault);
-        assertGt(borrowerVaultBefore, 0, "vault must be pre-funded");
-
-        vm.prank(borrower);
-        RefinanceFacet(address(diamond)).refinanceLoan(
-            activeLoanId,
-            borrowerOfferId
-        );
-
-        // Wallet untouched — netting fully drawn from vault.
-        assertEq(
-            ERC20(mockERC20).balanceOf(borrower),
-            borrowerWalletBefore,
-            "borrower wallet must be untouched when vault covers payoff"
-        );
-        // Vault decreased by exactly the payoff amount.
-        assertLt(
-            ERC20(mockERC20).balanceOf(borrowerVault),
-            borrowerVaultBefore,
-            "vault must drain by the payoff amount"
-        );
-        // suppress unused
-        newLenderOfferId;
-    }
-
-    function test_T092A_LoanNetting_VaultEmptyFallsBackToWallet() public {
-        // T-092-A — when the borrower's vault is empty (legacy default),
-        // the refinance falls back to the wallet pull. Behaviour is
-        // identical to pre-#530 — guarantees no regression for
-        // borrowers who hold funds in the wallet.
-        uint256 newLenderOfferId = _acceptBorrowerOffer(borrowerOfferId);
-
-        // No vault pre-fund — vault starts empty.
-        address borrowerVault =
-            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
-        assertEq(
-            ERC20(mockERC20).balanceOf(borrowerVault),
-            0,
-            "vault must start empty"
-        );
 
         uint256 borrowerWalletBefore = ERC20(mockERC20).balanceOf(borrower);
 
@@ -1313,11 +1272,13 @@ contract RefinanceFacetTest is Test {
             borrowerOfferId
         );
 
-        // Wallet drained by the full payoff (legacy wallet-pull path).
+        // Wallet drained by the full payoff (the operational loan
+        // netting at work — new principal landed in wallet via
+        // _acceptBorrowerOffer, then refinance pulled it back out).
         assertLt(
             ERC20(mockERC20).balanceOf(borrower),
             borrowerWalletBefore,
-            "borrower wallet must drain when vault is empty"
+            "borrower wallet must drain by the refinance payoff"
         );
         // suppress unused
         newLenderOfferId;

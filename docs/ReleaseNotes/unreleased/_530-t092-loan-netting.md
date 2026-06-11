@@ -1,46 +1,30 @@
-## Thread — T-092-A: loan netting with vault-first wallet-fallback (#530)
+## Thread — T-092-A: refinance fund-source review and design clarification (#530)
 
-Closes the "borrower must maintain separate wallet ERC20 balance + standing diamond approval" requirement for keeper-driven refinance. The new fund-source pattern is vault-first wallet-fallback: the refinance payoff (treasury fee + lender share) consumes the borrower's VAULT balance first, then falls back to the WALLET (legacy pre-#530 path) for any shortfall.
+#530 was originally framed as a vault-first wallet-fallback fund source for `RefinanceFacet.refinanceLoan`. Codex review on PR #538 caught a real correctness issue (round-1 P2): `protocolTrackedVaultBalance` is an aggregate counter that includes funds locked in active lender offers (which sit in the creator's own vault — `OfferCreateFacet._pullCreatorAssetsClassic`). A vault-first netting could double-spend committed funds, breaking downstream offer fills.
 
-### What's new
+**Decision:** revert the vault-first path. Keep the existing wallet-pull flow as the canonical refinance payment source.
 
-**Contract change** ([`RefinanceFacet.sol:285-396`](contracts/src/facets/RefinanceFacet.sol#L285-L396)) — the old two-call `safeTransferFrom(borrower, treasury, …)` + `vaultDepositERC20From(borrower, oldLender, …)` flow is now split into two legs (treasury + lender), each running:
+### Why this is OK
 
-```
-fromVault   = min(borrower's vault counter, owed)
-fromWallet  = owed - fromVault
-[vault leg] vaultWithdrawERC20(borrower, asset, recipient, fromVault)
-[wallet leg] legacy path (safeTransferFrom for treasury;
-             vaultDepositERC20From for lender share)
-```
+The user's original concern — "wallet pull requires a Metamask popup, how is it automatic?" — was already addressed by the standing approval pattern. At consent time, the borrower calls `IERC20.approve(diamond, …)` once. Every later `safeTransferFrom(borrower, …)` operates on the existing allowance — no popup at refinance time. The keeper-driven path works fully automatically.
 
-The vault-to-vault transfer to the old lender uses the existing `vaultWithdrawERC20` + `recordVaultDepositERC20` two-step pattern (the same shape the Permit2 deposit path uses). Diamond never custodies the asset; the funds move vault-to-vault in two atomic side-effects.
+Operational loan netting is preserved by the existing flow: `OfferAcceptFacet.sol:840` routes the new lender's principal to the borrower's WALLET on accept, and the refinance immediately pulls from the same wallet to pay the old loan. The new principal cycles in then out within a single tx — that's the same net outcome a vault-first design would have produced, just routed through the wallet allowance pathway.
 
-### Why hybrid and not vault-only
+### Test addition
 
-`OfferAcceptFacet` routes the new lender's principal to the borrower's WALLET (line 840), not the vault. So a borrower who hasn't separately deposited into their vault has no vault balance to net against. Vault-only would have broken every existing refinance test fixture + the borrower-direct flow. The hybrid preserves backward compatibility while delivering the netting benefit to borrowers who fund their vault.
+A new positive-flow test `test_T092A_RefinanceWalletPath_StandingApprovalNoPopup` exercises the borrower-direct refinance happy path and asserts the wallet drains by approximately the payoff amount — documenting that operational netting is preserved via the wallet cycle. The two vault-first scenarios drafted earlier in this PR were removed alongside the contract revert.
 
-A borrower who routinely deposits into their vault (the common case — VPFI rewards + claim payouts + offer collateral release all land there) gets auto-refinance with zero wallet interactions at refinance time. A borrower who keeps funds in the wallet (the legacy default) still works through the unchanged safeTransferFrom path — no UX regression.
+### True vault-first netting requires a deeper change
 
-### Applies uniformly across collateral types
-
-The netting happens on the PRINCIPAL leg (always ERC20), not the collateral side. Liquid + illiquid + NFT collateral are all handled identically. Collateral handoff lower in the file (lines 349-387, three types) is unchanged.
-
-### Discovery: extend was already vault-first
-
-The matching `AutoLifecycleFacet.extendLoanInPlace` flow (`_routeInterest` at [AutoLifecycleFacet.sol:800-842](contracts/src/facets/AutoLifecycleFacet.sol#L800-L842)) was implemented vault-first from the start in Phase 3 (#507). Card #535 was filed on the wrong assumption that extend pulled from the wallet — closed as already-implemented.
+A proper vault-first refinance netting would require invariant-preserving locked-balance tracking: a counter (or per-flow reservation) that distinguishes "free" vault funds from "committed to an active lender offer" funds. That's a meaningful architectural change touching `OfferCreate / OfferAccept / OfferCancel` and is out of scope for this PR. The wallet path is correct + audit-clean today.
 
 ### Verification
 
-- forge build clean (`viaIR + optimizer=200`).
-- RefinanceFacetTest 34/34 (every existing test still passes — wallet-fallback path works identically).
-- Two new tests added under T-092-A:
-  - `test_T092A_LoanNetting_VaultFundedFullyCoversPayoff` — vault has funds → wallet untouched.
-  - `test_T092A_LoanNetting_VaultEmptyFallsBackToWallet` — vault empty → wallet drains (legacy).
-- T092AutoLifecycleIntegrationTest 17/17, LoanFacetTest broader 100/100 green.
+- forge build clean.
+- RefinanceFacetTest 35/35 (was 34, +1 new wallet-path positive scenario).
 - Deploy-sanity 12/12.
+- ABI re-export unchanged (no contract surface changes after revert).
 
-### Out of scope
+### What to do if vault-first netting becomes a requirement later
 
-- Routing the offer-accepted principal to the borrower's vault (would require OfferAcceptFacet changes). Out of #530's scope; could be a future enhancement that turns the hybrid path into vault-only.
-- Dapp surface for the new "pre-fund vault" suggestion. Borrowers who want full wallet-free refinance need to be told to deposit; can be folded into #537 (opt-in friction) or a separate dapp PR.
+File a follow-up card for **locked-balance tracking** as the prerequisite. Once the protocol has a clean separation between free + committed vault funds, vault-first refinance netting becomes a small surgical change.
