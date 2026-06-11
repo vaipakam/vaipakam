@@ -576,7 +576,9 @@ contract OfferCreateFacet is
                 params.durationDays,
                 params.lendingAsset,
                 params.collateralAsset,
+                params.assetType,
                 params.collateralAssetType,
+                params.prepayAsset,
                 params.amount,
                 maxAmountEffective
             );

@@ -582,7 +582,9 @@ contract OfferAcceptFacet is
                 offer.durationDays,
                 offer.lendingAsset,
                 offer.collateralAsset,
+                offer.assetType,
                 offer.collateralAssetType,
+                offer.prepayAsset,
                 offer.amount,
                 maxAmountEffective
             );

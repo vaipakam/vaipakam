@@ -74,7 +74,9 @@ library LibAutoRefinanceCheck {
         uint256 offerDurationDays,
         address offerLendingAsset,
         address offerCollateralAsset,
+        LibVaipakam.AssetType offerAssetType,
         LibVaipakam.AssetType offerCollateralAssetType,
+        address offerPrepayAsset,
         uint256 offerMinAmount,
         uint256 offerMaxAmount
     ) internal view {
@@ -106,10 +108,22 @@ library LibAutoRefinanceCheck {
         // declaration in a refinance-tagged offer. Verify the asset
         // TYPE matches too so a refinance-tagged offer can't sneak
         // an NFT-collateralised loan past as ERC20 (or vice-versa).
+        // Codex round-3 P2 — also require the new offer's principal
+        // assetType == ERC20. The old-loan-ERC20 check above only
+        // proves the OLD principal; without this guard, a hybrid
+        // contract that satisfies both branches could let a
+        // refinance-tagged ERC721 offer slip through.
+        // Codex round-3 P2 — prepayAsset must also match. The
+        // RefinanceFacet later routes prepay-asset flows via
+        // `LibOfferMatch.assertAssetContinuity`; a mismatch would
+        // surface as a delayed refinance failure with the new loan
+        // already created.
         if (
             offerLendingAsset != loan.principalAsset ||
             offerCollateralAsset != loan.collateralAsset ||
-            offerCollateralAssetType != loan.collateralAssetType
+            offerCollateralAssetType != loan.collateralAssetType ||
+            offerAssetType != LibVaipakam.AssetType.ERC20 ||
+            offerPrepayAsset != loan.prepayAsset
         ) {
             revert RefinanceTargetIncompatible();
         }
