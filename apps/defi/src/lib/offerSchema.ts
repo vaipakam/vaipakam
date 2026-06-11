@@ -106,6 +106,14 @@ export interface OfferFormState {
    *  Advanced mode when offerType=borrower AND collateralAssetType is
    *  erc721 or erc1155. */
   allowsParallelSale: boolean;
+  /** T-092 #511 sub (#523) — refinance target loan id. Empty string
+   *  ⇒ standard borrower offer (no refinance intent). When set, the
+   *  offer is created with the intent to refinance the named loan;
+   *  the contract enforces `params.fillMode == Aon` and the
+   *  borrower's per-loan `autoRefinanceCaps` at both create and
+   *  accept. Only valid on Borrower offers; the form auto-hides on
+   *  Lender. */
+  refinanceTargetLoanId: string;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -131,6 +139,7 @@ export const initialOfferForm: OfferFormState = {
   collateralAmountMax: '',
   periodicInterestCadence: 0, // None
   allowsParallelSale: false, // T-086 Round-8 #358 — explicit opt-in
+  refinanceTargetLoanId: '', // T-092 #511 sub (#523) — standard offer; non-empty enables refinance-tagged flow
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -446,11 +455,12 @@ export function toCreateOfferPayload(
     allowsParallelSale: s.allowsParallelSale,
     // #125 + Round-8 Codex round-8 P2 #4 — force Aon (1) when
     // `allowsParallelSale` is on; default to Partial (0) otherwise.
-    // The form's toggle visibility hides parallel-sale opt-in on
-    // offers where Aon would be inappropriate; this defensive coupling
-    // ensures the payload always matches the contract's
-    // `ParallelSaleRequiresAonFillMode` gate.
-    fillMode: s.allowsParallelSale ? 1 : 0,
+    // T-092 #511 sub (#523) — refinance-tagged offers MUST also be
+    // Aon (the contract reverts `InvalidRefinanceTarget` otherwise).
+    fillMode:
+      s.allowsParallelSale || s.refinanceTargetLoanId !== ''
+        ? 1
+        : 0,
     // Codex round-14 P1 — add the remaining createOffer tuple fields
     // so the payload matches the contract's `CreateOfferParams` shape
     // exactly. `expiresAt = 0n` ⇒ GTC (today's behaviour);
@@ -461,11 +471,13 @@ export function toCreateOfferPayload(
     // to default missing keys.
     expiresAt: 0n,
     allowsPrepayListing: false,
-    // T-092 Phase 2b (#506) — standard create flow always passes
-    // `0n` (= no refinance target). The keeper-driven auto-refinance
-    // UX will set this explicitly when constructing the offer; this
-    // builder is the standard path only.
-    refinanceTargetLoanId: 0n,
+    // T-092 #511 sub (#523) — when the form's refinance-tag input
+    // is filled, thread the loan id through. Standard offers leave
+    // the field empty and the payload sees `0n`.
+    refinanceTargetLoanId:
+      s.refinanceTargetLoanId !== ''
+        ? BigInt(s.refinanceTargetLoanId)
+        : 0n,
   };
 }
 

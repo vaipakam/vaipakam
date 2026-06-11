@@ -834,6 +834,9 @@
     "allowsPartialRepayHintBorrower": "Request the right to repay this loan in partial chunks. The lender consents implicitly by accepting your offer; if they don't want partial repay they will skip it. Default off.",
     "allowsParallelSaleLabel": "Allow optional sale of this NFT on OpenSea",
     "allowsParallelSaleHint": "Borrow OR sell — opting in marks this offer as eligible for a parallel-sale listing. The listing itself is published separately by calling the diamond's `postParallelSaleListing` once the offer is live (a dedicated in-app flow is queued as a follow-up). If a buyer fills the listing before any lender accepts, the sale proceeds land in your vault and the offer closes. If a lender accepts first, the listing (once published) carries through the loan and any later buyer fill automatically settles the loan from the sale proceeds (lender gets their promised interest, you keep the surplus). Only on Borrower offers with NFT collateral. Forces all-or-nothing fill mode.",
+    "refinanceTargetLabel": "Refinance an existing loan (optional)",
+    "refinanceTargetPlaceholder": "Loan ID",
+    "refinanceTargetHint": "Tag this offer to refinance one of your existing active loans. The keeper-driven refinance path enforces the per-loan refinance caps you set on LoanDetails; the offer must satisfy your rate ceiling and the protocol auto-forces AON fill mode. Leave empty for a standard borrower offer.",
     "periodicInterest": {
       "label": "Payment cadence",
       "disabledShort": "interval ≥ duration",
