@@ -516,8 +516,10 @@
     "optInLabel": "Auto-set refinance offer terms on every new loan",
     "optInHint": "Borrower convenience. Every new ERC20-principal loan auto-populates its refinance offer terms from your defaults; NFT-collateral loans require explicit per-loan opt-in (asymmetric default-loss risk).",
     "actionEnable": "Enable",
+    "actionConfirm": "I understand & enable",
     "actionDisable": "Disable",
-    "statePending": "Pending..."
+    "statePending": "Pending...",
+    "bestEffortWarning": "⚠️ Auto-refinance is best-effort. If no compatible lender offer is found before your loan's grace period ends, the loan may be liquidated. You remain responsible for monitoring and repaying manually if needed."
   },
   "autoLifecycle": {
     "errors": {
