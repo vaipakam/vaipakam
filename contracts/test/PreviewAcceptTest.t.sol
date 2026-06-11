@@ -100,7 +100,8 @@ contract PreviewAcceptTest is SetupTest {
                 collateralAmountMax: collateralRequired,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }
@@ -140,7 +141,8 @@ contract PreviewAcceptTest is SetupTest {
                 collateralAmountMax: collateralAmountMax,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }

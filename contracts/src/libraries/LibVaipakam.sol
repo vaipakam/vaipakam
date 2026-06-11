@@ -1185,6 +1185,17 @@ library LibVaipakam {
         // collateral; OfferCreateFacet rejects the flag on lender /
         // non-NFT-collateral offers.
         bool allowsParallelSale;
+        // T-092 Phase 2b (#506) — refinance target.
+        // When non-zero, this offer is created with the intent of
+        // refinancing loanId == refinanceTargetLoanId. The creator
+        // must be the current borrower-NFT owner of that loan + the
+        // loan must be Active at create time; the offer's terms are
+        // validated against `autoRefinanceCaps[loanId]` at BOTH
+        // create AND accept time so a keeper-driven acceptance
+        // can't route the borrower into a worse rate / longer
+        // obligation than they pre-approved. Default 0 = standard
+        // borrower offer (no refinance intent).
+        uint256 refinanceTargetLoanId;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -1366,6 +1377,15 @@ library LibVaipakam {
         // shared `LibPrepayCleanup.clearOfferListing` primitive
         // touches this slot AND the mapping in lockstep.
         bytes32 parallelSaleOrderHash;
+        // Slot 22 — T-092 Phase 2b (#506) — refinance target loan
+        // id. Append-only field, copied verbatim from
+        // `CreateOfferParams.refinanceTargetLoanId` at create-time.
+        // Reads at create + accept time gate the offer against
+        // `autoRefinanceCaps[refinanceTargetLoanId]`. Non-zero
+        // implies this is a refinance-tagged Borrower offer; the
+        // cap-check fires automatically. See AutoLifecycleFacet
+        // for the consent surface that populates the caps.
+        uint256 refinanceTargetLoanId;
     }
 
     /**

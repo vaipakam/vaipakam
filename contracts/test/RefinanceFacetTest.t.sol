@@ -213,7 +213,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.prank(borrower);
@@ -246,7 +247,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -320,7 +322,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -375,7 +378,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -487,7 +491,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL / 2,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -793,7 +798,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -856,7 +862,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -913,7 +920,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -960,7 +968,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1098,7 +1107,8 @@ contract RefinanceFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 

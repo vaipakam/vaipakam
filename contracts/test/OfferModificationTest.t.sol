@@ -65,7 +65,8 @@ contract OfferModificationTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 
@@ -98,7 +99,8 @@ contract OfferModificationTest is SetupTest {
             collateralAmountMax: 5000 ether,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 
@@ -515,7 +517,8 @@ contract OfferModificationTest is SetupTest {
                 collateralAmountMax: 1 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -572,7 +575,8 @@ contract OfferModificationTest is SetupTest {
                 collateralAmountMax: 1 ether,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 

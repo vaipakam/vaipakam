@@ -286,7 +286,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.prank(borrower);
@@ -319,7 +320,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -448,7 +450,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -515,7 +518,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -566,7 +570,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -613,7 +618,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -671,7 +677,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -715,7 +722,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -756,7 +764,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -810,7 +819,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.prank(lender);
@@ -846,7 +856,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -890,7 +901,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -927,7 +939,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL + 1,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1030,7 +1043,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1074,7 +1088,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1137,7 +1152,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1183,7 +1199,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1221,7 +1238,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -1265,7 +1283,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -2025,7 +2044,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 
@@ -2079,7 +2099,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 collateralAmountMax: COLLATERAL,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 

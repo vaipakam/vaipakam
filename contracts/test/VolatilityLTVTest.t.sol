@@ -82,7 +82,8 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
                 collateralAmountMax: collateral,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
 

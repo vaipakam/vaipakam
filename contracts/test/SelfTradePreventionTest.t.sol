@@ -87,7 +87,8 @@ contract SelfTradePreventionTest is SetupTest {
                 collateralAmountMax: 200,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }
@@ -122,7 +123,8 @@ contract SelfTradePreventionTest is SetupTest {
                 collateralAmountMax: 200,
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
             })
         );
     }

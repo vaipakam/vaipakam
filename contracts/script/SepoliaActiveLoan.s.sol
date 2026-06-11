@@ -162,7 +162,8 @@ contract SepoliaActiveLoan is Script {
             collateralAmountMax: 0,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
-            fillMode: LibVaipakam.FillMode.Partial
+            fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0
         });
     }
 }

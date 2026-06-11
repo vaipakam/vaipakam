@@ -21,6 +21,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 
 /**
  * @title OfferCreateFacet
@@ -239,6 +240,14 @@ contract OfferCreateFacet is
     // NotOfferCreator inherited from IVaipakamErrors
     error InsufficientAllowance();
     error LiquidityMismatch();
+    /// @notice T-092 Phase 2b (#506) — `refinanceTargetLoanId != 0`
+    ///         on a non-Borrower offer. The refinance-target flag is
+    ///         only meaningful for borrower-side offers; lender or
+    ///         other offer types with the field set are a creator
+    ///         mistake (likely re-using a struct without zeroing the
+    ///         field). The validator in `LibAutoRefinanceCheck`
+    ///         covers the Borrower-side semantic checks.
+    error InvalidRefinanceTarget();
     /// Findings 00025 — `params.durationDays > MAX_OFFER_DURATION_DAYS`.
     /// Surfaces `(provided, cap)` so the UI / SDK can show the gap.
     error OfferDurationExceedsCap(uint256 provided, uint256 cap);
@@ -528,6 +537,29 @@ contract OfferCreateFacet is
 
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _writeOfferFields(offer, creator, offerId, params);
+
+        // T-092 Phase 2b (#506) — refinance-tagged offer must be a
+        // Borrower offer + creator must be the current borrower-NFT
+        // owner of the targeted loan + the proposed terms must fit
+        // within the borrower's `autoRefinanceCaps[loanId]`.
+        // Validation re-runs at accept time too (caps may be
+        // tightened or NFT may transfer between create + accept).
+        if (params.refinanceTargetLoanId != 0) {
+            if (params.offerType != LibVaipakam.OfferType.Borrower) {
+                revert InvalidRefinanceTarget();
+            }
+            uint256 maxRateEffective =
+                params.interestRateBpsMax == 0
+                    ? params.interestRateBps
+                    : params.interestRateBpsMax;
+            LibAutoRefinanceCheck.validate(
+                s,
+                params.refinanceTargetLoanId,
+                creator,
+                maxRateEffective,
+                params.durationDays
+            );
+        }
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))
             .checkLiquidity(params.lendingAsset);
@@ -1241,6 +1273,8 @@ contract OfferCreateFacet is
             }
         }
         offer.allowsParallelSale = params.allowsParallelSale;
+        // T-092 Phase 2b (#506) — refinance target.
+        offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.

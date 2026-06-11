@@ -127,6 +127,11 @@
             "name": "allowsParallelSale",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -273,6 +278,11 @@
             "name": "allowsParallelSale",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -414,6 +424,11 @@
             "name": "allowsParallelSale",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       },
@@ -759,6 +774,17 @@
   },
   {
     "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -915,6 +941,11 @@
   {
     "type": "error",
     "name": "InvalidRateRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidRefinanceTarget",
     "inputs": []
   },
   {
@@ -1335,6 +1366,21 @@
   },
   {
     "type": "error",
+    "name": "RefinanceCapsRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceExpiryExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceRateExceedsCap",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {
@@ -1348,6 +1394,16 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RefinanceTargetNotBorrower",
+    "inputs": []
   },
   {
     "type": "error",
