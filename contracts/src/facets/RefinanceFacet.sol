@@ -448,10 +448,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // register its own vpfiHeld against the new loan id).
         LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
 
+        // T-092 Phase 2a (Codex round-1 P2) — emit the current
+        // borrower-NFT owner as the borrower (not msg.sender) so
+        // keeper-driven refinances attribute the row to the actual
+        // borrower in indexers / activity feeds, matching the fund-
+        // flow change above.
         emit LoanRefinanced(
             oldLoanId,
             newLoanId,
-            msg.sender,
+            currentBorrowerNftOwner,
             oldLoan.lender,
             newLender,
             shortfall,

@@ -337,7 +337,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](34);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -374,6 +374,10 @@ contract HelperTest {
         selectors[28] = AdminFacet.setAutoLendEnabled.selector;
         selectors[29] = AdminFacet.setAutoRefinanceEnabled.selector;
         selectors[30] = AdminFacet.setAutoExtendEnabled.selector;
+        // Codex round-1 P2 — getters.
+        selectors[31] = AdminFacet.getAutoLendEnabled.selector;
+        selectors[32] = AdminFacet.getAutoRefinanceEnabled.selector;
+        selectors[33] = AdminFacet.getAutoExtendEnabled.selector;
         return selectors;
     }
 

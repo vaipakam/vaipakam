@@ -475,6 +475,24 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit AutoExtendEnabledSet(enabled);
     }
 
+    /// @notice Codex round-1 P2 — getter trio so the dapp + keeper
+    ///         bots can decide whether to surface / submit the
+    ///         relevant auto-lifecycle action. Matches the
+    ///         `getPartialFillEnabled` precedent (write-only flags
+    ///         would force consumers to simulate failed sends to
+    ///         discover state).
+    function getAutoLendEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoLendEnabled;
+    }
+
+    function getAutoRefinanceEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoRefinanceEnabled;
+    }
+
+    function getAutoExtendEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.cfgAutoExtendEnabled;
+    }
+
     /// @notice Returns whether KYC enforcement is currently active.
     /// @return enforced False under Phase 1 pass-through (default), true when
     ///         governance has activated tiered enforcement.

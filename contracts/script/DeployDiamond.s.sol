@@ -814,7 +814,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](34);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -854,6 +854,10 @@ contract DeployDiamond is Script {
         s[28] = AdminFacet.setAutoLendEnabled.selector;
         s[29] = AdminFacet.setAutoRefinanceEnabled.selector;
         s[30] = AdminFacet.setAutoExtendEnabled.selector;
+        // Codex round-1 P2 — getters.
+        s[31] = AdminFacet.getAutoLendEnabled.selector;
+        s[32] = AdminFacet.getAutoRefinanceEnabled.selector;
+        s[33] = AdminFacet.getAutoExtendEnabled.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
