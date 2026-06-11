@@ -815,9 +815,9 @@ export const ADMIN_KNOBS: KnobMeta[] = [
   // the rest of the diamond.
   {
     id: 'cfgAutoLendEnabled',
-    label: 'Auto-lend kill switch',
+    label: 'Auto-lend offer posting kill switch',
     short:
-      'Master flag. When false, AutoLifecycleFacet rejects new auto-lend opt-ins (existing consents stay, can be revoked).',
+      'Master flag for the dapp posting standing lender offers on a user\'s behalf when vault deposits land. When false, AutoLifecycleFacet rejects new opt-ins (existing consents stay, can be revoked). The matcher itself is not gated by this — only the standing-offer posting flow.',
     category: 'autoLifecycle',
     unit: 'bool',
     hardMin: '0',
@@ -841,9 +841,9 @@ export const ADMIN_KNOBS: KnobMeta[] = [
   },
   {
     id: 'cfgAutoRefinanceEnabled',
-    label: 'Auto-refinance kill switch',
+    label: 'Auto-refinance offer posting kill switch',
     short:
-      'Master flag. When false, the keeper-driven RefinanceFacet path reverts; borrower-direct refinance still works.',
+      'Master flag for the dapp posting refinance-tagged borrower offers + the keeper-driven RefinanceFacet path. When false, both surfaces revert; borrower-direct refinance still works.',
     category: 'autoLifecycle',
     unit: 'bool',
     hardMin: '0',
