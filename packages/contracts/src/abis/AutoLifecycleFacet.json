@@ -688,7 +688,12 @@
   },
   {
     "type": "error",
-    "name": "AutoExtendDurationZero",
+    "name": "AutoExtendDurationOutOfRange",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoExtendEndTimeOverflow",
     "inputs": []
   },
   {
@@ -699,6 +704,11 @@
   {
     "type": "error",
     "name": "AutoExtendRateOutOfBand",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AutoExtendTooSoonAfterStart",
     "inputs": []
   },
   {
@@ -721,6 +731,17 @@
     "type": "error",
     "name": "EnforcedPause",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntentPending",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

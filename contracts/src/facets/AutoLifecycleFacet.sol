@@ -143,8 +143,26 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         intersection of `borrower.maxNewExpiry` and
     ///         `lender.maxNewExpiry`.
     error AutoExtendExpiryExceedsCap();
-    /// @notice T-092 Phase 3 — `newDurationDays` is zero.
-    error AutoExtendDurationZero();
+    /// @notice T-092 Phase 3 — `newDurationDays` is zero or exceeds the
+    ///         protocol's `cfgMaxOfferDurationDays` ceiling. Mirrors
+    ///         the duration bound `OfferCreateFacet` enforces on
+    ///         fresh offers; without this an extension could bypass
+    ///         the long-duration interest-formula invariant that the
+    ///         duration cap exists to protect.
+    error AutoExtendDurationOutOfRange();
+    /// @notice T-092 Phase 3 — extend called before at least one
+    ///         full day has elapsed since `loan.startTime`. Codex
+    ///         round-1 P1 — without this guard, `accruedInterestToTime`
+    ///         (which floors to whole days) returns 0 and the post-
+    ///         extension `startTime` reset would let a borrower
+    ///         repeatedly extend just before the daily boundary to
+    ///         erase all accrual.
+    error AutoExtendTooSoonAfterStart();
+    /// @notice T-092 Phase 3 — `block.timestamp + newDurationDays *
+    ///         1 days` overflows `uint64`. Without this check the
+    ///         explicit cast would silently truncate, letting a
+    ///         keeper-proposed duration wrap past the cap.
+    error AutoExtendEndTimeOverflow();
 
     /// @notice T-092 Phase 3 — emitted on a successful in-place
     ///         loan extension. The position NFTs are untouched; only
@@ -453,7 +471,33 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
             LibVaipakam.PeriodicInterestCadence.None) {
             revert PeriodicCadenceMustSettleFirst();
         }
-        if (newDurationDays == 0) revert AutoExtendDurationZero();
+        // Codex round-1 P2 — block extension while a swap-to-repay
+        // intent has the loan's collateral committed. Mirrors the
+        // same guard used by RepayFacet / RefinanceFacet / PrecloseFacet
+        // / collateral-mutation paths.
+        LibVaipakam.assertNoLiveIntentCommit(loanId);
+        // Codex round-1 P2 — duration must be in
+        // `[1, cfgMaxOfferDurationDays()]`. Otherwise extension could
+        // bypass the long-duration interest-formula invariant that
+        // the duration cap exists to protect (OfferCreateFacet
+        // enforces the same bound on fresh offers).
+        uint256 maxDurationDays = LibVaipakam.cfgMaxOfferDurationDays();
+        if (
+            newDurationDays == 0 ||
+            (maxDurationDays != 0 && newDurationDays > maxDurationDays)
+        ) {
+            revert AutoExtendDurationOutOfRange();
+        }
+        // Codex round-1 P1 — the executor resets `loan.startTime` to
+        // `block.timestamp` at the end. If less than a full day has
+        // elapsed since the previous start, `accruedInterestToTime`
+        // floors to zero accrued interest and a borrower could
+        // repeatedly extend just before the daily boundary to roll
+        // the obligation forward without ever paying interest. Refuse
+        // extension within the first day so accrual always lands.
+        if (block.timestamp < uint256(loan.startTime) + LibVaipakam.ONE_DAY) {
+            revert AutoExtendTooSoonAfterStart();
+        }
 
         // ── Auth: keeper-side bit + Tier-1 sanctions on all parties ──
         LibAuth.requireKeeperFor(
@@ -496,28 +540,37 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         if (newRateBps < lenderCaps.minRateBps || newRateBps > ceiling) {
             revert AutoExtendRateOutOfBand();
         }
-        uint64 newEndTime = uint64(block.timestamp + newDurationDays * 1 days);
+        // Codex round-1 P1 — compare expiry as uint256 BEFORE casting
+        // down to uint64. Otherwise an arithmetically-overflowing
+        // `block.timestamp + newDurationDays * 1 days` would silently
+        // wrap past the cap.
+        uint256 newEndTimeUint = block.timestamp + newDurationDays * 1 days;
+        if (newEndTimeUint > type(uint64).max) {
+            revert AutoExtendEndTimeOverflow();
+        }
         uint64 expiryCap = lenderCaps.maxNewExpiry < borrowerCaps.maxNewExpiry
             ? lenderCaps.maxNewExpiry
             : borrowerCaps.maxNewExpiry;
-        if (expiryCap != 0 && newEndTime > expiryCap) {
+        if (expiryCap != 0 && newEndTimeUint > uint256(expiryCap)) {
             revert AutoExtendExpiryExceedsCap();
         }
 
         // ── Accrued-interest math + treasury / lender split ──────────
-        uint256 elapsedDays = block.timestamp <= loan.startTime
-            ? 0
-            : (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
-        uint256 accruedInterest = LibEntitlement.proRataInterest(
-            loan.principal,
-            loan.interestRateBps,
-            elapsedDays
-        );
+        // Codex round-1 P1 — honor `loan.useFullTermInterest`. Using
+        // `LibEntitlement.settlementInterest` routes the full-term
+        // branch correctly: when the loan was contracted with the
+        // full-term coupon, that's what the lender is owed at every
+        // mid-loan settlement (otherwise an early extension would
+        // discard the lender's contracted coupon).
+        uint256 accruedInterest = LibEntitlement.settlementInterest(loan, block.timestamp);
         if (accruedInterest > 0) {
-            uint256 treasuryShare =
-                (accruedInterest * LibVaipakam.TREASURY_FEE_BPS) /
-                LibVaipakam.BASIS_POINTS;
-            uint256 lenderShare = accruedInterest - treasuryShare;
+            // Codex round-1 P2 — use the protocol's
+            // `cfgTreasuryFeeBps` (resolved via `splitTreasury`)
+            // rather than the hardcoded `TREASURY_FEE_BPS`. Otherwise
+            // any governance change to the treasury fee would silently
+            // bypass extension settlements.
+            (uint256 treasuryShare, uint256 lenderShare) =
+                LibEntitlement.splitTreasury(accruedInterest);
             _routeInterest(
                 loan.principalAsset,
                 borrowerNftOwner,
