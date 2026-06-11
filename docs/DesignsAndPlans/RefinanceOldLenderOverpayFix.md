@@ -1,8 +1,10 @@
 # Refinance — Old-Lender Shortfall: redundant over-compensation (spec + code)
 
-**Status:** Design — **Option 1 selected (2026-06-07)**: drop the refinance shortfall + update spec §2127/§2138 · **Date:** 2026-06-07 (corrected)
-**Card:** [#411]
+**Status:** ✅ **SHIPPED 2026-06-12** via PR #557 · Original design Option 1 selected 2026-06-07
+**Card:** [#411] (closed)
 **Independent of:** the interest floor-model change (`InterestSettlementFloorModel.md`)
+
+> **Implementation note (2026-06-12):** The Option 1 fix landed exactly as specified — `interestPortion = oldInterest` in `RefinanceFacet._refinanceLoanLogic`, with the `shortfall` local retained at 0 to keep the `LoanRefinanced` event signature byte-identical for indexers. Spec §2198 + §2211-§2214 updated in the same PR to drop the "borrower covers the shortfall" clause for refinance (it remains in force on the obligation-transfer / offset paths where the lender stays on the loan). New test `test_411_RefinanceExitingLenderReceivesFullTermOnly` asserts the exact amount the old lender's vault receives.
 
 > **Correction (2026-06-07):** an earlier draft of this doc called this a code-vs-spec *bug* ("code exceeds spec"). That was wrong — the spec **explicitly documents** the shortfall (see §3). This is therefore a deliberate **economic-policy decision** (change spec + code together), not a silent bug fix.
 
