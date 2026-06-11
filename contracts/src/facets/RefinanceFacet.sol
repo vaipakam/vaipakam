@@ -37,8 +37,10 @@ import {LibERC721} from "../libraries/LibERC721.sol";
  *           (creating a new loan). Principal from the new lender flows to
  *           the borrower.
  *        2. Borrower calls {refinanceLoan}: repays the old lender
- *           (principal + full-term interest + any shortfall — early
- *           repayment economics per README), releases old collateral,
+ *           (principal + full-term interest — early repayment
+ *           economics per README; #411 fix 2026-06-12 dropped the
+ *           rate-shortfall top-up that over-compensated the exiting
+ *           lender), releases old collateral,
  *           verifies post-refinance HF ≥ 1.5 and LTV ≤ loanInitMaxLtvBps on the new
  *           loan, and transitions the old loan to Repaid.
  */
@@ -51,7 +53,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
     /// @param borrower The borrower's address.
     /// @param oldLender The original lender's address.
     /// @param newLender The new lender's address.
-    /// @param shortfallPaid Any shortfall amount paid by borrower.
+    /// @param shortfallPaid Always 0 post-#411 fix (2026-06-12); previously
+    ///                      held the rate-shortfall top-up paid to the
+    ///                      exiting old lender. Retained at 0 to keep the
+    ///                      event signature byte-identical for indexers.
     /// @param oldLoanNewStatus The original loan's `LoanStatus` after the
     ///        refinance — always `Repaid` (1). Carried explicitly so an
     ///        indexer flips status from the payload rather than inferring
@@ -82,9 +87,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
      *         creating a new loan. Principal from Lender B is sent to alice.
      *      3. alice calls this function to close the old loan:
      *         - Verifies the Borrower Offer was accepted and a new loan exists.
-     *         - Repays old lender (principal + full-term interest + shortfall;
+     *         - Repays old lender (principal + full-term interest;
      *           see LibEntitlement.fullTermInterest — matches README early
-     *           repayment economics).
+     *           repayment economics). #411 fix (2026-06-12) — the
+     *           previous code also added a rate-shortfall top-up, but
+     *           full-term IS the lender's maximum entitlement on this
+     *           loan, so paying additional shortfall over-compensated
+     *           the exiting lender at borrower expense (see
+     *           docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md).
      *         - Releases old collateral back to alice.
      *         - Checks post-refinance HF and LTV on new loan.
      *         - Updates old loan NFTs and marks old loan Repaid.
@@ -274,32 +284,56 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
         // ── Repay old lender ──────────────────────────────────────────────
         // alice already received new principal from Lender B (via acceptOffer).
-        // README: repay old lender with principal + full-term interest (early repayment rules).
+        // README: repay old lender with principal + full-term interest.
+        // (Early-repayment rules — the exiting lender receives full-term
+        // interest, which is the maximum they could have earned on this
+        // loan, so they are strictly whole.)
         uint256 oldInterest = LibEntitlement.fullTermInterest(
             oldLoan.principal,
             oldLoan.interestRateBps,
             oldLoan.durationDays
         );
 
-        // Shortfall: if new offer yields less interest than old loan expected
-        uint256 newExpectedInterest = LibEntitlement.fullTermInterest(
-            offer.amount,
-            offer.interestRateBps,
-            offer.durationDays
-        );
-        uint256 shortfall = 0;
-        if (newExpectedInterest < oldInterest) {
-            shortfall = oldInterest - newExpectedInterest;
-        }
+        // #411 fix (2026-06-12) — DROPPED the rate-shortfall addend
+        // that previously over-compensated the exiting old lender at
+        // borrower expense. Spec §2127 / §2138 (the "Original Lender
+        // Protection Rule") historically required a shortfall =
+        // `oldFullTerm - newFullTerm` top-up on top of full-term
+        // interest. But full-term IS the lender's maximum possible
+        // earnings on this loan; paying ANY additional shortfall
+        // pushes them BEYOND their ceiling, funded by the borrower
+        // (`oldInterest + shortfall = P + 2·oldFullTerm − newFullTerm`).
+        //
+        // The Protection Rule is structurally satisfied by paying
+        // `principal + full-term interest` to an exiting lender —
+        // they are strictly whole at their maximum entitlement.
+        //
+        // The shortfall is still NECESSARY on the obligation-transfer
+        // / offset paths (`PrecloseFacet.transferObligationViaOffer`)
+        // where the lender STAYS on the loan and earns the NEW rate
+        // going forward — there the shortfall genuinely bridges back
+        // up to the original full-term. Refinance differs because the
+        // old lender exits (`s.lenderClaims[oldLoanId]` is set and the
+        // old loan closes). Refinance-path only fix; transfer/offset
+        // shortfall unchanged.
+        //
+        // Design doc:
+        // `docs/DesignsAndPlans/RefinanceOldLenderOverpayFix.md`
+        // (Option 1 selected 2026-06-07).
+        //
+        // The `shortfall` local is retained at 0 to keep the
+        // `LoanRefinanced` event signature byte-identical — indexers
+        // continue to decode the field, just always read 0 post-fix.
 
-        // Treasury fee on interest portion (1% of interest + shortfall).
+        // Treasury fee on interest portion (1% of interest).
         // Lender Yield Fee discount (Tokenomics §6): when the old lender has
         // platform-level VPFI-discount consent AND holds >= the required VPFI
         // in vault, the treasury cut is paid in VPFI from the old lender's
         // vault and the old lender keeps 100% of interestPortion in the
         // lending asset. tryApplyYieldFee silently falls back on any
         // precondition failure.
-        uint256 interestPortion = oldInterest + shortfall;
+        uint256 shortfall = 0; // #411 fix — see comment above.
+        uint256 interestPortion = oldInterest;
         (uint256 treasuryFee, uint256 lenderInterest) = LibEntitlement.splitTreasury(
             interestPortion
         );
