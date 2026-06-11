@@ -42,6 +42,8 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  *  is a conscious decision; removing the corresponding contract event
  *  later just makes the allowlist entry dead (harmless). */
 const DELIBERATELY_NOT_HANDLED = {
+  LoanExtended:
+    'T-092 Phase 3 (#503) — in-place loan extension mutates loan.startTime / interestRateBps / durationDays without an NFT or status change. No dapp consumer is wired yet (auto-extend UI lands alongside the keeper-bot driver), so the loan row update is intentionally deferred. When the dapp surface ships, add a `log.eventName === "LoanExtended"` branch that UPDATEs loans SET start_time = newStartTime, interest_rate_bps = newRateBps, duration_days = newDurationDays and REMOVE this entry.',
   PartialCollateralWithdrawn:
     'TEMPORARY — the handler needs the `newCollateralAmount` field added to the event in commit bd0e4aa, which is not yet on-chain. When the next contracts redeploy lands (+ ABI re-export + indexer redeploy), add a `log.eventName === "PartialCollateralWithdrawn"` branch (UPDATE loans SET collateral_amount = newCollateralAmount) and REMOVE this entry — the deadAllowlist check will flag it if you forget the removal',
   LoanFallbackPending:
