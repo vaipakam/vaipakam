@@ -347,7 +347,14 @@ export default function Activity() {
       // key.
       if (
         (ev.kind === 'LoanDefaulted' ||
-          ev.kind === 'SwapToRepayIntentForceCancelled') &&
+          ev.kind === 'SwapToRepayIntentForceCancelled' ||
+          // T-092 Phase 3 (#503) — `LoanExtended` participants
+          // contain only the `caller` (the keeper, or the borrower-
+          // NFT owner). The borrower + lender wallets are NOT in
+          // event args. Fall back to loan-membership the same way
+          // LoanDefaulted does so both parties see the extension on
+          // their per-wallet activity feed.
+          ev.kind === 'LoanExtended') &&
         typeof ev.args.loanId === 'string'
       ) {
         return userLoanIds.has(ev.args.loanId);

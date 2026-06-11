@@ -721,15 +721,28 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
-        LibInteractionRewards.registerLoan(
-            loanId,
-            lenderNftOwner,
-            borrowerNftOwner,
-            loan.principalAsset,
-            loan.principal,
-            uint256(newRateBps),
-            newDurationDays
-        );
+        // Codex round-8 P2 — only re-register when the extension is
+        // in-term. After `oldEndTime`, the borrower side is forfeited
+        // and `loanBorrowerEntryId[loanId]` must stay pointed at the
+        // closed entry so `sweepForfeitedInteractionRewards` can
+        // route the abandoned rewards to treasury. `registerLoan`
+        // overwrites both pointers — calling it on a late-extension
+        // loan would break the sweep. Lender side is symmetric for
+        // consistency (the lender wasn't forfeited, but skipping
+        // the re-register simply means no extension-period rewards
+        // for either side once the loan was in late territory — a
+        // conservative outcome).
+        if (inTermExtension) {
+            LibInteractionRewards.registerLoan(
+                loanId,
+                lenderNftOwner,
+                borrowerNftOwner,
+                loan.principalAsset,
+                loan.principal,
+                uint256(newRateBps),
+                newDurationDays
+            );
+        }
 
         emit LoanExtended(
             loanId,
