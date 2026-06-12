@@ -35,7 +35,7 @@ copying what the code does.
 
 | Date | Divergent symbol | Spec section | One-line summary | Status |
 |------|------------------|--------------|------------------|--------|
-| (none yet — open findings will appear here) |
+| 2026-06-13 | `VPFIDiscountFacet.withdrawVPFIFromVault` | ProjectDetailsREADME §"Phase 1 Additions → Allow Borrower to Withdraw Excess Collateral (Health Factor)" | VPFI staking-unwind drains vault VPFI guarded only by raw `balanceOf` — if that VPFI backs a live loan as ERC-20 collateral, it exits with no HF check and no revert, bypassing the collateral-protection invariant the risk-checked withdrawal path enforces. **Triaged 2026-06-13: code-wrong** (VPFI IS collateral-eligible — safe under P2P + lender discretion; reflexivity spiral is a pooled-protocol risk that doesn't apply here). Fix: route through `LibEncumbrance.freeBalance` (subtract the caller's VPFI encumbrance), scope VPFI-as-ERC-20-collateral. Bug card #570; fix lands with #565 (T-407-B v2). Detail in `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §6 F-1. | triaged: code-wrong → #570 |
 
 ## Resolved findings
 
