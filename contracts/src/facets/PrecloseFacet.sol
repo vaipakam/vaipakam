@@ -529,6 +529,18 @@ contract PrecloseFacet is
         }
 
         // ── 3. Release alice's collateral ───────────────────────────────────
+        // #569 §4.4 (2026-06-13) — rekey, release-leg. Drop the exiting
+        // borrower's collateral lien BEFORE returning their collateral,
+        // so the chokepoint guard passes. No-op on NFT rentals (D-1).
+        // The new borrower's lien is created after the loan rewrite
+        // below (rekey create-leg).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -574,6 +586,19 @@ contract PrecloseFacet is
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;
+
+        // #569 §4.4 (2026-06-13) — rekey, create-leg. Now that the loan
+        // row reflects the new borrower + their collateral (locked in
+        // their vault at offer creation, step 4 above), create the lien
+        // under the new borrower so the continuing loan's collateral is
+        // protected. No-op on NFT rentals (D-1).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recreateCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
 
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {

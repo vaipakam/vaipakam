@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 
 /**
  * @title  EncumbranceMutateFacet
@@ -71,5 +72,23 @@ contract EncumbranceMutateFacet {
         onlyDiamondInternal
     {
         LibEncumbrance.incrementCollateralLien(loanId, added);
+    }
+
+    /// @notice #569 §4.4 (2026-06-13) — re-create the lien from the
+    ///         loan row's CURRENT `(borrower, collateralAsset, amount)`
+    ///         state. Used as the create-leg of an obligation-transfer
+    ///         rekey (`PrecloseFacet.transferObligationViaOffer`):
+    ///         after the old borrower's lien is released and the loan
+    ///         is rewritten to the new borrower, this locks the new
+    ///         borrower's collateral. No-op on NFT-rental loans (D-1).
+    ///         See {LibEncumbrance.recreateCollateralLien}.
+    function recreateCollateralLien(uint256 loanId)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.recreateCollateralLien(
+            loanId,
+            LibVaipakam.storageSlot().loans[loanId]
+        );
     }
 }

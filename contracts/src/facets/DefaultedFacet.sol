@@ -206,18 +206,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // #407 PR 4 (T-407-B, 2026-06-12) — release the collateral
-        // lien EARLY (before any vault withdraw the default flow
-        // executes). The default path drains the borrower's vault into
-        // the lender / treasury directly, which would hit the
-        // {VaultFactoryFacet.vaultWithdrawERC20} guard if the lien were
-        // still active. Idempotent on already-released or empty rows.
-        // Wrapped in a private helper so the release call lives in its
-        // own scope — calling `LibEncumbrance.releaseCollateralLien`
-        // inline tripped viaIR's "Variable size 1 too deep" because
-        // `triggerDefault` already sits near solc's stack ceiling.
-        _releaseLienAtDefault(loanId);
-
         // Tiered KYC check on loan value for the lender. Both branches
         // (ERC20 loan / NFT rental) price the same way — we only differ in
         // which asset + amount to value. Collapsed to one getAssetPrice +
@@ -278,6 +266,22 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
+
+        // #569 §4.4 (2026-06-13) — release the collateral lien only
+        // AFTER the internal-match dispatch returned false. Codex #571
+        // P1: an EARLY release (before dispatch) tombstoned the lien, so
+        // a PARTIAL internal match that leaves the loan Active with
+        // reduced collateral would strand the residual collateral
+        // unprotected (the post-match decrement no-ops on a released
+        // row). The internal-match path owns its own lien adjustment
+        // (pre-withdraw decrement in `_executeTwoWayMatch` /
+        // `_executeThreeWayMatch`); from here down we're on the
+        // terminal external/default-transfer path, where a full release
+        // is correct and clears the guard for the collateral drains
+        // below. Idempotent on already-released / empty rows; no-op on
+        // NFT rentals (D-1). Private helper keeps `triggerDefault`'s
+        // stack under viaIR's ceiling.
+        _releaseLienAtDefault(loanId);
 
         // Execution routing (README §1): liquidation depends on whether the
         // live network exposes a swap path for the collateral. When the

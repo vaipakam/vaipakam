@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
@@ -85,6 +86,18 @@ contract VPFIDiscountFacet is
 {
     using SafeERC20 for IERC20;
     using Address for address payable;
+
+    /// @notice #569 §6 F-1 (2026-06-13) — raised by
+    ///         {withdrawVPFIFromVault} when the requested unstake amount
+    ///         exceeds the FREE vault VPFI balance because some of the
+    ///         caller's VPFI backs a live loan as ERC-20 collateral
+    ///         (it's in the encumbrance sub-ledger). The encumbered
+    ///         portion can only exit through the loan's own lifecycle
+    ///         (repay / liquidation / default), not this staking-unwind
+    ///         door.
+    /// @param requested The amount the caller asked to withdraw.
+    /// @param free      The withdrawable free balance (raw − encumbered).
+    error VPFIEncumberedByActiveLoan(uint256 requested, uint256 free);
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -598,6 +611,23 @@ contract VPFIDiscountFacet is
         if (vault == address(0)) revert VPFIVaultBalanceInsufficient();
         uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
+
+        // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
+        // is collateral-eligible (triaged code-wrong: safe under P2P +
+        // lender discretion). If the caller has VPFI backing a live loan
+        // as ERC-20 collateral, that portion is in
+        // `encumbered[msg.sender][vpfi][0]` and is NOT withdrawable
+        // through this staking-unwind door — only down to the free
+        // balance. The shared chokepoint guard in `vaultWithdrawERC20`
+        // (line below) enforces the same bound, but checking up-front
+        // (a) gives a clean, specific revert BEFORE the staking-rollup /
+        // checkpoint work below runs on a doomed amount, and (b) keeps
+        // this fund-exit surface self-protecting against any future
+        // refactor that bypasses the chokepoint. Defense-in-depth.
+        uint256 freeVpfi = LibEncumbrance.freeBalance(msg.sender, vpfi, 0, prevBal);
+        if (amount > freeVpfi) {
+            revert VPFIEncumberedByActiveLoan(amount, freeVpfi);
+        }
 
         // T-054 PR-2 — clamp the post-withdraw balance against the
         // protocol-tracked counter (less the same withdraw amount).

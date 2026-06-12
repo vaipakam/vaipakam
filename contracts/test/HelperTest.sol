@@ -654,10 +654,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
+        // #569 §4.4 — rekey create-leg for obligation transfer.
+        selectors[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
     }
 
     function getDefaultedFacetSelectors()

@@ -12,6 +12,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -36,13 +37,16 @@ contract PerAssetPauseTest is Test {
         diamond = new VaipakamDiamond(address(this), address(cutFacet));
         HelperTest helper = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = _cut(address(new AccessControlFacet()), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(new AdminFacet()), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(new OfferCreateFacet()), helper.getOfferCreateFacetSelectors());
         cuts[3] = _cut(address(new AddCollateralFacet()), helper.getAddCollateralFacetSelectors());
         cuts[4] = _cut(address(new EarlyWithdrawalFacet()), helper.getEarlyWithdrawalFacetSelectors());
         cuts[5] = _cut(address(new OfferCancelFacet()), helper.getOfferCancelFacetSelectors());
+
+        // #569 (2026-06-13) — encumbrance mutate facet for lien wires.
+        cuts[6] = _cut(address(new EncumbranceMutateFacet()), helper.getEncumbranceMutateFacetSelectors());
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

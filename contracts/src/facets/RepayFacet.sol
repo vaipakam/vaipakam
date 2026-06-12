@@ -781,10 +781,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
-            // #407 PR 4 round-1 Codex P1 #4 (2026-06-12) — decrement
-            // the lien by the partial-rental fee consumed; same
-            // rationale as `autoDeductDaily` above.
-            _decrementLienAtRentalConsumption(loanId, accrued);
+            // #569 D-1 (2026-06-13) — NFT rentals carry no collateral
+            // lien (the prepay pool is drained by this very mechanism,
+            // not protected by a lien), so no decrement here.
 
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
@@ -881,11 +880,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         );
         address treasury = LibFacet.getTreasury();
 
-        // #407 PR 4 round-1 Codex P1 #4 (2026-06-12) — decrement the
-        // collateral lien by the daily rental fee. The borrower's
-        // prepay pool IS the collateral here; both withdraws below
-        // drain it, and the loan stays Active.
-        _decrementLienAtRentalConsumption(loanId, dayFee);
+        // #569 D-1 (2026-06-13) — NFT rentals carry no collateral lien
+        // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
+        // has no side-door drain to protect against). No decrement here.
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -1422,10 +1419,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     }
 
     function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {
-        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
-    }
-
-    function _decrementLienAtRentalConsumption(uint256 loanId, uint256 consumed) private {
         _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }

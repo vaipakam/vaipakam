@@ -11,11 +11,16 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         `docs/DesignsAndPlans/PerLoanCollateralLien.md`:
  *
  *           1. **Per-loan collateral lien** (§§2-6): created at
- *              `LoanFacet.initiateLoan`; released on every loan-
- *              lifecycle terminal that frees the collateral
- *              (`RepayFacet.repayLoan`, `PrecloseFacet.precloseDirect`,
- *              `ClaimFacet`, `DefaultedFacet.triggerDefault`,
- *              `RefinanceFacet.refinanceLoan`).
+ *              `LoanFacet.initiateLoan` for ERC-20 LOANS only (#569
+ *              D-1 — NFT rentals are not liened); released / decremented
+ *              / re-keyed on every loan-lifecycle terminal or slice
+ *              flow that frees collateral (`RepayFacet.repayLoan`,
+ *              `PrecloseFacet.precloseDirect` / `transferObligationViaOffer`,
+ *              `DefaultedFacet.triggerDefault`, `RefinanceFacet`,
+ *              `SwapToRepayFacet` / `SwapToRepayIntentFacet`,
+ *              `PartialWithdrawalFacet`, the internal-match settlement).
+ *              `ClaimFacet` does NOT touch the lien — release happens
+ *              strictly upstream (see EncumbranceLifecycleMap.md §4.5).
  *
  *           2. **Offer-principal lock** (§7): created at
  *              `OfferCreateFacet._pullCreatorAssetsClassic` for ERC20
@@ -61,22 +66,27 @@ library LibEncumbrance {
     ///         Called from `LoanFacet.initiateLoan` AFTER the loan row
     ///         has been written (`loan.collateralAsset` / `Amount` /
     ///         `TokenId` / `Quantity` / `AssetType` already final).
-    /// @dev    Created for ALL loan shapes — ERC20 collateral AND
-    ///         NFT-rental prepay+buffer pools. The rental case looks
-    ///         like a pool that should "flow out", but the legitimate
-    ///         rental drains (daily deduction, partial repay, lender
-    ///         claim) are wired through {decrementCollateralLien} so
-    ///         the lien stays in parity with the loan's remaining
-    ///         collateral throughout. This shields the pool from
-    ///         unrelated ERC20-withdraw surfaces such as
-    ///         `VPFIDiscountFacet.withdrawVPFIFromVault` when
-    ///         `prepayAsset == VPFI`. #407 PR 4 round-1 Codex P1 #4
-    ///         (2026-06-12) — earlier "skip lien for NFT rentals"
-    ///         shortcut was wrong precisely because of that surface.
+    /// @dev    #569 lifecycle map decision D-1 (2026-06-13) — liened for
+    ///         **ERC-20 LOANS only** (`loan.assetType == ERC20`),
+    ///         covering ERC-20 + NFT collateral. NFT-RENTAL loans
+    ///         (`assetType` ERC721/1155) are NOT liened: their "collateral"
+    ///         is the prepay+buffer pool, which drains continuously
+    ///         through the intrinsic rental-deduction mechanism. The
+    ///         only side-door that could drain it
+    ///         (`withdrawVPFIFromVault` when `prepayAsset == VPFI`) is
+    ///         closed by decision D-2 (VPFI forbidden as a rental prepay
+    ///         asset), so the rental pool needs no lien and no
+    ///         per-deduction decrement wiring. See
+    ///         `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
     function createCollateralLien(
         uint256 loanId,
         LibVaipakam.Loan storage loan
     ) internal {
+        // D-1: only ERC-20 loans carry a collateral lien. NFT rentals
+        // (the principal/lent asset is an NFT) escrow a prepay pool that
+        // is intentionally drained by the rental mechanism, not a lien.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         // Tombstone re-use: a previously-released lien at the same
@@ -192,6 +202,10 @@ library LibEncumbrance {
         uint256 loanId,
         LibVaipakam.Loan storage loan
     ) internal {
+        // #569 D-1 — NFT-rental loans are never liened; recreate is a
+        // no-op for them (consistent with `createCollateralLien`).
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         (address asset, uint256 tokenId, uint256 amount) =
             _encodeCollateralFields(loan);
@@ -344,6 +358,11 @@ library LibEncumbrance {
 
     // ─── Internal ──────────────────────────────────────────────────────
 
+    /// @dev Encodes the lien's `(asset, tokenId, amount)` from an
+    ///      ERC-20 LOAN's collateral. NFT-rental loans never reach here
+    ///      (D-1 gates them out in `createCollateralLien`), so there is
+    ///      no prepay-pool branch — the lien is always the actual
+    ///      pledged collateral.
     function _encodeCollateralFields(
         LibVaipakam.Loan storage loan
     )
@@ -351,20 +370,6 @@ library LibEncumbrance {
         view
         returns (address asset, uint256 tokenId, uint256 amount)
     {
-        // For NFT-rental loans the borrower's vault holds `prepayAmount
-        // + bufferAmount` of the prepay asset — NOT `collateralAmount`
-        // (which is a lender-quoted reference figure from the offer and
-        // is typically much larger than the actual escrow). Locking
-        // `collateralAmount` would block every legitimate rental flow
-        // because the lien would exceed the vault balance from day 1.
-        // ERC20 loans use `collateralAmount` directly since it equals
-        // the deposit. #407 PR 4 round-1 (2026-06-12).
-        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
-            asset = loan.prepayAsset;
-            tokenId = 0;
-            amount = loan.prepayAmount + loan.bufferAmount;
-            return (asset, tokenId, amount);
-        }
         asset = loan.collateralAsset;
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             tokenId = 0;

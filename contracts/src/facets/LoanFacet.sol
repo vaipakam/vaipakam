@@ -272,14 +272,21 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // The lien is the on-chain proof that "this exact collateral
         // backs this exact loan"; the aggregate
         // `s.encumbered[user][asset][tokenId]` it ticks under is
-        // what the upcoming vault-withdraw guard reads to enforce
+        // what the vault-withdraw guard reads to enforce
         // `freeBalance = balance − Σ liens`. Every loan-lifecycle
         // terminal (`RepayFacet.repayLoan`, `PrecloseFacet.precloseDirect`,
         // `DefaultedFacet.triggerDefault`, `RefinanceFacet._refinanceLoanLogic`,
-        // `ClaimFacet.claimAs*`) releases or re-keys this lien so the
-        // aggregate stays consistent across the loan's life.
+        // `SwapToRepayFacet`, the internal-match settlement) releases,
+        // decrements, or re-keys this lien so the aggregate stays
+        // consistent across the loan's life. `ClaimFacet` does NOT touch
+        // the lien — by the time a claim is paid the terminal upstream
+        // has already released it, so the claim withdraw runs against a
+        // freed aggregate (see EncumbranceLifecycleMap.md §4.5).
+        // #569 D-1 — only ERC-20 LOANS are liened here; NFT rentals are
+        // not (the gate lives in `LibEncumbrance.createCollateralLien`).
         //
-        // See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §§2-6.
+        // See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` +
+        // `PerLoanCollateralLien.md` §§2-6.
         LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
 
         // T-092 — auto-opt-in convenience: if the borrower has the

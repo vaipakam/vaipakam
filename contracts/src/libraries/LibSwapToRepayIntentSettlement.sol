@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibCollateralSettlement} from "./LibCollateralSettlement.sol";
 import {LibSettlement} from "./LibSettlement.sol";
 import {LibLifecycle} from "./LibLifecycle.sol";
@@ -260,6 +261,13 @@ library LibSwapToRepayIntentSettlement {
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
+
+        // #569 §4.4 (2026-06-13) — intent fill is the terminal close of
+        // the swap-to-repay-intent flow. `commitSwapToRepayIntent`
+        // already decremented the lien to zero when it pulled the
+        // collateral into custody, so this release is a tombstone of the
+        // now-zeroed row for a clean terminal state (no aggregate change).
+        LibEncumbrance.releaseCollateralLien(loanId);
 
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 

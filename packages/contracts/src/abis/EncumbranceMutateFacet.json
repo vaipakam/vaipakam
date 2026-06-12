@@ -37,6 +37,19 @@
   },
   {
     "type": "function",
+    "name": "recreateCollateralLien",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "releaseCollateralLien",
     "inputs": [
       {

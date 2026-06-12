@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -540,6 +541,22 @@ contract SwapToRepayIntentFacet is
         // `loan.collateralAmount`.
         IERC20 collateralToken = IERC20(loan.collateralAsset);
         uint256 balanceBefore = collateralToken.balanceOf(address(this));
+        // #569 §4.4 (2026-06-13) — temporary-custody decrement. The
+        // full collateral is pulled into Diamond custody while the loan
+        // stays Active (the intent may later fill → close, or be
+        // cancelled → collateral restored to the vault). Drop the lien
+        // to zero BEFORE the withdraw so the chokepoint guard passes;
+        // `_teardownCommit` re-increments it when the collateral returns
+        // to the vault, and the fill-settlement path releases it on
+        // close. Revert-safe: a failed withdraw rolls back the decrement.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.decrementCollateralLien.selector,
+                loanId,
+                loan.collateralAmount
+            ),
+            bytes4(0)
+        );
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             loan.borrower, loan.collateralAsset, address(this), loan.collateralAmount
         );
@@ -897,6 +914,20 @@ contract SwapToRepayIntentFacet is
         );
         LibVaipakam.recordVaultDeposit(
             loan.borrower, loan.collateralAsset, commit.custodialCollateral
+        );
+        // #569 §4.4 (2026-06-13) — temporary-custody restore. The
+        // collateral is back in the borrower's vault and the loan stays
+        // Active, so re-instate the lien that `commitSwapToRepayIntent`
+        // decremented to zero. Without this, a borrower who commits then
+        // cancels an intent would leave their (still-pledged) collateral
+        // unprotected by the chokepoint guard.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                loanId,
+                commit.custodialCollateral
+            ),
+            bytes4(0)
         );
 
         // ── 4. Aggregate-allowance + live-count decrements ──────────

@@ -223,6 +223,15 @@ contract OfferCreateFacet is
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
     error InvalidAssetType();
+    /// @notice #569 decision D-2 (2026-06-13) — VPFI may not be used as
+    ///         the prepay asset for an NFT-rental offer. The rental
+    ///         prepay pool is deliberately NOT protected by a collateral
+    ///         lien (decision D-1), so allowing VPFI prepay would expose
+    ///         it to the `VPFIDiscountFacet.withdrawVPFIFromVault`
+    ///         staking-unwind drain with no protection. Rental prepay
+    ///         must be a plain ERC-20 with no vault-side unstake door.
+    ///         See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
+    error VpfiNotAllowedAsRentalPrepay();
     /// @notice T-086 Round-8 (#358) §19.5 — raised when a lender offer
     ///         is created with `allowsParallelSale = true` (the
     ///         parallel-sale flow is a borrower-side option only — the
@@ -535,6 +544,20 @@ contract OfferCreateFacet is
         LibFacet.requireAssetNotPaused(params.collateralAsset);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // #569 decision D-2 (2026-06-13) — an NFT-rental offer (the lent
+        // asset is an NFT) may not use VPFI as its prepay asset. The
+        // rental prepay pool is intentionally un-liened (D-1), so VPFI
+        // prepay would be drainable through `withdrawVPFIFromVault`
+        // with no protection. Gate it at the single shared offer-create
+        // chokepoint (covers classic + Permit2 + on-behalf paths).
+        if (
+            params.assetType != LibVaipakam.AssetType.ERC20 &&
+            s.vpfiToken != address(0) &&
+            params.prepayAsset == s.vpfiToken
+        ) {
+            revert VpfiNotAllowedAsRentalPrepay();
+        }
         unchecked {
             offerId = ++s.nextOfferId;
         }

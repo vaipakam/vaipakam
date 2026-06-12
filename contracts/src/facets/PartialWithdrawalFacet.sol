@@ -13,6 +13,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 
 /**
  * @title PartialWithdrawalFacet
@@ -102,6 +103,22 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         uint256 simulatedLtv = _ltvFromContext(ctx, collateralUsd);
         uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
         if (simulatedLtv > loanInitMaxLtvBps) revert LTVExceeded();
+
+        // #569 §4.2 (2026-06-13) — decrement the collateral lien by the
+        // withdrawn slice BEFORE the guarded vault withdraw. The loan
+        // stays Active with reduced collateral, so this is a
+        // slice-decrement (not a release). Without it the chokepoint
+        // guard sees the full lien and reverts this risk-approved
+        // excess-collateral withdrawal. Revert-safe: a downstream
+        // withdraw failure rolls back the decrement.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.decrementCollateralLien.selector,
+                loanId,
+                amount
+            ),
+            bytes4(0)
+        );
 
         // Withdraw from vault to borrower
         LibFacet.crossFacetCall(
