@@ -678,9 +678,19 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // in the floor uses the post-partial remaining term as
             // the lower bound.
             //
-            // Also credit `interestSettled` with the interest just
-            // paid so a later full repay / preclose nets the
-            // accumulator against the gross floor (removes #413).
+            // Codex round-1 P1 (PR #559): DO NOT credit
+            // `loan.interestSettled` here. The combined state reset
+            // (`principal -=`, `durationDays -=`, `startTime =`)
+            // already encodes the partial's effect on future
+            // settlements: at the next settlement, `gross =
+            // proRataInterest(remainingPrincipal, rate,
+            // remainingDuration)` is the borrower's FUTURE-ONLY
+            // entitlement to the lender. Adding the partial's
+            // already-paid interest to the accumulator AND
+            // subtracting it from a future-only gross would
+            // double-count the partial's settlement, underpaying
+            // the lender. `interestSettled` is the right tool only
+            // when state ISN'T reset (periodic-settle auto-liq path).
             uint256 elapsedSinceSegmentStart;
             unchecked {
                 elapsedSinceSegmentStart =
@@ -693,7 +703,6 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     loan.durationDays -= elapsedSinceSegmentStart;
                 }
             }
-            loan.interestSettled += accrued;
             // T-034 — startTime downsized to uint64; explicit cast.
             loan.startTime = uint64(block.timestamp); // Reset accrual start
 

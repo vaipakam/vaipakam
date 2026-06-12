@@ -1,6 +1,6 @@
 ## Thread — #408 / #410 / #413 unified floor-model fix (single end-to-end PR)
 
-Resolves three related interest-settlement bugs together via the single architectural change described in [`docs/DesignsAndPlans/InterestSettlementFloorModel.md`](docs/DesignsAndPlans/InterestSettlementFloorModel.md) (Option A ratified 2026-06-07, on PR #415 docs branch).
+Resolves three related interest-settlement bugs together via the single architectural change described in `docs/DesignsAndPlans/InterestSettlementFloorModel.md` (Option A ratified 2026-06-07, lives on PR [#415](https://github.com/vaipakam/vaipakam/pull/415) — not yet on `main`).
 
 ### The bugs
 

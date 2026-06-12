@@ -957,6 +957,12 @@ contract PrecloseFacet is
         params.amountMax = loan.principal;
         params.interestRateBpsMax = interestRateBps;
         params.collateralAmountMax = collateralAmount;
+        // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
+        // P2: inherit the source loan's floor-model election so
+        // the replacement (offset) loan settles under the same
+        // interest model. See `EarlyWithdrawalFacet._buildSaleParams`
+        // for the parallel rationale on the sale-vehicle builder.
+        params.useFullTermInterest = loan.useFullTermInterest;
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via

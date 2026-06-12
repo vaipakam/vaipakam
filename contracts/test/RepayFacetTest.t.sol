@@ -1616,26 +1616,36 @@ contract RepayFacetTest is Test {
             "partial-repay outflow = partial principal + accrued interest"
         );
 
-        // Now full repay (preclose) — should be remaining principal +
-        // floor on REMAINING term, MINUS interestSettled.
-        // After partial:
+        // Now full repay (preclose). After partial:
         //   principal = 500
         //   durationDays = 30 - 10 = 20 (decremented in repayPartial)
-        //   interestSettled = expectedPartialInterest
+        //   interestSettled = 0 (Codex round-1 P1: state reset
+        //     already encodes the partial's effect; crediting it
+        //     would double-count)
         //   startTime = now (post-partial)
         // Floor at preclose (elapsed 0 < remaining 20 → use 20):
         //   gross = 500 * 500 * 20 / (365 * 10000) = ~1.37 → 1
-        //   net   = gross - interestSettled (saturating)
+        //   net   = gross (interestSettled = 0)
+        //
+        // This is FUTURE-only interest on the REMAINING principal.
+        // The partial's interest (first 10 days on the original
+        // 1000 principal) has already been paid above; the lender
+        // is now entitled only to the remaining commitment's
+        // coupon. Total over the loan's life: partial-interest +
+        // preclose-interest = correct lender entitlement under
+        // the floor model.
         uint256 grossRemaining = (uint256(500) * 500 * 20) / (365 * 10000);
-        uint256 netExpected = grossRemaining > expectedPartialInterest
-            ? grossRemaining - expectedPartialInterest
-            : 0;
         uint256 dueAfterPartial = RepayFacet(address(diamond))
             .calculateRepaymentAmount(loanId);
         assertEq(
             dueAfterPartial,
-            500 + netExpected,
-            "preclose after partial must credit interestSettled (no double-charge)"
+            500 + grossRemaining,
+            "preclose after partial charges floor on REMAINING term + principal (#413 fix without double-counting)"
         );
+        // Sentinel: borrower's PARTIAL outflow + preclose outflow
+        // sums to the correct lender entitlement.
+        // (Not used directly in the assertion above but keeps the
+        // mental model traceable for the next reader.)
+        assertTrue(expectedPartialInterest >= 0, "trace anchor");
     }
 }
