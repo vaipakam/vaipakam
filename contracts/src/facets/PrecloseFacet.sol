@@ -582,10 +582,41 @@ contract PrecloseFacet is
         // ── 5. Update loan to reflect ben as borrower ───────────────────────
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
+        // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
+        // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
+        // pins only `collateralAsset` + `collateralAssetType`, so an
+        // ERC721/1155 offer from the same collection may carry a DIFFERENT
+        // `collateralTokenId` / `collateralQuantity` than the old loan.
+        // Without this the lien recreate below would lock the OLD tokenId
+        // under the new borrower while their actually-deposited NFT stays
+        // unencumbered. ERC-20 collateral leaves these at 0 (harmless).
+        loan.collateralTokenId = offer.collateralTokenId;
+        loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;
+
+        // #569 Codex #572 P1 #3 (2026-06-13) — verify the incoming
+        // borrower's offer collateral actually backs the loan before
+        // locking it. Pre-loan borrower-offer collateral is NOT
+        // encumbered (the map §5 "fourth surface", tracked separately),
+        // so a creator could deposit ERC-20 collateral at offer-create
+        // and drain it — e.g. VPFI via `withdrawVPFIFromVault` — before
+        // this transfer. Reverting here keeps the continuing loan from
+        // being rekeyed onto absent collateral. (Full pre-loan
+        // offer-collateral lock for the normal acceptance path is the
+        // follow-up card; this is the targeted guard for the obligation-
+        // transfer path that this PR newly liens.)
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+            address newBorrowerVault = LibFacet.getOrCreateVault(newBorrower);
+            if (
+                IERC20(loan.collateralAsset).balanceOf(newBorrowerVault) <
+                loan.collateralAmount
+            ) {
+                revert InsufficientCollateral();
+            }
+        }
 
         // #569 §4.4 (2026-06-13) — rekey, create-leg. Now that the loan
         // row reflects the new borrower + their collateral (locked in

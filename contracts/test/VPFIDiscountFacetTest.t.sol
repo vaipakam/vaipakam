@@ -421,7 +421,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     function test_D2_rentalOfferWithVpfiPrepay_reverts() public {
         LibVaipakam.CreateOfferParams memory p = _vpfiRentalOfferParams();
         vm.prank(lender);
-        vm.expectRevert(OfferCreateFacet.VpfiNotAllowedAsRentalPrepay.selector);
+        vm.expectRevert(IVaipakamErrors.VpfiNotAllowedAsRentalPrepay.selector);
         OfferCreateFacet(address(diamond)).createOffer(p);
     }
 

@@ -1223,5 +1223,10 @@
     "type": "error",
     "name": "VaultWithdrawFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VpfiNotAllowedAsRentalPrepay",
+    "inputs": []
   }
 ]

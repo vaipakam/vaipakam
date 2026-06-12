@@ -223,15 +223,9 @@ contract OfferCreateFacet is
     // Facet-specific errors (shared errors inherited from IVaipakamErrors)
     error InvalidOfferType();
     error InvalidAssetType();
-    /// @notice #569 decision D-2 (2026-06-13) — VPFI may not be used as
-    ///         the prepay asset for an NFT-rental offer. The rental
-    ///         prepay pool is deliberately NOT protected by a collateral
-    ///         lien (decision D-1), so allowing VPFI prepay would expose
-    ///         it to the `VPFIDiscountFacet.withdrawVPFIFromVault`
-    ///         staking-unwind drain with no protection. Rental prepay
-    ///         must be a plain ERC-20 with no vault-side unstake door.
-    ///         See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
-    error VpfiNotAllowedAsRentalPrepay();
+    // #569 D-2 error `VpfiNotAllowedAsRentalPrepay` moved to
+    // `IVaipakamErrors` (shared) so `OfferAcceptFacet` can also enforce
+    // the accept-time check (Codex #572 P1 #4).
     /// @notice T-086 Round-8 (#358) §19.5 — raised when a lender offer
     ///         is created with `allowsParallelSale = true` (the
     ///         parallel-sale flow is a borrower-side option only — the

@@ -1698,6 +1698,11 @@
   },
   {
     "type": "error",
+    "name": "VpfiNotAllowedAsRentalPrepay",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "WithdrawWouldUnderflowLien",
     "inputs": [
       {

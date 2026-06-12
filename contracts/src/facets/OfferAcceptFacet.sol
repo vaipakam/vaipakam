@@ -506,6 +506,21 @@ contract OfferAcceptFacet is
             revert OfferExpired(offerId, offer.expiresAt);
         }
 
+        // #569 decision D-2 (Codex #572 P1 #4, 2026-06-13) — accept-time
+        // guard mirroring the offer-create gate. A rental offer created
+        // BEFORE `vpfiToken` was configured (or while it was a different
+        // address) could carry VPFI as its prepay asset and slip past
+        // the create-time gate. Rentals aren't liened (D-1), so a VPFI
+        // prepay pool would be drainable via `withdrawVPFIFromVault`.
+        // Refuse to bind such an offer into a loan.
+        if (
+            offer.assetType != LibVaipakam.AssetType.ERC20 &&
+            s.vpfiToken != address(0) &&
+            offer.prepayAsset == s.vpfiToken
+        ) {
+            revert VpfiNotAllowedAsRentalPrepay();
+        }
+
         // T-086 Round-8 (#358) §19.7b Scenario B — Codex round-3
         // user-directed redesign: KEEP THE PARALLEL-SALE LISTING LIVE
         // across acceptance.
