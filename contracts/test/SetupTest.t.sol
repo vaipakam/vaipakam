@@ -22,6 +22,7 @@ import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -75,6 +76,7 @@ import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -222,6 +224,7 @@ contract SetupTest is Test {
     IntentDispatchFacet intentDispatchFacet;
     // T-092 Phase 1 (#499) — auto-lifecycle consent surface.
     AutoLifecycleFacet autoLifecycleFacet;
+    EncumbranceMutateFacet encumbranceMutateFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -316,6 +319,7 @@ contract SetupTest is Test {
         swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         intentDispatchFacet = new IntentDispatchFacet();
         autoLifecycleFacet = new AutoLifecycleFacet();
+        encumbranceMutateFacet = new EncumbranceMutateFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -379,7 +383,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](52);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](53);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -685,6 +689,12 @@ contract SetupTest is Test {
             facetAddress: address(autoLifecycleFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getAutoLifecycleFacetSelectors()
+        });
+        // #407 PR 2 (2026-06-12) — encumbrance mutate surface.
+        cuts[52] = IDiamondCut.FacetCut({
+            facetAddress: address(encumbranceMutateFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
