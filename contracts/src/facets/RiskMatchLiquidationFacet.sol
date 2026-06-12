@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -549,6 +550,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.LoanStatus.Active,
                     LibVaipakam.LoanStatus.InternalMatched
                 );
+                // #407 PR 4 round-1 Codex P1 #5 (2026-06-12) — full
+                // internal-match closes the loan; release the lien so
+                // the residual collateral handoff at terminal claim
+                // clears the chokepoint guard.
+                LibEncumbrance.releaseCollateralLien(loan.id);
+            } else {
+                // Partial internal match — loan stays Active with
+                // reduced collateral. Decrement the lien by the
+                // consumed slice so the residual stays protected
+                // without blocking the active-loan settlement.
+                LibEncumbrance.decrementCollateralLien(loan.id, collateralConsumed);
             }
             return;
         }

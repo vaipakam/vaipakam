@@ -8,6 +8,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -275,6 +276,16 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // fully consumed would leave dust stuck on the diamond.
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
+
+        // #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — release the
+        // collateral lien BEFORE the chokepoint guard sees the
+        // withdraw. swapToRepayFull is a terminal close path (loan
+        // transitions Active → Repaid below), so a full release here
+        // is semantically right. Safe under revert: any downstream
+        // revert (swap failure, slippage check) rolls back the storage
+        // write so the lien only releases when the loan actually
+        // closes.
+        _releaseLienAtSwapToRepay(loanId);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -528,6 +539,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // as `swapToRepayFull`.
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
+
+        // #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — decrement the
+        // lien by the slice we're moving out. The loan stays ACTIVE
+        // here so a full release would leave the residual collateral
+        // unprotected from other ERC20 withdraw surfaces.
+        _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -565,6 +582,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 loan.collateralAsset,
                 partialFillRefund
             );
+            // #407 PR 4 round-1 — restore the lien for the dust that
+            // landed back in the borrower vault; the loan stays Active
+            // and that collateral still backs it.
+            _incrementLienAtSwapToRepayPartial(loanId, partialFillRefund);
         }
 
         // ── Accrued-interest split + partial bound ───────────────────
@@ -704,5 +725,34 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             partialPrincipal,
             adapterUsed
         );
+    }
+
+    /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated
+    ///      cross-facet helpers. One per arg-shape; each call site
+    ///      picks the selector.
+    function _callEncumb1(bytes4 selector, uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId),
+            bytes4(0)
+        );
+    }
+
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _releaseLienAtSwapToRepay(uint256 loanId) private {
+        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
+    }
+
+    function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+    }
+
+    function _incrementLienAtSwapToRepayPartial(uint256 loanId, uint256 added) private {
+        _callEncumb2(EncumbranceMutateFacet.incrementCollateralLien.selector, loanId, added);
     }
 }

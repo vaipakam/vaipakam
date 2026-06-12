@@ -52,4 +52,24 @@ contract EncumbranceMutateFacet {
     {
         LibEncumbrance.releaseCollateralLien(loanId);
     }
+
+    /// @notice #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement
+    ///         an active lien by `consumed`. See
+    ///         {LibEncumbrance.decrementCollateralLien}.
+    function decrementCollateralLien(uint256 loanId, uint256 consumed)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.decrementCollateralLien(loanId, consumed);
+    }
+
+    /// @notice #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — increment
+    ///         an active lien by `added`. See
+    ///         {LibEncumbrance.incrementCollateralLien}.
+    function incrementCollateralLien(uint256 loanId, uint256 added)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.incrementCollateralLien(loanId, added);
+    }
 }

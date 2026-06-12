@@ -15,6 +15,8 @@ import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 
 /**
  * @title AddCollateralFacet
@@ -141,6 +143,24 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // Update loan collateral amount
         loan.collateralAmount += amount;
 
+        // #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — keep the
+        // collateral lien in parity with `loan.collateralAmount`. The
+        // FallbackPending branch is handled differently: the lien was
+        // released at default-entry and is currently 0, so we don't
+        // increment here — the cure path (`_cureFallback` below)
+        // recreates the lien from the cured `loan.collateralAmount`
+        // in a single atomic write.
+        if (loan.status == LibVaipakam.LoanStatus.Active) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    amount
+                ),
+                bytes4(0)
+            );
+        }
+
         // Calculate new HF and LTV for event emission (best-effort; failures don't revert)
         uint256 newHf;
         uint256 newLtv;
@@ -212,6 +232,15 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibVaipakam.LoanStatus.FallbackPending,
             LibVaipakam.LoanStatus.Active
         );
+
+        // #407 PR 4 round-1 Codex P1 #2 (2026-06-12) — recreate the
+        // collateral lien from the cured loan row. The lien was
+        // released at `DefaultedFacet.triggerDefault` entry when the
+        // failed liquidation flipped the loan to FallbackPending; now
+        // that the loan is back to Active, the lien must protect the
+        // restored collateral or the new chokepoint guard would let
+        // it drain through unrelated ERC20 withdraw surfaces.
+        LibEncumbrance.recreateCollateralLien(loanId, loan);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
