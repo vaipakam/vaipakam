@@ -34,7 +34,7 @@ abstract contract DiamondFacetNames {
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`;
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`.)
-    function cutFacetNames() internal pure returns (string[51] memory) {
+    function cutFacetNames() internal pure returns (string[52] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -142,7 +142,17 @@ abstract contract DiamondFacetNames {
             // follow-ups (#500/#501) wire the caps into
             // `RefinanceFacet.refinanceLoan` and add the
             // `extendLoanInPlace` executor.
-            "AutoLifecycleFacet"
+            "AutoLifecycleFacet",
+            // #407 PR 2 (2026-06-12) — thin cross-facet entry for
+            // the encumbrance sub-ledger's mutate surface. Created
+            // so each loan-lifecycle terminal can call
+            // `releaseCollateralLien(loanId)` via crossFacetCall
+            // (~50B per site) instead of inlining ~150B from the
+            // direct `LibEncumbrance.releaseCollateralLien(...)`.
+            // Unlocks release wiring at `RepayFacet.repayLoan` and
+            // the other terminals that were blocked by EIP-170 in
+            // #407 PR 1. See `EncumbranceMutateFacet.sol` natspec.
+            "EncumbranceMutateFacet"
         ];
     }
 }
