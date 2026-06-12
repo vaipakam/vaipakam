@@ -11,6 +11,7 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -259,9 +260,14 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
-            // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-            // registered (this PR). Cross-facet release wire deferred
-            // to PR 3 alongside the per-facet test-fixture updates.
+            // #407 PR 3 (2026-06-12) — release the collateral lien.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.releaseCollateralLien.selector,
+                    loanId
+                ),
+                bytes4(0)
+            );
 
             // Phase 5 / §5.2b — proper-close settlement for borrower LIF
             // VPFI path. Splits Diamond-held VPFI into borrower rebate +
