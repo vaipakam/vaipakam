@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -264,6 +265,22 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // pattern); reverts cleanly to 0 for illiquid loans without
         // failing the init.
         _emitLoanInitiatedDetails(loanId);
+
+        // #407 (2026-06-12) — Vault encumbrance sub-ledger. Create
+        // the collateral lien now that `loan.collateralAsset` /
+        // `Amount` / `TokenId` / `Quantity` / `AssetType` are final.
+        // The lien is the on-chain proof that "this exact collateral
+        // backs this exact loan"; the aggregate
+        // `s.encumbered[user][asset][tokenId]` it ticks under is
+        // what the upcoming vault-withdraw guard reads to enforce
+        // `freeBalance = balance − Σ liens`. Every loan-lifecycle
+        // terminal (`RepayFacet.repayLoan`, `PrecloseFacet.precloseDirect`,
+        // `DefaultedFacet.triggerDefault`, `RefinanceFacet._refinanceLoanLogic`,
+        // `ClaimFacet.claimAs*`) releases or re-keys this lien so the
+        // aggregate stays consistent across the loan's life.
+        //
+        // See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §§2-6.
+        LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
 
         // T-092 — auto-opt-in convenience: if the borrower has the
         // per-user flag set, populate this loan's refinance caps from

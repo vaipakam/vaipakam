@@ -10,6 +10,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
@@ -615,5 +616,48 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(randoUser);
         vm.expectRevert(RefinanceFacet.OnlyDiamondInternal.selector);
         RefinanceFacet(address(diamond)).refinanceLoanFromAccept(1, 1);
+    }
+
+    // ─── #407 Vault encumbrance sub-ledger — collateral lien ──────────
+
+    function test_407_LoanInitCreatesCollateralLien() public {
+        // Build an active loan via the existing fixture
+        // (ERC20-principal + ERC20-collateral). Then assert the
+        // collateral lien was created at loan-init with the right
+        // shape, and that the borrower's `encumbered` aggregate
+        // ticked up by the collateral amount.
+        uint256 loanId = _buildActiveLoan();
+
+        // Aggregate ticked up.
+        uint256 enc = MetricsFacet(address(diamond))
+            .getEncumbered(borrower, mockCollateralERC20, 0);
+        assertEq(
+            enc,
+            LOAN_COLLATERAL,
+            "encumbered aggregate must equal the loan's collateral amount"
+        );
+
+        // Per-loan lien row populated.
+        LibVaipakam.Encumbrance memory lien =
+            MetricsFacet(address(diamond)).getLoanCollateralLien(loanId);
+        assertEq(lien.user, borrower, "lien.user = borrower");
+        assertEq(lien.asset, mockCollateralERC20, "lien.asset = collateral");
+        assertEq(lien.tokenId, 0, "lien.tokenId = 0 for ERC20");
+        assertEq(lien.amount, LOAN_COLLATERAL, "lien.amount = collateral");
+        assertFalse(lien.released, "fresh lien is not released");
+
+        // Free-balance helper: a synthetic raw balance reports
+        // `raw − encumbered` as available.
+        uint256 free = MetricsFacet(address(diamond)).getFreeBalance(
+            borrower,
+            mockCollateralERC20,
+            0,
+            LOAN_COLLATERAL + 100 ether
+        );
+        assertEq(
+            free,
+            100 ether,
+            "freeBalance = raw - sum(liens)"
+        );
     }
 }

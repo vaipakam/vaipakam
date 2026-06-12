@@ -921,7 +921,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](40);
+        selectors = new bytes4[](44);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -981,6 +981,11 @@ contract HelperTest {
         // `assetPairActiveLoanIds` index. O(K) where K is loans in the
         // exact opposing asset pair. Backs the Phase 3 auto-dispatch.
         selectors[39] = MetricsFacet.hasInternalMatchCandidate.selector;
+        // #407 (2026-06-12) — Vault encumbrance views.
+        selectors[40] = MetricsFacet.getLoanCollateralLien.selector;
+        selectors[41] = MetricsFacet.getOfferPrincipalLien.selector;
+        selectors[42] = MetricsFacet.getEncumbered.selector;
+        selectors[43] = MetricsFacet.getFreeBalance.selector;
         return selectors;
     }
 
