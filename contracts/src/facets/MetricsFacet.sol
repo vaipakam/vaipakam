@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -1547,6 +1548,76 @@ contract MetricsFacet {
         } catch {
             decimals = 18;
         }
+    }
+
+    // ─── #407 (2026-06-12) — Vault encumbrance sub-ledger views ────
+    //
+    // Public read surface for the per-loan collateral lien + (future)
+    // offer-principal lock work. These selectors give the dapp +
+    // lenders + auditors an on-chain way to prove "this exact
+    // collateral / principal backs this exact loan / offer" and to
+    // compute `freeBalance = totalVaultBalance − Σ(activeLiens)`
+    // ahead of any withdraw.
+    //
+    // Hosted on MetricsFacet rather than a dedicated facet so the
+    // selector surface lands without registering a new facet (the
+    // existing read-only views fit naturally here).
+    //
+    // See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §3.6
+    // (Provability surface) and §7 (offer-principal extension).
+
+    /// @notice Read the collateral lien for `loanId`. Returns an
+    ///         empty `Encumbrance` (zero-filled) when no active
+    ///         lien exists (loan never existed, was never wired
+    ///         through the create hook, or was released on a
+    ///         terminal status transition).
+    function getLoanCollateralLien(uint256 loanId)
+        external
+        view
+        returns (LibVaipakam.Encumbrance memory)
+    {
+        return LibVaipakam.storageSlot().loanCollateralLien[loanId];
+    }
+
+    /// @notice Read the offer-principal lock for `offerId`. Returns
+    ///         an empty `Encumbrance` when no active lock exists.
+    ///         Only ERC20 Lender offers can have a non-empty entry
+    ///         (the create call sites in
+    ///         `OfferCreateFacet._pullCreatorAssetsClassic` will be
+    ///         wired in the offer-principal-lock impl PR).
+    function getOfferPrincipalLien(uint256 offerId)
+        external
+        view
+        returns (LibVaipakam.Encumbrance memory)
+    {
+        return LibVaipakam.storageSlot().offerPrincipalLien[offerId];
+    }
+
+    /// @notice Sum of every active lien for `(user, asset, tokenId)`.
+    ///         The withdraw guard in
+    ///         `VaultFactoryFacet.vaultWithdrawERC20` (separate PR)
+    ///         consults this same map; reading it directly here
+    ///         lets the dapp render "available to withdraw" before
+    ///         a tx is composed. ERC20 uses `tokenId = 0`.
+    function getEncumbered(address user, address asset, uint256 tokenId)
+        external
+        view
+        returns (uint256)
+    {
+        return LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
+    }
+
+    /// @notice Convenience: `rawBalance − Σ(activeLiens)` (saturating
+    ///         at 0). Caller supplies `rawBalance` so this reuses
+    ///         across ERC20 / ERC721 / ERC1155 without re-implementing
+    ///         the staticcall pattern at every consumer.
+    function getFreeBalance(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 rawBalance
+    ) external view returns (uint256) {
+        return LibEncumbrance.freeBalance(user, asset, tokenId, rawBalance);
     }
 
     /// @dev Best-effort ERC-721 collection name lookup for NFT-collateral

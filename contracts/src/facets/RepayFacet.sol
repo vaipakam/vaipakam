@@ -557,6 +557,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Active or FallbackPending both legally transition to Repaid here
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
         LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Repaid);
+        // #407 (2026-06-12) — collateral-lien release on Repaid is
+        // INTENTIONALLY NOT WIRED HERE because RepayFacet sits at
+        // the EIP-170 24,576-byte ceiling (adding the release call
+        // pushes it 151 bytes over). The lien release lands later
+        // when the loan transitions to Settled via `ClaimFacet`
+        // (separate follow-up PR for that wire — same lifecycle
+        // semantics, just deferred one transition). Until then the
+        // borrower's `encumbered` aggregate stays inflated by the
+        // lien amount between Repaid and Settled — the dapp
+        // surfaces this via the loan's status alongside the
+        // lien-stale signal.
+        //
+        // Follow-up: shrink RepayFacet (extract more logic to
+        // libraries) so the release fires at the Repaid transition
+        // directly, OR add a thin EncumbranceMutateFacet so each
+        // terminal can release via cross-facet call (~50 bytes vs
+        // ~150 for inlined).
 
         // Phase 5 / §5.2b — proper-close settlement for the borrower LIF
         // VPFI path. Splits any Diamond-held VPFI between the borrower's

@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -572,6 +573,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Either Active (direct default of illiquid loan) or
             // FallbackPending (retry succeeded) transitions here.
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Defaulted);
+            // #407 (2026-06-12) — release the collateral lien on
+            // default. The collateral has been moved out of the
+            // borrower's vault (either swapped to clear the debt,
+            // or transferred to the lender for illiquid pairs), so
+            // the lien on the original `(borrower, asset, tokenId)`
+            // tuple is no longer backing any loan obligation.
+            // Idempotent on already-released or empty rows.
+            LibEncumbrance.releaseCollateralLien(loanId);
 
             // Phase 5 / §5.2b — default is NOT a proper close, so the
             // borrower forfeits any up-front VPFI paid for the LIF. The

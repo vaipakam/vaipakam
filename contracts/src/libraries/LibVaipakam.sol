@@ -3905,6 +3905,45 @@ library LibVaipakam {
         ///         caps.
         mapping(uint256 => AutoExtendCaps) autoExtendBorrowerCaps;
         mapping(uint256 => AutoExtendCaps) autoExtendLenderCaps;
+
+        // ── #407 (2026-06-12) — Vault encumbrance sub-ledger ─────────
+        //
+        // Per-loan collateral lien storage. Created at
+        // `LoanFacet.initiateLoan` from the stamped `Loan.collateralAsset
+        // / Amount / TokenId / Quantity / AssetType`; released on every
+        // terminal that frees the collateral (`RepayFacet.repayLoan`,
+        // `PrecloseFacet.precloseDirect`, `ClaimFacet`,
+        // `DefaultedFacet.triggerDefault`, `RefinanceFacet.refinanceLoan`).
+        // On obligation-transfer / refinance: the loan's collateral
+        // identity may change; the lien must be re-keyed to the new
+        // collateral fields.
+        //
+        // See `docs/DesignsAndPlans/PerLoanCollateralLien.md` §§2-6.
+        mapping(uint256 => Encumbrance) loanCollateralLien;
+
+        // Per-(user,asset,tokenId) running aggregate of all active
+        // liens (collateral + offer-principal). The withdraw-chokepoint
+        // guard in `VaultFactoryFacet.vaultWithdrawERC20` reads this
+        // map to compute `freeBalance = balanceOf(proxy) - encumbered`.
+        // ERC20 uses `tokenId = 0`; ERC721 / ERC1155 use the actual
+        // tokenId. Keeping a single map for both lien categories means
+        // the guard never has to ask "which kind of lien" — it just
+        // asks "is this amount free?".
+        //
+        // See `PerLoanCollateralLien.md` §3.3 + §7.2 (the offer-
+        // principal extension uses the same map).
+        mapping(address => mapping(address => mapping(uint256 => uint256))) encumbered;
+
+        // Per-offer principal lock storage (Lender offers with ERC20
+        // lending asset only). Created at
+        // `OfferCreateFacet._pullCreatorAssetsClassic`; released
+        // partial on each `OfferMatchFacet.matchOffers` consumption,
+        // final on `OfferCancelFacet.cancelOffer` /
+        // `OfferAcceptFacet._acceptOffer` (single-fill) / dust-close
+        // in `OfferMatchFacet` / lazy-expiry sweep.
+        //
+        // See `PerLoanCollateralLien.md` §7.3.
+        mapping(uint256 => Encumbrance) offerPrincipalLien;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
@@ -3929,6 +3968,32 @@ library LibVaipakam {
         uint16 maxRateBps;   //
         uint64 maxNewExpiry; // both sides store an outer bound; executor picks min(both)
         address setter;      // same NFT-transfer-staleness fence as AutoRefinanceCaps
+    }
+
+    /// @notice #407 (2026-06-12) — vault encumbrance record. One row per
+    ///         lien (per loan's collateral; per offer's locked principal).
+    ///         Read by `VaultFactoryFacet.vaultWithdrawERC20`'s guard
+    ///         via the `encumbered[user][asset][tokenId]` aggregate,
+    ///         and by per-loan / per-offer view selectors for the
+    ///         dapp's "exact collateral / principal backing this
+    ///         position" surface.
+    ///
+    ///         `released = true` rows MAY remain in storage as
+    ///         tombstones (cheaper than `delete`) but MUST be ignored
+    ///         by every consumer; the aggregate is the only
+    ///         authoritative source for "free balance".
+    ///
+    /// @dev    Asset-type encoding (see `PerLoanCollateralLien.md` §3.5):
+    ///         - ERC20:   `(asset, tokenId=0, amount)`
+    ///         - ERC721:  `(asset, tokenId, amount=1)`
+    ///         - ERC1155: `(asset, tokenId, quantity)`
+    struct Encumbrance {
+        address user;       // vault owner — the side whose vault is locked
+        address asset;      // ERC20 / ERC721 / ERC1155 contract
+        uint256 tokenId;    // 0 for ERC20; tokenId for ERC721 / ERC1155
+        uint256 amount;     // ERC20 amount or ERC1155 quantity (1 for ERC721)
+        AssetType assetType;
+        bool released;      // tombstone marker — already released, ignore
     }
 
     /// @dev T-087 Sub 3 add-on #473 — yield venue discriminator.

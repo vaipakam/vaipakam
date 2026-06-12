@@ -1913,7 +1913,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](42);
+        s = new bytes4[](46);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -1993,6 +1993,13 @@ contract DeployDiamond is Script {
         // Phase 3 auto-dispatch in triggerLiquidation / triggerDefault /
         // claimAsLenderWithRetry consults this view internally.
         s[41] = MetricsFacet.hasInternalMatchCandidate.selector;
+        // #407 (2026-06-12) — Vault encumbrance sub-ledger read
+        // surface. Provability views for the per-loan collateral
+        // lien (and future offer-principal lock) work.
+        s[42] = MetricsFacet.getLoanCollateralLien.selector;
+        s[43] = MetricsFacet.getOfferPrincipalLien.selector;
+        s[44] = MetricsFacet.getEncumbered.selector;
+        s[45] = MetricsFacet.getFreeBalance.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

@@ -641,6 +641,17 @@
   },
   {
     "type": "error",
+    "name": "EncumbranceAlreadyExists",
+    "inputs": [
+      {
+        "name": "key",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
