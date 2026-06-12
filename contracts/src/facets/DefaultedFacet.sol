@@ -206,6 +206,18 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
+        // #407 PR 4 (T-407-B, 2026-06-12) — release the collateral
+        // lien EARLY (before any vault withdraw the default flow
+        // executes). The default path drains the borrower's vault into
+        // the lender / treasury directly, which would hit the
+        // {VaultFactoryFacet.vaultWithdrawERC20} guard if the lien were
+        // still active. Idempotent on already-released or empty rows.
+        // Wrapped in a private helper so the release call lives in its
+        // own scope — calling `LibEncumbrance.releaseCollateralLien`
+        // inline tripped viaIR's "Variable size 1 too deep" because
+        // `triggerDefault` already sits near solc's stack ceiling.
+        _releaseLienAtDefault(loanId);
+
         // Tiered KYC check on loan value for the lender. Both branches
         // (ERC20 loan / NFT rental) price the same way — we only differ in
         // which asset + amount to value. Collapsed to one getAssetPrice +
@@ -573,14 +585,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // Either Active (direct default of illiquid loan) or
             // FallbackPending (retry succeeded) transitions here.
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Defaulted);
-            // #407 (2026-06-12) — release the collateral lien on
-            // default. The collateral has been moved out of the
-            // borrower's vault (either swapped to clear the debt,
-            // or transferred to the lender for illiquid pairs), so
-            // the lien on the original `(borrower, asset, tokenId)`
-            // tuple is no longer backing any loan obligation.
-            // Idempotent on already-released or empty rows.
-            LibEncumbrance.releaseCollateralLien(loanId);
+            // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
+            // moved to the START of `triggerDefault` (line ~207) so
+            // the {VaultFactoryFacet.vaultWithdrawERC20} guard clears
+            // for every mid-flow withdraw. See the explanatory
+            // comment at the new call site.
 
             // Phase 5 / §5.2b — default is NOT a proper close, so the
             // borrower forfeits any up-front VPFI paid for the LIF. The
@@ -726,4 +735,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!oracleAvailable) emit LiquidationFallbackOracleUnavailable(loanId);
     }
 
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from
+    ///      `triggerDefault` so the lien-release lives in its own
+    ///      scope. The inline call form (`LibEncumbrance.releaseCollateralLien(loanId)`
+    ///      directly inside `triggerDefault`) tripped viaIR's
+    ///      "Variable size 1 too deep" — `triggerDefault` already sits
+    ///      near solc's stack ceiling (KYC value block + adapterCalls
+    ///      calldata + swap math locals). Wrapping the release in a
+    ///      private function gives it a fresh stack frame that
+    ///      doesn't compete with the caller's locals.
+    function _releaseLienAtDefault(uint256 loanId) private {
+        LibEncumbrance.releaseCollateralLien(loanId);
+    }
 }

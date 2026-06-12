@@ -61,10 +61,24 @@ library LibEncumbrance {
     ///         Called from `LoanFacet.initiateLoan` AFTER the loan row
     ///         has been written (`loan.collateralAsset` / `Amount` /
     ///         `TokenId` / `Quantity` / `AssetType` already final).
+    /// @dev    #407 PR 4 (T-407-B, 2026-06-12) — gated to ERC20 LOANS
+    ///         only. NFT-rental loans (`loan.assetType` is ERC721 or
+    ///         ERC1155) use the borrower's escrowed prepay+buffer pool
+    ///         as `collateralAsset`, and the rental flow is DESIGNED to
+    ///         drain that pool continuously through {RepayFacet}'s
+    ///         daily-deduction + partial-repay paths. Locking it would
+    ///         block those legitimate flows; the lender's claim on the
+    ///         pool is already protected by the structured rental math
+    ///         (`heldForLender`, `protocolTrackedVaultBalance`,
+    ///         `bufferAmount`) — the sub-ledger lien adds nothing
+    ///         there.  See
+    ///         `docs/DesignsAndPlans/PerLoanCollateralLien.md` §3.5.
     function createCollateralLien(
         uint256 loanId,
         LibVaipakam.Loan storage loan
     ) internal {
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         // Tombstone re-use: a previously-released lien at the same

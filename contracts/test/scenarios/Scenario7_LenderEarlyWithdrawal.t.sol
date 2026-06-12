@@ -26,6 +26,7 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
+import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
@@ -118,7 +119,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -141,6 +142,17 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         cuts[16] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance mutate facet,
+        // required so the loan-lifecycle terminals' cross-facet
+        // release call (e.g. {RepayFacet.repayLoan}) resolves
+        // in this scenario's minimal diamond cut.
+        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(encumbranceMutateFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();

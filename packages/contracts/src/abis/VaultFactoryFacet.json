@@ -1695,5 +1695,36 @@
     "type": "error",
     "name": "VaultWithdrawFailed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "WithdrawWouldUnderflowLien",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "free",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   }
 ]

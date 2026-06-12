@@ -293,6 +293,20 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         address treasury = LibFacet.getTreasury();
 
+        // #407 PR 4 (T-407-B, 2026-06-12) — release the collateral lien
+        // BEFORE the asset-type branch. The NFT-rental branch pulls
+        // treasury / lender shares out of the borrower's vault during
+        // settlement (`prepayAsset` == `collateralAsset` for rentals),
+        // so the lien must be released first or the chokepoint guard in
+        // {VaultFactoryFacet.vaultWithdrawERC20} blocks the legitimate
+        // settlement transfers. Safe under revert: any downstream
+        // revert in this function rolls back the storage write, so the
+        // lien is only released when the loan actually closes. Wrapped
+        // in a private helper so the cross-facet `abi.encodeWithSelector`
+        // locals don't compete with `repayLoan`'s already-tight stack
+        // frame (viaIR "Variable size 1 too deep" on inline form).
+        _releaseLienAtRepay(loanId);
+
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // ERC20 loan: Interest + late fee. Build the immutable settlement
             // plan first (phase 1, pure math); all downstream transfers and
@@ -558,25 +572,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Active or FallbackPending both legally transition to Repaid here
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
         LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Repaid);
-        // #407 PR 3 (2026-06-12) — release the collateral lien via
-        // cross-facet call to `EncumbranceMutateFacet`. Keeps
-        // RepayFacet under the EIP-170 24,576-byte ceiling
-        // (~50B per call site vs ~150B inlined).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
-        // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-        // registered in the diamond cut (this PR). The cross-facet
-        // release wire lands in PR 3 to keep this PR's diff focused
-        // on the facet foundation + registration; updating the 9
-        // per-facet test fixtures (RepayFacetTest, PrecloseFacetTest,
-        // RefinanceFacetTest, ClaimFacetTest, etc.) to include the
-        // new mutate facet in their minimal-cut setUps is its own
-        // scoped change.
+        // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
+        // moved to BEFORE the asset-type branch above (line ~296) so
+        // the NFT-rental path's mid-flow vault withdraws clear the
+        // {VaultFactoryFacet.vaultWithdrawERC20} guard. See the
+        // explanatory comment at the new call site.
 
         // Phase 5 / §5.2b — proper-close settlement for the borrower LIF
         // VPFI path. Splits any Diamond-held VPFI between the borrower's
@@ -1371,5 +1371,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // event ABI. Suppressed via the assignment below to silence
         // the unused-warning lint without inflating gas.
         expected; paid;
+    }
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from
+    ///      `repayLoan` so the cross-facet release-call's transient
+    ///      locals (`abi.encodeWithSelector` payload + selector) live
+    ///      in their own stack frame. The inline form inside
+    ///      `repayLoan` tripped viaIR's "Variable size 1 too deep" —
+    ///      that function carries the asset-type branch + settlement
+    ///      plan + Tier-1 / Tier-2 transfer scaffolding, so it's
+    ///      perpetually close to solc's stack ceiling.
+    function _releaseLienAtRepay(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
     }
 }

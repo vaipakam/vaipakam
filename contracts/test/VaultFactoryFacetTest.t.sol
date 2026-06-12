@@ -472,10 +472,26 @@ contract VaultFactoryFacetTest is Test {
 
     /// @dev Tests vaultWithdrawERC20 when the proxy call fails (ProxyCallFailed).
     function testVaultWithdrawERC20RevertsOnProxyFailure() public {
-        address vault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        // vault has 0 balance → withdrawERC20 inside proxy will fail
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
+        // #407 PR 4 (T-407-B): the chokepoint guard now fires before
+        // the proxy call when `amount > free balance`. With a zero-
+        // balance vault and no active lien, `free = 0` and any
+        // positive `amount` is blocked by the guard with a precise
+        // payload describing the shortfall. This supersedes the prior
+        // expectation that the proxy's `withdrawERC20` would revert
+        // with `ProxyCallFailed` — the guard surfaces a friendlier
+        // error one frame earlier.
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Withdraw ERC20 failed"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                user1,
+                mockERC20,
+                uint256(0),
+                9999 ether,
+                uint256(0)
+            )
+        );
         VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(user1, mockERC20, user2, 9999 ether);
     }
 
@@ -500,9 +516,20 @@ contract VaultFactoryFacetTest is Test {
     function testVaultWithdrawERC1155RevertsWhenFails() public {
         ERC1155Mock mock1155 = new ERC1155Mock();
         VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user1);
-        // Vault has 0 balance → should fail
+        // #407 PR 4 (T-407-B): with a zero-balance vault the chokepoint
+        // guard refuses the withdraw before the proxy call gets a
+        // chance to fail. See the sibling ERC20 test for the rationale.
         vm.prank(address(diamond));
-        vm.expectRevert(abi.encodeWithSelector(VaultFactoryFacet.ProxyCallFailed.selector, "Withdraw ERC1155 failed"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                user1,
+                address(mock1155),
+                uint256(1),
+                uint256(100),
+                uint256(0)
+            )
+        );
         VaultFactoryFacet(address(diamond)).vaultWithdrawERC1155(user1, address(mock1155), 1, 100, user2);
     }
 
