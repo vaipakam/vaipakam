@@ -506,10 +506,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // #407 PR 4 (T-407-B) — release collateral lien BEFORE the
-        // liquidation flow withdraws the borrower's collateral asset.
-        _releaseLienAtLiquidation(loanId);
-
         // l2 circuit breaker: block HF-based liquidation when the sequencer
         // is down or still in the 1h grace window. Chainlink prices and
         // AMM pools may be stale under those conditions, so a swap here
@@ -545,6 +541,17 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
             return;
         }
+
+        // #407 PR 4 round-1 Codex P1 #5 (2026-06-12) — release the
+        // collateral lien only AFTER the internal-match dispatch
+        // returned `false`. If internal-match auto-dispatched, that
+        // path may have partially consumed the loan and is responsible
+        // for its own lien decrement; releasing here would have
+        // unprotected the residual. From this line down we're on the
+        // external-aggregator swap branch — loan transitions Active →
+        // Defaulted (or FallbackPending on swap failure, where the
+        // cure path will recreate the lien).
+        _releaseLienAtLiquidation(loanId);
 
         // ── Internal-match priority window (B.2 / PR4) ─────────────────
         // When the kill-switch is on AND auto-dispatch above didn't fire
@@ -1167,6 +1174,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             // back so the keeper picks a larger fraction.
             revert InvalidPartialFraction(fractionBps, cap);
         }
+
+        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
+        // lien by the slice we're moving out. Loan stays Active after
+        // the slice swap, so full release would leave the residual
+        // collateral unprotected from other ERC20 withdraw surfaces.
+        _decrementLienAtPartialLiq(loanId, swappedCollateral);
 
         // Withdraw only the slice from the borrower's vault. If the
         // swap reverts downstream, the wrapping `revert` here unwinds
@@ -1947,13 +1960,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      released rows. NFT-rental loans never carry a lien
     ///      (gated at create time in {LibEncumbrance.createCollateralLien}),
     ///      so this is a no-op for those.
-    function _releaseLienAtLiquidation(uint256 loanId) private {
+    /// @dev #407 PR 4 round-1 (2026-06-12) — consolidated cross-facet
+    ///      helpers.
+    function _callEncumb1(bytes4 selector, uint256 loanId) private {
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
-                loanId
-            ),
+            abi.encodeWithSelector(selector, loanId),
             bytes4(0)
         );
+    }
+
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _releaseLienAtLiquidation(uint256 loanId) private {
+        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
+    }
+
+    function _decrementLienAtPartialLiq(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }

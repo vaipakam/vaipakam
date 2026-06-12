@@ -646,15 +646,18 @@ contract HelperTest {
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
-    ///         selectors. Single entry today; will grow with the
-    ///         offer-principal-lock impl PR.
+    ///         selectors. #407 PR 4 round-1 (2026-06-12) — extended
+    ///         with decrement/increment selectors that the active-loan
+    ///         slice + top-up flows wire through.
     function getEncumbranceMutateFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](3);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
+        selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
+        selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
     }
 
     function getDefaultedFacetSelectors()

@@ -781,6 +781,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
+            // #407 PR 4 round-1 Codex P1 #4 (2026-06-12) — decrement
+            // the lien by the partial-rental fee consumed; same
+            // rationale as `autoDeductDaily` above.
+            _decrementLienAtRentalConsumption(loanId, accrued);
+
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -875,6 +880,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             dayFee
         );
         address treasury = LibFacet.getTreasury();
+
+        // #407 PR 4 round-1 Codex P1 #4 (2026-06-12) — decrement the
+        // collateral lien by the daily rental fee. The borrower's
+        // prepay pool IS the collateral here; both withdraws below
+        // drain it, and the loan stays Active.
+        _decrementLienAtRentalConsumption(loanId, dayFee);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -1255,6 +1266,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             toSell = loan.collateralAmount;
         }
 
+        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
+        // lien by the periodic-interest shortfall slice. Loan stays
+        // Active after the slice swap, so a release would leave the
+        // residual collateral unprotected.
+        _decrementLienAtPeriodicAutoLiq(loanId, toSell);
+
         // Withdraw collateral to Diamond for swap (mirrors the HF-
         // liquidation withdraw shape).
         LibFacet.crossFacetCall(
@@ -1381,13 +1398,34 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      that function carries the asset-type branch + settlement
     ///      plan + Tier-1 / Tier-2 transfer scaffolding, so it's
     ///      perpetually close to solc's stack ceiling.
-    function _releaseLienAtRepay(uint256 loanId) private {
+    /// @dev #407 PR 4 round-1 (2026-06-12) — consolidated cross-facet
+    ///      lien helpers. One per arg-shape; each call site picks the
+    ///      selector. Replaces the per-selector helpers that grew
+    ///      bytecode without saving anything material (#568 tracks the
+    ///      structural fix).
+    function _callEncumb1(bytes4 selector, uint256 loanId) private {
         LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
-                loanId
-            ),
+            abi.encodeWithSelector(selector, loanId),
             bytes4(0)
         );
+    }
+
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _releaseLienAtRepay(uint256 loanId) private {
+        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
+    }
+
+    function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+    }
+
+    function _decrementLienAtRentalConsumption(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }
