@@ -22,6 +22,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -505,6 +506,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
+        // #407 PR 4 (T-407-B) — release collateral lien BEFORE the
+        // liquidation flow withdraws the borrower's collateral asset.
+        _releaseLienAtLiquidation(loanId);
+
         // l2 circuit breaker: block HF-based liquidation when the sequencer
         // is down or still in the 1h grace window. Chainlink prices and
         // AMM pools may be stale under those conditions, so a swap here
@@ -857,6 +862,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
+        // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
+        _releaseLienAtLiquidation(loanId);
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
@@ -1453,6 +1460,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
+        // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
+        _releaseLienAtLiquidation(loanId);
 
         // l2 circuit-breaker — same as atomic path. While the
         // sequencer is unhealthy, oracle reads may be stale and the
@@ -1927,4 +1936,24 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     // each call site. The commented-out legacy block earlier in this
     // file (around line 1625) is the original 0x-direct flow these
     // wrappers existed to serve; leaving it in place as history.
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — release the borrower's
+    ///      collateral lien before any liquidation-path vault withdraw
+    ///      drains the collateral asset (swap to lender share / treasury
+    ///      share / borrower surplus). Wrapped in a private helper so
+    ///      the cross-facet `abi.encodeWithSelector` locals don't
+    ///      compete with the trigger function's already-large stack
+    ///      frame (HF quorum + swap math). Idempotent on already-
+    ///      released rows. NFT-rental loans never carry a lien
+    ///      (gated at create time in {LibEncumbrance.createCollateralLien}),
+    ///      so this is a no-op for those.
+    function _releaseLienAtLiquidation(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
 }

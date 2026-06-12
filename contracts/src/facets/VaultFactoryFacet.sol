@@ -3,10 +3,13 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {VaipakamVaultImplementation} from "../VaipakamVaultImplementation.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -41,6 +44,50 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     modifier onlyDiamondInternal() {
         _checkDiamondInternal();
         _;
+    }
+
+    /// @notice #407 PR 4 (T-407-B, 2026-06-12) — raised by the vault
+    ///         withdraw guard when the requested withdraw amount
+    ///         exceeds the FREE balance (raw vault balance minus the
+    ///         active encumbrance sub-ledger for `(user, asset,
+    ///         tokenId)`). The encumbrance sub-ledger is fed by
+    ///         {LibEncumbrance.createCollateralLien} at loan-init and
+    ///         drained on every loan-lifecycle terminal — see
+    ///         `docs/DesignsAndPlans/PerLoanCollateralLien.md` §3.4 for
+    ///         the full rationale. The error fires when a release wire
+    ///         is missing or out of order on any of the loan-lifecycle
+    ///         terminal paths.
+    /// @dev    The `(user, asset, tokenId)` triple is the
+    ///         encumbrance-aggregate key; `requested` and `free` give
+    ///         the operator enough to pinpoint which lien is binding
+    ///         without an extra view-call.
+    error WithdrawWouldUnderflowLien(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 requested,
+        uint256 free
+    );
+
+    /// @dev    Extracted shared body — same shape as
+    ///         {_checkDiamondInternal} above. Keeps each call site to
+    ///         one function call so the guard cost stays small even
+    ///         when inlined three times (ERC20 / ERC721 / ERC1155 with-
+    ///         draw paths). Each withdraw site already has the proxy
+    ///         address in scope and a known asset shape, so this helper
+    ///         takes only the encumbrance-key triple + amount + the
+    ///         pre-computed raw balance.
+    function _assertWithdrawAllowed(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        uint256 rawBalance
+    ) private view {
+        uint256 free = LibEncumbrance.freeBalance(user, asset, tokenId, rawBalance);
+        if (amount > free) {
+            revert WithdrawWouldUnderflowLien(user, asset, tokenId, amount, free);
+        }
     }
     using SafeERC20 for IERC20;
 
@@ -395,6 +442,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         uint256 amount
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
+        // #407 PR 4 (T-407-B, 2026-06-12) — encumbrance guard. Block
+        // any withdraw whose amount would dip into the active lien
+        // aggregate for `(user, token, tokenId=0)`. Loan-lifecycle
+        // terminals release their lien BEFORE calling the withdraw
+        // selector (see RepayFacet / PrecloseFacet / RefinanceFacet /
+        // DefaultedFacet release wires), so legitimate post-close flows
+        // pass cleanly. A drifted release-wire path fails loud here.
+        _assertWithdrawAllowed(
+            user,
+            token,
+            /*tokenId=*/0,
+            amount,
+            IERC20(token).balanceOf(proxy)
+        );
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC20.selector,
@@ -835,6 +896,16 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address recipient
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
+        // #407 PR 4 — encumbrance guard. For ERC721 the lien semantic
+        // is "this specific tokenId is locked" — any encumbrance > 0
+        // means a loan-lifecycle terminal hasn't released yet. We read
+        // the aggregate directly rather than calling
+        // `ownerOf(tokenId)` (which would revert on a non-existent
+        // tokenId and mask the legitimate `ProxyCallFailed` revert
+        // path the underlying proxy provides for the not-owned case).
+        if (LibVaipakam.storageSlot().encumbered[user][nftContract][tokenId] > 0) {
+            revert WithdrawWouldUnderflowLien(user, nftContract, tokenId, 1, 0);
+        }
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC721.selector,
@@ -893,6 +964,14 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         address recipient
     ) external onlyDiamondInternal {
         address proxy = getOrCreateUserVault(user);
+        // #407 PR 4 — encumbrance guard, keyed on the specific tokenId.
+        _assertWithdrawAllowed(
+            user,
+            nftContract,
+            tokenId,
+            amount,
+            IERC1155(nftContract).balanceOf(proxy, tokenId)
+        );
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(
                 VaipakamVaultImplementation.withdrawERC1155.selector,

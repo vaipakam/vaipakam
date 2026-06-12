@@ -447,6 +447,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (the pre-Phase-2a behaviour) would mis-route on the
         // keeper-driven path — the keeper's vault doesn't hold the
         // collateral, and the keeper isn't the rightful recipient.
+
+        // #407 PR 4 (T-407-B, 2026-06-12) — release the OLD loan's
+        // collateral lien BEFORE the actual vault withdraw of the same
+        // collateral. The chokepoint guard in
+        // {VaultFactoryFacet.vaultWithdrawERC20} would otherwise block
+        // this legitimate refinance-driven collateral return. Safe
+        // under revert: any downstream revert in this function rolls
+        // back the lien-release storage write. Wrapped in a private
+        // helper to keep the `abi.encodeWithSelector` locals in their
+        // own stack frame — `_refinanceLoanLogic` already carries the
+        // HF/LTV scaffolding + settlement math, so inlining could trip
+        // viaIR's "Variable size 1 too deep".
+        _releaseOldLienAtRefinance(oldLoanId);
         if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             uint256 oldCol = oldLoan.collateralAmount;
             if (oldCol > 0) {
@@ -565,16 +578,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
-        // #407 PR 3 (2026-06-12) — release the OLD loan's collateral
-        // lien. The new loan's lien was already created at its own
-        // `initiateLoan`, so the aggregate stays consistent.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.releaseCollateralLien.selector,
-                oldLoanId
-            ),
-            bytes4(0)
-        );
+        // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
+        // moved to BEFORE the old-collateral withdraw above so the
+        // {VaultFactoryFacet.vaultWithdrawERC20} guard clears. See the
+        // explanatory comment at the new call site.
 
         // Phase 5 / §5.2b — proper-close settlement for the OLD loan's
         // borrower LIF VPFI path. The borrower earned the rebate over
@@ -613,5 +620,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 TreasuryTransferFailed.selector
             );
         }
+    }
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — see the comment at the
+    ///      call site in `_refinanceLoanLogic`. Extracted into a
+    ///      private function to keep the cross-facet release-call's
+    ///      transient locals in their own stack frame.
+    function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                oldLoanId
+            ),
+            bytes4(0)
+        );
     }
 }

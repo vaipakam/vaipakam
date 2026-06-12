@@ -70,7 +70,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](79);
+        selectors = new bytes4[](80);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -222,6 +222,10 @@ contract HelperTest {
         // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
         // after the Codex round-13 P2 #3 follow-up.)
         selectors[78] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
+        // #407 PR 4 (T-407-B, 2026-06-12) — direct write to the
+        // encumbrance aggregate so the withdraw-guard tests can pin
+        // the lien state without driving the full loan-init lifecycle.
+        selectors[79] = TestMutatorFacet.setEncumberedRaw.selector;
         return selectors;
     }
 
