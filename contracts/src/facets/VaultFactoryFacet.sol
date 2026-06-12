@@ -448,12 +448,29 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // selector (see RepayFacet / PrecloseFacet / RefinanceFacet /
         // DefaultedFacet release wires), so legitimate post-close flows
         // pass cleanly. A drifted release-wire path fails loud here.
+        //
+        // #569 Codex #572 round-2 P2 — cap the raw vault balance by the
+        // protocol-tracked balance before the lien subtraction.
+        // `balanceOf` includes UNSOLICITED dust (direct ERC-20 transfers
+        // the EVM can't reject); counting it as free would let a fully-
+        // encumbered user withdraw a dust-sized amount, and the post-
+        // withdraw `recordVaultWithdraw` decrement would then drive
+        // `protocolTrackedVaultBalance` BELOW the still-active lien —
+        // stranding/underflowing the eventual collateral return. The
+        // tracked counter excludes dust, so capping by it keeps free
+        // balance honest.
+        uint256 trackedBalance =
+            LibVaipakam.storageSlot().protocolTrackedVaultBalance[user][token];
+        uint256 rawForGuard = IERC20(token).balanceOf(proxy);
+        if (trackedBalance < rawForGuard) {
+            rawForGuard = trackedBalance;
+        }
         _assertWithdrawAllowed(
             user,
             token,
             /*tokenId=*/0,
             amount,
-            IERC20(token).balanceOf(proxy)
+            rawForGuard
         );
         (bool success, ) = proxy.call(
             abi.encodeWithSelector(

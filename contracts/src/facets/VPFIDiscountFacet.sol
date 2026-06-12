@@ -612,6 +612,12 @@ contract VPFIDiscountFacet is
         uint256 prevBal = IERC20(vpfi).balanceOf(vault);
         if (prevBal < amount) revert VPFIVaultBalanceInsufficient();
 
+        // T-054 PR-2 — clamp the post-withdraw balance against the
+        // protocol-tracked counter (less the same withdraw amount).
+        // Excludes any unsolicited dust still sitting in the vault
+        // from the post-mutation yield-bearing balance.
+        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
+
         // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
         // is collateral-eligible (triaged code-wrong: safe under P2P +
         // lender discretion). If the caller has VPFI backing a live loan
@@ -624,16 +630,16 @@ contract VPFIDiscountFacet is
         // checkpoint work below runs on a doomed amount, and (b) keeps
         // this fund-exit surface self-protecting against any future
         // refactor that bypasses the chokepoint. Defense-in-depth.
-        uint256 freeVpfi = LibEncumbrance.freeBalance(msg.sender, vpfi, 0, prevBal);
+        //
+        // #569 Codex #572 round-2 P2 — cap by the tracked balance first
+        // (same rationale as the chokepoint): unsolicited VPFI dust must
+        // not inflate the free figure, or the post-withdraw tracked
+        // decrement would dip below the active lien.
+        uint256 cappedBal = prevBal < prevTracked ? prevBal : prevTracked;
+        uint256 freeVpfi = LibEncumbrance.freeBalance(msg.sender, vpfi, 0, cappedBal);
         if (amount > freeVpfi) {
             revert VPFIEncumberedByActiveLoan(amount, freeVpfi);
         }
-
-        // T-054 PR-2 — clamp the post-withdraw balance against the
-        // protocol-tracked counter (less the same withdraw amount).
-        // Excludes any unsolicited dust still sitting in the vault
-        // from the post-mutation yield-bearing balance.
-        uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
         uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
             prevBal - amount,
             prevTracked - amount

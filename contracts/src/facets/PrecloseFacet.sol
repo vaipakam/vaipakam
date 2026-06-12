@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -610,9 +611,18 @@ contract PrecloseFacet is
         // transfer path that this PR newly liens.)
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             address newBorrowerVault = LibFacet.getOrCreateVault(newBorrower);
+            // #569 Codex #572 round-2 P1 — compare against the incoming
+            // borrower's FREE balance (raw − their existing encumbrances),
+            // not the raw vault balance. Otherwise, if they already have
+            // the same ERC-20 locked by another active loan, they could
+            // drain the new offer collateral down to that locked amount
+            // and this check would still pass — double-encumbering the
+            // same tokens across two loans.
+            uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
             if (
-                IERC20(loan.collateralAsset).balanceOf(newBorrowerVault) <
-                loan.collateralAmount
+                LibEncumbrance.freeBalance(
+                    newBorrower, loan.collateralAsset, 0, rawBal
+                ) < loan.collateralAmount
             ) {
                 revert InsufficientCollateral();
             }

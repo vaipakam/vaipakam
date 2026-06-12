@@ -120,20 +120,28 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
-        // Resolve the borrower's vault proxy — needed below by
-        // `_cureFallback` for the FallbackPending → Active branch.
-        // The chokepoint deposit also auto-creates if missing, but we
-        // need the address here regardless so resolve it explicitly.
-        address borrowerVault = LibFacet.getOrCreateVault(msg.sender);
+        // #569 Codex #572 round-2 P2 — resolve the canonical collateral
+        // vault as the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
+        // borrower-position NFT may have transferred, so the current
+        // holder (`requireBorrowerNftOwner` authorizes them) can call
+        // this — but the collateral lien is keyed to `loan.borrower`,
+        // the original collateral sits in `loan.borrower`'s vault, and
+        // the close / claim paths expect the enlarged `collateralAmount`
+        // there. The deposit, the lien increment, and the cure-path
+        // restore must all target the same vault as the lien.
+        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
 
-        // Transfer collateral from borrower into their vault proxy
-        // via the protocol's chokepoint so the
-        // protocolTrackedVaultBalance counter ticks up. Replaces
-        // the prior direct safeTransferFrom.
+        // Pull the top-up from the CALLER (`msg.sender`, the funding
+        // party / current NFT holder) into `loan.borrower`'s vault via
+        // the cross-payer chokepoint, so the protocolTrackedVaultBalance
+        // counter ticks up under `loan.borrower` (where the lien lives).
+        // For the common case (`msg.sender == loan.borrower`) this is
+        // identical to the prior `vaultDepositERC20` self-deposit.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20.selector,
-                msg.sender,
+                VaultFactoryFacet.vaultDepositERC20From.selector,
+                msg.sender,        // payer
+                loan.borrower,     // vault owner (= lien.user)
                 loan.collateralAsset,
                 amount
             ),

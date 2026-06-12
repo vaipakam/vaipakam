@@ -53,6 +53,16 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
         // Park the collateral inside the vault directly so the raw
         // balance is unambiguous (no real loan flow).
         ERC20Mock(mockCollateralERC20).mint(proxy, vaultBal);
+        // #569 Codex #572 round-2 P2 — the guard now caps raw balance by
+        // protocolTrackedVaultBalance (so unsolicited dust can't inflate
+        // free balance). A direct `mint` to the proxy doesn't tick that
+        // counter, so seed it to the deposited amount to model a
+        // protocol-deposited collateral position.
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower,
+            mockCollateralERC20,
+            vaultBal
+        );
 
         // Pin the lien aggregate via the test mutator — same shape
         // `LibEncumbrance.createCollateralLien` writes at
@@ -154,6 +164,13 @@ contract VaultFactoryFacetWithdrawGuardTest is SetupTest {
             borrower
         );
         ERC20Mock(mockCollateralERC20).mint(proxy, 100 ether);
+        // #569 Codex #572 round-2 P2 — seed the tracked counter (guard
+        // now caps raw by it; see the sibling test for the rationale).
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower,
+            mockCollateralERC20,
+            100 ether
+        );
         TestMutatorFacet(address(diamond)).setEncumberedRaw(
             borrower,
             mockCollateralERC20,
