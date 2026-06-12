@@ -444,6 +444,15 @@ contract EarlyWithdrawalFacet is
         params.amountMax = loan.principal;
         params.interestRateBpsMax = interestRateBps;
         params.collateralAmountMax = 0;
+        // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
+        // P2: inherit the source loan's floor-model election so the
+        // replacement loan settles under the same interest model.
+        // Without this, a memory-default `false` would silently
+        // opt out of the full-term floor on the new lender's books
+        // — re-introducing the early-repay under-charge on every
+        // internal builder flow (sale vehicle here, offset in
+        // PrecloseFacet).
+        params.useFullTermInterest = loan.useFullTermInterest;
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The outgoing lender (sale-
         // offer creator) can enable specific keepers on this sale offer

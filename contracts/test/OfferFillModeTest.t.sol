@@ -67,7 +67,8 @@ contract OfferFillModeTest is SetupTest {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
             fillMode: fillMode,
-            refinanceTargetLoanId: 0
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
         });
     }
 
@@ -104,7 +105,8 @@ contract OfferFillModeTest is SetupTest {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: fillMode,
-            refinanceTargetLoanId: 0
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
         });
         vm.prank(borrower);
         return OfferCreateFacet(address(diamond)).createOffer(p);

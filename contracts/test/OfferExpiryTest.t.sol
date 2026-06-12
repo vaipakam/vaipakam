@@ -73,7 +73,8 @@ contract OfferExpiryTest is SetupTest {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
             fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
         });
     }
 
@@ -110,7 +111,8 @@ contract OfferExpiryTest is SetupTest {
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: expiresAt,
             fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
         });
     }
 

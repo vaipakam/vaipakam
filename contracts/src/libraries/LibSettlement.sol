@@ -50,7 +50,10 @@ library LibSettlement {
         uint256 nowTime
     ) internal view returns (ERC20Settlement memory plan) {
         uint256 principal = loan.principal;
-        uint256 interest = LibEntitlement.settlementInterest(loan, nowTime);
+        // #408/#410/#413 — net of `loan.interestSettled` so any
+        // interest already paid via partial-repay or periodic
+        // settlement is credited exactly once.
+        uint256 interest = LibEntitlement.settlementInterestNet(loan, nowTime);
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(interest + lateFee);
         plan = ERC20Settlement({
             principal: principal,
@@ -64,17 +67,31 @@ library LibSettlement {
 
     /**
      * @notice Builds the settlement plan for an ERC-20 loan being preclosed
-     *         (borrower pays full-term interest early, per README §8 Option 1).
-     * @dev No late fee in the preclose path — preclose is strictly pre-maturity.
+     *         (borrower pays per the floor model, with `interestSettled`
+     *         credited so partial / periodic payments aren't re-charged).
+     * @dev No late fee in the preclose path — preclose is strictly
+     *      pre-maturity. Pre-#408 this routed through
+     *      `LibEntitlement.fullTermInterest` directly, which over-
+     *      charged borrowers who'd already paid interest via partial-
+     *      repay or periodic settlement (#413). Now routes through
+     *      the unified `settlementInterestNet` so the same floor +
+     *      credit semantics apply across every borrower-initiated
+     *      settlement entry point — removes the #413 divergence by
+     *      construction.
      */
     function computePreclose(
         LibVaipakam.Loan storage loan
     ) internal view returns (ERC20Settlement memory plan) {
         uint256 principal = loan.principal;
-        uint256 interest = LibEntitlement.fullTermInterest(
-            principal,
-            loan.interestRateBps,
-            loan.durationDays
+        // Preclose is pre-maturity so `elapsed < duration` → effective
+        // = `floorDays = useFullTermInterest ? durationDays : 0`. For
+        // the `true` branch (the typical preclose path), this equals
+        // the pre-#408 `fullTermInterest(...)` result — minus
+        // `interestSettled`. For the opt-out branch, falls back to
+        // pure accrued.
+        uint256 interest = LibEntitlement.settlementInterestNet(
+            loan,
+            block.timestamp
         );
         (uint256 treasuryShare, uint256 lenderShare) = LibEntitlement.splitTreasury(interest);
         plan = ERC20Settlement({

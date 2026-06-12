@@ -637,6 +637,26 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // remaining backing for HF / default math.
             loan.collateralAmount -= actualCollateralConsumed;
         }
+        // #408 / #410 / #413 (2026-06-12), Codex PR #559 round-1
+        // P1: mirror `RepayFacet.repayPartial`'s Option A remaining-
+        // committed-term tracking on this partial-repay entry point
+        // too. Without it, a full-term loan partially repaid via
+        // collateral swap would compute the floor on the reduced
+        // principal but over the ORIGINAL `durationDays`, drifting
+        // out of sync with the formula `RepayFacet.repayPartial`
+        // uses on the same loan state shape.
+        uint256 elapsedSinceSegmentStart;
+        unchecked {
+            elapsedSinceSegmentStart =
+                (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
+        }
+        if (elapsedSinceSegmentStart >= loan.durationDays) {
+            loan.durationDays = 0;
+        } else {
+            unchecked {
+                loan.durationDays -= elapsedSinceSegmentStart;
+            }
+        }
         loan.startTime = uint64(block.timestamp); // reset accrual clock
 
         // ── T-034 §4.5 — periodic-interest checkpoint advance

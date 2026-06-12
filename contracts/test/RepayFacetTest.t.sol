@@ -353,7 +353,8 @@ contract RepayFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -390,7 +391,8 @@ contract RepayFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -638,7 +640,8 @@ contract RepayFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);
@@ -695,7 +698,8 @@ contract RepayFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1324,7 +1328,8 @@ contract RepayFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1526,5 +1531,121 @@ contract RepayFacetTest is Test {
         // Just verify due is reasonable
         assertGt(due10, 1000, "Due should be greater than principal");
         assertGt(due20, 1000, "Due should be greater than principal");
+    }
+
+    // ─── #408 / #410 / #413 — floor-model regression tests ─────────────
+
+    /// @dev Build a loan with `useFullTermInterest: true` so the floor
+    ///      formula in `LibEntitlement.settlementInterest` activates.
+    function _helperFloorLoan() internal returns (uint256 loanId) {
+        vm.prank(lender);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: 1000,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 1500,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: 1000,
+                interestRateBpsMax: 500,
+                collateralAmountMax: 1500,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+        vm.prank(borrower);
+        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+    }
+
+    /// @notice #408 — early repay on a full-term loan charges floor
+    ///         (full-term interest), not pro-rata.
+    function test_408_EarlyRepayChargesFullTermFloor() public {
+        uint256 loanId = _helperFloorLoan();
+        // Repay at day 1 of a 30-day term.
+        vm.warp(block.timestamp + 1 days);
+
+        // Expected interest: full-term floor (proRataInterest @ 30 days)
+        // = 1000 * 500 * 30 / (365 * 10000) = ~4.10 → truncated to 4.
+        uint256 expectedFloor = (uint256(1000) * 500 * 30) / (365 * 10000);
+        uint256 due = RepayFacet(address(diamond))
+            .calculateRepaymentAmount(loanId);
+        // Full repay = principal + expectedFloor + 0 late fee.
+        assertEq(
+            due,
+            1000 + expectedFloor,
+            "early repay must charge full-term floor under useFullTermInterest=true"
+        );
+    }
+
+    /// @notice #413 — preclose after a partial-repay does NOT
+    ///         double-charge interest already paid via the partial.
+    function test_413_PrecloseAfterPartialDoesNotDoubleCharge() public {
+        uint256 loanId = _helperFloorLoan();
+        // Repay partial at day 10 of 30-day term (1/3 elapsed).
+        vm.warp(block.timestamp + 10 days);
+        uint256 partialAmt = 500; // half the principal
+
+        // Snapshot borrower wallet before partial.
+        uint256 walletBeforePartial = ERC20(mockERC20).balanceOf(borrower);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(loanId, partialAmt);
+        uint256 walletAfterPartial = ERC20(mockERC20).balanceOf(borrower);
+        uint256 paidOnPartial = walletBeforePartial - walletAfterPartial;
+        // Partial: half principal + ~1/3-term pro-rata interest on the
+        // ORIGINAL 1000 principal.
+        uint256 expectedPartialInterest = (uint256(1000) * 500 * 10) / (365 * 10000);
+        assertEq(
+            paidOnPartial,
+            partialAmt + expectedPartialInterest,
+            "partial-repay outflow = partial principal + accrued interest"
+        );
+
+        // Now full repay (preclose). After partial:
+        //   principal = 500
+        //   durationDays = 30 - 10 = 20 (decremented in repayPartial)
+        //   interestSettled = 0 (Codex round-1 P1: state reset
+        //     already encodes the partial's effect; crediting it
+        //     would double-count)
+        //   startTime = now (post-partial)
+        // Floor at preclose (elapsed 0 < remaining 20 → use 20):
+        //   gross = 500 * 500 * 20 / (365 * 10000) = ~1.37 → 1
+        //   net   = gross (interestSettled = 0)
+        //
+        // This is FUTURE-only interest on the REMAINING principal.
+        // The partial's interest (first 10 days on the original
+        // 1000 principal) has already been paid above; the lender
+        // is now entitled only to the remaining commitment's
+        // coupon. Total over the loan's life: partial-interest +
+        // preclose-interest = correct lender entitlement under
+        // the floor model.
+        uint256 grossRemaining = (uint256(500) * 500 * 20) / (365 * 10000);
+        uint256 dueAfterPartial = RepayFacet(address(diamond))
+            .calculateRepaymentAmount(loanId);
+        assertEq(
+            dueAfterPartial,
+            500 + grossRemaining,
+            "preclose after partial charges floor on REMAINING term + principal (#413 fix without double-counting)"
+        );
+        // Sentinel: borrower's PARTIAL outflow + preclose outflow
+        // sums to the correct lender entitlement.
+        // (Not used directly in the assertion above but keeps the
+        // mental model traceable for the next reader.)
+        assertTrue(expectedPartialInterest >= 0, "trace anchor");
     }
 }

@@ -75,7 +75,15 @@ library LibCollateralSettlement {
         returns (uint256)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        return loan.principal + LibEntitlement.settlementInterest(loan, asOfTimestamp);
+        // #408 / #410 (2026-06-12) — route through `settlementInterestNet`
+        // so partial-repay and periodic-settlement credits (held in
+        // `loan.interestSettled`) net against the gross floor. Pre-#410
+        // this used the bare `settlementInterest`, which on a partial-
+        // repay-then-parallel-sale path would have OVER-charged the
+        // buyer (the buyer's settlement should not re-pay interest
+        // the borrower already paid). The floor model + credit pair
+        // collapses every settlement entry point to the same formula.
+        return loan.principal + LibEntitlement.settlementInterestNet(loan, asOfTimestamp);
     }
 
     /// @notice Treasury + preclose fee entitlement at `asOfTimestamp`:
@@ -104,7 +112,13 @@ library LibCollateralSettlement {
         returns (uint256)
     {
         LibVaipakam.Loan storage loan = LibVaipakam.storageSlot().loans[loanId];
-        uint256 interestOwed = LibEntitlement.settlementInterest(loan, asOfTimestamp);
+        // #408 / #410 (2026-06-12) — must use the SAME interest basis
+        // as `principalPlusAccruedInterest` above, which now nets
+        // against `interestSettled`. Symmetry is load-bearing: a
+        // partial-repaid loan's parallel-sale would otherwise charge
+        // treasury on the FULL gross while the lender receives only
+        // the net — accounting drift.
+        uint256 interestOwed = LibEntitlement.settlementInterestNet(loan, asOfTimestamp);
         if (interestOwed == 0) return 0;
 
         // Preclose fee summand kept explicit at 0 here so that:
