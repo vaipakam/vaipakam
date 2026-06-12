@@ -118,6 +118,7 @@ FACETS=(
   "SwapToRepayIntentFacet"
   "IntentDispatchFacet"
   "AutoLifecycleFacet"
+  "EncumbranceMutateFacet"
   "IntentConfigFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"

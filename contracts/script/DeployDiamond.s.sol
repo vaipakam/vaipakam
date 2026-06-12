@@ -28,6 +28,7 @@ import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -155,6 +156,9 @@ contract DeployDiamond is Script {
         // Phase 2/3 wire the caps into RefinanceFacet + add the
         // extendLoanInPlace executor.
         AutoLifecycleFacet autoLifecycleFacet = new AutoLifecycleFacet();
+        // #407 PR 2 — thin cross-facet mutate surface for the
+        // vault encumbrance sub-ledger; see facet natspec.
+        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -218,7 +222,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](51);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](52);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -368,6 +372,11 @@ contract DeployDiamond is Script {
         cuts[50] = _buildCut(
             address(autoLifecycleFacet),
             _getAutoLifecycleFacetSelectors()
+        );
+        // #407 PR 2 — encumbrance mutate surface.
+        cuts[51] = _buildCut(
+            address(encumbranceMutateFacet),
+            _getEncumbranceMutateFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -689,6 +698,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("configFacet",             address(configFacet));
         Deployments.writeFacet("legalFacet",              address(legalFacet));
         Deployments.writeFacet("autoLifecycleFacet",      address(autoLifecycleFacet));
+        Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1241,6 +1251,15 @@ contract DeployDiamond is Script {
         s[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         s[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+    }
+
+    /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
+    ///         selectors. Single entry today; will grow as the
+    ///         offer-principal-lock impl PR adds the lock create /
+    ///         decrement / release surface.
+    function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
