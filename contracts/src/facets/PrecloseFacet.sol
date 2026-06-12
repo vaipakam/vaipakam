@@ -259,6 +259,9 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
+            // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
+            // registered (this PR). Cross-facet release wire deferred
+            // to PR 3 alongside the per-facet test-fixture updates.
 
             // Phase 5 / §5.2b — proper-close settlement for borrower LIF
             // VPFI path. Splits Diamond-held VPFI into borrower rebate +

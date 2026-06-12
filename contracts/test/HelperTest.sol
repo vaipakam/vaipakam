@@ -28,6 +28,7 @@ import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -638,6 +639,18 @@ contract HelperTest {
         selectors[11] = AutoLifecycleFacet.getAutoExtendLenderCaps.selector;
         // T-092 Phase 3 (#503) — extendLoanInPlace executor.
         selectors[12] = AutoLifecycleFacet.extendLoanInPlace.selector;
+    }
+
+    /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
+    ///         selectors. Single entry today; will grow with the
+    ///         offer-principal-lock impl PR.
+    function getEncumbranceMutateFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
     }
 
     function getDefaultedFacetSelectors()
