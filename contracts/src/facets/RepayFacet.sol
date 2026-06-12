@@ -9,6 +9,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -557,6 +558,17 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Active or FallbackPending both legally transition to Repaid here
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
         LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Repaid);
+        // #407 PR 3 (2026-06-12) — release the collateral lien via
+        // cross-facet call to `EncumbranceMutateFacet`. Keeps
+        // RepayFacet under the EIP-170 24,576-byte ceiling
+        // (~50B per call site vs ~150B inlined).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
         // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
         // registered in the diamond cut (this PR). The cross-facet
         // release wire lands in PR 3 to keep this PR's diff focused

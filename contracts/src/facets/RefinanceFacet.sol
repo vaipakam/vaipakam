@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -564,9 +565,16 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
-        // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-        // registered (this PR). Cross-facet release wire deferred
-        // to PR 3 alongside the per-facet test-fixture updates.
+        // #407 PR 3 (2026-06-12) — release the OLD loan's collateral
+        // lien. The new loan's lien was already created at its own
+        // `initiateLoan`, so the aggregate stays consistent.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                oldLoanId
+            ),
+            bytes4(0)
+        );
 
         // Phase 5 / §5.2b — proper-close settlement for the OLD loan's
         // borrower LIF VPFI path. The borrower earned the rebate over
