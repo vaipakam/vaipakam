@@ -287,7 +287,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(borrower);
@@ -321,7 +322,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -451,7 +453,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -519,7 +522,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -571,7 +575,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -619,7 +624,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -678,7 +684,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -723,7 +730,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -765,7 +773,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -820,7 +829,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.prank(lender);
@@ -857,7 +867,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -902,7 +913,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -940,7 +952,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1044,7 +1057,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1089,7 +1103,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1153,7 +1168,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1200,7 +1216,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1239,7 +1256,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -1284,7 +1302,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -2045,7 +2064,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 
@@ -2100,7 +2120,8 @@ contract EarlyWithdrawalFacetTest is Test {
                 periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
             })
         );
 

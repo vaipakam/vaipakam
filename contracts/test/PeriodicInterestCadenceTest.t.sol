@@ -80,7 +80,8 @@ contract PeriodicInterestCadenceTest is SetupTest {
             periodicInterestCadence: cadence,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
         });
     }
 

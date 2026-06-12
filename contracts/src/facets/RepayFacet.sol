@@ -667,6 +667,33 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             unchecked {
                 loan.principal -= partialAmount;
             }
+            // #408 / #410 / #413 (2026-06-12) — Option A: track
+            // remaining committed term. The accrual clock reset
+            // below (`loan.startTime = now`) measures `elapsedDays`
+            // from the most recent partial. To keep the floor in
+            // `LibEntitlement.settlementInterest` reflecting the
+            // borrower's REMAINING commitment (not the original),
+            // decrement `durationDays` by the elapsed days since the
+            // segment's start. After this, `max(elapsed, duration)`
+            // in the floor uses the post-partial remaining term as
+            // the lower bound.
+            //
+            // Also credit `interestSettled` with the interest just
+            // paid so a later full repay / preclose nets the
+            // accumulator against the gross floor (removes #413).
+            uint256 elapsedSinceSegmentStart;
+            unchecked {
+                elapsedSinceSegmentStart =
+                    (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
+            }
+            if (elapsedSinceSegmentStart >= loan.durationDays) {
+                loan.durationDays = 0;
+            } else {
+                unchecked {
+                    loan.durationDays -= elapsedSinceSegmentStart;
+                }
+            }
+            loan.interestSettled += accrued;
             // T-034 — startTime downsized to uint64; explicit cast.
             loan.startTime = uint64(block.timestamp); // Reset accrual start
 
@@ -970,17 +997,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 elapsed = block.timestamp - loan.startTime;
         uint256 elapsedDays = elapsed / LibVaipakam.ONE_DAY;
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
-            interest = loan.useFullTermInterest
-                ? LibEntitlement.fullTermInterest(
-                    loan.principal,
-                    loan.interestRateBps,
-                    loan.durationDays
-                )
-                : LibEntitlement.proRataInterest(
-                    loan.principal,
-                    loan.interestRateBps,
-                    elapsedDays
-                );
+            // #408 / #410 / #413 (2026-06-12) — route through the
+            // unified `settlementInterestNet` so this view matches
+            // what `LibSettlement.computeRepayment` charges at
+            // actual settlement. Pre-fix this branch used the bare
+            // `fullTermInterest` (capped at duration → blocked grace
+            // accrual) AND ignored `interestSettled` (over-charged
+            // after partial-repay / periodic). Both bugs collapse
+            // here too — the view must agree with the settler.
+            interest = LibEntitlement.settlementInterestNet(
+                loan,
+                block.timestamp
+            );
             totalDue = loan.principal + interest;
         } else {
             // NFT: Accrued rental (excluding already-deducted days)
@@ -1273,6 +1301,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         }
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(loan.lender, lenderProceeds);
+            // #408 / #410 / #413 (2026-06-12) — credit
+            // `interestSettled` by the interest just forwarded to the
+            // lender so a later full repay / preclose nets the
+            // accumulator against the gross floor. Mirrors the
+            // partial-repay accrual credit in `repayPartial`.
+            //
+            // Note: when slippage forces `lenderProceeds < shortfall`,
+            // we credit only what the lender ACTUALLY received — the
+            // borrower's gross obligation is unchanged, so the
+            // shortfall stays uncredited and the borrower pays the
+            // difference at the next settlement.
+            loan.interestSettled += lenderProceeds;
         }
 
         unchecked {

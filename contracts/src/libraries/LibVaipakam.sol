@@ -1196,6 +1196,26 @@ library LibVaipakam {
         // obligation than they pre-approved. Default 0 = standard
         // borrower offer (no refinance intent).
         uint256 refinanceTargetLoanId;
+        // ── #408 / #410 / #413 (2026-06-12) ───────────────────────
+        // Lender's election for the floor-model interest settlement.
+        // When `true` (the dapp builder default), every borrower-
+        // initiated ERC20 settlement on the resulting loan applies
+        // the FULL-TERM FLOOR:
+        //   gross = proRataInterest(P, rate, max(elapsedDays, durationDays))
+        //   net   = gross - interestSettled (saturating at 0)
+        //
+        // When `false` (lender opt-out for "soft" loans),
+        // floorDays = 0 → pure pro-rata-elapsed. Both branches still
+        // accrue through grace + late fee.
+        //
+        // Carries through `OfferCreateFacet._writeOfferPrincipalFields`
+        // into the existing `Offer.useFullTermInterest` field, then
+        // `LoanFacet.initiateLoan:792` snapshots into
+        // `Loan.useFullTermInterest`. Pre-#408 the params side
+        // didn't exist; the offer + loan fields were stranded as
+        // unreachable dead code, so `settlementInterest` always
+        // returned pro-rata regardless of intent.
+        bool useFullTermInterest;
     }
 
     /// @notice #193 — input bundle for `OfferMutateFacet.modifyOffer`.
@@ -1570,6 +1590,25 @@ library LibVaipakam {
         // THIS field (not the offer's) — once the loan is initialized
         // the relevant consent is fixed-at-loan-init.
         bool allowsPrepayListing;
+        // ── #408 / #410 / #413 (2026-06-12) ───────────────────────
+        // Cumulative interest already paid toward this loan via:
+        //   - `RepayFacet.repayPartial` — each partial's interest portion.
+        //   - `RepayFacet.settlePeriodicInterest` — each period's
+        //     interest forwarded to the lender.
+        // Read at every settlement (`LibEntitlement.settlementInterestNet`)
+        // to credit-against the unified gross floor amount, so the
+        // borrower never re-pays interest already paid. Removes the
+        // #413 double-charge on `precloseDirect` after partial /
+        // periodic settlement by construction.
+        //
+        // `uint256` chosen defensively (per Codex #558 round-3 P2):
+        // at max-duration (4,385d) + max-APR + uint256 `amount`, a
+        // smaller type could overflow. No packing benefit either way
+        // because the field is appended in its own slot.
+        //
+        // Append-only field (storage layout discipline). Zero on
+        // every existing loan at deploy time.
+        uint256 interestSettled;
     }
 
     /**

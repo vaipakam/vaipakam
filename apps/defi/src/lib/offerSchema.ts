@@ -114,6 +114,12 @@ export interface OfferFormState {
    *  accept. Only valid on Borrower offers; the form auto-hides on
    *  Lender. */
   refinanceTargetLoanId: string;
+  /** #408 / #410 / #413 (2026-06-12) — lender's election for the
+   *  full-term floor interest settlement model. When `true` (the
+   *  default), early repay charges the floor: `max(elapsed, duration)
+   *  - interestSettled`. When `false`, falls back to pure pro-rata-
+   *  elapsed. */
+  useFullTermInterest: boolean;
 }
 
 export const initialOfferForm: OfferFormState = {
@@ -140,6 +146,7 @@ export const initialOfferForm: OfferFormState = {
   periodicInterestCadence: 0, // None
   allowsParallelSale: false, // T-086 Round-8 #358 — explicit opt-in
   refinanceTargetLoanId: '', // T-092 #511 sub (#523) — standard offer; non-empty enables refinance-tagged flow
+  useFullTermInterest: true, // #408 — default true; lenders opt OUT for "soft" pro-rata loans
 };
 
 /** Payload shape expected by `Diamond.createOffer`. */
@@ -214,6 +221,10 @@ export interface CreateOfferPayload {
    *  Standard create flow passes `0n`; the keeper-driven auto-
    *  refinance UX sets this when constructing the offer. */
   refinanceTargetLoanId: bigint;
+  /** #408 — see `OfferFormState.useFullTermInterest`. Wire passes
+   *  through unchanged to the on-chain `CreateOfferParams.
+   *  useFullTermInterest` field. */
+  useFullTermInterest: boolean;
 }
 
 /**
@@ -478,6 +489,8 @@ export function toCreateOfferPayload(
       s.refinanceTargetLoanId !== ''
         ? BigInt(s.refinanceTargetLoanId)
         : 0n,
+    // #408 — carry the form's election unchanged.
+    useFullTermInterest: s.useFullTermInterest,
   };
 }
 

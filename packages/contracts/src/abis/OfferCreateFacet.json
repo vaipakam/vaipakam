@@ -132,6 +132,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -283,6 +288,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -429,6 +439,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       },

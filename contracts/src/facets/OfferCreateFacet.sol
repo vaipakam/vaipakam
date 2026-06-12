@@ -1303,6 +1303,12 @@ contract OfferCreateFacet is
         offer.allowsParallelSale = params.allowsParallelSale;
         // T-092 Phase 2b (#506) — refinance target.
         offer.refinanceTargetLoanId = params.refinanceTargetLoanId;
+        // #408 / #410 / #413 (2026-06-12) — floor-model election.
+        // Carries through to `Loan.useFullTermInterest` at loan-init
+        // (`LoanFacet.initiateLoan:792`), which `LibEntitlement.
+        // settlementInterest` reads to apply the full-term FLOOR
+        // (when `true`) or pure pro-rata-elapsed (when `false`).
+        offer.useFullTermInterest = params.useFullTermInterest;
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
