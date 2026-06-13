@@ -73,6 +73,13 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    *current* token. Do **not** apply a blanket global pause here — it would also
    freeze the drain paths and deadlock the procedure (the hard freeze comes
    later, step 4, once the drain is done).
+   **Caveat — no deposit-only pause.** The current Diamond does NOT expose a
+   per-function deposit-only pause (you cannot freeze `depositVPFIToVault`
+   while leaving withdraws open). Inflow-reduction here is therefore coarse:
+   announce, and run the drain during a deliberate **low-activity window**. The
+   only true inflow stop is the step-4 hard freeze; until then deposits/buys may
+   still land. That residual race is acceptable pre-live (low volume) and is
+   caught by the step-5 re-verify under freeze — but see **Known limitations**.
 2. **Enumerate ALL old-token exposure.** Identify every:
    - open offer whose `lendingAsset`, `prepayAsset`, **or** `collateralAsset`
      == old token (a VPFI-lending offer holds pre-vaulted old-VPFI principal);
@@ -82,7 +89,12 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    - **any non-zero `protocolTrackedVaultBalance[user][oldToken]`** — staked
      VPFI or deposited-but-uncommitted VPFI, **even with no active
      offer/loan/lien** (this is the class that strands after rotation — no
-     public exit; see "Why a rotation needs care").
+     public exit; see "Why a rotation needs care");
+   - **VPFI held in the Diamond's own custody for the borrower-LIF rebate**
+     (`borrowerLifRebate[loanId].vpfiHeld`) — a loan can hold this even when
+     its principal/collateral are NOT VPFI, so it does not appear in the leg
+     scans above; check the rebate ledger separately and let those loans reach
+     terminal (settle/forfeit) so the held VPFI is released before rotating.
    Scan via the indexer or a full active-offer scan on `lendingAsset` +
    `prepayAsset` + `collateralAsset` == old token (NOT
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and
@@ -104,14 +116,48 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    when this confirms **zero** old-token exposure under the freeze. This loop is
    what makes the procedure correct regardless of which inflow surfaces the
    step-1 list missed.
-6. **Rotate.** `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE / timelock),
-   under the freeze. Emits both `VPFITokenSet` and — because `previous != 0` —
-   `VPFITokenRotated(previous, newToken)`.
+6. **Rotate — and update EVERY VPFI pointer, not just the Diamond's.**
+   `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE / timelock), under the
+   freeze, updates only the Diamond's `s.vpfiToken` and emits both
+   `VPFITokenSet` and — because `previous != 0` — `VPFITokenRotated(previous,
+   newToken)`. But other contracts carry their **own** VPFI token reference and
+   must be repointed in the same window — notably the cross-chain fixed-rate
+   **buy receiver** (and any buy adapter), which would otherwise keep
+   minting/crediting the OLD token. Enumerate all such pointers and update them
+   atomically-enough that no inbound flow lands on a stale token.
 7. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
    record that the drain + zero-verification (steps 2–5) preceded it. The event
    is the on-chain breadcrumb; it does not by itself prove the drain.
 8. **Re-enable.** Unfreeze / unpause. Verify new VPFI offers/loans key off the
    new token.
+
+## Known limitations & residual risk
+
+A fully-clean rotation with live state is genuinely a **migration-class**
+operation, and this manual runbook has real limits — stated plainly so an
+operator does not over-trust it:
+
+- **No per-function deposit pause.** The Diamond cannot freeze deposits/buys
+  while keeping withdraws open, so the pre-freeze drain (steps 1–3) has an
+  inherent race: new old-token state can land while you drain. Mitigated by a
+  low-activity window + the step-4 hard freeze + the step-5 re-verify, and
+  acceptable pre-live (low volume), but not eliminated.
+- **Many VPFI touch-points.** Old-token VPFI can live as offer
+  principal/prepay/collateral, loan principal/prepay/collateral, encumbrances,
+  staked balances, uncommitted deposits, and the borrower-LIF rebate custody —
+  the step-2 list is the known set but is explicitly **non-exhaustive**; the
+  step-5 under-freeze re-verify is what makes the procedure correct regardless
+  of any surface the list omits.
+- **Multi-pointer.** `setVPFIToken` repoints only the Diamond; the cross-chain
+  buy receiver / adapter (and any future VPFI-aware contract) carry their own
+  pointer and must be updated in the same window.
+
+**For routine rotations with live state, do not rely on this manual
+procedure** — build a comprehensive on-chain migration mechanism (per-position
+token snapshot + tracked-balance migration + dual-token withdraw + a single
+multi-pointer repoint). That is the robust answer; this runbook is the
+proportionate one for a *rare, pre-live* event, paired with the
+`VPFITokenRotated` audit event so any rotation is at least detectable.
 
 ## Decision (recorded for #575)
 
