@@ -599,6 +599,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 // T-051 — Diamond-side transfer to vault ticks the
                 // protocolTrackedVaultBalance counter.
                 LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, held);
+                // #569 Codex #572 round-5 P1 — RE-LIEN the restored
+                // collateral. The lien was released at default-entry
+                // (when the loan went FallbackPending), so the snapshot
+                // collateral just pushed back into the borrower vault is
+                // currently UNencumbered while it sits as the borrower
+                // claim recorded above. Re-create the lien for `held`
+                // (create-if-absent on the released row) so it stays
+                // protected through the Repaid→claim gap and is released
+                // atomically inside `ClaimFacet.claimAsBorrower`. Without
+                // this, the stored borrower could drain the restored
+                // collateral (VPFI via `withdrawVPFIFromVault`) before a
+                // transferee claimant claims it. ERC20-only (D-1).
+                _callEncumb2(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    held
+                );
             }
             delete s.fallbackSnapshot[loanId];
         }

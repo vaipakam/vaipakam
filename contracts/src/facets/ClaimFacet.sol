@@ -249,23 +249,34 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
                 );
-                // #569 Codex #572 round-4 P2 — release any collateral
-                // lien created by FallbackPending top-ups. A loan's
-                // lien is released at default-ENTRY, but a borrower may
-                // have added (and lien-locked) top-up collateral while
-                // FallbackPending. This is the no-internal-match terminal
-                // for that loan, so the residual top-up lien must release
-                // here or the top-up would be stranded in the borrower's
-                // vault under an active encumbrance. Idempotent on
-                // already-released / empty rows (the common no-top-up
-                // case); no-op on NFT rentals (D-1).
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        EncumbranceMutateFacet.releaseCollateralLien.selector,
-                        loanId
-                    ),
-                    bytes4(0)
-                );
+                // #569 Codex #572 round-5 P1 — ROUTE any FallbackPending
+                // top-up to the borrower-position NFT holder instead of
+                // freeing it. The loan's ORIGINAL lien was released at
+                // default-ENTRY; a borrower may then have added (and
+                // lien-locked, round-4 `incrementCollateralLien`) top-up
+                // collateral while FallbackPending. On this no-cure
+                // terminal that top-up is a refunded failed-cure attempt
+                // owed to the CURRENT borrower-position holder — record it
+                // as the borrower claim and KEEP the lien, so the later
+                // `claimAsBorrower` (driven by the verified NFT owner)
+                // releases it atomically with the payout. A bare release
+                // here would free the top-up to the stored `loan.borrower`,
+                // who may have transferred the position away after the
+                // transferee funded the top-up — the drain. No-op in the
+                // common no-top-up case (lien amount 0 → no claim row, and
+                // a defaulted borrower has nothing else to claim). ERC20-
+                // only (D-1: NFT rentals are never liened, amount stays 0).
+                uint256 fallbackTopUp = s.loanCollateralLien[loanId].amount;
+                if (fallbackTopUp > 0) {
+                    s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
+                        asset: loan.collateralAsset,
+                        amount: fallbackTopUp,
+                        assetType: LibVaipakam.AssetType.ERC20,
+                        tokenId: 0,
+                        quantity: 0,
+                        claimed: false
+                    });
+                }
             }
         }
 

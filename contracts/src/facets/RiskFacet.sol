@@ -1473,8 +1473,19 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
-        // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
-        _releaseLienAtLiquidation(loanId);
+        // #569 Codex #572 round-5 P2 — UNLIKE the full-seizure atomic
+        // paths ({triggerLiquidation}/{triggerLiquidationSplit}, which
+        // withdraw ALL collateral and so fully release here), the
+        // discounted path seizes only `collateralSeized` and leaves
+        // `borrowerSurplus` COLLATERAL in `loan.borrower`'s vault as a
+        // `borrowerClaims` row. So the lien must NOT be fully released
+        // here; it is decremented by exactly `collateralSeized` inside
+        // `_settleDiscountedLiquidation` (just before the seizure
+        // withdraw), leaving the surplus encumbered until
+        // `ClaimFacet.claimAsBorrower` releases it atomically. A full
+        // release here would let the stored borrower drain the surplus
+        // (via `withdrawVPFIFromVault`) before a transferee claimant
+        // claims it.
 
         // l2 circuit-breaker — same as atomic path. While the
         // sequencer is unhealthy, oracle reads may be stale and the
@@ -1597,11 +1608,23 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: false
         });
 
+        // #569 Codex #572 round-5 P2 — decrement the lien by exactly
+        // `collateralSeized` (what leaves the vault for the liquidator).
+        // The full lien was retained through `triggerLiquidationDiscounted`
+        // (the early full release was removed); this decrement clears the
+        // guard for the seizure withdraw below while leaving
+        // `borrowerSurplus` encumbered. The surplus stays liened in
+        // `loan.borrower`'s vault until `ClaimFacet.claimAsBorrower`
+        // releases it atomically with the claim withdrawal — closing the
+        // transferred-position drain. No-op when `collateralSeized == 0`
+        // (the full collateral becomes the surplus claim).
+        _decrementLienAtPartialLiq(loanId, collateralSeized);
+
         // Withdraw `collateralSeized` from borrower vault directly to
-        // `recipient`. The remaining `borrowerSurplus` stays in the
-        // borrower's vault as a regular balance — the borrower
-        // retrieves it via standard vault withdrawal, no claim
-        // ceremony required.
+        // `recipient`. The remaining `borrowerSurplus` stays ENCUMBERED
+        // in the borrower's vault and is retrieved by the current
+        // borrower-position NFT holder via `ClaimFacet.claimAsBorrower`
+        // (which releases the residual lien atomically with the payout).
         if (collateralSeized > 0) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1615,12 +1638,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             );
         }
 
-        // Record borrower claim metadata — but the surplus is in
-        // COLLATERAL units (not principal), and is already in the
-        // borrower's vault. The `ClaimInfo` row records what the
-        // discount-path settlement left them with for off-chain
-        // accounting + the lender / borrower NFT metadata. `claimed`
-        // is set true when the surplus is zero (nothing to claim).
+        // Record borrower claim metadata — the surplus is in COLLATERAL
+        // units (not principal), sits ENCUMBERED in the borrower's vault,
+        // and is withdrawn by the borrower-position NFT holder through
+        // `claimAsBorrower`. `claimed` is set true when the surplus is
+        // zero (nothing to claim).
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: borrowerSurplus,
