@@ -545,23 +545,26 @@ contract PrecloseFacet is
             ),
             bytes4(0)
         );
-        // #569 Codex #572 round-4 P2 — withdraw the exiting collateral
+        // #569 Codex #572 round-11 P1 — withdraw the exiting collateral
         // from the STORED `loan.borrower`'s vault (where the pledged
         // collateral sits and where the lien just released was keyed),
-        // delivering it to `msg.sender` (the current borrower-position
-        // NFT holder, who is entitled to it on exit). The prior code
-        // sourced from `msg.sender`'s vault — when the position NFT had
-        // transferred, that returned the caller's OWN tokens while the
-        // pledged collateral stayed in `loan.borrower`'s vault with its
-        // lien removed. Common case (`msg.sender == loan.borrower`) is
-        // unchanged.
+        // delivering it to the CURRENT borrower-position NFT holder — NOT
+        // `msg.sender`. `transferObligationViaOffer` is keeper-authorizable
+        // (`requireKeeperFor` above), so `msg.sender` may be a keeper;
+        // paying the exiting collateral to `msg.sender` would hand it to an
+        // approved/compromised keeper. `migrateBorrowerPosition` (which
+        // re-keys the borrower NFT to the new borrower) runs later, so
+        // `ownerOf(loan.borrowerTokenId)` here is still the EXITING
+        // borrower — the rightful recipient. Common case (the holder calls
+        // directly, `msg.sender == holder == loan.borrower`) is unchanged.
+        address exitingBorrowerHolder = LibERC721.ownerOf(loan.borrowerTokenId);
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
                     loan.borrower,
                     loan.collateralAsset,
-                    msg.sender,
+                    exitingBorrowerHolder,
                     loan.collateralAmount
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
@@ -573,7 +576,7 @@ contract PrecloseFacet is
                     loan.borrower,
                     loan.collateralAsset,
                     loan.collateralTokenId,
-                    msg.sender
+                    exitingBorrowerHolder
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
             );
@@ -585,7 +588,7 @@ contract PrecloseFacet is
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     loan.collateralQuantity,
-                    msg.sender
+                    exitingBorrowerHolder
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
             );
