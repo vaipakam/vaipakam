@@ -54,19 +54,24 @@ staked/tracked-balance stranding anyway — see "Decision" below).
 
 ## Procedure (pause → drain → verify → rotate → re-enable)
 
-1. **Announce + freeze inflow.** The safest freeze is a **global guardian
-   pause** — it halts every VPFI-touching entry point at once. **Prefer it.**
-   If you pause selectively instead, the freeze set MUST include not only
-   offer-create and offer-accept but also the **VPFI vault-deposit surfaces**
-   — `depositVPFIToVault` / `depositVPFIToVaultWithPermit` — because they
-   stamp `protocolTrackedVaultBalance[user][oldToken]` under the *current*
-   token. A deposit (or staking top-up) that lands after enumeration but
-   before `setVPFIToken` would re-create exactly the stranded tracked balance
-   this runbook guards against. Missing a surface re-opens the gap, which is
-   why the global pause is recommended.
+1. **Freeze INFLOW only — keep the drain paths open.** Freeze the surfaces
+   that can ADD new old-token exposure: offer-create, offer-accept, and the
+   **VPFI vault-deposit surfaces** (`depositVPFIToVault` /
+   `depositVPFIToVaultWithPermit`, which stamp
+   `protocolTrackedVaultBalance[user][oldToken]` under the *current* token).
+   A deposit/stake landing after enumeration but before `setVPFIToken` would
+   re-create exactly the stranded balance this runbook guards against.
+   **Do NOT apply a blanket global guardian pause here:** it would also freeze
+   the withdraw / unstake / repay / settle / cancel / claim paths the drain
+   itself needs, deadlocking the procedure. (If you want a hard freeze at the
+   moment of rotation, apply it only at the very end — after the drain, right
+   before `setVPFIToken` — when there is nothing left to drain.)
 2. **Enumerate ALL old-token exposure.** Identify every:
-   - open offer whose `prepayAsset` or `collateralAsset` == old token;
-   - active loan whose `collateralAsset` == old token (VPFI collateral);
+   - open offer whose `lendingAsset`, `prepayAsset`, **or** `collateralAsset`
+     == old token — note `lendingAsset` too: a VPFI-**lending** offer holds
+     pre-vaulted old-VPFI principal (a tracked balance), so principal-side
+     VPFI is in scope, not just prepay/collateral;
+   - active loan whose `principalAsset` **or** `collateralAsset` == old token;
    - any non-zero VPFI encumbrance (`s.encumbered[user][oldToken][0]`);
    - **any non-zero `protocolTrackedVaultBalance[user][oldToken]`** — i.e.
      staked VPFI for the fee discount, or deposited-but-uncommitted VPFI —
@@ -74,17 +79,19 @@ staked/tracked-balance stranding anyway — see "Decision" below).
      after rotation (no public exit; see "Why a rotation needs care"), so it
      MUST be in the drain set, not just offers/loans.
    Enumerate via the indexer or a **full** active-offer scan filtered on
-   `collateralAsset` **and** `prepayAsset` == old token — NOT
+   `lendingAsset`, `prepayAsset`, **and** `collateralAsset` == old token — NOT
    `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only
    and would MISS old-token prepay and collateral offers — plus a full active-
-   loan scan (by `collateralAsset`) and the per-user
+   loan scan (by `principalAsset` + `collateralAsset`) and the per-user
    `protocolTrackedVaultBalance` ledger for the old token.
-3. **Drain them.** Cancel/let-expire the offers; settle/close/let-mature the
-   loans so their collateral lien releases; have users unstake + withdraw
-   their tracked old-token VPFI (or migrate it) so every
-   `protocolTrackedVaultBalance[user][oldToken]` returns to zero. Goal: **zero**
-   live references to the old token, zero old-token encumbrance, **and zero
-   old-token protocol-tracked vault balance.**
+3. **Drain them ACTIVELY.** Do not rely on passive expiry/maturity — that
+   leaves old-token state lingering indefinitely. **Actively** cancel the
+   offers (releasing their pre-vaulted principal), and settle / close / repay
+   the loans so their collateral lien releases; have users unstake + withdraw
+   their tracked old-token VPFI (or migrate it). Goal: **zero** live references
+   to the old token, zero old-token encumbrance, **and zero old-token
+   protocol-tracked vault balance** — driven to zero by action, not by
+   waiting.
 4. **Verify zero exposure.** Re-scan step 2 — offers, loans, encumbrances, AND
    tracked vault balances — and confirm nothing remains under the old token.
 5. **Rotate.** `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE /
