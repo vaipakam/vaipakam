@@ -54,6 +54,28 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     /// @custom:event-category informational/config
     event VPFITokenSet(address indexed previousToken, address indexed newToken);
 
+    /// @notice #575 — emitted IN ADDITION to {VPFITokenSet} when the registered
+    ///         VPFI token is ROTATED (changed from one non-zero address to a
+    ///         different one), as opposed to the one-time initial registration
+    ///         (zero → token). A rotation is a rare migration-class event:
+    ///         the D-2 rental-prepay restriction and the F-1 VPFI-collateral
+    ///         encumbrance consult both key off the *live* `s.vpfiToken`, so a
+    ///         rotation performed while offers/loans created under the old
+    ///         token are still in flight leaves a check-mismatch window (a
+    ///         previously-valid VPFI-prepay-adjacent offer may become
+    ///         un-acceptable; the F-1 consult reads the new token while a live
+    ///         loan's collateral sits under the old). There is no identified
+    ///         fund-loss path — the encumbrance sub-ledger protects each
+    ///         `(user, token)` lien independently of which token is "current" —
+    ///         but the mismatch is operationally undesirable. This distinct
+    ///         event lets ops / indexers DETECT a rotation and confirm the
+    ///         pause-drain-rotate runbook was followed
+    ///         (`docs/ops/VPFITokenRotationRunbook.md`).
+    /// @param previousToken The non-zero address being rotated away from.
+    /// @param newToken       The non-zero address rotated to.
+    /// @custom:event-category informational/config
+    event VPFITokenRotated(address indexed previousToken, address indexed newToken);
+
     /// @notice Emitted when the canonical-chain flag flips. Expected exactly
     ///         once in the protocol's lifetime — during the Base canonical
     ///         Diamond's deploy script. Any flip observed in production on
@@ -67,6 +89,19 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      not validate that the target implements IVPFIToken — the
     ///      admin is expected to pass the ERC1967Proxy for the canonical
     ///      VPFIToken deployment. Emits {VPFITokenSet}.
+    ///
+    ///      #575 — ROTATION CAVEAT. The expected lifetime use is a single
+    ///      initial registration (zero → token) at deploy. ROTATING the token
+    ///      (one non-zero address → a different one) while offers/loans created
+    ///      under the old token are still live is a migration-class operation:
+    ///      the D-2 rental-prepay restriction (OfferAcceptFacet) and the F-1
+    ///      VPFI-collateral encumbrance consult (VPFIDiscountFacet) read the
+    ///      *live* `s.vpfiToken`, so a mid-flight rotation creates a
+    ///      check-mismatch window. There is no fund-loss path (the encumbrance
+    ///      sub-ledger protects each `(user, token)` lien independently), but
+    ///      the rotation MUST follow the pause-drain-rotate procedure in
+    ///      `docs/ops/VPFITokenRotationRunbook.md`. A rotation
+    ///      additionally emits {VPFITokenRotated} so it is detectable on-chain.
     /// @param newToken The VPFI token proxy address (must be non-zero).
     // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIToken(address newToken) external onlyRole(LibAccessControl.ADMIN_ROLE) {
@@ -78,6 +113,12 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
         s.vpfiToken = newToken;
 
         emit VPFITokenSet(previous, newToken);
+        // #575 — a non-zero `previous` means this is a ROTATION, not the
+        // initial registration. Emit the distinct audit event so ops/indexers
+        // can detect it and verify the rotation runbook was followed.
+        if (previous != address(0)) {
+            emit VPFITokenRotated(previous, newToken);
+        }
     }
 
     /// @notice Returns the VPFI token proxy address registered with the

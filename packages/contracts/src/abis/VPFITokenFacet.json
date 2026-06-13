@@ -175,6 +175,25 @@
   },
   {
     "type": "event",
+    "name": "VPFITokenRotated",
+    "inputs": [
+      {
+        "name": "previousToken",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newToken",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VPFITokenSet",
     "inputs": [
       {
