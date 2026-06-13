@@ -1,4 +1,4 @@
-## Thread — Offer-principal lock: a lender's escrowed principal can't be withdrawn out from under a live offer (PR #PLACEHOLDER)
+## Thread — Offer-principal lock: a lender's escrowed principal can't be withdrawn out from under a live offer (PR #580)
 
 When a lender posts an ERC-20 lending offer, the platform escrows the
 offer's full principal ceiling into the lender's own per-user vault at
