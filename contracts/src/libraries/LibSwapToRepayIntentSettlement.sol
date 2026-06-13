@@ -262,12 +262,27 @@ library LibSwapToRepayIntentSettlement {
             LibVaipakam.LoanStatus.Repaid
         );
 
-        // #569 §4.4 (2026-06-13) — intent fill is the terminal close of
-        // the swap-to-repay-intent flow. `commitSwapToRepayIntent`
-        // already decremented the lien to zero when it pulled the
-        // collateral into custody, so this release is a tombstone of the
-        // now-zeroed row for a clean terminal state (no aggregate change).
-        LibEncumbrance.releaseCollateralLien(loanId);
+        // #569 Gap B (round-6 P1) — RE-LIEN the residual rather than
+        // tombstoning. `commitSwapToRepayIntent` decremented the lien to
+        // zero when it pulled the collateral into custody; on a partial
+        // fill (`makingAmount < custodialCollateral`) the residual was
+        // pushed BACK into loan.borrower's vault above and recorded as the
+        // borrower claim. This is the custody RETURN leg, so the residual
+        // must be re-encumbered to stay protected through the Repaid→claim
+        // window (released atomically by `claimAsBorrower`, with the burn
+        // backstop as the structural guarantee). A bare release here would
+        // let a transferred-away stored borrower drain the residual (VPFI
+        // via withdrawVPFIFromVault) before the rightful holder claims. On
+        // a full fill (residual 0) tombstone the now-zeroed row.
+        // `residual` recomputed here as `loan.collateralAmount - consumed`
+        // (identical to the borrower-claim amount recorded above; the fill
+        // residual lives in the earlier `_runFill` scope, not here).
+        uint256 intentResidual = loan.collateralAmount - consumed;
+        if (intentResidual > 0) {
+            LibEncumbrance.incrementCollateralLien(loanId, intentResidual);
+        } else {
+            LibEncumbrance.releaseCollateralLien(loanId);
+        }
 
         LibVPFIDiscount.settleBorrowerLifProper(loan);
 

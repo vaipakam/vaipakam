@@ -249,33 +249,43 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
                 );
-                // #569 Codex #572 round-5 P1 — ROUTE any FallbackPending
-                // top-up to the borrower-position NFT holder instead of
-                // freeing it. The loan's ORIGINAL lien was released at
-                // default-ENTRY; a borrower may then have added (and
-                // lien-locked, round-4 `incrementCollateralLien`) top-up
-                // collateral while FallbackPending. On this no-cure
-                // terminal that top-up is a refunded failed-cure attempt
-                // owed to the CURRENT borrower-position holder — record it
-                // as the borrower claim and KEEP the lien, so the later
-                // `claimAsBorrower` (driven by the verified NFT owner)
-                // releases it atomically with the payout. A bare release
-                // here would free the top-up to the stored `loan.borrower`,
-                // who may have transferred the position away after the
-                // transferee funded the top-up — the drain. No-op in the
-                // common no-top-up case (lien amount 0 → no claim row, and
-                // a defaulted borrower has nothing else to claim). ERC20-
-                // only (D-1: NFT rentals are never liened, amount stays 0).
-                uint256 fallbackTopUp = s.loanCollateralLien[loanId].amount;
-                if (fallbackTopUp > 0) {
-                    s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-                        asset: loan.collateralAsset,
-                        amount: fallbackTopUp,
-                        assetType: LibVaipakam.AssetType.ERC20,
-                        tokenId: 0,
-                        quantity: 0,
-                        claimed: false
-                    });
+                // #569 Gap C (round-6 P1) — fold the borrower's vault
+                // collateral lien into the borrower claim. After the
+                // fallback resolution above, the lien tracks EXACTLY the
+                // collateral sitting in loan.borrower's vault owed to the
+                // borrower-position holder: the fallback snapshot residual
+                // (re-liened in `_distributeFallbackCollateral`, Gap A) PLUS
+                // any FallbackPending top-up (folded into loan.collateralAmount
+                // and liened, round-4). Record that TOTAL as the borrower
+                // claim and KEEP the lien, so the verified-NFT-owner
+                // `claimAsBorrower` withdraws it + releases atomically (and
+                // the burn backstop guarantees release). A bare release here
+                // would free it to the stored `loan.borrower`, who may have
+                // transferred the position away — the drain.
+                //
+                // Guard: only fold into the claim when there is no
+                // conflicting DIFFERENT-asset claim already present (a
+                // retry-swap principal surplus — case (b), where
+                // `_distributeRetryProceeds` ran instead of
+                // `_distributeFallbackCollateral`). Overwriting a non-zero
+                // principal-surplus claim with the collateral total was the
+                // round-6 clobber bug. In that rare retry-surplus + top-up
+                // edge the top-up stays liened (released by the burn
+                // backstop); the borrowerClaims single-row limit on holding
+                // both a principal surplus and a collateral top-up is
+                // tracked as a follow-up. ERC20-only (D-1).
+                LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
+                uint256 owedCollateral = s.loanCollateralLien[loanId].amount;
+                if (
+                    owedCollateral > 0 &&
+                    (bClaim.amount == 0 || bClaim.asset == loan.collateralAsset)
+                ) {
+                    bClaim.asset = loan.collateralAsset;
+                    bClaim.amount = owedCollateral;
+                    bClaim.assetType = LibVaipakam.AssetType.ERC20;
+                    bClaim.tokenId = 0;
+                    bClaim.quantity = 0;
+                    bClaim.claimed = false;
                 }
             }
         }
@@ -863,6 +873,25 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.collateralAsset).safeTransfer(borrowerVault, snap.borrowerCollateral);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, snap.borrowerCollateral);
+            // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
+            // the vault here. The lien was released at liquidation/default
+            // ENTRY (when the full collateral left to Diamond custody); the
+            // borrower-residual claim row was recorded then too. This is the
+            // custody RETURN leg — the residual now sits in loan.borrower's
+            // vault owed to the borrower-position holder, so it must be
+            // encumbered through the window until `claimAsBorrower` releases
+            // it (and the burn backstop guarantees release). Without this,
+            // a transferred-away stored borrower could drain the residual
+            // (VPFI via withdrawVPFIFromVault) before the rightful holder
+            // claims. ERC20-only (create-if-absent on the released row).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    snap.borrowerCollateral
+                ),
+                bytes4(0)
+            );
         }
         // Claim records were already written in the collateral asset at
         // fallback time; nothing to rewrite here. loanId retained for
