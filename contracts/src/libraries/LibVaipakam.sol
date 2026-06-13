@@ -4640,6 +4640,34 @@ library LibVaipakam {
         return storageSlot().protocolCfg.internalMatchEnabled;
     }
 
+    /// @dev #577 / #585 — true when a FallbackPending loan still carries a
+    ///      vault-held AddCollateral top-up: an active (non-released)
+    ///      collateral lien. At fallback the original collateral moves to
+    ///      Diamond custody and its lien is released; a non-curing
+    ///      `AddCollateral` on the still-FallbackPending loan lands the top-up
+    ///      in the borrower's vault and seeds a fresh active lien sized to that
+    ///      vault portion (`AddCollateralFacet` accepts FallbackPending). Every
+    ///      claim-time / liquidation mechanism that draws
+    ///      `loan.collateralAmount` from Diamond custody — internal match and
+    ///      the claim-time retry swap — would then mis-account the vault-held
+    ///      top-up, drawing on same-token Diamond custody belonging to OTHER
+    ///      fallback loans. Such a loan is therefore ineligible for internal
+    ///      matching (rejected at the trigger gate / skipped by auto-dispatch /
+    ///      filtered out of candidate scans) and for retry swaps, until the
+    ///      top-up-aware unwind lands (#585); it resolves safely through the
+    ///      in-kind fallback distribution, which only touches the snapshot
+    ///      (the Diamond-held portion) and leaves the vault top-up liened.
+    ///      Shared by `RiskMatchLiquidationFacet`, `MetricsFacet`, and
+    ///      `ClaimFacet` so the "topped-up" definition lives in one place.
+    ///      ERC-20-only (the lien is ERC-20-gated per D-1), so a non-zero lien
+    ///      is always the ERC-20 top-up.
+    function hasActiveFallbackTopUp(uint256 loanId) internal view returns (bool) {
+        Storage storage s = storageSlot();
+        if (s.loans[loanId].status != LoanStatus.FallbackPending) return false;
+        Encumbrance storage lien = s.loanCollateralLien[loanId];
+        return !lien.released && lien.amount > 0;
+    }
+
     /// @dev Internal-liquidation match path (B.2) — global LTV
     ///      window above each loan's per-tier liquidation threshold
     ///      where external `triggerLiquidation` is gated to give

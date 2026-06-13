@@ -745,7 +745,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         bool retrySucceeded;
         uint256 proceeds;
-        if (retryCalls.length > 0 && !snap.retryAttempted) {
+        // #577 / #585 — a topped-up FallbackPending loan's collateral is split
+        // between the borrower's vault (the AddCollateral top-up, liened) and
+        // Diamond custody (the snapshot). `_attemptRetrySwap` would swap
+        // `loan.collateralAmount` — the WHOLE amount — out of Diamond custody,
+        // drawing on same-token custody belonging to OTHER fallback loans (the
+        // same mis-accounting the internal-match auto-dispatch above already
+        // skips for these loans). Skip the retry swap too and let the loan
+        // resolve through the in-kind distribution below, which only touches
+        // the snapshot (the Diamond-held portion); the vault top-up stays
+        // liened, owed to the borrower, pending #585's top-up-aware unwind.
+        if (
+            retryCalls.length > 0 &&
+            !snap.retryAttempted &&
+            !LibVaipakam.hasActiveFallbackTopUp(loanId)
+        ) {
             snap.retryAttempted = true;
             (retrySucceeded, proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
             emit ClaimRetryExecuted(loanId, retrySucceeded, proceeds);

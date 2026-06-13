@@ -531,7 +531,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // The top-up-aware unwind lands with #585; until then this is the
             // single pre-settlement eligibility gate for the direct trigger
             // (auto-dispatch checks the same condition and skips instead).
-            if (_hasActiveFallbackTopUp(loan)) {
+            if (LibVaipakam.hasActiveFallbackTopUp(loanId)) {
                 revert InternalMatchFallbackTopUpUnsupported(loanId);
             }
         } else {
@@ -558,34 +558,6 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     function _isMatchableStatus(LibVaipakam.LoanStatus status) private pure returns (bool) {
         return status == LibVaipakam.LoanStatus.Active ||
                status == LibVaipakam.LoanStatus.FallbackPending;
-    }
-
-    /// @dev #577 / #585 — true when a FallbackPending loan still carries a
-    ///      vault-held AddCollateral top-up: an active (non-released)
-    ///      collateral lien. At fallback the original collateral moves to
-    ///      Diamond custody and its lien is released; a subsequent
-    ///      `AddCollateral` on the still-FallbackPending loan lands the top-up
-    ///      in the borrower's vault and `incrementCollateralLien`-seeds a fresh
-    ///      active lien sized to that vault portion (`AddCollateralFacet`
-    ///      accepts FallbackPending). Internal-match settlement draws the moved
-    ///      collateral from Diamond custody, so a live lien here means part of
-    ///      `loan.collateralAmount` is in the vault, not the Diamond — the
-    ///      settlement branches would mis-account it. Such loans are therefore
-    ///      ineligible for internal match until #585's top-up-aware unwind.
-    ///      Only FallbackPending carries this hazard: an Active leg's lien IS
-    ///      its vault collateral and the match withdraws from the vault under
-    ///      it. ERC-20-only (NFT-rental loans never internal-match; the lien is
-    ///      ERC-20-gated per D-1), so a non-zero lien is always the ERC-20
-    ///      top-up.
-    function _hasActiveFallbackTopUp(LibVaipakam.Loan storage loan)
-        private
-        view
-        returns (bool)
-    {
-        if (loan.status != LibVaipakam.LoanStatus.FallbackPending) return false;
-        LibVaipakam.Encumbrance storage lien =
-            LibVaipakam.storageSlot().loanCollateralLien[loan.id];
-        return !lien.released && lien.amount > 0;
     }
 
     /// @dev #577 — retain an Active full-internal-match RESIDUAL so it's
@@ -697,11 +669,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // vault-held top-up otherwise. If one slips through, fail closed
             // (rolls the whole match back atomically) rather than corrupt
             // custody. Unreachable in practice; upholds the gate's invariant.
-            {
-                LibVaipakam.Encumbrance storage liveLien = s.loanCollateralLien[loan.id];
-                if (!liveLien.released && liveLien.amount > 0) {
-                    revert InternalMatchFallbackTopUpUnsupported(loan.id);
-                }
+            if (LibVaipakam.hasActiveFallbackTopUp(loan.id)) {
+                revert InternalMatchFallbackTopUpUnsupported(loan.id);
             }
 
             if (loan.principal == 0) {
@@ -828,8 +797,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // stranding recovery. The direct trigger rejects the same condition at
         // `_gateMatchableLeg`. (#585 replaces this skip with a real match.)
         if (
-            _hasActiveFallbackTopUp(s.loans[loanId]) ||
-            _hasActiveFallbackTopUp(s.loans[candidateId])
+            LibVaipakam.hasActiveFallbackTopUp(loanId) ||
+            LibVaipakam.hasActiveFallbackTopUp(candidateId)
         ) return false;
 
         // Settlement. `hasInternalMatchCandidate` has already filtered

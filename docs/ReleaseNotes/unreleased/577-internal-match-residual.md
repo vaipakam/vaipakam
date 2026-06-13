@@ -55,14 +55,20 @@ custody. The internal-match settlement always draws the moved collateral
 from protocol custody, so a loan split across both places can't be settled
 correctly yet — the vault-held top-up would be mis-counted. Until the
 accounting that reconciles the two lands (with #585), any such topped-up
-fallback-pending loan is simply **ineligible** for internal matching: it is
-rejected up front, before any funds move, whichever way the match is
-attempted (a directly requested match is declined; the automatic
-keeper/claim-time matcher quietly skips it and the loan resolves through
-its normal fallback claim instead — recovery never stalls). The loan stays
-fully recoverable through every other path. This is strictly safer than the
-earlier behaviour, which tore down the loan's collateral protection and
-freed the residual to the original borrower outright.
+fallback-pending loan is held out of **every** mechanism that would draw
+its whole collateral from protocol custody. That means it is ineligible for
+internal matching — and for the speculative collateral re-swap that a
+fallback claim would otherwise attempt — because both would consume the
+vault-held top-up the protocol doesn't actually hold. The loan is excluded
+up front, before any funds move, on all of these paths: a directly
+requested match is declined; the automatic keeper/claim-time matcher skips
+it; it is filtered out so it is never offered to other loans as a match
+target either; and its fallback claim goes straight to the safe in-kind
+payout, which only touches the protocol-held portion and leaves the vault
+top-up untouched. Recovery never stalls and the loan stays fully
+recoverable through every path. This is strictly safer than the earlier
+behaviour, which tore down the loan's collateral protection and freed the
+residual to the original borrower outright.
 
 Closes #577. The broader audit of every collateral-moving path for
 transferred positions is tracked separately as #574; the internal-match

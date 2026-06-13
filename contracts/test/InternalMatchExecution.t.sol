@@ -9,12 +9,15 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
  * @title InternalMatchExecution.t.sol
@@ -400,6 +403,77 @@ contract InternalMatchExecutionTest is SetupTest {
             uint8(_getLoan(LOAN_B).status),
             uint8(LibVaipakam.LoanStatus.Active),
             "candidate B stays Active - the skipped dispatch consumed nothing"
+        );
+    }
+
+    /// @notice #577 Codex round-4 P2 (finding #2) — `hasInternalMatchCandidate`
+    ///         must filter a topped-up FallbackPending candidate WHILE
+    ///         scanning, so a topped-up first candidate can't mask a later
+    ///         eligible one (or, with a single topped-up candidate, leak it as
+    ///         a match target that settlement would then mis-account).
+    function test_577_fallbackPending_topUpCandidate_filteredFromScan() public {
+        // A: Active caller scanning for an opposing match. B: a valid opposing
+        // FallbackPending candidate.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_B, borrowerB, mockERC20, 1000, 980, 20, true);
+
+        // Baseline: clean FallbackPending B IS surfaced as A's candidate.
+        (bool found0, uint256 cid0) =
+            MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_A);
+        assertTrue(found0, "clean FallbackPending B is a candidate");
+        assertEq(cid0, LOAN_B, "candidate is B");
+
+        // Give B a vault-held top-up lien → it must now be filtered out of the
+        // scan (returned as no candidate, not leaked as a match target).
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_B, borrowerB, mockERC20, 0, 200, LibVaipakam.AssetType.ERC20
+        );
+        (bool found1, ) =
+            MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_A);
+        assertFalse(found1, "topped-up FallbackPending B is filtered from the candidate scan");
+    }
+
+    /// @notice #577 Codex round-4 P1 (finding #1) — the claim-time RETRY swap
+    ///         must also be skipped for a topped-up FallbackPending loan, not
+    ///         only the internal match. `_attemptRetrySwap` swaps the WHOLE
+    ///         `loan.collateralAmount` (incl. the vault top-up) out of Diamond
+    ///         custody, which would draw on OTHER fallback loans' same-token
+    ///         custody. The retry block must be bypassed so the loan resolves
+    ///         through the in-kind fallback distribution instead. Asserted via
+    ///         the ABSENCE of `ClaimRetryExecuted` despite a non-empty retry
+    ///         try-list (a fresh, un-attempted snapshot — so the only thing
+    ///         that skips the retry is the top-up guard).
+    function test_577_fallbackPending_topUp_retrySwapSkipped() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 980, 20, true);
+
+        // Topped-up → ineligible for the retry swap.
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 300, LibVaipakam.AssetType.ERC20
+        );
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(LOAN_A, 980);
+
+        _mockLenderNft(LOAN_A, lender);
+        vm.recordLogs();
+        vm.prank(lender);
+        // Non-empty retry try-list (adapter slot 0, the SetupTest ZeroEx shim).
+        ClaimFacet(address(diamond)).claimAsLenderWithRetry(LOAN_A, defaultAdapterCalls());
+
+        // No ClaimRetryExecuted ⇒ the retry block was bypassed.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 retryTopic = keccak256("ClaimRetryExecuted(uint256,bool,uint256)");
+        for (uint256 i = 0; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics.length == 0 || logs[i].topics[0] != retryTopic,
+                "retry swap must be skipped for a topped-up FallbackPending loan"
+            );
+        }
+        // Resolved in-kind (not internal-matched, not stuck).
+        assertTrue(
+            _getLoan(LOAN_A).status != LibVaipakam.LoanStatus.InternalMatched,
+            "topped-up loan resolved via in-kind fallback, not internal match"
         );
     }
 
