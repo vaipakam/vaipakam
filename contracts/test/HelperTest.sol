@@ -70,7 +70,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](79);
+        selectors = new bytes4[](81);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -222,6 +222,14 @@ contract HelperTest {
         // it via NFTPrepayListingFacet.getPrepayListingAutoListOptedOut
         // after the Codex round-13 P2 #3 follow-up.)
         selectors[78] = TestMutatorFacet.getPrepayListingAutoListNonce.selector;
+        // #407 PR 4 (T-407-B, 2026-06-12) — direct write to the
+        // encumbrance aggregate so the withdraw-guard tests can pin
+        // the lien state without driving the full loan-init lifecycle.
+        selectors[79] = TestMutatorFacet.setEncumberedRaw.selector;
+        // #569 Codex #572 round-4 P2 — encumbrance-aggregate reader so
+        // lifecycle tests can assert the lien is HELD across a proper-
+        // close terminal and RELEASED only at `claimAsBorrower`.
+        selectors[80] = TestMutatorFacet.getEncumberedRaw.selector;
         return selectors;
     }
 
@@ -642,15 +650,20 @@ contract HelperTest {
     }
 
     /// @notice #407 PR 2 (2026-06-12) — encumbrance mutate facet
-    ///         selectors. Single entry today; will grow with the
-    ///         offer-principal-lock impl PR.
+    ///         selectors. #407 PR 4 round-1 (2026-06-12) — extended
+    ///         with decrement/increment selectors that the active-loan
+    ///         slice + top-up flows wire through.
     function getEncumbranceMutateFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](4);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
+        selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
+        selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
+        // #569 §4.4 — rekey create-leg for obligation transfer.
+        selectors[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
     }
 
     function getDefaultedFacetSelectors()

@@ -1258,8 +1258,14 @@ contract DeployDiamond is Script {
     ///         offer-principal-lock impl PR adds the lock create /
     ///         decrement / release surface.
     function _getEncumbranceMutateFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](4);
         s[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
+        // #407 PR 4 round-1 (2026-06-12) — decrement/increment cross-
+        // facet entries used by active-loan slice flows + addCollateral.
+        s[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
+        s[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
+        // #569 §4.4 (2026-06-13) — rekey create-leg for obligation transfer.
+        s[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

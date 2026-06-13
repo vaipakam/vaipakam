@@ -67,6 +67,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {IZeroExProxy} from "../src/interfaces/IZeroExProxy.sol";
@@ -246,7 +247,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -325,6 +326,14 @@ contract RiskFacetTest is Test {
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
 
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        // #407 PR 3 (2026-06-12) — encumbrance mutate facet.
+        EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        cuts[17] = IDiamondCut.FacetCut({
+            facetAddress: address(encumbranceMutateFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         AdminFacet(address(diamond)).unpause();

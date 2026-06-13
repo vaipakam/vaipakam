@@ -15,6 +15,8 @@ import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 
 /**
  * @title AddCollateralFacet
@@ -118,20 +120,28 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
-        // Resolve the borrower's vault proxy — needed below by
-        // `_cureFallback` for the FallbackPending → Active branch.
-        // The chokepoint deposit also auto-creates if missing, but we
-        // need the address here regardless so resolve it explicitly.
-        address borrowerVault = LibFacet.getOrCreateVault(msg.sender);
+        // #569 Codex #572 round-2 P2 — resolve the canonical collateral
+        // vault as the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
+        // borrower-position NFT may have transferred, so the current
+        // holder (`requireBorrowerNftOwner` authorizes them) can call
+        // this — but the collateral lien is keyed to `loan.borrower`,
+        // the original collateral sits in `loan.borrower`'s vault, and
+        // the close / claim paths expect the enlarged `collateralAmount`
+        // there. The deposit, the lien increment, and the cure-path
+        // restore must all target the same vault as the lien.
+        address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
 
-        // Transfer collateral from borrower into their vault proxy
-        // via the protocol's chokepoint so the
-        // protocolTrackedVaultBalance counter ticks up. Replaces
-        // the prior direct safeTransferFrom.
+        // Pull the top-up from the CALLER (`msg.sender`, the funding
+        // party / current NFT holder) into `loan.borrower`'s vault via
+        // the cross-payer chokepoint, so the protocolTrackedVaultBalance
+        // counter ticks up under `loan.borrower` (where the lien lives).
+        // For the common case (`msg.sender == loan.borrower`) this is
+        // identical to the prior `vaultDepositERC20` self-deposit.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
-                VaultFactoryFacet.vaultDepositERC20.selector,
-                msg.sender,
+                VaultFactoryFacet.vaultDepositERC20From.selector,
+                msg.sender,        // payer
+                loan.borrower,     // vault owner (= lien.user)
                 loan.collateralAsset,
                 amount
             ),
@@ -140,6 +150,27 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
 
         // Update loan collateral amount
         loan.collateralAmount += amount;
+
+        // #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — keep the
+        // collateral lien in parity with the collateral now sitting in
+        // the borrower's vault. #569 Codex #572 round-4 P1 — increment
+        // for BOTH Active and FallbackPending. The top-up lands in the
+        // vault immediately, so it must be liened immediately, even on a
+        // FallbackPending loan that this call doesn't cure (else the
+        // top-up is drainable before a later cure). `incrementCollateralLien`
+        // is create-if-absent, so it correctly seeds a fresh lien on the
+        // released FallbackPending row sized to the top-up (the vault
+        // portion) — the snapshot collateral still held in the Diamond
+        // is folded in by `_cureFallback`'s own increment when restored.
+        // No-op on NFT rentals (D-1).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                loanId,
+                amount
+            ),
+            bytes4(0)
+        );
 
         // Calculate new HF and LTV for event emission (best-effort; failures don't revert)
         uint256 newHf;
@@ -200,6 +231,18 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             snap.borrowerCollateral;
         if (held > 0) {
             IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
+            // #569 Codex #572 round-3 P2 — tick the protocol-tracked
+            // counter for the restored snapshot collateral. The cure
+            // recreates the lien for the FULL `collateralAmount` below;
+            // since the withdraw guard now caps free balance by
+            // `protocolTrackedVaultBalance` (round-2 P2), failing to
+            // record this Diamond→vault restore would leave the tracked
+            // counter below the lien, so the restored collateral could
+            // never be returned/liquidated after a later terminal.
+            // Mirrors `RepayFacet`'s FallbackPending-cure record.
+            LibVaipakam.recordVaultDeposit(
+                loan.borrower, loan.collateralAsset, held
+            );
         }
 
         delete s.fallbackSnapshot[loanId];
@@ -212,6 +255,18 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibVaipakam.LoanStatus.FallbackPending,
             LibVaipakam.LoanStatus.Active
         );
+
+        // #569 Codex #572 round-4 P1 — grow the lien by the restored
+        // snapshot collateral `held` (Diamond → vault, above). The
+        // top-up(s) that accumulated while the loan was FallbackPending
+        // were ALREADY liened by `addCollateral`'s increment (the lien
+        // now equals the vault's top-up portion), so this must INCREMENT
+        // by `held`, not overwrite — `held + topUps == collateralAmount`.
+        // `incrementCollateralLien` is create-if-absent, so this also
+        // covers the (held>0, no prior top-up) case where the cure is
+        // reached without an `addCollateral` increment. No-op on NFT
+        // rentals (D-1) and when `held == 0`.
+        LibEncumbrance.incrementCollateralLien(loanId, held);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -325,8 +326,37 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     // forge-lint: disable-next-line(mixed-case-function)
     function burnNFT(uint256 tokenId) external {
         _enforceAuthorizedCaller();
-        LibERC721._burn(tokenId);
         LibERC721.ERC721Storage storage es = LibERC721._storage();
+
+        // #569 — LIEN LIFECYCLE = BORROWER-POSITION-NFT LIFECYCLE.
+        // The collateral lien is created when the borrower position NFT is
+        // minted (loan-init) and must not outlive it. Releasing here is the
+        // single STRUCTURAL backstop guaranteeing a lien can never survive
+        // its borrower NFT — the whole class of "a terminal released the
+        // lien early / a return-leg forgot to release" bugs (Codex #572
+        // r4–6) cannot survive it. Gated on a TERMINAL loan status so it
+        // fires only on a genuine CLOSE-burn, NOT on an obligation-transfer
+        // re-key (which burns the OLD borrower token while the loan stays
+        // Active and the lien is being re-keyed to the NEW borrower —
+        // status gate is order-independent vs the re-key's token swap).
+        // Idempotent + ERC20-only: a no-op on already-released liens,
+        // lender positions, offer NFTs (loanId 0), Active/FallbackPending
+        // loans, and NFT-rental loans (never liened, D-1).
+        uint256 burnedLoanId = es.loanIds[tokenId];
+        if (burnedLoanId != 0 && !es.isLenderRoles[tokenId]) {
+            LibVaipakam.LoanStatus st = LibVaipakam
+                .storageSlot()
+                .loans[burnedLoanId]
+                .status;
+            if (
+                st != LibVaipakam.LoanStatus.Active &&
+                st != LibVaipakam.LoanStatus.FallbackPending
+            ) {
+                LibEncumbrance.releaseCollateralLien(burnedLoanId);
+            }
+        }
+
+        LibERC721._burn(tokenId);
         delete es.nftStatuses[tokenId];
         delete es.offerIds[tokenId];
         delete es.loanIds[tokenId];

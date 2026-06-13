@@ -8,6 +8,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -275,6 +276,28 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // fully consumed would leave dust stuck on the diamond.
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
+
+        // #569 Codex #572 round-4 P2 — DECREMENT the lien by exactly
+        // the collateral being withdrawn for the swap (`maxCollateralIn`),
+        // rather than fully releasing it. That clears the chokepoint
+        // guard for this withdraw while keeping the never-withdrawn
+        // residual (`collateralAmount - maxCollateralIn`) liened. The
+        // partial-fill leftover refunded back to the vault below is
+        // re-liened, so the borrower's `unconsumedCollateral` stays
+        // protected until `ClaimFacet.claimAsBorrower` releases it
+        // atomically with the claim withdrawal. A full release here
+        // would expose that residual to a `withdrawVPFIFromVault` drain
+        // by the stored borrower between this terminal and the claim
+        // (when the borrower-position NFT has been transferred to a
+        // different claimant). `maxCollateralIn <= collateralAmount`
+        // (the withdraw below would revert otherwise), so the decrement
+        // can't underflow the lien. Safe under revert: a downstream
+        // revert rolls back the storage write.
+        _callEncumb2(
+            EncumbranceMutateFacet.decrementCollateralLien.selector,
+            loanId,
+            maxCollateralIn
+        );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -352,8 +375,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // (never withdrawn from the borrower vault) + the partial-
         // fill residual the aggregator returned to the diamond
         // (Codex round-3 P1 #2). The borrower keeps everything that
-        // wasn't actually consumed by the swap. ClaimFacet releases
-        // on the Repaid transition.
+        // wasn't actually consumed by the swap.
+        // #569 Codex #572 round-4 P2 — `ClaimFacet.claimAsBorrower` now
+        // releases the lien on this residual atomically with the claim
+        // withdrawal (no longer at the Repaid transition).
         // Codex round-2 P1 #2 — `claimed: false` regardless of amount
         // so `settleBorrowerLifProper` below can credit
         // `borrowerLifRebate` for later claim.
@@ -372,6 +397,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
                 loan.collateralAsset,
+                partialFillRefund
+            );
+            // #569 Codex #572 round-4 P2 — RE-LIEN the refunded leftover.
+            // It was decremented out of the lien before the swap-withdraw
+            // above; now that it's back in the borrower's vault as part
+            // of `unconsumedCollateral`, it must be re-encumbered so the
+            // whole residual stays protected until the claim. Net lien
+            // after this = `(collateralAmount - maxCollateralIn) +
+            // partialFillRefund` = `unconsumedCollateral`.
+            _callEncumb2(
+                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                loanId,
                 partialFillRefund
             );
         }
@@ -528,6 +565,12 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // as `swapToRepayFull`.
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
+
+        // #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — decrement the
+        // lien by the slice we're moving out. The loan stays ACTIVE
+        // here so a full release would leave the residual collateral
+        // unprotected from other ERC20 withdraw surfaces.
+        _decrementLienAtSwapToRepayPartial(loanId, collateralSwapAmount);
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -565,6 +608,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 loan.collateralAsset,
                 partialFillRefund
             );
+            // #407 PR 4 round-1 — restore the lien for the dust that
+            // landed back in the borrower vault; the loan stays Active
+            // and that collateral still backs it.
+            _incrementLienAtSwapToRepayPartial(loanId, partialFillRefund);
         }
 
         // ── Accrued-interest split + partial bound ───────────────────
@@ -704,5 +751,23 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             partialPrincipal,
             adapterUsed
         );
+    }
+
+    /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated
+    ///      cross-facet helpers. One per arg-shape; each call site
+    ///      picks the selector.
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+    }
+
+    function _incrementLienAtSwapToRepayPartial(uint256 loanId, uint256 added) private {
+        _callEncumb2(EncumbranceMutateFacet.incrementCollateralLien.selector, loanId, added);
     }
 }

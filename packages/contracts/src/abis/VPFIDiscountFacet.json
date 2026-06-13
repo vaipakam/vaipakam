@@ -1533,6 +1533,22 @@
   },
   {
     "type": "error",
+    "name": "VPFIEncumberedByActiveLoan",
+    "inputs": [
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "free",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "VPFIGlobalCapExceeded",
     "inputs": []
   },
@@ -1589,6 +1605,11 @@
   {
     "type": "error",
     "name": "VaultWithdrawFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "VpfiNotAllowedAsRentalPrepay",
     "inputs": []
   }
 ]

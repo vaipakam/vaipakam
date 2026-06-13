@@ -9,6 +9,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -292,6 +293,19 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         address treasury = LibFacet.getTreasury();
 
+        // #569 Codex #572 round-4 P2 — the collateral-lien release is NO
+        // LONGER done here. On the ERC20-loan path the borrower's
+        // collateral STAYS in their vault as a `borrowerClaims` row and
+        // is withdrawn later by `ClaimFacet.claimAsBorrower`; releasing
+        // the lien at this terminal would let the stored borrower drain
+        // that collateral (via `withdrawVPFIFromVault`) before a
+        // transferee claimant claims it. The release is now done
+        // atomically inside `claimAsBorrower`, immediately before the
+        // claim withdrawal. The NFT-rental branch below never had a lien
+        // to release (D-1: rentals are not liened — its `prepayAsset`
+        // withdrawals see `encumbered == 0` at the guard), so dropping
+        // the pre-branch release is a no-op for rentals.
+
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // ERC20 loan: Interest + late fee. Build the immutable settlement
             // plan first (phase 1, pure math); all downstream transfers and
@@ -557,14 +571,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Active or FallbackPending both legally transition to Repaid here
         // (normal close or cure-by-repay). LibLifecycle validates the edge.
         LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Repaid);
-        // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-        // registered in the diamond cut (this PR). The cross-facet
-        // release wire lands in PR 3 to keep this PR's diff focused
-        // on the facet foundation + registration; updating the 9
-        // per-facet test fixtures (RepayFacetTest, PrecloseFacetTest,
-        // RefinanceFacetTest, ClaimFacetTest, etc.) to include the
-        // new mutate facet in their minimal-cut setUps is its own
-        // scoped change.
+        // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
+        // moved to BEFORE the asset-type branch above (line ~296) so
+        // the NFT-rental path's mid-flow vault withdraws clear the
+        // {VaultFactoryFacet.vaultWithdrawERC20} guard. See the
+        // explanatory comment at the new call site.
 
         // Phase 5 / §5.2b — proper-close settlement for the borrower LIF
         // VPFI path. Splits any Diamond-held VPFI between the borrower's
@@ -588,6 +599,23 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 // T-051 — Diamond-side transfer to vault ticks the
                 // protocolTrackedVaultBalance counter.
                 LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, held);
+                // #569 Codex #572 round-5 P1 — RE-LIEN the restored
+                // collateral. The lien was released at default-entry
+                // (when the loan went FallbackPending), so the snapshot
+                // collateral just pushed back into the borrower vault is
+                // currently UNencumbered while it sits as the borrower
+                // claim recorded above. Re-create the lien for `held`
+                // (create-if-absent on the released row) so it stays
+                // protected through the Repaid→claim gap and is released
+                // atomically inside `ClaimFacet.claimAsBorrower`. Without
+                // this, the stored borrower could drain the restored
+                // collateral (VPFI via `withdrawVPFIFromVault`) before a
+                // transferee claimant claims it. ERC20-only (D-1).
+                _callEncumb2(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    held
+                );
             }
             delete s.fallbackSnapshot[loanId];
         }
@@ -769,6 +797,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
+            // #569 D-1 (2026-06-13) — NFT rentals carry no collateral
+            // lien (the prepay pool is drained by this very mechanism,
+            // not protected by a lien), so no decrement here.
+
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -863,6 +895,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             dayFee
         );
         address treasury = LibFacet.getTreasury();
+
+        // #569 D-1 (2026-06-13) — NFT rentals carry no collateral lien
+        // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
+        // has no side-door drain to protect against). No decrement here.
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
@@ -1243,6 +1279,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             toSell = loan.collateralAmount;
         }
 
+        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
+        // lien by the periodic-interest shortfall slice. Loan stays
+        // Active after the slice swap, so a release would leave the
+        // residual collateral unprotected.
+        _decrementLienAtPeriodicAutoLiq(loanId, toSell);
+
         // Withdraw collateral to Diamond for swap (mirrors the HF-
         // liquidation withdraw shape).
         LibFacet.crossFacetCall(
@@ -1359,5 +1401,29 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // event ABI. Suppressed via the assignment below to silence
         // the unused-warning lint without inflating gas.
         expected; paid;
+    }
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — extracted from
+    ///      `repayLoan` so the cross-facet release-call's transient
+    ///      locals (`abi.encodeWithSelector` payload + selector) live
+    ///      in their own stack frame. The inline form inside
+    ///      `repayLoan` tripped viaIR's "Variable size 1 too deep" —
+    ///      that function carries the asset-type branch + settlement
+    ///      plan + Tier-1 / Tier-2 transfer scaffolding, so it's
+    ///      perpetually close to solc's stack ceiling.
+    /// @dev #407 PR 4 round-1 (2026-06-12) — consolidated cross-facet
+    ///      lien helpers. One per arg-shape; each call site picks the
+    ///      selector. Replaces the per-selector helpers that grew
+    ///      bytecode without saving anything material (#568 tracks the
+    ///      structural fix).
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
     }
 }

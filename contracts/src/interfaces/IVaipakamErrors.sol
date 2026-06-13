@@ -422,4 +422,17 @@ interface IVaipakamErrors {
     ///         See `docs/DesignsAndPlans/SwapToRepayIntentBased.md`
     ///         §5.8 for the block-vs-force-cancel matrix.
     error IntentPending(uint256 loanId);
+
+    /// @notice #569 decision D-2 (2026-06-13) — VPFI may not be used as
+    ///         the prepay asset for an NFT-rental offer. The rental
+    ///         prepay pool is intentionally NOT protected by a collateral
+    ///         lien (decision D-1), so allowing VPFI prepay would expose
+    ///         it to the `VPFIDiscountFacet.withdrawVPFIFromVault`
+    ///         staking-unwind drain with no protection. Enforced at BOTH
+    ///         offer-create (`OfferCreateFacet._createOfferSetup`) AND
+    ///         offer-accept (`OfferAcceptFacet._acceptOffer`) — the
+    ///         accept-time check closes the window where an offer was
+    ///         created before `vpfiToken` was configured (Codex #572 P1).
+    ///         See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
+    error VpfiNotAllowedAsRentalPrepay();
 }

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -307,10 +308,23 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
         incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
+        // #569 §4.4 (2026-06-13) — decrement each ACTIVE leg's lien by
+        // the consumed collateral BEFORE its `_settleLeg` vault withdraw
+        // (same ordering fix as `_executeTwoWayMatch`). Leg X consumes
+        // B's collateral, Leg Y consumes C's, Leg Z consumes A's.
+        if (!bFromDiamond) {
+            LibEncumbrance.decrementCollateralLien(loanIdB, movedX);
+        }
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
         _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
+        if (!cFromDiamond) {
+            LibEncumbrance.decrementCollateralLien(loanIdC, movedY);
+        }
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
         _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, cFromDiamond);
+        if (!aFromDiamond) {
+            LibEncumbrance.decrementCollateralLien(loanIdA, movedZ);
+        }
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
         _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, matcher, aFromDiamond);
 
@@ -434,8 +448,22 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
 
+        // #569 §4.4 (2026-06-13) — decrement each ACTIVE leg's lien by
+        // the consumed collateral BEFORE its `_settleLeg` vault withdraw,
+        // so the chokepoint guard sees the reduced lien and passes.
+        // FallbackPending legs (`*FromDiamond`) settle from Diamond
+        // custody (no vault withdraw, no guard) and had their lien
+        // released at the fallback transition — skip them.
+        // Leg X consumes B's collateral (`movedX`); Leg Y consumes A's
+        // (`movedY`).
+        if (!bFromDiamond) {
+            LibEncumbrance.decrementCollateralLien(loanIdB, movedX);
+        }
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
         _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
+        if (!aFromDiamond) {
+            LibEncumbrance.decrementCollateralLien(loanIdA, movedY);
+        }
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
         _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, aFromDiamond);
 
@@ -542,6 +570,12 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LoanStatus status = loan.status;
 
         // Active branch — same shape as the original B.2 code.
+        // #569 §4.4 (2026-06-13) — the lien DECREMENT for the consumed
+        // collateral now happens BEFORE the `_settleLeg` withdraw in
+        // `_executeTwoWayMatch` / `_executeThreeWayMatch` (the chokepoint
+        // guard reads the lien at withdraw time, so a post-withdraw
+        // decrement reverted every internal match — Codex #571 P1).
+        // Here we only tombstone the now-zeroed lien on a full close.
         if (status == LibVaipakam.LoanStatus.Active) {
             if (loan.principal == 0) {
                 LibLifecycle.transition(
@@ -549,7 +583,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.LoanStatus.Active,
                     LibVaipakam.LoanStatus.InternalMatched
                 );
+                // Full internal-match closes the loan. The pre-withdraw
+                // decrement already drove the lien amount to zero; this
+                // release tombstones the row (a no-op aggregate change)
+                // for a clean terminal state.
+                LibEncumbrance.releaseCollateralLien(loan.id);
             }
+            // Partial internal match — loan stays Active with reduced
+            // collateral. The pre-withdraw decrement already adjusted
+            // the lien; nothing to do here.
             return;
         }
 

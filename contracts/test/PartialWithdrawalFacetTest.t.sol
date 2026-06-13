@@ -27,6 +27,7 @@ import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 
@@ -109,7 +110,7 @@ contract PartialWithdrawalFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -132,6 +133,13 @@ contract PartialWithdrawalFacetTest is Test {
         cuts[14] = IDiamondCut.FacetCut({facetAddress: address(testMutatorFacet),   action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getTestMutatorFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({facetAddress: address(offerCancelFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCancelFacetSelectors()});
         cuts[16] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        // #569 (2026-06-13) — encumbrance mutate facet for lien wires.
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(new EncumbranceMutateFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -210,9 +218,12 @@ contract PartialWithdrawalFacetTest is Test {
 
     // ─── partialWithdrawCollateral reverts ───────────────────────────────────
 
-    function testPartialWithdrawRevertsNotBorrower() public {
+    function testPartialWithdrawRevertsNotNFTOwner() public {
+        // #569 round-10 P1 — partialWithdrawCollateral now authorizes the
+        // current borrower-position NFT holder (not the stored
+        // `loan.borrower`), so a non-holder caller reverts NotNFTOwner.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotBorrower.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 100 ether);
     }
 

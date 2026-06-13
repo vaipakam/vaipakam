@@ -22,6 +22,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
  // For NFT updates/burns
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
  // For transfers
 import {ProfileFacet} from "./ProfileFacet.sol";
  // For KYC if high-value
@@ -541,6 +542,17 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             return;
         }
 
+        // #407 PR 4 round-1 Codex P1 #5 (2026-06-12) — release the
+        // collateral lien only AFTER the internal-match dispatch
+        // returned `false`. If internal-match auto-dispatched, that
+        // path may have partially consumed the loan and is responsible
+        // for its own lien decrement; releasing here would have
+        // unprotected the residual. From this line down we're on the
+        // external-aggregator swap branch — loan transitions Active →
+        // Defaulted (or FallbackPending on swap failure, where the
+        // cure path will recreate the lien).
+        _releaseLienAtLiquidation(loanId);
+
         // ── Internal-match priority window (B.2 / PR4) ─────────────────
         // When the kill-switch is on AND auto-dispatch above didn't fire
         // (no candidate found), the external swap-liquidation path is
@@ -857,6 +869,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
+        // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
+        _releaseLienAtLiquidation(loanId);
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
@@ -1161,6 +1175,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             revert InvalidPartialFraction(fractionBps, cap);
         }
 
+        // #407 PR 4 round-1 Codex P1 #1 (2026-06-12) — decrement the
+        // lien by the slice we're moving out. Loan stays Active after
+        // the slice swap, so full release would leave the residual
+        // collateral unprotected from other ERC20 withdraw surfaces.
+        _decrementLienAtPartialLiq(loanId, swappedCollateral);
+
         // Withdraw only the slice from the borrower's vault. If the
         // swap reverts downstream, the wrapping `revert` here unwinds
         // the withdraw too (single tx, all storage rolled back) — no
@@ -1453,6 +1473,19 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
+        // #569 Codex #572 round-5 P2 — UNLIKE the full-seizure atomic
+        // paths ({triggerLiquidation}/{triggerLiquidationSplit}, which
+        // withdraw ALL collateral and so fully release here), the
+        // discounted path seizes only `collateralSeized` and leaves
+        // `borrowerSurplus` COLLATERAL in `loan.borrower`'s vault as a
+        // `borrowerClaims` row. So the lien must NOT be fully released
+        // here; it is decremented by exactly `collateralSeized` inside
+        // `_settleDiscountedLiquidation` (just before the seizure
+        // withdraw), leaving the surplus encumbered until
+        // `ClaimFacet.claimAsBorrower` releases it atomically. A full
+        // release here would let the stored borrower drain the surplus
+        // (via `withdrawVPFIFromVault`) before a transferee claimant
+        // claims it.
 
         // l2 circuit-breaker — same as atomic path. While the
         // sequencer is unhealthy, oracle reads may be stale and the
@@ -1575,11 +1608,23 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             claimed: false
         });
 
+        // #569 Codex #572 round-5 P2 — decrement the lien by exactly
+        // `collateralSeized` (what leaves the vault for the liquidator).
+        // The full lien was retained through `triggerLiquidationDiscounted`
+        // (the early full release was removed); this decrement clears the
+        // guard for the seizure withdraw below while leaving
+        // `borrowerSurplus` encumbered. The surplus stays liened in
+        // `loan.borrower`'s vault until `ClaimFacet.claimAsBorrower`
+        // releases it atomically with the claim withdrawal — closing the
+        // transferred-position drain. No-op when `collateralSeized == 0`
+        // (the full collateral becomes the surplus claim).
+        _decrementLienAtPartialLiq(loanId, collateralSeized);
+
         // Withdraw `collateralSeized` from borrower vault directly to
-        // `recipient`. The remaining `borrowerSurplus` stays in the
-        // borrower's vault as a regular balance — the borrower
-        // retrieves it via standard vault withdrawal, no claim
-        // ceremony required.
+        // `recipient`. The remaining `borrowerSurplus` stays ENCUMBERED
+        // in the borrower's vault and is retrieved by the current
+        // borrower-position NFT holder via `ClaimFacet.claimAsBorrower`
+        // (which releases the residual lien atomically with the payout).
         if (collateralSeized > 0) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -1593,12 +1638,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             );
         }
 
-        // Record borrower claim metadata — but the surplus is in
-        // COLLATERAL units (not principal), and is already in the
-        // borrower's vault. The `ClaimInfo` row records what the
-        // discount-path settlement left them with for off-chain
-        // accounting + the lender / borrower NFT metadata. `claimed`
-        // is set true when the surplus is zero (nothing to claim).
+        // Record borrower claim metadata — the surplus is in COLLATERAL
+        // units (not principal), sits ENCUMBERED in the borrower's vault,
+        // and is withdrawn by the borrower-position NFT holder through
+        // `claimAsBorrower`. `claimed` is set true when the surplus is
+        // zero (nothing to claim).
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: borrowerSurplus,
@@ -1927,4 +1971,38 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     // each call site. The commented-out legacy block earlier in this
     // file (around line 1625) is the original 0x-direct flow these
     // wrappers existed to serve; leaving it in place as history.
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — release the borrower's
+    ///      collateral lien before any liquidation-path vault withdraw
+    ///      drains the collateral asset (swap to lender share / treasury
+    ///      share / borrower surplus). Wrapped in a private helper so
+    ///      the cross-facet `abi.encodeWithSelector` locals don't
+    ///      compete with the trigger function's already-large stack
+    ///      frame (HF quorum + swap math). Idempotent on already-
+    ///      released rows. NFT-rental loans never carry a lien
+    ///      (gated at create time in {LibEncumbrance.createCollateralLien}),
+    ///      so this is a no-op for those.
+    /// @dev #407 PR 4 round-1 (2026-06-12) — consolidated cross-facet
+    ///      helpers.
+    function _callEncumb1(bytes4 selector, uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId),
+            bytes4(0)
+        );
+    }
+
+    function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(selector, loanId, arg2),
+            bytes4(0)
+        );
+    }
+
+    function _releaseLienAtLiquidation(uint256 loanId) private {
+        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
+    }
+
+    function _decrementLienAtPartialLiq(uint256 loanId, uint256 consumed) private {
+        _callEncumb2(EncumbranceMutateFacet.decrementCollateralLien.selector, loanId, consumed);
+    }
 }

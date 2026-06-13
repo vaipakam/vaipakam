@@ -2910,6 +2910,11 @@
   },
   {
     "type": "error",
+    "name": "VpfiNotAllowedAsRentalPrepay",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "WrongVenue",
     "inputs": [
       {

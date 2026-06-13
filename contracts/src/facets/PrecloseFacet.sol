@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -11,6 +12,7 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
@@ -259,9 +261,17 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
-            // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-            // registered (this PR). Cross-facet release wire deferred
-            // to PR 3 alongside the per-facet test-fixture updates.
+            // #569 Codex #572 round-4 P2 — the collateral-lien release
+            // is NO LONGER done at this proper-close terminal. The
+            // borrower's collateral stays in their vault as the
+            // `borrowerClaims` row recorded above and is withdrawn later
+            // by `ClaimFacet.claimAsBorrower`, which now releases the
+            // lien atomically right before that withdrawal. Releasing
+            // here would let the stored borrower drain the collateral
+            // (via `withdrawVPFIFromVault`) before a transferee claimant
+            // claims it. `precloseDirect` settles the lender via
+            // `safeTransferFrom` from the borrower's wallet (not a vault
+            // withdraw), so no guard-clearing release is needed here.
 
             // Phase 5 / §5.2b — proper-close settlement for borrower LIF
             // VPFI path. Splits Diamond-held VPFI into borrower rebate +
@@ -523,13 +533,38 @@ contract PrecloseFacet is
         }
 
         // ── 3. Release alice's collateral ───────────────────────────────────
+        // #569 §4.4 (2026-06-13) — rekey, release-leg. Drop the exiting
+        // borrower's collateral lien BEFORE returning their collateral,
+        // so the chokepoint guard passes. No-op on NFT rentals (D-1).
+        // The new borrower's lien is created after the loan rewrite
+        // below (rekey create-leg).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+        // #569 Codex #572 round-11 P1 — withdraw the exiting collateral
+        // from the STORED `loan.borrower`'s vault (where the pledged
+        // collateral sits and where the lien just released was keyed),
+        // delivering it to the CURRENT borrower-position NFT holder — NOT
+        // `msg.sender`. `transferObligationViaOffer` is keeper-authorizable
+        // (`requireKeeperFor` above), so `msg.sender` may be a keeper;
+        // paying the exiting collateral to `msg.sender` would hand it to an
+        // approved/compromised keeper. `migrateBorrowerPosition` (which
+        // re-keys the borrower NFT to the new borrower) runs later, so
+        // `ownerOf(loan.borrowerTokenId)` here is still the EXITING
+        // borrower — the rightful recipient. Common case (the holder calls
+        // directly, `msg.sender == holder == loan.borrower`) is unchanged.
+        address exitingBorrowerHolder = LibERC721.ownerOf(loan.borrowerTokenId);
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
-                    msg.sender,
+                    exitingBorrowerHolder,
                     loan.collateralAmount
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
@@ -538,10 +573,10 @@ contract PrecloseFacet is
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
                     loan.collateralTokenId,
-                    msg.sender
+                    exitingBorrowerHolder
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
             );
@@ -549,11 +584,11 @@ contract PrecloseFacet is
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     loan.collateralQuantity,
-                    msg.sender
+                    exitingBorrowerHolder
                 ),
                 IVaipakamErrors.VaultWithdrawFailed.selector
             );
@@ -564,10 +599,74 @@ contract PrecloseFacet is
         // ── 5. Update loan to reflect ben as borrower ───────────────────────
         loan.borrower = newBorrower;
         loan.collateralAmount = offer.collateralAmount;
+        // #569 Codex #572 P1 #2 (2026-06-13) — copy the incoming offer's
+        // collateral IDENTITY too, not just the amount. `assertAssetContinuity`
+        // pins only `collateralAsset` + `collateralAssetType`, so an
+        // ERC721/1155 offer from the same collection may carry a DIFFERENT
+        // `collateralTokenId` / `collateralQuantity` than the old loan.
+        // Without this the lien recreate below would lock the OLD tokenId
+        // under the new borrower while their actually-deposited NFT stays
+        // unencumbered. ERC-20 collateral leaves these at 0 (harmless).
+        loan.collateralTokenId = offer.collateralTokenId;
+        loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;
+
+        // #569 Codex #572 P1 #3 (2026-06-13) — verify the incoming
+        // borrower's offer collateral actually backs the loan before
+        // locking it. Pre-loan borrower-offer collateral is NOT
+        // encumbered (the map §5 "fourth surface", tracked separately),
+        // so a creator could deposit ERC-20 collateral at offer-create
+        // and drain it — e.g. VPFI via `withdrawVPFIFromVault` — before
+        // this transfer. Reverting here keeps the continuing loan from
+        // being rekeyed onto absent collateral. (Full pre-loan
+        // offer-collateral lock for the normal acceptance path is the
+        // follow-up card; this is the targeted guard for the obligation-
+        // transfer path that this PR newly liens.)
+        if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+            address newBorrowerVault = LibFacet.getOrCreateVault(newBorrower);
+            // #569 Codex #572 round-2 P1 — compare against the incoming
+            // borrower's FREE balance (raw − their existing encumbrances),
+            // not the raw vault balance. Otherwise, if they already have
+            // the same ERC-20 locked by another active loan, they could
+            // drain the new offer collateral down to that locked amount
+            // and this check would still pass — double-encumbering the
+            // same tokens across two loans.
+            // #569 Codex #572 round-3 P2 — cap the raw balance by the
+            // protocol-tracked balance first, matching the chokepoint
+            // guard. Otherwise drained tracked collateral replaced by
+            // unsolicited dust would pass here, and the later guarded
+            // exit (which uses `min(balanceOf, tracked)`) couldn't return
+            // or liquidate it.
+            uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
+            uint256 trackedBal =
+                s.protocolTrackedVaultBalance[newBorrower][loan.collateralAsset];
+            if (trackedBal < rawBal) {
+                rawBal = trackedBal;
+            }
+            if (
+                LibEncumbrance.freeBalance(
+                    newBorrower, loan.collateralAsset, 0, rawBal
+                ) < loan.collateralAmount
+            ) {
+                revert InsufficientCollateral();
+            }
+        }
+
+        // #569 §4.4 (2026-06-13) — rekey, create-leg. Now that the loan
+        // row reflects the new borrower + their collateral (locked in
+        // their vault at offer creation, step 4 above), create the lien
+        // under the new borrower so the continuing loan's collateral is
+        // protected. No-op on NFT rentals (D-1).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.recreateCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
 
         // ── 5b. NFT rental: reset prepay accounting and reassign user rights ─
         if (loan.assetType != LibVaipakam.AssetType.ERC20) {

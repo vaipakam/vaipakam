@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -249,6 +250,52 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibVaipakam.LoanStatus.Defaulted
                 );
             }
+            // #569 Gap C (round-6 P1 + round-9 P1) — fold the borrower's
+            // vault collateral lien into the borrower claim. The lien
+            // tracks EXACTLY the collateral sitting in loan.borrower's vault
+            // owed to the borrower-position holder: the fallback snapshot
+            // residual (re-liened in `_distributeFallbackCollateral`, Gap A)
+            // PLUS any FallbackPending top-up (folded into loan.collateralAmount
+            // and liened, round-4). Recording that TOTAL as the borrower
+            // claim (and KEEPING the lien) lets the verified-NFT-owner
+            // `claimAsBorrower` withdraw it + release atomically (with the
+            // burn backstop as the structural guarantee). A bare release
+            // would free it to the stored `loan.borrower`, who may have
+            // transferred the position away — the drain.
+            //
+            // round-9 P1 — gate on Defaulted, NOT FallbackPending. A
+            // claim-time RETRY SUCCESS inside `_resolveFallbackIfActive`
+            // drives the loan straight to Defaulted (leaving an
+            // empty/claimed borrower row + a dangling top-up lien); the
+            // old FallbackPending-only gate skipped this path, stranding
+            // the top-up. The Defaulted gate covers both the no-cure
+            // transition above AND the retry-success terminal.
+            //
+            // Guard: only fold when there is no conflicting DIFFERENT-asset
+            // claim already present (a non-zero retry-swap principal
+            // surplus — `_distributeRetryProceeds`). Overwriting that with
+            // the collateral total was the round-6 clobber bug; in that
+            // retry-surplus + top-up case the top-up is instead paid out
+            // as a second asset by `claimAsBorrower` (round-8). round-7 P1:
+            // read the amount ONLY from an ACTIVE lien — `releaseCollateralLien`
+            // zeroes the aggregate + the per-loan amount on release, but a
+            // never-reactivated released row must not be folded. ERC20-only.
+            if (loan.status == LibVaipakam.LoanStatus.Defaulted) {
+                LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
+                LibVaipakam.Encumbrance storage lienRow = s.loanCollateralLien[loanId];
+                uint256 owedCollateral = lienRow.released ? 0 : lienRow.amount;
+                if (
+                    owedCollateral > 0 &&
+                    (bClaim.amount == 0 || bClaim.asset == loan.collateralAsset)
+                ) {
+                    bClaim.asset = loan.collateralAsset;
+                    bClaim.amount = owedCollateral;
+                    bClaim.assetType = LibVaipakam.AssetType.ERC20;
+                    bClaim.tokenId = 0;
+                    bClaim.quantity = 0;
+                    bClaim.claimed = false;
+                }
+            }
         }
 
         // Claimable if there's a recorded amount, or heldForLender funds, or an NFT rental to return,
@@ -445,6 +492,49 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
 
+        // #569 round-8 P2 (#578) — capture a liened collateral amount that
+        // the single `borrowerClaims` row CANNOT carry because it is paying
+        // a DIFFERENT asset (the rare FallbackPending non-curing top-up +
+        // lender-retry-success principal-surplus combination: the claim row
+        // holds the principal surplus, but a collateral top-up is still
+        // liened in `loan.borrower`'s vault). Without paying it out here it
+        // would be released by the burn backstop and left for a
+        // transferred-away stored borrower to drain. The lien is the source
+        // of truth for owed collateral, so claimAsBorrower pays it out as a
+        // SECOND asset below. Captured BEFORE the release zeroes it. ERC20-
+        // only; skipped in the common case where the claim already IS the
+        // liened collateral (`lr.asset == claim.asset`).
+        LibVaipakam.Encumbrance storage lr = s.loanCollateralLien[loanId];
+        address extraLienedAsset;
+        uint256 extraLienedAmt;
+        if (!lr.released && lr.amount > 0 && lr.asset != claim.asset) {
+            extraLienedAsset = lr.asset;
+            extraLienedAmt = lr.amount;
+        }
+
+        // #569 Codex #572 round-4 P2 — release the collateral lien
+        // ATOMICALLY here, immediately before the claim withdrawal,
+        // rather than at the proper-close terminal. Proper-close paths
+        // (RepayFacet, PrecloseFacet direct, SwapToRepayFacet) leave the
+        // borrower's collateral in `loan.borrower`'s vault as this claim
+        // row; releasing the lien at the terminal would let the stored
+        // borrower (when the borrower-position NFT has been transferred
+        // to a different claimant) drain that collateral via
+        // `withdrawVPFIFromVault` between the terminal and this claim.
+        // Holding the lien until the claim closes the window: the
+        // release + withdraw are one atomic step driven by the rightful
+        // NFT-owner claimant, and the guard would otherwise block this
+        // withdraw while the lien is live. Idempotent + ERC20-only
+        // (D-1): a no-op on default/liquidation paths (already released)
+        // and on NFT-collateral claims (never liened).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
@@ -477,6 +567,26 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     claim.tokenId,
                     claim.quantity,
                     msg.sender
+                ),
+                VaultWithdrawFailed.selector
+            );
+        }
+
+        // #569 round-8 P2 (#578) — pay out the liened collateral the claim
+        // row couldn't carry (captured above). The lien was released just
+        // above, so the guard permits this withdraw; routing it to the
+        // rightful NFT-owner claimant closes the transferred-position drain
+        // where the burn backstop would otherwise free it to the stored
+        // borrower. Common case: extraLienedAmt == 0 (claim IS the liened
+        // collateral) → no-op.
+        if (extraLienedAmt > 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    loan.borrower,
+                    extraLienedAsset,
+                    msg.sender,
+                    extraLienedAmt
                 ),
                 VaultWithdrawFailed.selector
             );
@@ -811,6 +921,25 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.collateralAsset).safeTransfer(borrowerVault, snap.borrowerCollateral);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, snap.borrowerCollateral);
+            // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
+            // the vault here. The lien was released at liquidation/default
+            // ENTRY (when the full collateral left to Diamond custody); the
+            // borrower-residual claim row was recorded then too. This is the
+            // custody RETURN leg — the residual now sits in loan.borrower's
+            // vault owed to the borrower-position holder, so it must be
+            // encumbered through the window until `claimAsBorrower` releases
+            // it (and the burn backstop guarantees release). Without this,
+            // a transferred-away stored borrower could drain the residual
+            // (VPFI via withdrawVPFIFromVault) before the rightful holder
+            // claims. ERC20-only (create-if-absent on the released row).
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    snap.borrowerCollateral
+                ),
+                bytes4(0)
+            );
         }
         // Claim records were already written in the collateral asset at
         // fallback time; nothing to rewrite here. loanId retained for

@@ -548,14 +548,17 @@ library LibVPFIDiscount {
             prevTracked - vpfiRequired
         );
 
-        // Staking checkpoint BEFORE the balance leaves vault so the
-        // accrual captures the pre-deduction staked amount.
-        LibStakingRewards.updateUser(borrower, newStakedBal);
-
         // Withdraw VPFI from borrower's vault into Diamond custody (the
         // Diamond holds it until settlement splits it between rebate and
         // treasury). The withdraw reverts on insufficient balance /
         // vault misconfiguration; silent-fallback via the call wrapper.
+        // #569 Codex #572 round-4 P2 — the encumbrance guard can now
+        // revert this withdraw when the borrower's VPFI is locked as loan
+        // collateral. The staking + discount checkpoints are therefore
+        // stamped ONLY AFTER a successful withdraw (below), so the
+        // silent-fallback path (`ok == false`) can't leave reward state
+        // stamped as if VPFI had moved when the vault balance didn't
+        // change.
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -566,6 +569,11 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
+
+        // Staking checkpoint at the post-mutation balance (now that the
+        // withdraw committed). `newStakedBal` is the intended post-
+        // deduction staked amount, computed pre-withdraw above.
+        LibStakingRewards.updateUser(borrower, newStakedBal);
 
         // Rollup the borrower's discount accumulator at the post-
         // mutation balance now that the withdraw has committed. Seeds
@@ -754,8 +762,13 @@ library LibVPFIDiscount {
             vaultBal - vpfiRequired,
             prevTracked - vpfiRequired
         );
-        LibStakingRewards.updateUser(lender, newStakedBal);
 
+        // #569 Codex #572 round-4 P2 — stamp the staking + discount
+        // checkpoints ONLY AFTER a successful withdraw. The encumbrance
+        // guard can now revert this withdraw when the lender's VPFI is
+        // locked as loan collateral; on that silent-fallback path
+        // (`ok == false`) we must not leave reward state stamped as if
+        // VPFI had moved.
         address treasury = LibFacet.getTreasury();
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
@@ -767,6 +780,8 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
+
+        LibStakingRewards.updateUser(lender, newStakedBal);
 
         // 4. Re-stamp the accumulator at the post-mutation balance now
         //    that the withdraw has committed. Zero elapsed between this

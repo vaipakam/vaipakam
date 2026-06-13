@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
@@ -439,20 +440,42 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
         // ── Release old collateral ────────────────────────────────────────
-        // T-092 Phase 2a — old collateral lives in the current
-        // borrower-NFT owner's vault (auto-provisioned if absent via
-        // `getOrCreateUserVault` inside `vaultWithdrawERC20`) and is
-        // released back to the same owner. Using msg.sender here
-        // (the pre-Phase-2a behaviour) would mis-route on the
-        // keeper-driven path — the keeper's vault doesn't hold the
-        // collateral, and the keeper isn't the rightful recipient.
+        // #569 Codex #572 round-4 P2 — the old collateral physically
+        // lives in the STORED `oldLoan.borrower`'s vault: that's where
+        // it was deposited at loan-init and where the encumbrance lien
+        // is keyed. A borrower-position NFT transfer does NOT migrate
+        // vault contents (a plain ERC721 transfer can't move ERC20
+        // balances), so `loan.borrower` stays the custody vault for the
+        // life of the loan. The withdraw therefore SOURCES from
+        // `oldLoan.borrower` (custody) and DELIVERS to
+        // `currentBorrowerNftOwner` (the rightful recipient of the
+        // returned collateral on refinance — the current borrower-
+        // position holder). The prior code sourced from
+        // `currentBorrowerNftOwner`: correct only when the NFT never
+        // moved (`currentBorrowerNftOwner == oldLoan.borrower`); after a
+        // transfer it withdrew from the new owner's (empty) vault while
+        // the lien-release below freed the original borrower's real
+        // collateral — letting the original borrower drain it.
+
+        // #407 PR 4 (T-407-B, 2026-06-12) — release the OLD loan's
+        // collateral lien BEFORE the actual vault withdraw of the same
+        // collateral. The chokepoint guard in
+        // {VaultFactoryFacet.vaultWithdrawERC20} would otherwise block
+        // this legitimate refinance-driven collateral return. Safe
+        // under revert: any downstream revert in this function rolls
+        // back the lien-release storage write. Wrapped in a private
+        // helper to keep the `abi.encodeWithSelector` locals in their
+        // own stack frame — `_refinanceLoanLogic` already carries the
+        // HF/LTV scaffolding + settlement math, so inlining could trip
+        // viaIR's "Variable size 1 too deep".
+        _releaseOldLienAtRefinance(oldLoanId);
         if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             uint256 oldCol = oldLoan.collateralAmount;
             if (oldCol > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        currentBorrowerNftOwner,
+                        oldLoan.borrower,
                         oldLoan.collateralAsset,
                         currentBorrowerNftOwner,
                         oldCol
@@ -464,7 +487,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    currentBorrowerNftOwner,
+                    oldLoan.borrower,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     currentBorrowerNftOwner
@@ -475,7 +498,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    currentBorrowerNftOwner,
+                    oldLoan.borrower,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     oldLoan.collateralQuantity,
@@ -564,9 +587,10 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibVaipakam.LoanStatus.Active,
             LibVaipakam.LoanStatus.Repaid
         );
-        // #407 PR 2 (2026-06-12) — `EncumbranceMutateFacet` is now
-        // registered (this PR). Cross-facet release wire deferred
-        // to PR 3 alongside the per-facet test-fixture updates.
+        // #407 PR 4 (T-407-B, 2026-06-12) — collateral lien release
+        // moved to BEFORE the old-collateral withdraw above so the
+        // {VaultFactoryFacet.vaultWithdrawERC20} guard clears. See the
+        // explanatory comment at the new call site.
 
         // Phase 5 / §5.2b — proper-close settlement for the OLD loan's
         // borrower LIF VPFI path. The borrower earned the rebate over
@@ -605,5 +629,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 TreasuryTransferFailed.selector
             );
         }
+    }
+
+    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — see the comment at the
+    ///      call site in `_refinanceLoanLogic`. Extracted into a
+    ///      private function to keep the cross-facet release-call's
+    ///      transient locals in their own stack frame.
+    function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                oldLoanId
+            ),
+            bytes4(0)
+        );
     }
 }

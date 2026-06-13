@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
@@ -85,6 +86,18 @@ contract VPFIDiscountFacet is
 {
     using SafeERC20 for IERC20;
     using Address for address payable;
+
+    /// @notice #569 §6 F-1 (2026-06-13) — raised by
+    ///         {withdrawVPFIFromVault} when the requested unstake amount
+    ///         exceeds the FREE vault VPFI balance because some of the
+    ///         caller's VPFI backs a live loan as ERC-20 collateral
+    ///         (it's in the encumbrance sub-ledger). The encumbered
+    ///         portion can only exit through the loan's own lifecycle
+    ///         (repay / liquidation / default), not this staking-unwind
+    ///         door.
+    /// @param requested The amount the caller asked to withdraw.
+    /// @param free      The withdrawable free balance (raw − encumbered).
+    error VPFIEncumberedByActiveLoan(uint256 requested, uint256 free);
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
@@ -604,6 +617,29 @@ contract VPFIDiscountFacet is
         // Excludes any unsolicited dust still sitting in the vault
         // from the post-mutation yield-bearing balance.
         uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][vpfi];
+
+        // #569 §6 F-1 (2026-06-13) — explicit encumbrance consult. VPFI
+        // is collateral-eligible (triaged code-wrong: safe under P2P +
+        // lender discretion). If the caller has VPFI backing a live loan
+        // as ERC-20 collateral, that portion is in
+        // `encumbered[msg.sender][vpfi][0]` and is NOT withdrawable
+        // through this staking-unwind door — only down to the free
+        // balance. The shared chokepoint guard in `vaultWithdrawERC20`
+        // (line below) enforces the same bound, but checking up-front
+        // (a) gives a clean, specific revert BEFORE the staking-rollup /
+        // checkpoint work below runs on a doomed amount, and (b) keeps
+        // this fund-exit surface self-protecting against any future
+        // refactor that bypasses the chokepoint. Defense-in-depth.
+        //
+        // #569 Codex #572 round-2 P2 — cap by the tracked balance first
+        // (same rationale as the chokepoint): unsolicited VPFI dust must
+        // not inflate the free figure, or the post-withdraw tracked
+        // decrement would dip below the active lien.
+        uint256 cappedBal = prevBal < prevTracked ? prevBal : prevTracked;
+        uint256 freeVpfi = LibEncumbrance.freeBalance(msg.sender, vpfi, 0, cappedBal);
+        if (amount > freeVpfi) {
+            revert VPFIEncumberedByActiveLoan(amount, freeVpfi);
+        }
         uint256 newStakedBal = LibVPFIDiscount.clampToTracked(
             prevBal - amount,
             prevTracked - amount

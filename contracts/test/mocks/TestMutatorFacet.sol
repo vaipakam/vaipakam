@@ -715,4 +715,37 @@ contract TestMutatorFacet {
     function getPrepayListingAutoListNonce(uint256 loanId) external view returns (uint64) {
         return LibVaipakam.storageSlot().prepayListingAutoListNonce[loanId];
     }
+
+    // ─── #407 PR 4 (T-407-B) — encumbrance-aggregate direct write ───────
+    //
+    // Lets the withdraw-guard tests pin `encumbered[user][asset][tokenId]`
+    // to a known value without driving the full offer-create / loan-init
+    // flow. The production lifecycles (`LibEncumbrance.createCollateralLien`
+    // / `createOfferPrincipalLien`) are exercised in PR 3's fixture
+    // sweep + the upcoming T-407-C tests; this helper is purely for
+    // exercising the guard's REVERT branch in isolation.
+
+    function setEncumberedRaw(
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().encumbered[user][asset][tokenId] = amount;
+    }
+
+    // ─── #569 Codex #572 round-4 P2 — encumbrance-aggregate reader ──────
+    //
+    // Mirror of `setEncumberedRaw` for assertions: lets lifecycle tests
+    // read the live `encumbered[user][asset][tokenId]` aggregate after a
+    // real loan flow (e.g. to prove the collateral lien is HELD across a
+    // proper-close terminal and RELEASED only at `claimAsBorrower`).
+
+    function getEncumberedRaw(
+        address user,
+        address asset,
+        uint256 tokenId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
+    }
 }

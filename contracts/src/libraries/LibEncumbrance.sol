@@ -11,11 +11,16 @@ import {LibVaipakam} from "./LibVaipakam.sol";
  *         `docs/DesignsAndPlans/PerLoanCollateralLien.md`:
  *
  *           1. **Per-loan collateral lien** (§§2-6): created at
- *              `LoanFacet.initiateLoan`; released on every loan-
- *              lifecycle terminal that frees the collateral
- *              (`RepayFacet.repayLoan`, `PrecloseFacet.precloseDirect`,
- *              `ClaimFacet`, `DefaultedFacet.triggerDefault`,
- *              `RefinanceFacet.refinanceLoan`).
+ *              `LoanFacet.initiateLoan` for ERC-20 LOANS only (#569
+ *              D-1 — NFT rentals are not liened); released / decremented
+ *              / re-keyed on every loan-lifecycle terminal or slice
+ *              flow that frees collateral (`RepayFacet.repayLoan`,
+ *              `PrecloseFacet.precloseDirect` / `transferObligationViaOffer`,
+ *              `DefaultedFacet.triggerDefault`, `RefinanceFacet`,
+ *              `SwapToRepayFacet` / `SwapToRepayIntentFacet`,
+ *              `PartialWithdrawalFacet`, the internal-match settlement).
+ *              `ClaimFacet` does NOT touch the lien — release happens
+ *              strictly upstream (see EncumbranceLifecycleMap.md §4.5).
  *
  *           2. **Offer-principal lock** (§7): created at
  *              `OfferCreateFacet._pullCreatorAssetsClassic` for ERC20
@@ -61,10 +66,27 @@ library LibEncumbrance {
     ///         Called from `LoanFacet.initiateLoan` AFTER the loan row
     ///         has been written (`loan.collateralAsset` / `Amount` /
     ///         `TokenId` / `Quantity` / `AssetType` already final).
+    /// @dev    #569 lifecycle map decision D-1 (2026-06-13) — liened for
+    ///         **ERC-20 LOANS only** (`loan.assetType == ERC20`),
+    ///         covering ERC-20 + NFT collateral. NFT-RENTAL loans
+    ///         (`assetType` ERC721/1155) are NOT liened: their "collateral"
+    ///         is the prepay+buffer pool, which drains continuously
+    ///         through the intrinsic rental-deduction mechanism. The
+    ///         only side-door that could drain it
+    ///         (`withdrawVPFIFromVault` when `prepayAsset == VPFI`) is
+    ///         closed by decision D-2 (VPFI forbidden as a rental prepay
+    ///         asset), so the rental pool needs no lien and no
+    ///         per-deduction decrement wiring. See
+    ///         `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §2.
     function createCollateralLien(
         uint256 loanId,
         LibVaipakam.Loan storage loan
     ) internal {
+        // D-1: only ERC-20 loans carry a collateral lien. NFT rentals
+        // (the principal/lent asset is an NFT) escrow a prepay pool that
+        // is intentionally drained by the rental mechanism, not a lien.
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
         // Tombstone re-use: a previously-released lien at the same
@@ -98,14 +120,147 @@ library LibEncumbrance {
         if (lien.released || lien.user == address(0)) return;
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, lien.amount);
         lien.released = true;
+        // #569 round-7 P1 — zero the per-loan amount on release so a
+        // released tombstone can never be mis-read as a live lien. The
+        // `released` flag is the source of truth, but leaving a stale
+        // non-zero `amount` is a footgun (it let `claimAsLenderWithRetry`
+        // fold a bogus full-collateral claim off a released row). Callers
+        // that read `.amount` now always see 0 once released.
+        lien.amount = 0;
     }
 
-    /// @notice Re-key a collateral lien from one loan id to another.
-    ///         Used on `RefinanceFacet.refinanceLoan` (and any future
-    ///         obligation-transfer path) when the old loan closes +
-    ///         the new loan inherits the same collateral identity.
-    ///         The lien stays on the same `(user, asset, tokenId)`
-    ///         tuple → the aggregate does NOT change.
+    /// @notice Decrement an active collateral lien by `consumed`. Used
+    ///         by any flow that legitimately moves SOME collateral out
+    ///         of the borrower's vault while leaving the loan ACTIVE:
+    ///           - {RiskFacet.triggerPartialLiquidation} (slice swap),
+    ///           - {RepayFacet._autoLiquidatePeriodShortfall} (periodic
+    ///             interest shortfall slice),
+    ///           - {RepayFacet} NFT-rental daily/partial deduction
+    ///             (rental fee flowing to lender),
+    ///           - internal-match partial consumption.
+    ///         The lien struct stays alive; only `amount` (and the
+    ///         aggregate) drops. Idempotent on already-released rows
+    ///         (no-op).
+    /// @dev    #407 PR 4 round-1 Codex P1 (2026-06-12) — Codex caught
+    ///         that the original "release-on-terminal-only" model
+    ///         blocked legitimate active-loan slice withdrawals.
+    function decrementCollateralLien(uint256 loanId, uint256 consumed) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
+        if (lien.released || lien.user == address(0) || consumed == 0) return;
+        if (consumed > lien.amount) {
+            revert EncumbranceUnderflow(
+                lien.user,
+                lien.asset,
+                lien.tokenId,
+                consumed,
+                lien.amount
+            );
+        }
+        _decrementAggregate(lien.user, lien.asset, lien.tokenId, consumed);
+        unchecked {
+            lien.amount -= consumed;
+        }
+    }
+
+    /// @notice Increment an active collateral lien by `added`. Used by
+    ///         {AddCollateralFacet.addCollateral} when a borrower tops
+    ///         up the existing pledge.
+    /// @dev    #407 PR 4 round-1 Codex P2 (2026-06-12) — Codex caught
+    ///         that `addCollateral` previously grew `loan.collateralAmount`
+    ///         without growing the lien, leaving the top-up portion
+    ///         withdrawable through other ERC20 surfaces (e.g. the VPFI
+    ///         withdraw path).
+    function incrementCollateralLien(uint256 loanId, uint256 added) internal {
+        if (added == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
+
+        // #569 Codex #572 round-4 P1 — create-if-absent. A
+        // FallbackPending top-up (`AddCollateralFacet.addCollateral`)
+        // adds collateral while the loan's lien was RELEASED at
+        // default-entry. The top-up sits in the vault and must be
+        // protected immediately — even if it doesn't cure the loan in
+        // the same call — or it could be drained (e.g. VPFI via
+        // `withdrawVPFIFromVault`) before a later `_cureFallback`
+        // recreates the lien for the inflated `collateralAmount`. So a
+        // released / empty lien is CREATED here, sized to `added` (the
+        // vault portion), keyed to the loan's collateral identity —
+        // NOT to `collateralAmount` (which includes the snapshot
+        // collateral still held in the Diamond during FallbackPending).
+        // No-op on NFT rentals (D-1).
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (lien.released || lien.user == address(0)) {
+            if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+            (address asset, uint256 tokenId, ) = _encodeCollateralFields(loan);
+            s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
+                user: loan.borrower,
+                asset: asset,
+                tokenId: tokenId,
+                amount: added,
+                assetType: loan.collateralAssetType,
+                released: false
+            });
+            s.encumbered[loan.borrower][asset][tokenId] += added;
+            return;
+        }
+        s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
+        lien.amount += added;
+    }
+
+    /// @notice Re-create a collateral lien from the loan row's
+    ///         current `(borrower, collateralAsset, …, collateralAmount)`
+    ///         encoding. Used by the FallbackPending → Active cure
+    ///         path ({AddCollateralFacet._cureFallback}) which lands
+    ///         the snapshot collateral back in the borrower's vault
+    ///         and re-activates the loan; the lien (released early at
+    ///         {DefaultedFacet.triggerDefault} entry) must be reinstated
+    ///         or the cured loan would have unprotected collateral.
+    /// @dev    Tombstone-safe — if a `released:true` lien is already at
+    ///         the slot it's overwritten with a fresh `released:false`
+    ///         row. The aggregate is bumped only by the new amount
+    ///         (any old residual was already drained at release).
+    ///         #407 PR 4 round-1 Codex P1 #2 (2026-06-12).
+    function recreateCollateralLien(
+        uint256 loanId,
+        LibVaipakam.Loan storage loan
+    ) internal {
+        // #569 D-1 — NFT-rental loans are never liened; recreate is a
+        // no-op for them (consistent with `createCollateralLien`).
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (address asset, uint256 tokenId, uint256 amount) =
+            _encodeCollateralFields(loan);
+        s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
+            user: loan.borrower,
+            asset: asset,
+            tokenId: tokenId,
+            amount: amount,
+            assetType: loan.collateralAssetType,
+            released: false
+        });
+        s.encumbered[loan.borrower][asset][tokenId] += amount;
+    }
+
+    /// @notice Re-key a collateral lien from one loan id to another
+    ///         when the old loan closes + the new loan inherits the
+    ///         same collateral identity. On the `sameKey` path the lien
+    ///         stays on the same `(user, asset, tokenId)` tuple → the
+    ///         aggregate does NOT change and the collateral never leaves
+    ///         the vault.
+    /// @dev    RESERVED — INTENTIONALLY UNWIRED as of #565. The live
+    ///         `RefinanceFacet` still uses the legacy return-old +
+    ///         pledge-fresh model (release old lien + withdraw old
+    ///         collateral; the new loan carries its own freshly-pledged
+    ///         lien). This primitive is the carry-over path: the
+    ///         #565 encumbrance sub-ledger is the "separate locked-
+    ///         balance design" the spec said vault-first refinance
+    ///         netting required (ProjectDetailsREADME §"refinance"), so
+    ///         the follow-up refinance-collateral-carry-over PR wires
+    ///         this in place of the withdraw — skipping the redundant
+    ///         fresh-collateral deposit. Kept (not deleted) because that
+    ///         PR is the committed next step; do not remove.
     function rekeyCollateralLienOnRefinance(
         uint256 oldLoanId,
         uint256 newLoanId,
@@ -238,6 +393,11 @@ library LibEncumbrance {
 
     // ─── Internal ──────────────────────────────────────────────────────
 
+    /// @dev Encodes the lien's `(asset, tokenId, amount)` from an
+    ///      ERC-20 LOAN's collateral. NFT-rental loans never reach here
+    ///      (D-1 gates them out in `createCollateralLien`), so there is
+    ///      no prepay-pool branch — the lien is always the actual
+    ///      pledged collateral.
     function _encodeCollateralFields(
         LibVaipakam.Loan storage loan
     )

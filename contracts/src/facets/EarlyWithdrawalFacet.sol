@@ -18,6 +18,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 
 /**
@@ -640,6 +641,21 @@ contract EarlyWithdrawalFacet is
         // Release liam's collateral that was locked when creating the
         // borrower-style sale offer. liam locked collateral into his vault
         // via createOffer(Borrower, ...) — return it to him.
+        // #569 §4.6 (2026-06-13) — defensive lien release for the sale-
+        // vehicle temp loan before returning its collateral. The lender-
+        // side sale vehicle posts ZERO collateral today (`_buildSaleParams`
+        // forces `collateralAmount = 0`), so the temp loan's lien is
+        // empty and this is a no-op. It is wired defensively so that if
+        // a future change ever lets a sale vehicle carry real collateral,
+        // the chokepoint guard on the withdraws below clears. No-op on
+        // NFT rentals (D-1). EncumbranceLifecycleMap.md §4.6.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                tempLoanId
+            ),
+            bytes4(0)
+        );
         if (tempLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             if (tempLoan.collateralAmount > 0) {
                 LibFacet.crossFacetCall(

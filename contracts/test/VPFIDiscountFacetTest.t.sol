@@ -14,6 +14,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -348,6 +349,117 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
         _facet().depositVPFIToVault(0);
+    }
+
+    // ─── #569 §6 F-1 — withdrawVPFIFromVault respects collateral lien ────────
+
+    /// @notice F-1: VPFI staked into the vault that is ALSO pledged as
+    ///         ERC-20 loan collateral (recorded in the encumbrance
+    ///         aggregate) cannot be unstaked past the free balance.
+    function test_F1_withdrawVPFIFromVault_refusesEncumberedPortion() public {
+        uint256 staked = 100 ether;
+        vm.prank(borrower);
+        vpfiToken.approve(address(diamond), staked);
+        vm.prank(borrower);
+        _facet().depositVPFIToVault(staked);
+
+        // Simulate 40 VPFI backing a live loan as collateral — the
+        // encumbrance aggregate the withdraw guard / F-1 consult reads.
+        uint256 encumbered = 40 ether;
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(
+            borrower, address(vpfiToken), 0, encumbered
+        );
+        uint256 free = staked - encumbered; // 60
+
+        // Unstaking more than the free balance is refused with the
+        // specific F-1 error (before the chokepoint guard would).
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.VPFIEncumberedByActiveLoan.selector,
+                free + 1 ether,
+                free
+            )
+        );
+        _facet().withdrawVPFIFromVault(free + 1 ether);
+
+        // Unstaking exactly the free balance succeeds.
+        vm.prank(borrower);
+        _facet().withdrawVPFIFromVault(free);
+        assertEq(
+            vpfiToken.balanceOf(_buyerVault(borrower)),
+            encumbered,
+            "vault retains exactly the encumbered (pledged) VPFI"
+        );
+    }
+
+    /// @notice F-1 boundary: with zero encumbrance the full staked
+    ///         balance is freely unstakable (no behavioural change for
+    ///         users with no VPFI-collateralized loan).
+    function test_F1_withdrawVPFIFromVault_fullDrainWhenUnencumbered() public {
+        uint256 staked = 50 ether;
+        vm.prank(borrower);
+        vpfiToken.approve(address(diamond), staked);
+        vm.prank(borrower);
+        _facet().depositVPFIToVault(staked);
+
+        vm.prank(borrower);
+        _facet().withdrawVPFIFromVault(staked);
+        assertEq(vpfiToken.balanceOf(_buyerVault(borrower)), 0);
+    }
+
+    // ─── #569 D-2 — VPFI forbidden as an NFT-rental prepay asset ─────────────
+
+    /// @notice D-2: creating an NFT-rental offer whose prepay asset is
+    ///         the platform VPFI token is rejected at offer-create. The
+    ///         gate fires before any asset pull, so no NFT funding is
+    ///         needed to exercise it.
+    /// @dev    The 33-field `CreateOfferParams` literal is built in the
+    ///         `_vpfiRentalOfferParams` helper (its own stack frame) so
+    ///         this already-large test file stays under viaIR's stack
+    ///         ceiling (see #568).
+    function test_D2_rentalOfferWithVpfiPrepay_reverts() public {
+        LibVaipakam.CreateOfferParams memory p = _vpfiRentalOfferParams();
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.VpfiNotAllowedAsRentalPrepay.selector);
+        OfferCreateFacet(address(diamond)).createOffer(p);
+    }
+
+    /// @dev NFT-rental lender offer whose prepay asset is VPFI (the
+    ///      D-2 violation). Extracted to keep `test_D2_*`'s stack shallow.
+    function _vpfiRentalOfferParams()
+        private
+        view
+        returns (LibVaipakam.CreateOfferParams memory)
+    {
+        return LibVaipakam.CreateOfferParams({
+            offerType: LibVaipakam.OfferType.Lender,
+            lendingAsset: mockNft721,
+            amount: 10,
+            interestRateBps: 500,
+            collateralAsset: mockERC20,
+            collateralAmount: 1500,
+            durationDays: 30,
+            assetType: LibVaipakam.AssetType.ERC721,
+            tokenId: 1,
+            quantity: 1,
+            creatorRiskAndTermsConsent: true,
+            prepayAsset: address(vpfiToken), // ← D-2 violation
+            collateralAssetType: LibVaipakam.AssetType.ERC20,
+            collateralTokenId: 0,
+            collateralQuantity: 0,
+            allowsPartialRepay: true,
+            allowsPrepayListing: false,
+            allowsParallelSale: false,
+            amountMax: 10,
+            interestRateBpsMax: 500,
+            collateralAmountMax: 1500,
+            periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+            expiresAt: 0,
+            fillMode: LibVaipakam.FillMode.Partial,
+            refinanceTargetLoanId: 0,
+            useFullTermInterest: false
+        });
     }
 
     // ─── quoteVPFIDiscount ───────────────────────────────────────────────────
