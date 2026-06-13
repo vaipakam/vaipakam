@@ -463,6 +463,29 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
 
+        // #569 Codex #572 round-4 P2 — release the collateral lien
+        // ATOMICALLY here, immediately before the claim withdrawal,
+        // rather than at the proper-close terminal. Proper-close paths
+        // (RepayFacet, PrecloseFacet direct, SwapToRepayFacet) leave the
+        // borrower's collateral in `loan.borrower`'s vault as this claim
+        // row; releasing the lien at the terminal would let the stored
+        // borrower (when the borrower-position NFT has been transferred
+        // to a different claimant) drain that collateral via
+        // `withdrawVPFIFromVault` between the terminal and this claim.
+        // Holding the lien until the claim closes the window: the
+        // release + withdraw are one atomic step driven by the rightful
+        // NFT-owner claimant, and the guard would otherwise block this
+        // withdraw while the lien is live. Idempotent + ERC20-only
+        // (D-1): a no-op on default/liquidation paths (already released)
+        // and on NFT-collateral claims (never liened).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(

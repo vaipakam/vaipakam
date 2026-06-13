@@ -293,19 +293,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         address treasury = LibFacet.getTreasury();
 
-        // #407 PR 4 (T-407-B, 2026-06-12) — release the collateral lien
-        // BEFORE the asset-type branch. The NFT-rental branch pulls
-        // treasury / lender shares out of the borrower's vault during
-        // settlement (`prepayAsset` == `collateralAsset` for rentals),
-        // so the lien must be released first or the chokepoint guard in
-        // {VaultFactoryFacet.vaultWithdrawERC20} blocks the legitimate
-        // settlement transfers. Safe under revert: any downstream
-        // revert in this function rolls back the storage write, so the
-        // lien is only released when the loan actually closes. Wrapped
-        // in a private helper so the cross-facet `abi.encodeWithSelector`
-        // locals don't compete with `repayLoan`'s already-tight stack
-        // frame (viaIR "Variable size 1 too deep" on inline form).
-        _releaseLienAtRepay(loanId);
+        // #569 Codex #572 round-4 P2 — the collateral-lien release is NO
+        // LONGER done here. On the ERC20-loan path the borrower's
+        // collateral STAYS in their vault as a `borrowerClaims` row and
+        // is withdrawn later by `ClaimFacet.claimAsBorrower`; releasing
+        // the lien at this terminal would let the stored borrower drain
+        // that collateral (via `withdrawVPFIFromVault`) before a
+        // transferee claimant claims it. The release is now done
+        // atomically inside `claimAsBorrower`, immediately before the
+        // claim withdrawal. The NFT-rental branch below never had a lien
+        // to release (D-1: rentals are not liened — its `prepayAsset`
+        // withdrawals see `encumbered == 0` at the guard), so dropping
+        // the pre-branch release is a no-op for rentals.
 
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // ERC20 loan: Interest + late fee. Build the immutable settlement
@@ -1400,22 +1399,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      selector. Replaces the per-selector helpers that grew
     ///      bytecode without saving anything material (#568 tracks the
     ///      structural fix).
-    function _callEncumb1(bytes4 selector, uint256 loanId) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(selector, loanId),
-            bytes4(0)
-        );
-    }
-
     function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
         );
-    }
-
-    function _releaseLienAtRepay(uint256 loanId) private {
-        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
     }
 
     function _decrementLienAtPeriodicAutoLiq(uint256 loanId, uint256 consumed) private {

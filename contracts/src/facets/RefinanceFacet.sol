@@ -440,13 +440,22 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
         // ── Release old collateral ────────────────────────────────────────
-        // T-092 Phase 2a — old collateral lives in the current
-        // borrower-NFT owner's vault (auto-provisioned if absent via
-        // `getOrCreateUserVault` inside `vaultWithdrawERC20`) and is
-        // released back to the same owner. Using msg.sender here
-        // (the pre-Phase-2a behaviour) would mis-route on the
-        // keeper-driven path — the keeper's vault doesn't hold the
-        // collateral, and the keeper isn't the rightful recipient.
+        // #569 Codex #572 round-4 P2 — the old collateral physically
+        // lives in the STORED `oldLoan.borrower`'s vault: that's where
+        // it was deposited at loan-init and where the encumbrance lien
+        // is keyed. A borrower-position NFT transfer does NOT migrate
+        // vault contents (a plain ERC721 transfer can't move ERC20
+        // balances), so `loan.borrower` stays the custody vault for the
+        // life of the loan. The withdraw therefore SOURCES from
+        // `oldLoan.borrower` (custody) and DELIVERS to
+        // `currentBorrowerNftOwner` (the rightful recipient of the
+        // returned collateral on refinance — the current borrower-
+        // position holder). The prior code sourced from
+        // `currentBorrowerNftOwner`: correct only when the NFT never
+        // moved (`currentBorrowerNftOwner == oldLoan.borrower`); after a
+        // transfer it withdrew from the new owner's (empty) vault while
+        // the lien-release below freed the original borrower's real
+        // collateral — letting the original borrower drain it.
 
         // #407 PR 4 (T-407-B, 2026-06-12) — release the OLD loan's
         // collateral lien BEFORE the actual vault withdraw of the same
@@ -466,7 +475,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        currentBorrowerNftOwner,
+                        oldLoan.borrower,
                         oldLoan.collateralAsset,
                         currentBorrowerNftOwner,
                         oldCol
@@ -478,7 +487,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    currentBorrowerNftOwner,
+                    oldLoan.borrower,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     currentBorrowerNftOwner
@@ -489,7 +498,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    currentBorrowerNftOwner,
+                    oldLoan.borrower,
                     oldLoan.collateralAsset,
                     oldLoan.collateralTokenId,
                     oldLoan.collateralQuantity,

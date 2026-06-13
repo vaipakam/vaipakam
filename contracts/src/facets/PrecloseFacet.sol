@@ -261,14 +261,17 @@ contract PrecloseFacet is
                 LibVaipakam.LoanStatus.Active,
                 LibVaipakam.LoanStatus.Repaid
             );
-            // #407 PR 3 (2026-06-12) — release the collateral lien.
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.releaseCollateralLien.selector,
-                    loanId
-                ),
-                bytes4(0)
-            );
+            // #569 Codex #572 round-4 P2 — the collateral-lien release
+            // is NO LONGER done at this proper-close terminal. The
+            // borrower's collateral stays in their vault as the
+            // `borrowerClaims` row recorded above and is withdrawn later
+            // by `ClaimFacet.claimAsBorrower`, which now releases the
+            // lien atomically right before that withdrawal. Releasing
+            // here would let the stored borrower drain the collateral
+            // (via `withdrawVPFIFromVault`) before a transferee claimant
+            // claims it. `precloseDirect` settles the lender via
+            // `safeTransferFrom` from the borrower's wallet (not a vault
+            // withdraw), so no guard-clearing release is needed here.
 
             // Phase 5 / §5.2b — proper-close settlement for borrower LIF
             // VPFI path. Splits Diamond-held VPFI into borrower rebate +

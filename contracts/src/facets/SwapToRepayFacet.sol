@@ -277,15 +277,27 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 collateralBalanceBefore =
             IERC20(loan.collateralAsset).balanceOf(address(this));
 
-        // #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — release the
-        // collateral lien BEFORE the chokepoint guard sees the
-        // withdraw. swapToRepayFull is a terminal close path (loan
-        // transitions Active → Repaid below), so a full release here
-        // is semantically right. Safe under revert: any downstream
-        // revert (swap failure, slippage check) rolls back the storage
-        // write so the lien only releases when the loan actually
-        // closes.
-        _releaseLienAtSwapToRepay(loanId);
+        // #569 Codex #572 round-4 P2 — DECREMENT the lien by exactly
+        // the collateral being withdrawn for the swap (`maxCollateralIn`),
+        // rather than fully releasing it. That clears the chokepoint
+        // guard for this withdraw while keeping the never-withdrawn
+        // residual (`collateralAmount - maxCollateralIn`) liened. The
+        // partial-fill leftover refunded back to the vault below is
+        // re-liened, so the borrower's `unconsumedCollateral` stays
+        // protected until `ClaimFacet.claimAsBorrower` releases it
+        // atomically with the claim withdrawal. A full release here
+        // would expose that residual to a `withdrawVPFIFromVault` drain
+        // by the stored borrower between this terminal and the claim
+        // (when the borrower-position NFT has been transferred to a
+        // different claimant). `maxCollateralIn <= collateralAmount`
+        // (the withdraw below would revert otherwise), so the decrement
+        // can't underflow the lien. Safe under revert: a downstream
+        // revert rolls back the storage write.
+        _callEncumb2(
+            EncumbranceMutateFacet.decrementCollateralLien.selector,
+            loanId,
+            maxCollateralIn
+        );
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -363,8 +375,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // (never withdrawn from the borrower vault) + the partial-
         // fill residual the aggregator returned to the diamond
         // (Codex round-3 P1 #2). The borrower keeps everything that
-        // wasn't actually consumed by the swap. ClaimFacet releases
-        // on the Repaid transition.
+        // wasn't actually consumed by the swap.
+        // #569 Codex #572 round-4 P2 — `ClaimFacet.claimAsBorrower` now
+        // releases the lien on this residual atomically with the claim
+        // withdrawal (no longer at the Repaid transition).
         // Codex round-2 P1 #2 — `claimed: false` regardless of amount
         // so `settleBorrowerLifProper` below can credit
         // `borrowerLifRebate` for later claim.
@@ -383,6 +397,18 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             LibVaipakam.recordVaultDeposit(
                 loan.borrower,
                 loan.collateralAsset,
+                partialFillRefund
+            );
+            // #569 Codex #572 round-4 P2 — RE-LIEN the refunded leftover.
+            // It was decremented out of the lien before the swap-withdraw
+            // above; now that it's back in the borrower's vault as part
+            // of `unconsumedCollateral`, it must be re-encumbered so the
+            // whole residual stays protected until the claim. Net lien
+            // after this = `(collateralAmount - maxCollateralIn) +
+            // partialFillRefund` = `unconsumedCollateral`.
+            _callEncumb2(
+                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                loanId,
                 partialFillRefund
             );
         }
@@ -730,22 +756,11 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// @dev #407 PR 4 round-1 Codex P1 #3 (2026-06-12) — consolidated
     ///      cross-facet helpers. One per arg-shape; each call site
     ///      picks the selector.
-    function _callEncumb1(bytes4 selector, uint256 loanId) private {
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(selector, loanId),
-            bytes4(0)
-        );
-    }
-
     function _callEncumb2(bytes4 selector, uint256 loanId, uint256 arg2) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(selector, loanId, arg2),
             bytes4(0)
         );
-    }
-
-    function _releaseLienAtSwapToRepay(uint256 loanId) private {
-        _callEncumb1(EncumbranceMutateFacet.releaseCollateralLien.selector, loanId);
     }
 
     function _decrementLienAtSwapToRepayPartial(uint256 loanId, uint256 consumed) private {

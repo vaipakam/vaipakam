@@ -236,12 +236,24 @@ library LibEncumbrance {
         s.encumbered[loan.borrower][asset][tokenId] += amount;
     }
 
-    /// @notice Re-key a collateral lien from one loan id to another.
-    ///         Used on `RefinanceFacet.refinanceLoan` (and any future
-    ///         obligation-transfer path) when the old loan closes +
-    ///         the new loan inherits the same collateral identity.
-    ///         The lien stays on the same `(user, asset, tokenId)`
-    ///         tuple → the aggregate does NOT change.
+    /// @notice Re-key a collateral lien from one loan id to another
+    ///         when the old loan closes + the new loan inherits the
+    ///         same collateral identity. On the `sameKey` path the lien
+    ///         stays on the same `(user, asset, tokenId)` tuple → the
+    ///         aggregate does NOT change and the collateral never leaves
+    ///         the vault.
+    /// @dev    RESERVED — INTENTIONALLY UNWIRED as of #565. The live
+    ///         `RefinanceFacet` still uses the legacy return-old +
+    ///         pledge-fresh model (release old lien + withdraw old
+    ///         collateral; the new loan carries its own freshly-pledged
+    ///         lien). This primitive is the carry-over path: the
+    ///         #565 encumbrance sub-ledger is the "separate locked-
+    ///         balance design" the spec said vault-first refinance
+    ///         netting required (ProjectDetailsREADME §"refinance"), so
+    ///         the follow-up refinance-collateral-carry-over PR wires
+    ///         this in place of the withdraw — skipping the redundant
+    ///         fresh-collateral deposit. Kept (not deleted) because that
+    ///         PR is the committed next step; do not remove.
     function rekeyCollateralLienOnRefinance(
         uint256 oldLoanId,
         uint256 newLoanId,
