@@ -70,7 +70,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](81);
+        selectors = new bytes4[](83);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -230,6 +230,10 @@ contract HelperTest {
         // lifecycle tests can assert the lien is HELD across a proper-
         // close terminal and RELEASED only at `claimAsBorrower`.
         selectors[80] = TestMutatorFacet.getEncumberedRaw.selector;
+        // #577 — loan-collateral lien row setter/reader for internal-match
+        // residual tests (drain-block + claimability).
+        selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
+        selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
         return selectors;
     }
 

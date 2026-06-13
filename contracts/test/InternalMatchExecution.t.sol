@@ -9,12 +9,15 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
  * @title InternalMatchExecution.t.sol
@@ -159,6 +162,319 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(bAfter.principal, 0);
         assertEq(bAfter.collateralAmount, 0);
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+    }
+
+    /// @notice #577 — an OVER-collateralized full internal match leaves a
+    ///         residual that stays LIENED (drain-blocked for a
+    ///         transferred-away `loan.borrower`) and is CLAIMABLE by the
+    ///         current borrower-position NFT holder. Previously the
+    ///         residual lien was tombstoned + no claim row written:
+    ///         stranded for non-VPFI, drainable for VPFI.
+    function test_577_overCollateralizedMatch_residualLienedAndClaimable() public {
+        // A: 600 X debt, 1000 Y collateral; B: 600 Y debt, 600 X collateral.
+        // Match consumes movedY=600 of A's Y (pays B) + movedX=600 of B's X
+        // (pays A) → both close; A keeps a 400 Y residual.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A real collateral lien on A's pre-vaulted 1000 Y — so the
+        // pre-withdraw decrement leaves the 400 residual liened and the
+        // #577 retain keeps it (the drain-block surface).
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A InternalMatched");
+        assertEq(a.collateralAmount, 400, "A keeps the 400 residual");
+
+        // Drain-block: the residual lien is RETAINED (not tombstoned).
+        (uint256 lienAmt, bool released) =
+            TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
+        assertEq(lienAmt, 400, "residual lien retained");
+        assertFalse(released, "residual lien not released at match");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(borrower, mockCollateralERC20, 0),
+            400,
+            "aggregate reflects the retained residual"
+        );
+
+        // The stored `loan.borrower` (NFT now transferred away) is blocked
+        // from withdrawing the residual — exactly the drain the lien closes.
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                borrower, mockCollateralERC20, uint256(0), uint256(1), uint256(0)
+            )
+        );
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            borrower, mockCollateralERC20, borrower, 1
+        );
+
+        // Retrieval: the CURRENT borrower-position NFT holder (transferred
+        // to `newHolder`) claims the residual via claimAsBorrower (now
+        // accepting InternalMatched). The lien releases atomically at claim.
+        address newHolder = address(0xBEEF);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId),
+            abi.encode(newHolder)
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+
+        uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderBefore,
+            400,
+            "NFT holder claims the 400 residual"
+        );
+        (, bool relAfter) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
+        assertTrue(relAfter, "lien released at claim");
+
+        // #577 (narrowed) — the borrower's residual claim does NOT settle the
+        // loan. The internal-match lender side (the lender position NFT + any
+        // held/proceeds routed to the current lender holder) is closed by the
+        // separate lender-side lifecycle (#585); until then the loan stays
+        // InternalMatched, the same terminal state an exactly-collateralized
+        // match already sits in.
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "loan stays InternalMatched after borrower residual claim (lender side pending #585)"
+        );
+    }
+
+    /// @notice #577 (narrowed) — the borrower's residual claim on an
+    ///         InternalMatched loan must NOT touch or strand the lender side.
+    ///         Any `heldForLender` (from a prior offset the liquidation
+    ///         pre-empted) stays put, untouched, and the loan stays
+    ///         InternalMatched — the lender side (NFT + held + matched
+    ///         proceeds routed to the CURRENT lender holder) is closed by the
+    ///         separate lender-side lifecycle (#585), not here. Settling here
+    ///         would strand the held and leave a stale lender NFT pointing at
+    ///         a Settled loan; this test pins that we don't.
+    function test_577_internalMatched_borrowerClaim_leavesLenderSidePending() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+
+        // Pre-existing held: 50 X in the lender's vault + accounting. The
+        // borrower claim must leave both the vault balance and the
+        // `heldForLender` accounting untouched.
+        uint256 held = 50;
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(lenderVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(LOAN_A, held);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // The current borrower-position holder (transferred away) claims the
+        // residual. Only the borrower NFT is read/burned — the lender NFT is
+        // left wholly intact.
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        address borrowerHolder = address(0xBEEF);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(borrowerHolder));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+
+        uint256 lenderVaultBefore = IERC20(mockERC20).balanceOf(lenderVault);
+        vm.prank(borrowerHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+
+        // Lender side untouched: the held 50 X is still sitting in the lender's
+        // vault (not swept out by the borrower claim) and stays claimable by
+        // the lender-side lifecycle (#585).
+        assertEq(
+            IERC20(mockERC20).balanceOf(lenderVault),
+            lenderVaultBefore,
+            "held stays in the lender vault - borrower claim does not touch it"
+        );
+        // And the loan is NOT settled — it stays InternalMatched with the
+        // lender side honestly pending.
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "loan stays InternalMatched - lender side pending #585, not stranded by a premature settle"
+        );
+    }
+
+    /// @notice #577 Codex round-3 P1 — a FallbackPending loan still carrying a
+    ///         vault-held AddCollateral top-up (an active collateral lien) is
+    ///         INELIGIBLE for internal match. Settlement draws the moved
+    ///         collateral from Diamond custody while part of the collateral
+    ///         sits in the vault, which mis-accounts the top-up across the full
+    ///         / partial / zero-residual branches. The direct trigger rejects
+    ///         it at the eligibility gate (`_gateMatchableLeg`), BEFORE any
+    ///         funds move — for ANY active top-up lien, not just one exceeding
+    ///         the would-be residual (the prior, narrower guard). The
+    ///         top-up-aware unwind lands with #585.
+    function test_577_fallbackPending_topUp_ineligibleForInternalMatch() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 510, 10, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A vault-held top-up lien of 200 — BELOW the would-be 400 residual,
+        // so the old "lien > residual" guard would have missed it. The
+        // eligibility gate rejects ANY active top-up lien on a FallbackPending
+        // leg, before settlement.
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 200, LibVaipakam.AssetType.ERC20
+        );
+
+        vm.prank(matcher);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskMatchLiquidationFacet.InternalMatchFallbackTopUpUnsupported.selector,
+                LOAN_A
+            )
+        );
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+    }
+
+    /// @notice #577 Codex round-3 P1 (finding #2) — the claim-time auto-dispatch
+    ///         must SKIP a topped-up FallbackPending caller, NOT bubble the
+    ///         eligibility revert. If the auto-dispatch let
+    ///         `InternalMatchFallbackTopUpUnsupported` propagate, the lender's
+    ///         claim would revert and recovery would stall until the candidate
+    ///         set changed. Instead the claim falls through to the normal
+    ///         in-kind fallback distribution. The call must NOT revert and the
+    ///         loan must NOT end up internally matched.
+    function test_577_fallbackPending_topUp_autoDispatchSkips_noRevert() public {
+        // Lender entitlement = whole collateral net of treasury (borrower
+        // share 0) so the in-kind distribution doesn't re-lien a borrower
+        // residual on top of the manual top-up lien below — keeps the fixture
+        // focused on the lender's fall-through claim.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 980, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A carries a vault-held top-up lien → ineligible for internal match.
+        // B is a valid opposing candidate, so `hasInternalMatchCandidate(A)`
+        // surfaces it and the auto-dispatch REACHES the new skip check rather
+        // than short-circuiting on "no candidate".
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 300, LibVaipakam.AssetType.ERC20
+        );
+        // Fallback-time lender claim record (collateral-denominated) — the
+        // in-kind path passes it Diamond → lenderVault → lender.
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(LOAN_A, 980);
+
+        _mockLenderNft(LOAN_A, lender);
+        uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
+        vm.prank(lender);
+        // Must NOT revert with InternalMatchFallbackTopUpUnsupported: the
+        // auto-dispatch skips the topped-up caller and the claim resolves via
+        // the normal in-kind fallback path.
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // Lender was paid in-kind through the fall-through path (proves it
+        // completed, not just "didn't revert at the gate").
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(lender) - lenderBefore,
+            980,
+            "lender paid the in-kind fallback collateral after the skipped dispatch"
+        );
+        // A was NOT internally matched (the topped-up caller was skipped)...
+        assertTrue(
+            _getLoan(LOAN_A).status != LibVaipakam.LoanStatus.InternalMatched,
+            "topped-up FallbackPending caller is NOT internally matched at claim time"
+        );
+        // ...and B is untouched — no match consumed it.
+        assertEq(
+            uint8(_getLoan(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "candidate B stays Active - the skipped dispatch consumed nothing"
+        );
+    }
+
+    /// @notice #577 Codex round-4 P2 (finding #2) — `hasInternalMatchCandidate`
+    ///         must filter a topped-up FallbackPending candidate WHILE
+    ///         scanning, so a topped-up first candidate can't mask a later
+    ///         eligible one (or, with a single topped-up candidate, leak it as
+    ///         a match target that settlement would then mis-account).
+    function test_577_fallbackPending_topUpCandidate_filteredFromScan() public {
+        // A: Active caller scanning for an opposing match. B: a valid opposing
+        // FallbackPending candidate.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_B, borrowerB, mockERC20, 1000, 980, 20, true);
+
+        // Baseline: clean FallbackPending B IS surfaced as A's candidate.
+        (bool found0, uint256 cid0) =
+            MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_A);
+        assertTrue(found0, "clean FallbackPending B is a candidate");
+        assertEq(cid0, LOAN_B, "candidate is B");
+
+        // Give B a vault-held top-up lien → it must now be filtered out of the
+        // scan (returned as no candidate, not leaked as a match target).
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_B, borrowerB, mockERC20, 0, 200, LibVaipakam.AssetType.ERC20
+        );
+        (bool found1, ) =
+            MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_A);
+        assertFalse(found1, "topped-up FallbackPending B is filtered from the candidate scan");
+    }
+
+    /// @notice #577 Codex round-4 P1 (finding #1) — the claim-time RETRY swap
+    ///         must also be skipped for a topped-up FallbackPending loan, not
+    ///         only the internal match. `_attemptRetrySwap` swaps the WHOLE
+    ///         `loan.collateralAmount` (incl. the vault top-up) out of Diamond
+    ///         custody, which would draw on OTHER fallback loans' same-token
+    ///         custody. The retry block must be bypassed so the loan resolves
+    ///         through the in-kind fallback distribution instead. Asserted via
+    ///         the ABSENCE of `ClaimRetryExecuted` despite a non-empty retry
+    ///         try-list (a fresh, un-attempted snapshot — so the only thing
+    ///         that skips the retry is the top-up guard).
+    function test_577_fallbackPending_topUp_retrySwapSkipped() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 980, 20, true);
+
+        // Topped-up → ineligible for the retry swap.
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 300, LibVaipakam.AssetType.ERC20
+        );
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(LOAN_A, 980);
+
+        _mockLenderNft(LOAN_A, lender);
+        vm.recordLogs();
+        vm.prank(lender);
+        // Non-empty retry try-list (adapter slot 0, the SetupTest ZeroEx shim).
+        ClaimFacet(address(diamond)).claimAsLenderWithRetry(LOAN_A, defaultAdapterCalls());
+
+        // No ClaimRetryExecuted ⇒ the retry block was bypassed.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 retryTopic = keccak256("ClaimRetryExecuted(uint256,bool,uint256)");
+        for (uint256 i = 0; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics.length == 0 || logs[i].topics[0] != retryTopic,
+                "retry swap must be skipped for a topped-up FallbackPending loan"
+            );
+        }
+        // Resolved in-kind (not internal-matched, not stuck).
+        assertTrue(
+            _getLoan(LOAN_A).status != LibVaipakam.LoanStatus.InternalMatched,
+            "topped-up loan resolved via in-kind fallback, not internal match"
+        );
     }
 
     function test_partialMatch_smallerLegCleared_largerStaysActive() public {

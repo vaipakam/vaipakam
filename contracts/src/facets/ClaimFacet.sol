@@ -464,13 +464,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // Borrower can only claim after the loan is terminally Repaid or
-        // Defaulted. FallbackPending is explicitly blocked: during that window
-        // the borrower can still cure via addCollateral/repayLoan, so handing
-        // them the collateral split would short-circuit the cure policy.
+        // Borrower can only claim after the loan is terminally Repaid,
+        // Defaulted, or InternalMatched. FallbackPending is explicitly
+        // blocked: during that window the borrower can still cure via
+        // addCollateral/repayLoan, so handing them the collateral split
+        // would short-circuit the cure policy.
+        // #577 — InternalMatched is a terminal close: an over-collateralized
+        // full internal match leaves a residual liened in loan.borrower's
+        // vault with a borrowerClaims row owed to the current borrower-NFT
+        // holder. Accept it here so the holder can retrieve the residual
+        // (the lien is released atomically below, the same anti-drain
+        // release-at-claim flow proper closes use).
         if (
             loan.status != LibVaipakam.LoanStatus.Repaid &&
-            loan.status != LibVaipakam.LoanStatus.Defaulted
+            loan.status != LibVaipakam.LoanStatus.Defaulted &&
+            loan.status != LibVaipakam.LoanStatus.InternalMatched
         ) revert InvalidLoanStatus();
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];
@@ -640,6 +648,23 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNft && !lenderHasNftCollateralClaim;
         bool willSettle = lenderFullyClaimed || lenderHasNothing;
 
+        // #577 — an InternalMatched loan's lender side is NOT closed by this
+        // borrower claim. The internal match paid the *stored* `loan.lender`
+        // their principal directly (not via a claim row), and for a
+        // transferred lender position those proceeds — plus any `heldForLender`
+        // and the lender position NFT — must be routed to the *current* lender
+        // holder through the lender claim path, which does not yet accept
+        // InternalMatched. Until that lender-side lifecycle lands (#585), the
+        // borrower's residual retrieval must NOT settle the loan: settling
+        // here would strand the lender's held/proceeds and leave a stale
+        // lender NFT pointing at a Settled loan. Leaving the loan
+        // InternalMatched keeps the lender side honestly pending — the same
+        // terminal state an exactly-collateralized internal match already sits
+        // in — for the follow-up to close.
+        if (loan.status == LibVaipakam.LoanStatus.InternalMatched) {
+            willSettle = false;
+        }
+
         emit BorrowerFundsClaimed(
             loanId,
             msg.sender,
@@ -720,7 +745,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         bool retrySucceeded;
         uint256 proceeds;
-        if (retryCalls.length > 0 && !snap.retryAttempted) {
+        // #577 / #585 — a topped-up FallbackPending loan's collateral is split
+        // between the borrower's vault (the AddCollateral top-up, liened) and
+        // Diamond custody (the snapshot). `_attemptRetrySwap` would swap
+        // `loan.collateralAmount` — the WHOLE amount — out of Diamond custody,
+        // drawing on same-token custody belonging to OTHER fallback loans (the
+        // same mis-accounting the internal-match auto-dispatch above already
+        // skips for these loans). Skip the retry swap too and let the loan
+        // resolve through the in-kind distribution below, which only touches
+        // the snapshot (the Diamond-held portion); the vault top-up stays
+        // liened, owed to the borrower, pending #585's top-up-aware unwind.
+        if (
+            retryCalls.length > 0 &&
+            !snap.retryAttempted &&
+            !LibVaipakam.hasActiveFallbackTopUp(loanId)
+        ) {
             snap.retryAttempted = true;
             (retrySucceeded, proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
             emit ClaimRetryExecuted(loanId, retrySucceeded, proceeds);
