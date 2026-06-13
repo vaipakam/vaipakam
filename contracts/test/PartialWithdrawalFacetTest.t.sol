@@ -218,9 +218,12 @@ contract PartialWithdrawalFacetTest is Test {
 
     // ─── partialWithdrawCollateral reverts ───────────────────────────────────
 
-    function testPartialWithdrawRevertsNotBorrower() public {
+    function testPartialWithdrawRevertsNotNFTOwner() public {
+        // #569 round-10 P1 — partialWithdrawCollateral now authorizes the
+        // current borrower-position NFT holder (not the stored
+        // `loan.borrower`), so a non-holder caller reverts NotNFTOwner.
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.NotBorrower.selector);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
         PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 100 ether);
     }
 

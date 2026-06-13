@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -72,7 +73,18 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.borrower != msg.sender) revert NotBorrower();
+        // #569 Codex #572 round-10 P1 — authorize the CURRENT borrower-
+        // position NFT holder, not the stored `loan.borrower`. The
+        // collateral physically lives in `loan.borrower`'s vault for the
+        // life of the loan (never migrated on a position transfer), and a
+        // top-up funded by a transferee lands there too. Gating on
+        // `loan.borrower == msg.sender` let a borrower who had SOLD their
+        // position still pass the HF/LTV checks, decrement the lien, and
+        // withdraw collateral (including the transferee's top-up) out of
+        // that vault. Requiring the NFT owner — and delivering to them —
+        // aligns the authority with the entitlement. Common case
+        // (`msg.sender == loan.borrower == NFT owner`) is unchanged.
+        LibAuth.requireBorrowerNftOwner(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active) revert LoanNotActive();
         if (amount == 0 || amount > loan.collateralAmount)
             revert AmountTooHigh();
@@ -120,11 +132,15 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             bytes4(0)
         );
 
-        // Withdraw from vault to borrower
+        // #569 round-10 P1 — withdraw from the STORED `loan.borrower`'s
+        // vault (where the collateral physically sits and the lien is
+        // keyed) and deliver to `msg.sender` (the verified current
+        // borrower-NFT holder). Sourcing from `msg.sender` would pull the
+        // caller's own vault — wrong after a position transfer.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
-                msg.sender,
+                loan.borrower,
                 loan.collateralAsset,
                 msg.sender,
                 amount
