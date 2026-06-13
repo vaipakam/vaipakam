@@ -1,4 +1,4 @@
-## Thread — Borrower-offer collateral lock: pledged collateral can't be drained before a lender accepts (PR #PLACEHOLDER)
+## Thread — Borrower-offer collateral lock: pledged collateral can't be drained before a lender accepts (PR #582)
 
 When a borrower posts a borrow offer, they escrow the collateral they're
 pledging into their own vault up front — it sits there until a lender
