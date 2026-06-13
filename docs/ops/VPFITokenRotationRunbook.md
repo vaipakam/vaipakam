@@ -109,13 +109,22 @@ staked/tracked-balance stranding anyway — see "Decision" below).
    a hard freeze — a global guardian pause is appropriate **here** (the drain is
    done, so it can't deadlock anything). This stops every inflow surface at once
    for the brief rotate window, including any the partial step-1 freeze missed.
-5. **Re-verify ZERO under the freeze — the authoritative backstop.** With the
-   system frozen, re-run the step-2 enumeration across ALL legs. If anything
-   non-zero remains — some inflow surface slipped state in during the drain —
-   UNFREEZE, drain it (step 3), re-freeze (step 4), and re-verify. Proceed only
-   when this confirms **zero** old-token exposure under the freeze. This loop is
-   what makes the procedure correct regardless of which inflow surfaces the
-   step-1 list missed.
+5. **Re-verify ZERO under the freeze — comprehensive total-balance check.**
+   With the system frozen, confirm the protocol holds **zero recoverable
+   old-token VPFI anywhere it tracks or custodies it**. Do NOT rely on
+   re-walking the named step-2 surfaces alone — the authoritative test is a
+   TOTAL: account for the entire old-token VPFI supply the protocol controls.
+   That includes the step-2 classes (offers, loans, encumbrances, tracked
+   vault balances, borrower-LIF custody) **and** every place the protocol can
+   hold VPFI directly — the **Diamond's own reserve balance** (fixed-rate-buy
+   reserve, staking / interaction-reward pools) and any other VPFI-custodying
+   contract (e.g. the cross-chain buy receiver). Concretely: sum
+   `IERC20(oldToken).balanceOf(...)` across the Diamond, every user vault, and
+   every custodying contract, and reconcile it to zero (or to amounts that are
+   explicitly migration-handled). If anything remains, UNFREEZE, drain / migrate
+   it (step 3), re-freeze (step 4), and re-verify. **This total-balance check is
+   the real backstop** — it makes the procedure correct regardless of whether
+   any individual surface was named in steps 1–2.
 6. **Rotate — and update EVERY VPFI pointer, not just the Diamond's.**
    `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE / timelock), under the
    freeze, updates only the Diamond's `s.vpfiToken` and emits both
