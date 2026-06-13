@@ -27,28 +27,55 @@ a mismatch window. Observable effects: a previously-valid offer can become
 un-acceptable; the F-1 consult reads the new token while a live loan's
 collateral sits under the old one.
 
-**There is no fund-loss path.** The encumbrance sub-ledger protects every
-`(user, asset, tokenId)` lien independently of which token is "current": old
-VPFI collateral remains encumbered under the *old* token key and the standard
-vault-withdraw guard blocks draining it regardless of rotation. The mismatch
-is a correctness/UX concern on the checks, not a drain. This is why the
-chosen guard is this runbook + an on-chain audit event (`VPFITokenRotated`)
-rather than per-offer/loan address snapshotting (see "Decision" below).
+**Liened VPFI collateral is never lost.** The encumbrance sub-ledger protects
+every `(user, asset, tokenId)` lien independently of which token is "current":
+old VPFI collateral remains encumbered under the *old* token key and the
+standard vault-withdraw guard blocks draining it regardless of rotation.
+
+**But un-liened, protocol-tracked old-token balances can get STUCK.** A user
+may hold VPFI in their vault that is tracked by `protocolTrackedVaultBalance`
+but is **not** under an active offer/loan/lien — e.g. staked VPFI for the fee
+discount, or deposited-but-uncommitted VPFI. After a rotation:
+
+- `VPFIDiscountFacet.withdrawVPFIFromVault` resolves `s.vpfiToken` to the
+  **new** token, so it can no longer withdraw the user's **old**-token
+  balance; and
+- `recoverStuckERC20` only releases `balanceOf − protocolTrackedVaultBalance`
+  (the *untracked* excess), so the old **tracked** balance has no public exit.
+
+The funds are not permanently lost — governance can rotate back or add a
+migration path — but they are stranded until then. **This is the reason the
+drain step below must cover ALL protocol-tracked old-token balances, not just
+offers/loans/encumbrances.** Provided the drain is complete, no funds are
+stuck and the check mismatches reduce to a correctness/UX window. This is why
+the chosen guard is this runbook + an on-chain audit event (`VPFITokenRotated`)
+rather than per-offer/loan address snapshotting (which would not address the
+staked/tracked-balance stranding anyway — see "Decision" below).
 
 ## Procedure (pause → drain → verify → rotate → re-enable)
 
 1. **Announce + freeze inflow.** Pause the VPFI-touching entry points (or
    globally pause via the guardian) so no *new* offers/loans can reference
    the old token while you drain. At minimum: offer-create, offer-accept.
-2. **Enumerate live old-token references.** Identify every:
+2. **Enumerate ALL old-token exposure.** Identify every:
    - open offer whose `prepayAsset` or `collateralAsset` == old token;
    - active loan whose `collateralAsset` == old token (VPFI collateral);
-   - any non-zero VPFI encumbrance (`s.encumbered[user][oldToken][0]`).
-   Use the indexer / `getActiveOffersByAsset` + loan enumeration.
+   - any non-zero VPFI encumbrance (`s.encumbered[user][oldToken][0]`);
+   - **any non-zero `protocolTrackedVaultBalance[user][oldToken]`** — i.e.
+     staked VPFI for the fee discount, or deposited-but-uncommitted VPFI —
+     **even with no active offer/loan/lien.** This is the class that strands
+     after rotation (no public exit; see "Why a rotation needs care"), so it
+     MUST be in the drain set, not just offers/loans.
+   Use the indexer / `getActiveOffersByAsset` + loan enumeration + the
+   per-user tracked-balance ledger.
 3. **Drain them.** Cancel/let-expire the offers; settle/close/let-mature the
-   loans so their collateral lien releases. Goal: **zero** live references to
-   the old token and zero old-token encumbrance.
-4. **Verify zero exposure.** Re-scan step 2 and confirm nothing remains.
+   loans so their collateral lien releases; have users unstake + withdraw
+   their tracked old-token VPFI (or migrate it) so every
+   `protocolTrackedVaultBalance[user][oldToken]` returns to zero. Goal: **zero**
+   live references to the old token, zero old-token encumbrance, **and zero
+   old-token protocol-tracked vault balance.**
+4. **Verify zero exposure.** Re-scan step 2 — offers, loans, encumbrances, AND
+   tracked vault balances — and confirm nothing remains under the old token.
 5. **Rotate.** `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE /
    timelock). This emits both `VPFITokenSet` and — because `previous != 0` —
    `VPFITokenRotated(previous, newToken)`.
@@ -66,11 +93,17 @@ exist, (2) snapshot the VPFI address onto each offer/loan and have D-2/F-1
 read the snapshot, (3) this operational runbook.
 
 **Chosen: (3) runbook + an on-chain `VPFITokenRotated` audit event.**
-Rationale: the exposure is low with no identified fund-loss path (the
-encumbrance sub-ledger already protects each token's liens independently), so
-the permanent per-offer/loan struct-field + read-site cost of snapshotting
-(2) is not justified for a rare, pre-live, migration-class event. Option (1)
-needs a global "live VPFI references" counter the protocol doesn't currently
-maintain. The runbook plus a detectable rotation event gives a proportionate
-operational guardrail. If the protocol later expects routine VPFI rotations
-with live state, revisit (2).
+Rationale: the exposure is low and recoverable. Liened collateral is never at
+risk (the encumbrance sub-ledger protects each token's liens independently);
+the one real stranding risk — un-liened protocol-tracked old-token balances
+(staked VPFI) — is **governance-recoverable** and is fully eliminated by the
+drain step above. Snapshotting (2) keys off offers/loans, so it would not even
+address that staked/tracked-balance stranding, while adding a permanent
+per-offer/loan struct-field + read-site cost — not justified for a rare,
+pre-live, migration-class event. Option (1) needs a global "live VPFI
+references" counter the protocol doesn't currently maintain. The runbook
+(covering tracked balances) plus a detectable rotation event gives a
+proportionate operational guardrail. If the protocol later expects routine
+VPFI rotations with live state, revisit a fuller on-chain migration path
+(balance migration + dual-token withdraw), which is the part snapshotting
+alone would miss.

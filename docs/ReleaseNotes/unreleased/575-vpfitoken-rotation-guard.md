@@ -9,10 +9,16 @@ rotation done while offers or loans created under the old token are still in
 flight leaves a brief window where those checks evaluate against the new
 token instead of the one a position was created under.
 
-This is low-risk and operational, not a live bug: there is no way to lose
-funds (each user's collateral lien is protected independently of which token
-is "current"), and no production state exists yet. The window is a
-correctness/UX concern on the checks, not a drain.
+This is low-risk and operational, not a live bug, and no production state
+exists yet. Liened collateral is never at risk — each user's collateral lien
+is protected independently of which token is "current". The one real catch is
+that a user's *un-liened* protocol-tracked old-token balance (for example
+staked VPFI) would be left stranded after a rotation — the normal VPFI
+withdraw resolves to the new token, and the stuck-token recovery path only
+releases untracked balances — until governance acts. The funds are not
+permanently lost (governance-recoverable), but this is exactly why the
+rotation procedure must drain *all* tracked old-token balances, not just
+offers and loans.
 
 The decision recorded for this item is to treat rotation as a controlled
 operational procedure rather than to permanently snapshot a token address

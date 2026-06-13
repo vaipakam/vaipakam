@@ -64,11 +64,13 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///         token are still in flight leaves a check-mismatch window (a
     ///         previously-valid VPFI-prepay-adjacent offer may become
     ///         un-acceptable; the F-1 consult reads the new token while a live
-    ///         loan's collateral sits under the old). There is no identified
-    ///         fund-loss path — the encumbrance sub-ledger protects each
-    ///         `(user, token)` lien independently of which token is "current" —
-    ///         but the mismatch is operationally undesirable. This distinct
-    ///         event lets ops / indexers DETECT a rotation and confirm the
+    ///         loan's collateral sits under the old). Liened collateral is
+    ///         never at risk (the encumbrance sub-ledger protects each
+    ///         `(user, token)` lien independently of which token is "current");
+    ///         the one stranding risk — un-liened protocol-tracked old-token
+    ///         balances such as staked VPFI — is governance-recoverable and is
+    ///         eliminated by the runbook's drain step. This distinct event lets
+    ///         ops / indexers DETECT a rotation and confirm the
     ///         pause-drain-rotate runbook was followed
     ///         (`docs/ops/VPFITokenRotationRunbook.md`).
     /// @param previousToken The non-zero address being rotated away from.
@@ -97,10 +99,12 @@ contract VPFITokenFacet is DiamondAccessControl, IVaipakamErrors {
     ///      the D-2 rental-prepay restriction (OfferAcceptFacet) and the F-1
     ///      VPFI-collateral encumbrance consult (VPFIDiscountFacet) read the
     ///      *live* `s.vpfiToken`, so a mid-flight rotation creates a
-    ///      check-mismatch window. There is no fund-loss path (the encumbrance
-    ///      sub-ledger protects each `(user, token)` lien independently), but
-    ///      the rotation MUST follow the pause-drain-rotate procedure in
-    ///      `docs/ops/VPFITokenRotationRunbook.md`. A rotation
+    ///      check-mismatch window. Liened collateral is never at risk (the
+    ///      encumbrance sub-ledger protects each `(user, token)` lien
+    ///      independently), but un-liened protocol-tracked old-token balances
+    ///      (e.g. staked VPFI) would strand until governance acts — so the
+    ///      rotation MUST follow the pause-drain-rotate procedure (which drains
+    ///      those) in `docs/ops/VPFITokenRotationRunbook.md`. A rotation
     ///      additionally emits {VPFITokenRotated} so it is detectable on-chain.
     /// @param newToken The VPFI token proxy address (must be non-zero).
     // forge-lint: disable-next-line(mixed-case-function)
