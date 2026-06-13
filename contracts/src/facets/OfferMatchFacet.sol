@@ -293,6 +293,30 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         );
         loanId = abi.decode(ret, (uint256));
 
+        // #573 — decrement the BORROWER offer's collateral lock by the
+        // collateral this fill consumed. Done AFTER `acceptOfferInternal`
+        // (Codex P1): the inner `_acceptOffer` pays the VPFI Loan-Initiation
+        // Fee out of the borrower's vault BEFORE `initiateLoan` creates the
+        // child loan's collateral lien. If the collateral asset is VPFI and
+        // we decremented the offer lock BEFORE that, `reqCollateral` would
+        // momentarily look free to the VPFI withdraw guard and the LIF
+        // could be paid out of collateral meant to back the loan. Deferring
+        // to here keeps the offer lock covering this fill's collateral
+        // throughout the LIF; by now `createCollateralLien` has already
+        // re-encumbered `reqCollateral` under the loan, so the net
+        // aggregate is unchanged (offer-lock −reqCollateral, loan-lien
+        // +reqCollateral). The unfilled remainder is released at the
+        // borrower dust-close / single-fill refund below. No-op on a
+        // borrower offer with no collateral lock (NFT collateral, or none).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
+                borrowerOfferId,
+                mr.reqCollateral
+            ),
+            bytes4(0)
+        );
+
         // Clear the override now that the loan is initiated. Critical:
         // any subsequent same-tx initiateLoan calls (e.g., a follow-up
         // strategic flow) MUST fall through to the legacy field-read
@@ -336,6 +360,18 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (!s.protocolCfg.partialFillEnabled) {
             LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
             if (B.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                // #573 — single-fill fully consumes the borrower offer;
+                // release the remaining offer-collateral lock BEFORE the
+                // excess refund. After the per-fill decrement above the
+                // lock equals exactly the excess about to be returned, so
+                // leaving it active would block the creator's own refund.
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                        borrowerOfferId
+                    ),
+                    bytes4(0)
+                );
                 // Legacy fallback: a borrower offer created before
                 // #164 carries `collateralAmountMax == 0` in storage.
                 // Read-side then collapses to `collateralAmount` so
@@ -449,6 +485,22 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             if (borrowerRemaining < bm.amount) {
                 // Dust-close: refund residual collateral and flip accepted.
                 if (bm.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    // #573 — borrower offer is now terminal; release the
+                    // remaining offer-collateral lock BEFORE the residual
+                    // refund. After the per-fill decrements the lock equals
+                    // `collateralAmountMax - collateralAmountFilled` — exactly
+                    // the residual about to be returned — so leaving it
+                    // active would block the refund. Pairs with the
+                    // single-fill release above + the OfferAcceptFacet
+                    // direct-accept hand-off: every terminal a borrower
+                    // offer reaches drops its collateral lock exactly once.
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                            borrowerOfferId
+                        ),
+                        bytes4(0)
+                    );
                     uint256 borrowerCollPulled = bm.collateralAmountMax == 0
                         ? bm.collateralAmount
                         : bm.collateralAmountMax;

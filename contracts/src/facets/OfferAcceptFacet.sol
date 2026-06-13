@@ -431,6 +431,36 @@ contract OfferAcceptFacet is
         );
     }
 
+    /// @dev #573 — release the borrower offer-collateral lock on a DIRECT
+    ///      accept, before `initiateLoan` creates the loan-collateral lien
+    ///      on the same `(borrower, collateralAsset, 0)` key (so the two
+    ///      don't double-count the aggregate and block the residual
+    ///      refund). The match path (`matchOverride.active`) is excluded —
+    ///      OfferMatchFacet decrements the lock per fill and releases the
+    ///      remainder at dust-close. Gated to the ERC20-borrow +
+    ///      ERC20-collateral shape (the only one that pre-vaults a
+    ///      fungible collateral lock at create). Extracted so its locals
+    ///      stay out of `_acceptOffer`'s stack frame.
+    function _releaseBorrowerOfferCollateralLockOnDirectAccept(
+        uint256 offerId,
+        LibVaipakam.Offer storage offer,
+        LibVaipakam.Storage storage s
+    ) private {
+        if (
+            s.matchOverride.active ||
+            offer.offerType != LibVaipakam.OfferType.Borrower ||
+            offer.assetType != LibVaipakam.AssetType.ERC20 ||
+            offer.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) return;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                offerId
+            ),
+            bytes4(0)
+        );
+    }
+
     /// @dev NFT-rental prepay pull. Extracted from `_acceptOffer` to
     ///      keep that function's local count under viaIR's
     ///      stack-too-deep budget after the OfferFacet split.
@@ -1013,6 +1043,17 @@ contract OfferAcceptFacet is
             }
             // ERC721/ERC1155 lender offers: borrower prepay already transferred above
         }
+
+        // #573 — borrower offer-collateral hand-off (extracted to a helper
+        // to keep this function's local count under viaIR's stack-too-deep
+        // budget, same as `_refundBorrowerCollateralResidualIfNeeded`).
+        // On a DIRECT accept it releases the offer-collateral lock in full
+        // BEFORE `initiateLoan` creates the loan-collateral lien on the
+        // SAME (borrower, collateralAsset, 0) key — otherwise the two
+        // double-count the aggregate and the residual-collateral refund
+        // below is blocked. The loan lien re-encumbers the backing
+        // portion; the unused tail is refunded.
+        _releaseBorrowerOfferCollateralLockOnDirectAccept(offerId, offer, s);
 
         // Initiate loan. Pass the override-aware `acceptor` (resolved
         // at the top of this function) — under matchOffers msg.sender
