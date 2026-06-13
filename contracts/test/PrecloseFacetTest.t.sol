@@ -617,6 +617,56 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @notice #573 Codex round-2 P1 — a partially-filled borrower offer
+    ///         (amountFilled > 0, not yet dust-closed) must not be
+    ///         consumable for an obligation transfer: it would overfill
+    ///         the offer beyond the creator's ceiling. Mirrors the
+    ///         direct-accept / loan-sale partial-fill rejections. The
+    ///         guard fires before the asset/collateral checks + the
+    ///         offer-collateral hand-off, so no cross-facet mocks needed.
+    function testTransferObligationRevertsPartiallyFilledOffer() public {
+        vm.prank(newBorrower);
+        uint256 partialOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        // Simulate a prior matchOffers partial fill.
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(partialOffer);
+        o.amountFilled = 1;
+        TestMutatorFacet(address(diamond)).setOffer(partialOffer, o);
+
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, partialOffer);
+    }
+
     function testTransferObligationWithShortfall() public {
         // Warp a few days so accrued > 0, use higher rate so shortfall exists
         vm.warp(block.timestamp + 5 days);

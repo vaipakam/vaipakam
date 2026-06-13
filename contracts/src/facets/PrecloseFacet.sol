@@ -435,6 +435,15 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
+        // #573 Codex round-2 P1 — a partially-filled offer (amountFilled
+        // > 0, not yet dust-closed) is a matchOffers-managed entity.
+        // Consuming it for an obligation transfer would overfill it beyond
+        // the creator's ceiling — the principal / collateral checks below
+        // validate against `amountMax` / `collateralAmount`, not the
+        // remaining capacity. Mirror the direct-accept (OfferAcceptFacet)
+        // and loan-sale (EarlyWithdrawalFacet) partial-fill rejections:
+        // only `matchOffers` may advance a partially-filled offer.
+        if (offer.amountFilled > 0) revert InvalidOfferTerms();
         // Range Orders Phase 1 — single source of truth for the per-
         // asset invariants (lendingAsset / collateralAsset /
         // collateralAssetType / prepayAsset). The amount / duration /
