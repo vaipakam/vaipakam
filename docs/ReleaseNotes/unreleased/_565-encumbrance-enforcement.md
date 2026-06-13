@@ -50,3 +50,36 @@ attempt; it was re-built in one piece against a complete map of every place
 collateral can move
 (`docs/DesignsAndPlans/EncumbranceLifecycleMap.md`), so the protection is
 applied uniformly rather than patched site by site.
+
+## Review hardening — transferred borrower positions (Codex #572)
+
+A second pass closed a class of edge cases that only appear once a
+**borrower position has been sold or transferred** to a different holder.
+A Vaipakam loan's collateral physically stays in the *original* borrower's
+vault for the life of the loan — transferring the borrower-position NFT
+moves the right to the position, not the vault contents. Every exit that
+returns or moves that collateral now consistently takes it from the
+original borrower's vault (where the protection is anchored) and delivers
+it to whoever currently holds the position, so a transfer can never route
+collateral to the wrong vault or leave the real collateral unprotected.
+
+The most important refinement: on a normal close — repayment, early
+close, or a swap-to-repay — the protection on the borrower's collateral is
+now held until the borrower actually **claims** it back, released in the
+same step as the claim, rather than the instant the loan closes. Returned
+collateral sits in the borrower's vault as a pending claim between those
+two moments; holding the protection across that gap means a borrower who
+had already sold their position cannot drain the collateral out from under
+the new position-holder before they claim it. For the ordinary case (the
+same person closes and claims) nothing observable changes — they simply
+claim and receive their collateral as before.
+
+The same pass also protects collateral a borrower adds to a struggling
+loan during its post-liquidation grace window, so a top-up made while a
+loan is awaiting resolution can't be stranded under a stale lien if the
+loan then defaults.
+
+A companion improvement to refinancing — letting a refinance carry the
+*same* collateral forward instead of requiring a fresh pledge and
+returning the old — is captured as a dedicated follow-up, now that this
+encumbrance ledger provides the accounting it needs.
