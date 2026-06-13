@@ -542,11 +542,21 @@ contract PrecloseFacet is
             ),
             bytes4(0)
         );
+        // #569 Codex #572 round-4 P2 — withdraw the exiting collateral
+        // from the STORED `loan.borrower`'s vault (where the pledged
+        // collateral sits and where the lien just released was keyed),
+        // delivering it to `msg.sender` (the current borrower-position
+        // NFT holder, who is entitled to it on exit). The prior code
+        // sourced from `msg.sender`'s vault — when the position NFT had
+        // transferred, that returned the caller's OWN tokens while the
+        // pledged collateral stayed in `loan.borrower`'s vault with its
+        // lien removed. Common case (`msg.sender == loan.borrower`) is
+        // unchanged.
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
                     msg.sender,
                     loan.collateralAmount
@@ -557,7 +567,7 @@ contract PrecloseFacet is
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     msg.sender
@@ -568,7 +578,7 @@ contract PrecloseFacet is
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.collateralAsset,
                     loan.collateralTokenId,
                     loan.collateralQuantity,

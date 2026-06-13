@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
@@ -247,6 +248,23 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     loan,
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
+                );
+                // #569 Codex #572 round-4 P2 — release any collateral
+                // lien created by FallbackPending top-ups. A loan's
+                // lien is released at default-ENTRY, but a borrower may
+                // have added (and lien-locked) top-up collateral while
+                // FallbackPending. This is the no-internal-match terminal
+                // for that loan, so the residual top-up lien must release
+                // here or the top-up would be stranded in the borrower's
+                // vault under an active encumbrance. Idempotent on
+                // already-released / empty rows (the common no-top-up
+                // case); no-op on NFT rentals (D-1).
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.releaseCollateralLien.selector,
+                        loanId
+                    ),
+                    bytes4(0)
                 );
             }
         }
