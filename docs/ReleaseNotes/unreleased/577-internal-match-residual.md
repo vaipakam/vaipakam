@@ -1,4 +1,4 @@
-## Thread — Internal-match residual collateral is now retained + claimable, not stranded or drainable (PR #PLACEHOLDER)
+## Thread — Internal-match residual collateral is now retained + claimable, not stranded or drainable (PR #584)
 
 When an over-collateralized loan is closed by an internal match (the
 permissionless mechanism that nets two opposing under-water loans against
