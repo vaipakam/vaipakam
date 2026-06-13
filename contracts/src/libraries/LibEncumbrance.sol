@@ -165,21 +165,37 @@ library LibEncumbrance {
     ///         withdrawable through other ERC20 surfaces (e.g. the VPFI
     ///         withdraw path).
     function incrementCollateralLien(uint256 loanId, uint256 added) internal {
+        if (added == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
-        if (added == 0) return;
-        // Defensive — caller should only invoke this on an active loan
-        // with a live lien. If the lien is missing (e.g. a future
-        // active-during-recreate race), recreate it inline so the
-        // top-up is still protected.
+
+        // #569 Codex #572 round-4 P1 — create-if-absent. A
+        // FallbackPending top-up (`AddCollateralFacet.addCollateral`)
+        // adds collateral while the loan's lien was RELEASED at
+        // default-entry. The top-up sits in the vault and must be
+        // protected immediately — even if it doesn't cure the loan in
+        // the same call — or it could be drained (e.g. VPFI via
+        // `withdrawVPFIFromVault`) before a later `_cureFallback`
+        // recreates the lien for the inflated `collateralAmount`. So a
+        // released / empty lien is CREATED here, sized to `added` (the
+        // vault portion), keyed to the loan's collateral identity —
+        // NOT to `collateralAmount` (which includes the snapshot
+        // collateral still held in the Diamond during FallbackPending).
+        // No-op on NFT rentals (D-1).
+        LibVaipakam.Loan storage loan = s.loans[loanId];
         if (lien.released || lien.user == address(0)) {
-            revert EncumbranceUnderflow(
-                lien.user,
-                lien.asset,
-                lien.tokenId,
-                added,
-                0
-            );
+            if (loan.assetType != LibVaipakam.AssetType.ERC20) return;
+            (address asset, uint256 tokenId, ) = _encodeCollateralFields(loan);
+            s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
+                user: loan.borrower,
+                asset: asset,
+                tokenId: tokenId,
+                amount: added,
+                assetType: loan.collateralAssetType,
+                released: false
+            });
+            s.encumbered[loan.borrower][asset][tokenId] += added;
+            return;
         }
         s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
         lien.amount += added;

@@ -152,22 +152,25 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         loan.collateralAmount += amount;
 
         // #407 PR 4 round-1 Codex P2 #6 (2026-06-12) — keep the
-        // collateral lien in parity with `loan.collateralAmount`. The
-        // FallbackPending branch is handled differently: the lien was
-        // released at default-entry and is currently 0, so we don't
-        // increment here — the cure path (`_cureFallback` below)
-        // recreates the lien from the cured `loan.collateralAmount`
-        // in a single atomic write.
-        if (loan.status == LibVaipakam.LoanStatus.Active) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    EncumbranceMutateFacet.incrementCollateralLien.selector,
-                    loanId,
-                    amount
-                ),
-                bytes4(0)
-            );
-        }
+        // collateral lien in parity with the collateral now sitting in
+        // the borrower's vault. #569 Codex #572 round-4 P1 — increment
+        // for BOTH Active and FallbackPending. The top-up lands in the
+        // vault immediately, so it must be liened immediately, even on a
+        // FallbackPending loan that this call doesn't cure (else the
+        // top-up is drainable before a later cure). `incrementCollateralLien`
+        // is create-if-absent, so it correctly seeds a fresh lien on the
+        // released FallbackPending row sized to the top-up (the vault
+        // portion) — the snapshot collateral still held in the Diamond
+        // is folded in by `_cureFallback`'s own increment when restored.
+        // No-op on NFT rentals (D-1).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.incrementCollateralLien.selector,
+                loanId,
+                amount
+            ),
+            bytes4(0)
+        );
 
         // Calculate new HF and LTV for event emission (best-effort; failures don't revert)
         uint256 newHf;
@@ -253,14 +256,17 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibVaipakam.LoanStatus.Active
         );
 
-        // #407 PR 4 round-1 Codex P1 #2 (2026-06-12) — recreate the
-        // collateral lien from the cured loan row. The lien was
-        // released at `DefaultedFacet.triggerDefault` entry when the
-        // failed liquidation flipped the loan to FallbackPending; now
-        // that the loan is back to Active, the lien must protect the
-        // restored collateral or the new chokepoint guard would let
-        // it drain through unrelated ERC20 withdraw surfaces.
-        LibEncumbrance.recreateCollateralLien(loanId, loan);
+        // #569 Codex #572 round-4 P1 — grow the lien by the restored
+        // snapshot collateral `held` (Diamond → vault, above). The
+        // top-up(s) that accumulated while the loan was FallbackPending
+        // were ALREADY liened by `addCollateral`'s increment (the lien
+        // now equals the vault's top-up portion), so this must INCREMENT
+        // by `held`, not overwrite — `held + topUps == collateralAmount`.
+        // `incrementCollateralLien` is create-if-absent, so this also
+        // covers the (held>0, no prior top-up) case where the cure is
+        // reached without an `addCollateral` increment. No-op on NFT
+        // rentals (D-1) and when `held == 0`.
+        LibEncumbrance.incrementCollateralLien(loanId, held);
 
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
