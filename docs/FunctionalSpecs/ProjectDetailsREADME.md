@@ -278,6 +278,7 @@ The platform distinguishes between liquid and illiquid assets, which affects how
     - LTV = Borrowed Value / Collateral Value
     - Helath Factor = Collateral Value / Borrowed Value
   - Deposit the lending asset into the Vaipakam smart contract when creating the offer.
+  - The deposited principal is **locked against withdrawal for as long as the offer is live**. The creator cannot pull the escrowed principal — or the unfilled remainder of a range offer — back out of their vault while the offer stays open on the book. The lock is placed at create, lifted in full when the offer is accepted outright or cancelled, drawn down slice-by-slice as a range offer is partially filled by the matching engine, and lifted on the final dust-close. An offer's **own** refunds — cancelling, or a downward size edit — release their portion of the lock *before* the funds move, so an offer can always pay itself back; only unrelated / cross-purpose withdrawals are refused. This is the lender-side counterpart of the §2207 collateral-protection invariant: escrowed offer principal, like pledged collateral, is never withdrawable out a side door while it backs a live commitment.
 - **For Rentable NFTs (ERC-721/1155):**
   - Specify the NFT (e.g., Axie #1234), daily rental fee (e.g., 10 USDC/day), the ERC-20 token for rental payment and collateral (e.g., USDC), and rental duration (e.g., 7 days).
   - For ERC-721 NFTs: Deposit the NFT into the Vaipakam Vault contract when creating the offer so Vaipakam has vault-controlled owner/custody access for user-right assignment.
@@ -356,6 +357,12 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   NFT-rental offers see the delta in `prepayAsset` when `amount`
   changes (prepay = amount × durationDays × (1 + buffer)). Other
   offer shapes update storage with no vault movement.
+- Principal-lock tracking: a lender ERC-20 offer's principal lock
+  (§3) moves in lock-step with each `amountMax` delta — a downward
+  edit releases the refunded portion **before** the refund leaves
+  the vault (so the refund is never blocked by the offer's own
+  lock), and an upward edit grows the lock by exactly the extra
+  principal pulled in. The post-edit remainder stays locked.
 - **No Loan Initiation Fee** is charged on a modify; LIF applies to
   loan initiation only.
 - Already-accepted offers are terminal — modification reverts.

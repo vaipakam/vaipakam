@@ -21,6 +21,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
@@ -754,6 +755,34 @@ contract OfferAcceptFacet is
                         offer.amount
                     ),
                     VaultDepositFailed.selector
+                );
+            }
+
+            // T-407-C (#566) — release the offer-principal lock before
+            // the lender's principal leaves their vault below. A DIRECT
+            // single-fill accept consumes the lender offer in full
+            // (`effectivePrincipal == offer.amountMax`, the entire
+            // pre-vaulted principal), so the whole lien is released
+            // here. The matching path (`matchOverride.active`) is
+            // EXCLUDED: there the per-fill lien decrement / dust-close
+            // release is owned by `OfferMatchFacet.matchOffers`, and a
+            // full release here would wrongly free a partially-filled
+            // lender's still-locked remaining principal. Mirrors the
+            // `!s.matchOverride.active` gate on the borrower-path deposit
+            // just above. Must precede the treasury / matcher /
+            // net-to-borrower withdraws or the vault-withdraw chokepoint
+            // would treat the principal as still encumbered and block
+            // the lender's own disbursement.
+            if (
+                offer.offerType == LibVaipakam.OfferType.Lender &&
+                !s.matchOverride.active
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                        offerId
+                    ),
+                    bytes4(0)
                 );
             }
 
