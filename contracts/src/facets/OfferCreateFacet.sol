@@ -1047,22 +1047,28 @@ contract OfferCreateFacet is
         );
         if (!success) revert NFTMintFailed();
 
-        // T-407-C (#566) — offer-principal lock. An ERC20 Lender offer
-        // pre-vaults its full `amountMax` principal into the creator's
-        // own vault at create-time (the pull ran before this finish
-        // step). Mark that principal as encumbered in the same
+        // Offer-creator escrow lock. An offer pre-vaults the creator's
+        // ERC20 stake into their own vault at create-time (the pull ran
+        // before this finish step). Mark it encumbered in the same
         // `encumbered[user][asset][0]` aggregate the vault-withdraw
         // chokepoint reads, so the creator cannot withdraw the locked
-        // principal out from under a still-open offer. Released on
-        // cancel / single-fill accept / dust-close / lazy-expiry and
-        // decremented per partial fill (see OfferCancelFacet /
-        // OfferAcceptFacet / OfferMatchFacet). Gated to ERC20 Lender
-        // offers: borrower offers lock collateral (a separate concern,
-        // #574) and NFT lender offers hold the NFT itself in custody,
-        // not a fungible aggregate. `_creatorPullAmount` returns the
-        // exact pre-vaulted principal (`amountMax`, auto-collapsed to
-        // `amount` for legacy single-value callers) — reused so the lien
-        // can never drift from what was actually pulled.
+        // stake out from under a still-open offer. An offer has exactly
+        // ONE creator-side escrow, so the single `offerPrincipalLien`
+        // primitive serves both legs (asset-agnostic):
+        //   - T-407-C (#566): ERC20 Lender offer → its `amountMax`
+        //     principal in `lendingAsset`.
+        //   - #573 (security): ERC20-borrow Borrower offer with ERC20
+        //     collateral → its `collateralAmountMax` in `collateralAsset`.
+        //     Closes the pre-acceptance drain (e.g. `withdrawVPFIFromVault`
+        //     unstaking VPFI pledged as collateral before a lender accepts,
+        //     which would mint an under-collateralized loan).
+        // Released on cancel / single-fill accept / dust-close /
+        // lazy-expiry, decremented per partial fill, and (borrower leg)
+        // handed off to the loan-collateral lien at acceptance. NFT
+        // legs hold the token itself in custody (no fungible aggregate,
+        // no ERC20 drain door) so they're out of scope. `_creatorPullAmount`
+        // returns the exact pre-vaulted amount for each shape — reused so
+        // the lien can never drift from what was actually pulled.
         if (
             params.offerType == LibVaipakam.OfferType.Lender &&
             params.assetType == LibVaipakam.AssetType.ERC20
@@ -1073,6 +1079,21 @@ contract OfferCreateFacet is
                     offerId,
                     creator,
                     params.lendingAsset,
+                    _creatorPullAmount(offerId, params)
+                ),
+                bytes4(0)
+            );
+        } else if (
+            params.offerType == LibVaipakam.OfferType.Borrower &&
+            params.assetType == LibVaipakam.AssetType.ERC20 &&
+            params.collateralAssetType == LibVaipakam.AssetType.ERC20
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.createOfferPrincipalLien.selector,
+                    offerId,
+                    creator,
+                    params.collateralAsset,
                     _creatorPullAmount(offerId, params)
                 ),
                 bytes4(0)

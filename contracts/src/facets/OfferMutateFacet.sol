@@ -241,6 +241,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         offer.collateralAmountMax = newCollateralAmountMax;
 
         _settleCollateralDelta(
+            offerId,
             offer,
             oldCollateralAmountMax,
             newCollateralAmountMax
@@ -353,6 +354,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         }
         if (collateralChanged) {
             _settleCollateralDelta(
+                offerId,
                 offer,
                 oldCollateralAmountMax,
                 params.collateralAmountMax
@@ -640,6 +642,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// @dev Borrower ERC-20 path: pre-vault was `collateralAmountMax`
     ///      in `collateralAsset`. Delta math is the simple diff.
     function _settleCollateralDelta(
+        uint256 offerId,
         LibVaipakam.Offer storage offer,
         uint256 oldCollateralAmountMax,
         uint256 newCollateralAmountMax
@@ -651,11 +654,41 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             && offer.assetType == LibVaipakam.AssetType.ERC20
             && offer.collateralAssetType == LibVaipakam.AssetType.ERC20
         ) {
-            _pullOrRefundErc20(
-                offer.collateralAsset,
-                oldCollateralAmountMax,
-                newCollateralAmountMax
-            );
+            // #573 — keep the offer-collateral lock (the borrower-side
+            // creator escrow) in step with the collateral moving in / out
+            // of the vault, ordered so a SHRINK's refund isn't blocked by
+            // its own still-active lock (symmetric to `_settleAmountDelta`'s
+            // principal-lock handling). On a GROW the deposit lands before
+            // the lock widens (a deposit never hits the withdraw guard).
+            if (newCollateralAmountMax < oldCollateralAmountMax) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
+                        offerId,
+                        oldCollateralAmountMax - newCollateralAmountMax
+                    ),
+                    bytes4(0)
+                );
+                _pullOrRefundErc20(
+                    offer.collateralAsset,
+                    oldCollateralAmountMax,
+                    newCollateralAmountMax
+                );
+            } else {
+                _pullOrRefundErc20(
+                    offer.collateralAsset,
+                    oldCollateralAmountMax,
+                    newCollateralAmountMax
+                );
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.incrementOfferPrincipalLien.selector,
+                        offerId,
+                        newCollateralAmountMax - oldCollateralAmountMax
+                    ),
+                    bytes4(0)
+                );
+            }
         }
         // Other shapes: no creator-side collateral escrow keyed on
         // `collateralAmountMax`, so storage-only update is correct.

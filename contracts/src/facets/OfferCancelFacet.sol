@@ -287,6 +287,22 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // Borrower: unlock what was actually deposited at create.
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                    // #573 — release the offer-collateral lock BEFORE the
+                    // refund withdraw (symmetric to the lender-principal
+                    // release above). The remaining lock covers exactly
+                    // the unfilled collateral about to be returned; left
+                    // active, the vault-withdraw chokepoint would treat it
+                    // as encumbered and block the creator's own refund.
+                    // Idempotent + a no-op on offers that never carried a
+                    // lock (covers the partial-filled case — prior matches
+                    // decremented it).
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                            offerId
+                        ),
+                        bytes4(0)
+                    );
                     // Issue #164 — `createOffer` pre-vaults the
                     // UPPER bound (`collateralAmountMax`, post auto-
                     // collapse). Legacy fallback (`collateralAmountMax
