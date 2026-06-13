@@ -658,12 +658,17 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](8);
         selectors[0] = EncumbranceMutateFacet.releaseCollateralLien.selector;
         selectors[1] = EncumbranceMutateFacet.decrementCollateralLien.selector;
         selectors[2] = EncumbranceMutateFacet.incrementCollateralLien.selector;
         // #569 §4.4 — rekey create-leg for obligation transfer.
         selectors[3] = EncumbranceMutateFacet.recreateCollateralLien.selector;
+        // T-407-C (#566) — offer-principal lock (second lien category).
+        selectors[4] = EncumbranceMutateFacet.createOfferPrincipalLien.selector;
+        selectors[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
+        selectors[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
+        selectors[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
     }
 
     function getDefaultedFacetSelectors()

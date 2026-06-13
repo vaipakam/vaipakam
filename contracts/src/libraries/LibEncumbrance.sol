@@ -362,6 +362,27 @@ library LibEncumbrance {
         }
     }
 
+    /// @notice Grow the offer-principal lock by `added` — used when a
+    ///         lender raises an unaccepted offer's `amountMax` via
+    ///         `OfferMutateFacet.setOfferAmount` / `modifyOffer`, which
+    ///         pulls the extra principal into the creator's vault. The
+    ///         lock must grow in lock-step so the new principal is
+    ///         protected by the withdraw chokepoint. No-op on an
+    ///         absent / already-released row (defensive — the mutate
+    ///         path only reaches here for a live ERC20 lender offer that
+    ///         already carries a lock from offer-create).
+    function incrementOfferPrincipalLien(
+        uint256 offerId,
+        uint256 added
+    ) internal {
+        if (added == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Encumbrance storage lien = s.offerPrincipalLien[offerId];
+        if (lien.released || lien.user == address(0)) return;
+        s.encumbered[lien.user][lien.asset][lien.tokenId] += added;
+        lien.amount += added;
+    }
+
     /// @notice Release the offer-principal lock in full. Used on
     ///         cancel / single-fill accept / dust-close / lazy-expiry.
     ///         Idempotent (already-released rows are no-ops).

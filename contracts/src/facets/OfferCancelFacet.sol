@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 
 /**
@@ -222,6 +223,21 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // safe ONLY because every withdraw below targets `creator`.
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
+                // T-407-C (#566) — release the offer-principal lock
+                // BEFORE the refund withdraw. The remaining lien covers
+                // exactly the unfilled principal about to be returned;
+                // if it stayed active, the vault-withdraw chokepoint
+                // would treat that principal as encumbered and block the
+                // creator's own refund. Idempotent + a no-op on offers
+                // that never carried a lien (covers the partial-filled
+                // case too — prior matches already decremented it).
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                        offerId
+                    ),
+                    bytes4(0)
+                );
                 // Range Orders Phase 1 — refund only the UNFILLED
                 // portion. createOffer pre-vaulted `amountMax`; each
                 // partial match consumed a slice. Legacy single-value

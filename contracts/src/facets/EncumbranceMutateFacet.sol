@@ -91,4 +91,58 @@ contract EncumbranceMutateFacet {
             LibVaipakam.storageSlot().loans[loanId]
         );
     }
+
+    // ─── Offer-principal lock (T-407-C, #566) — second lien category ────
+    //
+    // The per-offer principal lock for ERC20 Lender offers. The creator's
+    // offered principal sits in their own vault from offer-create; these
+    // selectors keep the encumbrance aggregate aware of it so the creator
+    // cannot withdraw the locked portion before cancelling/filling the
+    // offer (the same `encumbered[user][asset][0]` aggregate the withdraw
+    // chokepoint guard reads). All gated `onlyDiamondInternal`; the lib
+    // functions live here (not inlined at the offer-flow call sites) to
+    // keep those bytecode-sensitive facets under the EIP-170 ceiling.
+
+    /// @notice Create the offer-principal lock at offer-create
+    ///         (`OfferCreateFacet._pullCreatorAssetsClassic`, Lender+ERC20
+    ///         branch). See {LibEncumbrance.createOfferPrincipalLien}.
+    function createOfferPrincipalLien(
+        uint256 offerId,
+        address creator,
+        address lendingAsset,
+        uint256 amount
+    ) external onlyDiamondInternal {
+        LibEncumbrance.createOfferPrincipalLien(offerId, creator, lendingAsset, amount);
+    }
+
+    /// @notice Decrement the offer-principal lock by `consumed` on each
+    ///         partial-fill match (`OfferMatchFacet.matchOffers`). See
+    ///         {LibEncumbrance.decrementOfferPrincipalLien}.
+    function decrementOfferPrincipalLien(uint256 offerId, uint256 consumed)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.decrementOfferPrincipalLien(offerId, consumed);
+    }
+
+    /// @notice Grow the offer-principal lock by `added` when a lender
+    ///         raises an unaccepted offer's `amountMax`
+    ///         (`OfferMutateFacet.setOfferAmount` / `modifyOffer`). See
+    ///         {LibEncumbrance.incrementOfferPrincipalLien}.
+    function incrementOfferPrincipalLien(uint256 offerId, uint256 added)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.incrementOfferPrincipalLien(offerId, added);
+    }
+
+    /// @notice Release the offer-principal lock in full on cancel /
+    ///         single-fill accept / dust-close / lazy-expiry. Idempotent.
+    ///         See {LibEncumbrance.releaseOfferPrincipalLien}.
+    function releaseOfferPrincipalLien(uint256 offerId)
+        external
+        onlyDiamondInternal
+    {
+        LibEncumbrance.releaseOfferPrincipalLien(offerId);
+    }
 }

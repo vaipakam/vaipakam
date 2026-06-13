@@ -19,6 +19,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -1045,6 +1046,38 @@ contract OfferCreateFacet is
             )
         );
         if (!success) revert NFTMintFailed();
+
+        // T-407-C (#566) — offer-principal lock. An ERC20 Lender offer
+        // pre-vaults its full `amountMax` principal into the creator's
+        // own vault at create-time (the pull ran before this finish
+        // step). Mark that principal as encumbered in the same
+        // `encumbered[user][asset][0]` aggregate the vault-withdraw
+        // chokepoint reads, so the creator cannot withdraw the locked
+        // principal out from under a still-open offer. Released on
+        // cancel / single-fill accept / dust-close / lazy-expiry and
+        // decremented per partial fill (see OfferCancelFacet /
+        // OfferAcceptFacet / OfferMatchFacet). Gated to ERC20 Lender
+        // offers: borrower offers lock collateral (a separate concern,
+        // #574) and NFT lender offers hold the NFT itself in custody,
+        // not a fungible aggregate. `_creatorPullAmount` returns the
+        // exact pre-vaulted principal (`amountMax`, auto-collapsed to
+        // `amount` for legacy single-value callers) — reused so the lien
+        // can never drift from what was actually pulled.
+        if (
+            params.offerType == LibVaipakam.OfferType.Lender &&
+            params.assetType == LibVaipakam.AssetType.ERC20
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.createOfferPrincipalLien.selector,
+                    offerId,
+                    creator,
+                    params.lendingAsset,
+                    _creatorPullAmount(offerId, params)
+                ),
+                bytes4(0)
+            );
+        }
 
         LibMetricsHooks.onOfferCreated(offer);
 

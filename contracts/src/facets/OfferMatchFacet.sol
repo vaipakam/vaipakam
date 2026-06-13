@@ -11,6 +11,7 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -254,6 +255,26 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         mo.matcher = msg.sender;
         mo.active = true;
 
+        // T-407-C (#566) — decrement the lender's offer-principal lock
+        // by this fill BEFORE `acceptOfferInternal` withdraws the same
+        // `mr.matchAmount` of principal from the lender's vault below.
+        // The lock was created at offer-create over the full `amountMax`;
+        // each fill draws a slice out, so the lien must shrink in lock-
+        // step or the vault-withdraw chokepoint would treat the slice as
+        // still encumbered and revert the disbursement. The remaining
+        // lock (covering the still-unfilled capacity) is released at the
+        // dust-close block below. No-op on a lender offer that never
+        // carried a lock (defensive — match-eligible lender offers are
+        // always ERC20).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
+                lenderOfferId,
+                mr.matchAmount
+            ),
+            bytes4(0)
+        );
+
         // Cross-facet call into OfferFacet's internal acceptor entry
         // — same body as `OfferFacet.acceptOffer`, but without
         // re-acquiring the (already-held) nonReentrant lock. The
@@ -354,6 +375,23 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // condition fires when the lender is fully filled
         // (`lenderRemaining == 0`).
         if (lenderRemaining < L.amount) {
+            // T-407-C (#566) — the lender offer is now terminal (dust-
+            // close or full-fill). Release whatever offer-principal lock
+            // remains BEFORE the dust refund below. After this match's
+            // decrement the residual lock equals `lenderRemaining`
+            // exactly, so the release frees precisely the dust about to
+            // be withdrawn; on a clean full-fill (`lenderRemaining == 0`)
+            // the lock is already drained and the release just tombstones
+            // the row. Pairs with the OfferAcceptFacet single-fill
+            // release + the OfferCancelFacet release — every terminal a
+            // lender offer can reach drops its lock exactly once.
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                    lenderOfferId
+                ),
+                bytes4(0)
+            );
             if (lenderRemaining > 0) {
                 // Dust refund: pull the unfilled remainder back to the
                 // lender's wallet. createOffer pre-vaulted amountMax;

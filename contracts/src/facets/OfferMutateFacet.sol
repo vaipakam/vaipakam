@@ -9,6 +9,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -171,7 +172,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         offer.amount = newAmount;
         offer.amountMax = newAmountMax;
 
-        _settleAmountDelta(offer, oldAmount, oldAmountMax, newAmount, newAmountMax);
+        _settleAmountDelta(offerId, offer, oldAmount, oldAmountMax, newAmount, newAmountMax);
 
         _emitModified(offerId, offer);
     }
@@ -342,6 +343,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         if (amountChanged) {
             _settleAmountDelta(
+                offerId,
                 offer,
                 oldAmount,
                 oldAmountMax,
@@ -556,6 +558,7 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// @param  newAmount      Post-mutation `amount`.
     /// @param  newAmountMax   Post-mutation `amountMax`.
     function _settleAmountDelta(
+        uint256 offerId,
         LibVaipakam.Offer storage offer,
         uint256 oldAmount,
         uint256 oldAmountMax,
@@ -569,7 +572,35 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // Lender ERC-20: pre-vault is exactly `amountMax` in
             // `lendingAsset`, so the delta is the simple difference.
             if (newAmountMax != oldAmountMax) {
-                _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                // T-407-C (#566) — keep the offer-principal lock in step
+                // with the principal moving in / out of the creator's
+                // vault. The lock delta equals the principal delta
+                // exactly. On a SHRINK the refund withdraw below would
+                // otherwise be blocked by its own still-active lock, so
+                // the lock is dropped FIRST; on a GROW the deposit lands
+                // before the lock widens (a deposit never touches the
+                // withdraw chokepoint, so order there is cosmetic).
+                if (newAmountMax < oldAmountMax) {
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
+                            offerId,
+                            oldAmountMax - newAmountMax
+                        ),
+                        bytes4(0)
+                    );
+                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                } else {
+                    _pullOrRefundErc20(offer.lendingAsset, oldAmountMax, newAmountMax);
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            EncumbranceMutateFacet.incrementOfferPrincipalLien.selector,
+                            offerId,
+                            newAmountMax - oldAmountMax
+                        ),
+                        bytes4(0)
+                    );
+                }
             }
             return;
         }

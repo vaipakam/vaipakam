@@ -21,6 +21,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LoanFacet} from "./LoanFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {EarlyWithdrawalFacet} from "./EarlyWithdrawalFacet.sol";
@@ -188,6 +189,12 @@ contract OfferAcceptFacet is
     // `OfferMatchFacet`) for ABI continuity with the other match-
     // routed errors that re-raise from this facet's revert vocabulary.
     error AonRequiresFullFill(uint256 offerId, uint256 required, uint256 provided);
+    /// @notice T-407-C (#566) Codex P1 — a direct accept was attempted on
+    ///         an offer that `matchOffers` has already partially filled.
+    ///         Such an offer must be advanced only through the matcher,
+    ///         which consumes its remaining capacity and owns the lien
+    ///         decrement (see {OfferMatchFacet.matchOffers}).
+    error OfferPartiallyFilled(uint256 offerId, uint256 amountFilled);
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -488,6 +495,22 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
+        // > 0 but not yet dust-closed, so accepted == false) is a
+        // matchOffers-managed entity: the matcher consumes its remaining
+        // capacity and owns the lien decrement. A DIRECT accept here would
+        // size the loan off the offer's FULL ceiling (not the residual)
+        // and, after releasing the residual offer-principal lock below,
+        // fund a loan larger than the remaining capacity — pulling the
+        // creator's unrelated free balance. Reject it; the matcher is the
+        // only valid path for a partially-filled offer. (Partial fills
+        // exist only under `partialFillEnabled`; single-fill offers go
+        // 0 → fully-consumed in one shot and never reach here with
+        // amountFilled > 0. The match path sets `matchOverride.active`, so
+        // this never fires on a match-routed accept.)
+        if (!s.matchOverride.active && offer.amountFilled > 0) {
+            revert OfferPartiallyFilled(offerId, offer.amountFilled);
+        }
         // T-086 Round-8 (#358) §19.7b — terminal-state gate. If the
         // offer was already consumed by a parallel sale (Scenario A),
         // refuse the accept — the collateral NFT is gone, no loan can
@@ -754,6 +777,34 @@ contract OfferAcceptFacet is
                         offer.amount
                     ),
                     VaultDepositFailed.selector
+                );
+            }
+
+            // T-407-C (#566) — release the offer-principal lock before
+            // the lender's principal leaves their vault below. A DIRECT
+            // single-fill accept consumes the lender offer in full
+            // (`effectivePrincipal == offer.amountMax`, the entire
+            // pre-vaulted principal), so the whole lien is released
+            // here. The matching path (`matchOverride.active`) is
+            // EXCLUDED: there the per-fill lien decrement / dust-close
+            // release is owned by `OfferMatchFacet.matchOffers`, and a
+            // full release here would wrongly free a partially-filled
+            // lender's still-locked remaining principal. Mirrors the
+            // `!s.matchOverride.active` gate on the borrower-path deposit
+            // just above. Must precede the treasury / matcher /
+            // net-to-borrower withdraws or the vault-withdraw chokepoint
+            // would treat the principal as still encumbered and block
+            // the lender's own disbursement.
+            if (
+                offer.offerType == LibVaipakam.OfferType.Lender &&
+                !s.matchOverride.active
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                        offerId
+                    ),
+                    bytes4(0)
                 );
             }
 
@@ -1239,7 +1290,13 @@ contract OfferAcceptFacet is
         // accept path; this classifier lets `previewAccept` surface the
         // same condition without reverting so the UI can disable the
         // "Accept" button + render an "expired" badge.
-        OfferExpired
+        OfferExpired,
+        // T-407-C (#566) Codex P2 — direct accept of a partially-filled
+        // offer (`amountFilled > 0`, not yet dust-closed) reverts
+        // `OfferPartiallyFilled`; only `matchOffers` may advance it.
+        // APPENDED (never inserted) so every existing classifier's uint8
+        // value stays stable for off-chain decoders.
+        OfferPartiallyFilled
     }
 
     /// @notice Projection of the loan that would land if the supplied
@@ -1436,6 +1493,15 @@ contract OfferAcceptFacet is
         // for the frontend.
         if (offer.accepted) {
             preview.errorCode = AcceptError.OfferAlreadyAccepted;
+            return preview;
+        }
+        // T-407-C (#566) Codex P2 — mirror the direct-accept partial-fill
+        // guard so the preview never quotes an accept that would revert.
+        // A partially-filled offer (`amountFilled > 0`, accepted == false)
+        // must be advanced via `matchOffers`, not `acceptOffer`. Order
+        // matches `_acceptOffer` (right after the `accepted` check).
+        if (offer.amountFilled > 0) {
+            preview.errorCode = AcceptError.OfferPartiallyFilled;
             return preview;
         }
         // #195 — surface the GTT lazy-expiry gate before sanctions /
