@@ -975,6 +975,55 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #574 — when a NON-borrower (here a keeper) precloses an NFT
+    ///      rental, the rental prepay (treasury fee + lender share) must be
+    ///      deducted from the BORROWER's prepay vault, not the caller's. The
+    ///      prepay was deposited by `loan.borrower` at loan init and lives in
+    ///      their vault regardless of who triggers the preclose. Pre-#574 the
+    ///      deduction keyed on `msg.sender`, so a keeper / transferred-position
+    ///      holder either reverted (no prepay in their own vault) or had their
+    ///      personal funds pulled. Asserted by expectCall on the withdraw's
+    ///      source arg.
+    function testPrecloseDirectNFTRental_prepaySourcedFromBorrowerNotKeeper() public {
+        uint256 fullRental = PRINCIPAL * 30;
+        _setLoanAsNftRental(activeLoanId, fullRental, (fullRental * 500) / 10000);
+
+        // Authorize a keeper for the preclose action on this loan (so the
+        // caller is provably NOT loan.borrower).
+        address keeper = makeAddr("preclose-keeper");
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        // Mock the vault / NFT cross-facet calls so the flow completes without
+        // real balances; expectCall still records the calldata that was sent.
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        // The prepay withdraw must source from `borrower` (loan.borrower) — the
+        // expectCall prefix matches selector + first arg. With the pre-#574
+        // `msg.sender` keying this would never fire (the keeper, not borrower,
+        // would be the source).
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, borrower)
+        );
+
+        vm.prank(keeper);
+        PrecloseFacet(address(diamond)).precloseDirect(activeLoanId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "keeper-triggered NFT-rental preclose completes"
+        );
+        vm.clearMockedCalls();
+    }
+
     // ─── offsetWithNewOffer NFT revert ──────────────────────────────────────
 
     function testOffsetRevertsForNFTLoan() public {
