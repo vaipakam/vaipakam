@@ -70,7 +70,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](80);
+        selectors = new bytes4[](81);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -226,6 +226,10 @@ contract HelperTest {
         // encumbrance aggregate so the withdraw-guard tests can pin
         // the lien state without driving the full loan-init lifecycle.
         selectors[79] = TestMutatorFacet.setEncumberedRaw.selector;
+        // #569 Codex #572 round-4 P2 — encumbrance-aggregate reader so
+        // lifecycle tests can assert the lien is HELD across a proper-
+        // close terminal and RELEASED only at `claimAsBorrower`.
+        selectors[80] = TestMutatorFacet.getEncumberedRaw.selector;
         return selectors;
     }
 

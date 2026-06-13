@@ -394,6 +394,54 @@ contract ClaimFacetTest is Test {
         assertTrue(claimed);
     }
 
+    /// @notice #569 Codex #572 round-4 P2 — the collateral lien is HELD
+    ///         across the proper-close (repay) terminal and released
+    ///         ONLY at `claimAsBorrower`, atomically with the claim
+    ///         withdrawal. Closes the transferred-borrower-position
+    ///         drain: a terminal release would let the stored borrower
+    ///         drain the collateral (e.g. VPFI via withdrawVPFIFromVault)
+    ///         in the window between the terminal and a transferee
+    ///         claimant's claim. Proving the lien stays non-zero after
+    ///         repay (so the withdraw guard blocks any drain) and zeroes
+    ///         exactly at claim is the structural guarantee.
+    function test_collateralLienHeldUntilClaim_notReleasedAtRepayTerminal() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+
+        // Lien active while the loan is live.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(
+                borrower, mockCollateralERC20, 0
+            ),
+            1500 ether,
+            "collateral liened while loan active"
+        );
+
+        _repayLoan(loanId);
+
+        // Proper-close terminal does NOT release the lien — the
+        // borrower's collateral stays encumbered in their vault as the
+        // recorded claim row.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(
+                borrower, mockCollateralERC20, 0
+            ),
+            1500 ether,
+            "lien HELD after repay terminal (released only at claim)"
+        );
+
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+
+        // Released atomically at the claim withdrawal.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(
+                borrower, mockCollateralERC20, 0
+            ),
+            0,
+            "lien released at claimAsBorrower"
+        );
+    }
+
     function testClaimAsBorrowerRevertsIfNothingToClaim() public {
         // After default with illiquid collateral, borrower has no claim (full collateral goes to lender)
         uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);

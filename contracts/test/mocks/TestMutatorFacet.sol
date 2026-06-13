@@ -733,4 +733,19 @@ contract TestMutatorFacet {
     ) external {
         LibVaipakam.storageSlot().encumbered[user][asset][tokenId] = amount;
     }
+
+    // ─── #569 Codex #572 round-4 P2 — encumbrance-aggregate reader ──────
+    //
+    // Mirror of `setEncumberedRaw` for assertions: lets lifecycle tests
+    // read the live `encumbered[user][asset][tokenId]` aggregate after a
+    // real loan flow (e.g. to prove the collateral lien is HELD across a
+    // proper-close terminal and RELEASED only at `claimAsBorrower`).
+
+    function getEncumberedRaw(
+        address user,
+        address asset,
+        uint256 tokenId
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
+    }
 }
