@@ -15,6 +15,7 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
@@ -634,6 +635,47 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, loan.borrowerTokenId),
             NFTBurnFailed.selector
         );
+
+        // #577 Codex round-1 P2 — close the lender side of an InternalMatched
+        // loan. The internal-matched lender was paid their principal at the
+        // match, but `claimAsLender` does NOT accept InternalMatched — so
+        // without this the lender position NFT is never burned (stale after
+        // settlement, P2b) and any `heldForLender` (from a prior offset the
+        // liquidation pre-empted) is unclaimable, stranding the loan with
+        // `willSettle == false` (P2a). Pay any held to the CURRENT lender-
+        // position NFT holder (mirrors `claimAsLender`'s held payout) and
+        // burn the lender NFT here, so `willSettle` below resolves true and
+        // the loan settles cleanly. Internal matches are ERC20-only (NFT
+        // rentals don't internal-match), so the held is in `principalAsset`.
+        if (loan.status == LibVaipakam.LoanStatus.InternalMatched) {
+            uint256 lenderHeld = s.heldForLender[loanId];
+            if (lenderHeld > 0) {
+                s.heldForLender[loanId] = 0;
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        loan.lender,
+                        loan.principalAsset,
+                        IERC721(address(this)).ownerOf(loan.lenderTokenId),
+                        lenderHeld
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+            }
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.updateNFTStatus.selector,
+                    loan.lenderTokenId,
+                    loanId,
+                    LibVaipakam.LoanPositionStatus.LoanClosed
+                ),
+                NFTStatusUpdateFailed.selector
+            );
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, loan.lenderTokenId),
+                NFTBurnFailed.selector
+            );
+        }
 
         // If lender already claimed or truly has nothing to claim, settle the loan.
         // Must check heldForLender, NFT rental returns, and NFT collateral claims.

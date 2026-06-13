@@ -645,26 +645,41 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // Treasury's at-fallback cut is forfeited.
                 delete s.lenderClaims[loan.id];
                 if (loan.collateralAmount > 0) {
-                    address borrowerVault = VaultFactoryFacet(address(this))
-                        .getOrCreateUserVault(loan.borrower);
-                    IERC20(loan.collateralAsset).safeTransfer(
-                        borrowerVault, loan.collateralAmount
-                    );
-                    LibVaipakam.recordVaultDeposit(
-                        loan.borrower, loan.collateralAsset, loan.collateralAmount
-                    );
-                    // #577 — lien the pushed residual + record a
-                    // borrowerClaims row so the current borrower-position
-                    // NFT holder retrieves it via `claimAsBorrower` (not
+                    // #577 — retain the residual as a borrowerClaims row owed
+                    // to the current borrower-position NFT holder (not
                     // drainable by a transferred-away `loan.borrower`).
-                    // Mirrors the Active-branch retain, but here the
-                    // residual moves from Diamond custody INTO the vault
-                    // first, so the lien is created fresh (the fallback
-                    // entry released the old one). The earlier code freed
-                    // it to the vault + deleted the claim row, leaving it
-                    // stranded (InternalMatched was not claimable) and
-                    // drainable.
-                    LibEncumbrance.createCollateralLien(loan.id, loan);
+                    //
+                    // #577 Codex round-1 P1 — `loan.collateralAmount` can be
+                    // SPLIT: a non-curing fallback top-up (AddCollateral) lands
+                    // in the borrower's vault with its own ACTIVE lien, while
+                    // the original collateral sits in Diamond custody. So the
+                    // active lien (`existingLien`) is already in the vault, and
+                    // only `diamondPortion` is in Diamond custody to push. Push
+                    // just that portion and bring the lien up to the full
+                    // `collateralAmount` via `incrementCollateralLien`
+                    // (create-if-absent) — NOT `createCollateralLien`, which
+                    // reverts on an existing non-released lien row and would
+                    // block the rescue for topped-up fallback loans.
+                    LibVaipakam.Encumbrance storage existing =
+                        s.loanCollateralLien[loan.id];
+                    uint256 existingLien =
+                        existing.released ? 0 : existing.amount;
+                    uint256 diamondPortion = loan.collateralAmount > existingLien
+                        ? loan.collateralAmount - existingLien
+                        : 0;
+                    if (diamondPortion > 0) {
+                        address borrowerVault = VaultFactoryFacet(address(this))
+                            .getOrCreateUserVault(loan.borrower);
+                        IERC20(loan.collateralAsset).safeTransfer(
+                            borrowerVault, diamondPortion
+                        );
+                        LibVaipakam.recordVaultDeposit(
+                            loan.borrower, loan.collateralAsset, diamondPortion
+                        );
+                    }
+                    // create-if-absent (no top-up) OR increment the top-up lien
+                    // by the pushed Diamond portion → lien == collateralAmount.
+                    LibEncumbrance.incrementCollateralLien(loan.id, diamondPortion);
                     s.borrowerClaims[loan.id] = LibVaipakam.ClaimInfo({
                         asset: loan.collateralAsset,
                         amount: loan.collateralAmount,

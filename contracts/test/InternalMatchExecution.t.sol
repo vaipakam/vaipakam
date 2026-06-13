@@ -239,6 +239,63 @@ contract InternalMatchExecutionTest is SetupTest {
         assertTrue(relAfter, "lien released at claim");
     }
 
+    /// @notice #577 Codex round-1 P2 — an InternalMatched loan carrying
+    ///         `heldForLender` (from a prior offset the liquidation
+    ///         pre-empted) must not get stuck: the borrower's residual
+    ///         claim closes the lender side (pays the held to the CURRENT
+    ///         lender NFT holder + burns the lender NFT) and settles.
+    function test_577_internalMatched_withHeld_closesLenderSideAndSettles() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+
+        // Distinct position-NFT ids so the borrower + lender `ownerOf`
+        // mocks below don't collide (scaffoldActiveLoan defaults both to 0).
+        {
+            LibVaipakam.Loan memory seedA = _getLoan(LOAN_A);
+            seedA.borrowerTokenId = 9001;
+            seedA.lenderTokenId = 9002;
+            TestMutatorFacet(address(diamond)).setLoan(LOAN_A, seedA);
+        }
+
+        // Pre-existing held: 50 X in the lender's vault + accounting.
+        uint256 held = 50;
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(lenderVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(LOAN_A, held);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        address borrowerHolder = address(0xBEEF);
+        address lenderHolder = address(0xCAFE);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(borrowerHolder));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.lenderTokenId), abi.encode(lenderHolder));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+
+        uint256 lenderHolderBefore = IERC20(mockERC20).balanceOf(lenderHolder);
+        vm.prank(borrowerHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+
+        assertEq(
+            IERC20(mockERC20).balanceOf(lenderHolder) - lenderHolderBefore,
+            held,
+            "held paid to the current lender NFT holder"
+        );
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "loan settles cleanly (not stuck on held)"
+        );
+    }
+
     function test_partialMatch_smallerLegCleared_largerStaysActive() public {
         // Asymmetric — design doc §7's worked example:
         //   A: 10_000 X debt, 5 Y collateral
