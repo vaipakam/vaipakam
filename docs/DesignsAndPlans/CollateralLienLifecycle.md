@@ -235,3 +235,60 @@ transferred-position scenario:
   + claimable by the NFT holder; not drainable by a transferred-away borrower.
 - **Guard (existing pattern):** `test_collateralLienHeldUntilClaim_*` extended
   per gap.
+
+---
+
+## 9. Governing principle (adopted) — lien lifecycle = borrower-NFT lifecycle
+
+The clarifying frame that dissolves the per-path tedium: **the collateral
+lien's lifecycle mirrors the borrower-position-NFT's lifecycle.**
+
+- **Mint** the borrower NFT (loan-init) → `createCollateralLien`.
+- **Burn** the borrower NFT (claim / terminal close) → release the lien.
+- **Re-key** (obligation transfer = burn old + mint new) → release-old +
+  create-new.
+
+Every round 4-6 bug was the lien *diverging* from the NFT — a terminal
+releasing the lien while the borrower NFT still existed (collateral still
+owed to its holder). The rule that structurally prevents the whole class:
+
+> **Terminals only `decrement` what physically leaves `loan.borrower`'s
+> vault (to satisfy the guard for a seizure/swap/custody-out); they NEVER
+> "release". Collateral returning from custody is `increment`-ed back. The
+> single RELEASE is at the borrower-NFT burn.**
+
+### Implementation (commit `4cae0ed7`)
+
+1. **Structural backstop** — `VaipakamNFTFacet.burnNFT` releases the
+   collateral lien when a **borrower-position** NFT is burned, gated on a
+   **terminal loan status** (so the obligation-transfer re-key, which burns
+   the old token while the loan stays `Active`, does NOT release the
+   continuing loan's lien — the status gate is order-independent vs the
+   token swap). A lien can no longer outlive its NFT — this alone would
+   have caught all of rounds 4-6.
+2. **Gap A** — `_distributeFallbackCollateral` `increment`s the borrower
+   residual on the custody return leg.
+3. **Gap B** — the swap-to-repay-intent fill `increment`s its residual
+   instead of tombstoning.
+4. **Gap C** — the FallbackPending top-up claim is set to the **total**
+   vault collateral lien, guarded against clobbering a retry principal-
+   surplus claim.
+5. **Full-seizure terminals** (RiskFacet 554/873, DefaultedFacet 284) keep
+   `release`-to-zero — the full collateral physically leaves, so it is the
+   degenerate `decrement`-by-full; no residual is ever freed, and the
+   backstop enforces the invariant. Partial-seizure terminals already
+   `decrement` (discounted-liq, partial-liq, swap-to-repay).
+6. **D-α** resolved in §942 (discounted surplus claim-gated).
+
+Verification: 540 targeted tests pass (incl. obligation-transfer +
+loan-sale burns), deploy-sanity 12/12 (EIP-170 holds with the backstop).
+
+### Remaining (carded, not in this PR)
+
+- **#577** — `InternalMatched` residual: make it reach a borrower claim
+  (so the NFT burns and the backstop releases) instead of the current
+  direct-vault-deposit + claims-deleted limbo. Spec-mandated (§938).
+- **Retry-surplus + top-up edge** — `borrowerClaims` single-row limit
+  can't hold both a retry principal surplus and a collateral top-up; the
+  top-up stays liened (backstop releases at burn) but isn't separately
+  claimable in that rare combination. Carded.
