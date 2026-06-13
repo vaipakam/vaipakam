@@ -2,7 +2,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
-import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibStakingRewards} from "./LibStakingRewards.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
@@ -539,37 +538,27 @@ library LibVPFIDiscount {
         if (borrowerVault == address(0)) return (false, 0);
 
         uint256 vaultBal = IERC20(vpfi).balanceOf(borrowerVault);
-        uint256 prevTracked = s.protocolTrackedVaultBalance[borrower][vpfi];
-        // #569 Codex #572 round-4 P2 — check FREE VPFI (capped by the
-        // tracked counter, minus active encumbrances), NOT raw balance.
-        // If the borrower's VPFI is locked as ERC-20 loan collateral, the
-        // chokepoint guard would revert the withdraw below AFTER the
-        // staking checkpoint had already been stamped, corrupting reward
-        // state on this silent-fallback path. Pre-checking free here makes
-        // the LIF fall back to the normal (non-VPFI) fee cleanly, before
-        // any checkpoint mutation.
-        uint256 cappedBal = vaultBal < prevTracked ? vaultBal : prevTracked;
-        if (
-            LibEncumbrance.freeBalance(borrower, vpfi, 0, cappedBal) < vpfiRequired
-        ) return (false, 0);
+        if (vaultBal < vpfiRequired) return (false, 0);
 
         // T-054 PR-2 — clamp checkpoint balance against the tracked
         // counter so unsolicited dust isn't counted as stake.
+        uint256 prevTracked = s.protocolTrackedVaultBalance[borrower][vpfi];
         uint256 newStakedBal = clampToTracked(
             vaultBal - vpfiRequired,
             prevTracked - vpfiRequired
         );
 
-        // Staking checkpoint — the free pre-check above guarantees the
-        // guarded withdraw below will succeed, so stamping here captures
-        // the pre-deduction staked amount without risk of a stamped-but-
-        // not-withdrawn fallback.
-        LibStakingRewards.updateUser(borrower, newStakedBal);
-
         // Withdraw VPFI from borrower's vault into Diamond custody (the
         // Diamond holds it until settlement splits it between rebate and
         // treasury). The withdraw reverts on insufficient balance /
         // vault misconfiguration; silent-fallback via the call wrapper.
+        // #569 Codex #572 round-4 P2 — the encumbrance guard can now
+        // revert this withdraw when the borrower's VPFI is locked as loan
+        // collateral. The staking + discount checkpoints are therefore
+        // stamped ONLY AFTER a successful withdraw (below), so the
+        // silent-fallback path (`ok == false`) can't leave reward state
+        // stamped as if VPFI had moved when the vault balance didn't
+        // change.
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -580,6 +569,11 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
+
+        // Staking checkpoint at the post-mutation balance (now that the
+        // withdraw committed). `newStakedBal` is the intended post-
+        // deduction staked amount, computed pre-withdraw above.
+        LibStakingRewards.updateUser(borrower, newStakedBal);
 
         // Rollup the borrower's discount accumulator at the post-
         // mutation balance now that the withdraw has committed. Seeds
@@ -759,28 +753,22 @@ library LibVPFIDiscount {
         // for the window, not a live tier lookup.
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, interestAmount);
         if (!canQuote) return (false, 0);
-        // #569 Codex #572 round-4 P2 — check FREE VPFI (capped by tracked,
-        // minus encumbrances), not raw balance, for the same reason as
-        // `tryApplyBorrowerLif`: if the lender's VPFI is locked as loan
-        // collateral, the guarded withdraw below would revert after the
-        // staking checkpoint was stamped, corrupting reward state on the
-        // silent-fallback path. Pre-check free so the yield fee falls back
-        // to the lending-asset split cleanly.
-        uint256 cappedBal = vaultBal < prevTracked ? vaultBal : prevTracked;
-        if (
-            LibEncumbrance.freeBalance(lender, vpfi, 0, cappedBal) < vpfiRequired
-        ) return (false, 0);
+        if (vaultBal < vpfiRequired) return (false, 0);
 
         // 3. Checkpoint staking accrual at the post-mutation balance.
         //    Mirrors the pattern at every other vault-mutation site.
-        //    Clamped against tracked-after-withdraw. The free pre-check
-        //    above guarantees the guarded withdraw succeeds.
+        //    Clamped against tracked-after-withdraw.
         uint256 newStakedBal = clampToTracked(
             vaultBal - vpfiRequired,
             prevTracked - vpfiRequired
         );
-        LibStakingRewards.updateUser(lender, newStakedBal);
 
+        // #569 Codex #572 round-4 P2 — stamp the staking + discount
+        // checkpoints ONLY AFTER a successful withdraw. The encumbrance
+        // guard can now revert this withdraw when the lender's VPFI is
+        // locked as loan collateral; on that silent-fallback path
+        // (`ok == false`) we must not leave reward state stamped as if
+        // VPFI had moved.
         address treasury = LibFacet.getTreasury();
         (bool ok, ) = address(this).call(
             abi.encodeWithSelector(
@@ -792,6 +780,8 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
+
+        LibStakingRewards.updateUser(lender, newStakedBal);
 
         // 4. Re-stamp the accumulator at the post-mutation balance now
         //    that the withdraw has committed. Zero elapsed between this
