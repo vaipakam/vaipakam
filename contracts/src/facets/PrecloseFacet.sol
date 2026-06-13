@@ -314,12 +314,22 @@ contract PrecloseFacet is
                 fullRental
             );
 
-            // Deduct from borrower's prepay vault: treasury fee
+            // Deduct from the borrower's prepay vault: treasury fee.
+            // #574 — source from `loan.borrower` (who deposited the rental
+            // prepay at loan init), NOT `msg.sender`. `precloseDirect` can be
+            // triggered by a keeper or a transferred borrower-position holder
+            // (it gates on keeper/holder authorisation, not borrower identity),
+            // and the prepay always sits in the original borrower's vault.
+            // Keying the source on `msg.sender` pulled from the caller's vault
+            // instead — reverting for a keeper/transferee with no prepay, or
+            // (worse) letting a transferred-away borrower redirect the prepay
+            // out of someone else's vault. The fee belongs to the prepay, so
+            // it must come from where the prepay lives.
             if (treasuryFee > 0) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        msg.sender,
+                        loan.borrower,
                         loan.prepayAsset,
                         LibFacet.getTreasury(),
                         treasuryFee
@@ -335,11 +345,15 @@ contract PrecloseFacet is
             // the borrower's vault), so we pass the lender's vault
             // straight in. Saves one transfer + removes a transient
             // Diamond `prepayAsset` balance.
+            // #574 — source from `loan.borrower`, not `msg.sender` (same
+            // transferred-position / keeper reasoning as the treasury-fee
+            // deduction above): the lender's rental income comes out of the
+            // borrower's prepay, which lives in the original borrower's vault.
             address lenderVault = LibFacet.getOrCreateVault(loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender,
+                    loan.borrower,
                     loan.prepayAsset,
                     lenderVault,
                     lenderShare
