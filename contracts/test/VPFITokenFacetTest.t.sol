@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
@@ -19,6 +20,7 @@ contract VPFITokenFacetTest is SetupTest {
     address internal constant INITIAL_MINTER = address(0xBEEF);
 
     event VPFITokenSet(address indexed previousToken, address indexed newToken);
+    event VPFITokenRotated(address indexed previousToken, address indexed newToken);
 
     function setUp() public {
         setupHelper();
@@ -71,10 +73,30 @@ contract VPFITokenFacetTest is SetupTest {
         );
         ERC1967Proxy proxy2 = new ERC1967Proxy(address(impl2), initData);
 
+        // #575 — a rotation (non-zero previous → different) emits BOTH the
+        // standard VPFITokenSet and the distinct VPFITokenRotated audit event.
         vm.expectEmit(true, true, false, false, address(diamond));
         emit VPFITokenSet(address(token), address(proxy2));
+        vm.expectEmit(true, true, false, false, address(diamond));
+        emit VPFITokenRotated(address(token), address(proxy2));
         _facet().setVPFIToken(address(proxy2));
         assertEq(_facet().getVPFIToken(), address(proxy2));
+    }
+
+    /// @dev #575 — the one-time initial registration (zero → token) must NOT
+    ///      emit VPFITokenRotated; that event is the distinct signal reserved
+    ///      for an actual rotation (a rare migration-class event).
+    function testSetVPFITokenInitialDoesNotEmitRotated() public {
+        vm.recordLogs();
+        _facet().setVPFIToken(address(token)); // zero → token (initial set)
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 rotatedTopic = keccak256("VPFITokenRotated(address,address)");
+        for (uint256 i = 0; i < logs.length; ++i) {
+            assertTrue(
+                logs[i].topics.length == 0 || logs[i].topics[0] != rotatedTopic,
+                "initial VPFI-token registration must not emit VPFITokenRotated"
+            );
+        }
     }
 
     // ─── Views before registration ───────────────────────────────────────────
