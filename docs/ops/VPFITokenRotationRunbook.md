@@ -52,57 +52,66 @@ the chosen guard is this runbook + an on-chain audit event (`VPFITokenRotated`)
 rather than per-offer/loan address snapshotting (which would not address the
 staked/tracked-balance stranding anyway — see "Decision" below).
 
-## Procedure (pause → drain → verify → rotate → re-enable)
+## Procedure (reduce inflow → drain → hard-freeze → re-verify under freeze → rotate → re-enable)
 
-1. **Freeze INFLOW only — keep the drain paths open.** Freeze the surfaces
-   that can ADD new old-token exposure: offer-create, offer-accept, and the
-   **VPFI vault-deposit surfaces** (`depositVPFIToVault` /
-   `depositVPFIToVaultWithPermit`, which stamp
-   `protocolTrackedVaultBalance[user][oldToken]` under the *current* token).
-   A deposit/stake landing after enumeration but before `setVPFIToken` would
-   re-create exactly the stranded balance this runbook guards against.
-   **Do NOT apply a blanket global guardian pause here:** it would also freeze
-   the withdraw / unstake / repay / settle / cancel / claim paths the drain
-   itself needs, deadlocking the procedure. (If you want a hard freeze at the
-   moment of rotation, apply it only at the very end — after the drain, right
-   before `setVPFIToken` — when there is nothing left to drain.)
+> **The guarantee is the re-verify under a hard freeze (step 5), not a perfect
+> inflow list.** VPFI has many inflow surfaces and more may be added over time,
+> so this runbook does not depend on enumerating every one. The inflow-reduction
+> in step 1 just limits churn during the drain; the *authoritative* check is
+> step 5 — re-confirming **zero** old-token exposure while the system is frozen,
+> immediately before rotating. Anything a partial inflow-freeze missed is caught
+> there.
+
+1. **Reduce inflow (best-effort) — keep drain paths OPEN.** Pause the known
+   VPFI *inflow* surfaces with whatever per-function / per-asset pause controls
+   exist, while leaving the *outflow / drain* paths (withdraw, unstake, repay,
+   settle, cancel, claim) open. Known inflow surfaces (**non-exhaustive** — the
+   guarantee is step 5, not this list): offer-create, offer-accept; the VPFI
+   vault-deposit surfaces (`depositVPFIToVault` / `depositVPFIToVaultWithPermit`);
+   and, where fixed-rate VPFI sales are enabled, the buy surfaces
+   (`buyVPFIWithETH`, `processBridgedBuy`). Each credits/stamps VPFI under the
+   *current* token. Do **not** apply a blanket global pause here — it would also
+   freeze the drain paths and deadlock the procedure (the hard freeze comes
+   later, step 4, once the drain is done).
 2. **Enumerate ALL old-token exposure.** Identify every:
    - open offer whose `lendingAsset`, `prepayAsset`, **or** `collateralAsset`
-     == old token — note `lendingAsset` too: a VPFI-**lending** offer holds
-     pre-vaulted old-VPFI principal (a tracked balance), so principal-side
-     VPFI is in scope, not just prepay/collateral;
-   - active loan whose `principalAsset` **or** `collateralAsset` == old token;
+     == old token (a VPFI-lending offer holds pre-vaulted old-VPFI principal);
+   - active loan whose `principalAsset`, `prepayAsset`, **or** `collateralAsset`
+     == old token (NFT-rental loans can hold old VPFI in their prepay pool);
    - any non-zero VPFI encumbrance (`s.encumbered[user][oldToken][0]`);
-   - **any non-zero `protocolTrackedVaultBalance[user][oldToken]`** — i.e.
-     staked VPFI for the fee discount, or deposited-but-uncommitted VPFI —
-     **even with no active offer/loan/lien.** This is the class that strands
-     after rotation (no public exit; see "Why a rotation needs care"), so it
-     MUST be in the drain set, not just offers/loans.
-   Enumerate via the indexer or a **full** active-offer scan filtered on
-   `lendingAsset`, `prepayAsset`, **and** `collateralAsset` == old token — NOT
-   `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only
-   and would MISS old-token prepay and collateral offers — plus a full active-
-   loan scan (by `principalAsset` + `collateralAsset`) and the per-user
-   `protocolTrackedVaultBalance` ledger for the old token.
-3. **Drain them ACTIVELY.** Do not rely on passive expiry/maturity — that
-   leaves old-token state lingering indefinitely. **Actively** cancel the
-   offers (releasing their pre-vaulted principal), and settle / close / repay
-   the loans so their collateral lien releases; have users unstake + withdraw
-   their tracked old-token VPFI (or migrate it). Goal: **zero** live references
-   to the old token, zero old-token encumbrance, **and zero old-token
-   protocol-tracked vault balance** — driven to zero by action, not by
-   waiting.
-4. **Verify zero exposure.** Re-scan step 2 — offers, loans, encumbrances, AND
-   tracked vault balances — and confirm nothing remains under the old token.
-5. **Rotate.** `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE /
-   timelock). This emits both `VPFITokenSet` and — because `previous != 0` —
+   - **any non-zero `protocolTrackedVaultBalance[user][oldToken]`** — staked
+     VPFI or deposited-but-uncommitted VPFI, **even with no active
+     offer/loan/lien** (this is the class that strands after rotation — no
+     public exit; see "Why a rotation needs care").
+   Scan via the indexer or a full active-offer scan on `lendingAsset` +
+   `prepayAsset` + `collateralAsset` == old token (NOT
+   `MetricsFacet.getActiveOffersByAsset`, which keys on `lendingAsset` only and
+   misses prepay/collateral offers), a full active-loan scan on all three legs,
+   the encumbrance ledger, and the `protocolTrackedVaultBalance` ledger.
+3. **Drain them ACTIVELY.** Don't rely on passive expiry/maturity. Actively
+   cancel the offers (releasing pre-vaulted principal); settle / close / repay
+   the loans so their liens release; have users unstake + withdraw (or migrate)
+   their tracked old-token VPFI. Drive every old-token offer, loan, encumbrance,
+   and tracked balance to zero by action.
+4. **Hard-freeze for the rotate window.** Now that the drain is complete, apply
+   a hard freeze — a global guardian pause is appropriate **here** (the drain is
+   done, so it can't deadlock anything). This stops every inflow surface at once
+   for the brief rotate window, including any the partial step-1 freeze missed.
+5. **Re-verify ZERO under the freeze — the authoritative backstop.** With the
+   system frozen, re-run the step-2 enumeration across ALL legs. If anything
+   non-zero remains — some inflow surface slipped state in during the drain —
+   UNFREEZE, drain it (step 3), re-freeze (step 4), and re-verify. Proceed only
+   when this confirms **zero** old-token exposure under the freeze. This loop is
+   what makes the procedure correct regardless of which inflow surfaces the
+   step-1 list missed.
+6. **Rotate.** `VPFITokenFacet.setVPFIToken(newToken)` (ADMIN_ROLE / timelock),
+   under the freeze. Emits both `VPFITokenSet` and — because `previous != 0` —
    `VPFITokenRotated(previous, newToken)`.
-6. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated`
-   and record that steps 1–4 were completed before it fired. (The event is
-   the on-chain breadcrumb that a rotation happened; it does not by itself
-   prove the drain — that is this runbook's responsibility.)
-7. **Re-enable.** Unpause the entry points. Verify new VPFI offers/loans key
-   off the new token.
+7. **Confirm the audit event.** Ops/indexer must observe `VPFITokenRotated` and
+   record that the drain + zero-verification (steps 2–5) preceded it. The event
+   is the on-chain breadcrumb; it does not by itself prove the drain.
+8. **Re-enable.** Unfreeze / unpause. Verify new VPFI offers/loans key off the
+   new token.
 
 ## Decision (recorded for #575)
 
