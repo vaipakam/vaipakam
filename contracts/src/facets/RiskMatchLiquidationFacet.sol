@@ -538,6 +538,37 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                status == LibVaipakam.LoanStatus.FallbackPending;
     }
 
+    /// @dev #577 — retain an Active full-internal-match RESIDUAL so it's
+    ///      retrievable by the current borrower-position NFT holder rather
+    ///      than tombstoned + freed. At the call site the loan's debt is
+    ///      zero (full match) and `loan.collateralAmount` holds the
+    ///      over-collateralization residual, still liened in
+    ///      `loan.borrower`'s vault (the pre-withdraw decrement left the
+    ///      lien at exactly the residual). Record a `borrowerClaims` row +
+    ///      KEEP the lien; `ClaimFacet.claimAsBorrower` (which accepts
+    ///      `InternalMatched`) releases the lien atomically at claim and
+    ///      routes the residual to the rightful NFT owner — the same
+    ///      anti-drain release-at-claim flow proper closes use. An
+    ///      exactly-collateralized match (residual 0) tombstones the
+    ///      already-zero lien cleanly. ERC-20 collateral only (NFT-rental
+    ///      loans never internal-match-liquidate; the lien is ERC-20-gated
+    ///      per D-1).
+    function _retainInternalMatchResidual(LibVaipakam.Loan storage loan) private {
+        if (loan.collateralAmount == 0) {
+            LibEncumbrance.releaseCollateralLien(loan.id);
+            return;
+        }
+        LibVaipakam.storageSlot().borrowerClaims[loan.id] = LibVaipakam.ClaimInfo({
+            asset: loan.collateralAsset,
+            amount: loan.collateralAmount,
+            assetType: loan.collateralAssetType,
+            tokenId: loan.collateralTokenId,
+            quantity: loan.collateralQuantity,
+            claimed: false
+        });
+        // Lien intentionally retained — released inside `claimAsBorrower`.
+    }
+
     /// @dev EC-003 Phase 1 / EC-007 — post-settlement housekeeping for a
     ///      loan whose principal was reduced by an internal match.
     ///      Handles three cases:
@@ -583,11 +614,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.LoanStatus.Active,
                     LibVaipakam.LoanStatus.InternalMatched
                 );
-                // Full internal-match closes the loan. The pre-withdraw
-                // decrement already drove the lien amount to zero; this
-                // release tombstones the row (a no-op aggregate change)
-                // for a clean terminal state.
-                LibEncumbrance.releaseCollateralLien(loan.id);
+                // #577 — a full internal-match closes the loan, but an
+                // OVER-collateralized loan leaves a residual
+                // (`loan.collateralAmount`) still in `loan.borrower`'s
+                // vault, liened (the pre-withdraw decrement left the lien
+                // at exactly the residual). Retain it as a borrowerClaims
+                // row + KEEP the lien instead of tombstoning it — see
+                // `_retainInternalMatchResidual`. The earlier code released
+                // the lien on the (false) assumption the decrement always
+                // zeroed it; for the over-collateralized case that freed
+                // the residual with no claim path (stranded, and drainable
+                // by a transferred-away `loan.borrower`).
+                _retainInternalMatchResidual(loan);
             }
             // Partial internal match — loan stays Active with reduced
             // collateral. The pre-withdraw decrement already adjusted
@@ -603,9 +641,9 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // Full rescue. Lender was made whole in principal asset
                 // via `_settleLeg`. The residual collateral
                 // (`loan.collateralAmount`) is still in the Diamond's
-                // custody — push it to the borrower's vault so they can
-                // withdraw it via the standard Settled-path claim flow.
+                // custody — push it to the borrower's vault.
                 // Treasury's at-fallback cut is forfeited.
+                delete s.lenderClaims[loan.id];
                 if (loan.collateralAmount > 0) {
                     address borrowerVault = VaultFactoryFacet(address(this))
                         .getOrCreateUserVault(loan.borrower);
@@ -615,9 +653,29 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.recordVaultDeposit(
                         loan.borrower, loan.collateralAsset, loan.collateralAmount
                     );
+                    // #577 — lien the pushed residual + record a
+                    // borrowerClaims row so the current borrower-position
+                    // NFT holder retrieves it via `claimAsBorrower` (not
+                    // drainable by a transferred-away `loan.borrower`).
+                    // Mirrors the Active-branch retain, but here the
+                    // residual moves from Diamond custody INTO the vault
+                    // first, so the lien is created fresh (the fallback
+                    // entry released the old one). The earlier code freed
+                    // it to the vault + deleted the claim row, leaving it
+                    // stranded (InternalMatched was not claimable) and
+                    // drainable.
+                    LibEncumbrance.createCollateralLien(loan.id, loan);
+                    s.borrowerClaims[loan.id] = LibVaipakam.ClaimInfo({
+                        asset: loan.collateralAsset,
+                        amount: loan.collateralAmount,
+                        assetType: loan.collateralAssetType,
+                        tokenId: loan.collateralTokenId,
+                        quantity: loan.collateralQuantity,
+                        claimed: false
+                    });
+                } else {
+                    delete s.borrowerClaims[loan.id];
                 }
-                delete s.lenderClaims[loan.id];
-                delete s.borrowerClaims[loan.id];
                 s.fallbackSnapshot[loan.id].active = false;
                 LibLifecycle.transitionFromAny(
                     loan,

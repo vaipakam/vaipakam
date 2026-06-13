@@ -161,6 +161,84 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
     }
 
+    /// @notice #577 — an OVER-collateralized full internal match leaves a
+    ///         residual that stays LIENED (drain-blocked for a
+    ///         transferred-away `loan.borrower`) and is CLAIMABLE by the
+    ///         current borrower-position NFT holder. Previously the
+    ///         residual lien was tombstoned + no claim row written:
+    ///         stranded for non-VPFI, drainable for VPFI.
+    function test_577_overCollateralizedMatch_residualLienedAndClaimable() public {
+        // A: 600 X debt, 1000 Y collateral; B: 600 Y debt, 600 X collateral.
+        // Match consumes movedY=600 of A's Y (pays B) + movedX=600 of B's X
+        // (pays A) → both close; A keeps a 400 Y residual.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A real collateral lien on A's pre-vaulted 1000 Y — so the
+        // pre-withdraw decrement leaves the 400 residual liened and the
+        // #577 retain keeps it (the drain-block surface).
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A InternalMatched");
+        assertEq(a.collateralAmount, 400, "A keeps the 400 residual");
+
+        // Drain-block: the residual lien is RETAINED (not tombstoned).
+        (uint256 lienAmt, bool released) =
+            TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
+        assertEq(lienAmt, 400, "residual lien retained");
+        assertFalse(released, "residual lien not released at match");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(borrower, mockCollateralERC20, 0),
+            400,
+            "aggregate reflects the retained residual"
+        );
+
+        // The stored `loan.borrower` (NFT now transferred away) is blocked
+        // from withdrawing the residual — exactly the drain the lien closes.
+        vm.prank(address(diamond));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.WithdrawWouldUnderflowLien.selector,
+                borrower, mockCollateralERC20, uint256(0), uint256(1), uint256(0)
+            )
+        );
+        VaultFactoryFacet(address(diamond)).vaultWithdrawERC20(
+            borrower, mockCollateralERC20, borrower, 1
+        );
+
+        // Retrieval: the CURRENT borrower-position NFT holder (transferred
+        // to `newHolder`) claims the residual via claimAsBorrower (now
+        // accepting InternalMatched). The lien releases atomically at claim.
+        address newHolder = address(0xBEEF);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId),
+            abi.encode(newHolder)
+        );
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+
+        uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderBefore,
+            400,
+            "NFT holder claims the 400 residual"
+        );
+        (, bool relAfter) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
+        assertTrue(relAfter, "lien released at claim");
+    }
+
     function test_partialMatch_smallerLegCleared_largerStaysActive() public {
         // Asymmetric — design doc §7's worked example:
         //   A: 10_000 X debt, 5 Y collateral

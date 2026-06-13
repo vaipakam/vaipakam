@@ -464,13 +464,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // Borrower can only claim after the loan is terminally Repaid or
-        // Defaulted. FallbackPending is explicitly blocked: during that window
-        // the borrower can still cure via addCollateral/repayLoan, so handing
-        // them the collateral split would short-circuit the cure policy.
+        // Borrower can only claim after the loan is terminally Repaid,
+        // Defaulted, or InternalMatched. FallbackPending is explicitly
+        // blocked: during that window the borrower can still cure via
+        // addCollateral/repayLoan, so handing them the collateral split
+        // would short-circuit the cure policy.
+        // #577 — InternalMatched is a terminal close: an over-collateralized
+        // full internal match leaves a residual liened in loan.borrower's
+        // vault with a borrowerClaims row owed to the current borrower-NFT
+        // holder. Accept it here so the holder can retrieve the residual
+        // (the lien is released atomically below, the same anti-drain
+        // release-at-claim flow proper closes use).
         if (
             loan.status != LibVaipakam.LoanStatus.Repaid &&
-            loan.status != LibVaipakam.LoanStatus.Defaulted
+            loan.status != LibVaipakam.LoanStatus.Defaulted &&
+            loan.status != LibVaipakam.LoanStatus.InternalMatched
         ) revert InvalidLoanStatus();
 
         LibVaipakam.ClaimInfo storage claim = s.borrowerClaims[loanId];

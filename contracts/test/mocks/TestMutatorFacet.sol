@@ -748,4 +748,41 @@ contract TestMutatorFacet {
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().encumbered[user][asset][tokenId];
     }
+
+    // ─── #577 — loan-collateral lien row setter / reader ────────────────
+    //
+    // Pin a `loanCollateralLien[loanId]` row + tick its aggregate without
+    // driving the full loan-init flow, so internal-match residual tests can
+    // prove an over-collateralized residual stays LIENED (not drainable by a
+    // transferred-away `loan.borrower`) and is claimable by the NFT holder.
+    // Mirrors exactly what `LibEncumbrance.createCollateralLien` writes.
+    function setLoanCollateralLienRaw(
+        uint256 loanId,
+        address user,
+        address asset,
+        uint256 tokenId,
+        uint256 amount,
+        LibVaipakam.AssetType assetType
+    ) external {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.loanCollateralLien[loanId] = LibVaipakam.Encumbrance({
+            user: user,
+            asset: asset,
+            tokenId: tokenId,
+            amount: amount,
+            assetType: assetType,
+            released: false
+        });
+        s.encumbered[user][asset][tokenId] += amount;
+    }
+
+    function getLoanCollateralLienAmount(uint256 loanId)
+        external
+        view
+        returns (uint256 amount, bool released)
+    {
+        LibVaipakam.Encumbrance storage l =
+            LibVaipakam.storageSlot().loanCollateralLien[loanId];
+        return (l.amount, l.released);
+    }
 }
