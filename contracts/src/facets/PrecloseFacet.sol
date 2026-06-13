@@ -626,6 +626,26 @@ contract PrecloseFacet is
         // follow-up card; this is the targeted guard for the obligation-
         // transfer path that this PR newly liens.)
         if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+            // #573 — release the new borrower's offer-collateral lock
+            // (set when they created the borrow offer) BEFORE the
+            // free-balance check + lien recreate below. The obligation
+            // transfer is another borrower-offer consumption path: it
+            // hands the offer lock off to the continuing loan's collateral
+            // lien (`recreateCollateralLien` below). Without the release
+            // the still-active offer lock makes `freeBalance` read 0 here
+            // and the transfer reverts `InsufficientCollateral`. The check
+            // then confirms the collateral is genuinely present (not
+            // drained out a side door), and `recreateCollateralLien`
+            // re-locks it under the new borrower for the continuing loan.
+            // (The #565 comment above anticipated this as "the follow-up
+            // card" — #573 is that card.)
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                    borrowerOfferId
+                ),
+                bytes4(0)
+            );
             address newBorrowerVault = LibFacet.getOrCreateVault(newBorrower);
             // #569 Codex #572 round-2 P1 — compare against the incoming
             // borrower's FREE balance (raw − their existing encumbrances),

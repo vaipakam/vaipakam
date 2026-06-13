@@ -275,25 +275,6 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             bytes4(0)
         );
 
-        // #573 — symmetric decrement of the BORROWER offer's collateral
-        // lock by the collateral this fill consumes. The child loan's
-        // collateral lien (created inside `acceptOfferInternal` →
-        // `initiateLoan` → `createCollateralLien`, same
-        // `(borrower, collateralAsset, 0)` key) re-encumbers exactly this
-        // `reqCollateral`, so the offer lock must shrink by the same
-        // amount to keep the aggregate == vaulted collateral. The unfilled
-        // remainder is released at the borrower dust-close / single-fill
-        // refund below. No-op on a borrower offer that never carried a
-        // collateral lock (NFT collateral, or no lock).
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
-                borrowerOfferId,
-                mr.reqCollateral
-            ),
-            bytes4(0)
-        );
-
         // Cross-facet call into OfferFacet's internal acceptor entry
         // — same body as `OfferFacet.acceptOffer`, but without
         // re-acquiring the (already-held) nonReentrant lock. The
@@ -311,6 +292,30 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             VaultWithdrawFailed.selector
         );
         loanId = abi.decode(ret, (uint256));
+
+        // #573 — decrement the BORROWER offer's collateral lock by the
+        // collateral this fill consumed. Done AFTER `acceptOfferInternal`
+        // (Codex P1): the inner `_acceptOffer` pays the VPFI Loan-Initiation
+        // Fee out of the borrower's vault BEFORE `initiateLoan` creates the
+        // child loan's collateral lien. If the collateral asset is VPFI and
+        // we decremented the offer lock BEFORE that, `reqCollateral` would
+        // momentarily look free to the VPFI withdraw guard and the LIF
+        // could be paid out of collateral meant to back the loan. Deferring
+        // to here keeps the offer lock covering this fill's collateral
+        // throughout the LIF; by now `createCollateralLien` has already
+        // re-encumbered `reqCollateral` under the loan, so the net
+        // aggregate is unchanged (offer-lock −reqCollateral, loan-lien
+        // +reqCollateral). The unfilled remainder is released at the
+        // borrower dust-close / single-fill refund below. No-op on a
+        // borrower offer with no collateral lock (NFT collateral, or none).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
+                borrowerOfferId,
+                mr.reqCollateral
+            ),
+            bytes4(0)
+        );
 
         // Clear the override now that the loan is initiated. Critical:
         // any subsequent same-tx initiateLoan calls (e.g., a follow-up
