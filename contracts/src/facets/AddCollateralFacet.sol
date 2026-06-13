@@ -228,6 +228,18 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             snap.borrowerCollateral;
         if (held > 0) {
             IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
+            // #569 Codex #572 round-3 P2 — tick the protocol-tracked
+            // counter for the restored snapshot collateral. The cure
+            // recreates the lien for the FULL `collateralAmount` below;
+            // since the withdraw guard now caps free balance by
+            // `protocolTrackedVaultBalance` (round-2 P2), failing to
+            // record this Diamond→vault restore would leave the tracked
+            // counter below the lien, so the restored collateral could
+            // never be returned/liquidated after a later terminal.
+            // Mirrors `RepayFacet`'s FallbackPending-cure record.
+            LibVaipakam.recordVaultDeposit(
+                loan.borrower, loan.collateralAsset, held
+            );
         }
 
         delete s.fallbackSnapshot[loanId];

@@ -618,7 +618,18 @@ contract PrecloseFacet is
             // drain the new offer collateral down to that locked amount
             // and this check would still pass — double-encumbering the
             // same tokens across two loans.
+            // #569 Codex #572 round-3 P2 — cap the raw balance by the
+            // protocol-tracked balance first, matching the chokepoint
+            // guard. Otherwise drained tracked collateral replaced by
+            // unsolicited dust would pass here, and the later guarded
+            // exit (which uses `min(balanceOf, tracked)`) couldn't return
+            // or liquidate it.
             uint256 rawBal = IERC20(loan.collateralAsset).balanceOf(newBorrowerVault);
+            uint256 trackedBal =
+                s.protocolTrackedVaultBalance[newBorrower][loan.collateralAsset];
+            if (trackedBal < rawBal) {
+                rawBal = trackedBal;
+            }
             if (
                 LibEncumbrance.freeBalance(
                     newBorrower, loan.collateralAsset, 0, rawBal
