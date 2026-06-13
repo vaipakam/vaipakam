@@ -140,6 +140,29 @@ contract EarlyWithdrawalFacet is
             buyOffer.offerType != LibVaipakam.OfferType.Lender ||
             buyOffer.accepted
         ) revert InvalidSaleOffer();
+        // T-407-C (#566) Codex P2 — the loan sale consumes the buy offer
+        // in full, so it must be a clean SINGLE-VALUE, UNFILLED offer:
+        //   • Ranged (effective amountMax > amount): the offer pre-vaults
+        //     and liens the ceiling, but the refund below only returns
+        //     `amount - principal`, stranding `amountMax - amount` in the
+        //     seller's vault with no cancel path (the offer is marked
+        //     accepted here).
+        //   • Partially filled (amountFilled > 0): only the residual is
+        //     vaulted, so the full-amount principal + refund withdrawals
+        //     would revert, or over-consume the seller's unrelated free
+        //     balance.
+        // Both shapes stay usable for ordinary matching — just not as a
+        // loan-sale vehicle. With this guard the existing refund
+        // (`amount - principal`) is provably exact (vault holds exactly
+        // `amount`).
+        {
+            uint256 effMax = buyOffer.amountMax == 0
+                ? buyOffer.amount
+                : buyOffer.amountMax;
+            if (effMax != buyOffer.amount || buyOffer.amountFilled != 0) {
+                revert InvalidSaleOffer();
+            }
+        }
         // Enforce same asset types as original loan (README General Rules: lending, collateral, prepay)
         if (buyOffer.lendingAsset != loan.principalAsset)
             revert InvalidSaleOffer();

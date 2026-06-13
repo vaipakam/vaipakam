@@ -1290,7 +1290,13 @@ contract OfferAcceptFacet is
         // accept path; this classifier lets `previewAccept` surface the
         // same condition without reverting so the UI can disable the
         // "Accept" button + render an "expired" badge.
-        OfferExpired
+        OfferExpired,
+        // T-407-C (#566) Codex P2 — direct accept of a partially-filled
+        // offer (`amountFilled > 0`, not yet dust-closed) reverts
+        // `OfferPartiallyFilled`; only `matchOffers` may advance it.
+        // APPENDED (never inserted) so every existing classifier's uint8
+        // value stays stable for off-chain decoders.
+        OfferPartiallyFilled
     }
 
     /// @notice Projection of the loan that would land if the supplied
@@ -1487,6 +1493,15 @@ contract OfferAcceptFacet is
         // for the frontend.
         if (offer.accepted) {
             preview.errorCode = AcceptError.OfferAlreadyAccepted;
+            return preview;
+        }
+        // T-407-C (#566) Codex P2 — mirror the direct-accept partial-fill
+        // guard so the preview never quotes an accept that would revert.
+        // A partially-filled offer (`amountFilled > 0`, accepted == false)
+        // must be advanced via `matchOffers`, not `acceptOffer`. Order
+        // matches `_acceptOffer` (right after the `accepted` check).
+        if (offer.amountFilled > 0) {
+            preview.errorCode = AcceptError.OfferPartiallyFilled;
             return preview;
         }
         // #195 — surface the GTT lazy-expiry gate before sanctions /

@@ -281,4 +281,24 @@ contract OfferPrincipalLockTest is SetupTest {
         );
         OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
     }
+
+    /// @notice `previewAccept` must mirror the direct-accept partial-fill
+    ///         guard so off-chain quoters never propose an accept that
+    ///         deterministically reverts on-chain.
+    function test_previewAccept_classifiesPartialFill() public {
+        uint256 id = _createLenderOffer(200 ether, 1000 ether);
+
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(id);
+        o.amountFilled = 300 ether;
+        TestMutatorFacet(address(diamond)).setOffer(id, o);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferAcceptFacet(address(diamond)).previewAccept(id, borrower);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.OfferPartiallyFilled),
+            "preview classifies a partially-filled offer as non-acceptable"
+        );
+    }
 }

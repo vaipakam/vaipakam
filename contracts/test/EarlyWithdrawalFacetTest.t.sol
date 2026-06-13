@@ -371,6 +371,33 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, 1); // offer 1 is accepted
     }
 
+    function testSellLoanRevertsInvalidSaleOffer_RangedBuyOffer() public {
+        // T-407-C (#566) Codex P2 — a ranged buy offer (amountMax > amount)
+        // can't be a loan-sale vehicle: the refund path only returns
+        // `amount - principal`, stranding the ceiling residual with no
+        // cancel path. The sale must reject it up front.
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.amountMax = o.amount * 2;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    function testSellLoanRevertsInvalidSaleOffer_PartiallyFilledBuyOffer() public {
+        // T-407-C (#566) Codex P2 — a partially-filled buy offer holds only
+        // its residual in vault; consuming it as a full sale would revert
+        // or over-consume the seller's unrelated balance. Reject it.
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
+        o.amountFilled = 1;
+        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.InvalidSaleOffer.selector);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     // ─── sellLoanViaBuyOffer success ──────────────────────────────────────────
 
     function testSellLoanViaBuyOfferSuccess() public {
