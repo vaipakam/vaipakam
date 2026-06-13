@@ -120,6 +120,13 @@ library LibEncumbrance {
         if (lien.released || lien.user == address(0)) return;
         _decrementAggregate(lien.user, lien.asset, lien.tokenId, lien.amount);
         lien.released = true;
+        // #569 round-7 P1 — zero the per-loan amount on release so a
+        // released tombstone can never be mis-read as a live lien. The
+        // `released` flag is the source of truth, but leaving a stale
+        // non-zero `amount` is a footgun (it let `claimAsLenderWithRetry`
+        // fold a bogus full-collateral claim off a released row). Callers
+        // that read `.amount` now always see 0 once released.
+        lien.amount = 0;
     }
 
     /// @notice Decrement an active collateral lien by `consumed`. Used

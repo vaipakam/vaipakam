@@ -274,8 +274,19 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 // backstop); the borrowerClaims single-row limit on holding
                 // both a principal surplus and a collateral top-up is
                 // tracked as a follow-up. ERC20-only (D-1).
+                // #569 round-7 P1 — read the amount ONLY from an ACTIVE
+                // lien. `releaseCollateralLien` (run at default-entry)
+                // zeroes the encumbered aggregate + sets `released = true`
+                // but leaves the per-loan row's `amount` STALE. When the
+                // fallback leaves no borrower residual AND there is no
+                // top-up, Gap A never re-activates the row, so reading
+                // `.amount` off the released tombstone would fold a bogus
+                // full-collateral claim. A re-activated row (Gap A residual
+                // re-lien, or a round-4 top-up) has `released == false` and
+                // the correct live amount.
                 LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
-                uint256 owedCollateral = s.loanCollateralLien[loanId].amount;
+                LibVaipakam.Encumbrance storage lienRow = s.loanCollateralLien[loanId];
+                uint256 owedCollateral = lienRow.released ? 0 : lienRow.amount;
                 if (
                     owedCollateral > 0 &&
                     (bClaim.amount == 0 || bClaim.asset == loan.collateralAsset)
@@ -484,6 +495,26 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
 
+        // #569 round-8 P2 (#578) — capture a liened collateral amount that
+        // the single `borrowerClaims` row CANNOT carry because it is paying
+        // a DIFFERENT asset (the rare FallbackPending non-curing top-up +
+        // lender-retry-success principal-surplus combination: the claim row
+        // holds the principal surplus, but a collateral top-up is still
+        // liened in `loan.borrower`'s vault). Without paying it out here it
+        // would be released by the burn backstop and left for a
+        // transferred-away stored borrower to drain. The lien is the source
+        // of truth for owed collateral, so claimAsBorrower pays it out as a
+        // SECOND asset below. Captured BEFORE the release zeroes it. ERC20-
+        // only; skipped in the common case where the claim already IS the
+        // liened collateral (`lr.asset == claim.asset`).
+        LibVaipakam.Encumbrance storage lr = s.loanCollateralLien[loanId];
+        address extraLienedAsset;
+        uint256 extraLienedAmt;
+        if (!lr.released && lr.amount > 0 && lr.asset != claim.asset) {
+            extraLienedAsset = lr.asset;
+            extraLienedAmt = lr.amount;
+        }
+
         // #569 Codex #572 round-4 P2 — release the collateral lien
         // ATOMICALLY here, immediately before the claim withdrawal,
         // rather than at the proper-close terminal. Proper-close paths
@@ -539,6 +570,26 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     claim.tokenId,
                     claim.quantity,
                     msg.sender
+                ),
+                VaultWithdrawFailed.selector
+            );
+        }
+
+        // #569 round-8 P2 (#578) — pay out the liened collateral the claim
+        // row couldn't carry (captured above). The lien was released just
+        // above, so the guard permits this withdraw; routing it to the
+        // rightful NFT-owner claimant closes the transferred-position drain
+        // where the burn backstop would otherwise free it to the stored
+        // borrower. Common case: extraLienedAmt == 0 (claim IS the liened
+        // collateral) → no-op.
+        if (extraLienedAmt > 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    loan.borrower,
+                    extraLienedAsset,
+                    msg.sender,
+                    extraLienedAmt
                 ),
                 VaultWithdrawFailed.selector
             );
