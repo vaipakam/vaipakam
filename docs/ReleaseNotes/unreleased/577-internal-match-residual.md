@@ -31,6 +31,30 @@ lien.
 
 The fix applies uniformly to both internal-match full-close branches (the
 active-loan close and the fallback-rescue close). Exactly-collateralized
-matches (no residual) are unaffected. Closes #577. The broader audit of
-every collateral-moving path for transferred positions is tracked
-separately as #574.
+matches (no residual) are unaffected.
+
+Scope note — this change closes the **borrower** side of an internal
+match (retrieving the residual safely). It deliberately does not settle
+the loan: the borrower's residual claim leaves the loan in its
+internal-matched terminal state, exactly where an exactly-collateralized
+match already sits, with the **lender** side still pending. The lender
+side of an internal match (burning the lender position record once the
+lender's matched proceeds — and any amount held back from a pre-empted
+offset — have been routed to the *current* holder of the lender position,
+which matters when that position was transferred) is a distinct,
+partly-pre-existing concern tracked as its own follow-up (#585). Settling
+the loan as part of the borrower's claim would have stranded the lender's
+held funds and left a stale lender position record, so the borrower claim
+is kept honestly partial.
+
+One narrow rescue edge is, for now, rejected rather than mis-handled: if a
+fallback-pending loan that received an extra collateral top-up is matched
+such that the match consumed more than the loan's original collateral, the
+match is declined (it can still match against a smaller counterparty).
+Correctly unwinding that case needs the same lender-side accounting work
+and rides with #585. Declining is strictly safer than the previous
+behaviour, which freed the residual to the original borrower outright.
+
+Closes #577. The broader audit of every collateral-moving path for
+transferred positions is tracked separately as #574; the internal-match
+lender-side lifecycle as #585.

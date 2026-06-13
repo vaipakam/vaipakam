@@ -88,6 +88,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         liquidation threshold — it isn't liquidatable yet, so
     ///         internal-match can't fire.
     error InternalMatchLtvBelowFloor(uint256 loanId, uint256 currentLtvBps, uint256 floorBps);
+    /// @notice A FallbackPending loan carries a vault-held top-up whose lien
+    ///         EXCEEDS the post-match residual — the match consumed value
+    ///         beyond this loan's Diamond-held original (drawing on the
+    ///         Diamond's aggregate same-token balance). Unwinding that safely
+    ///         needs top-up-aware match accounting (returning the over-consumed
+    ///         excess to Diamond custody) and lands with the internal-match
+    ///         lender-side lifecycle (#585). Until then the match is rejected
+    ///         rather than risk freeing consumed collateral to a transferred-
+    ///         away borrower. `existingLien`/`residual` aid diagnosis.
+    error InternalMatchTopUpConsumed(uint256 loanId, uint256 existingLien, uint256 residual);
 
     /// @notice Emitted by `triggerInternalMatchLiquidation` on a valid
     ///         match. PR4 is validation-only and emits this from the
@@ -664,9 +674,28 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                         s.loanCollateralLien[loan.id];
                     uint256 existingLien =
                         existing.released ? 0 : existing.amount;
-                    uint256 diamondPortion = loan.collateralAmount > existingLien
-                        ? loan.collateralAmount - existingLien
-                        : 0;
+                    // #577 Codex round-2 P1 — if the active top-up lien
+                    // EXCEEDS the post-match residual, the match consumed
+                    // value beyond this loan's Diamond-held original (the
+                    // top-up sits in the vault, yet `_settleLeg` drew the full
+                    // `movedY` from the Diamond's aggregate balance). Saturating
+                    // `diamondPortion` to 0 and keeping the oversized lien would
+                    // let the borrower's claim release more than the genuine
+                    // residual, freeing the consumed top-up. Correctly unwinding
+                    // this needs top-up-aware match accounting (return the
+                    // over-consumed excess to Diamond custody) — deferred to the
+                    // internal-match lender-side lifecycle (#585). Reject the
+                    // match: the revert rolls the whole liquidation back
+                    // atomically (strictly safer than the pre-#577 behaviour,
+                    // which freed the residual outright), and the loan stays
+                    // matchable against a counterpart whose debt fits within
+                    // the Diamond-held original.
+                    if (existingLien > loan.collateralAmount) {
+                        revert InternalMatchTopUpConsumed(
+                            loan.id, existingLien, loan.collateralAmount
+                        );
+                    }
+                    uint256 diamondPortion = loan.collateralAmount - existingLien;
                     if (diamondPortion > 0) {
                         address borrowerVault = VaultFactoryFacet(address(this))
                             .getOrCreateUserVault(loan.borrower);
