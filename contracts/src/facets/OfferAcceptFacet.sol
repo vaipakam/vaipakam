@@ -189,6 +189,12 @@ contract OfferAcceptFacet is
     // `OfferMatchFacet`) for ABI continuity with the other match-
     // routed errors that re-raise from this facet's revert vocabulary.
     error AonRequiresFullFill(uint256 offerId, uint256 required, uint256 provided);
+    /// @notice T-407-C (#566) Codex P1 — a direct accept was attempted on
+    ///         an offer that `matchOffers` has already partially filled.
+    ///         Such an offer must be advanced only through the matcher,
+    ///         which consumes its remaining capacity and owns the lien
+    ///         decrement (see {OfferMatchFacet.matchOffers}).
+    error OfferPartiallyFilled(uint256 offerId, uint256 amountFilled);
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -489,6 +495,22 @@ contract OfferAcceptFacet is
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
         if (offer.accepted) revert OfferAlreadyAccepted();
+        // T-407-C (#566) Codex P1 — a partially-filled offer (amountFilled
+        // > 0 but not yet dust-closed, so accepted == false) is a
+        // matchOffers-managed entity: the matcher consumes its remaining
+        // capacity and owns the lien decrement. A DIRECT accept here would
+        // size the loan off the offer's FULL ceiling (not the residual)
+        // and, after releasing the residual offer-principal lock below,
+        // fund a loan larger than the remaining capacity — pulling the
+        // creator's unrelated free balance. Reject it; the matcher is the
+        // only valid path for a partially-filled offer. (Partial fills
+        // exist only under `partialFillEnabled`; single-fill offers go
+        // 0 → fully-consumed in one shot and never reach here with
+        // amountFilled > 0. The match path sets `matchOverride.active`, so
+        // this never fires on a match-routed accept.)
+        if (!s.matchOverride.active && offer.amountFilled > 0) {
+            revert OfferPartiallyFilled(offerId, offer.amountFilled);
+        }
         // T-086 Round-8 (#358) §19.7b — terminal-state gate. If the
         // offer was already consumed by a parallel sale (Scenario A),
         // refuse the accept — the collateral NFT is gone, no loan can

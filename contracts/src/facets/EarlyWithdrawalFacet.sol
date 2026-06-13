@@ -211,6 +211,23 @@ contract EarlyWithdrawalFacet is
         // complete — liam would owe tokens we never collected from him.
         if (liamCost > loan.principal) revert RateShortfallTooHigh();
 
+        // T-407-C (#566) Codex P1 — release the buy offer's offer-principal
+        // lock before consuming its principal. The Lender buy offer
+        // pre-vaulted its principal at create, encumbered in the same
+        // aggregate the #565 withdraw chokepoint reads. This sale
+        // terminally consumes the offer (accepted = true + position-NFT
+        // burn below), so release the lock in full BEFORE the principal +
+        // excess withdrawals — otherwise the chokepoint sees free balance
+        // = 0 and bricks the first withdraw. The NFT-burn at the end of
+        // this function is too late to unblock these withdraws.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseOfferPrincipalLien.selector,
+                buyOfferId
+            ),
+            bytes4(0)
+        );
+
         // Pull Noah's principal into the diamond in a single withdraw,
         // then fan out to liam / treasury / Noah's heldForLender.
         LibFacet.crossFacetCall(

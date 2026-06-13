@@ -11,6 +11,7 @@ import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /// @title  OfferPrincipalLockTest
 /// @notice T-407-C (#566) — end-to-end lifecycle coverage for the
@@ -248,5 +249,36 @@ contract OfferPrincipalLockTest is SetupTest {
             500 ether,
             "grow delta pulled from lender wallet"
         );
+    }
+
+    // ─── P1 (Codex) — direct accept of a partially-filled offer rejected ─
+
+    /// @notice A lender offer that `matchOffers` has partially filled
+    ///         (`amountFilled > 0`, not yet dust-closed) must not be
+    ///         direct-acceptable: the direct path would size the loan off
+    ///         the full ceiling (not the residual) and, after releasing
+    ///         the residual lock, over-commit the lender's free balance.
+    ///         Only the matcher may advance such an offer.
+    /// @dev    Stamps the partial-fill state directly to isolate the
+    ///         direct-accept guard; the end-to-end matchOffers partial
+    ///         fill is exercised by {BorrowerPartialFillTest} /
+    ///         {CancelAfterPartialFillTest}.
+    function test_directAccept_rejectedAfterPartialFill() public {
+        uint256 id = _createLenderOffer(200 ether, 1000 ether);
+
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOffer(id);
+        o.amountFilled = 300 ether;
+        TestMutatorFacet(address(diamond)).setOffer(id, o);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferAcceptFacet.OfferPartiallyFilled.selector,
+                id,
+                uint256(300 ether)
+            )
+        );
+        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
     }
 }
