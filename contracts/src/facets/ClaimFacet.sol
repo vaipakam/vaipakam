@@ -249,41 +249,38 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
                 );
-                // #569 Gap C (round-6 P1) — fold the borrower's vault
-                // collateral lien into the borrower claim. After the
-                // fallback resolution above, the lien tracks EXACTLY the
-                // collateral sitting in loan.borrower's vault owed to the
-                // borrower-position holder: the fallback snapshot residual
-                // (re-liened in `_distributeFallbackCollateral`, Gap A) PLUS
-                // any FallbackPending top-up (folded into loan.collateralAmount
-                // and liened, round-4). Record that TOTAL as the borrower
-                // claim and KEEP the lien, so the verified-NFT-owner
-                // `claimAsBorrower` withdraws it + releases atomically (and
-                // the burn backstop guarantees release). A bare release here
-                // would free it to the stored `loan.borrower`, who may have
-                // transferred the position away — the drain.
-                //
-                // Guard: only fold into the claim when there is no
-                // conflicting DIFFERENT-asset claim already present (a
-                // retry-swap principal surplus — case (b), where
-                // `_distributeRetryProceeds` ran instead of
-                // `_distributeFallbackCollateral`). Overwriting a non-zero
-                // principal-surplus claim with the collateral total was the
-                // round-6 clobber bug. In that rare retry-surplus + top-up
-                // edge the top-up stays liened (released by the burn
-                // backstop); the borrowerClaims single-row limit on holding
-                // both a principal surplus and a collateral top-up is
-                // tracked as a follow-up. ERC20-only (D-1).
-                // #569 round-7 P1 — read the amount ONLY from an ACTIVE
-                // lien. `releaseCollateralLien` (run at default-entry)
-                // zeroes the encumbered aggregate + sets `released = true`
-                // but leaves the per-loan row's `amount` STALE. When the
-                // fallback leaves no borrower residual AND there is no
-                // top-up, Gap A never re-activates the row, so reading
-                // `.amount` off the released tombstone would fold a bogus
-                // full-collateral claim. A re-activated row (Gap A residual
-                // re-lien, or a round-4 top-up) has `released == false` and
-                // the correct live amount.
+            }
+            // #569 Gap C (round-6 P1 + round-9 P1) — fold the borrower's
+            // vault collateral lien into the borrower claim. The lien
+            // tracks EXACTLY the collateral sitting in loan.borrower's vault
+            // owed to the borrower-position holder: the fallback snapshot
+            // residual (re-liened in `_distributeFallbackCollateral`, Gap A)
+            // PLUS any FallbackPending top-up (folded into loan.collateralAmount
+            // and liened, round-4). Recording that TOTAL as the borrower
+            // claim (and KEEPING the lien) lets the verified-NFT-owner
+            // `claimAsBorrower` withdraw it + release atomically (with the
+            // burn backstop as the structural guarantee). A bare release
+            // would free it to the stored `loan.borrower`, who may have
+            // transferred the position away — the drain.
+            //
+            // round-9 P1 — gate on Defaulted, NOT FallbackPending. A
+            // claim-time RETRY SUCCESS inside `_resolveFallbackIfActive`
+            // drives the loan straight to Defaulted (leaving an
+            // empty/claimed borrower row + a dangling top-up lien); the
+            // old FallbackPending-only gate skipped this path, stranding
+            // the top-up. The Defaulted gate covers both the no-cure
+            // transition above AND the retry-success terminal.
+            //
+            // Guard: only fold when there is no conflicting DIFFERENT-asset
+            // claim already present (a non-zero retry-swap principal
+            // surplus — `_distributeRetryProceeds`). Overwriting that with
+            // the collateral total was the round-6 clobber bug; in that
+            // retry-surplus + top-up case the top-up is instead paid out
+            // as a second asset by `claimAsBorrower` (round-8). round-7 P1:
+            // read the amount ONLY from an ACTIVE lien — `releaseCollateralLien`
+            // zeroes the aggregate + the per-loan amount on release, but a
+            // never-reactivated released row must not be folded. ERC20-only.
+            if (loan.status == LibVaipakam.LoanStatus.Defaulted) {
                 LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
                 LibVaipakam.Encumbrance storage lienRow = s.loanCollateralLien[loanId];
                 uint256 owedCollateral = lienRow.released ? 0 : lienRow.amount;
