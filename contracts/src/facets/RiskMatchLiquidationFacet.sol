@@ -88,16 +88,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         liquidation threshold — it isn't liquidatable yet, so
     ///         internal-match can't fire.
     error InternalMatchLtvBelowFloor(uint256 loanId, uint256 currentLtvBps, uint256 floorBps);
-    /// @notice A FallbackPending loan carries a vault-held top-up whose lien
-    ///         EXCEEDS the post-match residual — the match consumed value
-    ///         beyond this loan's Diamond-held original (drawing on the
-    ///         Diamond's aggregate same-token balance). Unwinding that safely
-    ///         needs top-up-aware match accounting (returning the over-consumed
-    ///         excess to Diamond custody) and lands with the internal-match
-    ///         lender-side lifecycle (#585). Until then the match is rejected
-    ///         rather than risk freeing consumed collateral to a transferred-
-    ///         away borrower. `existingLien`/`residual` aid diagnosis.
-    error InternalMatchTopUpConsumed(uint256 loanId, uint256 existingLien, uint256 residual);
+    /// @notice A FallbackPending loan still carries a vault-held AddCollateral
+    ///         top-up (an active, non-released collateral lien on the released
+    ///         at-fallback row). Internal-match settlement draws the moved
+    ///         collateral from Diamond custody, which mis-accounts against that
+    ///         vault-held top-up across the full / partial / zero-residual
+    ///         settlement branches. Until the top-up-aware unwind lands (#585)
+    ///         such a loan is ineligible for internal match — rejected at the
+    ///         eligibility gate (`_gateMatchableLeg`), before any funds move, so
+    ///         the residual can never be mis-settled. Auto-dispatch skips the
+    ///         same condition without reverting.
+    error InternalMatchFallbackTopUpUnsupported(uint256 loanId);
 
     /// @notice Emitted by `triggerInternalMatchLiquidation` on a valid
     ///         match. PR4 is validation-only and emits this from the
@@ -522,6 +523,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
             _assertOraclePriceable(loan.principalAsset);
             _assertOraclePriceable(loan.collateralAsset);
+            // #577 / #585 — reject a FallbackPending leg that still carries a
+            // vault-held AddCollateral top-up, BEFORE any funds move. Settling
+            // it would draw the moved collateral from Diamond custody while
+            // part of `loan.collateralAmount` sits in the vault, mis-accounting
+            // the top-up across the full / partial / zero-residual branches.
+            // The top-up-aware unwind lands with #585; until then this is the
+            // single pre-settlement eligibility gate for the direct trigger
+            // (auto-dispatch checks the same condition and skips instead).
+            if (_hasActiveFallbackTopUp(loan)) {
+                revert InternalMatchFallbackTopUpUnsupported(loanId);
+            }
         } else {
             _requireLtvAboveFloor(loanId);
         }
@@ -546,6 +558,34 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     function _isMatchableStatus(LibVaipakam.LoanStatus status) private pure returns (bool) {
         return status == LibVaipakam.LoanStatus.Active ||
                status == LibVaipakam.LoanStatus.FallbackPending;
+    }
+
+    /// @dev #577 / #585 — true when a FallbackPending loan still carries a
+    ///      vault-held AddCollateral top-up: an active (non-released)
+    ///      collateral lien. At fallback the original collateral moves to
+    ///      Diamond custody and its lien is released; a subsequent
+    ///      `AddCollateral` on the still-FallbackPending loan lands the top-up
+    ///      in the borrower's vault and `incrementCollateralLien`-seeds a fresh
+    ///      active lien sized to that vault portion (`AddCollateralFacet`
+    ///      accepts FallbackPending). Internal-match settlement draws the moved
+    ///      collateral from Diamond custody, so a live lien here means part of
+    ///      `loan.collateralAmount` is in the vault, not the Diamond — the
+    ///      settlement branches would mis-account it. Such loans are therefore
+    ///      ineligible for internal match until #585's top-up-aware unwind.
+    ///      Only FallbackPending carries this hazard: an Active leg's lien IS
+    ///      its vault collateral and the match withdraws from the vault under
+    ///      it. ERC-20-only (NFT-rental loans never internal-match; the lien is
+    ///      ERC-20-gated per D-1), so a non-zero lien is always the ERC-20
+    ///      top-up.
+    function _hasActiveFallbackTopUp(LibVaipakam.Loan storage loan)
+        private
+        view
+        returns (bool)
+    {
+        if (loan.status != LibVaipakam.LoanStatus.FallbackPending) return false;
+        LibVaipakam.Encumbrance storage lien =
+            LibVaipakam.storageSlot().loanCollateralLien[loan.id];
+        return !lien.released && lien.amount > 0;
     }
 
     /// @dev #577 — retain an Active full-internal-match RESIDUAL so it's
@@ -647,6 +687,23 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         if (status == LibVaipakam.LoanStatus.FallbackPending) {
             LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
+            // #577 / #585 — defence in depth. Topped-up FallbackPending loans
+            // are rejected/skipped at the eligibility gate (`_gateMatchableLeg`
+            // for the direct trigger, the skip in `attemptInternalMatchAuto-
+            // Dispatch`), so a live (non-released) collateral lien must NOT
+            // reach settlement: every branch below — full rescue, zero-residual
+            // full rescue, and partial rescue — assumes all of
+            // `loan.collateralAmount` is Diamond-held and would mis-account a
+            // vault-held top-up otherwise. If one slips through, fail closed
+            // (rolls the whole match back atomically) rather than corrupt
+            // custody. Unreachable in practice; upholds the gate's invariant.
+            {
+                LibVaipakam.Encumbrance storage liveLien = s.loanCollateralLien[loan.id];
+                if (!liveLien.released && liveLien.amount > 0) {
+                    revert InternalMatchFallbackTopUpUnsupported(loan.id);
+                }
+            }
+
             if (loan.principal == 0) {
                 // Full rescue. Lender was made whole in principal asset
                 // via `_settleLeg`. The residual collateral
@@ -655,60 +712,25 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // Treasury's at-fallback cut is forfeited.
                 delete s.lenderClaims[loan.id];
                 if (loan.collateralAmount > 0) {
-                    // #577 — retain the residual as a borrowerClaims row owed
-                    // to the current borrower-position NFT holder (not
-                    // drainable by a transferred-away `loan.borrower`).
-                    //
-                    // #577 Codex round-1 P1 — `loan.collateralAmount` can be
-                    // SPLIT: a non-curing fallback top-up (AddCollateral) lands
-                    // in the borrower's vault with its own ACTIVE lien, while
-                    // the original collateral sits in Diamond custody. So the
-                    // active lien (`existingLien`) is already in the vault, and
-                    // only `diamondPortion` is in Diamond custody to push. Push
-                    // just that portion and bring the lien up to the full
-                    // `collateralAmount` via `incrementCollateralLien`
-                    // (create-if-absent) — NOT `createCollateralLien`, which
-                    // reverts on an existing non-released lien row and would
-                    // block the rescue for topped-up fallback loans.
-                    LibVaipakam.Encumbrance storage existing =
-                        s.loanCollateralLien[loan.id];
-                    uint256 existingLien =
-                        existing.released ? 0 : existing.amount;
-                    // #577 Codex round-2 P1 — if the active top-up lien
-                    // EXCEEDS the post-match residual, the match consumed
-                    // value beyond this loan's Diamond-held original (the
-                    // top-up sits in the vault, yet `_settleLeg` drew the full
-                    // `movedY` from the Diamond's aggregate balance). Saturating
-                    // `diamondPortion` to 0 and keeping the oversized lien would
-                    // let the borrower's claim release more than the genuine
-                    // residual, freeing the consumed top-up. Correctly unwinding
-                    // this needs top-up-aware match accounting (return the
-                    // over-consumed excess to Diamond custody) — deferred to the
-                    // internal-match lender-side lifecycle (#585). Reject the
-                    // match: the revert rolls the whole liquidation back
-                    // atomically (strictly safer than the pre-#577 behaviour,
-                    // which freed the residual outright), and the loan stays
-                    // matchable against a counterpart whose debt fits within
-                    // the Diamond-held original.
-                    if (existingLien > loan.collateralAmount) {
-                        revert InternalMatchTopUpConsumed(
-                            loan.id, existingLien, loan.collateralAmount
-                        );
-                    }
-                    uint256 diamondPortion = loan.collateralAmount - existingLien;
-                    if (diamondPortion > 0) {
-                        address borrowerVault = VaultFactoryFacet(address(this))
-                            .getOrCreateUserVault(loan.borrower);
-                        IERC20(loan.collateralAsset).safeTransfer(
-                            borrowerVault, diamondPortion
-                        );
-                        LibVaipakam.recordVaultDeposit(
-                            loan.borrower, loan.collateralAsset, diamondPortion
-                        );
-                    }
-                    // create-if-absent (no top-up) OR increment the top-up lien
-                    // by the pushed Diamond portion → lien == collateralAmount.
-                    LibEncumbrance.incrementCollateralLien(loan.id, diamondPortion);
+                    // #577 — retain the residual as a drain-protected
+                    // borrowerClaims row owed to the current borrower-position
+                    // NFT holder (not freely withdrawable by a transferred-away
+                    // `loan.borrower`). Topped-up FallbackPending loans are
+                    // excluded from internal match upstream (`_gateMatchableLeg`
+                    // / auto-dispatch skip) and the defensive guard above has
+                    // confirmed no live lien, so the ENTIRE residual is in
+                    // Diamond custody here — push it all to the borrower's vault
+                    // and lien it. `incrementCollateralLien` is create-if-absent,
+                    // seeding a fresh lien on the released at-fallback row.
+                    address borrowerVault = VaultFactoryFacet(address(this))
+                        .getOrCreateUserVault(loan.borrower);
+                    IERC20(loan.collateralAsset).safeTransfer(
+                        borrowerVault, loan.collateralAmount
+                    );
+                    LibVaipakam.recordVaultDeposit(
+                        loan.borrower, loan.collateralAsset, loan.collateralAmount
+                    );
+                    LibEncumbrance.incrementCollateralLien(loan.id, loan.collateralAmount);
                     s.borrowerClaims[loan.id] = LibVaipakam.ClaimInfo({
                         asset: loan.collateralAsset,
                         amount: loan.collateralAmount,
@@ -794,6 +816,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         (bool found, uint256 candidateId) = MetricsFacet(address(this))
             .hasInternalMatchCandidate(loanId);
         if (!found) return false;
+
+        // #577 / #585 — skip (no dispatch) when either leg is a FallbackPending
+        // loan still carrying a vault-held AddCollateral top-up. Settling such
+        // a leg mis-accounts the vault top-up against the Diamond-custody draw.
+        // Returning false here — rather than letting `_executeTwoWayMatch`
+        // revert `InternalMatchFallbackTopUpUnsupported` mid-settlement — keeps
+        // auto-dispatch non-fatal: the caller (a claim-time / liquidation /
+        // default rescue) falls through to its normal fallback-claim or
+        // external-liquidation path instead of bubbling the revert and
+        // stranding recovery. The direct trigger rejects the same condition at
+        // `_gateMatchableLeg`. (#585 replaces this skip with a real match.)
+        if (
+            _hasActiveFallbackTopUp(s.loans[loanId]) ||
+            _hasActiveFallbackTopUp(s.loans[candidateId])
+        ) return false;
 
         // Settlement. `hasInternalMatchCandidate` has already filtered
         // candidates by status (Active or FallbackPending), oracle

@@ -311,43 +311,96 @@ contract InternalMatchExecutionTest is SetupTest {
         );
     }
 
-    /// @notice #577 Codex round-2 P1 — a FallbackPending loan whose vault-held
-    ///         top-up lien EXCEEDS the post-match residual means the internal
-    ///         match consumed value beyond the loan's Diamond-held original
-    ///         (the top-up sits in the vault, yet `_settleLeg` drew the full
-    ///         `movedY` from the Diamond's aggregate balance). Saturating the
-    ///         Diamond portion to 0 and keeping the oversized lien would let
-    ///         the borrower's claim free the consumed top-up. Until top-up-
-    ///         aware match accounting lands (#585) the match is rejected — the
-    ///         revert rolls the whole liquidation back atomically, strictly
-    ///         safer than the pre-#577 behaviour (which freed the residual to
-    ///         the possibly-transferred-away borrower outright).
-    function test_577_fallbackPending_topUpExceedsResidual_matchReverts() public {
-        // A: 600 X debt, 1000 Y collateral → FallbackPending. B: 600 Y debt,
-        // 600 X collateral. The match clears A's 600 X principal and consumes
-        // 600 of A's Y collateral → A leaves a 400 Y residual.
+    /// @notice #577 Codex round-3 P1 — a FallbackPending loan still carrying a
+    ///         vault-held AddCollateral top-up (an active collateral lien) is
+    ///         INELIGIBLE for internal match. Settlement draws the moved
+    ///         collateral from Diamond custody while part of the collateral
+    ///         sits in the vault, which mis-accounts the top-up across the full
+    ///         / partial / zero-residual branches. The direct trigger rejects
+    ///         it at the eligibility gate (`_gateMatchableLeg`), BEFORE any
+    ///         funds move — for ANY active top-up lien, not just one exceeding
+    ///         the would-be residual (the prior, narrower guard). The
+    ///         top-up-aware unwind lands with #585.
+    function test_577_fallbackPending_topUp_ineligibleForInternalMatch() public {
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 510, 10, true);
         _mockLtv(LOAN_B, 9_000);
 
-        // A vault-held top-up lien of 500 — ABOVE the 400 post-match residual,
-        // i.e. the match dipped into more than this loan's Diamond original.
+        // A vault-held top-up lien of 200 — BELOW the would-be 400 residual,
+        // so the old "lien > residual" guard would have missed it. The
+        // eligibility gate rejects ANY active top-up lien on a FallbackPending
+        // leg, before settlement.
         TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
-            LOAN_A, borrower, mockCollateralERC20, 0, 500, LibVaipakam.AssetType.ERC20
+            LOAN_A, borrower, mockCollateralERC20, 0, 200, LibVaipakam.AssetType.ERC20
         );
 
         vm.prank(matcher);
-        // The match consumes 600 of A's 1000 Y gross (matcher fee comes out
-        // of the lender payout, not the collateral accounting), so the
-        // residual is exactly 400 and the guard fires on existingLien 500 > 400.
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskMatchLiquidationFacet.InternalMatchTopUpConsumed.selector,
-                LOAN_A, uint256(500), uint256(400)
+                RiskMatchLiquidationFacet.InternalMatchFallbackTopUpUnsupported.selector,
+                LOAN_A
             )
         );
         RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+    }
+
+    /// @notice #577 Codex round-3 P1 (finding #2) — the claim-time auto-dispatch
+    ///         must SKIP a topped-up FallbackPending caller, NOT bubble the
+    ///         eligibility revert. If the auto-dispatch let
+    ///         `InternalMatchFallbackTopUpUnsupported` propagate, the lender's
+    ///         claim would revert and recovery would stall until the candidate
+    ///         set changed. Instead the claim falls through to the normal
+    ///         in-kind fallback distribution. The call must NOT revert and the
+    ///         loan must NOT end up internally matched.
+    function test_577_fallbackPending_topUp_autoDispatchSkips_noRevert() public {
+        // Lender entitlement = whole collateral net of treasury (borrower
+        // share 0) so the in-kind distribution doesn't re-lien a borrower
+        // residual on top of the manual top-up lien below — keeps the fixture
+        // focused on the lender's fall-through claim.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 980, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A carries a vault-held top-up lien → ineligible for internal match.
+        // B is a valid opposing candidate, so `hasInternalMatchCandidate(A)`
+        // surfaces it and the auto-dispatch REACHES the new skip check rather
+        // than short-circuiting on "no candidate".
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 300, LibVaipakam.AssetType.ERC20
+        );
+        // Fallback-time lender claim record (collateral-denominated) — the
+        // in-kind path passes it Diamond → lenderVault → lender.
+        TestMutatorFacet(address(diamond)).setLenderClaimAssetRaw(LOAN_A, mockCollateralERC20);
+        TestMutatorFacet(address(diamond)).setLenderClaimAmountRaw(LOAN_A, 980);
+
+        _mockLenderNft(LOAN_A, lender);
+        uint256 lenderBefore = IERC20(mockCollateralERC20).balanceOf(lender);
+        vm.prank(lender);
+        // Must NOT revert with InternalMatchFallbackTopUpUnsupported: the
+        // auto-dispatch skips the topped-up caller and the claim resolves via
+        // the normal in-kind fallback path.
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // Lender was paid in-kind through the fall-through path (proves it
+        // completed, not just "didn't revert at the gate").
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(lender) - lenderBefore,
+            980,
+            "lender paid the in-kind fallback collateral after the skipped dispatch"
+        );
+        // A was NOT internally matched (the topped-up caller was skipped)...
+        assertTrue(
+            _getLoan(LOAN_A).status != LibVaipakam.LoanStatus.InternalMatched,
+            "topped-up FallbackPending caller is NOT internally matched at claim time"
+        );
+        // ...and B is untouched — no match consumed it.
+        assertEq(
+            uint8(_getLoan(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "candidate B stays Active - the skipped dispatch consumed nothing"
+        );
     }
 
     function test_partialMatch_smallerLegCleared_largerStaysActive() public {

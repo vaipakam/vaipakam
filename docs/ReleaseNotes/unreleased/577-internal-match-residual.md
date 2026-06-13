@@ -47,13 +47,22 @@ the loan as part of the borrower's claim would have stranded the lender's
 held funds and left a stale lender position record, so the borrower claim
 is kept honestly partial.
 
-One narrow rescue edge is, for now, rejected rather than mis-handled: if a
-fallback-pending loan that received an extra collateral top-up is matched
-such that the match consumed more than the loan's original collateral, the
-match is declined (it can still match against a smaller counterparty).
-Correctly unwinding that case needs the same lender-side accounting work
-and rides with #585. Declining is strictly safer than the previous
-behaviour, which freed the residual to the original borrower outright.
+One class of rescue is, for now, held back rather than mis-handled. A
+fallback-pending loan can still receive an extra collateral top-up while it
+waits (the borrower trying to cure it); that top-up sits in the borrower's
+own vault while the loan's original collateral has moved into protocol
+custody. The internal-match settlement always draws the moved collateral
+from protocol custody, so a loan split across both places can't be settled
+correctly yet — the vault-held top-up would be mis-counted. Until the
+accounting that reconciles the two lands (with #585), any such topped-up
+fallback-pending loan is simply **ineligible** for internal matching: it is
+rejected up front, before any funds move, whichever way the match is
+attempted (a directly requested match is declined; the automatic
+keeper/claim-time matcher quietly skips it and the loan resolves through
+its normal fallback claim instead — recovery never stalls). The loan stays
+fully recoverable through every other path. This is strictly safer than the
+earlier behaviour, which tore down the loan's collateral protection and
+freed the residual to the original borrower outright.
 
 Closes #577. The broader audit of every collateral-moving path for
 transferred positions is tracked separately as #574; the internal-match

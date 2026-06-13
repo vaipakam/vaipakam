@@ -204,6 +204,17 @@
   },
   {
     "type": "error",
+    "name": "InternalMatchFallbackTopUpUnsupported",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InternalMatchLoanNotMatchable",
     "inputs": [
       {
@@ -240,27 +251,6 @@
     "inputs": [
       {
         "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InternalMatchTopUpConsumed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "existingLien",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "residual",
         "type": "uint256",
         "internalType": "uint256"
       }
