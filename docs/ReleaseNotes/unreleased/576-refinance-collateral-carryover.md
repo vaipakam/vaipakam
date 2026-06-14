@@ -44,6 +44,16 @@ deposited nothing, so a flipped "not carry-over" reading could try to
 refund or settle collateral that never existed (a fund-safety bug on
 cancel). Recording the decision once removes that whole class.
 
+Because the decision is recorded once but the real lien lives on the target
+loan, the accept-time hand-off is a STRICT same-key retag: it only moves the
+lien when its key (owner, asset, token id, amount, kind) still matches the
+new loan exactly. If the target obligation migrated to a different borrower
+after the offer was posted (which moved the lien to that borrower and
+returned the original collateral), the keys diverge and the refinance is
+rejected — never falling back to creating a fresh, unbacked lien against an
+empty vault. This holds even if the borrower position is later transferred
+back to the original creator.
+
 Eligibility is correspondingly precise: an offer carries over only if it is
 the original borrower's, single-value, with collateral identity exactly
 matching the targeted loan AND a live old-loan lien. Anything else — a

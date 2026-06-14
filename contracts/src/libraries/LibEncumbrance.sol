@@ -307,16 +307,28 @@ library LibEncumbrance {
     ///         calling, so `sameKey` always holds for a refinance carry-over
     ///         (the offer pledges no fresh collateral and `initiateLoan`
     ///         skips the fresh lien — see the refinance-origin skips there).
-    ///         The `!sameKey` branch is a defensive fallback (it would
-    ///         release + re-create), not reached on the carry-over path.
+    ///         #576 Codex round-7 P1 — this is now STRICT: it performs the
+    ///         retag ONLY when the old lien's key matches the new loan
+    ///         EXACTLY (`sameKey`), and returns `false` otherwise WITHOUT
+    ///         mutating any lien. The previous `!sameKey` release+create
+    ///         fallback was unsafe on the carry-over path: a carry-over offer
+    ///         pledges NO fresh collateral, so creating a fresh lien for the
+    ///         new borrower would back the replacement loan with an
+    ///         accounting-only lien against an empty vault. The borrower-
+    ///         migration race reaches `!sameKey` (old lien keyed to the
+    ///         migrated-in borrower B, new loan borrower A after the NFT
+    ///         returns to A); the caller (RefinanceFacet) reverts the whole
+    ///         accept-and-refinance when this returns `false`.
+    /// @return retagged True iff a same-key retag was performed; false means
+    ///         the caller must reject the carry-over (no state was changed).
     function rekeyCollateralLienOnRefinance(
         uint256 oldLoanId,
         uint256 newLoanId,
         LibVaipakam.Loan storage newLoan
-    ) internal {
+    ) internal returns (bool retagged) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Encumbrance storage oldLien = s.loanCollateralLien[oldLoanId];
-        if (oldLien.released || oldLien.user == address(0)) return;
+        if (oldLien.released || oldLien.user == address(0)) return false;
 
         // Compare the new loan's collateral encoding against the old
         // lien. If they match (no collateral change), just retag —
@@ -354,12 +366,15 @@ library LibEncumbrance {
             // refinanced-away loan. The `released` flag is the source of truth;
             // zeroing `amount` removes the footgun.
             oldLien.amount = 0;
-        } else {
-            // Different collateral identity → release old + create
-            // fresh (aggregate ticks under both keys).
-            releaseCollateralLien(oldLoanId);
-            createCollateralLien(newLoanId, newLoan);
+            return true;
         }
+        // !sameKey — the old lien's key no longer matches the new loan (e.g.
+        // the target obligation migrated to a different borrower since the
+        // carry-over offer was created). Do NOT fall back to release+create:
+        // the carry-over offer deposited no fresh collateral, so that would
+        // leave the replacement loan backed by an accounting-only lien against
+        // an empty vault. Signal the mismatch; the caller rejects the refinance.
+        return false;
     }
 
     // ─── Offer-principal lock — per-offer (ERC20 Lender only) ───────────

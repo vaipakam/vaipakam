@@ -484,7 +484,23 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             if (oldLien.released || oldLien.user == address(0)) {
                 revert InvalidRefinanceOffer();
             }
-            LibEncumbrance.rekeyCollateralLienOnRefinance(oldLoanId, newLoanId, newLoan);
+            // #576 Codex round-7 P1 — the retag is STRICT: it only succeeds when
+            // the old lien's key matches the new loan EXACTLY (same user, asset,
+            // tokenId, amount, kind). If the target obligation migrated to a
+            // different borrower since this carry-over offer was created (the
+            // old lien is now keyed to the migrated-in borrower, the new loan's
+            // borrower is the original creator after the borrower NFT returns to
+            // them), the keys diverge; falling back to release+create would
+            // back the replacement loan with an accounting-only lien against an
+            // empty vault (the carry-over offer pledged no fresh collateral).
+            // Reject the stale carry-over instead — fail closed.
+            if (
+                !LibEncumbrance.rekeyCollateralLienOnRefinance(
+                    oldLoanId, newLoanId, newLoan
+                )
+            ) {
+                revert InvalidRefinanceOffer();
+            }
         } else {
             // Legacy: release the old lien BEFORE the withdraw (the chokepoint
             // guard would otherwise block the legitimate refinance return).
