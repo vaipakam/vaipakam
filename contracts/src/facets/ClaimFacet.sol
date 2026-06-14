@@ -332,9 +332,13 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // (the reservation exists precisely to block the stored lender's
         // unstake front-run until this gated claim runs). No-op for every
         // loan that never reserved (non-VPFI, or paths not yet wired) —
-        // keyed off `s.lenderProceedsEncumbered[loanId]`. `claim.asset` is
-        // the loan's principal asset (the reserved asset, tokenId 0).
-        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, claim.asset);
+        // keyed off `s.lenderProceedsEncumbered[loanId]`. Release under
+        // `loan.principalAsset` — the asset the reservation was recorded
+        // under (Codex round-3 P1): `claim.asset` can be the COLLATERAL
+        // asset on a collateral-denominated terminal (a VPFI loan that
+        // partial-matched then resolved in-kind), which would hit the wrong
+        // `encumbered` bucket and revert / free an unrelated lien.
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, loan.principalAsset);
 
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {

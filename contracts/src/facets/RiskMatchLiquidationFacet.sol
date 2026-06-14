@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -652,6 +653,16 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.LoanStatus.Active,
                     LibVaipakam.LoanStatus.InternalMatched
                 );
+                // #585 (Codex round-3 P1) — an internal match is a
+                // LIQUIDATION-class terminal for the borrower (their
+                // distressed loan was force-cleared), so forfeit the
+                // borrower's VPFI Loan-Initiation-Fee custody to treasury
+                // here — exactly as DefaultedFacet / RiskFacet do at their
+                // liquidation terminals. Without this the Diamond-held
+                // `borrowerLifRebate[loanId].vpfiHeld` would be stranded once
+                // the loan settles (claimAsBorrower rejects a Settled loan).
+                // Idempotent / no-op when the borrower paid no VPFI LIF.
+                LibVPFIDiscount.forfeitBorrowerLif(loan);
                 // #577 — a full internal-match closes the loan, but an
                 // OVER-collateralized loan leaves a residual
                 // (`loan.collateralAmount`) still in `loan.borrower`'s
@@ -794,6 +805,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     delete s.borrowerClaims[loan.id];
                 }
                 s.fallbackSnapshot[loan.id].active = false;
+                // #585 (Codex round-3 P1) — liquidation-class terminal:
+                // forfeit the borrower VPFI LIF custody to treasury (see the
+                // Active full-match branch). No-op when none was paid.
+                LibVPFIDiscount.forfeitBorrowerLif(loan);
                 LibLifecycle.transitionFromAny(
                     loan,
                     LibVaipakam.LoanStatus.InternalMatched
