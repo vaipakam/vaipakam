@@ -606,6 +606,68 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
     }
 
+    /// @notice #576 — a refinance-TAGGED atomic refinance carries the old
+    ///         loan's collateral over IN PLACE: the encumbrance lien retags
+    ///         old→new (no second collateral lock), the collateral never
+    ///         leaves the borrower's vault, and the new loan is keyed to the
+    ///         original custody address. Proves the carry-over mechanism, not
+    ///         just that the flow completes.
+    function test_576_atomicRefinance_carriesCollateralOverViaLienRetag() public {
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(oldLoanId, true, 600, uint64(block.timestamp + 365 days));
+        vm.prank(borrower);
+        uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        address newLender = _provisionFundedActorWithVault(
+            "carryoverNewLender", mockERC20, LOAN_PRINCIPAL * 4
+        );
+        _grantStandingApprovalToDiamond(borrower, mockERC20);
+
+        // Pre-state: the OLD loan's collateral is liened exactly once.
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            LOAN_COLLATERAL,
+            "pre: single collateral lock"
+        );
+
+        // SINGLE TX — accept fires the atomic accept-and-refinance chain.
+        vm.prank(newLender);
+        uint256 newLoanId = OfferAcceptFacet(address(diamond))
+            .acceptOffer(refinanceOfferId, true);
+
+        // #576 — the lien RETAGGED old→new: still exactly one lock (NOT
+        // doubled by a fresh pledge), the old lien released, the new lien
+        // carries the same identity under the original borrower custody.
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            LOAN_COLLATERAL,
+            "post: still a single lock (retagged, not doubled)"
+        );
+        LibVaipakam.Encumbrance memory oldLien =
+            MetricsFacet(address(diamond)).getLoanCollateralLien(oldLoanId);
+        assertTrue(oldLien.released, "old lien retagged away (released)");
+        LibVaipakam.Encumbrance memory newLien =
+            MetricsFacet(address(diamond)).getLoanCollateralLien(newLoanId);
+        assertEq(newLien.user, borrower, "carried lien.user = original borrower custody");
+        assertEq(newLien.asset, mockCollateralERC20, "carried lien.asset");
+        assertEq(newLien.amount, LOAN_COLLATERAL, "carried lien.amount = collateral");
+        assertFalse(newLien.released, "carried lien is active");
+
+        // The new loan is keyed to the original custody address + carries the
+        // old collateral identity (structurally a transferred position).
+        LibVaipakam.Loan memory newLoan =
+            LoanFacet(address(diamond)).getLoanDetails(newLoanId);
+        assertEq(newLoan.borrower, borrower, "new loan.borrower = original custody address");
+        assertEq(newLoan.collateralAmount, LOAN_COLLATERAL, "new loan carries the old collateral amount");
+        assertEq(uint8(newLoan.status), uint8(LibVaipakam.LoanStatus.Active), "new loan Active");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan Repaid"
+        );
+    }
+
     function test_T092H_RefinanceLoanFromAccept_RejectsExternalEOA() public {
         // T-092-H — the new external entry is `onlyDiamondInternal`
         // gated. A direct external EOA call must revert

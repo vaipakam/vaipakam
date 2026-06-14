@@ -1097,8 +1097,17 @@ contract OfferCreateFacet is
         } else if (
             params.offerType == LibVaipakam.OfferType.Borrower &&
             params.assetType == LibVaipakam.AssetType.ERC20 &&
-            params.collateralAssetType == LibVaipakam.AssetType.ERC20
+            params.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
+            params.refinanceTargetLoanId == 0
         ) {
+            // #576 — a refinance-tagged Borrower offer pledged NO fresh
+            // collateral (the carry-over skip in `_pullCreatorAssetsClassic`),
+            // so there is nothing to escrow-lock here. Locking would encumber
+            // `collateralAmountMax` of collateral that was never deposited — a
+            // phantom lien that double-counts the carried collateral (which is
+            // already liened under the OLD loan and retagged to the new loan at
+            // refinance). The `refinanceTargetLoanId == 0` guard keeps the #573
+            // escrow lock for every ordinary Borrower offer.
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.createOfferPrincipalLien.selector,
