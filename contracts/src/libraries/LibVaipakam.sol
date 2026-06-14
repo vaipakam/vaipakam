@@ -3944,6 +3944,26 @@ library LibVaipakam {
         //
         // See `PerLoanCollateralLien.md` §7.3.
         mapping(uint256 => Encumbrance) offerPrincipalLien;
+
+        // #585 — per-loan VPFI lender-PROCEEDS encumbrance. When an
+        // internal match settles a VPFI-principal loan, the lender's
+        // matched proceeds are deposited into the (possibly transferred-
+        // away) stored `loan.lender`'s vault and recorded as a
+        // `lenderClaims` row owed to the CURRENT lender-position holder.
+        // VPFI is the one principal asset with a user-facing tracked-
+        // balance exit (`VPFIDiscountFacet.withdrawVPFIFromVault`, the
+        // unstake path), so without a reservation the stored lender could
+        // front-run the holder's claim and unstake those proceeds. This
+        // map records the amount ticked into the shared `encumbered`
+        // aggregate for that loan, so `withdrawVPFIFromVault`'s
+        // free-balance guard excludes it until `ClaimFacet` releases it
+        // immediately before paying the rightful holder. Non-VPFI
+        // proceeds need no entry (no user-facing tracked-withdraw path).
+        // The same reservation should be extended to the other terminal
+        // lender-proceeds paths (Repay / Default / Preclose / Risk) — a
+        // pre-existing gap tracked as a follow-up; the release point in
+        // `ClaimFacet` already handles every path keyed off this map.
+        mapping(uint256 => uint256) lenderProceedsEncumbered;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
