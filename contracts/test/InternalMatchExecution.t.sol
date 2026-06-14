@@ -10,7 +10,9 @@ import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -241,28 +243,26 @@ contract InternalMatchExecutionTest is SetupTest {
         (, bool relAfter) = TestMutatorFacet(address(diamond)).getLoanCollateralLienAmount(LOAN_A);
         assertTrue(relAfter, "lien released at claim");
 
-        // #577 (narrowed) — the borrower's residual claim does NOT settle the
-        // loan. The internal-match lender side (the lender position NFT + any
-        // held/proceeds routed to the current lender holder) is closed by the
-        // separate lender-side lifecycle (#585); until then the loan stays
-        // InternalMatched, the same terminal state an exactly-collateralized
-        // match already sits in.
+        // The borrower's residual claim ALONE does NOT settle the loan: the
+        // lender proceeds are still unclaimed. The lender side is closed via
+        // the standard lender claim (#585) — exercised in the test_585_*
+        // ordering cases, where the subsequent lender claim settles it. Here
+        // we pin the borrower-first half: the loan stays InternalMatched.
         assertEq(
             uint8(_getLoan(LOAN_A).status),
             uint8(LibVaipakam.LoanStatus.InternalMatched),
-            "loan stays InternalMatched after borrower residual claim (lender side pending #585)"
+            "borrower residual claim alone does not settle - lender proceeds still unclaimed"
         );
     }
 
-    /// @notice #577 (narrowed) — the borrower's residual claim on an
-    ///         InternalMatched loan must NOT touch or strand the lender side.
-    ///         Any `heldForLender` (from a prior offset the liquidation
-    ///         pre-empted) stays put, untouched, and the loan stays
-    ///         InternalMatched — the lender side (NFT + held + matched
-    ///         proceeds routed to the CURRENT lender holder) is closed by the
-    ///         separate lender-side lifecycle (#585), not here. Settling here
-    ///         would strand the held and leave a stale lender NFT pointing at
-    ///         a Settled loan; this test pins that we don't.
+    /// @notice #577 — the borrower's residual claim on an InternalMatched
+    ///         loan must NOT touch the lender side. Any `heldForLender`
+    ///         (from a prior offset the liquidation pre-empted) stays put,
+    ///         untouched, and the borrower claim ALONE does not settle the
+    ///         loan — the lender side closes through its own claim (#585).
+    ///         Settling on the borrower claim would strand the held and leave
+    ///         a stale lender NFT pointing at a Settled loan; this test pins
+    ///         that we don't.
     function test_577_internalMatched_borrowerClaim_leavesLenderSidePending() public {
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
@@ -305,12 +305,12 @@ contract InternalMatchExecutionTest is SetupTest {
             lenderVaultBefore,
             "held stays in the lender vault - borrower claim does not touch it"
         );
-        // And the loan is NOT settled — it stays InternalMatched with the
-        // lender side honestly pending.
+        // And the loan is NOT settled by the borrower claim alone — it stays
+        // InternalMatched until the lender also claims (#585).
         assertEq(
             uint8(_getLoan(LOAN_A).status),
             uint8(LibVaipakam.LoanStatus.InternalMatched),
-            "loan stays InternalMatched - lender side pending #585, not stranded by a premature settle"
+            "loan stays InternalMatched - borrower claim alone does not settle"
         );
     }
 
@@ -876,13 +876,13 @@ contract InternalMatchExecutionTest is SetupTest {
     }
 
     function test_fallbackPending_claimTime_fullAutoDispatch_noRevert() public {
-        // PR #22 / issue #23 review item 2. A claim-time FULL internal
-        // match clears `snap.active` and deletes the lender claim
-        // records. `_claimAsLenderImpl` must short-circuit on the
-        // `fullyResolved` signal from `_resolveFallbackIfActive` —
-        // otherwise it reads the zeroed claim, reverts
-        // `NothingToClaim()`, and (because the auto-dispatch runs in
-        // THIS transaction) rolls back the successful match.
+        // PR #22 / issue #23 review item 2, updated for #585. A claim-time
+        // FULL internal match clears `snap.active` and now RECORDS the
+        // matched proceeds as a lender claim (no longer deletes it).
+        // `_claimAsLenderImpl` no longer short-circuits — it falls through
+        // to the standard payout, which pays the triggering lender, burns
+        // the NFT, and settles A. The call must still succeed (no
+        // `NothingToClaim()` rollback of the in-tx match).
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
@@ -891,32 +891,38 @@ contract InternalMatchExecutionTest is SetupTest {
         address aLenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
 
-        // The LENDER (position-NFT owner) claims with no candidate
-        // hand-picked — the claim-time auto-dispatch finds LOAN_B and
-        // FULLY matches A. The call must succeed (no `NothingToClaim`
-        // revert). Ownership is checked before the auto-dispatch
-        // (EC-007 review fix), so the lender NFT must be mocked.
+        // The LENDER (position-NFT owner, here un-transferred) claims with
+        // no candidate hand-picked — the claim-time auto-dispatch finds
+        // LOAN_B and FULLY matches A, then the claim pays out. Ownership is
+        // checked before the auto-dispatch (EC-007), so mock the lender NFT.
+        uint256 lenderBefore = IERC20(mockERC20).balanceOf(lender);
         _mockLenderNft(LOAN_A, lender);
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
 
-        // Full match landed AND survived the claim call: both loans
-        // InternalMatched, and the lender was paid in the principal
-        // asset by the match settlement (1000 - 1% matcher fee).
+        // #585 — A's lender claim completed in the same call: A is Settled,
+        // the lender (also the matcher) received the 990 proceeds + 10
+        // incentive = 1000 X, and the vault was swept to zero by the claim.
+        // B stays InternalMatched (its own lender hasn't claimed yet).
         assertEq(
             uint8(_getLoan(LOAN_A).status),
-            uint8(LibVaipakam.LoanStatus.InternalMatched),
-            "A fully matched at claim time"
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "A claim-time match + lender claim settles in one call"
         );
         assertEq(
             uint8(_getLoan(LOAN_B).status),
             uint8(LibVaipakam.LoanStatus.InternalMatched),
-            "B matched"
+            "B matched, its lender side still pending"
+        );
+        assertEq(
+            IERC20(mockERC20).balanceOf(lender) - lenderBefore,
+            1000,
+            "triggering lender gets proceeds + matcher incentive"
         );
         assertEq(
             IERC20(mockERC20).balanceOf(aLenderVault),
-            990,
-            "A lender paid in principal asset by the match"
+            0,
+            "vault swept to the lender by the fall-through claim"
         );
     }
 
@@ -998,9 +1004,12 @@ contract InternalMatchExecutionTest is SetupTest {
 
     function test_fallbackPending_snapshotCleared_onFullRescue() public {
         // After a full FallbackPending → InternalMatched rescue, the
-        // lender's & borrower's collateral-unit claim records are
-        // cleared and the snapshot is no longer active. The Settled-
-        // path claim flow takes over from here.
+        // snapshot is no longer active and the borrower's collateral-unit
+        // claim record is cleared (zero-residual here). #585 — the lender
+        // claim record is now REWRITTEN with the principal-asset matched
+        // proceeds (no longer deleted), claimable by the current lender
+        // holder via the Settled-path lender claim; exercised in the
+        // test_585_* cases below.
         _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
         _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
         _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 850, 20, true);
@@ -1021,5 +1030,262 @@ contract InternalMatchExecutionTest is SetupTest {
         address aLenderVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(lender);
         assertEq(IERC20(mockERC20).balanceOf(aLenderVault), 990);
+    }
+
+    // ─── #585 — internal-match LENDER-side lifecycle ────────────────────────
+    //
+    // A full internal match deposits the lender's matched proceeds
+    // (`moved - incentive`) into the STORED `loan.lender`'s vault and now
+    // records them as a `lenderClaims` row. The CURRENT lender-position-NFT
+    // holder extracts them via `claimAsLender` (which accepts
+    // InternalMatched), the lender NFT is burned, and the loan settles once
+    // both sides have cleared. Default incentive = 1%, so a 1000 leg pays
+    // the lender 990.
+
+    /// @notice #585 — a transferred lender position claims the matched
+    ///         proceeds from the stored lender's vault; the loan settles on
+    ///         the lender claim alone for a zero-residual match.
+    function test_585_fullMatch_transferredLenderHolder_receivesProceeds() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // Proceeds (990 X) sit in the STORED lender's vault, protocol-tracked.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        assertEq(IERC20(mockERC20).balanceOf(lenderVault), 990, "matched proceeds parked in stored lender vault");
+
+        // The lender position NFT was transferred to `newHolder`.
+        address newHolder = makeAddr("newLenderHolder");
+        _mockLenderNft(LOAN_A, newHolder);
+
+        uint256 holderBefore = IERC20(mockERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // The CURRENT holder received the 990, drawn out of the stored
+        // lender's vault (which is now empty), and the loan settled.
+        assertEq(IERC20(mockERC20).balanceOf(newHolder) - holderBefore, 990, "current holder claims matched proceeds");
+        assertEq(IERC20(mockERC20).balanceOf(lenderVault), 0, "stored lender vault drained to the holder by the claim");
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "zero-residual match settles on the lender claim alone"
+        );
+    }
+
+    /// @notice #585 — the stored lender (no longer the NFT owner) cannot
+    ///         extract the proceeds; they are NFT-owner-gated, and the
+    ///         protocol-tracked vault balance has no user-facing drain.
+    function test_585_storedLender_cannotExtractAfterTransfer() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // NFT owned by someone else; the stored lender's claim is rejected.
+        _mockLenderNft(LOAN_A, makeAddr("newLenderHolder"));
+        vm.prank(lender);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // Proceeds remain protocol-tracked in the vault — undrainable by the
+        // stored lender; only the gated claim moves them.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        assertEq(IERC20(mockERC20).balanceOf(lenderVault), 990, "proceeds stay parked, not drained by the rejected claim");
+    }
+
+    /// @notice #585 — a zero-residual match leaves NO borrower claim; the
+    ///         borrower has nothing to claim and the lender claim settles.
+    function test_585_zeroResidual_settlesOnLenderClaim() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // Borrower has nothing to claim (exactly collateralized).
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(borrower));
+        vm.prank(borrower);
+        vm.expectRevert(ClaimFacet.NothingToClaim.selector);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+
+        // The lender claim alone settles the loan.
+        _mockLenderNft(LOAN_A, lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "settled on lender claim");
+    }
+
+    /// @notice #585 — over-collateralized match, LENDER claims first: the
+    ///         loan stays InternalMatched (residual still owed to the
+    ///         borrower) until the borrower claims, which settles it.
+    function test_585_overCollat_lenderFirstThenBorrower_settles() public {
+        _overCollatMatch();
+
+        // Lender claims first — proceeds out, but the borrower residual is
+        // still unclaimed, so the loan stays InternalMatched.
+        _mockLenderNft(LOAN_A, lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "lender-first claim does not settle while the borrower residual is pending"
+        );
+
+        // Borrower claims the 400 residual — now both sides cleared → Settled.
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        address bHolder = makeAddr("bHolder");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(bHolder));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.prank(bHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "borrower second claim settles");
+    }
+
+    /// @notice #585 — over-collateralized match, BORROWER claims first: the
+    ///         loan stays InternalMatched (lender proceeds still unclaimed)
+    ///         until the lender claims, which settles it. Regression-guards
+    ///         that removing the #577 override did not over-settle.
+    function test_585_overCollat_borrowerFirstThenLender_settles() public {
+        _overCollatMatch();
+
+        // Borrower claims the residual first — lender proceeds still pending,
+        // so the loan stays InternalMatched (the natural settle predicate,
+        // not the deleted #577 override, keeps it open).
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        address bHolder = makeAddr("bHolder");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(IERC721.ownerOf.selector, a.borrowerTokenId), abi.encode(bHolder));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.prank(bHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+        assertEq(
+            uint8(_getLoan(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.InternalMatched),
+            "borrower-first claim does not settle while lender proceeds are pending"
+        );
+
+        // Lender claims → both sides cleared → Settled.
+        _mockLenderNft(LOAN_A, lender);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "lender second claim settles");
+    }
+
+    /// @notice #585 — a claim-time auto-dispatch full match records the
+    ///         lender proceeds and FALLS THROUGH to pay the triggering
+    ///         current holder (also the matcher), burns the NFT, and settles
+    ///         — no `NothingToClaim` rollback of the in-tx match.
+    function test_585_claimTimeAutoDispatch_fullMatch_paysTriggeringHolder() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        // A is FallbackPending (no top-up → eligible); B is an Active candidate.
+        _moveToFallbackPending(LOAN_A, borrower, mockCollateralERC20, 1000, 980, 20, true);
+        _mockLtv(LOAN_B, 9_000);
+
+        // A's lender position is held by `newHolder`, who triggers the claim
+        // (and is therefore the matcher earning the 1% on A's leg).
+        address newHolder = makeAddr("newLenderHolder");
+        _mockLenderNft(LOAN_A, newHolder);
+
+        uint256 holderBefore = IERC20(mockERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        // 990 matched proceeds (claimed) + 10 matcher incentive = 1000 X.
+        assertEq(IERC20(mockERC20).balanceOf(newHolder) - holderBefore, 1000, "holder gets proceeds + matcher incentive");
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "claim-time match settles on the same claim");
+    }
+
+    /// @notice #585 — a sanctioned lender claimant is rejected before any
+    ///         payout (Tier-1 gate on the fund recipient = msg.sender).
+    function test_585_sanctionedLenderClaimant_reverts() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        address flagged = makeAddr("sanctionedHolder");
+        _mockLenderNft(LOAN_A, flagged);
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(flagged, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        vm.prank(flagged);
+        vm.expectRevert(abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flagged));
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+    }
+
+    /// @notice #585 — in a 3-way cycle each lender position claims ITS OWN
+    ///         leg's proceeds in ITS OWN principal asset (guards the
+    ///         leg-transposition risk in the per-leg proceeds threading).
+    function test_585_threeWay_eachLenderClaimsOwnProceeds() public {
+        address mockY = address(new ERC20Mock("ChainY", "CY", 18));
+        // Distinct stored lenders so each leg's proceeds vault is isolated.
+        address lenderA = makeAddr("lenderA3");
+        address lenderC = makeAddr("lenderC3");
+        _seedLoan(LOAN_A, lenderA, borrower, mockERC20, 1_000, mockY, 1_000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1_000, mockERC20, 1_000);
+        _seedLoan(LOAN_C, lenderC, borrowerB, mockY, 1_000, mockCollateralERC20, 1_000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        _mockLtv(LOAN_C, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, LOAN_C);
+
+        // Scaffolded loans all share lenderTokenId 0, so the `ownerOf` mock
+        // is per-claim: re-point it to each leg's holder right before that
+        // leg's claim.
+        address holderA = makeAddr("holderA3");
+        address holderB = makeAddr("holderB3");
+        address holderC = makeAddr("holderC3");
+        _mockLenderNft(LOAN_A, holderA);
+        vm.prank(holderA);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        _mockLenderNft(LOAN_B, holderB);
+        vm.prank(holderB);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_B);
+        _mockLenderNft(LOAN_C, holderC);
+        vm.prank(holderC);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_C);
+
+        // A.lender lends X, B.lender lends Y, C.lender lends Z — each holder
+        // gets 990 of exactly their own leg's principal asset.
+        assertEq(IERC20(mockERC20).balanceOf(holderA), 990, "A holder gets 990 X");
+        assertEq(IERC20(mockCollateralERC20).balanceOf(holderB), 990, "B holder gets 990 Y");
+        assertEq(IERC20(mockY).balanceOf(holderC), 990, "C holder gets 990 Z");
+    }
+
+    /// @dev Over-collateralized 2-way match fixture used by the #585
+    ///      claim-ordering tests: A owes 600 X against 1000 Y; B owes 600 Y
+    ///      against 600 X. Both close; A keeps a 400 Y residual (liened,
+    ///      owed to the borrower position). Mirrors the #577 fixture.
+    function _overCollatMatch() internal {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN_A, borrower, mockCollateralERC20, 0, 1000, LibVaipakam.AssetType.ERC20
+        );
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
     }
 }

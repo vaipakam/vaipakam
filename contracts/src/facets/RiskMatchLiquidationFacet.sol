@@ -352,9 +352,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         //   la consumed movedZ (paid out to C's lender)
         //   lb consumed movedX (paid out to A's lender)
         //   lc consumed movedY (paid out to B's lender)
-        _settleFallbackOrTransitionPostMatch(la, movedZ);
-        _settleFallbackOrTransitionPostMatch(lb, movedX);
-        _settleFallbackOrTransitionPostMatch(lc, movedY);
+        // #585 — lender proceeds per leg (the asymmetry: a loan's collateral
+        // is consumed by the NEXT leg, but its OWN lender is paid by its own
+        // leg). A.lender ← Leg X (movedX − incentiveX); B.lender ← Leg Y;
+        // C.lender ← Leg Z.
+        _settleFallbackOrTransitionPostMatch(la, movedZ, movedX - incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, movedX, movedY - incentiveY);
+        _settleFallbackOrTransitionPostMatch(lc, movedY, movedZ - incentiveZ);
     }
 
     /// @dev Settle one leg of an internal match — the receiving
@@ -492,8 +496,11 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // helper folds FallbackPending snapshot reduction into the
         // same exit point as the Active-case transition, so both leg
         // statuses converge on a consistent terminal-or-residual shape.
-        _settleFallbackOrTransitionPostMatch(la, movedY);
-        _settleFallbackOrTransitionPostMatch(lb, movedX);
+        // #585 — lender proceeds per leg (asymmetric, as in the 3-way case):
+        // la's collateral is consumed by Leg Y (movedY), but A.lender is paid
+        // by Leg X (movedX − incentiveX); symmetrically for lb.
+        _settleFallbackOrTransitionPostMatch(la, movedY, movedX - incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, movedX, movedY - incentiveY);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —
@@ -616,9 +623,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///           snapshot-driven path (`_distributeFallbackCollateral`,
     ///           Diamond → vaults) — exactly as a fresh, smaller
     ///           FallbackPending loan would.
+    /// @param lenderProceeds The principal-asset amount (`moved - incentive`)
+    ///        this loan's lender was paid into `loan.lender`'s vault by
+    ///        `_settleLeg`. On a FULL match it is recorded as a
+    ///        `lenderClaims` row (#585) so the CURRENT lender-position-NFT
+    ///        holder — not the stored `loan.lender` — claims it through the
+    ///        standard lender-claim path. Ignored on a partial match
+    ///        (the loan stays open; the lender claim is still the snapshot
+    ///        residual, scaled below).
     function _settleFallbackOrTransitionPostMatch(
         LibVaipakam.Loan storage loan,
-        uint256 collateralConsumed
+        uint256 collateralConsumed,
+        uint256 lenderProceeds
     ) private {
         LibVaipakam.LoanStatus status = loan.status;
 
@@ -648,6 +664,25 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // the residual with no claim path (stranded, and drainable
                 // by a transferred-away `loan.borrower`).
                 _retainInternalMatchResidual(loan);
+                // #585 — the lender's matched proceeds were deposited into
+                // `loan.lender`'s vault by `_settleLeg` but, on a full
+                // close, no claim row existed: a transferred-away lender
+                // position could not extract them (and the stored lender
+                // can't either — protocol-tracked balances have no
+                // user-facing withdraw), stranding the funds and leaving
+                // the loan stuck `InternalMatched`. Record the proceeds as
+                // a standard lender claim so the CURRENT lender-position-NFT
+                // holder claims them via `claimAsLender` (NFT-owner-gated,
+                // sanctions-checked), which also burns the lender NFT and
+                // settles the loan once the borrower side clears.
+                LibVaipakam.storageSlot().lenderClaims[loan.id] = LibVaipakam.ClaimInfo({
+                    asset: loan.principalAsset,
+                    amount: lenderProceeds,
+                    assetType: LibVaipakam.AssetType.ERC20,
+                    tokenId: 0,
+                    quantity: 0,
+                    claimed: false
+                });
             }
             // Partial internal match — loan stays Active with reduced
             // collateral. The pre-withdraw decrement already adjusted
@@ -679,7 +714,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 // (`loan.collateralAmount`) is still in the Diamond's
                 // custody — push it to the borrower's vault.
                 // Treasury's at-fallback cut is forfeited.
-                delete s.lenderClaims[loan.id];
+                //
+                // #585 — record the matched proceeds as a lender claim
+                // (REPLACING the prior `delete`, which left a transferred
+                // lender position with no way to extract the funds
+                // `_settleLeg` deposited into `loan.lender`'s vault). This
+                // overwrites any stale at-fallback snapshot lender claim
+                // with the match proceeds owed to the current holder.
+                s.lenderClaims[loan.id] = LibVaipakam.ClaimInfo({
+                    asset: loan.principalAsset,
+                    amount: lenderProceeds,
+                    assetType: LibVaipakam.AssetType.ERC20,
+                    tokenId: 0,
+                    quantity: 0,
+                    claimed: false
+                });
                 if (loan.collateralAmount > 0) {
                     // #577 — retain the residual as a drain-protected
                     // borrowerClaims row owed to the current borrower-position

@@ -191,12 +191,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // Loan must be resolved (Repaid, Defaulted, or FallbackPending awaiting
-        // the lender's one-shot retry). Active or already Settled is rejected.
+        // Loan must be resolved (Repaid, Defaulted, FallbackPending awaiting
+        // the lender's one-shot retry, or InternalMatched). Active or already
+        // Settled is rejected.
+        // #585 — InternalMatched is now a claimable terminal for the lender:
+        // an internal match records the matched proceeds as a lender claim
+        // (RiskMatchLiquidationFacet._settleFallbackOrTransitionPostMatch),
+        // which the current lender-position holder withdraws here. The
+        // FallbackPending-only block below is skipped for InternalMatched
+        // (no claim-time retry/auto-dispatch), so this falls straight through
+        // to the standard claim-record payout.
         if (
             loan.status != LibVaipakam.LoanStatus.Repaid &&
             loan.status != LibVaipakam.LoanStatus.Defaulted &&
-            loan.status != LibVaipakam.LoanStatus.FallbackPending
+            loan.status != LibVaipakam.LoanStatus.FallbackPending &&
+            loan.status != LibVaipakam.LoanStatus.InternalMatched
         ) revert InvalidLoanStatus();
 
         // Already-claimed guard FIRST. A successful claim burns the
@@ -205,9 +214,9 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // `ERC721NonexistentToken` on the burned token — this guard
         // must run before it so the caller sees the precise
         // `AlreadyClaimed()` error. (`claim` is a storage pointer; a
-        // claim-time full match deletes the record, but that path
-        // returns early — see `fullyResolved` below — before any
-        // further read.)
+        // claim-time full match REWRITES the record with the matched
+        // proceeds (#585) — the pointer reflects that fresh value when
+        // the payout reads it below.)
         LibVaipakam.ClaimInfo storage claim = s.lenderClaims[loanId];
         if (claim.claimed) revert AlreadyClaimed();
 
@@ -228,13 +237,17 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // leaves them as the collateral split recorded by the fallback. Once
         // resolved, the loan is terminally Defaulted (no further cure).
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
-            bool fullyResolved = _resolveFallbackIfActive(loanId, loan, retryCalls);
-            // EC-007 — a full claim-time internal match settled the lender
-            // in the principal asset and deleted the claim records. There
-            // is nothing left to pay out here; returning avoids the
-            // `NothingToClaim()` revert below, which would otherwise roll
-            // back the successful match (the auto-dispatch ran in this tx).
-            if (fullyResolved) return;
+            // #585 — the return value (fully-resolved) is intentionally
+            // discarded. A full claim-time internal match now RECORDS the
+            // matched proceeds as a lender claim (it no longer deletes the
+            // record), so we always fall through to the standard payout
+            // below, which pays `msg.sender` (the verified NFT owner /
+            // matcher), burns the lender NFT, and settles. The old early
+            // `return` existed only to dodge a `NothingToClaim()` revert on
+            // the then-deleted record — no longer a risk. The status-gated
+            // blocks below (FallbackPending → Defaulted force, Defaulted
+            // lien-fold) naturally no-op once the loan is `InternalMatched`.
+            _resolveFallbackIfActive(loanId, loan, retryCalls);
             // EC-003 Phase 3 — the auto-dispatch inside
             // `_resolveFallbackIfActive` may have transitioned the
             // loan to `InternalMatched` (on a full match). Only force
@@ -647,24 +660,17 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         bool lenderFullyClaimed = lenderClaim.claimed;
         bool lenderHasNothing = lenderClaim.amount == 0 && !lenderHasHeld && !lenderHasRentalNft && !lenderHasNftCollateralClaim;
         bool willSettle = lenderFullyClaimed || lenderHasNothing;
-
-        // #577 — an InternalMatched loan's lender side is NOT closed by this
-        // borrower claim. The internal match paid the *stored* `loan.lender`
-        // their principal directly (not via a claim row), and for a
-        // transferred lender position those proceeds — plus any `heldForLender`
-        // and the lender position NFT — must be routed to the *current* lender
-        // holder through the lender claim path, which does not yet accept
-        // InternalMatched. Until that lender-side lifecycle lands (#585), the
-        // borrower's residual retrieval must NOT settle the loan: settling
-        // here would strand the lender's held/proceeds and leave a stale
-        // lender NFT pointing at a Settled loan. Leaving the loan
-        // InternalMatched keeps the lender side honestly pending — the same
-        // terminal state an exactly-collateralized internal match already sits
-        // in — for the follow-up to close.
-        if (loan.status == LibVaipakam.LoanStatus.InternalMatched) {
-            willSettle = false;
-        }
-
+        // #585 — for an InternalMatched loan the lender side is now closed
+        // through the standard lender claim path: the match records the
+        // matched proceeds as a `lenderClaims` row owed to the current
+        // lender-position holder (`claimAsLender` accepts InternalMatched).
+        // So the natural settle predicate above composes correctly — a
+        // borrower claim settles the loan only once the lender has claimed
+        // (`lenderFullyClaimed`) or genuinely has nothing. The #577
+        // unconditional `willSettle = false` override (which deferred the
+        // close until this lender-side lifecycle existed) is therefore
+        // removed: keeping it would now wrongly strand a fully-claimed loan
+        // in InternalMatched.
         emit BorrowerFundsClaimed(
             loanId,
             msg.sender,
@@ -695,12 +701,14 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     ///      path): the pre-recorded collateral split is pushed from
     ///      the Diamond to lender/treasury/borrower vaults.
     /// @dev Returns `true` when a claim-time internal match FULLY resolved
-    ///      the loan (transitioned it to `InternalMatched` and cleared the
-    ///      lender claim records). The caller MUST then return without
-    ///      touching the claim records — see the `NothingToClaim()` note in
-    ///      `_claimAsLenderImpl`. Returns `false` for the partial-match,
-    ///      no-match, and retry-swap paths, where the (scaled) residual is
-    ///      still pending a normal claim-record payout.
+    ///      the loan (transitioned it to `InternalMatched`). Returns `false`
+    ///      for the partial-match, no-match, and retry-swap paths.
+    ///      #585 — the caller now DISCARDS this value: a full match records
+    ///      the matched proceeds as a lender claim (it no longer deletes the
+    ///      record), so every path falls through to the standard claim-record
+    ///      payout. The bool is retained only as a status signal for any
+    ///      future caller; it no longer gates control flow in
+    ///      `_claimAsLenderImpl`.
     function _resolveFallbackIfActive(
         uint256 loanId,
         LibVaipakam.Loan storage loan,
@@ -719,10 +727,11 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // The auto-dispatch may:
         //   - FULLY match the loan → it transitions FallbackPending →
         //     InternalMatched, `snap.active` is cleared, the lender is
-        //     paid in the principal asset by the match settlement and
-        //     the lender claim records are deleted. We detect this below
-        //     by re-reading `snap.active` and signal `fullyResolved` so
-        //     the caller skips the claim-record payout entirely.
+        //     paid in the principal asset by the match settlement, and
+        //     (#585) the matched proceeds are RECORDED as a lender claim.
+        //     We detect this below by re-reading `snap.active` and return
+        //     `true`; the caller discards it and falls through to pay the
+        //     just-recorded claim to the verified NFT owner.
         //   - PARTIALLY match the loan → it stays FallbackPending, the
         //     snapshot is scaled to the residual, `snap.active` STAYS
         //     true. We must NOT return — we fall through to the
@@ -736,11 +745,12 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // ahead of this call), so the lender who triggers their own
         // claim-time rescue is the matcher and earns the 1% bonus.
         RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender);
-        // EC-007 — a full match consumed the snapshot and cleared the
-        // lender claim records. Signal the caller to return early: if it
-        // fell through to the claim-record payout it would read a zeroed
-        // claim, revert `NothingToClaim()`, and — because the auto-dispatch
-        // ran in THIS transaction — roll back the successful match.
+        // EC-007 — a full match consumed the snapshot and (#585) recorded
+        // the matched proceeds as a lender claim. Report it as fully
+        // resolved; the caller discards this and falls through to pay the
+        // recorded claim. (Pre-#585 this returned early to dodge a
+        // `NothingToClaim()` revert on the then-deleted record — no longer
+        // a risk now that the record is written.)
         if (!snap.active) return true;
 
         bool retrySucceeded;
