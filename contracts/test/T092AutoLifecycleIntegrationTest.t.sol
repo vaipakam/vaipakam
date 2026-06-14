@@ -7,6 +7,10 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -603,6 +607,224 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint8(newLoan.status),
             uint8(LibVaipakam.LoanStatus.Active),
             "new loan must remain Active"
+        );
+    }
+
+    /// @notice #576 — a refinance-TAGGED atomic refinance carries the old
+    ///         loan's collateral over IN PLACE: the encumbrance lien retags
+    ///         old→new (no second collateral lock), the collateral never
+    ///         leaves the borrower's vault, and the new loan is keyed to the
+    ///         original custody address. Proves the carry-over mechanism, not
+    ///         just that the flow completes.
+    function test_576_atomicRefinance_carriesCollateralOverViaLienRetag() public {
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(oldLoanId, true, 600, uint64(block.timestamp + 365 days));
+        vm.prank(borrower);
+        uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        // #576 — the persisted carry-over decision is stamped true at create
+        // for this clean original-borrower / single-value / live-lien /
+        // matching-identity offer.
+        assertTrue(
+            OfferCancelFacet(address(diamond))
+                .getOfferDetails(refinanceOfferId).refinanceCarryOver,
+            "carry-over flag persisted true at create"
+        );
+        address newLender = _provisionFundedActorWithVault(
+            "carryoverNewLender", mockERC20, LOAN_PRINCIPAL * 4
+        );
+        _grantStandingApprovalToDiamond(borrower, mockERC20);
+
+        // Pre-state: the OLD loan's collateral is liened exactly once.
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            LOAN_COLLATERAL,
+            "pre: single collateral lock"
+        );
+
+        // SINGLE TX — accept fires the atomic accept-and-refinance chain.
+        vm.prank(newLender);
+        uint256 newLoanId = OfferAcceptFacet(address(diamond))
+            .acceptOffer(refinanceOfferId, true);
+
+        // #576 — the lien RETAGGED old→new: still exactly one lock (NOT
+        // doubled by a fresh pledge), the old lien released, the new lien
+        // carries the same identity under the original borrower custody.
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrower, mockCollateralERC20, 0),
+            LOAN_COLLATERAL,
+            "post: still a single lock (retagged, not doubled)"
+        );
+        LibVaipakam.Encumbrance memory oldLien =
+            MetricsFacet(address(diamond)).getLoanCollateralLien(oldLoanId);
+        assertTrue(oldLien.released, "old lien retagged away (released)");
+        // #576 Codex P3 — the released old-loan tombstone must read amount 0
+        // so old-loan readers (e.g. getLoanCollateralLien) can't stale-report
+        // the full collateral as still liened against the refinanced-away loan.
+        assertEq(oldLien.amount, 0, "released old lien amount zeroed on retag");
+        LibVaipakam.Encumbrance memory newLien =
+            MetricsFacet(address(diamond)).getLoanCollateralLien(newLoanId);
+        assertEq(newLien.user, borrower, "carried lien.user = original borrower custody");
+        assertEq(newLien.asset, mockCollateralERC20, "carried lien.asset");
+        assertEq(newLien.amount, LOAN_COLLATERAL, "carried lien.amount = collateral");
+        assertFalse(newLien.released, "carried lien is active");
+
+        // The new loan is keyed to the original custody address + carries the
+        // old collateral identity (structurally a transferred position).
+        LibVaipakam.Loan memory newLoan =
+            LoanFacet(address(diamond)).getLoanDetails(newLoanId);
+        assertEq(newLoan.borrower, borrower, "new loan.borrower = original custody address");
+        assertEq(newLoan.collateralAmount, LOAN_COLLATERAL, "new loan carries the old collateral amount");
+        assertEq(uint8(newLoan.status), uint8(LibVaipakam.LoanStatus.Active), "new loan Active");
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Repaid),
+            "old loan Repaid"
+        );
+    }
+
+    function test_576_refinanceTaggedOffer_mismatchedCollateral_isNotCarryOver()
+        public
+    {
+        // #576 Codex P3 — a refinance-tagged offer whose carried collateral
+        // identity does NOT match the targeted loan's is NOT eligible for
+        // carry-over: the persisted `refinanceCarryOver` flag resolves to
+        // false, so it takes the legacy fresh-pledge path (a fresh batch IS
+        // deposited) instead of skipping a deposit it could never satisfy at
+        // refinance. The offer is created normally — no revert.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+
+        LibVaipakam.CreateOfferParams memory params =
+            _refinanceTaggedOfferParams(oldLoanId, 400);
+        // Mismatch the carried collateral amount vs the old loan's
+        // (LOAN_COLLATERAL); keep the single-value invariant intact.
+        params.collateralAmount = LOAN_COLLATERAL + 1 ether;
+        params.collateralAmountMax = LOAN_COLLATERAL + 1 ether;
+
+        vm.prank(borrower);
+        uint256 offerId =
+            OfferCreateFacet(address(diamond)).createOffer(params);
+
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOfferDetails(offerId);
+        assertFalse(
+            o.refinanceCarryOver,
+            "mismatched-collateral tagged offer is not carry-over"
+        );
+    }
+
+    function test_576_refinanceTaggedOffer_collateralMutationBlocked() public {
+        // #576 Codex P2 — a refinance-tagged carry-over offer vaults NO
+        // collateral batch at create (the deposit is skipped). Mutating its
+        // collateral post-create would desync the create-time carry-over
+        // decision from the physical vault, so both mutation entry points must
+        // reject a tagged offer's collateral cluster.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        // setOfferCollateral on a tagged offer reverts.
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.CollateralMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).setOfferCollateral(
+            taggedOfferId, LOAN_COLLATERAL, LOAN_COLLATERAL
+        );
+
+        // modifyOffer's collateral cluster on a tagged offer reverts too.
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.CollateralMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).modifyOffer(
+            taggedOfferId,
+            LibVaipakam.OfferModifyParams({
+                amount: LOAN_PRINCIPAL,
+                amountMax: LOAN_PRINCIPAL,
+                interestRateBps: 400,
+                interestRateBpsMax: 400,
+                collateralAmount: LOAN_COLLATERAL + 1 ether,
+                collateralAmountMax: LOAN_COLLATERAL + 1 ether
+            })
+        );
+    }
+
+    function test_576_refinanceTaggedOffer_notMatchable() public {
+        // #576 Codex P1/P2 — a refinance-tagged offer is direct-accept-only.
+        // The partial-fill matcher can't honour the carry-over contract
+        // atomically (a pre-dust-close match would create an uncollateralized
+        // loan, and the matcher's midpoint collateral can diverge from the
+        // fixed carried amount), so matchOffers must reject tagged offers
+        // BEFORE previewMatch — the lenderOfferId need not even exist.
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        vm.expectRevert(
+            OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
+        );
+        OfferMatchFacet(address(diamond)).matchOffers(999, taggedOfferId);
+    }
+
+    function test_576_refinanceTaggedOffer_cannotOptIntoParallelSale() public {
+        // #576 Codex P1 — a refinance-tagged offer is single-purpose. It must
+        // not also opt into the pre-loan parallel sale (#358 borrow-OR-sell):
+        // on a carry-over offer the listed collateral is the target loan's
+        // already-encumbered NFT, so a sale fill before the refinance accept
+        // would transfer it out while the old loan stays Active. Reject the
+        // combination at create.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        LibVaipakam.CreateOfferParams memory params =
+            _refinanceTaggedOfferParams(oldLoanId, 400);
+        params.allowsParallelSale = true;
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.InvalidRefinanceTarget.selector);
+        OfferCreateFacet(address(diamond)).createOffer(params);
+    }
+
+    function test_576_refinanceTaggedOffer_notTransferableViaObligation()
+        public
+    {
+        // #576 Codex P1 — a refinance-tagged offer must not be consumable by
+        // the unrelated obligation-transfer path. On a carry-over offer the
+        // collateral was never deposited (it's the target loan's, already
+        // liened), so transferObligation would double-lien the same NFT and
+        // corrupt settlement. Reject before any state change.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(
+            oldLoanId, taggedOfferId
         );
     }
 

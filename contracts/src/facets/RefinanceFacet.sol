@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -439,73 +441,111 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Codex round-1 P1 fix on PR #317.
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
-        // ── Release old collateral ────────────────────────────────────────
-        // #569 Codex #572 round-4 P2 — the old collateral physically
-        // lives in the STORED `oldLoan.borrower`'s vault: that's where
-        // it was deposited at loan-init and where the encumbrance lien
-        // is keyed. A borrower-position NFT transfer does NOT migrate
-        // vault contents (a plain ERC721 transfer can't move ERC20
-        // balances), so `loan.borrower` stays the custody vault for the
-        // life of the loan. The withdraw therefore SOURCES from
-        // `oldLoan.borrower` (custody) and DELIVERS to
-        // `currentBorrowerNftOwner` (the rightful recipient of the
-        // returned collateral on refinance — the current borrower-
-        // position holder). The prior code sourced from
-        // `currentBorrowerNftOwner`: correct only when the NFT never
-        // moved (`currentBorrowerNftOwner == oldLoan.borrower`); after a
-        // transfer it withdrew from the new owner's (empty) vault while
-        // the lien-release below freed the original borrower's real
-        // collateral — letting the original borrower drain it.
-
-        // #407 PR 4 (T-407-B, 2026-06-12) — release the OLD loan's
-        // collateral lien BEFORE the actual vault withdraw of the same
-        // collateral. The chokepoint guard in
-        // {VaultFactoryFacet.vaultWithdrawERC20} would otherwise block
-        // this legitimate refinance-driven collateral return. Safe
-        // under revert: any downstream revert in this function rolls
-        // back the lien-release storage write. Wrapped in a private
-        // helper to keep the `abi.encodeWithSelector` locals in their
-        // own stack frame — `_refinanceLoanLogic` already carries the
-        // HF/LTV scaffolding + settlement math, so inlining could trip
-        // viaIR's "Variable size 1 too deep".
-        _releaseOldLienAtRefinance(oldLoanId);
-        if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
-            uint256 oldCol = oldLoan.collateralAmount;
-            if (oldCol > 0) {
+        // ── Collateral handling — carry-over vs legacy ──
+        // #576 — a CARRY-OVER refinance (tagged + NON-transferred +
+        // single-value, per `LibAutoRefinanceCheck.isCarryOver`) reuses the OLD
+        // loan's collateral IN PLACE: OfferCreateFacet skipped the fresh deposit
+        // + escrow and LoanFacet skipped the fresh lien (all keyed off the same
+        // predicate), so the collateral is already in the borrower's vault and
+        // we just RETAG the lien old→new (`sameKey` — no aggregate change, no
+        // 2x lock). Because carry-over is NON-transferred, `newLoan.borrower`
+        // (= offer.creator) already equals `oldLoan.borrower`, so the loan was
+        // born correct — no post-init pin, no event/index/reward divergence.
+        //
+        // Everything else — untagged (legacy direct), TRANSFERRED tagged, or
+        // RANGED tagged — pledged a fresh collateral batch at create and carries
+        // its own fresh lien, so it takes the legacy path: release the old lien
+        // and return the old collateral to the current borrower-position holder.
+        // Reads the PERSISTED create-time decision on the offer — the same
+        // flag the deposit/lien skips keyed off, so retag-vs-legacy can't
+        // disagree with whether a fresh batch was actually deposited.
+        LibVaipakam.Offer storage bOffer = s.offers[borrowerOfferId];
+        if (bOffer.refinanceCarryOver) {
+            // Validate the FULL collateral identity matches the old loan (Codex
+            // round-1 P2). The tag check only proved asset + type, so without
+            // this a borrower could advertise a different amount / tokenId /
+            // quantity that a lender accepts, then end up backed by the OLD
+            // collateral instead (no LTV gate catches NFT/illiquid mismatch).
+            // Reverting unwinds the whole atomic accept-and-refinance.
+            if (
+                newLoan.collateralAsset != oldLoan.collateralAsset ||
+                newLoan.collateralAssetType != oldLoan.collateralAssetType ||
+                newLoan.collateralAmount != oldLoan.collateralAmount ||
+                newLoan.collateralTokenId != oldLoan.collateralTokenId ||
+                newLoan.collateralQuantity != oldLoan.collateralQuantity
+            ) revert InvalidRefinanceOffer();
+            // Require the OLD loan's lien to be LIVE (Codex round-1 P2):
+            // `rekeyCollateralLienOnRefinance` silently no-ops on a missing /
+            // released lien, which would leave the carried collateral
+            // UNENCUMBERED under the new loan (withdrawable before close). Every
+            // ERC-20 loan post-#565 carries a lien, so this only fires on a
+            // genuinely un-encumbered position — fail closed.
+            LibVaipakam.Encumbrance storage oldLien = s.loanCollateralLien[oldLoanId];
+            if (oldLien.released || oldLien.user == address(0)) {
+                revert InvalidRefinanceOffer();
+            }
+            // #576 Codex round-7 P1 — the retag is STRICT: it only succeeds when
+            // the old lien's key matches the new loan EXACTLY (same user, asset,
+            // tokenId, amount, kind). If the target obligation migrated to a
+            // different borrower since this carry-over offer was created (the
+            // old lien is now keyed to the migrated-in borrower, the new loan's
+            // borrower is the original creator after the borrower NFT returns to
+            // them), the keys diverge; falling back to release+create would
+            // back the replacement loan with an accounting-only lien against an
+            // empty vault (the carry-over offer pledged no fresh collateral).
+            // Reject the stale carry-over instead — fail closed.
+            if (
+                !LibEncumbrance.rekeyCollateralLienOnRefinance(
+                    oldLoanId, newLoanId, newLoan
+                )
+            ) {
+                revert InvalidRefinanceOffer();
+            }
+        } else {
+            // Legacy: release the old lien BEFORE the withdraw (the chokepoint
+            // guard would otherwise block the legitimate refinance return).
+            // The old collateral lives in `oldLoan.borrower`'s vault (the
+            // custody key, unaffected by a position transfer); deliver it to
+            // `currentBorrowerNftOwner` (the rightful current holder).
+            _releaseOldLienAtRefinance(oldLoanId);
+            if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                uint256 oldCol = oldLoan.collateralAmount;
+                if (oldCol > 0) {
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            VaultFactoryFacet.vaultWithdrawERC20.selector,
+                            oldLoan.borrower,
+                            oldLoan.collateralAsset,
+                            currentBorrowerNftOwner,
+                            oldCol
+                        ),
+                        VaultWithdrawFailed.selector
+                    );
+                }
+            } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
+                        VaultFactoryFacet.vaultWithdrawERC721.selector,
                         oldLoan.borrower,
                         oldLoan.collateralAsset,
-                        currentBorrowerNftOwner,
-                        oldCol
+                        oldLoan.collateralTokenId,
+                        currentBorrowerNftOwner
+                    ),
+                    VaultWithdrawFailed.selector
+                );
+            } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaultFactoryFacet.vaultWithdrawERC1155.selector,
+                        oldLoan.borrower,
+                        oldLoan.collateralAsset,
+                        oldLoan.collateralTokenId,
+                        oldLoan.collateralQuantity,
+                        currentBorrowerNftOwner
                     ),
                     VaultWithdrawFailed.selector
                 );
             }
-        } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC721.selector,
-                    oldLoan.borrower,
-                    oldLoan.collateralAsset,
-                    oldLoan.collateralTokenId,
-                    currentBorrowerNftOwner
-                ),
-                VaultWithdrawFailed.selector
-            );
-        } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                    oldLoan.borrower,
-                    oldLoan.collateralAsset,
-                    oldLoan.collateralTokenId,
-                    oldLoan.collateralQuantity,
-                    currentBorrowerNftOwner
-                ),
-                VaultWithdrawFailed.selector
-            );
         }
 
         // Post-refinance LTV + HF gates. Mirrors
@@ -631,10 +671,13 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         }
     }
 
-    /// @dev #407 PR 4 (T-407-B, 2026-06-12) — see the comment at the
-    ///      call site in `_refinanceLoanLogic`. Extracted into a
-    ///      private function to keep the cross-facet release-call's
-    ///      transient locals in their own stack frame.
+    /// @dev #407 PR 4 (T-407-B) — release the OLD loan's collateral lien
+    ///      before the legacy refinance return-withdraw of the same
+    ///      collateral (the chokepoint guard would otherwise block it).
+    ///      Used only on the UNTAGGED (legacy) refinance path; the tagged
+    ///      carry-over path retags the lien instead (#576). Extracted to
+    ///      keep the cross-facet call's transient locals in their own stack
+    ///      frame.
     function _releaseOldLienAtRefinance(uint256 oldLoanId) private {
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(

@@ -1406,6 +1406,21 @@ library LibVaipakam {
         // cap-check fires automatically. See AutoLifecycleFacet
         // for the consent surface that populates the caps.
         uint256 refinanceTargetLoanId;
+        // Slot 23 (packed: 1 byte of a fresh slot) — #576 PERSISTED
+        // collateral carry-over decision. Computed ONCE at `createOffer`
+        // (after `LibAutoRefinanceCheck.validate`) from the full carry-over
+        // predicate (tagged + non-transferred + single-value + live old-loan
+        // lien + exact collateral identity) and never recomputed. Every later
+        // consumption site — the create-time deposit/escrow-lock skips, the
+        // loan-init collateral-lien skip, the cancel refund skip, and
+        // `RefinanceFacet`'s retag-vs-legacy fork — reads THIS flag rather than
+        // re-deriving from mutable state. Re-derivation was unsafe: the target
+        // loan's `borrower` can change (`transferObligationViaOffer`) and its
+        // lien can be released between create and the later sites, flipping a
+        // recomputed predicate and desyncing it from the physical vault (a
+        // carry-over offer deposited NO collateral, so a flipped "not
+        // carry-over" read would withdraw/settle a batch that never existed).
+        bool refinanceCarryOver;
     }
 
     /**

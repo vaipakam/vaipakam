@@ -51,7 +51,8 @@ library LibOfferMatch {
         LtvAboveTier,             // (depthTieredLtvEnabled on) synthetic init-LTV at matched amount + collateral > the effective tier cap (or collateral is Tier 0 / no-borrow)
         SelfTrade,                // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
         OfferExpired,             // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
-        AonRequiresFullFill       // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
+        AonRequiresFullFill,      // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
+        RefinanceTagged           // #576 — either offer carries `refinanceTargetLoanId != 0`. Refinance-tagged offers are direct-accept-only (collateral carry-over can't be honoured atomically by the partial-fill matcher); `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. This variant lets bots skip the pair at preview time.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -209,6 +210,21 @@ library LibOfferMatch {
 
         if (L.accepted || B.accepted) {
             r.errorCode = MatchError.OfferAccepted;
+            return r;
+        }
+
+        // #576 — refinance-tagged offers are DIRECT-ACCEPT-ONLY (their
+        // collateral carry-over contract can only be honoured atomically by
+        // the accept-and-refinance path; the partial-fill matcher would create
+        // an uncollateralized loan and/or diverge the carried collateral). The
+        // state-changing `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`
+        // for these; surface the same verdict here so the first-party matcher
+        // skips the pair at preview time instead of having one tagged borrower
+        // offer repeatedly block a lender from reaching later valid borrowers.
+        if (
+            L.refinanceTargetLoanId != 0 || B.refinanceTargetLoanId != 0
+        ) {
+            r.errorCode = MatchError.RefinanceTagged;
             return r;
         }
 

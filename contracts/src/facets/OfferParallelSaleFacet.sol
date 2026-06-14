@@ -309,6 +309,16 @@ contract OfferParallelSaleFacet is
 
         // ── Offer-shape preconditions (§19.5 opt-in) ──────────────
         if (!offer.allowsParallelSale) revert ParallelSaleNotEnabled(offerId);
+        // #576 — defense in depth: a refinance-tagged offer can never carry
+        // `allowsParallelSale` (OfferCreateFacet rejects the combination at
+        // create), so this is structurally unreachable — but assert it here too
+        // so the invariant "a refinance-tagged offer's collateral is never
+        // listed for sale" is enforced at the listing entry point itself, not
+        // only at create. On a carry-over offer the listed NFT would be the
+        // refinance target loan's already-encumbered collateral.
+        if (offer.refinanceTargetLoanId != 0) {
+            revert ParallelSaleNotEnabled(offerId);
+        }
 
         // ── Terminal-state preconditions ──────────────────────────
         if (offer.accepted) revert OfferTerminal(offerId);

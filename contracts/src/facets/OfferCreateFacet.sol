@@ -366,7 +366,7 @@ contract OfferCreateFacet is
     ) external nonReentrant whenNotPaused returns (uint256 offerId) {
         address vault;
         (offerId, vault) = _createOfferSetup(msg.sender, params);
-        _pullCreatorAssetsClassic(msg.sender, params, vault);
+        _pullCreatorAssetsClassic(offerId, msg.sender, params, vault);
         _createOfferFinish(msg.sender, offerId, params);
     }
 
@@ -398,7 +398,7 @@ contract OfferCreateFacet is
         }
         address vault;
         (offerId, vault) = _createOfferSetup(creator, params);
-        _pullCreatorAssetsClassic(creator, params, vault);
+        _pullCreatorAssetsClassic(offerId, creator, params, vault);
         _createOfferFinish(creator, offerId, params);
     }
 
@@ -472,6 +472,15 @@ contract OfferCreateFacet is
         } else {
             // Borrower NFT rental offer — Permit2 pulls the prepay.
             expectedAsset = params.prepayAsset;
+        }
+        // #576 — a CARRY-OVER refinance offer pledges NO fresh collateral, so
+        // skip the Permit2 pull + deposit-record entirely (mirrors the
+        // classic-path skip in `_pullCreatorAssetsClassic`); RefinanceFacet
+        // retags the old lien. Without this, a Permit2 refinance would force a
+        // second collateral batch and lose the carry-over.
+        if (LibVaipakam.storageSlot().offers[offerId].refinanceCarryOver) {
+            _createOfferFinish(msg.sender, offerId, params);
+            return offerId;
         }
         LibPermit2.pull(msg.sender, vault, expectedAsset, amount, permit, signature);
         // Permit2 already moved funds to the user's vault. Record
@@ -558,6 +567,19 @@ contract OfferCreateFacet is
         }
         s.userOfferIds[creator].push(offerId);
 
+        // #576 — a refinance-tagged offer is SINGLE-PURPOSE: consumable only by
+        // the direct accept-and-refinance path. It may not also opt into the
+        // pre-loan parallel sale (#358 borrow-OR-sell): on a carry-over offer
+        // the listed collateral is the target loan's already-encumbered NFT, so
+        // a sale fill before the refinance accept would transfer it out while
+        // the old loan stays Active. Reject the combination up front — BEFORE
+        // `_writeOfferFields`' parallel-sale collateral-shape validation — so
+        // the verdict is the clear "this is an invalid refinance offer"
+        // regardless of collateral type.
+        if (params.refinanceTargetLoanId != 0 && params.allowsParallelSale) {
+            revert InvalidRefinanceTarget();
+        }
+
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _writeOfferFields(offer, creator, offerId, params);
 
@@ -580,6 +602,8 @@ contract OfferCreateFacet is
             if (params.fillMode != LibVaipakam.FillMode.Aon) {
                 revert InvalidRefinanceTarget();
             }
+            // (refinance-tagged + allowsParallelSale already rejected up front,
+            // before _writeOfferFields — see the guard above.)
             uint256 maxRateEffective =
                 params.interestRateBpsMax == 0
                     ? params.interestRateBps
@@ -599,6 +623,23 @@ contract OfferCreateFacet is
                 params.prepayAsset,
                 params.amount,
                 maxAmountEffective
+            );
+            // #576 — compute + PERSIST the carry-over decision ONCE, here, at
+            // create (after validate has confirmed the asset/type identity +
+            // caps). isCarryOver folds in the live-lien + exact
+            // collateral-identity checks, so a no-lien or mismatched-collateral
+            // target resolves to `false` and takes the legacy fresh-pledge
+            // path. Every later site reads this stored flag instead of
+            // re-deriving the predicate from the target loan's (mutable)
+            // borrower + lien — see Offer.refinanceCarryOver.
+            offer.refinanceCarryOver = LibAutoRefinanceCheck.isCarryOver(
+                s,
+                params.refinanceTargetLoanId,
+                creator,
+                params.collateralAmount,
+                params.collateralAmountMax,
+                params.collateralTokenId,
+                params.collateralQuantity
             );
         }
 
@@ -868,6 +909,7 @@ contract OfferCreateFacet is
     ///      apply to them. The `vault` argument stays in the
     ///      signature because NFT receivers still target it directly.
     function _pullCreatorAssetsClassic(
+        uint256 offerId,
         address creator,
         LibVaipakam.CreateOfferParams calldata params,
         address vault
@@ -911,6 +953,19 @@ contract OfferCreateFacet is
         } else {
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
+                // #576 — a CARRY-OVER refinance offer reuses the OLD loan's
+                // collateral IN PLACE (the non-transferred predicate
+                // guarantees it's already in this creator's vault), and
+                // `RefinanceFacet` retags the lien old→new. So it must NOT
+                // pre-vault a second batch — the 2x lock this removes. Only the
+                // carry-over case skips; transferred / ranged / untagged offers
+                // pledge fresh collateral and take the legacy refinance path.
+                // Nothing else is pulled on this branch, so returning early is
+                // the complete skip. Reads the PERSISTED create-time decision
+                // (set in `_createOfferSetup`) — never re-derives.
+                if (
+                    LibVaipakam.storageSlot().offers[offerId].refinanceCarryOver
+                ) return;
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // Issue #164 — pre-vault the upper bound
                     // (`collateralAmountMax`) so the borrower-range
@@ -1086,8 +1141,18 @@ contract OfferCreateFacet is
         } else if (
             params.offerType == LibVaipakam.OfferType.Borrower &&
             params.assetType == LibVaipakam.AssetType.ERC20 &&
-            params.collateralAssetType == LibVaipakam.AssetType.ERC20
+            params.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
+            !LibVaipakam.storageSlot().offers[offerId].refinanceCarryOver
         ) {
+            // #576 — a CARRY-OVER refinance offer pledged NO fresh collateral
+            // (the carry-over skip in `_pullCreatorAssetsClassic`), so there is
+            // nothing to escrow-lock here. Locking would encumber
+            // `collateralAmountMax` of collateral that was never deposited — a
+            // phantom lien double-counting the carried collateral (already
+            // liened under the OLD loan, retagged at refinance). The
+            // `!isCarryOver` guard keeps the #573 escrow lock for every ordinary
+            // Borrower offer (incl. transferred / ranged / untagged refinances,
+            // which DO pledge fresh collateral).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.createOfferPrincipalLien.selector,
