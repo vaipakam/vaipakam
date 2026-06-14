@@ -570,18 +570,15 @@ contract PrecloseFacet is
                 VaultDepositFailed.selector
             );
             s.heldForLender[loanId] += lenderShare;
-            // #592 — `lenderShare` (accrued + shortfall) was deposited into the
-            // lender's vault and is owed to the current lender-position holder
-            // at the loan's terminal claim. Obligation transfer leaves the loan
-            // Active, so reserve VPFI proceeds against the unstake path now and
-            // release them path-agnostically in ClaimFacet. `payAsset` equals
-            // `loan.principalAsset` on ERC20 loans (the only ones that can be
-            // VPFI — VPFI is barred as a rental prepay asset). No-op otherwise.
-            if (loan.principalAsset == s.vpfiToken) {
-                LibEncumbrance.encumberLenderProceeds(
-                    loanId, loan.lender, loan.principalAsset, lenderShare
-                );
-            }
+            // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
+            // reserved here. Unlike the terminal paths, these land on an
+            // ACTIVE loan whose `loan.lender` can change before claim
+            // (obligation-transfer keeps the lender, but a subsequent lender
+            // sale, or the offset path, rewrites it), so the claim-time release
+            // — keyed on the then-current `loan.lender` — would target a
+            // different account than the reserved one. Reserving them safely
+            // needs a re-key across every lender-change path plus a decision on
+            // exiting-lender ownership; tracked as a follow-up (#597).
         }
 
         // ── 3. Release alice's collateral ───────────────────────────────────
@@ -1046,17 +1043,11 @@ contract PrecloseFacet is
             VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
-        // #592 — `lenderTotal` (old principal + interest) was deposited into
-        // the old lender's vault, owed to the current lender-position holder at
-        // the loan's terminal claim. Offset leaves the loan Active, so reserve
-        // VPFI proceeds against the unstake path now; ClaimFacet releases them.
-        // `payAssetOffset` equals `loan.principalAsset` on the ERC20 loans that
-        // can be VPFI. No-op otherwise.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, lenderTotal
-            );
-        }
+        // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
+        // reserved here — see the matching note in `transferObligationViaOffer`.
+        // The offset path rewrites `loan.lender` (old → new) within this same
+        // transaction, so the reserved (old) account and the claim-time
+        // (new) account diverge immediately. Deferred to a follow-up (#597).
     }
 
     /**

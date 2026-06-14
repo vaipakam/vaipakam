@@ -620,13 +620,17 @@ sale proceeds, without weakening the lender's default rights.
     proceeds must be reserved against that exit the moment they land — so
     the stored lender cannot withdraw them before the current holder
     claims — and released exactly when the holder claims. This applies on
-    every terminal close that produces a deferred lender claim or
-    held-for-lender accrual: full repayment, time-based default, borrower
-    preclose (direct and offset / obligation-transfer), health-factor
-    liquidation, and internal matching. Principal assets with no tracked
-    exit need no such reservation. Paths that pay the lender's wallet
-    directly (partial repayment, periodic-interest shortfall) are not in
-    scope — there is no tracked vault balance to drain.
+    every **terminal** close that produces a deferred lender claim, where the
+    lender of record is fixed between the deposit and the claim: full
+    repayment, swap-to-repay, time-based default, borrower preclose (direct),
+    refinance, health-factor liquidation, and internal matching. Principal
+    assets with no tracked exit need no such reservation. Paths that pay the
+    lender's wallet directly (partial repayment, periodic-interest shortfall)
+    are not in scope — there is no tracked vault balance to drain. The
+    held-for-lender accruals (preclose offset / obligation transfer) land on
+    a still-active loan whose lender of record can change before the claim,
+    so reserving them safely requires re-keying the reservation across every
+    lender-change path and is handled separately.
 - A successful marketplace fill is a proper loan close, not a default.
   It must settle the lender, treasury, borrower residual, position NFT
   lock, and borrower VPFI rebate / forfeiture state consistently with

@@ -14,12 +14,15 @@ The internal-match path already closed this (the #585 work added the
 reserve/release mechanism: the proceeds are reserved in the locked-balance
 ledger at deposit and released, path-agnostically, the instant the holder
 claims). This change extends the **reserve** call to every remaining VPFI
-lender-proceeds deposit site across the ordinary terminal paths:
+lender-proceeds deposit site across the **terminal** close paths — the ones
+where the loan closes immediately, so the lender of record is fixed between
+the deposit and the eventual claim:
 
 - full repayment,
+- swap-to-repay (collateral swapped to clear the debt),
 - time-based default (liquid DEX-swap settlement),
-- borrower preclose (direct) and the preclose offset / obligation-transfer
-  "held-for-lender" accruals,
+- borrower preclose (direct),
+- refinance (the old loan's lender is paid off and exits),
 - health-factor liquidation (full, atomic-split, and discounted variants).
 
 At each, when the principal asset is VPFI, the proceeds are reserved
@@ -32,4 +35,12 @@ Deliberately **not** reserved (documented): the partial-repayment and
 periodic-interest-shortfall paths pay the lender's **wallet** directly (not
 a vault deposit, so no tracked balance to drain), and partial liquidation
 deposits proceeds to the lender with no deferred claim (they belong to the
-lender at liquidation time, not to a later holder). Closes #592.
+lender at liquidation time, not to a later holder).
+
+The **held-for-lender** accruals (preclose offset and obligation transfer)
+are also deliberately left for a follow-up (#597): unlike the terminal
+paths, they land on a loan that stays **active**, whose lender of record
+can change before the claim (the offset path rewrites it in the same
+transaction; a later lender sale rewrites it and migrates the held funds),
+so reserving them correctly needs a re-key across every lender-change path
+plus a decision on exiting-lender ownership. Closes #592.

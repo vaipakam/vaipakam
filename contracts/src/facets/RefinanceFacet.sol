@@ -418,6 +418,17 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             quantity: 0,
             claimed: false
         });
+        // #592 — refinance is a terminal close of the OLD loan: the old
+        // lender's proceeds land in their (possibly transferred-away) vault and
+        // are owed to the current old-position holder via the claim above.
+        // Reserve VPFI proceeds against the unstake path until that holder
+        // claims (released path-agnostically in ClaimFacet). `oldLoan.lender`
+        // is fixed for the now-terminal old loan. No-op for non-VPFI principal.
+        if (oldLoan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                oldLoanId, oldLoan.lender, oldLoan.principalAsset, lenderDue
+            );
+        }
 
         // T-086 follow-up to step 14 — clear any active prepay listing on
         // the OLD loan BEFORE the collateral withdrawal below. Placement
