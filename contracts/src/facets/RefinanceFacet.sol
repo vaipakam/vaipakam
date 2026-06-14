@@ -456,16 +456,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // RANGED tagged — pledged a fresh collateral batch at create and carries
         // its own fresh lien, so it takes the legacy path: release the old lien
         // and return the old collateral to the current borrower-position holder.
+        // Reads the PERSISTED create-time decision on the offer — the same
+        // flag the deposit/lien skips keyed off, so retag-vs-legacy can't
+        // disagree with whether a fresh batch was actually deposited.
         LibVaipakam.Offer storage bOffer = s.offers[borrowerOfferId];
-        if (
-            LibAutoRefinanceCheck.isCarryOver(
-                s,
-                bOffer.refinanceTargetLoanId,
-                bOffer.creator,
-                bOffer.collateralAmount,
-                bOffer.collateralAmountMax
-            )
-        ) {
+        if (bOffer.refinanceCarryOver) {
             // Validate the FULL collateral identity matches the old loan (Codex
             // round-1 P2). The tag check only proved asset + type, so without
             // this a borrower could advertise a different amount / tokenId /

@@ -622,6 +622,14 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         vm.prank(borrower);
         uint256 refinanceOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+        // #576 — the persisted carry-over decision is stamped true at create
+        // for this clean original-borrower / single-value / live-lien /
+        // matching-identity offer.
+        assertTrue(
+            OfferCancelFacet(address(diamond))
+                .getOfferDetails(refinanceOfferId).refinanceCarryOver,
+            "carry-over flag persisted true at create"
+        );
         address newLender = _provisionFundedActorWithVault(
             "carryoverNewLender", mockERC20, LOAN_PRINCIPAL * 4
         );
@@ -675,14 +683,15 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
     }
 
-    function test_576_refinanceTaggedOffer_mismatchedCollateral_rejectedAtCreate()
+    function test_576_refinanceTaggedOffer_mismatchedCollateral_isNotCarryOver()
         public
     {
         // #576 Codex P3 — a refinance-tagged offer whose carried collateral
-        // identity does NOT match the targeted loan's must be rejected at
-        // CREATE (RefinanceTargetIncompatible), not silently created and left
-        // to skip the carry-over deposit and revert mid-refinance. Build a
-        // tagged offer that mismatches on collateral amount.
+        // identity does NOT match the targeted loan's is NOT eligible for
+        // carry-over: the persisted `refinanceCarryOver` flag resolves to
+        // false, so it takes the legacy fresh-pledge path (a fresh batch IS
+        // deposited) instead of skipping a deposit it could never satisfy at
+        // refinance. The offer is created normally — no revert.
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
         _f().setAutoRefinanceCaps(
@@ -697,10 +706,15 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         params.collateralAmountMax = LOAN_COLLATERAL + 1 ether;
 
         vm.prank(borrower);
-        vm.expectRevert(
-            LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector
+        uint256 offerId =
+            OfferCreateFacet(address(diamond)).createOffer(params);
+
+        LibVaipakam.Offer memory o =
+            OfferCancelFacet(address(diamond)).getOfferDetails(offerId);
+        assertFalse(
+            o.refinanceCarryOver,
+            "mismatched-collateral tagged offer is not carry-over"
         );
-        OfferCreateFacet(address(diamond)).createOffer(params);
     }
 
     function test_576_refinanceTaggedOffer_collateralMutationBlocked() public {

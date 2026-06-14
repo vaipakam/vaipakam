@@ -4,7 +4,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
-import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -296,15 +295,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // double-lien the single carried collateral. Skip it for carry-over
         // only — transferred / ranged / untagged refinances pledged fresh
         // collateral and DO need their own lien (legacy path).
-        if (
-            !LibAutoRefinanceCheck.isCarryOver(
-                s,
-                offer.refinanceTargetLoanId,
-                offer.creator,
-                offer.collateralAmount,
-                offer.collateralAmountMax
-            )
-        ) {
+        // Reads the PERSISTED create-time decision on the offer — never
+        // re-derives from the (mutable) target loan + lien state.
+        if (!offer.refinanceCarryOver) {
             LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
         }
 

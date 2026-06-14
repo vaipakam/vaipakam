@@ -3,7 +3,6 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
-import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 // #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
@@ -293,13 +292,15 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // are therefore gated on `!carryOver`. (The
             // `releaseOfferPrincipalLien` is idempotent — a no-op when no lock
             // exists — so it stays unconditional.)
-            bool carryOver = LibAutoRefinanceCheck.isCarryOver(
-                s,
-                offer.refinanceTargetLoanId,
-                offer.creator,
-                offer.collateralAmount,
-                offer.collateralAmountMax
-            );
+            //
+            // #576 Codex P2 — read the PERSISTED create-time decision, NOT a
+            // recomputation. The target loan's `borrower` can change
+            // (`transferObligationViaOffer`) between create and cancel; a
+            // recomputed predicate would then flip to "not carry-over" and try
+            // to withdraw collateral the offer never deposited — reverting (and
+            // wedging cancel) or, worse, draining unrelated free balance from
+            // the creator's vault. The stored flag is immune to that drift.
+            bool carryOver = offer.refinanceCarryOver;
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // #573 — release the offer-collateral lock BEFORE the
