@@ -613,6 +613,20 @@ sale proceeds, without weakening the lender's default rights.
   owners at fill time, not only the original lender and borrower
   wallets. This preserves secondary-transfer semantics for both
   lender-side and borrower-side position NFTs.
+  - As a consequence, when a terminal path deposits lender proceeds into
+    the **stored** lender's vault but owes them to the **current** holder
+    via a claim, and the principal asset is one with a user-facing
+    tracked-balance exit (VPFI, via its unstake/withdraw path), those
+    proceeds must be reserved against that exit the moment they land — so
+    the stored lender cannot withdraw them before the current holder
+    claims — and released exactly when the holder claims. This applies on
+    every terminal close that produces a deferred lender claim or
+    held-for-lender accrual: full repayment, time-based default, borrower
+    preclose (direct and offset / obligation-transfer), health-factor
+    liquidation, and internal matching. Principal assets with no tracked
+    exit need no such reservation. Paths that pay the lender's wallet
+    directly (partial repayment, periodic-interest shortfall) are not in
+    scope — there is no tracked vault balance to drain.
 - A successful marketplace fill is a proper loan close, not a default.
   It must settle the lender, treasury, borrower residual, position NFT
   lock, and borrower VPFI rebate / forfeiture state consistently with

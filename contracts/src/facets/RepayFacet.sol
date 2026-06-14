@@ -9,6 +9,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -379,6 +380,18 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 quantity: 0,
                 claimed: false
             });
+            // #592 — the lender proceeds were just deposited into the
+            // (possibly transferred-away) stored lender's vault and are owed to
+            // the CURRENT lender-position holder via the claim above. VPFI is
+            // the one principal asset with a user-facing tracked-balance exit
+            // (`withdrawVPFIFromVault`), so reserve the proceeds against that
+            // unstake path until the holder claims (released path-agnostically
+            // in `ClaimFacet._claimAsLenderImpl`). No-op for non-VPFI principal.
+            if (loan.principalAsset == s.vpfiToken) {
+                LibEncumbrance.encumberLenderProceeds(
+                    loanId, loan.lender, loan.principalAsset, plan.lenderDue
+                );
+            }
 
             // Record borrower's claimable (collateral stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({

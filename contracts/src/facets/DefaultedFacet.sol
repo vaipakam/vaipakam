@@ -431,6 +431,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     quantity: 0,
                     claimed: false
                 });
+                // #592 — reserve VPFI lender proceeds against the unstake path
+                // until the current holder claims (released in ClaimFacet).
+                // The proceeds sit in the stored lender's vault; VPFI is the
+                // one principal asset with a user-facing tracked exit. No-op
+                // for non-VPFI principal.
+                if (loan.principalAsset == s.vpfiToken) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loanId, loan.lender, loan.principalAsset, lenderProceeds
+                    );
+                }
 
                 // Borrower surplus
                 if (borrowerSurplus > 0) {
