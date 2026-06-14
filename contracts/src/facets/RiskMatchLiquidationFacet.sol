@@ -683,6 +683,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #585 — if the proceeds are VPFI, reserve them against the
+                // unstake path (`withdrawVPFIFromVault`) so the stored
+                // lender can't front-run the holder's claim. Released in
+                // `ClaimFacet._claimAsLenderImpl` just before the payout.
+                if (loan.principalAsset == LibVaipakam.storageSlot().vpfiToken) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loan.id, loan.lender, loan.principalAsset, lenderProceeds
+                    );
+                }
             }
             // Partial internal match — loan stays Active with reduced
             // collateral. The pre-withdraw decrement already adjusted
@@ -729,6 +738,12 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     quantity: 0,
                     claimed: false
                 });
+                // #585 — VPFI proceeds reservation (see the Active branch).
+                if (loan.principalAsset == s.vpfiToken) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loan.id, loan.lender, loan.principalAsset, lenderProceeds
+                    );
+                }
                 if (loan.collateralAmount > 0) {
                     // #577 — retain the residual as a drain-protected
                     // borrowerClaims row owed to the current borrower-position

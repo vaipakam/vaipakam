@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -325,6 +326,15 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
+
+        // #585 — release any VPFI lender-proceeds reservation BEFORE the
+        // withdraw, so the vault-withdraw guard sees the proceeds as free
+        // (the reservation exists precisely to block the stored lender's
+        // unstake front-run until this gated claim runs). No-op for every
+        // loan that never reserved (non-VPFI, or paths not yet wired) —
+        // keyed off `s.lenderProceedsEncumbered[loanId]`. `claim.asset` is
+        // the loan's principal asset (the reserved asset, tokenId 0).
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, claim.asset);
 
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {

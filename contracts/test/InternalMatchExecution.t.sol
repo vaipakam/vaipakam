@@ -11,6 +11,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -1271,6 +1272,58 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(IERC20(mockERC20).balanceOf(holderA), 990, "A holder gets 990 X");
         assertEq(IERC20(mockCollateralERC20).balanceOf(holderB), 990, "B holder gets 990 Y");
         assertEq(IERC20(mockY).balanceOf(holderC), 990, "C holder gets 990 Z");
+    }
+
+    /// @notice #585 P1 fix — VPFI internal-match proceeds are RESERVED in the
+    ///         stored lender's vault (ticking the `encumbered` aggregate that
+    ///         `withdrawVPFIFromVault`'s guard subtracts), so a transferred-
+    ///         away lender cannot front-run the holder's claim via the VPFI
+    ///         unstake path. The reservation releases atomically when the
+    ///         current holder claims. Non-VPFI proceeds carry no reservation.
+    function test_585_vpfiProceeds_reservedThenReleasedOnClaim() public {
+        // Designate mockERC20 as the VPFI token.
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+
+        // A lends VPFI (mockERC20); B is the mirror. Leg X pays A.lender 990
+        // VPFI out of B's VPFI collateral; leg Y pays B.lender 990 of the
+        // non-VPFI asset out of A's collateral.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // A's 990 VPFI proceeds are reserved under the stored lender.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(lender, mockERC20, 0),
+            990,
+            "VPFI proceeds reserved against the unstake path"
+        );
+        // B's proceeds are non-VPFI → no reservation.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(lenderB, mockCollateralERC20, 0),
+            0,
+            "non-VPFI proceeds carry no reservation"
+        );
+
+        // Lender position transferred; the current holder claims → reservation
+        // released atomically, proceeds paid to the holder.
+        address newHolder = makeAddr("newVpfiLenderHolder");
+        _mockLenderNft(LOAN_A, newHolder);
+        uint256 balBefore = IERC20(mockERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+
+        assertEq(IERC20(mockERC20).balanceOf(newHolder) - balBefore, 990, "holder claims the VPFI proceeds");
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(lender, mockERC20, 0),
+            0,
+            "reservation released on claim"
+        );
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Settled), "settled");
     }
 
     /// @dev Over-collateralized 2-way match fixture used by the #585
