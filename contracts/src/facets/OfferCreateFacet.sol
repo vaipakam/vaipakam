@@ -617,6 +617,13 @@ contract OfferCreateFacet is
                 params.amount,
                 maxAmountEffective
             );
+            LibAutoRefinanceCheck.assertCarriedCollateralMatches(
+                s,
+                params.refinanceTargetLoanId,
+                params.collateralAmount,
+                params.collateralTokenId,
+                params.collateralQuantity
+            );
         }
 
         LibVaipakam.LiquidityStatus principalLiq = OracleFacet(address(this))

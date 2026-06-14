@@ -191,4 +191,34 @@ library LibAutoRefinanceCheck {
             revert RefinanceExpiryExceedsCap();
         }
     }
+
+    /// @notice #576 Codex P3 — assert the refinance-tagged offer's carried
+    ///         collateral identity matches the targeted loan's EXACTLY
+    ///         (amount + tokenId + quantity), mirroring `RefinanceFacet`'s
+    ///         identity gate. Called at BOTH create and accept for every
+    ///         refinance-tagged offer, alongside {validate}. Rejecting a
+    ///         mismatched offer up front stops it from passing create,
+    ///         skipping the carry-over collateral deposit, and becoming an
+    ///         unfillable offer that only reverts mid-refinance after the
+    ///         replacement loan has already begun initializing. The asset +
+    ///         assetType halves of the identity are already covered by
+    ///         {validate}. Split into its own function (rather than folded
+    ///         into {validate}) to keep `validate`'s viaIR stack frame under
+    ///         the EVM 16-slot ceiling.
+    function assertCarriedCollateralMatches(
+        LibVaipakam.Storage storage s,
+        uint256 loanId,
+        uint256 offerCollateralAmount,
+        uint256 offerCollateralTokenId,
+        uint256 offerCollateralQuantity
+    ) internal view {
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (
+            offerCollateralAmount != loan.collateralAmount ||
+            offerCollateralTokenId != loan.collateralTokenId ||
+            offerCollateralQuantity != loan.collateralQuantity
+        ) {
+            revert RefinanceTargetIncompatible();
+        }
+    }
 }

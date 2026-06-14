@@ -34,6 +34,19 @@ the refinancer's). Letting a transferred position also carry over — by
 consolidating the collateral into the current holder's vault — is tracked
 as a separate design item (#594).
 
+Two guards keep the carry-over accounting honest. A refinance-tagged offer
+whose collateral identity does not match the targeted loan exactly (asset,
+type, amount, token id, quantity) is **rejected at creation**, so a
+mismatched offer can never be posted, skip its carry-over deposit, and then
+revert mid-refinance after the replacement loan has already started. And a
+refinance-tagged offer's collateral is **frozen** once created — the
+offer-collateral mutators reject it (principal and rate terms can still be
+changed) — so the create-time carry-over deposit decision can never drift
+out of sync with the physical vault. Separately, when a same-key retag
+moves a lien from the old loan to the new one, the old loan's lien row is
+zeroed (matching the normal release path) so stale per-loan readers can't
+mis-report the collateral as still owed on the refinanced-away loan.
+
 Refinance carries over the **same** collateral by definition; changing the
 collateral as part of a refinance is out of scope (use the add/remove
 collateral flow). Closes #576.

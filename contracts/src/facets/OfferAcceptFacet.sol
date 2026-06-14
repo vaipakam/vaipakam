@@ -657,6 +657,13 @@ contract OfferAcceptFacet is
                 offer.amount,
                 maxAmountEffective
             );
+            LibAutoRefinanceCheck.assertCarriedCollateralMatches(
+                s,
+                offer.refinanceTargetLoanId,
+                offer.collateralAmount,
+                offer.collateralTokenId,
+                offer.collateralQuantity
+            );
         }
 
         // Per-asset pause: block accepts if either leg has been paused

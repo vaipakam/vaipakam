@@ -344,6 +344,16 @@ library LibEncumbrance {
                 released: false
             });
             oldLien.released = true;
+            // #576 Codex P3 — zero the old per-loan amount on retag, matching
+            // `releaseCollateralLien`'s tombstone discipline. The aggregate is
+            // deliberately NOT decremented here (the collateral physically
+            // stays put and is now counted under `newLoanId`'s live lien), but
+            // a released row with a stale non-zero `amount` would let an
+            // old-loan reader (e.g. `MetricsFacet.getLoanCollateralLien`)
+            // mis-report the full collateral as still liened against the
+            // refinanced-away loan. The `released` flag is the source of truth;
+            // zeroing `amount` removes the footgun.
+            oldLien.amount = 0;
         } else {
             // Different collateral identity → release old + create
             // fresh (aggregate ticks under both keys).

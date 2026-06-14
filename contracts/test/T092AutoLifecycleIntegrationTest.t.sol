@@ -7,6 +7,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -647,6 +648,10 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         LibVaipakam.Encumbrance memory oldLien =
             MetricsFacet(address(diamond)).getLoanCollateralLien(oldLoanId);
         assertTrue(oldLien.released, "old lien retagged away (released)");
+        // #576 Codex P3 — the released old-loan tombstone must read amount 0
+        // so old-loan readers (e.g. getLoanCollateralLien) can't stale-report
+        // the full collateral as still liened against the refinanced-away loan.
+        assertEq(oldLien.amount, 0, "released old lien amount zeroed on retag");
         LibVaipakam.Encumbrance memory newLien =
             MetricsFacet(address(diamond)).getLoanCollateralLien(newLoanId);
         assertEq(newLien.user, borrower, "carried lien.user = original borrower custody");
@@ -665,6 +670,76 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             uint8(LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status),
             uint8(LibVaipakam.LoanStatus.Repaid),
             "old loan Repaid"
+        );
+    }
+
+    function test_576_refinanceTaggedOffer_mismatchedCollateral_rejectedAtCreate()
+        public
+    {
+        // #576 Codex P3 — a refinance-tagged offer whose carried collateral
+        // identity does NOT match the targeted loan's must be rejected at
+        // CREATE (RefinanceTargetIncompatible), not silently created and left
+        // to skip the carry-over deposit and revert mid-refinance. Build a
+        // tagged offer that mismatches on collateral amount.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+
+        LibVaipakam.CreateOfferParams memory params =
+            _refinanceTaggedOfferParams(oldLoanId, 400);
+        // Mismatch the carried collateral amount vs the old loan's
+        // (LOAN_COLLATERAL); keep the single-value invariant intact.
+        params.collateralAmount = LOAN_COLLATERAL + 1 ether;
+        params.collateralAmountMax = LOAN_COLLATERAL + 1 ether;
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            LibAutoRefinanceCheck.RefinanceTargetIncompatible.selector
+        );
+        OfferCreateFacet(address(diamond)).createOffer(params);
+    }
+
+    function test_576_refinanceTaggedOffer_collateralMutationBlocked() public {
+        // #576 Codex P2 — a refinance-tagged carry-over offer vaults NO
+        // collateral batch at create (the deposit is skipped). Mutating its
+        // collateral post-create would desync the create-time carry-over
+        // decision from the physical vault, so both mutation entry points must
+        // reject a tagged offer's collateral cluster.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        // setOfferCollateral on a tagged offer reverts.
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.CollateralMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).setOfferCollateral(
+            taggedOfferId, LOAN_COLLATERAL, LOAN_COLLATERAL
+        );
+
+        // modifyOffer's collateral cluster on a tagged offer reverts too.
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.CollateralMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).modifyOffer(
+            taggedOfferId,
+            LibVaipakam.OfferModifyParams({
+                amount: LOAN_PRINCIPAL,
+                amountMax: LOAN_PRINCIPAL,
+                interestRateBps: 400,
+                interestRateBpsMax: 400,
+                collateralAmount: LOAN_COLLATERAL + 1 ether,
+                collateralAmountMax: LOAN_COLLATERAL + 1 ether
+            })
         );
     }
 

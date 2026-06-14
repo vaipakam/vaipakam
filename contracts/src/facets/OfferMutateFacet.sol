@@ -481,6 +481,24 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 newCollateralAmount,
         uint256 newCollateralAmountMax
     ) private view {
+        // #576 Codex P2 — freeze collateral on a refinance-tagged offer.
+        // Such an offer's collateral is pinned to the targeted loan's
+        // (RefinanceFacet + LibAutoRefinanceCheck.validate enforce exact
+        // identity), and the create-time deposit decision
+        // (`LibAutoRefinanceCheck.isCarryOver`) is computed FROM these very
+        // fields: a carry-over offer vaults NO collateral batch. Allowing a
+        // post-create collateral mutation would silently desync that decision
+        // from the physical vault — a mutated offer that flips carry-over
+        // on/off would later try to refund/withdraw/settle a batch that was
+        // never deposited (or skip refunding one that was). Both mutation
+        // entry points (`setOfferCollateral`, `modifyOffer`) route their
+        // collateral cluster through here, so blocking it here freezes
+        // `isCarryOver`'s inputs for the offer's whole life. Amount/rate
+        // mutation stays allowed (those don't feed the deposit decision); a
+        // borrower who needs different collateral cancels and re-posts.
+        if (offer.refinanceTargetLoanId != 0) {
+            revert CollateralMutationUnsupportedForShape();
+        }
         if (
             offer.offerType == LibVaipakam.OfferType.Borrower
             && offer.assetType != LibVaipakam.AssetType.ERC20
