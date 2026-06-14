@@ -449,6 +449,15 @@ contract PrecloseFacet is
         LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
         if (offer.offerType != LibVaipakam.OfferType.Borrower || offer.accepted)
             revert InvalidOfferTerms();
+        // #576 — a refinance-tagged offer is SINGLE-PURPOSE: it may only be
+        // consumed by the direct accept-and-refinance path. Consuming it for an
+        // UNRELATED obligation transfer is invalid: on a carry-over offer the
+        // collateral was never deposited (it's the refinance target loan's,
+        // already liened in the creator's vault), so this path would recreate a
+        // lien for the SAME NFT against the transferred loan too — double-liening
+        // the one collateral and corrupting settlement. Reject before any state
+        // change (no offer NFT burn, no lien write).
+        if (offer.refinanceTargetLoanId != 0) revert InvalidOfferTerms();
         // #573 Codex round-2 P1 — a partially-filled offer (amountFilled
         // > 0, not yet dust-closed) is a matchOffers-managed entity.
         // Consuming it for an obligation transfer would overfill it beyond

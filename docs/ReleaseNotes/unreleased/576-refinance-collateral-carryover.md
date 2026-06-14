@@ -56,14 +56,20 @@ moves a lien from the old loan to the new one, the old loan's lien row is
 zeroed (matching the normal release path) so stale per-loan readers can't
 mis-report the collateral as still owed on the refinanced-away loan.
 
-A refinance-tagged offer is also **direct-accept-only**: it must be filled
-by a lender directly accepting it (which chains atomically into the
-refinance), not through the anonymous range-order matcher. The matcher
-can't guarantee the collateral retag fires atomically with the
-replacement-loan creation, nor preserve the fixed carried collateral
-against its own midpoint sizing, so it rejects refinance-tagged offers.
-Re-admitting them with a carry-over-aware matched path is tracked
-separately (#595).
+A refinance-tagged offer is also **single-purpose**: it can be consumed
+only by a lender directly accepting it (which chains atomically into the
+refinance). Every other offer-consumption path rejects it, because a
+carry-over offer advertises collateral it never re-deposited (the
+collateral is the target loan's, already liened): the range-order matcher
+rejects it, the pre-loan parallel-sale opt-in is forbidden on it at
+creation, and the obligation-transfer path rejects it. Loan-level paths
+(prepay-listing, auto-list, OpenSea-bidder match, liquidation, default)
+stay safe because they act on the fully-collateralized refinanced loan, or
+— for liquidation/default of the target loan — they release that loan's
+lien, after which an open carry-over offer can neither be accepted (target
+no longer Active) nor over-refund on cancel (it reads the recorded
+"deposited nothing" decision). Re-admitting tagged offers to the matcher
+with a carry-over-aware path is tracked separately (#595).
 
 Refinance carries over the **same** collateral by definition; changing the
 collateral as part of a refinance is out of scope (use the add/remove

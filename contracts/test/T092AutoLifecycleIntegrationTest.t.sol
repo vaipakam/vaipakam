@@ -10,6 +10,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -780,6 +781,51 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
             OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
         );
         OfferMatchFacet(address(diamond)).matchOffers(999, taggedOfferId);
+    }
+
+    function test_576_refinanceTaggedOffer_cannotOptIntoParallelSale() public {
+        // #576 Codex P1 — a refinance-tagged offer is single-purpose. It must
+        // not also opt into the pre-loan parallel sale (#358 borrow-OR-sell):
+        // on a carry-over offer the listed collateral is the target loan's
+        // already-encumbered NFT, so a sale fill before the refinance accept
+        // would transfer it out while the old loan stays Active. Reject the
+        // combination at create.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        LibVaipakam.CreateOfferParams memory params =
+            _refinanceTaggedOfferParams(oldLoanId, 400);
+        params.allowsParallelSale = true;
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.InvalidRefinanceTarget.selector);
+        OfferCreateFacet(address(diamond)).createOffer(params);
+    }
+
+    function test_576_refinanceTaggedOffer_notTransferableViaObligation()
+        public
+    {
+        // #576 Codex P1 — a refinance-tagged offer must not be consumable by
+        // the unrelated obligation-transfer path. On a carry-over offer the
+        // collateral was never deposited (it's the target loan's, already
+        // liened), so transferObligation would double-lien the same NFT and
+        // corrupt settlement. Reject before any state change.
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        vm.prank(borrower);
+        vm.expectRevert(PrecloseFacet.InvalidOfferTerms.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(
+            oldLoanId, taggedOfferId
+        );
     }
 
     function test_T092H_RefinanceLoanFromAccept_RejectsExternalEOA() public {

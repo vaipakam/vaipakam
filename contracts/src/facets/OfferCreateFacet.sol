@@ -567,6 +567,19 @@ contract OfferCreateFacet is
         }
         s.userOfferIds[creator].push(offerId);
 
+        // #576 — a refinance-tagged offer is SINGLE-PURPOSE: consumable only by
+        // the direct accept-and-refinance path. It may not also opt into the
+        // pre-loan parallel sale (#358 borrow-OR-sell): on a carry-over offer
+        // the listed collateral is the target loan's already-encumbered NFT, so
+        // a sale fill before the refinance accept would transfer it out while
+        // the old loan stays Active. Reject the combination up front — BEFORE
+        // `_writeOfferFields`' parallel-sale collateral-shape validation — so
+        // the verdict is the clear "this is an invalid refinance offer"
+        // regardless of collateral type.
+        if (params.refinanceTargetLoanId != 0 && params.allowsParallelSale) {
+            revert InvalidRefinanceTarget();
+        }
+
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _writeOfferFields(offer, creator, offerId, params);
 
@@ -589,6 +602,8 @@ contract OfferCreateFacet is
             if (params.fillMode != LibVaipakam.FillMode.Aon) {
                 revert InvalidRefinanceTarget();
             }
+            // (refinance-tagged + allowsParallelSale already rejected up front,
+            // before _writeOfferFields — see the guard above.)
             uint256 maxRateEffective =
                 params.interestRateBpsMax == 0
                     ? params.interestRateBps
