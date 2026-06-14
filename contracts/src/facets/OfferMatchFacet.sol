@@ -94,6 +94,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     error DurationMismatch();
     error MatchHFTooLow();
     error VaultWithdrawFailed();
+    /// @notice #576 — a refinance-tagged offer was passed to `matchOffers`.
+    ///         Refinance-tagged offers carry a collateral carry-over contract
+    ///         that only the direct accept-and-refinance path can honour
+    ///         atomically, so they are excluded from the partial-fill matcher.
+    error RefinanceTaggedOfferNotMatchable();
 
     /// @notice Range Orders Phase 1 — bot-facing preview of a candidate
     ///         (lender, borrower) match. Pure view; runs the validity
@@ -155,6 +160,29 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             // Master kill-switch: matching infra dormant until governance
             // enables it post-bake.
             revert FunctionDisabled(3);
+        }
+
+        // #576 — refinance-tagged offers are DIRECT-ACCEPT-ONLY. A tagged
+        // offer's collateral is "carried over" from the loan it refinances
+        // (no fresh pledge — see OfferCreateFacet's carry-over skip), and only
+        // the direct accept-and-refinance path (OfferAcceptFacet._acceptOffer
+        // -> RefinanceFacet.refinanceLoanFromAccept) honours that contract
+        // atomically. Routing a tagged offer through the partial-fill matcher
+        // is unsafe on two counts: (1) a match that fills before the
+        // dust-close branch creates the replacement loan with the carry-over
+        // deposit AND lien both skipped but the retag not yet fired — an
+        // uncollateralized loan; (2) the matcher's midpoint
+        // `matchOverride.collateralAmount` can diverge from the fixed carried
+        // amount, tripping RefinanceFacet's identity check. A carry-over-aware
+        // matched-refinance path is a separate design item (#595); until then,
+        // reject tagged offers here. (The atomic-refinance hook later in this facet's
+        // dust-close block is consequently unreachable for tagged offers — it
+        // is retained as the wiring a future carry-over-aware path would use.)
+        if (
+            s.offers[borrowerOfferId].refinanceTargetLoanId != 0 ||
+            s.offers[lenderOfferId].refinanceTargetLoanId != 0
+        ) {
+            revert RefinanceTaggedOfferNotMatchable();
         }
 
         // Pre-flight via the shared core; map structured errors into

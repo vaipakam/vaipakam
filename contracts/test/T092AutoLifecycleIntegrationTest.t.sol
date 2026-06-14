@@ -8,6 +8,8 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
+import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
@@ -741,6 +743,29 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 collateralAmountMax: LOAN_COLLATERAL + 1 ether
             })
         );
+    }
+
+    function test_576_refinanceTaggedOffer_notMatchable() public {
+        // #576 Codex P1/P2 — a refinance-tagged offer is direct-accept-only.
+        // The partial-fill matcher can't honour the carry-over contract
+        // atomically (a pre-dust-close match would create an uncollateralized
+        // loan, and the matcher's midpoint collateral can diverge from the
+        // fixed carried amount), so matchOffers must reject tagged offers
+        // BEFORE previewMatch — the lenderOfferId need not even exist.
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        uint256 oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        uint256 taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+
+        vm.expectRevert(
+            OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
+        );
+        OfferMatchFacet(address(diamond)).matchOffers(999, taggedOfferId);
     }
 
     function test_T092H_RefinanceLoanFromAccept_RejectsExternalEOA() public {

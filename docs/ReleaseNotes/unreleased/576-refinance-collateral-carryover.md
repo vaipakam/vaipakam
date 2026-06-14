@@ -47,6 +47,15 @@ moves a lien from the old loan to the new one, the old loan's lien row is
 zeroed (matching the normal release path) so stale per-loan readers can't
 mis-report the collateral as still owed on the refinanced-away loan.
 
+A refinance-tagged offer is also **direct-accept-only**: it must be filled
+by a lender directly accepting it (which chains atomically into the
+refinance), not through the anonymous range-order matcher. The matcher
+can't guarantee the collateral retag fires atomically with the
+replacement-loan creation, nor preserve the fixed carried collateral
+against its own midpoint sizing, so it rejects refinance-tagged offers.
+Re-admitting them with a carry-over-aware matched path is tracked
+separately (#595).
+
 Refinance carries over the **same** collateral by definition; changing the
 collateral as part of a refinance is out of scope (use the add/remove
 collateral flow). Closes #576.

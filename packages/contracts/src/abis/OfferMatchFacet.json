@@ -286,6 +286,11 @@
   },
   {
     "type": "error",
+    "name": "RefinanceTaggedOfferNotMatchable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SanctionedAddress",
     "inputs": [
       {
