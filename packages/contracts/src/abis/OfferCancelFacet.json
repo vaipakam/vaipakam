@@ -241,6 +241,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "refinanceCarryOver",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }
@@ -442,6 +447,11 @@
             "name": "refinanceTargetLoanId",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "refinanceCarryOver",
+            "type": "bool",
+            "internalType": "bool"
           }
         ]
       }

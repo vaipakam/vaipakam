@@ -53,6 +53,78 @@ library LibAutoRefinanceCheck {
     ///         (and getting the principal stranded mid-refinance).
     error RefinanceTargetIncompatible();
 
+    /// @notice #576 — is this refinance-tagged offer eligible for
+    ///         COLLATERAL CARRY-OVER (reuse the old loan's collateral in
+    ///         place, no fresh pledge)? True only for the clean case the
+    ///         carry-over machinery handles end-to-end:
+    ///           1. tagged (`refinanceTargetLoanId != 0`),
+    ///           2. NON-transferred — `creator == oldLoan.borrower`, i.e.
+    ///              the collateral physically sits in the creator's own
+    ///              vault (a transferred position's collateral is in the
+    ///              ORIGINAL borrower's vault, so carry-over can't skip the
+    ///              deposit there — it falls back to legacy return+pledge),
+    ///           3. single-value collateral (`collateralAmountMax` collapses
+    ///              to `collateralAmount`) — a borrower range would leave a
+    ///              residual the carry-over never deposited,
+    ///           4. exact collateral identity (amount + tokenId + quantity)
+    ///              vs the old loan — a mismatch couldn't satisfy the
+    ///              refinance identity gate, so it must pledge fresh instead,
+    ///           5. a LIVE old-loan collateral lien — a no-lien legacy loan
+    ///              has nothing to retag.
+    ///         This is evaluated ONCE at `createOffer` and PERSISTED on
+    ///         `Offer.refinanceCarryOver`; every later collateral-deposit /
+    ///         lien / refund / retag site reads that stored flag rather than
+    ///         re-deriving this predicate (the target loan's borrower + lien
+    ///         are mutable, so re-derivation could diverge from the
+    ///         create-time deposit decision). Anything not carry-over
+    ///         (untagged, transferred, ranged, mismatched or no-lien) takes
+    ///         the ordinary deposit + legacy refinance path unchanged.
+    function isCarryOver(
+        LibVaipakam.Storage storage s,
+        uint256 refinanceTargetLoanId,
+        address creator,
+        uint256 collateralAmount,
+        uint256 collateralAmountMax,
+        uint256 collateralTokenId,
+        uint256 collateralQuantity
+    ) internal view returns (bool) {
+        if (refinanceTargetLoanId == 0) return false;
+        LibVaipakam.Loan storage loan = s.loans[refinanceTargetLoanId];
+        // (2) NON-transferred — the collateral physically sits in the
+        // creator's own vault. A transferred position's collateral is in the
+        // ORIGINAL borrower's vault, so carry-over can't retag it into the
+        // refinancer's; it must take the legacy return+pledge path.
+        if (creator != loan.borrower) return false;
+        // (3) single-value collateral — a borrower range would leave a
+        // residual the carry-over never deposited.
+        if (collateralAmountMax != 0 && collateralAmountMax != collateralAmount) {
+            return false;
+        }
+        // (4) #576 Codex P3/P2 — the carried collateral must match the old
+        // loan's identity EXACTLY (amount + tokenId + quantity; asset +
+        // assetType are checked by {validate} before this runs). A mismatch
+        // means the skipped deposit could never satisfy RefinanceFacet's
+        // identity gate, so a mismatched offer must take the legacy
+        // fresh-pledge path (where any compatible collateral is allowed)
+        // rather than be advertised as an unfillable carry-over.
+        if (
+            collateralAmount != loan.collateralAmount ||
+            collateralTokenId != loan.collateralTokenId ||
+            collateralQuantity != loan.collateralQuantity
+        ) {
+            return false;
+        }
+        // (5) #576 Codex P2 — the old loan's collateral lien must be LIVE to
+        // retag. A loan originated before the encumbrance ledger (or otherwise
+        // carrying an empty/released lien) has nothing to carry over, so it
+        // must pledge fresh collateral via the legacy path instead of skipping
+        // a deposit against a lien that doesn't exist.
+        LibVaipakam.Encumbrance storage lien =
+            s.loanCollateralLien[refinanceTargetLoanId];
+        if (lien.user == address(0) || lien.released) return false;
+        return true;
+    }
+
     /// @notice Validate that the offer creator + terms satisfy the
     ///         per-loan auto-refinance caps stored under
     ///         `autoRefinanceCaps[loanId]`. Caller resolves the
@@ -157,4 +229,5 @@ library LibAutoRefinanceCheck {
             revert RefinanceExpiryExceedsCap();
         }
     }
+
 }

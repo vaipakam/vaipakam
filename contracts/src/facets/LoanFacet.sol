@@ -287,7 +287,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         //
         // See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` +
         // `PerLoanCollateralLien.md` §§2-6.
-        LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
+        //
+        // #576 — a CARRY-OVER refinance loan reuses the OLD loan's collateral
+        // in place (never deposited fresh — see OfferCreateFacet's carry-over
+        // skip); `RefinanceFacet` retags the old lien to this loan via
+        // `rekeyCollateralLienOnRefinance`, so a fresh lien here would
+        // double-lien the single carried collateral. Skip it for carry-over
+        // only — transferred / ranged / untagged refinances pledged fresh
+        // collateral and DO need their own lien (legacy path).
+        // Reads the PERSISTED create-time decision on the offer — never
+        // re-derives from the (mutable) target loan + lien state.
+        if (!offer.refinanceCarryOver) {
+            LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
+        }
 
         // T-092 — auto-opt-in convenience: if the borrower has the
         // per-user flag set, populate this loan's refinance caps from
