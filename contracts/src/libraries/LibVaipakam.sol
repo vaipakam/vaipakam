@@ -3979,6 +3979,16 @@ library LibVaipakam {
         // pre-existing gap tracked as a follow-up; the release point in
         // `ClaimFacet` already handles every path keyed off this map.
         mapping(uint256 => uint256) lenderProceedsEncumbered;
+        // #592 — the ASSET each loan's lender-proceeds reservation was
+        // recorded under (the asset actually deposited into the lender vault
+        // at the terminal: `principalAsset` for cash-settled closes,
+        // `collateralAsset` for an in-kind/illiquid default — VPFI is
+        // collateral-eligible). The release MUST decrement the same aggregate
+        // it was reserved under, which is NOT always the loan's principal asset
+        // nor the claim record's asset. A loan reserves lender-proceeds at its
+        // single terminal, so this is written once per loan and cleared on
+        // release.
+        mapping(uint256 => address) lenderProceedsEncumberedAsset;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.

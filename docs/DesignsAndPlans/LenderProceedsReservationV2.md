@@ -128,17 +128,25 @@ Make the reservation key on the **deposited/claim asset**, end to end:
   terminals, `loan.collateralAsset` for the in-kind/illiquid default
   branch. (Today every gated site happens to use `principalAsset`; this
   adds the in-kind default branch with `collateralAsset`.)
-- **Release point (ClaimFacet):** change
-  `releaseLenderProceeds(loanId, loan.lender, loan.principalAsset)` to use
-  **`s.lenderClaims[loanId].asset`** — the recorded claim asset. This is
-  **backward-compatible**: for every principal-asset claim (incl. the
-  merged #585 internal-match path) `lenderClaims.asset == principalAsset`,
-  so behaviour is identical; for a VPFI-collateral claim it now releases
-  the correct aggregate.
+- **Release point (ClaimFacet) — RECORD the reserved asset, release under
+  it** (refined after Codex round-4). Releasing under any *derived* asset —
+  `loan.principalAsset` OR `lenderClaims[loanId].asset` — is fragile: the
+  loan's single per-loan reserved amount (`s.lenderProceedsEncumbered`) is
+  ticked under exactly **one** aggregate, and the release must decrement
+  **that same** aggregate, which equals neither derived value in general (a
+  loan that reserved under principal and later resolves to a collateral
+  claim would underflow the collateral bucket and leave the real reservation
+  stuck). So the reserve **records the asset**
+  (`s.lenderProceedsEncumberedAsset[loanId]`) and `releaseLenderProceeds`
+  takes **no asset argument** — it releases under the recorded asset.
+  Reserve/release are then self-consistent by construction. A loan reserves
+  lender-proceeds at its **single terminal**, so the recorded asset is
+  written once; a second reserve under a different asset is an invariant
+  break (`assert`, no ABI surface).
 
-*Why key on `lenderClaims.asset` and not re-derive:* the claim row is the
-single source of truth for "what asset is owed and claimable"; deriving
-from `principalAsset` is exactly the bug.
+*Why record and not derive:* only the value captured at reserve time is
+authoritative; neither `principalAsset` nor `lenderClaims.asset` is
+guaranteed to be the asset the reservation was actually ticked under.
 
 ### 4.2 Held-for-lender reservation + re-key (fixes G2)
 

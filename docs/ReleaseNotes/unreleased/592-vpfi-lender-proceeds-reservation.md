@@ -32,11 +32,14 @@ The reservation now keys on the **asset actually deposited** rather than the
 loan's principal asset: that is the principal asset for cash-settled closes,
 but the **collateral** asset for an in-kind / illiquid default — and VPFI is
 collateral-eligible, so a non-VPFI-principal loan whose VPFI collateral is
-handed to the lender in kind is now reserved too. The claim-time release was
-corrected to free the same asset the claim is recorded under (previously it
-always used the principal asset, which would have freed the wrong balance —
-or none — for a VPFI-collateral claim). Assets with no user-facing
-tracked-withdraw path carry no reservation and are untouched.
+handed to the lender in kind is now reserved too. Each loan's reservation
+**records the asset it was placed under**, and the claim-time release frees
+**that same** asset rather than re-deriving one — previously it used the
+loan's principal asset, which would have freed the wrong balance (or none)
+for a VPFI-collateral claim, and even keying on the claim record's asset
+could mismatch a loan whose reserve and claim assets differ. Recording the
+asset makes reserve and release agree by construction. Assets with no
+user-facing tracked-withdraw path carry no reservation and are untouched.
 
 Deliberately **not** reserved (documented): the partial-repayment and
 periodic-interest-shortfall paths pay the lender's **wallet** directly (not

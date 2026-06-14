@@ -334,17 +334,14 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // loan that never reserved (non-VPFI, or paths not yet wired) —
         // keyed off `s.lenderProceedsEncumbered[loanId]`.
         //
-        // #592 (LenderProceedsReservationV2 §4.1) — release under the CLAIM
-        // asset (`claim.asset == s.lenderClaims[loanId].asset`), not
-        // `loan.principalAsset`. The reservation is now recorded under the
-        // asset that actually lands in the lender vault at the terminal, which
-        // is `principalAsset` for cash-settled closes but `collateralAsset`
-        // for an in-kind/illiquid default (and VPFI is collateral-eligible).
-        // Reserve and release therefore agree on the asset for every claim;
-        // for principal-asset claims (incl. the merged #585 internal-match
-        // path) `claim.asset == principalAsset`, so this is behaviour-
-        // identical there.
-        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, claim.asset);
+        // #592 (LenderProceedsReservationV2 §4.1) — the reservation records the
+        // asset it was ticked under (the asset actually deposited into the
+        // lender vault: `principalAsset` for cash closes, `collateralAsset` for
+        // an in-kind/illiquid default — VPFI is collateral-eligible).
+        // `releaseLenderProceeds` releases under that RECORDED asset, so the
+        // caller passes no asset: the decrement always hits the same aggregate
+        // the reserve ticked, even when the claim record's asset differs.
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
 
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
