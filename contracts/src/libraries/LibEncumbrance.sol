@@ -208,6 +208,55 @@ library LibEncumbrance {
         lien.amount += added;
     }
 
+    // ─── Lender-proceeds reservation (VPFI) ─────────────────────────────
+
+    /// @notice #585 — reserve a loan's VPFI lender PROCEEDS against the
+    ///         user-facing unstake path. When an internal match settles a
+    ///         VPFI-principal loan, the proceeds are deposited into the
+    ///         (possibly transferred-away) stored lender's vault and owed
+    ///         to the CURRENT lender-position holder via a `lenderClaims`
+    ///         row. VPFI is the one principal asset with a user-facing
+    ///         tracked-balance exit (`VPFIDiscountFacet.withdrawVPFIFromVault`),
+    ///         so this ticks the shared `encumbered` aggregate (tokenId 0,
+    ///         ERC20) under the stored lender — exactly the aggregate that
+    ///         path's free-balance guard subtracts — blocking a front-run
+    ///         unstake until the holder claims. Records the ticked amount
+    ///         per loan so the release is exact. Call ONLY for VPFI
+    ///         proceeds; other assets have no user-facing tracked-withdraw
+    ///         and need no reservation.
+    function encumberLenderProceeds(
+        uint256 loanId,
+        address lender,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.encumbered[lender][asset][0] += amount;
+        s.lenderProceedsEncumbered[loanId] += amount;
+    }
+
+    /// @notice #585 — release a loan's VPFI lender-proceeds reservation
+    ///         (see {encumberLenderProceeds}). Called from
+    ///         `ClaimFacet._claimAsLenderImpl` immediately BEFORE the
+    ///         proceeds withdraw, so the withdraw guard sees them as free.
+    ///         Idempotent + keyed off the per-loan record → a no-op for
+    ///         every loan that never reserved (non-VPFI, or any
+    ///         lender-proceeds path not yet wired to reserve). `asset` is
+    ///         the loan's immutable `principalAsset` (== the reserved
+    ///         asset, tokenId 0).
+    function releaseLenderProceeds(
+        uint256 loanId,
+        address lender,
+        address asset
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.lenderProceedsEncumbered[loanId];
+        if (reserved == 0) return;
+        _decrementAggregate(lender, asset, 0, reserved);
+        s.lenderProceedsEncumbered[loanId] = 0;
+    }
+
     /// @notice Re-create a collateral lien from the loan row's
     ///         current `(borrower, collateralAsset, …, collateralAmount)`
     ///         encoding. Used by the FallbackPending → Active cure
