@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -440,33 +441,55 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // Codex round-1 P1 fix on PR #317.
         LibPrepayCleanup.clearActiveListing(oldLoan, oldLoanId);
 
-        // ── Collateral handling — carry-over (tagged) vs legacy (untagged) ──
-        // #576 — a refinance-TAGGED Borrower offer (`refinanceTargetLoanId
-        // != 0`) reuses the OLD loan's collateral IN PLACE: OfferCreateFacet
-        // skipped the fresh deposit and LoanFacet skipped the fresh lien (both
-        // gated on the same tag), so here we pin the new loan to the old
-        // custody address + collateral identity and RETAG the lien old→new via
-        // the `sameKey` branch — no aggregate change, no second collateral
-        // lock (the 2x lock this removes). Pinning `loan.borrower` to the
-        // original makes the refinanced loan structurally identical to an
-        // already-transferred position (collateral in the original vault, the
-        // new borrower NFT held by the refinancer), which every close path
-        // (RepayFacet / ClaimFacet / DefaultedFacet) already handles.
+        // ── Collateral handling — carry-over vs legacy ──
+        // #576 — a CARRY-OVER refinance (tagged + NON-transferred +
+        // single-value, per `LibAutoRefinanceCheck.isCarryOver`) reuses the OLD
+        // loan's collateral IN PLACE: OfferCreateFacet skipped the fresh deposit
+        // + escrow and LoanFacet skipped the fresh lien (all keyed off the same
+        // predicate), so the collateral is already in the borrower's vault and
+        // we just RETAG the lien old→new (`sameKey` — no aggregate change, no
+        // 2x lock). Because carry-over is NON-transferred, `newLoan.borrower`
+        // (= offer.creator) already equals `oldLoan.borrower`, so the loan was
+        // born correct — no post-init pin, no event/index/reward divergence.
         //
-        // An UNTAGGED offer (`refinanceTargetLoanId == 0`, the legacy
-        // borrower-direct fixture path) pledged a fresh collateral batch at
-        // offer-create and the new loan carries its own fresh lien from init,
-        // so it keeps the legacy behaviour: release the old lien and return
-        // the old collateral to the current borrower-position holder. (Carry-
-        // over is impossible there — the fresh collateral was already locked.)
-        if (s.offers[borrowerOfferId].refinanceTargetLoanId != 0) {
-            newLoan.borrower = oldLoan.borrower;
-            newLoan.collateralAsset = oldLoan.collateralAsset;
-            newLoan.collateralAmount = oldLoan.collateralAmount;
-            newLoan.collateralTokenId = oldLoan.collateralTokenId;
-            newLoan.collateralQuantity = oldLoan.collateralQuantity;
-            newLoan.collateralAssetType = oldLoan.collateralAssetType;
-                LibEncumbrance.rekeyCollateralLienOnRefinance(oldLoanId, newLoanId, newLoan);
+        // Everything else — untagged (legacy direct), TRANSFERRED tagged, or
+        // RANGED tagged — pledged a fresh collateral batch at create and carries
+        // its own fresh lien, so it takes the legacy path: release the old lien
+        // and return the old collateral to the current borrower-position holder.
+        LibVaipakam.Offer storage bOffer = s.offers[borrowerOfferId];
+        if (
+            LibAutoRefinanceCheck.isCarryOver(
+                s,
+                bOffer.refinanceTargetLoanId,
+                bOffer.creator,
+                bOffer.collateralAmount,
+                bOffer.collateralAmountMax
+            )
+        ) {
+            // Validate the FULL collateral identity matches the old loan (Codex
+            // round-1 P2). The tag check only proved asset + type, so without
+            // this a borrower could advertise a different amount / tokenId /
+            // quantity that a lender accepts, then end up backed by the OLD
+            // collateral instead (no LTV gate catches NFT/illiquid mismatch).
+            // Reverting unwinds the whole atomic accept-and-refinance.
+            if (
+                newLoan.collateralAsset != oldLoan.collateralAsset ||
+                newLoan.collateralAssetType != oldLoan.collateralAssetType ||
+                newLoan.collateralAmount != oldLoan.collateralAmount ||
+                newLoan.collateralTokenId != oldLoan.collateralTokenId ||
+                newLoan.collateralQuantity != oldLoan.collateralQuantity
+            ) revert InvalidRefinanceOffer();
+            // Require the OLD loan's lien to be LIVE (Codex round-1 P2):
+            // `rekeyCollateralLienOnRefinance` silently no-ops on a missing /
+            // released lien, which would leave the carried collateral
+            // UNENCUMBERED under the new loan (withdrawable before close). Every
+            // ERC-20 loan post-#565 carries a lien, so this only fires on a
+            // genuinely un-encumbered position — fail closed.
+            LibVaipakam.Encumbrance storage oldLien = s.loanCollateralLien[oldLoanId];
+            if (oldLien.released || oldLien.user == address(0)) {
+                revert InvalidRefinanceOffer();
+            }
+            LibEncumbrance.rekeyCollateralLienOnRefinance(oldLoanId, newLoanId, newLoan);
         } else {
             // Legacy: release the old lien BEFORE the withdraw (the chokepoint
             // guard would otherwise block the legitimate refinance return).

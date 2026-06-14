@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -288,14 +289,22 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` +
         // `PerLoanCollateralLien.md` §§2-6.
         //
-        // #576 — a refinance-originated loan carries the OLD loan's
-        // collateral in place (it was never deposited fresh — see
-        // OfferCreateFacet's refinance skip). `RefinanceFacet` retags the
-        // old lien to this loan via `rekeyCollateralLienOnRefinance`, so
-        // creating a fresh lien here would double-lien the single carried
-        // collateral (and tick the aggregate under the refinancer, whose
-        // vault holds nothing). Skip it; the retag keys the lien.
-        if (offer.refinanceTargetLoanId == 0) {
+        // #576 — a CARRY-OVER refinance loan reuses the OLD loan's collateral
+        // in place (never deposited fresh — see OfferCreateFacet's carry-over
+        // skip); `RefinanceFacet` retags the old lien to this loan via
+        // `rekeyCollateralLienOnRefinance`, so a fresh lien here would
+        // double-lien the single carried collateral. Skip it for carry-over
+        // only — transferred / ranged / untagged refinances pledged fresh
+        // collateral and DO need their own lien (legacy path).
+        if (
+            !LibAutoRefinanceCheck.isCarryOver(
+                s,
+                offer.refinanceTargetLoanId,
+                offer.creator,
+                offer.collateralAmount,
+                offer.collateralAmountMax
+            )
+        ) {
             LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
         }
 

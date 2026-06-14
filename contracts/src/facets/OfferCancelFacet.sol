@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 // #195 — `LibAuth.requireOfferCreator` is replaced by an inline access
 // gate that admits the creator OR any caller against an expired offer;
 // see `cancelOffer` for the full rule.
@@ -285,6 +286,20 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             }
         } else {
             // Borrower: unlock what was actually deposited at create.
+            // #576 — a CARRY-OVER refinance offer pledged NO fresh collateral
+            // and created no escrow lock (both skipped at create), so there is
+            // nothing to refund on cancel; trying to withdraw never-deposited
+            // collateral would revert. The collateral-return withdraws below
+            // are therefore gated on `!carryOver`. (The
+            // `releaseOfferPrincipalLien` is idempotent — a no-op when no lock
+            // exists — so it stays unconditional.)
+            bool carryOver = LibAutoRefinanceCheck.isCarryOver(
+                s,
+                offer.refinanceTargetLoanId,
+                offer.creator,
+                offer.collateralAmount,
+                offer.collateralAmountMax
+            );
             if (offer.assetType == LibVaipakam.AssetType.ERC20) {
                 if (offer.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // #573 — release the offer-collateral lock BEFORE the
@@ -324,7 +339,7 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         ? offer.collateralAmount
                         : offer.collateralAmountMax;
                     uint256 borrowerColRefund = borrowerColMax - offer.collateralAmountFilled;
-                    if (borrowerColRefund > 0) {
+                    if (borrowerColRefund > 0 && !carryOver) {
                         LibFacet.crossFacetCall(
                             abi.encodeWithSelector(
                                 VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -337,28 +352,32 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                         );
                     }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC721.selector,
-                            creator,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            creator
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
+                    if (!carryOver) {
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                VaultFactoryFacet.vaultWithdrawERC721.selector,
+                                creator,
+                                offer.collateralAsset,
+                                offer.collateralTokenId,
+                                creator
+                            ),
+                            VaultWithdrawFailed.selector
+                        );
+                    }
                 } else if (offer.collateralAssetType == LibVaipakam.AssetType.ERC1155) {
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            VaultFactoryFacet.vaultWithdrawERC1155.selector,
-                            creator,
-                            offer.collateralAsset,
-                            offer.collateralTokenId,
-                            offer.collateralQuantity,
-                            creator
-                        ),
-                        VaultWithdrawFailed.selector
-                    );
+                    if (!carryOver) {
+                        LibFacet.crossFacetCall(
+                            abi.encodeWithSelector(
+                                VaultFactoryFacet.vaultWithdrawERC1155.selector,
+                                creator,
+                                offer.collateralAsset,
+                                offer.collateralTokenId,
+                                offer.collateralQuantity,
+                                creator
+                            ),
+                            VaultWithdrawFailed.selector
+                        );
+                    }
                 }
             } else if (
                 offer.assetType == LibVaipakam.AssetType.ERC721 ||

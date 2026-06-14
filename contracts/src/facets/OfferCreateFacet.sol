@@ -473,6 +473,23 @@ contract OfferCreateFacet is
             // Borrower NFT rental offer — Permit2 pulls the prepay.
             expectedAsset = params.prepayAsset;
         }
+        // #576 — a CARRY-OVER refinance offer pledges NO fresh collateral, so
+        // skip the Permit2 pull + deposit-record entirely (mirrors the
+        // classic-path skip in `_pullCreatorAssetsClassic`); RefinanceFacet
+        // retags the old lien. Without this, a Permit2 refinance would force a
+        // second collateral batch and lose the carry-over.
+        if (
+            LibAutoRefinanceCheck.isCarryOver(
+                LibVaipakam.storageSlot(),
+                params.refinanceTargetLoanId,
+                msg.sender,
+                params.collateralAmount,
+                params.collateralAmountMax
+            )
+        ) {
+            _createOfferFinish(msg.sender, offerId, params);
+            return offerId;
+        }
         LibPermit2.pull(msg.sender, vault, expectedAsset, amount, permit, signature);
         // Permit2 already moved funds to the user's vault. Record
         // the deposit in the protocolTrackedVaultBalance counter so
@@ -911,17 +928,24 @@ contract OfferCreateFacet is
         } else {
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
-                // #576 — refinance collateral carry-over: a refinance-tagged
-                // Borrower offer reuses the OLD loan's collateral IN PLACE —
-                // it never leaves `oldLoan.borrower`'s vault, and
-                // `RefinanceFacet` retags the lien old→new
-                // (`rekeyCollateralLienOnRefinance`). So it must NOT pre-vault
-                // a second collateral batch: that momentary 2x lock is exactly
-                // what carry-over removes. The collateral identity is validated
-                // to match the old loan (`LibAutoRefinanceCheck`) and pinned to
-                // it at refinance time. Nothing else is pulled on this path, so
-                // returning early is the complete skip.
-                if (params.refinanceTargetLoanId != 0) return;
+                // #576 — a CARRY-OVER refinance offer reuses the OLD loan's
+                // collateral IN PLACE (the non-transferred predicate
+                // guarantees it's already in this creator's vault), and
+                // `RefinanceFacet` retags the lien old→new. So it must NOT
+                // pre-vault a second batch — the 2x lock this removes. Only the
+                // carry-over case skips; transferred / ranged / untagged offers
+                // pledge fresh collateral and take the legacy refinance path.
+                // Nothing else is pulled on this branch, so returning early is
+                // the complete skip.
+                if (
+                    LibAutoRefinanceCheck.isCarryOver(
+                        LibVaipakam.storageSlot(),
+                        params.refinanceTargetLoanId,
+                        creator,
+                        params.collateralAmount,
+                        params.collateralAmountMax
+                    )
+                ) return;
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // Issue #164 — pre-vault the upper bound
                     // (`collateralAmountMax`) so the borrower-range
@@ -1098,16 +1122,23 @@ contract OfferCreateFacet is
             params.offerType == LibVaipakam.OfferType.Borrower &&
             params.assetType == LibVaipakam.AssetType.ERC20 &&
             params.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
-            params.refinanceTargetLoanId == 0
+            !LibAutoRefinanceCheck.isCarryOver(
+                LibVaipakam.storageSlot(),
+                params.refinanceTargetLoanId,
+                creator,
+                params.collateralAmount,
+                params.collateralAmountMax
+            )
         ) {
-            // #576 — a refinance-tagged Borrower offer pledged NO fresh
-            // collateral (the carry-over skip in `_pullCreatorAssetsClassic`),
-            // so there is nothing to escrow-lock here. Locking would encumber
+            // #576 — a CARRY-OVER refinance offer pledged NO fresh collateral
+            // (the carry-over skip in `_pullCreatorAssetsClassic`), so there is
+            // nothing to escrow-lock here. Locking would encumber
             // `collateralAmountMax` of collateral that was never deposited — a
-            // phantom lien that double-counts the carried collateral (which is
-            // already liened under the OLD loan and retagged to the new loan at
-            // refinance). The `refinanceTargetLoanId == 0` guard keeps the #573
-            // escrow lock for every ordinary Borrower offer.
+            // phantom lien double-counting the carried collateral (already
+            // liened under the OLD loan, retagged at refinance). The
+            // `!isCarryOver` guard keeps the #573 escrow lock for every ordinary
+            // Borrower offer (incl. transferred / ranged / untagged refinances,
+            // which DO pledge fresh collateral).
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.createOfferPrincipalLien.selector,
