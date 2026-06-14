@@ -911,6 +911,17 @@ contract OfferCreateFacet is
         } else {
             // Borrower: lock collateral (or prepay for NFT rental).
             if (params.assetType == LibVaipakam.AssetType.ERC20) {
+                // #576 — refinance collateral carry-over: a refinance-tagged
+                // Borrower offer reuses the OLD loan's collateral IN PLACE —
+                // it never leaves `oldLoan.borrower`'s vault, and
+                // `RefinanceFacet` retags the lien old→new
+                // (`rekeyCollateralLienOnRefinance`). So it must NOT pre-vault
+                // a second collateral batch: that momentary 2x lock is exactly
+                // what carry-over removes. The collateral identity is validated
+                // to match the old loan (`LibAutoRefinanceCheck`) and pinned to
+                // it at refinance time. Nothing else is pulled on this path, so
+                // returning early is the complete skip.
+                if (params.refinanceTargetLoanId != 0) return;
                 if (params.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     // Issue #164 — pre-vault the upper bound
                     // (`collateralAmountMax`) so the borrower-range

@@ -249,18 +249,17 @@ library LibEncumbrance {
     ///         stays on the same `(user, asset, tokenId)` tuple → the
     ///         aggregate does NOT change and the collateral never leaves
     ///         the vault.
-    /// @dev    RESERVED — INTENTIONALLY UNWIRED as of #565. The live
-    ///         `RefinanceFacet` still uses the legacy return-old +
-    ///         pledge-fresh model (release old lien + withdraw old
-    ///         collateral; the new loan carries its own freshly-pledged
-    ///         lien). This primitive is the carry-over path: the
-    ///         #565 encumbrance sub-ledger is the "separate locked-
-    ///         balance design" the spec said vault-first refinance
-    ///         netting required (ProjectDetailsREADME §"refinance"), so
-    ///         the follow-up refinance-collateral-carry-over PR wires
-    ///         this in place of the withdraw — skipping the redundant
-    ///         fresh-collateral deposit. Kept (not deleted) because that
-    ///         PR is the committed next step; do not remove.
+    /// @dev    #576 — LIVE. `RefinanceFacet._refinanceLoanLogic` calls this
+    ///         in place of the legacy return-old + pledge-fresh model: the
+    ///         collateral stays in `oldLoan.borrower`'s vault and the lien
+    ///         retags old→new via the `sameKey` branch (no aggregate change,
+    ///         no second collateral lock). RefinanceFacet pins the new loan's
+    ///         `borrower` + collateral identity to the old loan's BEFORE
+    ///         calling, so `sameKey` always holds for a refinance carry-over
+    ///         (the offer pledges no fresh collateral and `initiateLoan`
+    ///         skips the fresh lien — see the refinance-origin skips there).
+    ///         The `!sameKey` branch is a defensive fallback (it would
+    ///         release + re-create), not reached on the carry-over path.
     function rekeyCollateralLienOnRefinance(
         uint256 oldLoanId,
         uint256 newLoanId,

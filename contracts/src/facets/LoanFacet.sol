@@ -287,7 +287,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         //
         // See `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` +
         // `PerLoanCollateralLien.md` §§2-6.
-        LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
+        //
+        // #576 — a refinance-originated loan carries the OLD loan's
+        // collateral in place (it was never deposited fresh — see
+        // OfferCreateFacet's refinance skip). `RefinanceFacet` retags the
+        // old lien to this loan via `rekeyCollateralLienOnRefinance`, so
+        // creating a fresh lien here would double-lien the single carried
+        // collateral (and tick the aggregate under the refinancer, whose
+        // vault holds nothing). Skip it; the retag keys the lien.
+        if (offer.refinanceTargetLoanId == 0) {
+            LibEncumbrance.createCollateralLien(loanId, s.loans[loanId]);
+        }
 
         // T-092 — auto-opt-in convenience: if the borrower has the
         // per-user flag set, populate this loan's refinance caps from
