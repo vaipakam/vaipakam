@@ -463,6 +463,27 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         );
 
         if (willSettle) {
+            // #585 P2 (Codex round-2) — a ZERO-residual internal match leaves
+            // the borrower with no claim row, so the borrower would never run
+            // `claimAsBorrower` (it reverts `NothingToClaim` before settle,
+            // `InvalidLoanStatus` after), leaving a transferable borrower
+            // position NFT pointing at a Settled loan. Burn it here as part of
+            // the lender-driven settle. Gated on `borrowerHasNothing` (so a
+            // borrower who DID claim — over-collateralized residual — already
+            // burned their own NFT) and on the InternalMatched terminal (other
+            // "borrower has nothing" terminals keep their existing behaviour).
+            if (
+                borrowerHasNothing &&
+                loan.status == LibVaipakam.LoanStatus.InternalMatched
+            ) {
+                LibFacet.crossFacetCall(
+                    abi.encodeWithSelector(
+                        VaipakamNFTFacet.burnNFT.selector,
+                        loan.borrowerTokenId
+                    ),
+                    NFTBurnFailed.selector
+                );
+            }
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
             emit LoanSettled(loanId);
         }

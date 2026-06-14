@@ -692,10 +692,28 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                         loan.id, loan.lender, loan.principalAsset, lenderProceeds
                     );
                 }
+            } else if (lenderProceeds > 0) {
+                // #585 P1 (Codex round-2) — PARTIAL internal match: the loan
+                // stays Active with reduced principal, but `_settleLeg`
+                // already paid THIS leg's proceeds into the lender's vault.
+                // Accumulate them into `heldForLender` so the eventual
+                // terminal claim (a later full match, repay, or default)
+                // pays the CURRENT lender-position holder the SUM of every
+                // partial leg — not just the final one. The full-match
+                // branch above records only the FINAL leg in `lenderClaims`;
+                // `heldForLender` carries the priors and survives a later
+                // RepayFacet `lenderClaims` overwrite because `claimAsLender`
+                // pays `lenderClaims + heldForLender`. (Per-loan
+                // `heldForLender` is the same accumulator Preclose uses; the
+                // adds compose.)
+                LibVaipakam.Storage storage sa = LibVaipakam.storageSlot();
+                sa.heldForLender[loan.id] += lenderProceeds;
+                if (loan.principalAsset == sa.vpfiToken) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loan.id, loan.lender, loan.principalAsset, lenderProceeds
+                    );
+                }
             }
-            // Partial internal match — loan stays Active with reduced
-            // collateral. The pre-withdraw decrement already adjusted
-            // the lien; nothing to do here.
             return;
         }
 
@@ -781,6 +799,23 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     LibVaipakam.LoanStatus.InternalMatched
                 );
                 return;
+            }
+
+            // #585 P1 (Codex round-2) — a PARTIAL fallback rescue paid THIS
+            // leg's matched proceeds (principal asset) into the lender's
+            // vault via `_settleLeg`. The scaled snapshot below tracks only
+            // the REMAINING collateral residual, so accumulate the matched
+            // proceeds into `heldForLender` (the priors-carrier) — the
+            // eventual terminal claim then pays the current lender holder
+            // BOTH the matched principal and the residual. See the Active
+            // partial branch.
+            if (lenderProceeds > 0) {
+                s.heldForLender[loan.id] += lenderProceeds;
+                if (loan.principalAsset == s.vpfiToken) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loan.id, loan.lender, loan.principalAsset, lenderProceeds
+                    );
+                }
             }
 
             // Partial rescue. Loan stays FallbackPending with reduced

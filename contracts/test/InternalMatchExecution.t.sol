@@ -1274,6 +1274,47 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(IERC20(mockY).balanceOf(holderC), 990, "C holder gets 990 Z");
     }
 
+    /// @notice #585 P1 (Codex round-2) — a loan PARTIALLY internally matched
+    ///         and then FULLY matched later must pay the lender holder the SUM
+    ///         of both legs. The partial leg's proceeds accumulate into
+    ///         heldForLender; the full leg lands in lenderClaims; the terminal
+    ///         claim pays both — not just the final leg.
+    function test_585_partialThenFullMatch_accumulatesProceeds() public {
+        // Match 1 — partial on A. A lends 1000 X against 1000 Y; B owes 600 Y
+        // against 600 X. X leg moves min(1000,600)=600 → A.principal 400 left
+        // (stays Active); A.lender's 594 X partial proceeds → heldForLender.
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.Active), "A partial -> stays Active");
+
+        // Match 2 — full on A's residual. C owes 400 Y against 400 X. X leg
+        // moves 400 → A fully cleared → InternalMatched; 396 X → lenderClaims.
+        address borrowerC = makeAddr("borrowerC");
+        address lenderC = makeAddr("lenderC");
+        _seedLoan(LOAN_C, lenderC, borrowerC, mockCollateralERC20, 400, mockERC20, 400);
+        _mockLtv(LOAN_C, 9_000);
+        _mockLtv(LOAN_A, 9_000);
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_C, 0);
+        assertEq(uint8(_getLoan(LOAN_A).status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A full -> InternalMatched");
+
+        // A's lender holder claims the SUM: held (594) + lenderClaims (396) = 990 X.
+        address holder = makeAddr("partialAccumHolder");
+        _mockLenderNft(LOAN_A, holder);
+        uint256 balBefore = IERC20(mockERC20).balanceOf(holder);
+        vm.prank(holder);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN_A);
+        assertEq(
+            IERC20(mockERC20).balanceOf(holder) - balBefore,
+            990,
+            "holder claims partial + final proceeds (not just the final leg)"
+        );
+    }
+
     /// @notice #585 P1 fix — VPFI internal-match proceeds are RESERVED in the
     ///         stored lender's vault (ticking the `encumbered` aggregate that
     ///         `withdrawVPFIFromVault`'s guard subtracts), so a transferred-
