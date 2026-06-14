@@ -4,6 +4,9 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -143,6 +146,93 @@ contract Vpfi592LenderProceedsTest is SetupTest {
         // (The loan stays Repaid until the borrower also claims their
         // collateral; the lender-side reserve/release is what this test
         // exercises.)
+    }
+
+    /// @dev #592 ReservationV2 §4.1 (G1) — claim-asset keying: an in-kind /
+    ///      illiquid default hands the COLLATERAL to the lender (not the
+    ///      principal). When that collateral is VPFI, it must be reserved
+    ///      under the COLLATERAL asset and released on `claim.asset` at claim.
+    function test_592_inKindDefault_reservesVpfiCollateralThenReleasesOnClaim()
+        public
+    {
+        address storedLender = makeAddr("storedInKindLender");
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+
+        // Non-VPFI principal, VPFI collateral, both-consent (illiquid → in-kind
+        // collateral-transfer default branch).
+        LibVaipakam.Loan memory l;
+        l.id = LOAN;
+        l.status = LibVaipakam.LoanStatus.Active;
+        l.lender = storedLender;
+        l.borrower = borrower;
+        l.principalAsset = mockCollateralERC20; // non-VPFI
+        l.principal = 500;
+        l.collateralAsset = mockERC20; // VPFI collateral
+        l.collateralAmount = 1000;
+        l.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        l.assetType = LibVaipakam.AssetType.ERC20;
+        l.interestRateBps = 0;
+        l.startTime = uint64(block.timestamp);
+        l.durationDays = 30;
+        l.lenderTokenId = LENDER_TOKEN_ID;
+        l.borrowerTokenId = 8888;
+        l.liquidationLtvBpsAtInit = 8_500;
+        l.riskAndTermsConsentFromBoth = true;
+        l.principalLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        l.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
+        _mockLenderNft(storedLender);
+
+        // Fund the borrower vault with the VPFI collateral so the in-kind
+        // collateral withdraw to the lender vault succeeds.
+        address bVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        ERC20Mock(mockERC20).mint(bVault, 1000);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower, mockERC20, 1000
+        );
+
+        // Both legs illiquid: collateral-illiquid → in-kind branch; principal-
+        // illiquid → the KYC value path is skipped (no price mock needed).
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Illiquid);
+        mockOracleLiquidity(
+            mockCollateralERC20, LibVaipakam.LiquidityStatus.Illiquid
+        );
+
+        // Past the grace boundary.
+        vm.warp(block.timestamp + 31 days + 30 days);
+
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+
+        // The VPFI collateral handed to the stored lender's vault is reserved
+        // under the COLLATERAL asset.
+        assertEq(
+            _encumbered(storedLender),
+            1000,
+            "VPFI collateral reserved on in-kind default (claim-asset keyed)"
+        );
+
+        vm.prank(storedLender);
+        vm.expectRevert();
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(1000);
+
+        address newHolder = makeAddr("newInKindHolder");
+        _mockLenderNft(newHolder);
+        uint256 balBefore = IERC20(mockERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsLender(LOAN);
+
+        assertEq(
+            IERC20(mockERC20).balanceOf(newHolder) - balBefore,
+            1000,
+            "current holder claims the VPFI collateral"
+        );
+        assertEq(
+            _encumbered(storedLender),
+            0,
+            "reservation released on claim (released on claim.asset)"
+        );
     }
 
     /// @dev A non-VPFI principal asset carries NO reservation (no user-facing

@@ -327,18 +327,24 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
 
-        // #585 — release any VPFI lender-proceeds reservation BEFORE the
+        // #585/#592 — release any VPFI lender-proceeds reservation BEFORE the
         // withdraw, so the vault-withdraw guard sees the proceeds as free
         // (the reservation exists precisely to block the stored lender's
         // unstake front-run until this gated claim runs). No-op for every
         // loan that never reserved (non-VPFI, or paths not yet wired) —
-        // keyed off `s.lenderProceedsEncumbered[loanId]`. Release under
-        // `loan.principalAsset` — the asset the reservation was recorded
-        // under (Codex round-3 P1): `claim.asset` can be the COLLATERAL
-        // asset on a collateral-denominated terminal (a VPFI loan that
-        // partial-matched then resolved in-kind), which would hit the wrong
-        // `encumbered` bucket and revert / free an unrelated lien.
-        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, loan.principalAsset);
+        // keyed off `s.lenderProceedsEncumbered[loanId]`.
+        //
+        // #592 (LenderProceedsReservationV2 §4.1) — release under the CLAIM
+        // asset (`claim.asset == s.lenderClaims[loanId].asset`), not
+        // `loan.principalAsset`. The reservation is now recorded under the
+        // asset that actually lands in the lender vault at the terminal, which
+        // is `principalAsset` for cash-settled closes but `collateralAsset`
+        // for an in-kind/illiquid default (and VPFI is collateral-eligible).
+        // Reserve and release therefore agree on the asset for every claim;
+        // for principal-asset claims (incl. the merged #585 internal-match
+        // path) `claim.asset == principalAsset`, so this is behaviour-
+        // identical there.
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender, claim.asset);
 
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {

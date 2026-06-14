@@ -515,6 +515,21 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     quantity: loan.collateralQuantity,
                     claimed: false
                 });
+                // #592 (ReservationV2 §4.1) — in-kind/illiquid default: the
+                // lender claim asset is the COLLATERAL, not the principal. VPFI
+                // is collateral-eligible, so when the (ERC-20) collateral that
+                // just landed in the stored lender's vault IS VPFI, reserve it
+                // against the unstake path — keyed on the collateral asset, the
+                // same asset ClaimFacet releases on (`claim.asset`). NFT
+                // collateral can't be VPFI and has no fungible unstake door.
+                if (
+                    loan.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
+                    loan.collateralAsset == s.vpfiToken
+                ) {
+                    LibEncumbrance.encumberLenderProceeds(
+                        loanId, loan.lender, loan.collateralAsset, loan.collateralAmount
+                    );
+                }
 
                 // Any heldForLender from prior preclose top-ups are handled by
                 // ClaimFacet.claimAsLender, which withdraws them in the correct

@@ -25,11 +25,18 @@ the deposit and the eventual claim:
 - refinance (the old loan's lender is paid off and exits),
 - health-factor liquidation (full, atomic-split, and discounted variants).
 
-At each, when the principal asset is VPFI, the proceeds are reserved
-against the unstake path the moment they land in the lender's vault, and
-the existing claim-time release frees them exactly when the current holder
-claims. Non-VPFI principal assets have no user-facing tracked-withdraw
-path, so they carry no reservation and are untouched.
+At each, when the asset that lands in the lender's vault is VPFI, the
+proceeds are reserved against the unstake path the moment they land, and
+the claim-time release frees them exactly when the current holder claims.
+The reservation now keys on the **asset actually deposited** rather than the
+loan's principal asset: that is the principal asset for cash-settled closes,
+but the **collateral** asset for an in-kind / illiquid default — and VPFI is
+collateral-eligible, so a non-VPFI-principal loan whose VPFI collateral is
+handed to the lender in kind is now reserved too. The claim-time release was
+corrected to free the same asset the claim is recorded under (previously it
+always used the principal asset, which would have freed the wrong balance —
+or none — for a VPFI-collateral claim). Assets with no user-facing
+tracked-withdraw path carry no reservation and are untouched.
 
 Deliberately **not** reserved (documented): the partial-repayment and
 periodic-interest-shortfall paths pay the lender's **wallet** directly (not
