@@ -793,20 +793,16 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         bool retrySucceeded;
         uint256 proceeds;
-        // #577 / #585 — a topped-up FallbackPending loan's collateral is split
-        // between the borrower's vault (the AddCollateral top-up, liened) and
-        // Diamond custody (the snapshot). `_attemptRetrySwap` would swap
-        // `loan.collateralAmount` — the WHOLE amount — out of Diamond custody,
-        // drawing on same-token custody belonging to OTHER fallback loans (the
-        // same mis-accounting the internal-match auto-dispatch above already
-        // skips for these loans). Skip the retry swap too and let the loan
-        // resolve through the in-kind distribution below, which only touches
-        // the snapshot (the Diamond-held portion); the vault top-up stays
-        // liened, owed to the borrower, pending #585's top-up-aware unwind.
+        // #591 — a topped-up FallbackPending loan's collateral is split between
+        // the borrower's vault (the AddCollateral top-up, liened) and Diamond
+        // custody (the snapshot). `_attemptRetrySwap` now swaps ONLY the
+        // Diamond-held portion (it derives `diamondPortion` from the lien), so
+        // it never draws on same-token custody belonging to OTHER fallback
+        // loans. The vault top-up stays liened, owed to the borrower, and is
+        // resolved through the in-kind distribution. No top-up guard needed.
         if (
             retryCalls.length > 0 &&
-            !snap.retryAttempted &&
-            !LibVaipakam.hasActiveFallbackTopUp(loanId)
+            !snap.retryAttempted
         ) {
             snap.retryAttempted = true;
             (retrySucceeded, proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
@@ -836,10 +832,24 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.Loan storage loan,
         LibSwap.AdapterCall[] memory retryCalls
     ) internal returns (bool, uint256) {
+        // #591 — swap ONLY the Diamond-held portion of the collateral. For a
+        // topped-up FallbackPending loan, `loan.collateralAmount` includes the
+        // AddCollateral top-up which sits in the borrower's vault (liened), NOT
+        // in Diamond custody; swapping the whole `collateralAmount` from the
+        // Diamond would draw on same-token custody belonging to OTHER fallback
+        // loans. The snapshot `lenderPrincipalDue` / `treasuryPrincipalDue`
+        // that `_distributeRetryProceeds` distributes against already describe
+        // only the Diamond (snapshot) portion, and the vault top-up stays
+        // liened — owed to the borrower — through the in-kind path. For a loan
+        // with no top-up the lien amount is 0, so this equals
+        // `loan.collateralAmount` (unchanged behaviour).
+        uint256 diamondPortion = LibVaipakam.hasActiveFallbackTopUp(loanId)
+            ? loan.collateralAmount - LibVaipakam.storageSlot().loanCollateralLien[loanId].amount
+            : loan.collateralAmount;
         uint256 expected = _expectedSwapOutput(
             loan.collateralAsset,
             loan.principalAsset,
-            loan.collateralAmount
+            diamondPortion
         );
         uint256 minOut = (expected *
             (LibVaipakam.BASIS_POINTS -
@@ -857,7 +867,7 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             loanId,
             loan.collateralAsset,
             loan.principalAsset,
-            loan.collateralAmount,
+            diamondPortion,
             minOut,
             address(this),
             retryCalls

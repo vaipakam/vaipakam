@@ -452,15 +452,11 @@ contract MetricsFacet {
                 cst != LibVaipakam.LoanStatus.FallbackPending
             ) continue;
 
-            // #577 / #585 — skip a candidate that is a FallbackPending loan
-            // still carrying a vault-held AddCollateral top-up. It is
-            // ineligible for internal match (its collateral is split between
-            // the vault and Diamond custody, which settlement would
-            // mis-account), so it must be filtered WHILE scanning — not only
-            // after a single candidate is picked — otherwise a topped-up first
-            // candidate would mask a later eligible one and block an otherwise
-            // safe match. Cheap storage read, so do it before the oracle gate.
-            if (LibVaipakam.hasActiveFallbackTopUp(cid)) continue;
+            // #591 — topped-up FallbackPending candidates are no longer
+            // filtered out. Internal-match settlement now sizes a topped-up
+            // leg's contribution against its Diamond portion only and returns
+            // the vault top-up to the borrower side, so such candidates are
+            // eligible.
 
             // Oracle gate — internal match settles at oracle price, so
             // both of the candidate's assets need a fresh reading.
