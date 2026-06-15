@@ -4,6 +4,11 @@ import { useTokenMeta } from '../../lib/tokenMeta';
 import { TokenAmount } from '../app/TokenAmount';
 import { AddressDisplay } from '../app/AddressDisplay';
 import { type Encumbrance } from '../../types/encumbrance';
+import { AssetType } from '../../types/loan';
+
+/** Canonical EVM zero address — a `getLoanCollateralLien` default
+ *  (never-encumbered) record carries `user == address(0)`. */
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 interface Props {
   /** The loan's collateral lien, read from
@@ -27,20 +32,28 @@ interface Props {
  * is provably encumbered for the life of the loan. Mirrors the existing
  * loan-detail `.card` markup (title + `.data-row` pairs).
  *
- * Renders NOTHING when there is no live lien — either the record is
- * missing, or it is fully lifted (`amount == 0 && released`). A zero-amount
- * but un-released record (shouldn't normally happen) still renders so the
- * state is visible rather than silently hidden.
+ * Renders NOTHING when there is no live lien. `getLoanCollateralLien`
+ * returns a DEFAULT zero `Encumbrance` (`user == address(0)`, `amount == 0`)
+ * for loans that never had a collateral lien (e.g. NFT-rental loans), so we
+ * treat ANY non-positive-amount or zero-`user` record as "no lien" rather
+ * than rendering a bogus card. Only a positive-amount lien with a real
+ * vault owner renders.
  */
 export function CollateralLienCard({ lien, blockExplorer, role }: Props) {
   const { t } = useTranslation();
   // Hook order must be stable — resolve token meta before any early return.
   const meta = useTokenMeta(lien?.asset ?? null);
 
-  // No lien to show: missing record, or fully lifted.
+  // No lien to show: missing record, zero amount (includes the default
+  // never-encumbered record), or a default record whose `user` is the
+  // zero address. Any of these means there's nothing real to surface.
   if (!lien) return null;
-  if (lien.amount === 0n && lien.released) return null;
+  if (lien.amount === 0n) return null;
+  if (!lien.user || lien.user.toLowerCase() === ZERO_ADDRESS) return null;
 
+  // ERC-721 / ERC-1155 lien amounts are token COUNTS, not 18-dec wei.
+  const isNft =
+    lien.assetType === AssetType.ERC721 || lien.assetType === AssetType.ERC1155;
   const isActive = !lien.released && lien.amount > 0n;
   const symbol = meta?.symbol ?? '';
 
@@ -60,7 +73,26 @@ export function CollateralLienCard({ lien, blockExplorer, role }: Props) {
       <div className="data-row">
         <span className="data-label">{t('loanDetails.lien.amount')}</span>
         <span className="data-value mono">
-          <TokenAmount amount={lien.amount} address={lien.asset} />
+          {isNft ? (
+            // ERC-721 (count 1) / ERC-1155 (quantity) — render the raw
+            // count, never via <TokenAmount> (which applies 18 decimals
+            // and would show `0.000…001` for a 1-NFT lien).
+            <>
+              {lien.amount.toString()}{' '}
+              {t('loanDetails.lien.tokenCountSuffix', {
+                count: Number(lien.amount),
+              })}
+              {/* Surface the tokenId for the single-NFT (ERC-721) case
+                  so the lien names the exact pledged NFT. */}
+              {lien.assetType === AssetType.ERC721 && (
+                <span style={{ color: 'var(--text-tertiary)' }}>
+                  {' '}#{lien.tokenId.toString()}
+                </span>
+              )}
+            </>
+          ) : (
+            <TokenAmount amount={lien.amount} address={lien.asset} />
+          )}
         </span>
       </div>
 

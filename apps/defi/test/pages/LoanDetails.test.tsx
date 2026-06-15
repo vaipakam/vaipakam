@@ -241,6 +241,37 @@ describe('LoanDetails', () => {
     expect(screen.queryByText(/Collateral backing this loan/i)).not.toBeInTheDocument();
   });
 
+  // Finding 4 — the lien card must refresh after a mutation that changes
+  // the on-chain lien. `addCollateral` increments the lien, so a successful
+  // add must re-pull `getLoanCollateralLien` (via the hook's `reload`).
+  it('refreshes the collateral lien after a successful add-collateral', async () => {
+    walletMock.address = '0xME';
+    localStorage.setItem('vaipakam.uiMode', 'advanced');
+    diamondMock.getLoanDetails.mockResolvedValue(mkLoan({ borrower: '0xME' }));
+    diamondMock.ownerOf.mockImplementation(async (t: bigint) => (t === 20n ? '0xME' : '0xX'));
+    diamondMock.addCollateral.mockResolvedValue({
+      hash: '0xTX',
+      wait: vi.fn().mockResolvedValue(undefined),
+    });
+    renderLoan();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Repay in Full/i })).toBeInTheDocument(),
+    );
+    // Initial mount read of the lien (the hook's first load).
+    await waitFor(() => expect(diamondMock.getLoanCollateralLien).toHaveBeenCalled());
+    const callsBefore = diamondMock.getLoanCollateralLien.mock.calls.length;
+    await userEvent.type(screen.getByPlaceholderText(/Amount to add/i), '5');
+    await userEvent.click(screen.getByRole('button', { name: /^Add Collateral$/i }));
+    await waitFor(() => expect(diamondMock.addCollateral).toHaveBeenCalled());
+    // The success path must re-read the lien (reloadLien) on top of the
+    // mount read — the card can't go stale after the increment.
+    await waitFor(() =>
+      expect(diamondMock.getLoanCollateralLien.mock.calls.length).toBeGreaterThan(
+        callsBefore,
+      ),
+    );
+  });
+
   it('does not show collateral-lien card to a non-party even with an active lien', async () => {
     walletMock.address = '0xSOMEONE';
     diamondMock.getLoanDetails.mockResolvedValue(mkLoan());

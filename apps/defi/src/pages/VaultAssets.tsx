@@ -380,15 +380,18 @@ export default function VaultAssets() {
               args: [userAddr, tk.address as Address],
             }) as Promise<bigint>,
             // #564 D.2 — lien-locked portion of this (user, token) balance.
-            // ERC-20 vault balances are keyed at tokenId 0. Falls back to
-            // 0n (nothing locked) on revert so a missing view never hides
-            // the otherwise-correct total.
+            // ERC-20 vault balances are keyed at tokenId 0. On revert we
+            // resolve `null` (UNKNOWN) — never `0n`. Coercing a failed read
+            // to `0n` would fail OPEN for the exact gate this surfaces:
+            // locked collateral would render as fully withdrawable. `null`
+            // instead drives an explicit "encumbrance unavailable" state so
+            // the row can never look more free than it actually is.
             (publicClient.readContract({
               address: diamondAddress,
               abi: METRICS_ENCUMBERED_ABI,
               functionName: 'getEncumbered',
               args: [userAddr, tk.address as Address, 0n],
-            }) as Promise<bigint>).catch(() => 0n),
+            }) as Promise<bigint>).catch(() => null),
             // Pull decimals so the zero-vs-dust filter can pick the
             // right wei threshold per token. Falls back to 18 (the
             // ERC-20 default) on revert / non-standard tokens — same
@@ -405,7 +408,16 @@ export default function VaultAssets() {
           // freeBalance = max(0, display - encumbered). Floor at zero so a
           // lien larger than the (already min'd) display total — possible
           // mid-flow when tracked lags balanceOf — never renders negative.
-          const free = display > encumbered ? display - encumbered : 0n;
+          // When `encumbered` is null (the read REVERTED), we DON'T compute
+          // a free balance: a falsely-free figure would understate the lock.
+          // `freeBalance: null` flags the unknown state so the row renders an
+          // "encumbrance unavailable" note instead of "fully free".
+          const free =
+            encumbered === null
+              ? null
+              : display > encumbered
+                ? display - encumbered
+                : 0n;
           return {
             address: tk.address,
             hint: tk.hint,
@@ -423,8 +435,9 @@ export default function VaultAssets() {
             address: tk.address,
             hint: tk.hint,
             balance: 0n,
-            encumbered: 0n,
-            freeBalance: 0n,
+            // Whole-token read failed — encumbrance is unknown, not zero.
+            encumbered: null,
+            freeBalance: null,
             decimals: 18,
           };
         }
@@ -829,6 +842,69 @@ export default function VaultAssets() {
                   <td style={{ textAlign: 'right', fontFamily: 'monospace' }}>
                     {row.balance === null ? (
                       <span style={{ color: 'var(--text-secondary)' }}>…</span>
+                    ) : row.encumbered === null && row.balance > 0n ? (
+                      /* #564 D.2 — encumbrance read REVERTED for a
+                         non-zero balance. We fail CLOSED: rather than
+                         coercing the lock to zero and rendering the row
+                         as fully withdrawable, we show the Total and
+                         flag Locked / Free as unknown ("—") plus an
+                         "encumbrance unavailable" note. A reverting
+                         `getEncumbered` must never make the row look
+                         more free than it is. */
+                      <div
+                        style={{
+                          display: 'inline-flex',
+                          flexDirection: 'column',
+                          gap: 2,
+                          alignItems: 'flex-end',
+                        }}
+                      >
+                        <span>
+                          <span
+                            style={{
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.72rem',
+                              marginRight: 6,
+                            }}
+                          >
+                            {t('vaultAssets.breakdownTotal')}
+                          </span>
+                          <TokenAmount amount={row.balance} address={row.address} />
+                        </span>
+                        <span style={{ color: 'var(--text-tertiary)' }}>
+                          <span
+                            style={{
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.72rem',
+                              marginRight: 6,
+                            }}
+                          >
+                            {t('vaultAssets.breakdownLocked')}
+                          </span>
+                          —
+                        </span>
+                        <span style={{ color: 'var(--text-tertiary)' }}>
+                          <span
+                            style={{
+                              color: 'var(--text-secondary)',
+                              fontSize: '0.72rem',
+                              marginRight: 6,
+                            }}
+                          >
+                            {t('vaultAssets.breakdownFree')}
+                          </span>
+                          —
+                        </span>
+                        <span
+                          style={{
+                            color: 'var(--accent-red, var(--text-tertiary))',
+                            fontSize: '0.68rem',
+                            fontFamily: 'inherit',
+                          }}
+                        >
+                          {t('vaultAssets.encumbranceUnavailable')}
+                        </span>
+                      </div>
                     ) : row.encumbered && row.encumbered > 0n ? (
                       /* #564 D.2 — Total / Locked / Free breakdown. Only
                          rendered when some of the balance is lien-locked;
@@ -893,7 +969,7 @@ export default function VaultAssets() {
                             for; this page has no per-row withdraw control
                             (withdrawals run through the staking flow), so
                             the gate surfaces as a read-only status. */}
-                        {(!row.freeBalance || row.freeBalance <= 0n) && (
+                        {row.freeBalance !== null && row.freeBalance <= 0n && (
                           <span
                             style={{
                               color: 'var(--text-tertiary)',

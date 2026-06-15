@@ -897,7 +897,9 @@
       "statusActive": "Active",
       "statusReleased": "Released",
       "lockedIn": "Locked in vault",
-      "lenderNote": "Your collateral is provably locked in the borrower's vault for the life of this loan — verifiable directly on-chain.",
+      "tokenCountSuffix_one": "token",
+      "tokenCountSuffix_other": "tokens",
+      "lenderNote": "The borrower's collateral backing this loan is locked in their vault for the life of the loan — provable directly on-chain.",
       "verifyOnChain": "View on explorer",
       "borrowerNote": "This collateral is locked until you repay, refinance, or default. Direct withdrawals of the locked amount revert until the loan closes."
     },
@@ -1844,6 +1846,7 @@
     "breakdownLocked": "Locked",
     "breakdownFree": "Free",
     "fullyLocked": "Fully locked — backing open loans / offers",
+    "encumbranceUnavailable": "Encumbrance unavailable — withdrawable amount unknown",
     "refresh": "Refresh",
     "refreshing": "Refreshing… ",
     "synced": "Synced — ",

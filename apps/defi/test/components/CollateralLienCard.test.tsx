@@ -101,4 +101,74 @@ describe('CollateralLienCard', () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  // Finding 2 — `getLoanCollateralLien` returns a DEFAULT zero record
+  // (user == address(0), amount == 0) for loans that never had a collateral
+  // lien (e.g. NFT-rental loans). That bogus record must render NOTHING,
+  // even though it's un-released.
+  it('renders nothing for the default zero-filled never-encumbered record', () => {
+    const { container } = render(
+      <CollateralLienCard
+        lien={mkLien({
+          user: '0x0000000000000000000000000000000000000000',
+          amount: 0n,
+          released: false,
+        })}
+        blockExplorer={EXPLORER}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  // Also: a positive-amount record whose `user` is somehow the zero address
+  // is still a non-live default and must not render a card.
+  it('renders nothing when the lien user is the zero address', () => {
+    const { container } = render(
+      <CollateralLienCard
+        lien={mkLien({
+          user: '0x0000000000000000000000000000000000000000',
+          amount: 5n,
+          released: false,
+        })}
+        blockExplorer={EXPLORER}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  // Finding 3 — ERC-721 / ERC-1155 lien amounts are token COUNTS, not 18-dec
+  // wei, and must render as the raw count, never via <TokenAmount> (which
+  // would apply 18 decimals and show `0.000…001`).
+  it('renders an ERC-721 lien as a raw count with the tokenId, not a decimal', () => {
+    render(
+      <CollateralLienCard
+        lien={mkLien({ assetType: 1, amount: 1n, tokenId: 42n })}
+        blockExplorer={EXPLORER}
+        role="lender"
+      />,
+    );
+    // Raw "1" count + the pluralization key (mock returns the key) — NOT the
+    // <TokenAmount> mock, which would print the raw bigint "1" for a count
+    // but the assertion below pins the count + tokenId presentation.
+    expect(
+      screen.getByText(/1\s+loanDetails\.lien\.tokenCountSuffix/),
+    ).toBeInTheDocument();
+    // The exact pledged NFT id is surfaced for the single-NFT case.
+    expect(screen.getByText(/#42/)).toBeInTheDocument();
+  });
+
+  it('renders an ERC-1155 lien quantity as a raw count', () => {
+    render(
+      <CollateralLienCard
+        lien={mkLien({ assetType: 2, amount: 7n, tokenId: 9n })}
+        blockExplorer={EXPLORER}
+        role="borrower"
+      />,
+    );
+    expect(
+      screen.getByText(/7\s+loanDetails\.lien\.tokenCountSuffix/),
+    ).toBeInTheDocument();
+    // ERC-1155 does NOT append the single-NFT "#id" suffix (quantity-based).
+    expect(screen.queryByText(/#9/)).not.toBeInTheDocument();
+  });
 });

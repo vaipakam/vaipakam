@@ -492,12 +492,17 @@ export default function OfferDetails() {
                 </span>
               </div>
 
-              {/* #564 D.4 — Locked principal. Shown only to the offer's
-                  creator (the lender) once the offer has been accepted and
-                  a live principal lien exists. An open or fully-released
+              {/* #564 D.4 — Locked principal. The offer-principal lien is
+                  created at offer CREATION and stays live while the offer is
+                  open / partially filled; a DIRECT accept RELEASES it
+                  (`released == true`). So the row must surface whenever the
+                  creator views an offer whose principal is still locked
+                  (un-released, positive amount) — NOT gated on
+                  `status === 'accepted'`, which hid the row exactly when the
+                  principal IS locked. Shown only to the creator (the lender).
+                  An open offer with a live lock shows it; a fully-released
                   offer renders nothing here. */}
               {isCreator &&
-                status === 'accepted' &&
                 principalLien &&
                 principalLien.amount > 0n &&
                 !principalLien.released && (
