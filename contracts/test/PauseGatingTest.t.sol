@@ -15,6 +15,7 @@ import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
@@ -99,7 +100,7 @@ contract PauseGatingTest is SetupTest {
 
     function test_pause_autoDeductDaily() public {
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        RepayFacet(address(diamond)).autoDeductDaily(0);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(0);
     }
 
     // ── PrecloseFacet ───────────────────────────────────────────────────────

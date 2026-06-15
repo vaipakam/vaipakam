@@ -8,6 +8,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
@@ -749,6 +750,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             quantity: 0,
             claimed: false
         });
+        // #592 — reserve VPFI lender proceeds (deposited into the stored
+        // lender's vault, owed to the current holder) against the unstake path
+        // until the holder claims; ClaimFacet releases. No-op for non-VPFI.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, lenderProceeds
+            );
+        }
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
@@ -997,6 +1006,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             quantity: 0,
             claimed: false
         });
+        // #592 — reserve VPFI lender proceeds against the unstake path until
+        // the current holder claims; ClaimFacet releases. No-op for non-VPFI.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, lenderProceeds
+            );
+        }
         if (borrowerSurplus > 0) {
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
@@ -1607,6 +1623,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             quantity: 0,
             claimed: false
         });
+        // #592 — reserve VPFI lender proceeds against the unstake path until
+        // the current holder claims; ClaimFacet releases. No-op for non-VPFI.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, lenderProceeds
+            );
+        }
 
         // #569 Codex #572 round-5 P2 — decrement the lien by exactly
         // `collateralSeized` (what leaves the vault for the liquidator).

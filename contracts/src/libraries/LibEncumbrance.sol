@@ -232,6 +232,18 @@ library LibEncumbrance {
     ) internal {
         if (amount == 0) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #592 — record the ASSET this loan's reservation is under so the
+        // release decrements the SAME aggregate, regardless of what asset the
+        // claim record ends up holding. A loan reserves lender-proceeds at its
+        // single terminal, so the asset is written once; a second reserve under
+        // a DIFFERENT asset would make the single per-loan amount span two
+        // aggregates that one release can't unwind — that's a state-corruption
+        // invariant break, so assert it cannot happen (Panic, no ABI surface).
+        if (s.lenderProceedsEncumbered[loanId] == 0) {
+            s.lenderProceedsEncumberedAsset[loanId] = asset;
+        } else {
+            assert(s.lenderProceedsEncumberedAsset[loanId] == asset);
+        }
         s.encumbered[lender][asset][0] += amount;
         s.lenderProceedsEncumbered[loanId] += amount;
     }
@@ -242,19 +254,28 @@ library LibEncumbrance {
     ///         proceeds withdraw, so the withdraw guard sees them as free.
     ///         Idempotent + keyed off the per-loan record → a no-op for
     ///         every loan that never reserved (non-VPFI, or any
-    ///         lender-proceeds path not yet wired to reserve). `asset` is
-    ///         the loan's immutable `principalAsset` (== the reserved
-    ///         asset, tokenId 0).
+    ///         lender-proceeds path not yet wired to reserve). #592 — releases
+    ///         under the asset RECORDED at reserve time
+    ///         (`s.lenderProceedsEncumberedAsset[loanId]`), not a passed-in
+    ///         asset, so the decrement always matches the reserve regardless of
+    ///         the claim record's asset (tokenId 0).
     function releaseLenderProceeds(
         uint256 loanId,
-        address lender,
-        address asset
+        address lender
     ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 reserved = s.lenderProceedsEncumbered[loanId];
         if (reserved == 0) return;
+        // #592 — release under the asset the reservation was RECORDED under,
+        // NOT the loan's principal asset nor the claim record's asset (which
+        // can differ — e.g. an in-kind default reserved the collateral). This
+        // guarantees the decrement hits the same aggregate the reserve ticked,
+        // so it can never underflow an unrelated bucket while leaving the real
+        // reservation stuck.
+        address asset = s.lenderProceedsEncumberedAsset[loanId];
         _decrementAggregate(lender, asset, 0, reserved);
         s.lenderProceedsEncumbered[loanId] = 0;
+        s.lenderProceedsEncumberedAsset[loanId] = address(0);
     }
 
     /// @notice Re-create a collateral lien from the loan row's

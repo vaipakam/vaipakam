@@ -226,6 +226,17 @@ library LibSwapToRepayIntentSettlement {
             quantity: 0,
             claimed: false
         });
+        // #592 — intent-based swap-to-repay mirrors the v1 terminal waterfall:
+        // `plan.lenderDue` lands in the (possibly transferred-away) stored
+        // lender's vault and is owed to the current holder via the claim above.
+        // Reserve VPFI proceeds against the unstake path until the holder
+        // claims (released path-agnostically in ClaimFacet). Terminal close →
+        // `loan.lender` fixed. No-op for non-VPFI principal.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, plan.lenderDue
+            );
+        }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: loan.collateralAmount - consumed,

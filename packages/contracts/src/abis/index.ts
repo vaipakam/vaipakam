@@ -9,6 +9,9 @@ import OfferMutateFacetABI from './OfferMutateFacet.json';
 import OfferParallelSaleFacetABI from './OfferParallelSaleFacet.json';
 import LoanFacetABI from './LoanFacet.json';
 import RepayFacetABI from './RepayFacet.json';
+// Issue #66 — periodic-interest + NFT-rental daily-deduction cluster
+// split out of RepayFacet to stay under the EIP-170 runtime-size limit.
+import RepayPeriodicFacetABI from './RepayPeriodicFacet.json';
 // T-090 — Borrower-initiated swap-to-repay surface. Swaps collateral
 // asset → principal asset and applies the proceeds to a full or partial
 // loan repay in one transaction.
@@ -91,6 +94,7 @@ export {
   OfferParallelSaleFacetABI,
   LoanFacetABI,
   RepayFacetABI,
+  RepayPeriodicFacetABI,
   SwapToRepayFacetABI,
   SwapToRepayIntentFacetABI,
   IntentDispatchFacetABI,
@@ -155,6 +159,7 @@ export const DIAMOND_ABI = [
   ...OfferParallelSaleFacetABI,
   ...LoanFacetABI,
   ...RepayFacetABI,
+  ...RepayPeriodicFacetABI,
   ...SwapToRepayFacetABI,
   ...SwapToRepayIntentFacetABI,
   ...IntentDispatchFacetABI,

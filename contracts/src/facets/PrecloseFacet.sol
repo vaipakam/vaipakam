@@ -240,6 +240,14 @@ contract PrecloseFacet is
                 quantity: 0,
                 claimed: false
             });
+            // #592 — reserve VPFI lender proceeds against the unstake path
+            // until the current holder claims (released in ClaimFacet). No-op
+            // for non-VPFI principal.
+            if (loan.principalAsset == s.vpfiToken) {
+                LibEncumbrance.encumberLenderProceeds(
+                    loanId, loan.lender, loan.principalAsset, plan.lenderDue
+                );
+            }
 
             // Record borrower's claimable (collateral stays in borrower's vault)
             s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -562,6 +570,15 @@ contract PrecloseFacet is
                 VaultDepositFailed.selector
             );
             s.heldForLender[loanId] += lenderShare;
+            // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
+            // reserved here. Unlike the terminal paths, these land on an
+            // ACTIVE loan whose `loan.lender` can change before claim
+            // (obligation-transfer keeps the lender, but a subsequent lender
+            // sale, or the offset path, rewrites it), so the claim-time release
+            // — keyed on the then-current `loan.lender` — would target a
+            // different account than the reserved one. Reserving them safely
+            // needs a re-key across every lender-change path plus a decision on
+            // exiting-lender ownership; tracked as a follow-up (#597).
         }
 
         // ── 3. Release alice's collateral ───────────────────────────────────
@@ -1026,6 +1043,11 @@ contract PrecloseFacet is
             VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
+        // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
+        // reserved here — see the matching note in `transferObligationViaOffer`.
+        // The offset path rewrites `loan.lender` (old → new) within this same
+        // transaction, so the reserved (old) account and the claim-time
+        // (new) account diverge immediately. Deferred to a follow-up (#597).
     }
 
     /**

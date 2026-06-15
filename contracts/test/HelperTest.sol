@@ -24,6 +24,7 @@ import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
@@ -566,15 +567,25 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7); // Adjust count
+        selectors = new bytes4[](3); // Adjust count
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
-        selectors[2] = RepayFacet.autoDeductDaily.selector;
-        selectors[3] = RepayFacet.calculateRepaymentAmount.selector;
-        // T-034 PR2 — Periodic Interest Payment views + entry point.
-        selectors[4] = RepayFacet.previewPeriodicSettle.selector;
-        selectors[5] = RepayFacet.nextPeriodCheckpoint.selector;
-        selectors[6] = RepayFacet.settlePeriodicInterest.selector;
+        selectors[2] = RepayFacet.calculateRepaymentAmount.selector;
+    }
+
+    /// Issue #66 — periodic-interest + NFT-rental daily-deduction
+    /// selectors, split out of RepayFacet into RepayPeriodicFacet to keep
+    /// both facets under the EIP-170 runtime-bytecode limit.
+    function getRepayPeriodicFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](4);
+        selectors[0] = RepayPeriodicFacet.autoDeductDaily.selector;
+        selectors[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
+        selectors[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
+        selectors[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.

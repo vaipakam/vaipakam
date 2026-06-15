@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -370,6 +371,15 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             quantity: 0,
             claimed: false
         });
+        // #592 — reserve VPFI lender proceeds against the unstake path until
+        // the current holder claims (released path-agnostically in ClaimFacet).
+        // Terminal close: `loan.lender` is fixed between this reserve and the
+        // claim. No-op for non-VPFI principal.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, plan.lenderDue
+            );
+        }
 
         // Codex round-1 P1 #2 — record the residual pledged collateral
         // (never withdrawn from the borrower vault) + the partial-
