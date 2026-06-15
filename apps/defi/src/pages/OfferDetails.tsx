@@ -28,6 +28,7 @@ import { ErrorAlert } from '../components/app/ErrorAlert';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
 import { useLogIndex } from '../hooks/useLogIndex';
+import { type Encumbrance } from '../types/encumbrance';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
@@ -117,6 +118,10 @@ export default function OfferDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refetchTick, setRefetchTick] = useState(0);
+  // #564 D.4 — principal lien backing this offer once it has been
+  // accepted/filled. Read from `MetricsFacet.getOfferPrincipalLien`;
+  // surfaced as a "Locked principal" row to the offer's creator (lender).
+  const [principalLien, setPrincipalLien] = useState<Encumbrance | null>(null);
   // Tx hash of the OfferCreated event. Resolved lazily via the
   // indexer's activity feed (`/activity?offerId=N&kind=OfferCreated`)
   // — the worker already captured the tx hash when it indexed the
@@ -206,6 +211,44 @@ export default function OfferDetails() {
       cancelled = true;
     };
   }, [chainId, offerIdBig, diamondRead, refetchTick, t]);
+
+  // #564 D.4 — read the offer's principal lien. Only meaningful once the
+  // offer is accepted/filled (an open offer's principal is escrowed but
+  // the lien record may be zero/released until a loan binds it). Read on
+  // its own effect so the main offer fetch stays untouched; failures fall
+  // soft to `null` (the row simply doesn't render). #564 D.3 (NFT
+  // metadata) is contract/worker-side and out of frontend scope here.
+  useEffect(() => {
+    if (offerIdBig === null) {
+      setPrincipalLien(null);
+      return;
+    }
+    let cancelled = false;
+    // Clear any prior offer's lien at the START of each new (non-null)
+    // offerId load so a stale record never lingers in the card while the
+    // fresh read is in flight. React Router reuses this component across
+    // offer ids, so without this the previous offer's principal proof
+    // would show against the new offer until the new read resolved.
+    setPrincipalLien(null);
+    (async () => {
+      try {
+        const lien = (await diamondRead.getOfferPrincipalLien(
+          offerIdBig,
+        )) as Encumbrance;
+        // Guard against a stale in-flight response writing after the
+        // offerId already changed (an earlier read can resolve AFTER the
+        // newer one rendered and clobber the correct record).
+        if (!cancelled) setPrincipalLien(lien);
+      } catch {
+        // View missing on an older deploy / transient RPC blip — render
+        // nothing rather than blocking the page.
+        if (!cancelled) setPrincipalLien(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [offerIdBig, diamondRead, refetchTick]);
 
   // T-086 Round-8 §19.7e + Codex round-15 P2 #2 — corroborate
   // consumed-by-sale terminal from `useLogIndex` events. Runs
@@ -457,6 +500,35 @@ export default function OfferDetails() {
                   />
                 </span>
               </div>
+
+              {/* #564 D.4 — Locked principal. The offer-principal lien is
+                  created at offer CREATION and stays live while the offer is
+                  open / partially filled; a DIRECT accept RELEASES it
+                  (`released == true`). So the row must surface whenever the
+                  creator views an offer whose principal is still locked
+                  (un-released, positive amount) — NOT gated on
+                  `status === 'accepted'`, which hid the row exactly when the
+                  principal IS locked. Shown only to the creator (the lender).
+                  An open offer with a live lock shows it; a fully-released
+                  offer renders nothing here. */}
+              {isCreator &&
+                principalLien &&
+                principalLien.amount > 0n &&
+                !principalLien.released && (
+                  <div className="data-row">
+                    <span className="data-label">
+                      {t('offerDetails.lockedPrincipal', {
+                        defaultValue: 'Locked principal',
+                      })}
+                    </span>
+                    <span className="data-value mono">
+                      <TokenAmount
+                        amount={principalLien.amount}
+                        address={principalLien.asset}
+                      />
+                    </span>
+                  </div>
+                )}
 
               <div className="data-row">
                 <span className="data-label">

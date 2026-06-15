@@ -21,10 +21,24 @@ const diamondMock: any = {
   // needs topping up. Default 0n so the allowance path is a no-op in tests
   // that don't care about it.
   calculateRepaymentAmount: vi.fn().mockResolvedValue(0n),
+  // #564 D.1 — collateral-lien read consumed by useLoanCollateralLien.
+  // Default: no live lien (released, zero amount) so the card stays hidden
+  // in tests that don't opt into it.
+  getLoanCollateralLien: vi.fn().mockResolvedValue({
+    user: '0xBORROWER',
+    asset: '0xCOL',
+    tokenId: 0n,
+    amount: 0n,
+    assetType: 0,
+    released: true,
+  }),
 };
 vi.mock('../../src/contracts/useDiamond', () => ({
   useDiamondContract: () => diamondMock,
   useDiamondRead: () => diamondMock,
+  // useLoanCollateralLien reads through useReadyDiamond — return the same
+  // mock so the hook resolves against `getLoanCollateralLien` above.
+  useReadyDiamond: () => diamondMock,
 }));
 
 const walletMock = { address: null as string | null };
@@ -72,8 +86,18 @@ describe('LoanDetails', () => {
     walletMock.address = null;
     Object.values(diamondMock).forEach((m: any) => m.mockReset && m.mockReset());
     // mockReset wipes resolved values set at mock creation — restore the
-    // default needed by every test.
+    // defaults needed by every test.
     diamondMock.calculateRepaymentAmount.mockResolvedValue(0n);
+    // #564 D.1 — default to "no live lien" so the card is hidden unless a
+    // test opts into an active lien explicitly.
+    diamondMock.getLoanCollateralLien.mockResolvedValue({
+      user: '0xBORROWER',
+      asset: '0xCOL',
+      tokenId: 0n,
+      amount: 0n,
+      assetType: 0,
+      released: true,
+    });
     localStorage.removeItem('vaipakam.uiMode');
   });
 
@@ -184,5 +208,84 @@ describe('LoanDetails', () => {
     renderLoan();
     await waitFor(() => expect(screen.getByRole('heading', { name: /Loan #1/i })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: /Repay in Full/i })).not.toBeInTheDocument();
+  });
+
+  // #564 D.1 — collateral-lien card.
+  it('shows collateral-lien card with active lien for a party', async () => {
+    walletMock.address = '0xME';
+    diamondMock.getLoanDetails.mockResolvedValue(mkLoan({ borrower: '0xME' }));
+    diamondMock.ownerOf.mockImplementation(async (t: bigint) => (t === 20n ? '0xME' : '0xX'));
+    diamondMock.getLoanCollateralLien.mockResolvedValue({
+      user: '0xBORROWER',
+      asset: '0xCOL',
+      tokenId: 0n,
+      amount: 2n * 10n ** 18n,
+      assetType: 0,
+      released: false,
+    });
+    renderLoan();
+    await waitFor(() =>
+      expect(screen.getByText(/Collateral backing this loan/i)).toBeInTheDocument(),
+    );
+    // Active lien renders the "Active" status label.
+    expect(screen.getByText(/^Active$/)).toBeInTheDocument();
+  });
+
+  it('hides collateral-lien card when there is no live lien', async () => {
+    walletMock.address = '0xME';
+    diamondMock.getLoanDetails.mockResolvedValue(mkLoan({ borrower: '0xME' }));
+    diamondMock.ownerOf.mockImplementation(async (t: bigint) => (t === 20n ? '0xME' : '0xX'));
+    // Default mock already resolves a released, zero-amount lien.
+    renderLoan();
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Loan #1/i })).toBeInTheDocument());
+    expect(screen.queryByText(/Collateral backing this loan/i)).not.toBeInTheDocument();
+  });
+
+  // Finding 4 — the lien card must refresh after a mutation that changes
+  // the on-chain lien. `addCollateral` increments the lien, so a successful
+  // add must re-pull `getLoanCollateralLien` (via the hook's `reload`).
+  it('refreshes the collateral lien after a successful add-collateral', async () => {
+    walletMock.address = '0xME';
+    localStorage.setItem('vaipakam.uiMode', 'advanced');
+    diamondMock.getLoanDetails.mockResolvedValue(mkLoan({ borrower: '0xME' }));
+    diamondMock.ownerOf.mockImplementation(async (t: bigint) => (t === 20n ? '0xME' : '0xX'));
+    diamondMock.addCollateral.mockResolvedValue({
+      hash: '0xTX',
+      wait: vi.fn().mockResolvedValue(undefined),
+    });
+    renderLoan();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Repay in Full/i })).toBeInTheDocument(),
+    );
+    // Initial mount read of the lien (the hook's first load).
+    await waitFor(() => expect(diamondMock.getLoanCollateralLien).toHaveBeenCalled());
+    const callsBefore = diamondMock.getLoanCollateralLien.mock.calls.length;
+    await userEvent.type(screen.getByPlaceholderText(/Amount to add/i), '5');
+    await userEvent.click(screen.getByRole('button', { name: /^Add Collateral$/i }));
+    await waitFor(() => expect(diamondMock.addCollateral).toHaveBeenCalled());
+    // The success path must re-read the lien (reloadLien) on top of the
+    // mount read — the card can't go stale after the increment.
+    await waitFor(() =>
+      expect(diamondMock.getLoanCollateralLien.mock.calls.length).toBeGreaterThan(
+        callsBefore,
+      ),
+    );
+  });
+
+  it('does not show collateral-lien card to a non-party even with an active lien', async () => {
+    walletMock.address = '0xSOMEONE';
+    diamondMock.getLoanDetails.mockResolvedValue(mkLoan());
+    diamondMock.ownerOf.mockResolvedValue('0xNOBODY');
+    diamondMock.getLoanCollateralLien.mockResolvedValue({
+      user: '0xBORROWER',
+      asset: '0xCOL',
+      tokenId: 0n,
+      amount: 2n * 10n ** 18n,
+      assetType: 0,
+      released: false,
+    });
+    renderLoan();
+    await waitFor(() => expect(screen.getByRole('heading', { name: /Loan #1/i })).toBeInTheDocument());
+    expect(screen.queryByText(/Collateral backing this loan/i)).not.toBeInTheDocument();
   });
 });

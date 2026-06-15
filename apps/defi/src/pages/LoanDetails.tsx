@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { L as Link } from "../components/L";
 import { useTranslation } from "react-i18next";
@@ -7,6 +7,7 @@ import { useMode } from "../context/ModeContext";
 import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useLoan } from "../hooks/useLoan";
+import { useLoanCollateralLien } from "../hooks/useLoanCollateralLien";
 import { useKeeperStatus } from "../hooks/useKeeperStatus";
 import {
   LoanStatus,
@@ -48,6 +49,7 @@ import { LoanTimeline } from "../components/app/LoanTimeline";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
+import { CollateralLienCard } from "../components/loanDetails/CollateralLienCard";
 import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
@@ -81,6 +83,32 @@ export default function LoanDetails() {
     error,
     reload: loadLoan,
   } = useLoan(loanId);
+  // #564 D.1 — on-chain collateral lien backing this loan, surfaced in the
+  // CollateralLienCard below the Collateral & Risk card for both parties.
+  // `reloadLien` is re-pulled after any on-chain mutation that changes the
+  // lien (add-collateral increments it; repay / default / preclose /
+  // refinance / claim release it) so the card never goes stale.
+  const {
+    lien: collateralLien,
+    error: lienError,
+    loading: lienLoading,
+    reload: reloadLien,
+  } = useLoanCollateralLien(loanId);
+  // Convenience composite for the panel/hook success callbacks that take a
+  // single `onAfterSuccess`: refresh the loan state AND the lien card in
+  // one go after any mutation that may have changed the lien.
+  //
+  // Returns the combined promise (await both refreshes) so callers that
+  // `await onAfterSuccess()` — e.g. the swap-to-repay panels — genuinely
+  // block until the loan has flipped out of Active before re-enabling
+  // their submit button. Returning `undefined` here let the panel's await
+  // resolve immediately, leaving a window where a second swap could fire
+  // against a still-Active-looking loan (double-swap risk). Both
+  // `loadLoan` and `reloadLien` are async, so `Promise.all` awaits the
+  // on-chain loan refresh, not just the lien read.
+  const loadLoanAndLien = useCallback(async (): Promise<void> => {
+    await Promise.all([loadLoan(), reloadLien()]);
+  }, [loadLoan, reloadLien]);
   // Per README §3 lines 190–191 keeper authority follows the current
   // Phase 6: the old "whitelist-status" two-layer summary lived next to
   // the per-side keeper bools on the loan struct. Both are gone; the new
@@ -327,6 +355,8 @@ export default function LoanDetails() {
       setTxHash(tx.hash);
       await tx.wait();
       loadLoan();
+      // Repay releases the collateral lien — refresh the card.
+      reloadLien();
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
       // T-086 — when the borrower's repay races a buyer's
@@ -342,8 +372,11 @@ export default function LoanDetails() {
       setActionError(friendly ?? decodeContractError(err, "Repayment failed"));
       step.failure(err);
       // Refresh the page-level loan state so the banner + actions
-      // card switch to the post-Settled view.
+      // card switch to the post-Settled view. Also refresh the lien —
+      // a race-lost repay may have transitioned the loan terminal
+      // (e.g. prepay-sale settlement), releasing the lien.
       loadLoan();
+      reloadLien();
     } finally {
       setActionLoading(false);
     }
@@ -420,6 +453,8 @@ export default function LoanDetails() {
       setTxHash(tx.hash);
       await tx.wait();
       loadLoan();
+      // Add-collateral increments the on-chain lien — refresh the card.
+      reloadLien();
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
       setActionError(decodeContractError(err, "Add collateral failed"));
@@ -458,6 +493,8 @@ export default function LoanDetails() {
       setTxHash(tx.hash);
       await tx.wait();
       loadLoan();
+      // Default releases / transfers the collateral — refresh the lien.
+      reloadLien();
       step.success({ note: `tx ${tx.hash}` });
     } catch (err) {
       setActionError(decodeContractError(err, "Trigger default failed"));
@@ -607,7 +644,12 @@ export default function LoanDetails() {
         address={address ? address.toLowerCase() : null}
         chainId={chainId}
         blockExplorer={activeBlockExplorer}
-        onClaimed={loadLoan}
+        onClaimed={() => {
+          // A claim is the terminal release of the collateral lien —
+          // refresh both the loan state and the lien card together.
+          loadLoan();
+          reloadLien();
+        }}
       />
 
       {/* T-086 step 13 — live prepay-listing state. Visible to everyone
@@ -930,6 +972,21 @@ export default function LoanDetails() {
           )}
         </div>
 
+        {/* #564 D.1 — collateral-lien card. Shown to either loan party;
+            renders nothing when there is no live lien. Passes the page's
+            existing `role` so lender/borrower see role-specific copy.
+            #564 D.3 (NFT metadata) is contract/worker-side, out of scope
+            here. */}
+        {(isLender || isBorrower) && (
+          <CollateralLienCard
+            lien={collateralLien}
+            blockExplorer={activeBlockExplorer}
+            role={role}
+            error={lienError}
+            loading={lienLoading}
+          />
+        )}
+
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             {t('loanDetails.parties')}
@@ -1143,7 +1200,7 @@ export default function LoanDetails() {
                 }
                 actionLoading={actionLoading}
                 onActionLoadingChange={setActionLoading}
-                onAfterSuccess={loadLoan}
+                onAfterSuccess={loadLoanAndLien}
               />
             )}
 
@@ -1192,7 +1249,7 @@ export default function LoanDetails() {
                 }
                 actionLoading={actionLoading}
                 onActionLoadingChange={setActionLoading}
-                onAfterSuccess={loadLoan}
+                onAfterSuccess={loadLoanAndLien}
               />
             )}
 
@@ -1252,6 +1309,10 @@ export default function LoanDetails() {
                   collateralAmount={loan.collateralAmount}
                   principalAsset={loan.principalAsset as Address}
                   diamondAddress={activeDiamondAddr as Address}
+                  // HF liquidation releases the lien + flips the loan to
+                  // Defaulted on-chain — refresh both so the card and the
+                  // status badge don't stay stale after success.
+                  onLiquidated={loadLoanAndLien}
                 />
               </div>
             )}
