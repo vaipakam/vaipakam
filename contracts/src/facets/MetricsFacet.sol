@@ -437,6 +437,14 @@ contract MetricsFacet {
             st != LibVaipakam.LoanStatus.FallbackPending
         ) return (false, 0);
 
+        // #591 (Codex #605 round-2 P2) — also filter the SUBJECT. A topped-up
+        // FallbackPending subject whose Diamond portion is exhausted has nothing
+        // to contribute, so the direct trigger reverts and auto-dispatch
+        // declines it. Without this guard the public view would still advertise
+        // a counterparty no entry point accepts. (Active/non-topped-up subjects
+        // have matchable == collateralAmount, unaffected.)
+        if (LibVaipakam.internalMatchableCollateral(loanId) == 0) return (false, 0);
+
         uint256[] storage candidates = s.assetPairActiveLoanIds[
             loan.collateralAsset
         ][loan.principalAsset];
@@ -452,15 +460,20 @@ contract MetricsFacet {
                 cst != LibVaipakam.LoanStatus.FallbackPending
             ) continue;
 
-            // #577 / #585 — skip a candidate that is a FallbackPending loan
-            // still carrying a vault-held AddCollateral top-up. It is
-            // ineligible for internal match (its collateral is split between
-            // the vault and Diamond custody, which settlement would
-            // mis-account), so it must be filtered WHILE scanning — not only
-            // after a single candidate is picked — otherwise a topped-up first
-            // candidate would mask a later eligible one and block an otherwise
-            // safe match. Cheap storage read, so do it before the oracle gate.
-            if (LibVaipakam.hasActiveFallbackTopUp(cid)) continue;
+            // #591 — topped-up FallbackPending candidates are no longer
+            // filtered out. Internal-match settlement now sizes a topped-up
+            // leg's contribution against its Diamond portion only and returns
+            // the vault top-up to the borrower side, so such candidates are
+            // eligible.
+            //
+            // #591 (Codex #605 P1) — EXCEPT a candidate whose Diamond portion
+            // is exhausted (topped-up FallbackPending whose snapshot a prior
+            // partial match consumed; only the vault top-up remains). It has
+            // nothing to contribute — matching it would drain THIS loan's
+            // collateral one-sidedly. Filter it WHILE scanning so it can't mask
+            // a later eligible candidate. Cheap storage read; do it before the
+            // oracle gate. (Active candidates have matchable == collateralAmount.)
+            if (LibVaipakam.internalMatchableCollateral(cid) == 0) continue;
 
             // Oracle gate — internal match settles at oracle price, so
             // both of the candidate's assets need a fresh reading.

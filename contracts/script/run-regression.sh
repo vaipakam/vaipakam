@@ -1,49 +1,41 @@
 #!/usr/bin/env bash
 #
-# run-regression.sh — local full-regression gate that COMPILES, where the naive
-# `forge test --no-match-path "test/invariants/*"` currently does not.
+# run-regression.sh — local full-regression gate, run in compile-bounded CHUNKS
+# so no single `solc` invocation forms the over-threshold compilation unit that
+# trips viaIR "Variable size is N too deep in the stack".
 #
-# WHY: this codebase sits near the viaIR whole-unit stack ceiling. The naive
-# command is NON-sparse — it compiles `src` + ALL `test` + ALL `script` in one
-# `solc` unit, and the standalone deploy scripts under `script/*.s.sol` push
-# that unit over the edge, failing with "Variable size is N too deep in the
-# stack" even though every test is correct (Issue #601; surfaced in #603/#596).
+# WHY CHUNKS (not one sparse pass): this codebase sits AT the viaIR whole-unit
+# stack ceiling. The bare `forge test --no-match-path "test/invariants/*"` is
+# non-sparse (compiles src+all-test+all-script) and fails outright. A single
+# sparse `--match-path 'test/*.t.sol'` pass (matched files + deps, no standalone
+# scripts) bought headroom for a while, but ordinary feature growth (#591)
+# re-crossed even that. So we split the suite into chunks small enough that
+# each `forge test --match-path` invocation stays under the ceiling. Foundry
+# caches `src` across invocations, so only the first chunk pays the full src
+# compile; the rest add just their own test files. See Issue #601 / #605.
 #
-# THE FIX (no batching needed): drive the run with `--match-path`, which makes
-# Foundry compile SPARSELY — only the matched files + their dependency closure.
-# `test/*.t.sol` recursively matches every test file under `test/` (globset's
-# `*` crosses `/`; see contracts/foundry.toml), so its dep closure is
-# `src` + all tests + only the scripts that tests actually import (e.g.
-# DeployDiamond.s.sol via DeployDiamondIntegrationTest). The standalone deploy
-# scripts that nothing imports are NOT compiled — and dropping that slice of IR
-# keeps the unit under the ceiling. `--no-match-path 'test/invariants/*'` then
-# drops the heavy invariant suites from the RUN (they stay matched/compiled but
-# don't execute), matching the project's end-of-step regression scope.
+# COVERAGE — CANNOT MISS A SUITE: the chunk set is DERIVED FROM `find`, so any
+# new `*.t.sol` is picked up automatically. An exhaustiveness guard cross-checks
+# every non-invariant test file against the chunks and ABORTS if one is
+# uncovered — so a new suite can never be silently skipped.
 #
-# CANNOT MISS A SUITE: the recursive `test/*.t.sol` glob matches every current
-# AND future `*.t.sol` anywhere under `test/`, so a newly-added suite is picked
-# up automatically — there is no chunk list, folder layout, or allowlist to keep
-# in sync. (The standalone scripts' compile-correctness is covered separately by
-# `forge build` / predeploy-check, not by this test regression.)
-#
-# Forces FOUNDRY_PROFILE=default so a stray `quick`/`cifast` in the caller's env
-# can't silently empty test discovery or narrow the suite and still report green.
+# Forces FOUNDRY_PROFILE=default so a stray quick/cifast in the caller's env
+# can't narrow the suite and still report green.
 #
 # USAGE:
 #   bash script/run-regression.sh              # full suite minus invariants
 #   bash script/run-regression.sh --invariants # ALSO run the invariant suites
-#   bash script/run-regression.sh -vvv         # extra args pass through to forge
+#   CHUNK_SIZE=20 bash script/run-regression.sh # smaller chunks if a chunk trips
 
 set -uo pipefail
 cd "$(dirname "$0")/.."   # -> contracts/
 
 export FOUNDRY_PROFILE=default
-# IO-priority boost only. The repo's documented `nice -n -10` (raised CPU
-# priority) is deliberately omitted: negative niceness requires privileges most
-# operators (and sandboxed runners) lack, and a failing `nice` would abort the
-# whole run. `ionice -c 2 -n 0` is best-effort and privilege-free. Operators who
-# can raise priority may prepend `nice -n -10` manually.
+# IO-priority boost only — `nice -n -10` (raised CPU priority) needs privileges
+# operators/sandboxes lack and a failing nice would abort the run.
 PREFIX=(ionice -c 2 -n 0)
+
+CHUNK_SIZE="${CHUNK_SIZE:-25}"
 
 RUN_INVARIANTS=0
 FORGE_ARGS=()
@@ -54,25 +46,66 @@ for a in "$@"; do
   esac
 done
 
-FAILED=0
+# Subdirectories that hold *.t.sol (excluding invariants, which run separately).
+# A new such subdir must be added here; the exhaustiveness guard fails loudly
+# if one appears that isn't covered.
+SUBDIRS=(scenarios deploy fork seaport token)
 
-echo "===== full regression (non-invariant, sparse compile) ====="
-if ! "${PREFIX[@]}" forge test --match-path 'test/*.t.sol' \
-       --no-match-path 'test/invariants/*' "${FORGE_ARGS[@]}"; then
+# ── Top-level suites, chunked ────────────────────────────────────────────────
+# `test/*.t.sol` recurses under globset (its `*` crosses `/`), so we CANNOT use
+# it to mean "top-level only". Instead enumerate the top-level files explicitly
+# (find -maxdepth 1) and pass each chunk as a brace glob of exact file stems —
+# no slashes inside the brace, so no recursion ambiguity.
+mapfile -t TOP < <(find test -maxdepth 1 -name '*.t.sol' -printf '%f\n' | sed 's/\.t\.sol$//' | sort)
+
+FAILED=0
+run() {  # run(label, glob...)
+  local label="$1"; shift
+  echo ""
+  echo "===== $label : forge test --match-path '$*' ====="
+  "${PREFIX[@]}" forge test --match-path "$*" "${FORGE_ARGS[@]}" || { echo "CHUNK FAILED: $label" >&2; FAILED=1; }
+}
+
+n=0; chunk=()
+flush() {
+  (( ${#chunk[@]} == 0 )) && return
+  local joined; joined=$(IFS=,; echo "${chunk[*]}")
+  run "top-level chunk #$1" "test/{$joined}.t.sol"
+  chunk=()
+}
+ci=0
+for stem in "${TOP[@]}"; do
+  chunk+=("$stem"); n=$((n+1))
+  if (( n % CHUNK_SIZE == 0 )); then ci=$((ci+1)); flush "$ci"; fi
+done
+ci=$((ci+1)); flush "$ci"
+
+# ── Subdirectory suites ──────────────────────────────────────────────────────
+sub_join=$(IFS=,; echo "${SUBDIRS[*]}")
+run "subdirs (${sub_join})" "test/{$sub_join}/*.t.sol"
+
+# ── Optional invariants pass ─────────────────────────────────────────────────
+if (( RUN_INVARIANTS )); then
+  run "invariants" "test/invariants/*.t.sol"
+fi
+
+# ── Exhaustiveness guard ─────────────────────────────────────────────────────
+# Every non-invariant test file must be either top-level OR under a covered
+# subdir. Anything else (a new subdir, a nested path) is uncovered → fail.
+shopt -s nullglob
+declare -A COVERED=()
+for f in test/*.t.sol; do COVERED["$f"]=1; done
+for d in "${SUBDIRS[@]}"; do for f in test/"$d"/*.t.sol; do COVERED["$f"]=1; done; done
+MISSED=()
+while IFS= read -r f; do [[ -n "${COVERED[$f]:-}" ]] || MISSED+=("$f"); done \
+  < <(find test -name '*.t.sol' ! -path 'test/invariants/*' | sort)
+if (( ${#MISSED[@]} > 0 )); then
+  echo "" >&2
+  echo "ERROR: ${#MISSED[@]} non-invariant test file(s) not covered by any chunk — add the dir to SUBDIRS:" >&2
+  printf '  %s\n' "${MISSED[@]}" >&2
   FAILED=1
 fi
 
-if (( RUN_INVARIANTS )); then
-  echo ""
-  echo "===== invariant suites ====="
-  if ! "${PREFIX[@]}" forge test --match-path 'test/invariants/*' "${FORGE_ARGS[@]}"; then
-    FAILED=1
-  fi
-fi
-
 echo ""
-if (( FAILED )); then
-  echo "REGRESSION: FAILURES above ^^^" >&2
-  exit 1
-fi
-echo "REGRESSION: green"
+if (( FAILED )); then echo "REGRESSION: FAILURES above ^^^" >&2; exit 1; fi
+echo "REGRESSION: green (all chunks + exhaustiveness guard)"

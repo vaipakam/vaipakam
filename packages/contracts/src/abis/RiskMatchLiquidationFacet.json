@@ -204,17 +204,6 @@
   },
   {
     "type": "error",
-    "name": "InternalMatchFallbackTopUpUnsupported",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InternalMatchLoanNotMatchable",
     "inputs": [
       {
@@ -240,6 +229,17 @@
       },
       {
         "name": "floorBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InternalMatchNoMatchableCollateral",
+    "inputs": [
+      {
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }
