@@ -1,7 +1,20 @@
 [
   {
     "type": "function",
-    "name": "calculateRepaymentAmount",
+    "name": "autoDeductDaily",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "nextPeriodCheckpoint",
     "inputs": [
       {
         "name": "loanId",
@@ -11,7 +24,7 @@
     ],
     "outputs": [
       {
-        "name": "totalDue",
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -20,7 +33,7 @@
   },
   {
     "type": "function",
-    "name": "repayLoan",
+    "name": "previewPeriodicSettle",
     "inputs": [
       {
         "name": "loanId",
@@ -28,12 +41,48 @@
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "cadence",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "periodEndAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "graceEndsAt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expected",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "paidByBorrower",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "shortfall",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "canSettleNow",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "repayPartial",
+    "name": "settlePeriodicInterest",
     "inputs": [
       {
         "name": "loanId",
@@ -41,9 +90,21 @@
         "internalType": "uint256"
       },
       {
-        "name": "partialAmount",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "adapterCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -51,7 +112,7 @@
   },
   {
     "type": "event",
-    "name": "LoanRepaid",
+    "name": "AutoDailyDeducted",
     "inputs": [
       {
         "name": "loanId",
@@ -60,47 +121,17 @@
         "internalType": "uint256"
       },
       {
-        "name": "repayer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "interestPaid",
+        "name": "dayFeeDeducted",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "lateFeePaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "outstandingPrincipal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accruedInterest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newStatus",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "enum LibVaipakam.LoanStatus"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "LoanSettlementBreakdown",
+    "name": "PeriodicInterestAutoLiquidated",
     "inputs": [
       {
         "name": "loanId",
@@ -109,19 +140,31 @@
         "internalType": "uint256"
       },
       {
-        "name": "principal",
+        "name": "periodEndAt",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "interest",
+        "name": "shortfall",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "lateFee",
+        "name": "collateralSold",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lenderProceeds",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "settlerBonus",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -133,41 +176,10 @@
         "internalType": "uint256"
       },
       {
-        "name": "lenderShare",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PartialRepaid",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
+        "name": "settler",
+        "type": "address",
         "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amountRepaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newPrincipal",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "accruedInterest",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -211,7 +223,7 @@
   },
   {
     "type": "event",
-    "name": "RepayPartialPeriodAdvanced",
+    "name": "PeriodicSlippageOverBuffer",
     "inputs": [
       {
         "name": "loanId",
@@ -220,25 +232,110 @@
         "internalType": "uint256"
       },
       {
-        "name": "periodEndAt",
+        "name": "expectedShortfall",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "expected",
+        "name": "actualLenderProceeds",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "advancedBy",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdapterAttempted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "success",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAdapterSucceeded",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "adapter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "outputAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "SwapAllAdaptersFailed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AdapterIndexOutOfRange",
+    "inputs": [
+      {
+        "name": "adapterIdx",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "registeredCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -341,17 +438,6 @@
   },
   {
     "type": "error",
-    "name": "ERC721NonexistentToken",
-    "inputs": [
-      {
-        "name": "tokenId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },
@@ -390,11 +476,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientPartialAmount",
-    "inputs": []
   },
   {
     "type": "error",
@@ -581,6 +662,11 @@
   },
   {
     "type": "error",
+    "name": "NoSwapAdaptersConfigured",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
@@ -611,12 +697,22 @@
   },
   {
     "type": "error",
+    "name": "NotDailyYet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotLender",
     "inputs": []
   },
   {
     "type": "error",
     "name": "NotNFTOwner",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotNFTRental",
     "inputs": []
   },
   {
@@ -685,11 +781,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PartialRepayNotAllowed",
-    "inputs": []
   },
   {
     "type": "error",
@@ -819,11 +910,6 @@
   },
   {
     "type": "error",
-    "name": "RepaymentPastGracePeriod",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReportAfterFinalization",
     "inputs": []
   },
@@ -860,21 +946,21 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
+    "name": "SafeERC20FailedOperation",
     "inputs": [
       {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
+    "name": "SanctionedAddress",
     "inputs": [
       {
-        "name": "token",
+        "name": "who",
         "type": "address",
         "internalType": "address"
       }

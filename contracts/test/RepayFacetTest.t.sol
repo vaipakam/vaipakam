@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -47,6 +48,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 
@@ -99,6 +101,7 @@ contract RepayFacetTest is Test {
     HelperTest helperTest;
     RiskFacet riskFacet; // Added
     RepayFacet repayFacet;
+    RepayPeriodicFacet repayPeriodicFacet;
     AdminFacet adminFacet;
     AccessControlFacet accessControlFacet;
     TestMutatorFacet testMutatorFacet;
@@ -132,6 +135,7 @@ contract RepayFacetTest is Test {
         riskFacet = new RiskFacet();
         helperTest = new HelperTest();
         repayFacet = new RepayFacet();
+        repayPeriodicFacet = new RepayPeriodicFacet();
         adminFacet = new AdminFacet();
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
@@ -140,7 +144,7 @@ contract RepayFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](15);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](16);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -210,6 +214,15 @@ contract RepayFacetTest is Test {
             facetAddress: address(encumbranceMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+        // Issue #66 — periodic-interest + NFT-rental daily-deduction
+        // cluster split out of RepayFacet; route its selectors here so
+        // autoDeductDaily / settlePeriodicInterest resolve on this
+        // minimal test diamond.
+        cuts[15] = IDiamondCut.FacetCut({
+            facetAddress: address(repayPeriodicFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRepayPeriodicFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -445,7 +458,7 @@ contract RepayFacetTest is Test {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
 
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             2
@@ -760,30 +773,30 @@ contract RepayFacetTest is Test {
     function testAutoDeductDailyRevertsForERC20Loan() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
-        vm.expectRevert(RepayFacet.NotNFTRental.selector);
-        RepayFacet(address(diamond)).autoDeductDaily(1); // loanId 1 is ERC20
+        vm.expectRevert(RepayPeriodicFacet.NotNFTRental.selector);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(1); // loanId 1 is ERC20
     }
 
     /// @dev Tests autoDeductDaily reverts if called too soon (NotDailyYet).
     function testAutoDeductDailyRevertsIfTooSoon() public {
         helperOfferLoan();
         // No warp — block.timestamp < lastDeductTime + 1 day
-        vm.expectRevert(RepayFacet.NotDailyYet.selector);
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        vm.expectRevert(RepayPeriodicFacet.NotDailyYet.selector);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
     }
 
     /// @dev Tests autoDeductDaily reverts if status is not Active.
     function testAutoDeductDailyRevertsIfNotActive() public {
         helperOfferLoan();
         vm.warp(block.timestamp + 1 days);
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
         // Repay the loan to change status
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(2);
 
         vm.warp(block.timestamp + 1 days);
         vm.expectRevert(IVaipakamErrors.InvalidLoanStatus.selector);
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
     }
 
     /// @dev Tests that repayNFT reverts with InsufficientPrepay when prepayAmount=0.
@@ -942,7 +955,7 @@ contract RepayFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(2, loan);
 
         vm.warp(block.timestamp + 1 days);
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
 
         loan = LoanFacet(address(diamond)).getLoanDetails(2);
         assertEq(loan.durationDays, 0);
@@ -1019,7 +1032,7 @@ contract RepayFacetTest is Test {
             "mock revert"
         );
         vm.expectRevert(bytes("mock revert"));
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
         vm.clearMockedCalls();
     }
 
@@ -1248,7 +1261,7 @@ contract RepayFacetTest is Test {
 
         vm.warp(block.timestamp + 1 days);
         vm.expectRevert(RepayFacet.InsufficientPrepay.selector);
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
     }
 
     /// @dev Tests autoDeductDaily "Treasury deduct failed" path.
@@ -1271,7 +1284,7 @@ contract RepayFacetTest is Test {
             "treasury fail"
         );
         vm.expectRevert(bytes("treasury fail"));
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
         vm.clearMockedCalls();
     }
 
@@ -1287,7 +1300,7 @@ contract RepayFacetTest is Test {
             "expires fail"
         );
         vm.expectRevert(bytes("expires fail"));
-        RepayFacet(address(diamond)).autoDeductDaily(2);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
         vm.clearMockedCalls();
     }
 

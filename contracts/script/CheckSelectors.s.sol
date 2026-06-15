@@ -8,6 +8,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 
 // Add imports for other facets as needed, e.g., import "../src/facets/ProfileFacet.sol";
@@ -65,7 +66,8 @@ contract CheckSelectors is Script {
         selectors = new bytes4[](4); // Adjust count
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
-        selectors[2] = RepayFacet.autoDeductDaily.selector;
+        // Issue #66 — autoDeductDaily moved to RepayPeriodicFacet.
+        selectors[2] = RepayPeriodicFacet.autoDeductDaily.selector;
         selectors[3] = RepayFacet.calculateRepaymentAmount.selector;
     }
 

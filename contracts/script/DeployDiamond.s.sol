@@ -24,6 +24,7 @@ import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
@@ -144,6 +145,7 @@ contract DeployDiamond is Script {
         OfferMutateFacet offerMutateFacet = new OfferMutateFacet();
         LoanFacet loanFacet = new LoanFacet();
         RepayFacet repayFacet = new RepayFacet();
+        RepayPeriodicFacet repayPeriodicFacet = new RepayPeriodicFacet();
         SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
         SwapToRepayIntentFacet swapToRepayIntentFacet = new SwapToRepayIntentFacet();
@@ -222,7 +224,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](52);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](53);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -377,6 +379,13 @@ contract DeployDiamond is Script {
         cuts[51] = _buildCut(
             address(encumbranceMutateFacet),
             _getEncumbranceMutateFacetSelectors()
+        );
+        // Issue #66 — periodic-interest + NFT-rental daily-deduction
+        // cluster, split out of RepayFacet to keep both facets under the
+        // EIP-170 runtime-bytecode limit. Shares LibVaipakam storage.
+        cuts[52] = _buildCut(
+            address(repayPeriodicFacet),
+            _getRepayPeriodicFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -671,6 +680,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("offerMutateFacet",        address(offerMutateFacet));
         Deployments.writeFacet("loanFacet",               address(loanFacet));
         Deployments.writeFacet("repayFacet",              address(repayFacet));
+        Deployments.writeFacet("repayPeriodicFacet",      address(repayPeriodicFacet));
         Deployments.writeFacet("swapToRepayFacet",        address(swapToRepayFacet));
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
@@ -728,6 +738,7 @@ contract DeployDiamond is Script {
         console.log("OfferMutateFacet:     ", address(offerMutateFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("RepayFacet:           ", address(repayFacet));
+        console.log("RepayPeriodicFacet:   ", address(repayPeriodicFacet));
         console.log("SwapToRepayFacet:     ", address(swapToRepayFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("RiskFacet:            ", address(riskFacet));
@@ -1173,21 +1184,27 @@ contract DeployDiamond is Script {
     }
 
     function _getRepaySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](3);
         s[0] = RepayFacet.repayLoan.selector;
         s[1] = RepayFacet.repayPartial.selector;
-        s[2] = RepayFacet.autoDeductDaily.selector;
-        s[3] = RepayFacet.calculateRepaymentAmount.selector;
-        // T-034 — Periodic Interest Payment: the permissionless settler
-        // entry point plus its two companion views. These were added to
-        // RepayFacet in the T-034 PR2 work and wired into HelperTest's
-        // test-diamond list, but this production cut list was missed —
-        // so a real deploy shipped a Diamond where they revert
-        // `FunctionDoesNotExist`. Surfaced by the Issue #71
-        // selector-coverage guardrail.
-        s[4] = RepayFacet.previewPeriodicSettle.selector;
-        s[5] = RepayFacet.nextPeriodCheckpoint.selector;
-        s[6] = RepayFacet.settlePeriodicInterest.selector;
+        s[2] = RepayFacet.calculateRepaymentAmount.selector;
+    }
+
+    /// @dev Issue #66 — the NFT-rental daily-deduction loop and the
+    ///      T-034 periodic-interest settlement cluster were split out of
+    ///      RepayFacet into RepayPeriodicFacet to keep both facets under
+    ///      the EIP-170 24,576-byte runtime limit. These four external
+    ///      selectors now route to RepayPeriodicFacet.
+    function _getRepayPeriodicFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](4);
+        s[0] = RepayPeriodicFacet.autoDeductDaily.selector;
+        s[1] = RepayPeriodicFacet.previewPeriodicSettle.selector;
+        s[2] = RepayPeriodicFacet.nextPeriodCheckpoint.selector;
+        s[3] = RepayPeriodicFacet.settlePeriodicInterest.selector;
     }
 
     /// T-090 — Borrower-initiated swap-to-repay facet selectors.

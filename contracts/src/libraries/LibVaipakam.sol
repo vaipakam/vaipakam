@@ -890,7 +890,7 @@ library LibVaipakam {
         // `false`:
         //   - `OfferFacet.createOffer` reverts `PeriodicInterestDisabled`
         //     for any non-`None` cadence.
-        //   - `RepayFacet.settlePeriodicInterest` reverts wholesale (PR2).
+        //   - `RepayPeriodicFacet.settlePeriodicInterest` reverts wholesale (PR2).
         //   - `RepayFacet.repayPartial` interest-first fold + inline
         //     checkpoint advance is bypassed (PR2).
         //   - Every cadence-aware UI surface in the frontend is hidden.
@@ -1608,7 +1608,7 @@ library LibVaipakam {
         // ── #408 / #410 / #413 (2026-06-12) ───────────────────────
         // Cumulative interest already paid toward this loan via:
         //   - `RepayFacet.repayPartial` — each partial's interest portion.
-        //   - `RepayFacet.settlePeriodicInterest` — each period's
+        //   - `RepayPeriodicFacet.settlePeriodicInterest` — each period's
         //     interest forwarded to the lender.
         // Read at every settlement (`LibEntitlement.settlementInterestNet`)
         // to credit-against the unified gross floor amount, so the

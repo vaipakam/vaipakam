@@ -18,6 +18,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
@@ -72,6 +73,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {console} from "forge-std/console.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
@@ -218,6 +220,7 @@ contract SetupTest is Test {
     RiskFacet riskFacet; // Added
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
     RepayFacet repayFacet;
+    RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
     // T-090 v1.1 (#389) — intent-based swap-to-repay sibling facet.
     SwapToRepayIntentFacet swapToRepayIntentFacet;
@@ -315,6 +318,7 @@ contract SetupTest is Test {
         riskFacet = new RiskFacet();
         riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
         repayFacet = new RepayFacet();
+        repayPeriodicFacet = new RepayPeriodicFacet();
         swapToRepayFacet = new SwapToRepayFacet();
         swapToRepayIntentFacet = new SwapToRepayIntentFacet();
         intentDispatchFacet = new IntentDispatchFacet();
@@ -383,7 +387,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](53);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](54);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -695,6 +699,13 @@ contract SetupTest is Test {
             facetAddress: address(encumbranceMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+        // Issue #66 — periodic-interest + NFT-rental daily-deduction
+        // cluster split out of RepayFacet to stay under EIP-170.
+        cuts[53] = IDiamondCut.FacetCut({
+            facetAddress: address(repayPeriodicFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRepayPeriodicFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

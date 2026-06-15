@@ -23,6 +23,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  // For mock ERC20
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -376,7 +377,8 @@ contract OfferFacetTest is Test {
         selectors = new bytes4[](4); // Adjust count
         selectors[0] = RepayFacet.repayLoan.selector;
         selectors[1] = RepayFacet.repayPartial.selector;
-        selectors[2] = RepayFacet.autoDeductDaily.selector;
+        // Issue #66 — autoDeductDaily moved to RepayPeriodicFacet.
+        selectors[2] = RepayPeriodicFacet.autoDeductDaily.selector;
         selectors[3] = RepayFacet.calculateRepaymentAmount.selector;
     }
 
