@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibPausable} from "../libraries/LibPausable.sol";
@@ -982,30 +983,33 @@ contract MetricsFacet {
     ///         saves frontends a second round-trip for the per-offer
     ///         struct fetch that they were doing after the IDs came back.
     /// @dev    O(limit) — page slice of the user's lifetime offer
-    ///         index `userOfferIds[user]`. Returns the FULL Offer
-    ///         struct per row including state flags (`accepted`,
-    ///         `amountFilled`), letting consumers filter
-    ///         active vs filled client-side without a follow-up read.
+    ///         index `userOfferIds[user]`. Returns a lean flat
+    ///         {LibMetricsTypes.OfferSummary} per row including state
+    ///         flags (`accepted`, `amountFilled`), letting consumers
+    ///         filter active vs filled client-side without a follow-up
+    ///         read. The summary omits rental/listing/snapshot fields to
+    ///         keep the viaIR array-coder shallow — consumers needing
+    ///         those call the single-struct getOffer view.
     /// @param  user   The offer creator.
     /// @param  offset Skip this many entries.
     /// @param  limit  Max page size.
-    /// @return offers Page of {LibVaipakam.Offer} records.
+    /// @return offers Page of {LibMetricsTypes.OfferSummary} records.
     /// @return total  Total offers in the user's lifetime index.
     function getUserAllOffersWithDetails(
         address user,
         uint256 offset,
         uint256 limit
-    ) external view returns (LibVaipakam.Offer[] memory offers, uint256 total) {
+    ) external view returns (LibMetricsTypes.OfferSummary[] memory offers, uint256 total) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256[] storage src = s.userOfferIds[user];
         total = src.length;
-        if (offset >= total) return (new LibVaipakam.Offer[](0), total);
+        if (offset >= total) return (new LibMetricsTypes.OfferSummary[](0), total);
         uint256 endExcl = offset + limit;
         if (endExcl > total) endExcl = total;
         uint256 size = endExcl - offset;
-        offers = new LibVaipakam.Offer[](size);
+        offers = new LibMetricsTypes.OfferSummary[](size);
         for (uint256 i = 0; i < size; i++) {
-            offers[i] = s.offers[src[offset + i]];
+            offers[i] = LibMetricsTypes.toOfferSummary(s.offers[src[offset + i]]);
         }
     }
 

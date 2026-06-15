@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -533,7 +534,7 @@ contract MetricsFacetTest is SetupTest {
         _seedOpenOffer(3, lender, mockERC20, 3000 ether);
         TestMutatorFacet(address(diamond)).setNextOfferId(4);
 
-        (LibVaipakam.Offer[] memory rows, uint256 total) =
+        (LibMetricsTypes.OfferSummary[] memory rows, uint256 total) =
             MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 50);
 
         assertEq(total, 3);
@@ -555,9 +556,9 @@ contract MetricsFacetTest is SetupTest {
         _seedOpenOffer(3, lender, mockERC20, 3000 ether);
         TestMutatorFacet(address(diamond)).setNextOfferId(4);
 
-        (LibVaipakam.Offer[] memory page1, uint256 total1) =
+        (LibMetricsTypes.OfferSummary[] memory page1, uint256 total1) =
             MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 2);
-        (LibVaipakam.Offer[] memory page2, uint256 total2) =
+        (LibMetricsTypes.OfferSummary[] memory page2, uint256 total2) =
             MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 2, 2);
 
         assertEq(total1, 3);
@@ -570,7 +571,7 @@ contract MetricsFacetTest is SetupTest {
     /// @dev Off-the-end offset returns an empty array (not a revert)
     ///      so the frontend can probe past the last page safely.
     function testGetUserAllOffersWithDetails_emptyUser() public view {
-        (LibVaipakam.Offer[] memory rows, uint256 total) =
+        (LibMetricsTypes.OfferSummary[] memory rows, uint256 total) =
             MetricsFacet(address(diamond)).getUserAllOffersWithDetails(lender, 0, 50);
         assertEq(total, 0);
         assertEq(rows.length, 0);
