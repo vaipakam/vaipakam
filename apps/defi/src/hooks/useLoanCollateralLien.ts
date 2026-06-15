@@ -21,40 +21,62 @@ export function useLoanCollateralLien(loanId: string | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    if (!loanId) return;
-    if (!diamond) {
-      // Chain has no Diamond — leave lien=null; the page renders the
-      // unsupported-chain banner. Without this gate the call against
-      // ZERO_ADDRESS throws AbiDecodingZeroDataError on mount.
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const step = beginStep({
-      area: 'loan-view',
-      flow: 'getLoanCollateralLien',
-      step: 'read',
-      loanId,
-    });
-    try {
-      const data = (await diamond.getLoanCollateralLien(
-        BigInt(loanId),
-      )) as Encumbrance;
-      setLien(data);
-      step.success();
-    } catch (err) {
-      setError('Collateral lien failed to load.');
-      setLien(null);
-      step.failure(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [loanId, diamond]);
+  /**
+   * Inner read. Accepts an `isCancelled` predicate so the caller (the
+   * effect, or the `reload` callback) can suppress every state write once
+   * the loanId has moved on. React Router reuses this component across
+   * loan ids, so an in-flight `getLoanCollateralLien` can resolve AFTER
+   * the new loan rendered — without the guard it would publish the
+   * previous loan's collateral record as proof against the new loan.
+   */
+  const load = useCallback(
+    async (isCancelled: () => boolean = () => false) => {
+      if (!loanId) return;
+      // Clear the previous loan's lien up front so a stale record doesn't
+      // linger in the card while the new read is in flight.
+      if (!isCancelled()) {
+        setLien(null);
+        setError(null);
+        setLoading(true);
+      }
+      if (!diamond) {
+        // Chain has no Diamond — leave lien=null; the page renders the
+        // unsupported-chain banner. Without this gate the call against
+        // ZERO_ADDRESS throws AbiDecodingZeroDataError on mount.
+        if (!isCancelled()) setLoading(false);
+        return;
+      }
+      const step = beginStep({
+        area: 'loan-view',
+        flow: 'getLoanCollateralLien',
+        step: 'read',
+        loanId,
+      });
+      try {
+        const data = (await diamond.getLoanCollateralLien(
+          BigInt(loanId),
+        )) as Encumbrance;
+        if (!isCancelled()) setLien(data);
+        step.success();
+      } catch (err) {
+        if (!isCancelled()) {
+          setError('Collateral lien failed to load.');
+          setLien(null);
+        }
+        step.failure(err);
+      } finally {
+        if (!isCancelled()) setLoading(false);
+      }
+    },
+    [loanId, diamond],
+  );
 
   useEffect(() => {
-    load();
+    let cancelled = false;
+    load(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
   }, [load]);
 
   return { lien, loading, error, reload: load };

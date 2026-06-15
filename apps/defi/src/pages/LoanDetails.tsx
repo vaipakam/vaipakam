@@ -88,14 +88,26 @@ export default function LoanDetails() {
   // `reloadLien` is re-pulled after any on-chain mutation that changes the
   // lien (add-collateral increments it; repay / default / preclose /
   // refinance / claim release it) so the card never goes stale.
-  const { lien: collateralLien, reload: reloadLien } =
-    useLoanCollateralLien(loanId);
+  const {
+    lien: collateralLien,
+    error: lienError,
+    loading: lienLoading,
+    reload: reloadLien,
+  } = useLoanCollateralLien(loanId);
   // Convenience composite for the panel/hook success callbacks that take a
   // single `onAfterSuccess`: refresh the loan state AND the lien card in
   // one go after any mutation that may have changed the lien.
-  const loadLoanAndLien = useCallback(() => {
-    loadLoan();
-    reloadLien();
+  //
+  // Returns the combined promise (await both refreshes) so callers that
+  // `await onAfterSuccess()` — e.g. the swap-to-repay panels — genuinely
+  // block until the loan has flipped out of Active before re-enabling
+  // their submit button. Returning `undefined` here let the panel's await
+  // resolve immediately, leaving a window where a second swap could fire
+  // against a still-Active-looking loan (double-swap risk). Both
+  // `loadLoan` and `reloadLien` are async, so `Promise.all` awaits the
+  // on-chain loan refresh, not just the lien read.
+  const loadLoanAndLien = useCallback(async (): Promise<void> => {
+    await Promise.all([loadLoan(), reloadLien()]);
   }, [loadLoan, reloadLien]);
   // Per README §3 lines 190–191 keeper authority follows the current
   // Phase 6: the old "whitelist-status" two-layer summary lived next to
@@ -970,6 +982,8 @@ export default function LoanDetails() {
             lien={collateralLien}
             blockExplorer={activeBlockExplorer}
             role={role}
+            error={lienError}
+            loading={lienLoading}
           />
         )}
 
@@ -1295,6 +1309,10 @@ export default function LoanDetails() {
                   collateralAmount={loan.collateralAmount}
                   principalAsset={loan.principalAsset as Address}
                   diamondAddress={activeDiamondAddr as Address}
+                  // HF liquidation releases the lien + flips the loan to
+                  // Defaulted on-chain — refresh both so the card and the
+                  // status badge don't stay stale after success.
+                  onLiquidated={loadLoanAndLien}
                 />
               </div>
             )}

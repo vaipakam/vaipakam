@@ -224,11 +224,20 @@ export default function OfferDetails() {
       return;
     }
     let cancelled = false;
+    // Clear any prior offer's lien at the START of each new (non-null)
+    // offerId load so a stale record never lingers in the card while the
+    // fresh read is in flight. React Router reuses this component across
+    // offer ids, so without this the previous offer's principal proof
+    // would show against the new offer until the new read resolved.
+    setPrincipalLien(null);
     (async () => {
       try {
         const lien = (await diamondRead.getOfferPrincipalLien(
           offerIdBig,
         )) as Encumbrance;
+        // Guard against a stale in-flight response writing after the
+        // offerId already changed (an earlier read can resolve AFTER the
+        // newer one rendered and clobber the correct record).
         if (!cancelled) setPrincipalLien(lien);
       } catch {
         // View missing on an older deploy / transient RPC blip — render

@@ -18,6 +18,13 @@ interface LiquidateButtonProps {
   /** The diamond address — `taker` for aggregator quotes, target of the
    *  triggerLiquidation call. */
   diamondAddress: Address;
+  /** Optional success hook fired after `triggerLiquidation`'s `tx.wait()`
+   *  resolves. A successful HF-liquidation releases the collateral lien
+   *  and moves the loan to Defaulted on-chain, so the host page passes a
+   *  refresh callback (loan + lien) to keep its cards from going stale.
+   *  Optional so other callers are unaffected. May be async; the result
+   *  is awaited. */
+  onLiquidated?: () => void | Promise<void>;
 }
 
 const WORKER_ORIGIN =
@@ -55,6 +62,7 @@ export function LiquidateButton({
   collateralAmount,
   principalAsset,
   diamondAddress,
+  onLiquidated,
 }: LiquidateButtonProps) {
   const { address, isCorrectChain } = useWallet();
   const diamond = useDiamondContract();
@@ -95,6 +103,11 @@ export function LiquidateButton({
       ).triggerLiquidation(loanId, quotes.calls);
       setTxHash(tx.hash);
       await tx.wait();
+      // Liquidation released the lien + moved the loan to Defaulted —
+      // let the host page refresh its loan/lien cards so they don't go
+      // stale. Optional; awaited so the refresh completes before we drop
+      // the submitting state.
+      await onLiquidated?.();
       step.success({ note: `tx ${tx.hash} via ${quotes.ranked[0].adapterKind}` });
     } catch (err) {
       setError(decodeContractError(err, 'Liquidation failed'));

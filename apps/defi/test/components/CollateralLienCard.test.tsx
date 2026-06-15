@@ -157,7 +157,7 @@ describe('CollateralLienCard', () => {
     expect(screen.getByText(/#42/)).toBeInTheDocument();
   });
 
-  it('renders an ERC-1155 lien quantity as a raw count', () => {
+  it('renders an ERC-1155 lien quantity as a raw count with the tokenId', () => {
     render(
       <CollateralLienCard
         lien={mkLien({ assetType: 2, amount: 7n, tokenId: 9n })}
@@ -168,7 +168,56 @@ describe('CollateralLienCard', () => {
     expect(
       screen.getByText(/7\s+loanDetails\.lien\.tokenCountSuffix/),
     ).toBeInTheDocument();
-    // ERC-1155 does NOT append the single-NFT "#id" suffix (quantity-based).
-    expect(screen.queryByText(/#9/)).not.toBeInTheDocument();
+    // ERC-1155 tokenId is part of the (asset, tokenId, quantity) lien key —
+    // a collection can have multiple distinct ids encumbered, so the id
+    // names the exact pledged token and MUST be surfaced.
+    expect(screen.getByText(/#9/)).toBeInTheDocument();
+  });
+
+  // Finding 3 (round 2) — a lien-read FAILURE (error set, no record) must
+  // render an explicit "unavailable" shell, not nothing. A silent
+  // `return null` would be indistinguishable from a genuine no-lien loan,
+  // hiding the fact that the on-chain proof couldn't be verified.
+  it('renders the unavailable shell when the read errored and no lien resolved', () => {
+    render(
+      <CollateralLienCard
+        lien={null}
+        blockExplorer={EXPLORER}
+        role="lender"
+        error={new Error('rpc blip')}
+      />,
+    );
+    expect(screen.getByText(/loanDetails\.lien\.title/)).toBeInTheDocument();
+    expect(screen.getByText('loanDetails.lien.unavailable')).toBeInTheDocument();
+  });
+
+  // The unavailable shell is suppressed while the read is still in flight
+  // (loading) so a transient pre-resolve null doesn't flash an error.
+  it('renders nothing while the lien read is still loading (no error shell)', () => {
+    const { container } = render(
+      <CollateralLienCard
+        lien={null}
+        blockExplorer={EXPLORER}
+        role="lender"
+        loading
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  // A resolved lien wins over a stale error — show the real card.
+  it('renders the normal card when a lien resolved even if error is set', () => {
+    render(
+      <CollateralLienCard
+        lien={mkLien()}
+        blockExplorer={EXPLORER}
+        role="lender"
+        error={new Error('stale')}
+      />,
+    );
+    expect(screen.getByText('loanDetails.lien.statusActive')).toBeInTheDocument();
+    expect(
+      screen.queryByText('loanDetails.lien.unavailable'),
+    ).not.toBeInTheDocument();
   });
 });

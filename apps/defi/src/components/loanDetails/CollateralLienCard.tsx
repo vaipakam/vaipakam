@@ -23,6 +23,16 @@ interface Props {
    *  surfaces the lock-until-terminal warning. `undefined` (non-party)
    *  renders the neutral lien facts only. */
   role?: 'lender' | 'borrower';
+  /** A lien-read failure surfaced from `useLoanCollateralLien`. When set
+   *  (and no `lien` resolved), the card renders an "unavailable" shell
+   *  instead of nothing — a failed read must NOT look identical to a
+   *  genuine no-lien loan, which would silently hide the collateral
+   *  proof. Mirrors VaultAssets' `encumbranceUnavailable` pattern. */
+  error?: unknown;
+  /** True while the lien read is in flight. Suppresses the "unavailable"
+   *  shell so a transient pre-resolve `error===null && lien===null`
+   *  state doesn't flash. */
+  loading?: boolean;
 }
 
 /**
@@ -39,10 +49,39 @@ interface Props {
  * than rendering a bogus card. Only a positive-amount lien with a real
  * vault owner renders.
  */
-export function CollateralLienCard({ lien, blockExplorer, role }: Props) {
+export function CollateralLienCard({
+  lien,
+  blockExplorer,
+  role,
+  error,
+  loading,
+}: Props) {
   const { t } = useTranslation();
   // Hook order must be stable — resolve token meta before any early return.
   const meta = useTokenMeta(lien?.asset ?? null);
+
+  // Lien-read failure with no resolved record: render an explicit
+  // "unavailable" shell rather than nothing. A silent `return null` here
+  // would be indistinguishable from a genuine no-lien loan, hiding the
+  // fact that the on-chain proof simply couldn't be verified right now.
+  // Suppressed while the read is still in flight so it doesn't flash.
+  if (!lien && error && !loading) {
+    return (
+      <div className="card">
+        <div className="card-title">🔒 {t('loanDetails.lien.title')}</div>
+        <p
+          className="lien-note"
+          style={{
+            marginTop: 4,
+            fontSize: '0.82rem',
+            color: 'var(--text-tertiary)',
+          }}
+        >
+          {t('loanDetails.lien.unavailable')}
+        </p>
+      </div>
+    );
+  }
 
   // No lien to show: missing record, zero amount (includes the default
   // never-encumbered record), or a default record whose `user` is the
@@ -82,9 +121,13 @@ export function CollateralLienCard({ lien, blockExplorer, role }: Props) {
               {t('loanDetails.lien.tokenCountSuffix', {
                 count: Number(lien.amount),
               })}
-              {/* Surface the tokenId for the single-NFT (ERC-721) case
-                  so the lien names the exact pledged NFT. */}
-              {lien.assetType === AssetType.ERC721 && (
+              {/* Surface the tokenId for BOTH the single-NFT (ERC-721)
+                  case and ERC-1155: for ERC-1155 the tokenId is part of
+                  the (asset, tokenId, quantity) lien key, so a collection
+                  can have multiple distinct ids encumbered — the id names
+                  the exact pledged token. */}
+              {(lien.assetType === AssetType.ERC721 ||
+                lien.assetType === AssetType.ERC1155) && (
                 <span style={{ color: 'var(--text-tertiary)' }}>
                   {' '}#{lien.tokenId.toString()}
                 </span>
