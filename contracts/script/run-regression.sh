@@ -38,6 +38,11 @@ set -uo pipefail
 cd "$(dirname "$0")/.."   # -> contracts/
 
 export FOUNDRY_PROFILE=default
+# IO-priority boost only. The repo's documented `nice -n -10` (raised CPU
+# priority) is deliberately omitted: negative niceness requires privileges most
+# operators (and sandboxed runners) lack, and a failing `nice` would abort the
+# whole run. `ionice -c 2 -n 0` is best-effort and privilege-free. Operators who
+# can raise priority may prepend `nice -n -10` manually.
 PREFIX=(ionice -c 2 -n 0)
 
 RUN_INVARIANTS=0

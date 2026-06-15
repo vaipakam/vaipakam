@@ -685,9 +685,11 @@ Three profiles live in `contracts/foundry.toml`:
 
 - Iterating on a contract change, want to know "does it compile?":
   `FOUNDRY_PROFILE=quick forge build` — ~44 s cold, <1 s warm.
-- Running operator-local full regression / scripts / predeploy-check
-  / gas-snapshot diff: `forge build` / `forge test --no-match-path
-  "test/invariants/*"` / `forge script` — default profile.
+- Running operator-local full regression: `bash script/run-regression.sh`
+  (sparse compile — the bare `forge test --no-match-path "test/invariants/*"`
+  can trip the viaIR ceiling; see "Local full regression" below). Scripts /
+  predeploy-check / gas-snapshot diff: `forge build` / `forge script` —
+  default profile.
 - Running the invariant suite specifically (separate pass; full-
   regression command above excludes it): `forge test --match-path
   "test/invariants/*"` — default profile.
@@ -717,8 +719,9 @@ correct (a compilation-unit-size limit, not a code bug; see Issue #601 and the
 **local** regression through the helper instead:
 
 ```bash
-bash contracts/script/run-regression.sh              # full suite minus invariants
-bash contracts/script/run-regression.sh --invariants # + the invariant suites
+# from contracts/ (all build/test commands run there, per the top of this doc):
+bash script/run-regression.sh              # full suite minus invariants
+bash script/run-regression.sh --invariants # + the invariant suites
 ```
 
 It runs `forge test --match-path 'test/*.t.sol' --no-match-path
