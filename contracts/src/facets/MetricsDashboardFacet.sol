@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {StakingRewardsFacet} from "./StakingRewardsFacet.sol";
@@ -89,11 +90,14 @@ contract MetricsDashboardFacet {
     }
 
     /// @notice Loan + computed risk for a paginated dashboard row.
-    /// @param loan          Full {LibVaipakam.Loan} struct.
+    /// @param loan          Lean flat {LibMetricsTypes.LoanSummary}
+    ///        projection (omits rental/periodic/snapshot fields to keep
+    ///        the viaIR array-coder shallow — consumers needing those
+    ///        call the single-struct getLoanDetails view).
     /// @param ltvBps        Current LTV in basis points; 0 if illiquid.
     /// @param healthFactor  Current HF (1e18 scale); 0 if illiquid.
     struct LoanWithRisk {
-        LibVaipakam.Loan loan;
+        LibMetricsTypes.LoanSummary loan;
         uint256 ltvBps;
         uint256 healthFactor;
     }
@@ -103,13 +107,14 @@ contract MetricsDashboardFacet {
     ///         lender + borrower loans together with a role chip,
     ///         so the per-row tag lets it filter / colour without
     ///         a separate per-side fetch.
-    /// @param loan          Full {LibVaipakam.Loan} struct.
+    /// @param loan          Lean flat {LibMetricsTypes.LoanSummary}
+    ///        projection (see {LoanWithRisk}).
     /// @param ltvBps        Current LTV in basis points; 0 if illiquid.
     /// @param healthFactor  Current HF (1e18 scale); 0 if illiquid.
     /// @param borrowerSide  `true` when the queried user is the
     ///        borrower of this loan; `false` when they're the lender.
     struct LoanWithRiskAndSide {
-        LibVaipakam.Loan loan;
+        LibMetricsTypes.LoanSummary loan;
         uint256 ltvBps;
         uint256 healthFactor;
         bool borrowerSide;
@@ -201,7 +206,7 @@ contract MetricsDashboardFacet {
                 skipped += 1;
                 continue;
             }
-            buf[written].loan = l;
+            buf[written].loan = LibMetricsTypes.toLoanSummary(l);
             // Best-effort risk read; reverts cleanly to 0 for illiquid
             // (no oracle feed). Mirrors AddCollateralFacet pattern.
             (bool okLtv, bytes memory retLtv) = address(this).staticcall(
@@ -281,7 +286,7 @@ contract MetricsDashboardFacet {
                 skipped += 1;
                 continue;
             }
-            buf[written].loan = l;
+            buf[written].loan = LibMetricsTypes.toLoanSummary(l);
             buf[written].borrowerSide = isBorrower;
             // Best-effort risk read; silent-degrade-to-0 mirrors
             // {getUserDashboardLoans}.
@@ -314,14 +319,16 @@ contract MetricsDashboardFacet {
      *                    only currently open offers.
      * @param  offset     Skip this many matching offers.
      * @param  limit      Max page size (≤ {MAX_PAGE_LIMIT}).
-     * @return offers     Page of matching {LibVaipakam.Offer} records.
+     * @return offers     Page of matching {LibMetricsTypes.OfferSummary}
+     *                    records (lean flat projection — see
+     *                    {MetricsFacet.getUserAllOffersWithDetails}).
      */
     function getUserDashboardOffers(
         address user,
         bool filledOnly,
         uint32 offset,
         uint32 limit
-    ) external view returns (LibVaipakam.Offer[] memory offers) {
+    ) external view returns (LibMetricsTypes.OfferSummary[] memory offers) {
         if (limit > MAX_PAGE_LIMIT) revert LimitTooLarge(limit, MAX_PAGE_LIMIT);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Walk the user's lifetime offer index. The `accepted`
@@ -331,7 +338,7 @@ contract MetricsDashboardFacet {
         // offer space. O(user's offer count).
         uint256[] storage userOffers = s.userOfferIds[user];
         uint256 total = userOffers.length;
-        LibVaipakam.Offer[] memory buf = new LibVaipakam.Offer[](limit);
+        LibMetricsTypes.OfferSummary[] memory buf = new LibMetricsTypes.OfferSummary[](limit);
         uint256 written;
         uint256 skipped;
         for (uint256 i = 0; i < total && written < limit; i++) {
@@ -351,10 +358,10 @@ contract MetricsDashboardFacet {
                 skipped += 1;
                 continue;
             }
-            buf[written] = o;
+            buf[written] = LibMetricsTypes.toOfferSummary(o);
             written += 1;
         }
-        offers = new LibVaipakam.Offer[](written);
+        offers = new LibMetricsTypes.OfferSummary[](written);
         for (uint256 j = 0; j < written; j++) offers[j] = buf[j];
     }
 

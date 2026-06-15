@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
@@ -131,8 +132,15 @@ contract MetricsDashboardFacetTest is SetupTest {
             lender, /* borrowerSide */ false, 0, 50
         );
         assertEq(rows.length, 2);
-        assertTrue(rows[0].loan.lender == lender);
-        assertTrue(rows[1].loan.lender == lender);
+        // The lean LoanSummary DTO omits the `lender`/`borrower` address
+        // fields (they're not needed by the dashboard table, which keys
+        // off the connected user). Assert the filter via the loan ids
+        // instead — loans 1 & 2 were seeded for `lender`, loan 3 for
+        // `lender2`; loan 3 must not surface. Callers needing the
+        // address read the single-struct {LoanFacet.getLoanDetails}.
+        assertTrue(rows[0].loan.id == 1 || rows[0].loan.id == 2);
+        assertTrue(rows[1].loan.id == 1 || rows[1].loan.id == 2);
+        assertTrue(rows[0].loan.id != rows[1].loan.id);
     }
 
     function testLoans_pagination_offsetAndLimit() public {
@@ -201,12 +209,16 @@ contract MetricsDashboardFacetTest is SetupTest {
         _seedOpenOffer(3, lender2); // not for `lender`
         TestMutatorFacet(address(diamond)).setNextOfferId(4);
 
-        LibVaipakam.Offer[] memory openOffers =
+        LibMetricsTypes.OfferSummary[] memory openOffers =
             dash.getUserDashboardOffers(lender, /* filledOnly */ false, 0, 50);
         assertEq(openOffers.length, 2);
-        assertEq(openOffers[0].creator, lender);
+        // The lean OfferSummary DTO omits the `creator` address; assert
+        // the filter via the offer id instead (offers 1 & 2 seeded for
+        // `lender`, offer 3 for `lender2`). Callers needing the creator
+        // read the single-struct {OfferCancelFacet.getOffer}.
+        assertTrue(openOffers[0].id == 1 || openOffers[0].id == 2);
 
-        LibVaipakam.Offer[] memory filledOffers =
+        LibMetricsTypes.OfferSummary[] memory filledOffers =
             dash.getUserDashboardOffers(lender, true, 0, 50);
         assertEq(filledOffers.length, 0);
     }
