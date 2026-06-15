@@ -7,6 +7,7 @@ import { useMode } from "../context/ModeContext";
 import { useDiamondContract, useDiamondRead } from "../contracts/useDiamond";
 import { useERC20 } from "../contracts/useERC20";
 import { useLoan } from "../hooks/useLoan";
+import { useLoanCollateralLien } from "../hooks/useLoanCollateralLien";
 import { useKeeperStatus } from "../hooks/useKeeperStatus";
 import {
   LoanStatus,
@@ -48,6 +49,7 @@ import { LoanTimeline } from "../components/app/LoanTimeline";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { PeriodicInterestCheckpointCard } from "../components/loanDetails/PeriodicInterestCheckpointCard";
+import { CollateralLienCard } from "../components/loanDetails/CollateralLienCard";
 import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBanner";
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
@@ -81,6 +83,9 @@ export default function LoanDetails() {
     error,
     reload: loadLoan,
   } = useLoan(loanId);
+  // #564 D.1 — on-chain collateral lien backing this loan, surfaced in the
+  // CollateralLienCard below the Collateral & Risk card for both parties.
+  const { lien: collateralLien } = useLoanCollateralLien(loanId);
   // Per README §3 lines 190–191 keeper authority follows the current
   // Phase 6: the old "whitelist-status" two-layer summary lived next to
   // the per-side keeper bools on the loan struct. Both are gone; the new
@@ -929,6 +934,19 @@ export default function LoanDetails() {
             />
           )}
         </div>
+
+        {/* #564 D.1 — collateral-lien card. Shown to either loan party;
+            renders nothing when there is no live lien. Passes the page's
+            existing `role` so lender/borrower see role-specific copy.
+            #564 D.3 (NFT metadata) is contract/worker-side, out of scope
+            here. */}
+        {(isLender || isBorrower) && (
+          <CollateralLienCard
+            lien={collateralLien}
+            blockExplorer={activeBlockExplorer}
+            role={role}
+          />
+        )}
 
         <div className="card">
           <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
