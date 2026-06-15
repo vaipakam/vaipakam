@@ -4713,6 +4713,36 @@ library LibVaipakam {
         return !lien.released && lien.amount > 0;
     }
 
+    /// @dev #591 — the collateral a loan can contribute to an internal match
+    ///      (the "Diamond-matchable" portion). For a topped-up FallbackPending
+    ///      loan the AddCollateral top-up sits in the borrower's vault (liened),
+    ///      NOT in Diamond custody, so only `collateralAmount − lien.amount`
+    ///      (the at-fallback snapshot still in Diamond) may be matched; matching
+    ///      against the full `collateralAmount` would over-draw Diamond custody.
+    ///      For every other loan it is the full `collateralAmount`.
+    ///
+    ///      CRITICAL (Codex #605 P1): this can be `0` while `collateralAmount`
+    ///      stays `> 0` — a topped-up FallbackPending loan whose Diamond
+    ///      snapshot was fully consumed by an earlier partial match still
+    ///      carries the vault top-up. Such a leg has NOTHING to contribute, so
+    ///      every internal-match eligibility gate treats `== 0` as
+    ///      non-matchable; otherwise it would receive a one-sided match that
+    ///      drains the counterparty's collateral with no reciprocal debt
+    ///      reduction. Single source of truth for `RiskMatchLiquidationFacet`
+    ///      (leg sizing + gate) and `MetricsFacet` (candidate scan).
+    function internalMatchableCollateral(uint256 loanId) internal view returns (uint256) {
+        Storage storage s = storageSlot();
+        Loan storage loan = s.loans[loanId];
+        if (loan.status == LoanStatus.FallbackPending) {
+            Encumbrance storage lien = s.loanCollateralLien[loanId];
+            if (!lien.released && lien.amount > 0) {
+                // Diamond portion = snapshot total = collateralAmount − top-up.
+                return loan.collateralAmount - lien.amount;
+            }
+        }
+        return loan.collateralAmount;
+    }
+
     /// @dev Internal-liquidation match path (B.2) — global LTV
     ///      window above each loan's per-tier liquidation threshold
     ///      where external `triggerLiquidation` is gated to give

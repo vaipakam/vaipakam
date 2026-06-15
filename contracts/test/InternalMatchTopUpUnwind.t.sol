@@ -497,4 +497,48 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         assertTrue(found, "topped-up FallbackPending candidate is now surfaced");
         assertEq(cid, LOAN_B, "candidate is B");
     }
+
+    // ───── #591 Codex #605 P1 — exhausted Diamond portion is non-matchable ─────
+
+    /// @notice A topped-up FallbackPending leg whose at-fallback Diamond
+    ///         snapshot is fully exhausted (snapshotTotal == 0; only the vault
+    ///         top-up remains, so `collateralAmount > 0` but the Diamond-
+    ///         matchable portion is 0) must be rejected by the direct trigger
+    ///         BEFORE any funds move — otherwise it would receive a one-sided
+    ///         match draining the counterparty.
+    function test_toppedUp_exhaustedDiamond_directTrigger_reverts() public {
+        // A: principal 600, snapshotTotal 0 + topUp 500 = 500 collateral, all vault.
+        //    _diamondMatchable(A) == 500 − 500 == 0.
+        _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 0, 500, 0, 0);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_B, 9_000);
+
+        uint256 bCollatBefore = _getLoan(LOAN_B).collateralAmount;
+
+        vm.prank(matcher);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskMatchLiquidationFacet.InternalMatchNoMatchableCollateral.selector, LOAN_A
+            )
+        );
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // Counterparty untouched — the revert rolled back before any transfer.
+        assertEq(_getLoan(LOAN_B).collateralAmount, bCollatBefore, "counterparty not drained");
+    }
+
+    /// @notice An exhausted-Diamond topped-up FallbackPending loan must NOT be
+    ///         surfaced as a match candidate (so it can't drain a scanning
+    ///         counterparty via auto-dispatch). It is filtered WHILE scanning.
+    function test_toppedUp_exhaustedDiamond_notSurfacedByScan() public {
+        // B (the scanning loan) is a viable Active leg looking for a partner.
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 600, mockERC20, 600);
+        _mockLtv(LOAN_B, 9_000);
+        // A is the exhausted-Diamond topped-up FallbackPending candidate.
+        _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 0, 500, 0, 0);
+
+        (bool found, uint256 cid) =
+            MetricsFacet(address(diamond)).hasInternalMatchCandidate(LOAN_B);
+        assertTrue(!found || cid != LOAN_A, "exhausted-Diamond leg must not be a candidate");
+    }
 }

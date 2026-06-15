@@ -457,6 +457,15 @@ contract MetricsFacet {
             // leg's contribution against its Diamond portion only and returns
             // the vault top-up to the borrower side, so such candidates are
             // eligible.
+            //
+            // #591 (Codex #605 P1) — EXCEPT a candidate whose Diamond portion
+            // is exhausted (topped-up FallbackPending whose snapshot a prior
+            // partial match consumed; only the vault top-up remains). It has
+            // nothing to contribute — matching it would drain THIS loan's
+            // collateral one-sidedly. Filter it WHILE scanning so it can't mask
+            // a later eligible candidate. Cheap storage read; do it before the
+            // oracle gate. (Active candidates have matchable == collateralAmount.)
+            if (LibVaipakam.internalMatchableCollateral(cid) == 0) continue;
 
             // Oracle gate — internal match settles at oracle price, so
             // both of the candidate's assets need a fresh reading.

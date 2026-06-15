@@ -236,6 +236,17 @@
   },
   {
     "type": "error",
+    "name": "InternalMatchNoMatchableCollateral",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InternalMatchSelfPair",
     "inputs": [
       {

@@ -94,6 +94,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     // the match sizes a leg against its Diamond portion only
     // (`_diamondMatchable`) and the vault top-up is returned to the borrower
     // side, so the former eligibility/skip/defence-in-depth gates are gone.
+    /// @notice #591 (Codex #605 P1) — a leg has no Diamond-matchable collateral
+    ///         (`LibVaipakam.internalMatchableCollateral == 0`): either a zero-
+    ///         collateral loan, or a topped-up FallbackPending loan whose
+    ///         at-fallback Diamond snapshot was fully consumed by an earlier
+    ///         partial match (only the vault top-up remains, which never
+    ///         participates in a match). Such a leg has nothing to contribute,
+    ///         so it is non-matchable — matching it would hand the counterparty's
+    ///         collateral to this loan's lender with no reciprocal debt
+    ///         reduction. Rejected at the eligibility gate; the executors also
+    ///         fail closed if any leg's `moved` amount is zero.
+    error InternalMatchNoMatchableCollateral(uint256 loanId);
 
     /// @notice Emitted by `triggerInternalMatchLiquidation` on a valid
     ///         match. PR4 is validation-only and emits this from the
@@ -287,13 +298,8 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      every other leg (Active, or FallbackPending without a top-up)
     ///      the matchable size is the full `collateralAmount` — unchanged.
     function _diamondMatchable(LibVaipakam.Loan storage loan) private view returns (uint256) {
-        if (
-            loan.status == LibVaipakam.LoanStatus.FallbackPending &&
-            LibVaipakam.hasActiveFallbackTopUp(loan.id)
-        ) {
-            return loan.collateralAmount - LibVaipakam.storageSlot().loanCollateralLien[loan.id].amount;
-        }
-        return loan.collateralAmount;
+        // Single source of truth (shared with MetricsFacet's candidate scan).
+        return LibVaipakam.internalMatchableCollateral(loan.id);
     }
 
     /// @dev Execute the 3-loan chain A→B→C→A version of partial-match α.
@@ -336,6 +342,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         movedX = la.principal < matchableB ? la.principal : matchableB;
         movedY = lb.principal < matchableC ? lb.principal : matchableC;
         movedZ = lc.principal < matchableA ? lc.principal : matchableA;
+
+        // #591 (Codex #605 P1) — fail closed if any leg moves zero (see the
+        // 2-way executor for the rationale): a zero leg in the A→B→C→A chain
+        // means an exhausted/empty leg slipped the eligibility gate and would
+        // settle a one-sided transfer draining a counterparty.
+        if (movedX == 0) revert InternalMatchNoMatchableCollateral(lb.id);
+        if (movedY == 0) revert InternalMatchNoMatchableCollateral(lc.id);
+        if (movedZ == 0) revert InternalMatchNoMatchableCollateral(la.id);
 
         uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
         incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
@@ -489,6 +503,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         movedX = la.principal < matchableB ? la.principal : matchableB;
         movedY = lb.principal < matchableA ? lb.principal : matchableA;
 
+        // #591 (Codex #605 P1) — fail closed if either leg moves zero. A
+        // legitimate mutual match always moves >0 on both legs (both have
+        // outstanding principal AND matchable collateral); a zero leg means an
+        // exhausted/empty leg slipped past the eligibility gate, which would
+        // settle a one-sided transfer (counterparty collateral → this lender
+        // with no reciprocal debt reduction). Roll back rather than drain.
+        if (movedX == 0) revert InternalMatchNoMatchableCollateral(la.id);
+        if (movedY == 0) revert InternalMatchNoMatchableCollateral(lb.id);
+
         uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
         incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
         incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
@@ -565,6 +588,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // only (`_diamondMatchable`) and `_settleFallbackOrTransition-
             // PostMatch` returns the vault top-up to the borrower side, so
             // the draw stays bounded by Diamond custody.
+            //
+            // #591 (Codex #605 P1) — but a leg whose Diamond portion is fully
+            // exhausted (top-up consumed the snapshot in an earlier partial
+            // match; only the vault top-up remains) has NOTHING to match. Reject
+            // it before any funds move — otherwise it would receive a one-sided
+            // match draining the counterparty. (Active legs always have
+            // matchable == collateralAmount, so this only bites exhausted
+            // topped-up FallbackPending legs.)
+            if (LibVaipakam.internalMatchableCollateral(loanId) == 0) {
+                revert InternalMatchNoMatchableCollateral(loanId);
+            }
         } else {
             _requireLtvAboveFloor(loanId);
         }
@@ -951,6 +985,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // only (`_diamondMatchable`) and the post-match settlement returns
         // the vault top-up to the borrower side, so the auto-dispatch match
         // is now safe for topped-up legs on either side.
+        //
+        // #591 (Codex #605 P1) — but skip (non-fatally) if THIS loan's Diamond
+        // portion is exhausted (topped-up FallbackPending whose snapshot a
+        // prior partial match consumed; only the vault top-up remains). It has
+        // nothing to contribute, so a match would be one-sided. The candidate
+        // side is already filtered for the same condition by
+        // `hasInternalMatchCandidate`. Returning false lets the caller fall
+        // through to its normal fallback-claim / external path.
+        if (LibVaipakam.internalMatchableCollateral(loanId) == 0) return false;
 
         // Settlement. `hasInternalMatchCandidate` has already filtered
         // candidates by status (Active or FallbackPending), oracle
