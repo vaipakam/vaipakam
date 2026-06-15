@@ -19,6 +19,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
+import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
  // Added for HF/LTV mocks
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -160,7 +161,7 @@ contract LoanFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](14);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -223,6 +224,13 @@ contract LoanFacetTest is Test {
         });
 
         cuts[11] = IDiamondCut.FacetCut({facetAddress: address(new RiskMatchLiquidationFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()});
+        // #602 — EncumbranceMutateFacet. The offer-create path
+        // (`OfferCreateFacet._pullCreatorAssetsClassic`, Lender+ERC20 branch)
+        // cross-calls `EncumbranceMutateFacet.createOfferPrincipalLien` (the
+        // #566/#407 offer-principal lock), and the loan lifecycle calls its
+        // sibling lien mutators. Without this cut every offer-create here
+        // reverts `FunctionDoesNotExist`, which broke the whole suite.
+        cuts[13] = IDiamondCut.FacetCut({facetAddress: address(new EncumbranceMutateFacet()), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()});
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
         // Diamond born paused (LibPausable). Clear via direct
