@@ -661,8 +661,10 @@ Three profiles live in `contracts/foundry.toml`:
 
 - **`default`** — full coverage. Compiles `src/` + `test/` + `script/`,
   viaIR + optimizer (runs=200). Used by operator-local full-regression
-  runs (`forge test --no-match-path "test/invariants/*"`) at end-of-step
-  and every mainnet-deploy path. Cold compile: 14-19 min, ~17.7 GB RSS
+  runs (via `bash script/run-regression.sh` — NOT the bare
+  `forge test --no-match-path "test/invariants/*"`, which is non-sparse and
+  can trip the viaIR whole-unit stack ceiling; see the "Local full regression"
+  subsection below) and every mainnet-deploy path. Cold compile: 14-19 min, ~17.7 GB RSS
   on this codebase as of 2026-05-27 (over the 16 GB ubuntu-latest CI
   ceiling — NOT used by any GitHub Actions job for that reason).
 - **`cifast`** — narrow scope for the per-PR-push CI lane. Compiles
@@ -703,36 +705,43 @@ discovery.
 The high-priority `nice -n -10 ionice` prefix still applies to both
 profiles — it's about scheduling priority, not the build itself.
 
-### Local full regression — run it BATCHED (`run-regression-batched.sh`)
+### Local full regression — run it via `run-regression.sh` (sparse compile)
 
-This codebase sits near the **viaIR whole-unit stack ceiling**. Compiling
-`src` + ALL `test` + `script` in one `solc` pass (the naive
-`forge test --no-match-path "test/invariants/*"`) can fail to **compile** with
+This codebase sits near the **viaIR whole-unit stack ceiling**. The bare
+`forge test --no-match-path "test/invariants/*"` is **non-sparse**: it compiles
+`src` + ALL `test` + ALL `script` in one `solc` unit, and the standalone deploy
+scripts under `script/*.s.sol` push it over the edge — failing with
 `Error: Variable size is N too deep in the stack` even when every test is
-correct — a limit on the size of a single compilation unit, not a code bug
-(see Issue #601 and the #603 release note). CI sidesteps it via the narrower
-`cifast` lane; run the full **local** regression **batched** instead:
+correct (a compilation-unit-size limit, not a code bug; see Issue #601 and the
+#603 release note). CI sidesteps it via the narrower `cifast` lane. Run the full
+**local** regression through the helper instead:
 
 ```bash
-bash contracts/script/run-regression-batched.sh            # full suite, batched
-bash contracts/script/run-regression-batched.sh --invariants   # + invariants pass
+bash contracts/script/run-regression.sh              # full suite minus invariants
+bash contracts/script/run-regression.sh --invariants # + the invariant suites
 ```
 
-It runs the suite in compile-bounded **chunks** (each a `forge test
---match-path` glob proven to stay under the ceiling) so no single pass forms
-the over-threshold unit. Foundry tests are per-test isolated (fresh EVM +
-`setUp` each), so splitting files across invocations is **behaviour-neutral**.
-A built-in **exhaustiveness guard** diffs `find test -name '*.t.sol'` (minus
-invariants) against the chunk globs and **aborts if any suite is uncovered**,
-so a newly-added test file can never be silently skipped. If a chunk ever trips
-"stack too deep", subdivide it (e.g. split the top-level chunk into
-`test/[A-M]*.t.sol` + `test/[N-Z]*.t.sol`) and update both the `CHUNKS` array
-and the guard's `COVER_GLOBS`.
+It runs `forge test --match-path 'test/*.t.sol' --no-match-path
+'test/invariants/*'` (forcing `FOUNDRY_PROFILE=default`). Driving with
+`--match-path` makes Foundry compile **sparsely** — only the matched files +
+their dependency closure — so the standalone scripts that no test imports are
+left out, and dropping that slice of IR keeps the unit under the ceiling. The
+deploy logic still compiles where it matters (DeployDiamond.s.sol is pulled in
+as a dependency of `test/deploy/DeployDiamondIntegrationTest`).
 
-The principled cause-fix that keeps chunks small is to return **lean DTOs** from
-paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) — never
-an array of a 40+-field struct, whose ABI coder inflates the unit's peak stack.
-Batching is the safety net; lean array-view returns attack the root.
+**Cannot miss a suite:** globset's `*` crosses `/` (see `contracts/foundry.toml`),
+so `test/*.t.sol` recursively matches every current and future `*.t.sol`
+anywhere under `test/` — a newly-added suite is picked up automatically; there
+is no chunk list, folder layout, or allowlist to keep in sync. (Standalone
+scripts' compile-correctness is covered separately by `forge build` /
+predeploy-check.)
+
+The principled cause-fix that keeps the unit small is to return **lean DTOs**
+from paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) —
+never an array of a 40+-field struct, whose ABI coder inflates peak stack. If
+the test slice alone ever trips the ceiling, fall back to splitting the run into
+two `--match-path` globs (e.g. `test/[A-M]*.t.sol` + `test/[N-Z]*.t.sol` + the
+subdirs), but that is not needed today.
 
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
