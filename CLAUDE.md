@@ -703,6 +703,37 @@ discovery.
 The high-priority `nice -n -10 ionice` prefix still applies to both
 profiles — it's about scheduling priority, not the build itself.
 
+### Local full regression — run it BATCHED (`run-regression-batched.sh`)
+
+This codebase sits near the **viaIR whole-unit stack ceiling**. Compiling
+`src` + ALL `test` + `script` in one `solc` pass (the naive
+`forge test --no-match-path "test/invariants/*"`) can fail to **compile** with
+`Error: Variable size is N too deep in the stack` even when every test is
+correct — a limit on the size of a single compilation unit, not a code bug
+(see Issue #601 and the #603 release note). CI sidesteps it via the narrower
+`cifast` lane; run the full **local** regression **batched** instead:
+
+```bash
+bash contracts/script/run-regression-batched.sh            # full suite, batched
+bash contracts/script/run-regression-batched.sh --invariants   # + invariants pass
+```
+
+It runs the suite in compile-bounded **chunks** (each a `forge test
+--match-path` glob proven to stay under the ceiling) so no single pass forms
+the over-threshold unit. Foundry tests are per-test isolated (fresh EVM +
+`setUp` each), so splitting files across invocations is **behaviour-neutral**.
+A built-in **exhaustiveness guard** diffs `find test -name '*.t.sol'` (minus
+invariants) against the chunk globs and **aborts if any suite is uncovered**,
+so a newly-added test file can never be silently skipped. If a chunk ever trips
+"stack too deep", subdivide it (e.g. split the top-level chunk into
+`test/[A-M]*.t.sol` + `test/[N-Z]*.t.sol`) and update both the `CHUNKS` array
+and the guard's `COVER_GLOBS`.
+
+The principled cause-fix that keeps chunks small is to return **lean DTOs** from
+paginated / array views (the #603 `OfferSummary`/`LoanSummary` pattern) — never
+an array of a 40+-field struct, whose ABI coder inflates the unit's peak stack.
+Batching is the safety net; lean array-view returns attack the root.
+
 ## Task tracking — @vaipakam-labs GitHub Project is the live tracker
 
 The single live tracker for in-flight and queued work is the GitHub
