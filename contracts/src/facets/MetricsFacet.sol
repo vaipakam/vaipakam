@@ -437,6 +437,14 @@ contract MetricsFacet {
             st != LibVaipakam.LoanStatus.FallbackPending
         ) return (false, 0);
 
+        // #591 (Codex #605 round-2 P2) — also filter the SUBJECT. A topped-up
+        // FallbackPending subject whose Diamond portion is exhausted has nothing
+        // to contribute, so the direct trigger reverts and auto-dispatch
+        // declines it. Without this guard the public view would still advertise
+        // a counterparty no entry point accepts. (Active/non-topped-up subjects
+        // have matchable == collateralAmount, unaffected.)
+        if (LibVaipakam.internalMatchableCollateral(loanId) == 0) return (false, 0);
+
         uint256[] storage candidates = s.assetPairActiveLoanIds[
             loan.collateralAsset
         ][loan.principalAsset];

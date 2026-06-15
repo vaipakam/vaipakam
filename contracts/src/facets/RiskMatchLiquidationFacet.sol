@@ -923,6 +923,43 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             // The top-up lien is left UNTOUCHED below.
             uint256 oldCollat = diamondAfter + collateralConsumed;
             uint256 newCollat = diamondAfter;
+
+            // #591 (Codex #605 round-2 P1) — if THIS partial match consumed the
+            // ENTIRE Diamond portion (`diamondAfter == 0`) while a vault top-up
+            // is still live, the fallback's liquidatable collateral is fully
+            // gone and only the borrower's top-up remains. The Diamond-based
+            // fallback claim path can't return a vault-held amount, so scaling
+            // the snapshot to 0 would strand the top-up. Resolve TERMINALLY,
+            // reusing the proven full-rescue mechanism: record the top-up as a
+            // drain-protected `borrowerClaims` (paid from the borrower vault to
+            // the CURRENT position holder by `claimAsBorrower`, which releases
+            // the lien), clear the snapshot, forfeit the borrower LIF, and
+            // transition to InternalMatched. The matched proceeds are already in
+            // `heldForLender` (above); the remaining principal is written off as
+            // the lender's fallback shortfall — the liquidatable collateral is
+            // exhausted, so nothing more is recoverable. (`topUp == 0` keeps the
+            // pre-existing non-topped-up behaviour: fall through and scale to 0.)
+            if (diamondAfter == 0 && topUp > 0) {
+                s.borrowerClaims[loan.id] = LibVaipakam.ClaimInfo({
+                    asset: loan.collateralAsset,
+                    amount: topUp,
+                    assetType: LibVaipakam.AssetType.ERC20,
+                    tokenId: 0,
+                    quantity: 0,
+                    claimed: false
+                });
+                // The matched proceeds already exited; the lender's residual
+                // collateral claim is zero (Diamond consumed).
+                s.lenderClaims[loan.id].amount = 0;
+                loan.principal = 0; // fallback shortfall written off — loan terminal.
+                s.fallbackSnapshot[loan.id].active = false;
+                LibVPFIDiscount.forfeitBorrowerLif(loan);
+                LibLifecycle.transitionFromAny(
+                    loan, LibVaipakam.LoanStatus.InternalMatched
+                );
+                return;
+            }
+
             if (oldCollat == 0 || newCollat >= oldCollat) return;
 
             LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loan.id];

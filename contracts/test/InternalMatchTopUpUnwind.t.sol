@@ -298,6 +298,55 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         );
     }
 
+    /// @notice #591 (Codex #605 round-2 P1) — a topped-up FallbackPending loan
+    ///         partially matched such that the match consumes the ENTIRE Diamond
+    ///         portion while principal remains. The vault top-up must NOT be
+    ///         stranded: the loan resolves terminally (InternalMatched), the
+    ///         top-up is recorded as a borrowerClaims and recovered by the
+    ///         CURRENT holder, and the remaining principal is written off.
+    function test_toppedUp_partialMatch_exhaustsDiamond_topUpStillClaimable() public {
+        // A: principal 600 (X); collateral = Diamond 800 (Y) + topUp 200 (Y).
+        // B: principal 800 (Y) ≥ A's Diamond 800 (so movedY=800 consumes it all),
+        //    collateral 500 (X) < A's principal 600 (so movedX=500, A.principal=100 remains).
+        _seedToppedUpFallback(LOAN_A, lender, borrower, mockERC20, 600, mockCollateralERC20, 800, 200, 760, 20);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 800, mockERC20, 500);
+        _mockLtv(LOAN_B, 9_000);
+
+        uint256 diamondYBefore = IERC20(mockCollateralERC20).balanceOf(address(diamond));
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        LibVaipakam.Loan memory a = _getLoan(LOAN_A);
+        // Diamond fully consumed (movedY=800) → terminal resolution, not stuck FallbackPending.
+        assertEq(uint8(a.status), uint8(LibVaipakam.LoanStatus.InternalMatched), "A resolved terminally");
+        assertEq(a.principal, 0, "remaining principal written off (lender fallback shortfall)");
+        assertEq(a.collateralAmount, 200, "only the top-up remains");
+
+        // Diamond released exactly its own 800 snapshot (all matched out); never over-drew.
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(address(diamond)),
+            diamondYBefore - 800,
+            "Diamond released only its 800 snapshot"
+        );
+
+        // Top-up is NOT stranded — recorded as a borrower claim.
+        (, uint256 borrowerClaimAmt, ) = ClaimFacet(address(diamond)).getClaimableAmount(LOAN_A, false);
+        assertEq(borrowerClaimAmt, 200, "top-up recorded as borrower claim");
+
+        // Current (transferred-away) holder recovers the top-up.
+        address newHolder = makeAddr("newHolderExhaust");
+        _mockBorrowerNftHolder(LOAN_A, newHolder);
+        uint256 holderBefore = IERC20(mockCollateralERC20).balanceOf(newHolder);
+        vm.prank(newHolder);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN_A);
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(newHolder) - holderBefore,
+            200,
+            "current holder recovers the top-up (not stranded)"
+        );
+    }
+
     // ──────────────────── 2. topped-up PARTIAL match ────────────────
 
     /// @notice §5.2 — a topped-up FallbackPending loan PARTIALLY matched:
