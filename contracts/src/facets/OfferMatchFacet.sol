@@ -13,6 +13,7 @@ import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
 /**
@@ -164,7 +165,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert FunctionDisabled(3);
         }
 
-        return _executeMatch(lenderOfferId, borrowerOfferId);
+        // No borrower collateral floor: two on-chain offers each accepted
+        // their own single-value / ranged collateral semantics at create time.
+        return _executeMatch(lenderOfferId, borrowerOfferId, 0);
     }
 
     // ─── #396 v0.6 — keeper-matcher for signed offers ────────────────────
@@ -195,6 +198,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     error SignedOfferFillInvalid(uint256 fillAmount, uint256 remaining);
     /// @notice The slice materialize cross-facet call reverted with no data.
     error SignedOfferMaterializeFailed();
+    /// @notice Burning the consumed transient lender-slice position NFT failed.
+    error NFTBurnFailed();
 
     /// @notice Keeper-matcher fill of a **vault-backed** signed offer against
     ///         an on-chain counterparty offer — full or partial. The keeper
@@ -236,19 +241,41 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // because _executeMatch is an INTERNAL call.
         bool signedIsLender =
             LibVaipakam.OfferType(o.offerType) == LibVaipakam.OfferType.Lender;
+        // Signed-BORROWER slice: pin the loan collateral to the signer's
+        // interpolated floor for this fill (the slice's own `collateralAmount`,
+        // == its `collateralAmountMax`). See `_executeMatch`'s borrowerCollFloor
+        // doc + the #616 P1 rationale. Signed-LENDER: 0 (the on-chain borrower
+        // counterparty governs its own collateral).
         loanId = signedIsLender
-            ? _executeMatch(sliceOfferId, counterpartyOfferId)
-            : _executeMatch(counterpartyOfferId, sliceOfferId);
+            ? _executeMatch(sliceOfferId, counterpartyOfferId, 0)
+            : _executeMatch(
+                counterpartyOfferId,
+                sliceOfferId,
+                s.offers[sliceOfferId].collateralAmount
+            );
 
-        // De-index the transient slice from active-offer discovery. When the
-        // slice is the BORROWER side, _executeMatch's borrower dust-close
-        // already called onOfferAccepted. But the LENDER-side dust-close only
-        // sets `accepted = true` + emits OfferClosed (no metrics hook), so a
-        // lender slice would otherwise linger in `activeOfferIdsList` /
-        // `assetPairActiveOfferIds` even though it is fully consumed — a dead
-        // transient offer keepers/UI would keep seeing. Remove it here.
+        // Transient-slice cleanup for the LENDER direction. The lender slice is
+        // the match ACCEPTOR, so LoanFacet mints a FRESH loan lender-position
+        // NFT (acceptorTokenId) and `onLoanInitiated` clears only the carried-
+        // over BORROWER token — leaving the slice's OWN OfferCreated position
+        // NFT + its `offerIdByPositionTokenId` reverse-map entry orphaned, and
+        // the lender dust-close fires no metrics hook. Untouched, the fully
+        // consumed one-tx slice would surface as a phantom OPEN offer in both
+        // `getUserPositionOffers` (active index + reverse map) and tokenURI
+        // (live NFT). Mirror OfferCancelFacet's terminal cleanup: drop the
+        // active index, clear the reverse map, burn the orphan NFT. (A BORROWER
+        // slice needs none of this: its token carries over to
+        // `loan.borrowerTokenId` and onLoanInitiated owns the cleanup.)
         if (signedIsLender) {
             LibMetricsHooks.onOfferAccepted(sliceOfferId);
+            uint256 slicePosToken = s.offers[sliceOfferId].positionTokenId;
+            delete s.offerIdByPositionTokenId[slicePosToken];
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaipakamNFTFacet.burnNFT.selector, slicePosToken
+                ),
+                NFTBurnFailed.selector
+            );
         }
 
         emit SignedOfferMatched(
@@ -345,8 +372,22 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         the LIF split all resolve to the original external caller.
     /// @param lenderOfferId    The lender (lend) offer being matched.
     /// @param borrowerOfferId  The borrower (borrow) offer being matched.
+    /// @param borrowerCollFloor A hard floor for the collateral locked on this
+    ///         match, clamped UP from `previewMatch`'s computed requirement.
+    ///         `0` (matchOffers + the signed-LENDER direction) is a no-op:
+    ///         `lockColl == mr.reqCollateral`, byte-identical to the prior
+    ///         behaviour. Set non-zero ONLY by the signed-BORROWER slice path,
+    ///         where the signer committed a collateral floor for this fill that
+    ///         the engine's single-value branch would otherwise refund away —
+    ///         see `matchSignedOffer`. Clamping UP is always HF-safe (more
+    ///         collateral ⇒ lower LTV / higher HF), and the slice pulls exactly
+    ///         this amount, so the borrower-side refund nets to zero.
     /// @return loanId          The newly initiated loan.
-    function _executeMatch(uint256 lenderOfferId, uint256 borrowerOfferId)
+    function _executeMatch(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId,
+        uint256 borrowerCollFloor
+    )
         internal
         returns (uint256 loanId)
     {
@@ -462,13 +503,24 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert InvalidOfferType();
         }
 
+        // #616 (Codex P1) — signed-BORROWER collateral floor. `previewMatch`'s
+        // single-value branch locks only the lender's pro-rated requirement
+        // (`mr.reqCollateral`) and refunds the borrower's committed excess. For
+        // a signed-borrower slice that collapses a range to one value, that
+        // refunds away the collateral FLOOR the signer actually signed. Clamp
+        // the locked amount UP to that floor. No-op when `borrowerCollFloor`
+        // is 0 (matchOffers + signed-LENDER) — `lockColl == mr.reqCollateral`.
+        uint256 lockColl = mr.reqCollateral < borrowerCollFloor
+            ? borrowerCollFloor
+            : mr.reqCollateral;
+
         // ── State mutation: install the match override. See the
         // matching docstring on `OfferFacet._acceptOffer` for the
         // override-slot consumer side.
         LibVaipakam.MatchOverride storage mo = s.matchOverride;
         mo.amount = mr.matchAmount;
         mo.rateBps = mr.matchRateBps;
-        mo.collateralAmount = mr.reqCollateral;
+        mo.collateralAmount = lockColl;
         mo.counterparty = s.offers[lenderOfferId].creator;
         mo.matcher = msg.sender;
         mo.active = true;
@@ -530,7 +582,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
                 borrowerOfferId,
-                mr.reqCollateral
+                lockColl
             ),
             bytes4(0)
         );
@@ -689,7 +741,10 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Offer storage bm = s.offers[borrowerOfferId];
         if (s.protocolCfg.partialFillEnabled && !bm.accepted) {
             bm.amountFilled += mr.matchAmount;
-            bm.collateralAmountFilled += mr.reqCollateral;
+            // #616 (Codex P1) — track the floor-clamped collateral actually
+            // locked (`lockColl`), so the dust-close residual refund nets to
+            // zero for a signed-borrower slice. No-op when floor is 0.
+            bm.collateralAmountFilled += lockColl;
             // #183 (Canonical Limit-Order Phase 2): direct storage read
             // for the borrower's effective ceiling. The GTC derivation
             // (`amountMax == 0 → derive from collateralAmountMax ×

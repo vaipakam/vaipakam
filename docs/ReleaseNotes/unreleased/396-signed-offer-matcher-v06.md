@@ -29,9 +29,15 @@ an all-or-nothing offer signed with a range is rejected as malformed rather
 than silently filled at one end. When a signed range specifies a non-constant
 collateral ratio, a partial slice is collateralized to honour the signer's
 stated floor for that fill size — never a thinner pro-rata of the ceiling that
-would under-collateralize what the signer agreed to. Each transient slice is
-also removed from active-offer discovery once consumed, so a fully-filled
-slice never lingers as a dead offer.
+would under-collateralize what the signer agreed to. This floor guarantee holds
+in both directions: when a signed BORROWER over-pledges relative to the matched
+lender's bare requirement, the loan locks the collateral the borrower actually
+signed rather than refunding the committed excess down to the lender's minimum.
+Each transient slice is also fully retired once consumed — removed from
+active-offer discovery, and (for a lender-side slice, whose loan position is a
+separately-minted record) its one-transaction offer position is burned — so a
+fully-filled slice never lingers as a phantom open offer in any listing or
+position view.
 
 Internally this reused the existing matcher by factoring its execution body into
 a shared core, so both the on-chain matcher and the signed-offer matcher run the

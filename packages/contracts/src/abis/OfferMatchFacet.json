@@ -454,6 +454,11 @@
   },
   {
     "type": "error",
+    "name": "NFTBurnFailed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "OfferAlreadyAccepted",
     "inputs": []
   },

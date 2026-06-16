@@ -7,6 +7,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -787,5 +789,109 @@ contract SignedOfferMatcherTest is SetupTest {
             2 * PRINCIPAL,
             "slice collateral max == floor (single-value)"
         );
+    }
+
+    /// @dev Pull the `sliceOfferId` (first data word) out of the most recent
+    ///      `SignedOfferMatched` log. Call right after `matchSignedOffer`
+    ///      under `vm.recordLogs()`.
+    function _lastSliceOfferId() internal returns (uint256 sliceOfferId) {
+        bytes32 sigTopic = keccak256(
+            "SignedOfferMatched(bytes32,address,address,uint256,uint256,uint256,uint256)"
+        );
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bool found;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == sigTopic) {
+                found = true;
+                (sliceOfferId, , , ) =
+                    abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
+            }
+        }
+        assertTrue(found, "SignedOfferMatched emitted");
+    }
+
+    // ─── 10. Borrower-direction collateral floor (Codex round-2 P1) ────────
+
+    /// @notice A signed BORROWER slice must lock the signer's interpolated
+    ///         collateral FLOOR, not the matched lender's lower pro-rated
+    ///         requirement. Without the `_executeMatch` floor pin, the engine's
+    ///         single-value borrower branch would lock `reqFromLender` and
+    ///         refund the committed excess — opening the loan below the
+    ///         collateral the borrower actually signed. Built over-collateralized
+    ///         (2.0x floor) against a 1.5x lender requirement so the two diverge.
+    function test_borrowerSlice_locksSignedCollateralFloor() public {
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer(16, PRINCIPAL, 2 * PRINCIPAL, LibVaipakam.FillMode.Partial);
+        // Non-constant ratio: 2.0x floor (2000 @ 1000), 1.25x ceiling (2500 @ 2000).
+        o.collateralAmount = 2 * PRINCIPAL;
+        o.collateralAmountMax = 5 * PRINCIPAL / 2;
+        bytes memory sig = _sign(o);
+        // Signer pledges the floor (2000) for this min-slice fill.
+        _fundActorVault(signer, mockCollateralERC20, 2 * PRINCIPAL);
+
+        // On-chain lender requires only 1.5x (1500) for 1000 principal —
+        // below the borrower's 2000 floor.
+        uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
+
+        vm.prank(keeper);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+            o, sig, lenderOfferId, PRINCIPAL
+        );
+
+        LibVaipakam.Loan memory loan =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(loan.borrower, signer, "borrower = signer");
+        // The loan locks the signed FLOOR (2000), NOT the lender's 1500 req.
+        assertEq(
+            loan.collateralAmount,
+            2 * PRINCIPAL,
+            "loan locks signed collateral floor"
+        );
+        // No collateral refunded to the signer's wallet (floor == pulled).
+        assertEq(
+            ERC20(mockCollateralERC20).balanceOf(signer),
+            0,
+            "no floor-collateral refunded out"
+        );
+    }
+
+    // ─── 11. Transient lender-slice NFT cleanup (Codex round-2 P2) ─────────
+
+    /// @notice After a signed-LENDER match, the consumed one-tx slice must not
+    ///         linger as a phantom open offer. Its OfferCreated position NFT is
+    ///         burned and its `offerIdByPositionTokenId` reverse-map entry
+    ///         cleared, so `getUserPositionOffers` no longer returns it and its
+    ///         tokenURI/ownerOf reverts. The signer's REAL lender position is a
+    ///         separate, freshly-minted loan NFT.
+    function test_lenderSlice_positionNftBurnedAfterMatch() public {
+        LibSignedOffer.SignedOffer memory o =
+            _lenderSignedOffer(17, PRINCIPAL, PRINCIPAL, LibVaipakam.FillMode.Partial);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+        uint256 borrowerOfferId = _postBorrowerCounterparty(borrower, PRINCIPAL);
+
+        vm.recordLogs();
+        vm.prank(keeper);
+        OfferMatchFacet(address(diamond)).matchSignedOffer(
+            o, sig, borrowerOfferId, PRINCIPAL
+        );
+        uint256 sliceOfferId = _lastSliceOfferId();
+        uint256 slicePosToken =
+            OfferCancelFacet(address(diamond)).getOffer(sliceOfferId).positionTokenId;
+
+        // The orphan slice position NFT is burned.
+        vm.expectRevert();
+        VaipakamNFTFacet(address(diamond)).ownerOf(slicePosToken);
+
+        // getUserPositionOffers no longer surfaces the consumed slice as an
+        // open offer (reverse map cleared + NFT gone).
+        (uint256[] memory offerIds, ) =
+            MetricsFacet(address(diamond)).getUserPositionOffers(signer);
+        for (uint256 i = 0; i < offerIds.length; i++) {
+            assertTrue(
+                offerIds[i] != sliceOfferId,
+                "consumed slice must not appear as an open offer"
+            );
+        }
     }
 }
