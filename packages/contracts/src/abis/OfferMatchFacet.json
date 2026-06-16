@@ -543,6 +543,11 @@
   },
   {
     "type": "error",
+    "name": "KeeperAccessRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderIntentCollateralUnresolvable",
     "inputs": []
   },

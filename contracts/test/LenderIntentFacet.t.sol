@@ -172,14 +172,19 @@ contract LenderIntentFacetTest is SetupTest {
         );
     }
 
-    function test_keeperAuthFlag_reverts_untilGateShips() public {
-        // requiresKeeperAuth=true rejected until the permissioned-solver gate
-        // lands (a later v1 increment) — no false sense of protection.
+    function test_keeperAuthFlag_accepted() public {
+        // #393 v1-c — requiresKeeperAuth=true is now honoured (the gate ships in
+        // matchIntent); registering it round-trips.
         vm.prank(user);
-        vm.expectRevert(LenderIntentFacet.LenderIntentKeeperGateNotEnabled.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true
+        );
+        assertTrue(
+            LenderIntentFacet(address(diamond))
+                .getLenderIntent(user, mockERC20, mockCollateralERC20)
+                .requiresKeeperAuth,
+            "requiresKeeperAuth stored"
         );
     }
 

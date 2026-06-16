@@ -108,4 +108,28 @@ library LibAuth {
         ) revert IVaipakamErrors.KeeperAccessRequired();
     }
 
+    /// @notice #393 v1-c — PRE-loan keeper authorization, keyed by the PRINCIPAL
+    ///         (the party being acted for) instead of a loan's NFT holder. Used
+    ///         by `OfferMatchFacet.matchIntent` to gate a solver filling a
+    ///         lender's `requiresKeeperAuth` standing intent: the loan doesn't
+    ///         exist yet, so the loan-keyed `requireKeeperFor` can't apply.
+    /// @dev    Same model as `requireKeeperFor` minus the per-loan toggle: allow
+    ///         the diamond (internal cross-facet), the principal acting for
+    ///         themselves, or an opted-in keeper (`keeperAccessEnabled[principal]`
+    ///         AND the `action` bit set in `approvedKeeperActions[principal][caller]`).
+    /// @param action    One of `LibVaipakam.KEEPER_ACTION_*` (bitmask).
+    /// @param principal The party whose authorization is required (the lender).
+    function requireKeeperForPrincipal(uint8 action, address principal)
+        internal
+        view
+    {
+        if (msg.sender == address(this)) return; // diamond-internal
+        if (msg.sender == principal) return; // self
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (
+            !s.keeperAccessEnabled[principal] ||
+            (s.approvedKeeperActions[principal][msg.sender] & action) == 0
+        ) revert IVaipakamErrors.KeeperAccessRequired();
+    }
+
 }

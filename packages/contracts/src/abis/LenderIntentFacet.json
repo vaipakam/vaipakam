@@ -331,11 +331,6 @@
   },
   {
     "type": "error",
-    "name": "LenderIntentKeeperGateNotEnabled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LenderIntentNotActive",
     "inputs": []
   },

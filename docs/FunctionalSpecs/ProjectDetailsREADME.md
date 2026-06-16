@@ -336,9 +336,11 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   commitment; cancelling one is always permitted so a lender can wind down
   standing exposure at any time. Intents are independent per asset-pair, and the
   loan-making path is governed by a feature switch that stays off until enabled
-  post-launch. Restricting an intent to authorized solvers only is a planned
-  capability that is not yet available; until it ships, an intent that requests
-  it is rejected rather than registered without the protection in force.
+  post-launch. A lender may also mark an intent **solver-permissioned**: when
+  set, only the lender themselves or a solver the lender has explicitly
+  authorized (via the platform's per-user keeper-approval mechanism, with a
+  dedicated "fill a standing intent" action) may fill it; an intent left open —
+  the default — is fillable by any solver.
 - **Filling an intent.** A solver fills a lender's standing intent against an
   existing on-chain borrower offer: the protocol builds a one-time lender offer
   from the intent — the lender's rate floor, the borrower offer's term (which

@@ -4436,12 +4436,18 @@ library LibVaipakam {
     ///      the bit is reserved here so the consent-cap setters
     ///      shipped in Phase 1 stay forward-compatible.
     uint8 internal constant KEEPER_ACTION_EXTEND = 1 << 5; // 0x20
+    /// @dev #393 v1-c — authorize a solver to fill the principal owner's
+    ///      standing lending INTENT (`OfferMatchFacet.matchIntent`) when that
+    ///      intent is set `requiresKeeperAuth`. PRE-loan / principal-keyed (the
+    ///      loan doesn't exist at fill time), so it is checked via
+    ///      `LibAuth.requireKeeperForPrincipal`, not the loan-keyed
+    ///      `requireKeeperFor`. An un-opted intent stays openly fillable.
+    uint8 internal constant KEEPER_ACTION_SIGNED_FILL = 1 << 6; // 0x40
     /// @dev All actions — convenience for "grant everything" UX
     ///      flows. T-092 Phase 3 (#503) widened this from 0x1F to
     ///      0x3F at the same time the `extendLoanInPlace` executor
-    ///      landed, so a user granting "all actions" knows the
-    ///      EXTEND authority is included.
-    uint8 internal constant KEEPER_ACTION_ALL = 0x3F;
+    ///      landed; #393 v1-c widened it 0x3F → 0x7F with SIGNED_FILL.
+    uint8 internal constant KEEPER_ACTION_ALL = 0x7F;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.

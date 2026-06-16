@@ -63,11 +63,6 @@ contract LenderIntentFacet is
     /// @notice `maxExposure`, `minRateBps`, `maxInitLtvBps`, or `minFillAmount`
     ///         was outside its valid range (see `setLenderIntent`).
     error LenderIntentInvalidBounds();
-    /// @notice `requiresKeeperAuth == true` is not yet honoured — the
-    ///         permissioned-solver gate ships in a later v1 increment. Rejecting
-    ///         it here prevents a lender registering a "keeper-only" intent that
-    ///         an as-yet-ungated fill path would treat as openly fillable.
-    error LenderIntentKeeperGateNotEnabled();
     /// @notice No active intent exists for the (owner, asset-pair) to cancel.
     error LenderIntentNotActive();
     /// @notice A diamond-internal-only entry was called externally.
@@ -127,11 +122,10 @@ contract LenderIntentFacet is
         if (lendingAsset == collateralAsset) {
             revert LenderIntentSelfCollateralized();
         }
-        // The permissioned-solver gate is not wired yet (later v1 increment);
-        // until it is, a "keeper-only" intent would be indistinguishable from an
-        // open one at the fill path. Reject the flag so no lender registers a
-        // false sense of protection. Lifted when the gate ships.
-        if (requiresKeeperAuth) revert LenderIntentKeeperGateNotEnabled();
+        // #393 v1-c — `requiresKeeperAuth` is now honoured: a true intent is
+        // fillable only by the lender or a solver they've authorized for
+        // `KEEPER_ACTION_SIGNED_FILL` (gate enforced in `matchIntent`). No longer
+        // rejected here.
         // Bounds sanity: exposure + slice positive, slice within exposure, an
         // LTV ceiling in (0, 100%], a positive term, and a rate floor at or
         // below the protocol interest ceiling so a materialized offer can
