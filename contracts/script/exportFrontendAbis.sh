@@ -89,6 +89,8 @@ FACETS=(
   "MetricsDashboardFacet"
   "OfferCancelFacet"
   "OfferCreateFacet"
+  # #396 v0.5 — gasless signed off-chain offer book fill surface.
+  "SignedOfferFacet"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"

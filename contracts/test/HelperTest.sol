@@ -30,6 +30,7 @@ import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -250,7 +251,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](6);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -258,6 +259,11 @@ contract HelperTest {
         // Cross-facet entry consumed by PrecloseFacet.offsetWithNewOffer
         // (Option 3 offset flow) — address(this)-only gating.
         selectors[3] = OfferCreateFacet.createOfferInternal.selector;
+        // #396 v0.5 — cross-facet materialize entries used by
+        // `SignedOfferFacet` to mint a normal on-chain offer from a
+        // signed off-chain offer (vault-backed + wallet-backed Permit2).
+        selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
+        selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
         return selectors;
     }
 
@@ -684,6 +690,25 @@ contract HelperTest {
         selectors[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
         selectors[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
         selectors[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+    }
+
+    /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
+    ///         Two fill entry points, signer-only cancel + batch nonce
+    ///         invalidation, and the four read views.
+    function getSignedOfferFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](8);
+        selectors[0] = SignedOfferFacet.acceptSignedOffer.selector;
+        selectors[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
+        selectors[2] = SignedOfferFacet.cancelSignedOffer.selector;
+        selectors[3] = SignedOfferFacet.invalidateSignedOfferNonce.selector;
+        selectors[4] = SignedOfferFacet.hashSignedOffer.selector;
+        selectors[5] = SignedOfferFacet.signedOfferOrderHash.selector;
+        selectors[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
+        selectors[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
     }
 
     function getDefaultedFacetSelectors()

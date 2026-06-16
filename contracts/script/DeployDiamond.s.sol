@@ -30,6 +30,7 @@ import {SwapToRepayIntentFacet} from "../src/facets/SwapToRepayIntentFacet.sol";
 import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -161,6 +162,8 @@ contract DeployDiamond is Script {
         // #407 PR 2 — thin cross-facet mutate surface for the
         // vault encumbrance sub-ledger; see facet natspec.
         EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
+        // #396 v0.5 — gasless signed off-chain offer book fill surface.
+        SignedOfferFacet signedOfferFacet = new SignedOfferFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -224,7 +227,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](53);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](54);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -386,6 +389,14 @@ contract DeployDiamond is Script {
         cuts[52] = _buildCut(
             address(repayPeriodicFacet),
             _getRepayPeriodicFacetSelectors()
+        );
+        // #396 v0.5 — gasless signed off-chain offer book. A creator
+        // signs offer terms once off-chain; a counterparty fills here,
+        // materializing the signed offer into a normal on-chain offer +
+        // immediately accepting it. See `SignedOfferFacet.sol` natspec.
+        cuts[53] = _buildCut(
+            address(signedOfferFacet),
+            _getSignedOfferFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1096,7 +1107,7 @@ contract DeployDiamond is Script {
     ///      `_getOfferSelectors()` seven entries are partitioned across
     ///      the two getters below; selector VALUES are unchanged.
     function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](6);
         s[0] = OfferCreateFacet.createOffer.selector;
         s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -1106,6 +1117,12 @@ contract DeployDiamond is Script {
         // the shared diamond reentrancy guard the caller already holds.
         // `address(this)`-only gated inside the facet body.
         s[3] = OfferCreateFacet.createOfferInternal.selector;
+        // #396 v0.5 — cross-facet materialize entries used by
+        // `SignedOfferFacet` to mint a normal on-chain offer from a
+        // signed off-chain offer (vault-backed + wallet-backed Permit2
+        // witness). `address(this)`-only gated inside the facet body.
+        s[4] = OfferCreateFacet.createSignedOfferVault.selector;
+        s[5] = OfferCreateFacet.createSignedOfferWallet.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet
@@ -1288,6 +1305,22 @@ contract DeployDiamond is Script {
         s[5] = EncumbranceMutateFacet.decrementOfferPrincipalLien.selector;
         s[6] = EncumbranceMutateFacet.releaseOfferPrincipalLien.selector;
         s[7] = EncumbranceMutateFacet.incrementOfferPrincipalLien.selector;
+    }
+
+    /// @notice #396 v0.5 — gasless signed off-chain offer book selectors.
+    ///         Two fill entry points (vault-backed + wallet-backed via
+    ///         Permit2 witness), signer-only cancel + batch nonce
+    ///         invalidation, and the four read views.
+    function _getSignedOfferFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](8);
+        s[0] = SignedOfferFacet.acceptSignedOffer.selector;
+        s[1] = SignedOfferFacet.acceptSignedOfferWithPermit.selector;
+        s[2] = SignedOfferFacet.cancelSignedOffer.selector;
+        s[3] = SignedOfferFacet.invalidateSignedOfferNonce.selector;
+        s[4] = SignedOfferFacet.hashSignedOffer.selector;
+        s[5] = SignedOfferFacet.signedOfferOrderHash.selector;
+        s[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
+        s[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

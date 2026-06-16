@@ -612,9 +612,18 @@ contract OfferAcceptFacet is
         // two use sites (lender-asset LIF split + `loan.matcher`
         // recording) so we don't pay a stack slot for it. viaIR's
         // stack-too-deep budget is tight in this function.
+        // #396 v0.5 — a signed-offer fill routes through `SignedOfferFacet`,
+        // which cross-facet-calls `acceptOfferInternal` (so `msg.sender` is the
+        // diamond here). It injects the REAL counterparty into
+        // `s.signedOfferAcceptor` for exactly this resolution (set immediately
+        // before the call, cleared immediately after). Same shape as the
+        // `matchOverride` injection. Precedence: an explicit match override
+        // wins, then a signed-offer injection, else the direct caller.
         address acceptor = s.matchOverride.active
             ? s.matchOverride.counterparty
-            : msg.sender;
+            : (s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender);
 
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's
@@ -915,10 +924,15 @@ contract OfferAcceptFacet is
                                 offer.lendingAsset,
                                 // Read matcher inline from storage to
                                 // keep this function under viaIR's
-                                // stack-too-deep budget.
+                                // stack-too-deep budget. #396 v0.5: on a
+                                // signed-offer fill `msg.sender` is the
+                                // diamond (cross-facet `acceptOfferInternal`),
+                                // so fall back to the injected real filler.
                                 s.matchOverride.active
                                     ? s.matchOverride.matcher
-                                    : msg.sender,
+                                    : (s.signedOfferAcceptor != address(0)
+                                        ? s.signedOfferAcceptor
+                                        : msg.sender),
                                 matcherCut
                             ),
                             VaultWithdrawFailed.selector
@@ -1089,7 +1103,9 @@ contract OfferAcceptFacet is
         // but recording on every loan keeps the read cheap and uniform.
         s.loans[loanId].matcher = s.matchOverride.active
             ? s.matchOverride.matcher
-            : msg.sender;
+            : (s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender);
 
         // Update offer.
         //
@@ -1240,7 +1256,14 @@ contract OfferAcceptFacet is
         uint256 effFilled = offer.accepted ? effectivePrincipal : offer.amountFilled;
         emit OfferAccepted(
             offerId,
-            msg.sender,
+            // #396 v0.5 — inject the real filler ONLY on the signed-offer path
+            // (where `msg.sender` is the diamond via cross-facet
+            // `acceptOfferInternal`). The matchOffers path keeps emitting
+            // `msg.sender` (the matcher/bot) and legacy direct keeps emitting
+            // the caller — both unchanged, so indexer semantics don't shift.
+            s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender,
             loanId,
             effectivePrincipal,
             effFilled,

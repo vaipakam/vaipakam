@@ -3989,6 +3989,33 @@ library LibVaipakam {
         // single terminal, so this is written once per loan and cleared on
         // release.
         mapping(uint256 => address) lenderProceedsEncumberedAsset;
+        // #396 v0.5 — signed off-chain offer book. APPEND-ONLY.
+        // `signedOfferFilled`: order hash (the EIP-712 digest from
+        // `LibSignedOffer.digest`) → cumulative principal already filled
+        // against that signed offer. The remaining-fillable is
+        // `amount(Max) − signedOfferFilled[hash]`; an AON offer closes on
+        // first fill (set to `amount`), a partial-fillable one decrements
+        // toward the dust floor. `cancelSignedOffer` sets it to `amount` so
+        // the offer becomes unfillable. This is the off-chain-offer analog
+        // of `Offer.amountFilled` and the sole replay/double-fill guard for
+        // a non-stored offer.
+        mapping(bytes32 => uint256) signedOfferFilled;
+        // #396 v0.5 — per-signer batch-cancel nonce. A signer mass-
+        // invalidates a cohort of their live signed offers by burning the
+        // nonce they all carry (`invalidateNonce`); every fill checks this
+        // before honouring the signature. Granular single-offer cancel is
+        // `signedOfferFilled` (by order hash); this is the coarse bulk lever.
+        mapping(address => mapping(uint256 => bool)) signedOfferNonceUsed;
+        // #396 v0.5 — transient acceptor injection for the signed-offer fill
+        // path. `SignedOfferFacet` sets this to the real counterparty
+        // (`msg.sender`) immediately before its cross-facet
+        // `acceptOfferInternal` call and clears it immediately after, so
+        // `_acceptOffer` resolves the acceptor to the real caller instead of
+        // the diamond (a cross-facet hop loses `msg.sender`). Mirrors the
+        // `matchOverride.counterparty` injection the matcher uses. MUST be
+        // address(0) outside an in-flight signed-offer fill — always cleared
+        // in the same call; a non-zero value at rest is a bug.
+        address signedOfferAcceptor;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.

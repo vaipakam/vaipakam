@@ -271,6 +271,37 @@ The platform distinguishes between liquid and illiquid assets, which affects how
 
 ## 3. Offer Creation
 
+### Creation modes — on-chain and gasless signed offers (v0.5)
+
+An offer may be created two ways, both reaching the same on-chain offer state:
+
+- **On-chain offer** (the original mode) — the creator sends a transaction that
+  deposits/locks their stake and records the offer immediately.
+- **Signed off-chain offer (gasless)** — the creator signs the binding offer
+  terms once with an EIP-712 signature (no transaction, no gas). The offer lives
+  off-chain (front-end / indexer order book) until a counterparty fills it. At
+  fill, the signed offer is materialized into an ordinary on-chain offer and
+  accepted in the same transaction, so the resulting loan and every downstream
+  rule (position NFTs, claims, VPFI discount, sanctions screening, liquidity and
+  health-factor gates) behave identically to an on-chain offer. The act of
+  signing is the creator's risk-and-terms consent.
+
+  The signer's stake is sourced either from **free balance already in their
+  Vaipakam vault** (checked and locked, nothing pulled) or **from their wallet
+  via a single Permit2 signature** that authorizes the token transfer and binds
+  the offer terms together (wallet-sourced signed offers are all-or-nothing).
+  No funds are ever pooled — the stake stays in the signer's own isolated vault
+  until the fill instant.
+
+  Signed offers are replay-protected (each fill is recorded against the offer's
+  order hash and can never be filled twice) and cancellable: the signer can
+  cancel a specific offer on-chain, or batch-cancel every offer carrying a given
+  nonce (the secure complement to a free off-chain delete). Smart-contract
+  wallets can sign (ERC-1271). v0.5 supports direct, full acceptance of ERC-20
+  lender-principal and ERC-20-collateral borrower offers; partial fills, the
+  programmatic lender-intent vault, and aggregator adapters are later phases,
+  and NFT-collateral / refinance-tagged signed offers are out of v0.5 scope.
+
 ### Lenders:
 
 - **For ERC-20 Tokens:**

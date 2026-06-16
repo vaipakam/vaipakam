@@ -36,6 +36,11 @@ contract MockPermit2 is ISignatureTransfer {
     SignatureTransferDetails public lastTransferDetails;
     address public lastOwner;
     uint256 public callCount;
+    // Witness-variant last-call record (#396 v0.5 wallet-backed signed
+    // offer path). Tests read these to confirm the facet forwarded the
+    // offer-hash witness + type string the wallet-backed fill binds.
+    bytes32 public lastWitness;
+    string public lastWitnessTypeString;
 
     function permitTransferFrom(
         PermitTransferFrom calldata permit,
@@ -51,6 +56,33 @@ contract MockPermit2 is ISignatureTransfer {
         // Execute the transfer so the facet's post-pull assertions
         // (vault balances, offer state, etc.) behave as they would
         // under real Permit2.
+        IERC20(permit.permitted.token).safeTransferFrom(
+            owner,
+            transferDetails.to,
+            transferDetails.requestedAmount
+        );
+    }
+
+    /// @notice Witness variant — same skip-verification stand-in as
+    ///         {permitTransferFrom}, additionally recording the witness +
+    ///         type string so wallet-backed signed-offer tests can assert
+    ///         the facet bound the offer hash. Like the plain variant it
+    ///         skips signature reconstruction and just moves the tokens.
+    function permitWitnessTransferFrom(
+        PermitTransferFrom calldata permit,
+        SignatureTransferDetails calldata transferDetails,
+        address owner,
+        bytes32 witness,
+        string calldata witnessTypeString,
+        bytes calldata /* signature */
+    ) external override {
+        lastPermit = permit;
+        lastTransferDetails = transferDetails;
+        lastOwner = owner;
+        lastWitness = witness;
+        lastWitnessTypeString = witnessTypeString;
+        callCount += 1;
+
         IERC20(permit.permitted.token).safeTransferFrom(
             owner,
             transferDetails.to,

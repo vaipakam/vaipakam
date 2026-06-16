@@ -69,6 +69,24 @@ interface ISignatureTransfer {
         bytes calldata signature
     ) external;
 
+    /// @notice Permit2 witness variant — the signer authorizes the token
+    ///         transfer AND binds an arbitrary `witness` hash into the SAME
+    ///         EIP-712 digest, with `witnessTypeString` declaring the witness
+    ///         member + its referenced type definitions. Permit2 reconstructs
+    ///         `PermitWitnessTransferFrom(TokenPermissions permitted,address
+    ///         spender,uint256 nonce,uint256 deadline,<witnessTypeString>` and
+    ///         verifies the signature against it. Used by the wallet-backed
+    ///         signed-offer path so one signature binds the pull + the offer
+    ///         terms (the witness = the `SignedOffer` struct hash).
+    function permitWitnessTransferFrom(
+        PermitTransferFrom calldata permit,
+        SignatureTransferDetails calldata transferDetails,
+        address owner,
+        bytes32 witness,
+        string calldata witnessTypeString,
+        bytes calldata signature
+    ) external;
+
     function nonceBitmap(address owner, uint256 wordPos)
         external
         view
@@ -135,6 +153,63 @@ library LibPermit2 {
                 requestedAmount: amount
             }),
             owner,
+            signature
+        );
+    }
+
+    /**
+     * @notice Witness variant of {pull} — pulls `amount` of `expectedToken`
+     *         from `owner` to `to` while binding `witness` into the signed
+     *         EIP-712 digest. Used by the wallet-backed signed-offer path
+     *         (#396 v0.5): a single Permit2 signature authorizes the token
+     *         transfer AND commits to the offer terms (the `witness` is the
+     *         `LibSignedOffer.hashStruct` of the offer), so no separate
+     *         offer signature is needed.
+     *
+     * @dev Same `expectedToken == permit.permitted.token` guard as {pull}
+     *      (a witness binds the terms but Permit2 still independently honours
+     *      whatever token the permit names — the guard prevents a wrong-asset
+     *      pull being recorded as the funded leg). All other invariants
+     *      (amount ≤ signed, deadline, nonce-not-burned, signature) are
+     *      enforced inside Permit2 against the witness-augmented digest;
+     *      `owner` MUST equal the offer's `signer`. Permit2 supports ERC-1271
+     *      `owner`s, so a smart-contract wallet can sign the witness too.
+     *
+     * @param owner             Signer of the permit (= the offer signer).
+     * @param to                Destination (the signer's vault proxy).
+     * @param expectedToken     Asset the protocol expects to pull.
+     * @param amount            Amount to pull — ≤ signed amount.
+     * @param permit            `PermitTransferFrom` the user signed.
+     * @param witness           The `SignedOffer` struct hash bound into the digest.
+     * @param witnessTypeString Permit2 witness type declaration
+     *                          (`LibSignedOffer.WITNESS_TYPE_STRING`).
+     * @param signature         Signature over the witness-augmented digest.
+     */
+    function pullWithWitness(
+        address owner,
+        address to,
+        address expectedToken,
+        uint256 amount,
+        ISignatureTransfer.PermitTransferFrom memory permit,
+        bytes32 witness,
+        string memory witnessTypeString,
+        bytes memory signature
+    ) internal {
+        if (permit.permitted.token != expectedToken) {
+            revert IVaipakamErrors.Permit2TokenMismatch(
+                expectedToken,
+                permit.permitted.token
+            );
+        }
+        ISignatureTransfer(PERMIT2).permitWitnessTransferFrom(
+            permit,
+            ISignatureTransfer.SignatureTransferDetails({
+                to: to,
+                requestedAmount: amount
+            }),
+            owner,
+            witness,
+            witnessTypeString,
             signature
         );
     }
