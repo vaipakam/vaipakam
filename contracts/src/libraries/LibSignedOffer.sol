@@ -311,37 +311,18 @@ library LibSignedOffer {
         // Principal collapses to the slice (single-value).
         p.amount = fillAmount;
         p.amountMax = fillAmount;
-        // Collateral: **linearly interpolate between the two SIGNED endpoints**
-        // `(amount, collateralAmount)` and `(amountMax, collateralAmountMax)`,
-        // rounded UP. Pro-rating only from the ceiling under-collateralizes a
-        // range with a non-constant collateral ratio — e.g. amount=1000/
-        // collateralAmount=2000, amountMax=2000/collateralAmountMax=3000: a
-        // 1000 fill must require 2000 (the signed floor at that size), not
-        // 1500. Interpolation honours BOTH endpoints: it returns exactly
-        // collateralAmount at the floor and collateralAmountMax at the ceiling.
-        // The caller (`_vetSignedOfferForMatch`) guarantees
-        // `amount <= fillAmount <= amountMax`, so the interpolation is in-range.
-        uint256 amt = o.amount;
-        uint256 amtMax = o.amountMax == 0 ? o.amount : o.amountMax;
-        uint256 collMin = o.collateralAmount;
-        uint256 collMax =
-            o.collateralAmountMax == 0 ? o.collateralAmount : o.collateralAmountMax;
-        uint256 sliceColl;
-        if (amtMax <= amt || fillAmount <= amt) {
-            // Single-value range, or a fill at the floor → the signed floor.
-            sliceColl = collMin;
-        } else if (fillAmount >= amtMax) {
-            sliceColl = collMax;
-        } else if (collMax > collMin) {
-            // Normal (collateral non-decreasing in amount): interpolate up.
-            sliceColl = collMin
-                + (((collMax - collMin) * (fillAmount - amt) + (amtMax - amt) - 1)
-                    / (amtMax - amt));
-        } else {
-            // Pathological (collateral non-increasing in amount): the floor is
-            // the larger requirement — keep it (conservative).
-            sliceColl = collMin;
-        }
+        // Collateral scales pro-rata at the offer's CONSTANT ratio:
+        // `sliceColl = collateralAmount * fillAmount / amount`. The matcher's
+        // `_vetSignedOfferForMatch` guarantees the signed ratio is constant
+        // (`collMin:amount == collMax:amountMax`), so this single formula gives
+        // exactly `collateralAmount` at the floor and `collateralAmountMax` at
+        // the ceiling, and is ADDITIVE across partial slices: the per-slice
+        // collateral sums to `collateralAmountMax` at full fill (integer-floor
+        // keeps the aggregate AT OR BELOW the signed ceiling — never above, so
+        // a multi-slice fill can't over-collect from the signer). Mirrors the
+        // pro-rata partial-fill model standard limit-order books (0x / Seaport /
+        // CoW) use; a non-constant ratio is rejected before reaching here.
+        uint256 sliceColl = (o.collateralAmount * fillAmount) / o.amount;
         p.collateralAmount = sliceColl;
         p.collateralAmountMax = sliceColl;
     }

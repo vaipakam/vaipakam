@@ -602,6 +602,11 @@
   },
   {
     "type": "error",
+    "name": "SignedOfferRatioNotConstant",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SignedOfferSigExpired",
     "inputs": [
       {

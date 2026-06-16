@@ -24,15 +24,26 @@ Because slicing rewrites a fill to a single fixed-size on-chain offer, the
 matcher also re-asserts — before slicing — the intent guarantees the signer
 relies on and the matching engine can no longer see once the range is
 collapsed: a partial fill can never be smaller than the signer's stated
-minimum slice, can never leave a sub-minimum remainder stranded off-chain, and
-an all-or-nothing offer signed with a range is rejected as malformed rather
-than silently filled at one end. When a signed range specifies a non-constant
-collateral ratio, a partial slice is collateralized to honour the signer's
-stated floor for that fill size — never a thinner pro-rata of the ceiling that
-would under-collateralize what the signer agreed to. This floor guarantee holds
-in both directions: when a signed BORROWER over-pledges relative to the matched
-lender's bare requirement, the loan locks the collateral the borrower actually
-signed rather than refunding the committed excess down to the lender's minimum.
+minimum slice, can never leave a sub-minimum remainder stranded off-chain, a
+zero minimum is rejected outright, and an all-or-nothing offer signed with a
+range is rejected as malformed rather than silently filled at one end.
+
+Collateral on a partially-fillable signed offer must scale at a CONSTANT ratio
+across its range (the same collateral-to-principal proportion at the minimum
+and the maximum) — exactly how mainstream signed-order books (0x, Seaport, CoW)
+treat a single order: one price, pro-rata partial fills. A signer who wants
+different ratios posts separate offers, or a single all-or-nothing offer. With
+that rule, each slice's collateral is a clean pro-rata share that sums to
+exactly the signed ceiling across the whole fill — a keeper can never split the
+range into slices that, in aggregate, lock more collateral than the signer
+agreed to. The signer's collateral is also honoured as a true floor on the
+borrower side: when a signed borrower is matched against a lender asking for
+less collateral than the borrower pledged, the loan locks what the borrower
+signed (not the lender's lower minimum), and that floored amount is what the
+health-factor / loan-to-value safety check evaluates — so a match that is safe
+at the signed pledge is admitted rather than rejected on the lender's thinner
+requirement.
+
 Each transient slice is also fully retired once consumed — removed from
 active-offer discovery, and (for a lender-side slice, whose loan position is a
 separately-minted record) its one-transaction offer position is burned — so a

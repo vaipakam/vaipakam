@@ -200,6 +200,10 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     error SignedOfferMaterializeFailed();
     /// @notice Burning the consumed transient lender-slice position NFT failed.
     error NFTBurnFailed();
+    /// @notice A matched signed offer's collateral:principal ratio is not
+    ///         constant across its range (collMin:amount != collMax:amountMax).
+    ///         A non-constant ratio is not sliceable; use separate offers or AON.
+    error SignedOfferRatioNotConstant();
 
     /// @notice Keeper-matcher fill of a **vault-backed** signed offer against
     ///         an on-chain counterparty offer — full or partial. The keeper
@@ -307,6 +311,33 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (fillAmount == 0 || fillAmount > remaining) {
             revert SignedOfferFillInvalid(fillAmount, remaining);
         }
+        // #616 round-3 (Codex P2) — reject a zero signed minimum. With
+        // `amount == 0`, any dust `fillAmount` clears the min-slice +
+        // dust-remainder guards below, and once `_materializeSlice` rewrites
+        // the slice to `amount = amountMax = fillAmount` the create-time
+        // positive-amount invariant never sees the malformed zero — a keeper
+        // could drain the signed max in arbitrarily tiny vault-backed loans.
+        if (o.amount == 0) revert SignedOfferFillInvalid(fillAmount, remaining);
+        // #616 round-3 (Codex P1) — a matched signed offer must carry a CONSTANT
+        // collateral:principal ratio (collMin:amount == collMax:amountMax),
+        // cross-multiplied to avoid division. Each slice then prices collateral
+        // as collMin*fill/amount, which is ADDITIVE: the per-slice locks sum to
+        // exactly collMax at full fill, so a keeper cannot split a non-constant
+        // range into slices that lock more aggregate collateral than the signer
+        // signed (the round-3 over-collection vector). A varying ratio across
+        // the fill is not a sliceable order — express it as separate signed
+        // offers, or a single AON offer (one ratio, one fill). For AON
+        // (amount == ceiling) this same check forces collMin == collMax,
+        // matching its single principal value. This mirrors how 0x / Seaport /
+        // CoW carry one price per order and partial-fill pro-rata.
+        {
+            uint256 effCollMax = o.collateralAmountMax == 0
+                ? o.collateralAmount
+                : o.collateralAmountMax;
+            if (o.collateralAmount * ceiling != effCollMax * o.amount) {
+                revert SignedOfferRatioNotConstant();
+            }
+        }
         if (LibVaipakam.FillMode(o.fillMode) == LibVaipakam.FillMode.Aon) {
             // AON structural invariant (mirrors createOffer): an all-or-nothing
             // offer must be a single fixed size — `amount == amountMax`. A
@@ -372,16 +403,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         the LIF split all resolve to the original external caller.
     /// @param lenderOfferId    The lender (lend) offer being matched.
     /// @param borrowerOfferId  The borrower (borrow) offer being matched.
-    /// @param borrowerCollFloor A hard floor for the collateral locked on this
-    ///         match, clamped UP from `previewMatch`'s computed requirement.
-    ///         `0` (matchOffers + the signed-LENDER direction) is a no-op:
-    ///         `lockColl == mr.reqCollateral`, byte-identical to the prior
-    ///         behaviour. Set non-zero ONLY by the signed-BORROWER slice path,
-    ///         where the signer committed a collateral floor for this fill that
-    ///         the engine's single-value branch would otherwise refund away —
-    ///         see `matchSignedOffer`. Clamping UP is always HF-safe (more
-    ///         collateral ⇒ lower LTV / higher HF), and the slice pulls exactly
-    ///         this amount, so the borrower-side refund nets to zero.
+    /// @param borrowerCollFloor A hard floor for the borrower collateral on this
+    ///         match, forwarded into `previewMatch` so the floor is applied at
+    ///         BOTH the lock and the HF/LTV gate (no post-hoc clamp). `0`
+    ///         (matchOffers + the signed-LENDER direction) is a no-op,
+    ///         byte-identical to the prior behaviour. Set non-zero ONLY by the
+    ///         signed-BORROWER slice path, where the signer committed a
+    ///         constant-ratio collateral for this fill that the engine's
+    ///         single-value branch would otherwise refund away — see
+    ///         `matchSignedOffer`. The slice pulls exactly this amount, so the
+    ///         borrower-side refund nets to zero; clamping UP is always HF-safe.
     /// @return loanId          The newly initiated loan.
     function _executeMatch(
         uint256 lenderOfferId,
@@ -419,7 +450,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // Pre-flight via the shared core; map structured errors into
         // typed reverts declared on this facet.
         LibOfferMatch.MatchResult memory mr =
-            LibOfferMatch.previewMatch(lenderOfferId, borrowerOfferId);
+            LibOfferMatch.previewMatch(
+                lenderOfferId, borrowerOfferId, borrowerCollFloor
+            );
         if (mr.errorCode != LibOfferMatch.MatchError.Ok) {
             if (mr.errorCode == LibOfferMatch.MatchError.AssetMismatch
                 || mr.errorCode == LibOfferMatch.MatchError.AssetTypeMismatch) {
@@ -503,24 +536,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert InvalidOfferType();
         }
 
-        // #616 (Codex P1) — signed-BORROWER collateral floor. `previewMatch`'s
-        // single-value branch locks only the lender's pro-rated requirement
-        // (`mr.reqCollateral`) and refunds the borrower's committed excess. For
-        // a signed-borrower slice that collapses a range to one value, that
-        // refunds away the collateral FLOOR the signer actually signed. Clamp
-        // the locked amount UP to that floor. No-op when `borrowerCollFloor`
-        // is 0 (matchOffers + signed-LENDER) — `lockColl == mr.reqCollateral`.
-        uint256 lockColl = mr.reqCollateral < borrowerCollFloor
-            ? borrowerCollFloor
-            : mr.reqCollateral;
-
         // ── State mutation: install the match override. See the
         // matching docstring on `OfferFacet._acceptOffer` for the
-        // override-slot consumer side.
+        // override-slot consumer side. `mr.reqCollateral` already reflects the
+        // signed-borrower floor (threaded into previewMatch above), so the
+        // override, the offer-lien decrement, and the dust-close refund all
+        // key off the SAME value and stay consistent.
         LibVaipakam.MatchOverride storage mo = s.matchOverride;
         mo.amount = mr.matchAmount;
         mo.rateBps = mr.matchRateBps;
-        mo.collateralAmount = lockColl;
+        mo.collateralAmount = mr.reqCollateral;
         mo.counterparty = s.offers[lenderOfferId].creator;
         mo.matcher = msg.sender;
         mo.active = true;
@@ -582,7 +607,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             abi.encodeWithSelector(
                 EncumbranceMutateFacet.decrementOfferPrincipalLien.selector,
                 borrowerOfferId,
-                lockColl
+                mr.reqCollateral
             ),
             bytes4(0)
         );
@@ -741,10 +766,7 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Offer storage bm = s.offers[borrowerOfferId];
         if (s.protocolCfg.partialFillEnabled && !bm.accepted) {
             bm.amountFilled += mr.matchAmount;
-            // #616 (Codex P1) — track the floor-clamped collateral actually
-            // locked (`lockColl`), so the dust-close residual refund nets to
-            // zero for a signed-borrower slice. No-op when floor is 0.
-            bm.collateralAmountFilled += lockColl;
+            bm.collateralAmountFilled += mr.reqCollateral;
             // #183 (Canonical Limit-Order Phase 2): direct storage read
             // for the borrower's effective ceiling. The GTC derivation
             // (`amountMax == 0 → derive from collateralAmountMax ×

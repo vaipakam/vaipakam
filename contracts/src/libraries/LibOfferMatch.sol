@@ -193,6 +193,30 @@ library LibOfferMatch {
         view
         returns (MatchResult memory r)
     {
+        // Bot preview + the on-chain `matchOffers` path impose NO borrower
+        // collateral floor — two on-chain offers each accepted their own
+        // single-value / ranged collateral semantics at create time.
+        return previewMatch(lenderOfferId, borrowerOfferId, 0);
+    }
+
+    /// @notice `previewMatch` with an explicit borrower collateral FLOOR.
+    /// @dev    `borrowerCollFloor` is non-zero ONLY for a #396 signed-BORROWER
+    ///         slice: it carries the signer's posted (constant-ratio) collateral
+    ///         for the fill, so the single-value branch clamps the locked
+    ///         amount UP to it AND the HF/LTV synthetic gate runs on the floored
+    ///         value — a match that's safe at the signed pledge is no longer
+    ///         rejected just because the matched lender's bare requirement is
+    ///         lower (Codex #616 round-3 P2). `0` preserves the pre-#616
+    ///         refund-the-overage / requirement-locked semantic byte-for-byte.
+    function previewMatch(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId,
+        uint256 borrowerCollFloor
+    )
+        internal
+        view
+        returns (MatchResult memory r)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage L = s.offers[lenderOfferId];
         LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
@@ -399,16 +423,29 @@ library LibOfferMatch {
                 return r;
             }
         } else {
-            // Single-value / legacy mode — pre-#164 semantic exactly.
-            // Borrower's posted collateral must cover the lender's
-            // pro-rated requirement; the LOCKED amount stays at that
-            // requirement and the OfferMatchFacet excess-refund hook
+            // Single-value / legacy mode — pre-#164 semantic exactly when
+            // `borrowerCollFloor == 0`: the borrower's posted collateral must
+            // cover the lender's pro-rated requirement; the LOCKED amount stays
+            // at that requirement and the OfferMatchFacet excess-refund hook
             // returns the overage to the borrower's wallet.
-            if (B.collateralAmount < reqFromLender) {
+            //
+            // #616 round-3 (Codex P1/P2): a signed-BORROWER slice passes its
+            // own posted (constant-ratio) collateral as `borrowerCollFloor`,
+            // so the requirement is clamped UP to the signer's floor. Because
+            // the gate below runs on `picked`, the HF/LTV check sees the
+            // floored collateral — a match safe at the signed pledge is admitted
+            // even when the lender's bare requirement alone would be too low.
+            // The slice pulls exactly its floor, so the dust-close refund nets
+            // to zero. Clamping UP is always HF-safe (more collateral ⇒ lower
+            // LTV / higher HF).
+            uint256 req = reqFromLender < borrowerCollFloor
+                ? borrowerCollFloor
+                : reqFromLender;
+            if (B.collateralAmount < req) {
                 r.errorCode = MatchError.CollateralBelowRequired;
                 return r;
             }
-            picked = reqFromLender;
+            picked = req;
         }
         r.reqCollateral = picked;
 

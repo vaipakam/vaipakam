@@ -705,90 +705,25 @@ contract SignedOfferMatcherTest is SetupTest {
         OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, ceiling);
     }
 
-    /// @notice When a signed range has a NON-constant collateral ratio, slicing
-    ///         at the minimum (`fillAmount == amount`) must honour the signed
-    ///         collateral FLOOR (`collateralAmount`), not a pro-rata of the
-    ///         ceiling collateral (which would under-collateralize the slice
-    ///         below what the signer agreed to). Built with a 2.0x floor and a
-    ///         1.25x ceiling ratio so the two computations diverge: the old
-    ///         pro-rata-from-ceiling would yield 1250, the floor is 2000.
-    function test_partial_collateralFloor_honoured() public {
+    /// @notice A matched signed offer with a NON-constant collateral ratio
+    ///         (collMin:amount != collMax:amountMax) is rejected before slicing
+    ///         — a varying ratio across the fill isn't a sliceable order (it
+    ///         would let a keeper split the range into slices that over-collect
+    ///         in aggregate). Built 2.0x floor / 1.25x ceiling. Must be AON or
+    ///         expressed as separate offers instead.
+    function test_nonConstantRatio_partial_reverts() public {
         LibSignedOffer.SignedOffer memory o =
             _lenderSignedOffer(15, PRINCIPAL, 2 * PRINCIPAL, LibVaipakam.FillMode.Partial);
-        // Non-constant ratio: 2.0x floor, 1.25x ceiling.
-        o.collateralAmount = 2 * PRINCIPAL; // 2000 @ amount 1000
-        o.collateralAmountMax = 5 * PRINCIPAL / 2; // 2500 @ amountMax 2000
+        // Non-constant ratio: 2.0x floor (2000 @ 1000), 1.25x ceiling (2500 @ 2000).
+        o.collateralAmount = 2 * PRINCIPAL;
+        o.collateralAmountMax = 5 * PRINCIPAL / 2;
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, 2 * PRINCIPAL);
+        uint256 cp = _postBorrowerCounterparty(borrower, PRINCIPAL);
 
-        // On-chain borrower pledges EXACTLY the signed floor (2000) for a 1000
-        // principal so the match clears the lender's collateral requirement
-        // without over/under-pledge clamping ambiguity.
-        vm.prank(borrower);
-        uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Borrower,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL,
-                interestRateBps: RATE_BPS,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: 2 * PRINCIPAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL,
-                interestRateBpsMax: RATE_BPS + 100,
-                collateralAmountMax: 2 * PRINCIPAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        // Fill at the minimum slice (fillAmount == amount). The materialized
-        // slice's collateral requirement must equal the signed FLOOR (2000).
-        vm.recordLogs();
         vm.prank(keeper);
+        vm.expectRevert(OfferMatchFacet.SignedOfferRatioNotConstant.selector);
         OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp, PRINCIPAL);
-
-        bytes32 sigTopic = keccak256(
-            "SignedOfferMatched(bytes32,address,address,uint256,uint256,uint256,uint256)"
-        );
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        uint256 sliceOfferId;
-        bool found;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics[0] == sigTopic) {
-                found = true;
-                (sliceOfferId, , , ) =
-                    abi.decode(logs[i].data, (uint256, uint256, uint256, uint256));
-            }
-        }
-        assertTrue(found, "SignedOfferMatched emitted");
-
-        // Read the materialized slice offer directly: its collateral floor +
-        // ceiling are both pinned to the interpolated value (single-value
-        // slice), which at fillAmount == amount is the signed FLOOR (2000),
-        // NOT the old pro-rata-from-ceiling (1250).
-        LibVaipakam.Offer memory slice =
-            OfferCancelFacet(address(diamond)).getOffer(sliceOfferId);
-        assertEq(slice.collateralAmount, 2 * PRINCIPAL, "slice collateral == signed floor");
-        assertEq(
-            slice.collateralAmountMax,
-            2 * PRINCIPAL,
-            "slice collateral max == floor (single-value)"
-        );
     }
 
     /// @dev Pull the `sliceOfferId` (first data word) out of the most recent
@@ -810,27 +745,35 @@ contract SignedOfferMatcherTest is SetupTest {
         assertTrue(found, "SignedOfferMatched emitted");
     }
 
+    /// @dev A vault-backed signed BORROWER offer at a fixed 2.0x collateral
+    ///      ratio (constant: collMin:amount == collMax:amountMax). Over-
+    ///      collateralized vs the standard 1.5x lender counterparty, so the
+    ///      signed floor exceeds the lender's pro-rated requirement.
+    function _borrowerSignedOffer2x(uint256 nonce, uint256 amount, uint256 amountMax)
+        internal
+        view
+        returns (LibSignedOffer.SignedOffer memory o)
+    {
+        o = _borrowerSignedOffer(nonce, amount, amountMax, LibVaipakam.FillMode.Partial);
+        o.collateralAmount = 2 * amount; // 2.0x floor
+        o.collateralAmountMax = 2 * amountMax; // 2.0x ceiling (constant ratio)
+    }
+
     // ─── 10. Borrower-direction collateral floor (Codex round-2 P1) ────────
 
-    /// @notice A signed BORROWER slice must lock the signer's interpolated
-    ///         collateral FLOOR, not the matched lender's lower pro-rated
-    ///         requirement. Without the `_executeMatch` floor pin, the engine's
-    ///         single-value borrower branch would lock `reqFromLender` and
-    ///         refund the committed excess — opening the loan below the
-    ///         collateral the borrower actually signed. Built over-collateralized
-    ///         (2.0x floor) against a 1.5x lender requirement so the two diverge.
+    /// @notice A signed BORROWER slice locks the signer's pro-rata collateral,
+    ///         not the matched lender's lower requirement. Constant 2.0x ratio
+    ///         vs a 1.5x lender counterparty: the loan must lock the borrower's
+    ///         2000 (the threaded floor), not the lender's 1500 — otherwise the
+    ///         loan opens below the collateral the signer signed.
     function test_borrowerSlice_locksSignedCollateralFloor() public {
         LibSignedOffer.SignedOffer memory o =
-            _borrowerSignedOffer(16, PRINCIPAL, 2 * PRINCIPAL, LibVaipakam.FillMode.Partial);
-        // Non-constant ratio: 2.0x floor (2000 @ 1000), 1.25x ceiling (2500 @ 2000).
-        o.collateralAmount = 2 * PRINCIPAL;
-        o.collateralAmountMax = 5 * PRINCIPAL / 2;
+            _borrowerSignedOffer2x(16, PRINCIPAL, 2 * PRINCIPAL);
         bytes memory sig = _sign(o);
-        // Signer pledges the floor (2000) for this min-slice fill.
+        // Signer pledges 2000 (2.0x) for this min-slice fill.
         _fundActorVault(signer, mockCollateralERC20, 2 * PRINCIPAL);
 
-        // On-chain lender requires only 1.5x (1500) for 1000 principal —
-        // below the borrower's 2000 floor.
+        // On-chain lender requires only 1.5x (1500) for 1000 principal.
         uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
 
         vm.prank(keeper);
@@ -841,17 +784,127 @@ contract SignedOfferMatcherTest is SetupTest {
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.borrower, signer, "borrower = signer");
-        // The loan locks the signed FLOOR (2000), NOT the lender's 1500 req.
+        // The loan locks the signed 2000 floor, NOT the lender's 1500 req.
         assertEq(
             loan.collateralAmount,
             2 * PRINCIPAL,
             "loan locks signed collateral floor"
         );
-        // No collateral refunded to the signer's wallet (floor == pulled).
+        // Floor == pulled → nothing refunded back to the signer's wallet.
         assertEq(
             ERC20(mockCollateralERC20).balanceOf(signer),
             0,
             "no floor-collateral refunded out"
+        );
+    }
+
+    /// @notice Aggregate collateral across partial slices is capped at the
+    ///         signed ceiling. A constant 2.0x [1000,2000]/[2000,4000] borrower
+    ///         offer filled in two 1000 slices locks 2000 each — summing to
+    ///         exactly the signed `collateralAmountMax` (4000), never more.
+    function test_borrowerSlice_aggregateCollateralCapped() public {
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer2x(18, PRINCIPAL, 2 * PRINCIPAL);
+        bytes memory sig = _sign(o);
+        // Signer funds the full signed ceiling (4000); each slice draws its share.
+        _fundActorVault(signer, mockCollateralERC20, 4 * PRINCIPAL);
+
+        address l1 = _newCounterparty("lcp1");
+        address l2 = _newCounterparty("lcp2");
+        uint256 cp1 = _postLenderCounterparty(l1, PRINCIPAL);
+        uint256 cp2 = _postLenderCounterparty(l2, PRINCIPAL);
+
+        vm.prank(keeper);
+        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, PRINCIPAL);
+        vm.prank(keeper);
+        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, PRINCIPAL);
+
+        uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
+        uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
+        assertEq(c1, 2 * PRINCIPAL, "slice 1 locks 2.0x");
+        assertEq(c2, 2 * PRINCIPAL, "slice 2 locks 2.0x");
+        // Sum equals the signed ceiling exactly — no aggregate over-collection.
+        assertEq(c1 + c2, 4 * PRINCIPAL, "aggregate == signed collateralAmountMax");
+    }
+
+    /// @notice A signed offer with `amount == 0` is rejected before slicing,
+    ///         so a keeper can't drain the signed max in dust-sized fills that
+    ///         bypass the min-slice + create-time positive-amount invariants.
+    function test_zeroMinimum_reverts() public {
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer2x(19, PRINCIPAL, 2 * PRINCIPAL);
+        o.amount = 0; // malformed zero minimum
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockCollateralERC20, 4 * PRINCIPAL);
+        uint256 lenderOfferId = _postLenderCounterparty(lender, PRINCIPAL);
+
+        uint256 dust = PRINCIPAL / 4;
+        vm.prank(keeper);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferMatchFacet.SignedOfferFillInvalid.selector,
+                dust, // fillAmount
+                2 * PRINCIPAL // remaining (= ceiling, nothing filled)
+            )
+        );
+        OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, lenderOfferId, dust);
+    }
+
+    /// @notice The borrower floor is included in `previewMatch`'s HF/LTV gate,
+    ///         not applied after it. A lender counterparty requiring only 1.0x
+    ///         (HF-unsafe on its own) still matches a 2.0x signed borrower: the
+    ///         gate sees the floored 2000 collateral and admits the loan, rather
+    ///         than reverting `MatchHFTooLow` on the lender's bare 1000.
+    function test_borrowerFloor_admitsLowLenderRequirement() public {
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer2x(20, PRINCIPAL, 2 * PRINCIPAL);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockCollateralERC20, 2 * PRINCIPAL);
+
+        // On-chain lender requiring only 1.0x (1000 collateral for 1000
+        // principal) — HF < 1.5 on its own, but safe at the borrower's 2.0x.
+        address lowLender = _newCounterparty("lowlender");
+        vm.prank(lowLender);
+        uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: RATE_BPS,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: PRINCIPAL, // 1.0x requirement
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: RATE_BPS + 100,
+                collateralAmountMax: PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        vm.prank(keeper);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchSignedOffer(
+            o, sig, cp, PRINCIPAL
+        );
+        assertGt(loanId, 0, "match admitted at the borrower floor");
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).collateralAmount,
+            2 * PRINCIPAL,
+            "loan locks 2.0x floor (HF-safe), not lender's 1.0x"
         );
     }
 
