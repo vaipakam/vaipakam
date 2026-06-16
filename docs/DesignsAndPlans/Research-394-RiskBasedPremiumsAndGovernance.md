@@ -89,7 +89,9 @@ layer.
 ## 6. Spin-off implementation issues
 
 1. **Runtime-tunable bounded health floor** + **per-asset liquidation threshold** in
-   `AssetRiskParams` + range-checked setters (Piece A). **Audit every HF/threshold consumer to
+   `AssetRiskParams` (**snapshotted onto the loan at origination**, exactly like `interestRateBps`
+   — a live read at liquidation would retroactively move an open loan's exit terms; live reads are
+   for *new* offers only) + range-checked setters (Piece A). **Audit every HF/threshold consumer to
    read the runtime value, not the constant:** the `MIN_HEALTH_FACTOR` constant is read at the
    `LoanFacet._checkInitialLtvAndHf` init gate (**both** the tiered HF≥1.0 branch and the
    non-tiered HF≥1.5 branch). The migration step is concrete: **`grep` every `MIN_HEALTH_FACTOR`

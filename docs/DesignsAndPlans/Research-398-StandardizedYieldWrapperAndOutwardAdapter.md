@@ -105,8 +105,13 @@ This is the direct, concrete mechanism by which an external aggregator "uses" us
 ## 5. Spin-off implementation issues
 
 1. **(Outward) ERC-4626 LenderIntent adapter:** a 4626 face over a per-aggregator
-   LenderIntentVault that posts signed offers + auto-rolls + marks `totalAssets`. = item #4 of
-   #393's spin-off list. Gated on #396 + auto-roll vault.
+   LenderIntentVault that posts signed offers + auto-rolls. **Carry the safety constraints into the
+   build (this ticket is what an implementer copies):** (a) **single authorized depositor** AND
+   **non-transferable / transfer-allowlisted shares** (gating deposits alone is insufficient —
+   shares are ERC-20-transferable); (b) **`totalAssets` marks active-loan principal risk-adjusted**
+   (haircut / write down on default, not full face) and **excludes unrealized interest**;
+   (c) **`maxWithdraw` = idle balance only** (locked principal isn't redeemable until the loan
+   settles). = item #4 of #393's spin-off list. Gated on #396 + auto-roll vault.
 2. **(Inward) Deferred** — no issue spun off now; revisit only if #397 adopts or a broad
    yield-bearing-collateral class lands.
 

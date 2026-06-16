@@ -128,8 +128,11 @@ guardian-pause add is independently shippable now (pure safety upside); the per-
 2. **Per-selector cut-freeze mechanism** — one-way, timelocked permanent selector removal from
    future cuts. **Must also freeze the cut machinery's OWN selectors** (`diamondCut` + the freeze-
    enforcing selector) for the frozen set — a freeze enforced only inside `DiamondCutFacet` is
-   bypassable by cutting in a replacement cut-facet. Built pre-audit, *exercised* post-audit on
-   custody/accounting selectors.
+   bypassable by cutting in a replacement cut-facet. **AND must block ADDING new selectors that
+   touch frozen custody/accounting storage** — freezing only the *existing* selectors leaves a
+   bypass where a fresh selector on a new facet reads/writes the same custody slots. So the freeze
+   is over the *storage region* (or an explicit add-guard tied to the frozen storage), not merely
+   the current selector list. Built pre-audit, *exercised* post-audit on custody/accounting.
 3. **Vault UUPS upgrade-hook freeze** — a one-way `upgradesFrozen` flag that makes the vault's
    `_authorizeUpgrade` revert forever, **without** renouncing the Diamond's operational ownership
    (custody is Diamond-mediated and must keep working). Freeze the upgrade hook, keep the owner.

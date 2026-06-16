@@ -176,8 +176,10 @@ existing `GovernanceConfigDesign` + timelock without touching custody.
 ## 7. Proposed spin-off implementation issues (after cluster verdict)
 
 1. **Signed-offer book** (the #396 implementation): EIP-712 `Offer` intent schema + on-chain
-   nonce/order-hash registry + cancel + pull-at-accept solvency + under-funded auto-promote.
-   *Foundation — do first.*
+   nonce registry **+ a per-order-hash remaining-amount ledger for partial fills** (a boolean
+   nonce-used flag is AON-only) + cancel + pull-at-accept solvency where **wallet-backed
+   (signature-transfer) is AON-only and partial fills require the vault-backed path** + under-
+   funded auto-promote. *Foundation — do first.* (Full constraint list in #396.)
 2. **Auto-roll LenderIntentVault**: per-user (and per-aggregator) intent vault that re-posts a
    signed offer when principal returns on terminal close — **but only when the vault is still the
    current lender-NFT holder** (positions transfer mid-loan; if transferred, proceeds go to the

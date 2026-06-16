@@ -135,8 +135,12 @@ backstop.
 
 1. **Backstop vault v0 (treasury-seeded):** segregated vault + per-asset capacity cap + posted
    rate + auto-counterparty origination (backstop→borrower) triggered on an **on-chain-provable
-   unmatched condition** (an on-chain offer/order past an on-chain deadline with no fill — **never**
-   off-chain "no match found", which is unverifiable/gameable) + liquidator-of-last-resort hook
+   unmatched condition** — an on-chain offer/order that has gone unfilled past a **dedicated
+   `backstopEligibleAfter` deadline that is SEPARATE from the offer's `expiresAt`** (and strictly
+   earlier): if the trigger reused `expiresAt`, the offer would already be **dead/unfillable** when
+   the backstop tried to fill it. The backstop fills a *still-valid but unmatched-for-duration*
+   offer, never an expired one; and **never** off-chain "no match found" (unverifiable/gameable) +
+   liquidator-of-last-resort hook
    into the FallbackPending custody path that **preserves the borrower cure window** (acts only
    after the cure window elapses or the lender claims; never short-circuits repay/addCollateral).
    No external LPs, no slashing.
