@@ -302,40 +302,13 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev Build the on-chain `CreateOfferParams` from a signed offer.
-    ///      Field-by-field on a memory struct (a 26-field literal trips viaIR).
-    ///      `creatorRiskAndTermsConsent` is set true — the signature IS the
-    ///      creator's consent.
+    ///      Delegates to `LibSignedOffer.toCreateOfferParams` — the single
+    ///      source of the mapping, shared with the v0.6 matcher.
     function _paramsFromSigned(LibSignedOffer.SignedOffer calldata o)
         private
         pure
-        returns (LibVaipakam.CreateOfferParams memory p)
+        returns (LibVaipakam.CreateOfferParams memory)
     {
-        p.offerType = LibVaipakam.OfferType(o.offerType);
-        p.lendingAsset = o.lendingAsset;
-        p.amount = o.amount;
-        p.interestRateBps = o.interestRateBps;
-        p.collateralAsset = o.collateralAsset;
-        p.collateralAmount = o.collateralAmount;
-        p.durationDays = o.durationDays;
-        p.assetType = LibVaipakam.AssetType(o.assetType);
-        p.tokenId = o.tokenId;
-        p.quantity = o.quantity;
-        p.creatorRiskAndTermsConsent = true;
-        p.prepayAsset = o.prepayAsset;
-        p.collateralAssetType = LibVaipakam.AssetType(o.collateralAssetType);
-        p.collateralTokenId = o.collateralTokenId;
-        p.collateralQuantity = o.collateralQuantity;
-        p.allowsPartialRepay = o.allowsPartialRepay;
-        p.amountMax = o.amountMax;
-        p.interestRateBpsMax = o.interestRateBpsMax;
-        p.collateralAmountMax = o.collateralAmountMax;
-        p.periodicInterestCadence =
-            LibVaipakam.PeriodicInterestCadence(o.periodicInterestCadence);
-        p.expiresAt = o.expiresAt;
-        p.fillMode = LibVaipakam.FillMode(o.fillMode);
-        p.allowsPrepayListing = o.allowsPrepayListing;
-        p.allowsParallelSale = o.allowsParallelSale;
-        p.refinanceTargetLoanId = o.refinanceTargetLoanId;
-        p.useFullTermInterest = o.useFullTermInterest;
+        return LibSignedOffer.toCreateOfferParams(o);
     }
 }

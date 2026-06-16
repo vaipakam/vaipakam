@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {LibVaipakam} from "./LibVaipakam.sol";
 
 /**
  * @title LibSignedOffer
@@ -242,5 +243,46 @@ library LibSignedOffer {
             abi.encodePacked("\x19\x01", domainSeparator(), orderHash)
         );
         ok = SignatureChecker.isValidSignatureNow(o.signer, fullDigest, signature);
+    }
+
+    /// @notice Map a `SignedOffer` to the on-chain `CreateOfferParams` used to
+    ///         materialize it (full size — the offer's own `amount`/range).
+    /// @dev    Shared by `SignedOfferFacet` (the v0.5 fill path) and the v0.6
+    ///         `OfferMatchFacet` matcher so the mapping lives in ONE place.
+    ///         Populated field-by-field on a memory struct (a 26-field literal
+    ///         trips viaIR's stack ceiling). `creatorRiskAndTermsConsent` is
+    ///         set true — the signature IS the creator's consent.
+    function toCreateOfferParams(SignedOffer memory o)
+        internal
+        pure
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p.offerType = LibVaipakam.OfferType(o.offerType);
+        p.lendingAsset = o.lendingAsset;
+        p.amount = o.amount;
+        p.interestRateBps = o.interestRateBps;
+        p.collateralAsset = o.collateralAsset;
+        p.collateralAmount = o.collateralAmount;
+        p.durationDays = o.durationDays;
+        p.assetType = LibVaipakam.AssetType(o.assetType);
+        p.tokenId = o.tokenId;
+        p.quantity = o.quantity;
+        p.creatorRiskAndTermsConsent = true;
+        p.prepayAsset = o.prepayAsset;
+        p.collateralAssetType = LibVaipakam.AssetType(o.collateralAssetType);
+        p.collateralTokenId = o.collateralTokenId;
+        p.collateralQuantity = o.collateralQuantity;
+        p.allowsPartialRepay = o.allowsPartialRepay;
+        p.amountMax = o.amountMax;
+        p.interestRateBpsMax = o.interestRateBpsMax;
+        p.collateralAmountMax = o.collateralAmountMax;
+        p.periodicInterestCadence =
+            LibVaipakam.PeriodicInterestCadence(o.periodicInterestCadence);
+        p.expiresAt = o.expiresAt;
+        p.fillMode = LibVaipakam.FillMode(o.fillMode);
+        p.allowsPrepayListing = o.allowsPrepayListing;
+        p.allowsParallelSale = o.allowsParallelSale;
+        p.refinanceTargetLoanId = o.refinanceTargetLoanId;
+        p.useFullTermInterest = o.useFullTermInterest;
     }
 }
