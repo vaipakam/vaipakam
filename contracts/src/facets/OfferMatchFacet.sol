@@ -162,6 +162,24 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert FunctionDisabled(3);
         }
 
+        return _executeMatch(lenderOfferId, borrowerOfferId);
+    }
+
+    /// @notice Shared match-execution core for `matchOffers` and the v0.6
+    ///         `matchSignedOffer`. `msg.sender` (the matcher / LIF recipient)
+    ///         is preserved because this is an internal call from both
+    ///         entries — there is no `address(this)` cross-facet hop, so the
+    ///         `matchOverride.matcher`, the `OfferMatched` `msg.sender`, and
+    ///         the LIF split all resolve to the original external caller.
+    /// @param lenderOfferId    The lender (lend) offer being matched.
+    /// @param borrowerOfferId  The borrower (borrow) offer being matched.
+    /// @return loanId          The newly initiated loan.
+    function _executeMatch(uint256 lenderOfferId, uint256 borrowerOfferId)
+        internal
+        returns (uint256 loanId)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
         // #576 — refinance-tagged offers are DIRECT-ACCEPT-ONLY. A tagged
         // offer's collateral is "carried over" from the loan it refinances
         // (no fresh pledge — see OfferCreateFacet's carry-over skip), and only
