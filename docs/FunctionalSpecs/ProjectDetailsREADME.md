@@ -298,9 +298,21 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   cancel a specific offer on-chain, or batch-cancel every offer carrying a given
   nonce (the secure complement to a free off-chain delete). Smart-contract
   wallets can sign (ERC-1271). v0.5 supports direct, full acceptance of ERC-20
-  lender-principal and ERC-20-collateral borrower offers; partial fills, the
-  programmatic lender-intent vault, and aggregator adapters are later phases,
-  and NFT-collateral / refinance-tagged signed offers are out of v0.5 scope.
+  lender-principal and ERC-20-collateral borrower offers; the programmatic
+  lender-intent vault and aggregator adapters are later phases, and
+  NFT-collateral / refinance-tagged signed offers are out of scope.
+
+  **Keeper-matcher (v0.6).** Beyond a direct counterparty accept, a keeper can
+  also **match a signed offer against an existing on-chain counterparty offer**,
+  earning the same 1% matcher kickback the on-chain matcher earns — so a signed
+  offer can be filled without a human counterparty directly accepting it. This
+  also enables **partial fills** of a vault-backed signed offer: each match
+  fills a slice (a large signed offer can be consumed across several matches
+  over time), with the remaining amount tracked off-chain; an all-or-nothing
+  signed offer must still be filled in a single full match. Every signed match
+  runs through the same matching engine — and therefore the same collateral and
+  health-factor safety checks — as an on-chain match, so an under-collateralized
+  signed match reverts rather than creating a bad loan.
 
 ### Lenders:
 
