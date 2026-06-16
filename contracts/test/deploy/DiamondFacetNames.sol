@@ -34,7 +34,7 @@ abstract contract DiamondFacetNames {
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`;
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`.)
-    function cutFacetNames() internal pure returns (string[53] memory) {
+    function cutFacetNames() internal pure returns (string[54] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -153,7 +153,14 @@ abstract contract DiamondFacetNames {
             // Unlocks release wiring at `RepayFacet.repayLoan` and
             // the other terminals that were blocked by EIP-170 in
             // #407 PR 1. See `EncumbranceMutateFacet.sol` natspec.
-            "EncumbranceMutateFacet"
+            "EncumbranceMutateFacet",
+            // #396 v0.5 — gasless signed off-chain offer book. A creator
+            // signs offer terms once off-chain; a counterparty fills on
+            // chain here, materializing the signed offer into a normal
+            // on-chain offer (OfferCreateFacet.createSignedOffer{Vault,
+            // Wallet}) and immediately accepting it. See
+            // `SignedOfferFacet.sol` natspec.
+            "SignedOfferFacet"
         ];
     }
 }
