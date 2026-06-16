@@ -330,18 +330,21 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // #393 v1-b — if this loan was opened via `matchIntent`, release the
         // originating lender intent's live-principal cap: the principal is now
-        // returning to the lender's vault, so it becomes re-lendable. Routed to
+        // returning to the lender's control, so it frees up. Routed to
         // LenderIntentFacet (the heavy triple-mapping decrement sits behind one
         // cross-facet boundary, not inlined into every transition facet — RiskFacet
         // is at the EIP-170 edge). Keyed off the per-loan ORIGINATING intent, so a
-        // sold lender position still releases the original owner's counter; a
-        // non-intent loan is a no-op there.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                LenderIntentFacet.releaseIntentExposure.selector, loanId
-            ),
-            bytes4(0)
-        );
+        // sold lender position still releases the original owner's counter. Gated
+        // on the cheap per-loan origin check so a non-intent loan skips the hop
+        // entirely (no wasted gas, no LenderIntentFacet-routing dependency).
+        if (s.intentOrigin[loanId].owner != address(0)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // #585/#592 — release any VPFI lender-proceeds reservation BEFORE the
         // withdraw, so the vault-withdraw guard sees the proceeds as free

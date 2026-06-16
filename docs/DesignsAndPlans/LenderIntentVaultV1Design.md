@@ -182,13 +182,26 @@ existing claim semantics, never a bypass** — exactly the synthesis §3.2 ⚠�
 the internal-match-auto-dispatch precedent (a cross-facet helper invoked inside the claim flow after
 NFT-ownership is verified).
 
-`lenderIntentLivePrincipal[owner][lend][coll]` is decremented when the loan reaches a terminal state
-— wired at the single `LibLifecycle.transition` chokepoint (which fires `onLoanStatusChanged` on
-every close). This **terminal release ships in v1-b together with the increment** (a counter that
-only goes up would permanently consume `maxExposure`, breaking the repay→re-offer cycle): the close
-hook reads the per-loan **originating intent key** recorded at §3.2 step 7 — `(owner, lend, coll)`,
-NOT the current `loan.lender` (which a lender-position sale mutates) — and decrements that owner's
-counter exactly once. v1-d adds only the optional keeper claim-on-behalf on top.
+`lenderIntentLivePrincipal[owner][lend][coll]` is released by the SIGNED full fill amount, keyed off
+the per-loan **originating intent** recorded at §3.2 step 7 — `(owner, lend, coll)`, NOT the current
+`loan.lender` (which a lender-position sale mutates). The release ships with the increment in v1-b
+(via `LenderIntentFacet.releaseIntentExposure`, a self-gated cross-facet entry — the heavy
+triple-mapping decrement sits behind ONE boundary rather than inlining into every transition facet,
+because `RiskFacet` is at the EIP-170 ceiling). It fires at the two points the original owner's
+principal genuinely leaves the loan: **lender-claim** (`ClaimFacet` — the principal returns to the
+lender's control) and **lender-position sale** (`EarlyWithdrawalFacet.completeLoanSale` — the seller
+exits with proceeds, so their cap frees immediately rather than waiting on the buyer's claim).
+`delete`-on-release makes it idempotent across both.
+
+**Conservative-cap precision (deliberate, documented).** The cap is a SAFETY bound — it only ever
+over-counts, never under-counts, so it can never permit exceeding `maxExposure`. Two edge cases
+leave it briefly over-counted (more restrictive, never unsafe), both self-correcting at the loan's
+final claim: (a) a mid-loan **partial liquidation** (`RiskFacet.triggerPartialLiquidation`) reduces
+`loan.principal` while the loan stays Active, but the cap still counts the full original fill until
+claim — a precise mid-life decrement would need a hook in `RiskFacet`, which has **zero EIP-170
+headroom**, so it is deferred to a follow-up (tracked) that includes the RiskFacet split; (b)
+between any other active principal reduction and the eventual claim. Precise mid-life exposure
+decrements are a follow-up; the v1-b behaviour is fund-safe.
 
 ---
 
