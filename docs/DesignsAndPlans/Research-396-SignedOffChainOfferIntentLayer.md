@@ -83,9 +83,14 @@ A new **signed-offer accept path** that coexists with the on-chain `Offer` path:
   signature binding only the terms + a per-offer fill ledger); or (c) a **per-fill signature**
   scheme (a nonce-bitmap the signer tops up). Pick (a) for the common case; the wallet-backed
   single-signature path is **AON-only**.
-- **Cancellation:** `cancelSignedOffer(nonce)` / `incrementNonce()` on an on-chain
-  `signedOfferNonceUsed[signer][nonce]` registry; free off-chain delete handled by the
-  indexer/agent book.
+- **Cancellation + fill-tracking:** `cancelSignedOffer(nonce)` / `incrementNonce()` on an on-chain
+  nonce registry; free off-chain delete handled by the indexer/agent book. **⚠️ A boolean
+  `signedOfferNonceUsed[signer][nonce]` is sufficient only for AON offers.** A partial-fillable
+  signed offer needs a **per-offer-hash remaining-amount ledger** (`signedOfferFilled[offerHash]`
+  → cumulative filled), NOT a one-shot used-flag — each partial fill decrements the remaining and
+  the offer closes when remaining hits the dust floor (mirroring the existing on-chain
+  `Offer.amountFilled` semantics). Cancellation then sets remaining to 0. So: boolean nonce-used
+  for AON; remaining-amount ledger keyed by order-hash for partial-fillable.
 - **Solvency:** pull-at-accept with revert-on-insolvency (already how our vault moves work);
   add the indexer-side "under-funded → hidden, auto-promote when funded" filter so the book
   surfaced to UIs is always fillable.

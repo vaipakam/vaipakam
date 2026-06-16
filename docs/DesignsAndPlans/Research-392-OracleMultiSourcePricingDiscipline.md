@@ -54,9 +54,21 @@ The pricing path is far more defended than the card's "single feed + AMM depth" 
 
 ## 4. Verdict + the one optional refinement
 
-**Verdict: ALREADY SATISFIED.** The card's adopt-target (deviation-bounded multi-source guard +
-staleness + L2-sequencer discipline + fail-closed fallback) is shipped and wired into both
-liquidation paths. Recommend **closing #392 as implemented**, with a pointer to Phase 7b.
+**Verdict: ALREADY SATISFIED — conditional on secondary coverage.** The card's adopt-target
+(deviation-bounded multi-source guard + staleness + L2-sequencer discipline + fail-closed
+fallback) is shipped and wired into both liquidation paths. Recommend **closing #392 as
+implemented**, with a pointer to Phase 7b.
+
+**⚠️ Coverage caveat (the one real residual).** The Soft-2-of-N quorum **soft-falls-back to
+primary-only when all secondaries are Unavailable** for an asset/deployment. That is correct for
+liveness, but it means the cross-check's strength **degrades to a single feed** on any asset/pair
+where Tellor/API3/DIA keys are **unset** (a new listing, a chain where the secondaries don't cover
+the pair). So "satisfied" is **conditional on the operator actually configuring ≥2 secondaries per
+liquid collateral**. Recommended follow-up (operator + a small guard, not a redesign): a
+**per-asset minimum-secondary-coverage policy** for assets used as *liquid liquidation collateral*
+— e.g. require ≥1 (ideally ≥2) live secondary before an asset is classified Liquid, so a
+zero-secondary asset can't ride single-feed pricing into a liquidation. This is a config-coverage
+gap, not a missing mechanism.
 
 **Optional, low-priority refinement (NOT required):** the current cross-check compares Chainlink
 against *price-feed* secondaries (Tellor/API3/DIA). It does **not** add a distinct

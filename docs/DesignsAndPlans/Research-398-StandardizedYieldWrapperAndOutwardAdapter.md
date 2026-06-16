@@ -53,16 +53,24 @@ This is the direct, concrete mechanism by which an external aggregator "uses" us
   strategy deposits into with zero bespoke integration. The clean `deployFunds` / `freeFunds` /
   `harvestAndReport` separation is worth borrowing as our deposit / withdraw / mark split.
 - **The recommended shape — a per-aggregator `LenderIntentVault` with a 4626 face:**
-  - An aggregator deploys (or is assigned) a **single Vaipakam vault** that exposes ERC-4626
-    `deposit/withdraw/redeem/totalAssets`. The aggregator's strategy treats it as a yield venue.
+  - An aggregator deploys (or is assigned) a **single Vaipakam vault** exposing the ERC-4626
+    interface, but with **`deposit`/`mint` restricted to ONE authorized depositor** (the
+    aggregator's strategy address, set at deploy) — an open 4626 face would let multiple Vaipakam
+    principals share one vault, the exact commingling E1 forbids (same restriction as
+    [HybridIntentLayer §3.3](HybridIntentLayer.md)). The aggregator's strategy treats it as a
+    yield venue.
   - Internally, the adapter takes deposited principal and **programmatically posts signed offers**
     (#396) on the aggregator's behalf, **auto-rolls** returned principal on terminal close
     (#393 Layer 1).
-  - **`totalAssets` must count only WITHDRAWABLE value** = idle balance + outstanding principal.
-    **Accrued-but-unpaid loan interest is NOT included as withdrawable** — counting unrealized
-    interest in `totalAssets` would inflate the share price and let a redeemer withdraw value that
-    has not yet been collected (a draw on other principal). Interest enters `totalAssets` only when
-    it is **realized** (paid at repay/preclose/refinance settlement). A separate read MAY surface
+  - **`totalAssets` (the share-price mark) ≠ withdrawable liquidity — keep them separate.**
+    `totalAssets` = idle + outstanding principal in active loans (the *managed* value, for share
+    pricing). **Withdrawable liquidity = idle balance only** — principal locked in an active loan
+    is not redeemable until that loan settles, so `withdraw`/`redeem` can only draw the idle
+    portion (a redemption that exceeds idle must revert / queue, like any 4626 with illiquid
+    underlying — `maxWithdraw` reflects idle, not `totalAssets`). And **accrued-but-unpaid loan
+    interest is NOT counted in `totalAssets` at all** — counting unrealized interest would inflate
+    the share price and let a redeemer draw value not yet collected; interest enters `totalAssets`
+    only when **realized** at repay/preclose/refinance settlement. A separate read MAY surface
     *accrued/pending* interest for display, but it never backs a redemption.
   - **`harvestAndReport`-equivalent**: on each settlement, realized interest is folded into
     `totalAssets`, so the aggregator's share price reflects **collected** yield — matching the

@@ -52,11 +52,19 @@ a **compile-time constant** (`LibVaipakam.sol:66`) — changing it needs a contr
 **Piece A — dual-factor, runtime-tunable risk params (the binary-gate evolution):**
 - Make the health floor **runtime-tunable + range-bounded** instead of the `MIN_HEALTH_FACTOR`
   constant: a `cfgMinHealthFactor` setter bounded to a safe range (e.g. [1.2e18, 2.0e18]) so a
-  misconfig can't open an unsafe position. Default unchanged (1.5e18).
+  misconfig can't open an unsafe position. Default unchanged (1.5e18). **⚠️ Preserve the existing
+  two-branch floor:** `_checkInitialLtvAndHf` already uses **HF ≥ 1.0** when `depthTieredLtvEnabled`
+  and **HF ≥ 1.5** otherwise. The runtime knob must be **branch-aware** (a tunable bound *per
+  branch*, with the tiered branch's floor allowed lower), NOT a single global floor that would
+  silently raise the tiered path's threshold and break depth-tiered admissions.
 - Add a **per-asset liquidation threshold** to `AssetRiskParams` (distinct from
   `loanInitMaxLtvBps`), so each collateral carries its own origination-LTV / liquidation-
   threshold pair. The depth-tiered path already clamps init LTV; this generalizes the *exit*
-  side per-asset.
+  side per-asset. **⚠️ Snapshot the liquidation threshold at origination onto the loan** (like
+  `interestRateBps`): if liquidation reads the *live* per-asset threshold, a governance tweak
+  would **retroactively move an existing loan's liquidation point** — an E2-adjacent violation
+  (the borrower's exit terms must be fixed at the terms they accepted). Live reads are fine only
+  for *new* offers; open loans use their snapshotted threshold.
 - All setters **range-bounded** (reject out-of-band values) — the card's explicit safety ask.
 
 **Piece B — risk premium on the RATE (E2-safe):** a risk premium is expressed **only** as the

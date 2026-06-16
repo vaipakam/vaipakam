@@ -69,11 +69,18 @@ A **segregated backstop vault**, never commingled with ordinary lender/borrower 
   **never slashed**. To keep even this exception out of v0, **v0 is treasury-seed-only** (no LP
   pooling at all); the consented LP tranche is a deliberate v1 decision with its own disclosure +
   audit. The tranche must be a separate contract/vault, never the lending vaults.
-- **As counterparty-of-last-resort:** when a signed offer goes unmatched past a threshold, the
-  backstop may auto-fill it within **curated risk bounds** — a per-asset **capacity cap**
-  (debt-ceiling analog) + a **posted backstop rate** (so the backstop's participation is priced,
-  not free) + the existing HF/depth-tiered-LTV gate. Settlement is **backstop-vault → borrower**,
-  never out of a commingled user pool.
+- **As counterparty-of-last-resort:** the backstop may auto-fill an unmatched offer within
+  **curated risk bounds** — a per-asset **capacity cap** (debt-ceiling analog) + a **posted
+  backstop rate** (so the backstop's participation is priced, not free) + the existing
+  HF/depth-tiered-LTV gate. Settlement is **backstop-vault → borrower**, never out of a commingled
+  user pool. **⚠️ The trigger must be ON-CHAIN-PROVABLE, not "the off-chain book had no match."**
+  With a signed *off-chain* order book (#396), the protocol cannot prove on-chain that no
+  counterparty existed — keying auto-fill on off-chain absence is unverifiable and gameable (a
+  solver could suppress matches to force backstop fills at the posted rate). The trigger must be an
+  on-chain fact: e.g. an **on-chain offer** (or an on-chain-recorded signed offer) that has sat
+  **past an on-chain deadline** (`expiresAt`-style) with `amountFilled == 0`, or a borrower
+  explicitly requesting backstop fill of their own on-chain offer. The backstop fills *on-chain
+  state*, never an off-chain "we didn't find anyone" claim.
 - **As liquidator-of-last-resort:** when a keeper swap fails (the FallbackPending path), the
   backstop can absorb the custodied collateral at an oracle-bounded price and make the lender
   whole, closing the position. **It MUST preserve the borrower cure window**: today a

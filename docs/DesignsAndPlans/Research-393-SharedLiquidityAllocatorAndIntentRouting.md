@@ -34,7 +34,7 @@ The substrate for an intent/allocator layer is already substantially built:
 | Per-user vault custody | `VaultFactoryFacet.getOrCreateUserVault` (≈:197); `VaipakamVaultImplementation` | one ERC1967 proxy per user; only the Diamond moves funds; **no pooled balance anywhere**; encumbrance sub-ledger (#407) guards withdrawals |
 | Autonomous matcher | `vaipakam-keeper-bot/src/detectors/offerMatcher.ts` | already scans → buckets by continuity → `previewMatch` → submits `matchOffers`; caps 2000 previews / 25 matches / 90 s per tick |
 | Keeper authorization | `ProfileFacet` keeper surface (≈:315–501) | per-user opt-in + per-keeper per-action bitmask + per-offer/per-loan enable |
-| Intent seed (swaps) | `SwapToRepayIntentFacet` (skeleton) + apps/agent `/intent/fusion/*` | signed-order swap-to-repay path exists in skeleton; **no EIP-712 signed-intent on the OFFER layer yet** |
+| Intent seed (swaps) | `SwapToRepayIntentFacet` (skeleton) + the agent's intent-swap settlement route | signed-order swap-to-repay path exists in skeleton; **no EIP-712 signed-intent on the OFFER layer yet** |
 
 **Key gap:** there is (a) no gasless signed-offer book — every offer is an on-chain tx, so
 the book can't be deep; (b) no auto-roll of returned principal into a fresh offer; (c) no

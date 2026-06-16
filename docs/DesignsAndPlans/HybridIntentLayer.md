@@ -155,9 +155,11 @@ caps) uses the timelock-asymmetric pattern.
 1. **MEV on solver competition.** v0/v1: **protocol-permissioned solvers only**, but this must be
    **a real on-chain gate, not an assumption** — note that the *legacy* `matchOffers` is
    permissionless today, so the new **`acceptSignedOffer` / signed-offer fill path must itself
-   carry a solver-authorization check** (reuse the `ProfileFacet` keeper-authorization surface, or
-   a per-signed-offer "permissioned-fill" flag the signer sets). The signed offer opts into
-   permissioned-only filling; an un-opted offer can still be filled by the open legacy path. With
+   carry a solver-authorization check**. The `ProfileFacet` keeper bitmask has **no signed-fill
+   action today**, so this needs a **new dedicated keeper action bit** (e.g. `KEEPER_ACTION_
+   SIGNED_FILL`) the signer authorizes, OR a per-signed-offer "permissioned-fill" allowlist the
+   signer sets — not a reuse of an existing action. The signed offer opts into permissioned-only
+   filling; an un-opted offer can still be filled by the open legacy path. With
    permissioned fills there is no open solver market yet, so no MEV game. v2 (open solvers):
    bilateral per-offer fills with the signed rate as a hard floor mean a filler can never give the
    user worse than signed; competition drives toward the user-favorable end (Dutch-decay style on
@@ -166,9 +168,14 @@ caps) uses the timelock-asymmetric pattern.
    machinery on the signed offer — order-book-style limit by default; optional rate-decay
    (Dutch) on the *new-offer quote* is a v2 enhancement via the rate model, never a live-loan
    re-price.
-3. **VPFI alignment.** The intent path routes through `acceptOffer`→`initiateLoan`, so Phase-5
-   LIF/VPFI accounting (`LibVPFIDiscount`) applies unchanged — the discount snapshot at init is
-   untouched. The LenderIntentVault's auto-rolled loans accrue VPFI identically.
+3. **VPFI alignment.** The intent path routes through `acceptOffer`→`initiateLoan`, so the Phase-5
+   LIF/VPFI *machinery* (`LibVPFIDiscount`) is reused — BUT it is **not automatically unchanged for
+   vault-backed offers**: the VPFI discount snapshot keys off the lender identity, and if the
+   *vault contract* is the offerer the discount would resolve against the vault's (likely zero)
+   VPFI balance, not the **beneficial owner's**. So the same `beneficialOwner` threading required
+   for loan attribution (§3.2) must also drive the VPFI discount resolution — the discount accrues
+   to the depositing user / aggregator, not the vault. This is an explicit v1 design item, not a
+   free consequence.
 4. **Failed-match gas.** Pull-at-accept + the under-funded auto-hide filter (#396) means the
    matcher only submits offers that pass `previewMatch` and are funded; a failed match reverts
    cheaply and the **solver eats its own gas** (it chose the pair) — same incentive as today's

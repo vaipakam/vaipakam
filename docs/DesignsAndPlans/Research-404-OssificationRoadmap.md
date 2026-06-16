@@ -57,17 +57,35 @@ must trust the timelocked owner won't rewrite custody/accounting.
 
 | Surface | Pre-audit | Post-audit target |
 | --- | --- | --- |
-| Vault custody (deposit/withdraw, the only fund-moving paths) | upgradeable | **FREEZE** (per-selector cut-freeze + UUPS upgrade renounce on the vault impl) |
+| Vault custody (deposit/withdraw, the only fund-moving paths) | upgradeable | **FREEZE** — per-selector cut-freeze **AND freeze the vault PROXY upgrade path**, not just renounce the shared impl (see ⚠️ below) |
 | Core loan accounting invariants (principal/interest/collateral math) | upgradeable | **FREEZE** the invariant-bearing facets; keep a thin upgradeable wrapper if needed |
 | Fee ceilings | upgradeable | **bounded-immutable** (hard-cap the max fee in frozen code, like the 25%-of-interest precedent) |
-| Risk params / curation (#394), rate model (#400), oracle adapters (#392) | upgradeable | **keep upgradeable** (curation must evolve) — but behind the timelock-asymmetry + bounded setters |
-| Diamond-cut governance itself | timelock | **separated guardian/upgrade multisigs + 48–72h timelock**; publish renounce timeline |
+| Risk params / curation (#394), rate model (#400), oracle adapters (#392) | upgradeable | **bounded-upgradeable, NOT freely upgradeable** — curation must evolve, but a freely-swappable oracle/risk facet can drain custody indirectly (see ⚠️⚠️ below), so these stay behind timelock-asymmetry + bounded setters + guardian veto, never a free replace |
+| Diamond-cut governance itself | timelock | **freeze the cut path too** (see ⚠️⚠️⚠️) + separated guardian/upgrade multisigs + 48–72h timelock; publish renounce timeline |
+
+**⚠️ Vault proxy, not just impl.** Each user vault is a UUPS **proxy** pointing at the shared
+implementation. Renouncing/freezing the shared impl is **not enough** — if the proxy's upgrade
+path stays live, the Diamond (which owns the proxies) could repoint them at a new impl and bypass
+the freeze. The freeze must **disable the proxy's `upgradeTo` path** (renounce UUPS upgrade
+authority on every vault proxy), not only stop publishing new impls.
+
+**⚠️⚠️ Oracle/risk freeze coupling (the load-bearing correction).** "Custody can't be changed" is
+**not honest if oracle adapters and risk curation stay *freely* upgradeable** — a malicious or
+compromised oracle swap can report a false price, drive a position to liquidatable, and **drain
+collateral without ever touching a custody selector**. So the freeze claim must bound the *price/
+risk* surface too: oracle adapters and risk params stay *bounded-upgradeable* (timelock + guardian
+veto + range-checked setters), never a free facet replace. The honest claim is "custody **and the
+price/risk inputs that move custody** can only change behind a guardian-vetoable timelock," not
+"custody is frozen while the oracle is a free hot-swap."
 
 **Mechanisms to add:**
-1. **Per-selector cut-freeze** — extend the diamond-cut path so chosen selectors (custody,
-   core accounting) can be **permanently** removed from future cuts. The freeze is itself a
-   one-way, timelocked action. This is the concrete tool that makes "custody can't be changed" a
-   *provable* claim, not a promise.
+1. **Per-selector cut-freeze — including the cut path itself.** Extend the diamond-cut path so
+   chosen selectors (custody, core accounting) can be **permanently** removed from future cuts,
+   one-way and timelocked. **⚠️⚠️⚠️ Critical:** a freeze enforced *only inside `DiamondCutFacet`*
+   is **bypassable** — the timelock could cut in a *new* `DiamondCutFacet` that ignores the freeze
+   registry. So the freeze must also cover the **cut machinery's own selectors** (the freeze must
+   make `diamondCut`/the freeze-enforcing selector un-replaceable for the frozen set), or it isn't
+   a freeze. This is what makes "custody can't be changed" a *provable* claim, not a promise.
 2. **Diamond-level guardian-pause** — give the core lending surface the same guardian fast-pause
    the cross-chain contracts already have (`GuardianPausable` pattern): guardian can pause, only
    owner (via timelock) can unpause, and **the guardian can never alter custody** — only halt.
@@ -84,8 +102,11 @@ either false (we can still cut) or reckless (no bug fix). Post-audit, a **provab
 freeze on custody** is a genuine differentiator: "no upgrade can ever move your collateral" is
 exactly the guarantee users now price for after several permanent-malicious-upgrade incidents.
 The minimum we'd freeze to claim it honestly = the vault custody paths + the core accounting
-invariants. Everything else (curation, risk, oracle) can stay upgradeable without undermining the
-claim — that's the whole point of the frozen-core / replaceable-periphery split.
+invariants **+ the cut path that protects them + the vault proxy upgrade authority**. Curation
+(caps, allocation) can stay freely replaceable, but the **price/risk inputs that can move custody
+indirectly** (oracle adapters, risk params) must be **bounded-upgradeable** (timelock + guardian
+veto + range-checked setters), not free hot-swaps — otherwise the "custody can't change" claim is
+defeated by a malicious oracle. That's the corrected frozen-core / *bounded*-periphery split.
 
 ## 5. Relationship + sequencing
 

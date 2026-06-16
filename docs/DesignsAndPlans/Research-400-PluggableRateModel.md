@@ -42,6 +42,14 @@ shared rate-model, not a pool re-pricing live debt.
   registered rate-model id; `OfferCreateFacet` / `OfferMatchFacet` call `quoteRateBps` to derive
   the offer's `interestRateBps` (or to bound the acceptable range). At `initiateLoan` the quoted
   rate is **snapshotted immutably** exactly as today. A live loan never consults a model again.
+- **⚠️ Bind the quoted rate at sign/create time, never re-quote live at accept.** If an offer
+  only stored a *model id* and `quoteRateBps` were evaluated **live at accept**, the rate could
+  move between when the offerer signed/created and when a counterparty accepts — the offerer would
+  be bound to terms they never agreed to (and, for a *signed* offer #396, the live quote wouldn't
+  even be covered by their signature). So the model is evaluated **once, at create/sign time**,
+  and the **resulting concrete rate is written into the offer** (and into the EIP-712 digest for
+  signed offers); accept reads the stored rate, never re-quotes. The model id may be retained for
+  provenance, but the *binding* value is the frozen quote.
 - **Default model:** an identity model returning the user-supplied rate — so the current
   behavior is just "the identity rate-model," and nothing changes unless a richer model is
   registered. Zero-config backward compatibility.

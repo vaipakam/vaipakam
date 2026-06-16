@@ -44,12 +44,17 @@ therefore **high**, not low.
 
 ## 4. What "done right" requires (the change-X)
 
-- **Maturity-aware pricing adapter** in `OracleFacet`. The conservative production primitive is a
-  **deterministic linear-discount-to-par oracle**: a discount factor rising linearly in time from
-  the current discount to 1.0 at maturity, computed purely from `block.timestamp` (no external
-  call → minimal manipulation surface). It **systematically under-prices** the token — safe for
-  lenders. (Dynamic TWAP-of-implied-APY oracles are more accurate but more manipulable; not for
-  a first integration.)
+- **Maturity-aware pricing adapter** in `OracleFacet`, priced as
+  **`min(linear-discount-to-par, live-market-price)`**. The linear-discount primitive — a discount
+  factor rising linearly to 1.0 at maturity, computed purely from `block.timestamp` (no external
+  call → minimal manipulation surface) — is conservative **only while the token tracks par**. If
+  the token's market price **falls** after onboarding (the underlying depegs, or implied yield
+  spikes), the linear-to-par curve keeps marching the price *toward par* while real value drops —
+  **reproducing the exact par-pricing blowup** of §3. So the adapter must **cap the linear value
+  by the live market price** (feed/AMM, run through the existing secondary-quorum + deviation
+  guard, see #392) and take the lower. Linear-discount alone is necessary but **not sufficient**;
+  the live-market cap is the load-bearing safety. (Dynamic TWAP-of-implied-APY oracles are more
+  accurate but more manipulable; not for a first integration.)
 - **Hard term constraint: loan term ≤ token maturity.** The simplest way to dodge the post-
   maturity discontinuity entirely. If a loan could outlive maturity, the adapter **must** switch
   to underlying-asset pricing at maturity **with a depeg/price-cap guard** — materially more
