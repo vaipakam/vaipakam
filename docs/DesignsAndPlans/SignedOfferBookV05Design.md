@@ -14,15 +14,21 @@ recommendation; everything else follows from the scout.
 ## 1. Scope (v0.5 — deliberately minimal)
 
 **In:**
-- A new `SignedOfferFacet` exposing:
+- A new `SignedOfferFacet` exposing (final shipped signatures):
   - `acceptSignedOffer(SignedOffer, sig, acceptorConsent)` — **vault-backed** fill (signer's
-    principal/collateral already in their Vaipakam vault). Supports AON and partial.
-  - `acceptSignedOfferWithPermit(SignedOffer, sig, permit, permitSig, acceptorConsent)` —
-    **wallet-backed** fill (Permit2 witness pulls the signer's wallet ERC-20). **AON-only**.
-  - `cancelSignedOffer(SignedOffer)` / `invalidateNonce(nonce)` — on-chain cancellation.
-  - `hashSignedOffer(SignedOffer) view returns (bytes32)` — the EIP-712 digest (off-chain +
-    tests consume it).
-  - `signedOfferRemaining(bytes32 orderHash) view` / `isNonceUsed(signer, nonce) view` — reads.
+    principal/collateral already in their Vaipakam vault); `sig` is the signer's EIP-712
+    signature. **Full-accept only in v0.5** (direct counterparty accept = AON semantics; partial
+    fills arrive with the matcher phase — see "Out" below).
+  - `acceptSignedOfferWithPermit(SignedOffer, permit, permitSig, acceptorConsent)` —
+    **wallet-backed** fill. **No separate offer signature**: the single Permit2 witness signature
+    (`permitSig`, over `permitWitnessTransferFrom` with the offer hash as the witness) binds BOTH
+    the token pull AND the offer terms. **AON-only**.
+  - `cancelSignedOffer(SignedOffer)` / `invalidateSignedOfferNonce(nonce)` — on-chain cancellation.
+  - `hashSignedOffer(SignedOffer) view returns (bytes32)` — the full EIP-712 digest the signer
+    signs (off-chain + tests consume it); `signedOfferOrderHash(SignedOffer) view` — the struct
+    hash (the ledger key).
+  - `signedOfferFilledAmount(bytes32 orderHash) view` / `isSignedOfferNonceUsed(signer, nonce)
+    view` — reads.
 - A Vaipakam EIP-712 domain for signed offers + the `SignedOffer` typed-data struct.
 - An on-chain nonce / per-order-hash remaining-amount ledger + replay/expiry/chainId guards.
 - EOA **and** EIP-1271 signers (OZ `SignatureChecker`).
@@ -92,12 +98,14 @@ diverge only at the pull:
 > + indexer visibility.
 
 ### D3 — Nonce model: per-order-hash remaining ledger + a per-signer cancel-nonce. **(recommended)**
-- **Replay / partial-fill tracking:** keyed by the **order hash** (the EIP-712 digest).
-  `s.signedOfferFilled[orderHash]` (cumulative filled amount) — AON closes on first fill; partial
-  decrements remaining; closes at the dust floor. This is the analog of `Offer.amountFilled` and
-  supports out-of-order handling of many distinct signed offers.
-- **Cancellation:** `cancelSignedOffer(offer)` sets `signedOfferFilled[hash] = amount` (fully
-  consumed → unfillable). Plus a coarse `invalidateNonce(nonce)` (per-signer) for "cancel a batch"
+- **Replay / consume tracking:** keyed by the **order hash = `LibSignedOffer.hashStruct(o)`** (the
+  domain-independent EIP-712 *struct* hash, NOT the full digest — so both funding modes key the
+  same ledger; chain/domain binding lives in the signature check). `s.signedOfferFilled[orderHash]`
+  (cumulative filled amount). In **v0.5 a direct accept consumes the offer fully** (set to the
+  ceiling); the cumulative-amount shape is forward-compatible with the matcher phase's partial
+  decrement (AON close vs partial decrement to a dust floor). Analog of `Offer.amountFilled`.
+- **Cancellation:** `cancelSignedOffer(offer)` sets `signedOfferFilled[hash] = ceiling` (fully
+  consumed → unfillable). Plus a coarse `invalidateSignedOfferNonce(nonce)` (per-signer) for "cancel a batch"
   — `s.signedOfferNonceUsed[signer][nonce]`, checked at accept. A signed offer carries both an
   `orderHash` identity and a `nonce` the signer can mass-invalidate.
 
