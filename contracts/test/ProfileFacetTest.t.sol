@@ -401,14 +401,14 @@ contract ProfileFacetTest is Test {
     }
 
     function testApproveKeeperRevertsOnOutOfRangeActions() public {
-        // T-092 Phase 3 (#503) widened KEEPER_ACTION_ALL from 0x1F to
-        // 0x3F by activating KEEPER_ACTION_EXTEND = 0x20 as the
-        // `extendLoanInPlace` executor landed. Bit 6 (0x40) is the
-        // new first invalid bit.
+        // T-092 Phase 3 (#503) widened KEEPER_ACTION_ALL 0x1F → 0x3F
+        // (KEEPER_ACTION_EXTEND = 0x20); #393 v1-c widened it 0x3F → 0x7F
+        // (KEEPER_ACTION_SIGNED_FILL = 0x40). Bit 7 (0x80) is now the
+        // first invalid bit.
         address k = makeAddr("keeperA");
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
-        ProfileFacet(address(diamond)).approveKeeper(k, 0x40);
+        ProfileFacet(address(diamond)).approveKeeper(k, 0x80);
     }
 
     function testApproveKeeperRecordsBitmask() public {

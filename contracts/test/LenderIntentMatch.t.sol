@@ -11,6 +11,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -384,5 +385,62 @@ contract LenderIntentMatchTest is SetupTest {
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         assertEq(_livePrincipal(), 0, "exposure released on lender claim");
+    }
+
+    // ─── 6. Permissioned-solver gate (#393 v1-c) ────────────────────────────
+
+    function _setIntentKeeperGated() internal {
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL,
+            true, // requiresKeeperAuth
+            true // riskAndTermsConsent
+        );
+    }
+
+    function test_matchIntent_keeperGated_unauthorizedSolver_reverts() public {
+        _setIntentKeeperGated();
+        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // The solver isn't authorized for KEEPER_ACTION_SIGNED_FILL → rejected.
+        vm.prank(solver);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    function test_matchIntent_keeperGated_authorizedSolver_succeeds() public {
+        _setIntentKeeperGated();
+        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        // The lender opts the solver in for SIGNED_FILL.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            solver, LibVaipakam.KEEPER_ACTION_SIGNED_FILL
+        );
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertGt(loanId, 0, "authorized solver fills keeper-gated intent");
+    }
+
+    function test_matchIntent_keeperGated_lenderSelf_succeeds() public {
+        // The lender can always fill their own keeper-gated intent.
+        _setIntentKeeperGated();
+        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(lender);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertGt(loanId, 0, "lender fills own keeper-gated intent");
     }
 }

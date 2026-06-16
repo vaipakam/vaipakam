@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -365,9 +366,15 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentInactive();
-        // (intent.requiresKeeperAuth can't be true in v1-b — setLenderIntent
-        // rejects it until the v1-c permissioned-solver gate ships, which is
-        // where the keeper-authorization check on `msg.sender` will land.)
+        // #393 v1-c — permissioned-solver gate. A `requiresKeeperAuth` intent may
+        // only be filled by the lender themselves or a solver the lender has
+        // authorized for `KEEPER_ACTION_SIGNED_FILL` (pre-loan, principal-keyed).
+        // An un-opted intent (the default) stays openly fillable by any solver.
+        if (intent.requiresKeeperAuth) {
+            LibAuth.requireKeeperForPrincipal(
+                LibVaipakam.KEEPER_ACTION_SIGNED_FILL, lender
+            );
+        }
 
         if (fillAmount < intent.minFillAmount) revert LenderIntentFillBelowMin();
         uint256 live = s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
