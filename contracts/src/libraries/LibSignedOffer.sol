@@ -300,9 +300,18 @@ library LibSignedOffer {
     ///         so a too-low slice collateral reverts the match — it can never
     ///         mint an under-collateralized loan. The off-chain offer's
     ///         remaining is tracked by `signedOfferFilled[orderHash]`.
-    /// @param  o          The signed offer.
-    /// @param  fillAmount The principal this slice fills (≤ the offer's remaining).
-    function toCreateOfferParams(SignedOffer memory o, uint256 fillAmount)
+    /// @param  o            The signed offer.
+    /// @param  filledBefore Cumulative principal already filled by prior slices
+    ///                      of THIS order (the `signedOfferFilled` ledger value
+    ///                      BEFORE this fill). Used to price collateral as the
+    ///                      cumulative DIFFERENCE so per-slice rounding can't
+    ///                      drop the signed total — see below.
+    /// @param  fillAmount   The principal this slice fills (≤ the remaining).
+    function toCreateOfferParams(
+        SignedOffer memory o,
+        uint256 filledBefore,
+        uint256 fillAmount
+    )
         internal
         pure
         returns (LibVaipakam.CreateOfferParams memory p)
@@ -311,18 +320,25 @@ library LibSignedOffer {
         // Principal collapses to the slice (single-value).
         p.amount = fillAmount;
         p.amountMax = fillAmount;
-        // Collateral scales pro-rata at the offer's CONSTANT ratio:
-        // `sliceColl = collateralAmount * fillAmount / amount`. The matcher's
-        // `_vetSignedOfferForMatch` guarantees the signed ratio is constant
-        // (`collMin:amount == collMax:amountMax`), so this single formula gives
-        // exactly `collateralAmount` at the floor and `collateralAmountMax` at
-        // the ceiling, and is ADDITIVE across partial slices: the per-slice
-        // collateral sums to `collateralAmountMax` at full fill (integer-floor
-        // keeps the aggregate AT OR BELOW the signed ceiling — never above, so
-        // a multi-slice fill can't over-collect from the signer). Mirrors the
-        // pro-rata partial-fill model standard limit-order books (0x / Seaport /
-        // CoW) use; a non-constant ratio is rejected before reaching here.
-        uint256 sliceColl = (o.collateralAmount * fillAmount) / o.amount;
+        // Collateral scales pro-rata at the offer's CONSTANT ratio
+        // (`collMin:amount == collMax:amountMax`, guaranteed by the matcher's
+        // `_vetSignedOfferForMatch`). Price it as the cumulative DIFFERENCE of
+        // the pro-rata curve `cumColl(P) = collateralAmount * P / amount`:
+        //
+        //   sliceColl = cumColl(filledBefore + fillAmount) − cumColl(filledBefore)
+        //
+        // This TELESCOPES — summed over all slices the intermediate terms cancel
+        // and the total is `cumColl(amountMax) = collateralAmountMax` EXACTLY
+        // (constant ratio makes that division exact). Pricing each slice
+        // independently as `collMin*fill/amount` instead would floor each slice
+        // separately, so a keeper could pick fills whose dropped remainders sum
+        // to less than the signed total (e.g. amount=3/collMin=2 filled 4+5
+        // locks 2+3=5, not 6) — under-collateralizing a signed-LENDER full fill.
+        // The cumulative form assigns each rounding remainder to the slice that
+        // crosses the next integer, so the signed pro-rata total is preserved.
+        uint256 sliceColl =
+            (o.collateralAmount * (filledBefore + fillAmount)) / o.amount
+                - (o.collateralAmount * filledBefore) / o.amount;
         p.collateralAmount = sliceColl;
         p.collateralAmountMax = sliceColl;
     }

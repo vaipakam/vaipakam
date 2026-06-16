@@ -908,6 +908,42 @@ contract SignedOfferMatcherTest is SetupTest {
         );
     }
 
+    /// @notice Per-slice integer flooring must not drop the signed collateral
+    ///         total across unevenly-dividing fills. Constant 5/3 ratio
+    ///         (amount=3e18 / collMin=5e18, amountMax=9e18 / collMax=15e18),
+    ///         filled 4e18 + 5e18: cumulative-difference pricing locks
+    ///         6.666…e18 + 8.333…e18 = exactly 15e18 (collMax). Independent
+    ///         per-slice flooring would lose 1 wei (→ 14.999…e18), under-
+    ///         collateralizing what the signer signed.
+    function test_borrowerSlice_roundingPreservesSignedTotal() public {
+        uint256 amt = 3 ether;
+        uint256 amtMax = 9 ether;
+        LibSignedOffer.SignedOffer memory o =
+            _borrowerSignedOffer(21, amt, amtMax, LibVaipakam.FillMode.Partial);
+        // Constant 5/3 ratio (≈1.667x, HF-safe): 5e18*9e18 == 15e18*3e18.
+        o.collateralAmount = 5 ether;
+        o.collateralAmountMax = 15 ether;
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockCollateralERC20, 15 ether);
+
+        // Two lender counterparties at the standard 1.5x (below the 5/3 floor),
+        // sized to the two fills so the loan locks the borrower's slice floor.
+        address l1 = _newCounterparty("rlcp1");
+        address l2 = _newCounterparty("rlcp2");
+        uint256 cp1 = _postLenderCounterparty(l1, 4 ether);
+        uint256 cp2 = _postLenderCounterparty(l2, 5 ether);
+
+        vm.prank(keeper);
+        uint256 loan1 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp1, 4 ether);
+        vm.prank(keeper);
+        uint256 loan2 = OfferMatchFacet(address(diamond)).matchSignedOffer(o, sig, cp2, 5 ether);
+
+        uint256 c1 = LoanFacet(address(diamond)).getLoanDetails(loan1).collateralAmount;
+        uint256 c2 = LoanFacet(address(diamond)).getLoanDetails(loan2).collateralAmount;
+        // The aggregate is the signed collateralAmountMax EXACTLY — no wei lost.
+        assertEq(c1 + c2, 15 ether, "rounding-exact: aggregate == signed collMax");
+    }
+
     // ─── 11. Transient lender-slice NFT cleanup (Codex round-2 P2) ─────────
 
     /// @notice After a signed-LENDER match, the consumed one-tx slice must not

@@ -234,10 +234,14 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (!ok) revert SignedOfferBadSignature();
 
         // CEI: record the slice consumed BEFORE the materialize + match
-        // external calls (bounded by the ceiling in the vet above).
-        s.signedOfferFilled[orderHash] += fillAmount;
+        // external calls (bounded by the ceiling in the vet above). Capture the
+        // PRE-fill cumulative so the slice collateral is priced as the
+        // cumulative difference (rounding-exact across slices — see
+        // LibSignedOffer.toCreateOfferParams).
+        uint256 filledBefore = s.signedOfferFilled[orderHash];
+        s.signedOfferFilled[orderHash] = filledBefore + fillAmount;
 
-        uint256 sliceOfferId = _materializeSlice(o, fillAmount);
+        uint256 sliceOfferId = _materializeSlice(o, filledBefore, fillAmount);
         // Route the slice into the correct side-slot. _executeMatch processes
         // the BORROWER offer via acceptOfferInternal and injects the LENDER as
         // the counterparty, so the slice goes in whichever slot matches its
@@ -374,10 +378,11 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      revert (e.g. SignedOfferUnsupportedShape / InsufficientFreeBalance).
     function _materializeSlice(
         LibSignedOffer.SignedOffer calldata o,
+        uint256 filledBefore,
         uint256 fillAmount
     ) private returns (uint256 sliceOfferId) {
         LibVaipakam.CreateOfferParams memory params =
-            LibSignedOffer.toCreateOfferParams(o, fillAmount);
+            LibSignedOffer.toCreateOfferParams(o, filledBefore, fillAmount);
         // slither-disable-next-line low-level-calls
         (bool ok, bytes memory res) = address(this).call(
             abi.encodeWithSelector(
