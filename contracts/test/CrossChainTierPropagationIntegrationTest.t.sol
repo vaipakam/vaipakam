@@ -117,6 +117,15 @@ contract CrossChainTierPropagationIntegrationTest is SetupTest {
         uint256 amt = 500 ether;
         vpfiToken.transfer(user, amt);
         vm.startPrank(user);
+        // Opt into the VPFI discount program. The broadcast path's
+        // consent gate (ProtocolBroadcastFacet — Sub 4 round-3 P2 #2)
+        // forces the resolved tuple to (0, 0) for any user who has NOT
+        // consented, so their tier is never mirrored cross-chain. Without
+        // this opt-in the accumulator still resolves the correct tier
+        // (1, 1000) but the broadcast suppresses it as a consent-gated
+        // zero — the integration test must model a consented staker to
+        // exercise the rollup → broadcast → messenger chain at all.
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         IERC20(address(vpfiToken)).approve(address(diamond), amt);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(amt);
         vm.stopPrank();
