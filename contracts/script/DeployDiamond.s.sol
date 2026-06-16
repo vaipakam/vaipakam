@@ -1159,13 +1159,16 @@ contract DeployDiamond is Script {
     ///      matching surface. Carved out of OfferFacet to bring it
     ///      under EIP-170; same selectors, separate facet.
     function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](2);
+        s = new bytes4[](3);
         // `matchOffers` is the write entry bots submit; `previewMatch`
         // is the structured-error view they consult before
-        // submitting. Both gated on the `partialFillEnabled` master
+        // submitting. `matchSignedOffer` (#396 v0.6) is the keeper entry
+        // for filling a signed off-chain offer against an on-chain
+        // counterparty. All gated on the `partialFillEnabled` master
         // flag inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
+        s[2] = OfferMatchFacet.matchSignedOffer.selector;
     }
 
     /// @dev OfferCancelFacet — cancellation + read views carved out of

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SignatureChecker} from
     "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {LibVaipakam} from "./LibVaipakam.sol";
 
 /**
  * @title LibSignedOffer
@@ -242,5 +243,103 @@ library LibSignedOffer {
             abi.encodePacked("\x19\x01", domainSeparator(), orderHash)
         );
         ok = SignatureChecker.isValidSignatureNow(o.signer, fullDigest, signature);
+    }
+
+    /// @notice Map a `SignedOffer` to the on-chain `CreateOfferParams` used to
+    ///         materialize it (full size — the offer's own `amount`/range).
+    /// @dev    Shared by `SignedOfferFacet` (the v0.5 fill path) and the v0.6
+    ///         `OfferMatchFacet` matcher so the mapping lives in ONE place.
+    ///         Populated field-by-field on a memory struct (a 26-field literal
+    ///         trips viaIR's stack ceiling). `creatorRiskAndTermsConsent` is
+    ///         set true — the signature IS the creator's consent.
+    function toCreateOfferParams(SignedOffer memory o)
+        internal
+        pure
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p.offerType = LibVaipakam.OfferType(o.offerType);
+        p.lendingAsset = o.lendingAsset;
+        p.amount = o.amount;
+        p.interestRateBps = o.interestRateBps;
+        p.collateralAsset = o.collateralAsset;
+        p.collateralAmount = o.collateralAmount;
+        p.durationDays = o.durationDays;
+        p.assetType = LibVaipakam.AssetType(o.assetType);
+        p.tokenId = o.tokenId;
+        p.quantity = o.quantity;
+        p.creatorRiskAndTermsConsent = true;
+        p.prepayAsset = o.prepayAsset;
+        p.collateralAssetType = LibVaipakam.AssetType(o.collateralAssetType);
+        p.collateralTokenId = o.collateralTokenId;
+        p.collateralQuantity = o.collateralQuantity;
+        p.allowsPartialRepay = o.allowsPartialRepay;
+        p.amountMax = o.amountMax;
+        p.interestRateBpsMax = o.interestRateBpsMax;
+        p.collateralAmountMax = o.collateralAmountMax;
+        p.periodicInterestCadence =
+            LibVaipakam.PeriodicInterestCadence(o.periodicInterestCadence);
+        p.expiresAt = o.expiresAt;
+        p.fillMode = LibVaipakam.FillMode(o.fillMode);
+        p.allowsPrepayListing = o.allowsPrepayListing;
+        p.allowsParallelSale = o.allowsParallelSale;
+        p.refinanceTargetLoanId = o.refinanceTargetLoanId;
+        p.useFullTermInterest = o.useFullTermInterest;
+    }
+
+    /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used
+    ///         by the v0.6 matcher to materialize exactly the portion a single
+    ///         match fills. The principal collapses to `fillAmount`
+    ///         (single-value, so the materialized slice is fully consumed by
+    ///         one match — no dangling on-chain remainder); the collateral
+    ///         scales **pro-rata, rounded UP**; the rate band is kept so the
+    ///         match midpoint with the counterparty still resolves.
+    /// @dev    Rounding-up is the conservative choice, but correctness does NOT
+    ///         depend on the precise slice collateral: `LibOfferMatch.previewMatch`
+    ///         independently computes the real required collateral and enforces
+    ///         `CollateralBelowRequired` + the synthetic HF / LtvAboveTier gates,
+    ///         so a too-low slice collateral reverts the match — it can never
+    ///         mint an under-collateralized loan. The off-chain offer's
+    ///         remaining is tracked by `signedOfferFilled[orderHash]`.
+    /// @param  o            The signed offer.
+    /// @param  filledBefore Cumulative principal already filled by prior slices
+    ///                      of THIS order (the `signedOfferFilled` ledger value
+    ///                      BEFORE this fill). Used to price collateral as the
+    ///                      cumulative DIFFERENCE so per-slice rounding can't
+    ///                      drop the signed total — see below.
+    /// @param  fillAmount   The principal this slice fills (≤ the remaining).
+    function toCreateOfferParams(
+        SignedOffer memory o,
+        uint256 filledBefore,
+        uint256 fillAmount
+    )
+        internal
+        pure
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p = toCreateOfferParams(o);
+        // Principal collapses to the slice (single-value).
+        p.amount = fillAmount;
+        p.amountMax = fillAmount;
+        // Collateral scales pro-rata at the offer's CONSTANT ratio
+        // (`collMin:amount == collMax:amountMax`, guaranteed by the matcher's
+        // `_vetSignedOfferForMatch`). Price it as the cumulative DIFFERENCE of
+        // the pro-rata curve `cumColl(P) = collateralAmount * P / amount`:
+        //
+        //   sliceColl = cumColl(filledBefore + fillAmount) − cumColl(filledBefore)
+        //
+        // This TELESCOPES — summed over all slices the intermediate terms cancel
+        // and the total is `cumColl(amountMax) = collateralAmountMax` EXACTLY
+        // (constant ratio makes that division exact). Pricing each slice
+        // independently as `collMin*fill/amount` instead would floor each slice
+        // separately, so a keeper could pick fills whose dropped remainders sum
+        // to less than the signed total (e.g. amount=3/collMin=2 filled 4+5
+        // locks 2+3=5, not 6) — under-collateralizing a signed-LENDER full fill.
+        // The cumulative form assigns each rounding remainder to the slice that
+        // crosses the next integer, so the signed pro-rata total is preserved.
+        uint256 sliceColl =
+            (o.collateralAmount * (filledBefore + fillAmount)) / o.amount
+                - (o.collateralAmount * filledBefore) / o.amount;
+        p.collateralAmount = sliceColl;
+        p.collateralAmountMax = sliceColl;
     }
 }

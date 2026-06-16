@@ -330,9 +330,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
+        selectors[2] = OfferMatchFacet.matchSignedOffer.selector;
         return selectors;
     }
 
@@ -992,7 +993,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](44);
+        selectors = new bytes4[](45);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1057,6 +1058,10 @@ contract HelperTest {
         selectors[41] = MetricsFacet.getOfferPrincipalLien.selector;
         selectors[42] = MetricsFacet.getEncumbered.selector;
         selectors[43] = MetricsFacet.getFreeBalance.selector;
+        // #396 v0.6 — open-offer position enumeration (reverse-map keyed).
+        // Used by SignedOfferMatcherTest to assert a consumed transient
+        // lender slice is de-listed. Already cut in DeployDiamond.s.sol.
+        selectors[44] = MetricsFacet.getUserPositionOffers.selector;
         return selectors;
     }
 
