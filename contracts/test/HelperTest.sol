@@ -31,6 +31,7 @@ import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
+import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -710,6 +711,19 @@ contract HelperTest {
         selectors[5] = SignedOfferFacet.signedOfferOrderHash.selector;
         selectors[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
         selectors[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
+    }
+
+    function getLenderIntentFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](5);
+        selectors[0] = LenderIntentFacet.setLenderIntent.selector;
+        selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
+        selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
+        selectors[3] = LenderIntentFacet.getLenderIntent.selector;
+        selectors[4] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
     }
 
     function getDefaultedFacetSelectors()

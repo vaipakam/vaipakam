@@ -314,6 +314,27 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   health-factor safety checks — as an on-chain match, so an under-collateralized
   signed match reverts rather than creating a bad loan.
 
+### Standing lending intents (v1)
+
+- A lender may register a **standing lending intent** for an ERC-20 asset-pair:
+  a one-time on-chain setting describing the loans they are willing to make —
+  the maximum principal they will have out at once, a minimum interest rate, a
+  maximum loan-to-value, a maximum term, a smallest acceptable fill size, and
+  whether only an authorized solver may act on it. Registering an intent moves
+  no funds; the lender's principal stays in their existing vault and is drawn on
+  only when a concrete loan is later made within the intent's bounds.
+- The lender who registers the intent **remains the lender-of-record** on any
+  loan it produces — the intent is a layer over the lender's own vault, not a
+  separate fund-holding party — so repayment claims, fee treatment, and the
+  transferable lender position behave exactly as for a directly-created offer.
+- An intent's bounds are validated when set (a real asset-pair, a positive
+  exposure cap, a fill size no larger than that cap, an LTV ceiling above zero
+  and at most 100%, and a positive term); a malformed intent is rejected.
+  Registering an intent is sanctions-screened like any new lending commitment;
+  cancelling one is always permitted so a lender can wind down standing exposure
+  at any time. Intents are independent per asset-pair, and the loan-making path
+  is governed by a feature switch that stays off until enabled post-launch.
+
 ### Lenders:
 
 - **For ERC-20 Tokens:**

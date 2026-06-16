@@ -31,6 +31,7 @@ import {IntentDispatchFacet} from "../src/facets/IntentDispatchFacet.sol";
 import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
+import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -164,6 +165,8 @@ contract DeployDiamond is Script {
         EncumbranceMutateFacet encumbranceMutateFacet = new EncumbranceMutateFacet();
         // #396 v0.5 — gasless signed off-chain offer book fill surface.
         SignedOfferFacet signedOfferFacet = new SignedOfferFacet();
+        // #393 v1 — LenderIntentVault standing-terms surface.
+        LenderIntentFacet lenderIntentFacet = new LenderIntentFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -227,7 +230,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](54);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](55);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -397,6 +400,13 @@ contract DeployDiamond is Script {
         cuts[53] = _buildCut(
             address(signedOfferFacet),
             _getSignedOfferFacetSelectors()
+        );
+        // #393 v1 — LenderIntentVault standing-terms surface. A lender
+        // registers set-and-forget bounds; a permissioned solver fills
+        // concrete offers within them via OfferMatchFacet.matchIntent.
+        cuts[54] = _buildCut(
+            address(lenderIntentFacet),
+            _getLenderIntentFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1324,6 +1334,15 @@ contract DeployDiamond is Script {
         s[5] = SignedOfferFacet.signedOfferOrderHash.selector;
         s[6] = SignedOfferFacet.signedOfferFilledAmount.selector;
         s[7] = SignedOfferFacet.isSignedOfferNonceUsed.selector;
+    }
+
+    function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = LenderIntentFacet.setLenderIntent.selector;
+        s[1] = LenderIntentFacet.cancelLenderIntent.selector;
+        s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
+        s[3] = LenderIntentFacet.getLenderIntent.selector;
+        s[4] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

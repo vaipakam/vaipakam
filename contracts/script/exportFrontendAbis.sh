@@ -91,6 +91,8 @@ FACETS=(
   "OfferCreateFacet"
   # #396 v0.5 — gasless signed off-chain offer book fill surface.
   "SignedOfferFacet"
+  # #393 v1 — LenderIntentVault standing-terms surface.
+  "LenderIntentFacet"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"
