@@ -1,6 +1,45 @@
 [
   {
     "type": "function",
+    "name": "matchIntent",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "matchOffers",
     "inputs": [
       {
@@ -252,6 +291,61 @@
   },
   {
     "type": "event",
+    "name": "IntentMatched",
+    "inputs": [
+      {
+        "name": "lender",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "matcher",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "sliceOfferId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "OfferClosed",
     "inputs": [
       {
@@ -445,6 +539,31 @@
   {
     "type": "error",
     "name": "InvalidOfferType",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentCollateralUnresolvable",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentDurationTooLong",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentExposureExceeded",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentFillBelowMin",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentInactive",
     "inputs": []
   },
   {

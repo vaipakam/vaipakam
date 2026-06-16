@@ -134,6 +134,12 @@ library LibMetricsHooks {
             ) {
                 s.nftsInVaultByCollection[loan.collateralAsset] -= 1;
             }
+            // #393 v1-b — the intent live-principal release does NOT live here:
+            // this hook inlines into every loan-transition facet and RiskFacet
+            // is at the EIP-170 edge. It is instead released at lender-claim time
+            // (ClaimFacet → LenderIntentFacet.releaseIntentExposure, loan-sale-
+            // safe via `intentOrigin`), when the principal actually returns to
+            // the lender's vault and becomes re-lendable.
         }
 
         // terminalBadOrSettledCount tracks the "defaulted or settled" set

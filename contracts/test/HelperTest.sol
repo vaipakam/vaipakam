@@ -331,10 +331,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
         selectors[2] = OfferMatchFacet.matchSignedOffer.selector;
+        selectors[3] = OfferMatchFacet.matchIntent.selector;
         return selectors;
     }
 
@@ -718,12 +719,14 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](7);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
         selectors[3] = LenderIntentFacet.isLenderIntentEnabled.selector;
         selectors[4] = LenderIntentFacet.getLenderIntent.selector;
+        selectors[5] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
+        selectors[6] = LenderIntentFacet.releaseIntentExposure.selector;
     }
 
     function getDefaultedFacetSelectors()

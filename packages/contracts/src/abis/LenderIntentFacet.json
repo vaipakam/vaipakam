@@ -85,6 +85,35 @@
   },
   {
     "type": "function",
+    "name": "getLenderIntentLivePrincipal",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isLenderIntentEnabled",
     "inputs": [],
     "outputs": [
@@ -95,6 +124,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "releaseIntentExposure",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -305,6 +347,11 @@
   {
     "type": "error",
     "name": "LenderIntentZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OnlyDiamondInternal",
     "inputs": []
   },
   {

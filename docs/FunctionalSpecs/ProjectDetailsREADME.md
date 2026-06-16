@@ -339,6 +339,25 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   post-launch. Restricting an intent to authorized solvers only is a planned
   capability that is not yet available; until it ships, an intent that requests
   it is rejected rather than registered without the protection in force.
+- **Filling an intent.** A solver fills a lender's standing intent against an
+  existing on-chain borrower offer: the protocol builds a one-time lender offer
+  from the intent — the lender's rate floor, the borrower offer's term (which
+  must be within the intent's maximum), and the collateral the intent's maximum
+  loan-to-value requires — funds it from the lender's existing vault balance, and
+  matches it through the same engine (and the same collateral/health-factor
+  safety checks) as any on-chain match; the solver earns the same 1% matcher fee.
+  Each fill is held to the intent's bounds: not below the minimum fill size, not
+  past the exposure cap, not over the maximum term, and not below the maximum-LTV
+  collateral requirement (a fill the protocol can't price the collateral for is
+  refused, not opened blind to the bound).
+- **Exposure release + auto-roll.** The principal a lender has live in intent
+  loans is tracked per asset-pair against their exposure cap, and is freed when a
+  loan's principal returns to the lender's vault (at claim). As loans repay, the
+  freed capacity makes the same standing intent fillable again — so a lender's
+  supply re-lends across loans without any new action, closing the between-loans
+  idle gap. The release is tied to the loan's originating intent, so if a lender
+  sells their position mid-loan, the original lender's capacity is the one freed
+  (never the buyer's).
 
 ### Lenders:
 
