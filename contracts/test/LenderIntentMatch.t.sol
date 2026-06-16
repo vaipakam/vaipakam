@@ -297,6 +297,50 @@ contract LenderIntentMatchTest is SetupTest {
         );
     }
 
+    function test_matchIntent_partialRepayNotAllowed_reverts() public {
+        // A partial-repay counterparty can't fill an intent (it would let the
+        // borrower escape the committed-interest economics via pro-rata repays).
+        _setIntent(MAX_EXPOSURE);
+        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        address b = _newBorrower("b1");
+        vm.prank(b);
+        uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: MIN_RATE_BPS,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 2 * PRINCIPAL,
+                durationDays: MAX_DURATION,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: true, // ← disallowed for intent fills
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: MIN_RATE_BPS + 100,
+                collateralAmountMax: 2 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentPartialRepayNotAllowed.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
     // ─── 4. Kill-switch ─────────────────────────────────────────────────────
 
     function test_matchIntent_killSwitchOff_reverts() public {

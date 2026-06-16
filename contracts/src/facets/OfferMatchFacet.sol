@@ -235,6 +235,12 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         by repaying / preclosing early (the synthesis E3 election). The
     ///         solver must pick a counterparty that honours it.
     error LenderIntentFullTermRequired();
+    /// @notice The counterparty offer allows partial repayment
+    ///         (`allowsPartialRepay == true`), which charges only pro-rata
+    ///         interest on the repaid slice and so escapes the committed-interest
+    ///         economics the full-term floor protects. The standing intent has no
+    ///         opt-in for it, so an intent fill must be full-repay-only.
+    error LenderIntentPartialRepayNotAllowed();
     /// @notice The init-LTV-cap collateral floor is unresolvable (missing oracle
     ///         price / illiquid collateral), so the intent's LTV ceiling can't be
     ///         enforced — refuse rather than open a loan blind to the bound.
@@ -381,6 +387,14 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // committed interest (synthesis E3). Require the counterparty honour it.
         if (!s.offers[counterpartyOfferId].useFullTermInterest) {
             revert LenderIntentFullTermRequired();
+        }
+        // Likewise reject partial-repay: `repayPartial` charges only pro-rata
+        // interest on the repaid slice, escaping the committed-interest economics
+        // the full-term floor protects. The intent has no opt-in, so an intent
+        // fill is full-repay-only (keeps `loan.principal` == the reserved fill,
+        // and the exposure accounting exact).
+        if (s.offers[counterpartyOfferId].allowsPartialRepay) {
+            revert LenderIntentPartialRepayNotAllowed();
         }
         // Derive the collateral the intent's init-LTV ceiling requires for this
         // fill. The materialized lender offer demands it; `previewMatch` enforces
