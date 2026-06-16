@@ -127,16 +127,20 @@ Flow (mirrors `matchSignedOffer`, swapping signature-verify for intent-bounds-ch
 3. **Solver authorization** (§3.3): if `intent.requiresKeeperAuth`, require the solver is an opted-in
    keeper of `lender` for `KEEPER_ACTION_SIGNED_FILL`.
 4. **Bounds check**: `terms ⊆ intent` — `terms.rateBps >= intent.minRateBps`, `terms.ltv <=
-   intent.maxInitLtvBps`, `terms.durationDays <= intent.maxDurationDays`, `terms.collateralAsset ==
-   intent.collateralAsset`, `fillAmount >= minSlice`, and `lenderIntentLivePrincipal[lender] +
-   fillAmount <= intent.maxExposure`.
+   intent.maxInitLtvBps`, `terms.durationDays <= intent.maxDurationDays`, the pair is the intent's
+   `(lendingAsset, collateralAsset)` key, `fillAmount >= intent.minFillAmount`, and the
+   full-intent-keyed `lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset] + fillAmount
+   <= intent.maxExposure` (the counter introduced in this step — keyed by the full intent, never
+   lender-only).
 5. **Free-balance check**: `LibEncumbrance.freeBalance(lender, lendingAsset, 0, rawBalance) >=
    fillAmount` (the auto-roll "refill" is implicit here — returned principal is free balance again).
 6. **Materialize a slice offer with `creator = lender`** (NOT a vault contract) via the v0.6
    `createSignedOfferVault` path generalized to "intent-backed" (same vault-backed pull-from-free-
    balance, same `createOfferPrincipalLien`).
 7. `_executeMatch(...)` (v0.6, unchanged) → `loan.lender = lender` → **all 30+ downstream sites work
-   unchanged**. `lenderIntentLivePrincipal[lender] += fillAmount`.
+   unchanged**. `lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset] += fillAmount`, and
+   record the **originating** intent key per loan (so the close-time decrement survives a
+   lender-position sale that mutates `loan.lender` — §3.1).
 8. On the loan's terminal close, the standard claim path returns principal to `lender`'s vault and we
    decrement `lenderIntentLivePrincipal` (§3.4).
 
@@ -189,8 +193,8 @@ flag set at §3.2 step 7).
 
 | Inc | Deliverable | Depends on |
 | --- | --- | --- |
-| **v1-a** | Standing-intent storage + `setLenderIntent`/`cancelLenderIntent` + views; `lenderIntentLivePrincipal` accounting scaffold. No fill path yet. | — |
-| **v1-b** | `matchIntent` fill entry (bounds-check + materialize-with-`creator=lender` + `_executeMatch` + live-principal increment) + `lenderIntentEnabled` kill-switch. Open (no solver gate yet). | v1-a |
+| **v1-a** | Standing-intent storage (`LenderIntent` record + mandatory consent + bounds validation) + `setLenderIntent`/`cancelLenderIntent` + views + `lenderIntentEnabled` kill-switch. No fill path, no exposure counter yet. | — |
+| **v1-b** | `matchIntent` fill entry (bounds-check + materialize-with-`creator=lender` + `_executeMatch`) + the full-`(owner,lend,coll)`-keyed `lenderIntentLivePrincipal` counter + per-loan originating-intent marker (loan-sale-safe). Open (no solver gate yet). | v1-a |
 | **v1-c** | `KEEPER_ACTION_SIGNED_FILL` bit + `requireKeeperForPrincipal` + wire into `matchIntent` (and the `requiresKeeperAuth` opt-in on `SignedOffer` for v0.6's `matchSignedOffer`). ABI re-export. | v1-b |
 | **v1-d** | Auto-roll Layer 2 (keeper claim-on-behalf) + `lenderIntentLivePrincipal` terminal decrement at the lifecycle chokepoint. | v1-b |
 
@@ -198,10 +202,15 @@ v1-a/b are the MVP (standing terms + auto-roll Layer 1). v1-c/d harden + close t
 
 ## 5. Test plan (per increment)
 
-- v1-a: set/cancel intent, nonce bump invalidates, bounds validation reverts, exposure cap arithmetic.
+- v1-a: set/cancel intent round-trip + overwrite, mandatory-consent revert, all bounds-validation
+  reverts (zero asset / self-collateralized / zero exposure / min-fill > exposure / rate > ceiling /
+  zero or >100% LTV / zero term), keeper-gate-flag reject (until the gate ships), kill-switch
+  view + admin-only, per-pair independence.
 - v1-b: full+partial intent fill → `loan.lender == lender` + all claim/VPFI/KYC machinery unchanged
   (regression against existing loan-lifecycle suites); below-min-APR / above-LTV / over-exposure /
-  wrong-collateral reverts; free-balance refill across a repay→re-offer cycle; constant-ratio cap.
+  wrong-collateral reverts; full-intent-keyed exposure-cap arithmetic; the loan-sale case (origin
+  marker decrements the original owner's counter, not the buyer's); free-balance refill across a
+  repay→re-offer cycle; constant-ratio cap.
 - v1-c: un-opted intent fillable by anyone; opted intent rejects an unauthorized solver, accepts an
   opted-in keeper; `requiresKeeperAuth` on a v0.6 `SignedOffer` gates `matchSignedOffer`.
 - v1-d: keeper claim-on-behalf deposits to current NFT holder; transferred-position case pays the
