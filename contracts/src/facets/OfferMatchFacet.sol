@@ -234,9 +234,22 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // the counterparty, so the slice goes in whichever slot matches its
         // own offerType. `msg.sender` (the keeper) is preserved as the matcher
         // because _executeMatch is an INTERNAL call.
-        loanId = LibVaipakam.OfferType(o.offerType) == LibVaipakam.OfferType.Lender
+        bool signedIsLender =
+            LibVaipakam.OfferType(o.offerType) == LibVaipakam.OfferType.Lender;
+        loanId = signedIsLender
             ? _executeMatch(sliceOfferId, counterpartyOfferId)
             : _executeMatch(counterpartyOfferId, sliceOfferId);
+
+        // De-index the transient slice from active-offer discovery. When the
+        // slice is the BORROWER side, _executeMatch's borrower dust-close
+        // already called onOfferAccepted. But the LENDER-side dust-close only
+        // sets `accepted = true` + emits OfferClosed (no metrics hook), so a
+        // lender slice would otherwise linger in `activeOfferIdsList` /
+        // `assetPairActiveOfferIds` even though it is fully consumed — a dead
+        // transient offer keepers/UI would keep seeing. Remove it here.
+        if (signedIsLender) {
+            LibMetricsHooks.onOfferAccepted(sliceOfferId);
+        }
 
         emit SignedOfferMatched(
             orderHash, o.signer, msg.sender, sliceOfferId, counterpartyOfferId, loanId, fillAmount
@@ -267,13 +280,31 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (fillAmount == 0 || fillAmount > remaining) {
             revert SignedOfferFillInvalid(fillAmount, remaining);
         }
-        // AON intent: an all-or-nothing signed offer may only be filled in full
-        // (a single match consuming the whole, un-pre-filled offer).
-        if (
-            LibVaipakam.FillMode(o.fillMode) == LibVaipakam.FillMode.Aon
-                && (filled != 0 || fillAmount != ceiling)
-        ) {
-            revert SignedOfferFillInvalid(fillAmount, remaining);
+        if (LibVaipakam.FillMode(o.fillMode) == LibVaipakam.FillMode.Aon) {
+            // AON structural invariant (mirrors createOffer): an all-or-nothing
+            // offer must be a single fixed size — `amount == amountMax`. A
+            // ranged AON signature is malformed; reject it before slicing
+            // (otherwise `_materializeSlice` would rewrite it to a single value
+            // and the invariant the direct path enforces would be bypassed).
+            if (o.amount != ceiling) revert SignedOfferFillInvalid(fillAmount, remaining);
+            // AON intent: filled in full, in a single un-pre-filled match.
+            if (filled != 0 || fillAmount != ceiling) {
+                revert SignedOfferFillInvalid(fillAmount, remaining);
+            }
+        } else {
+            // Partial-fillable: honour the signer's MINIMUM slice size (`amount`)
+            // and never strand sub-minimum dust. A keeper may not fill below
+            // `amount`, nor leave a remainder that is non-zero but < `amount`
+            // (it would be an unfillable off-chain dust remainder). `_materialize
+            // Slice` rewrites the slice to a single value, so `previewMatch` can
+            // no longer see the signed minimum — it must be enforced HERE.
+            if (fillAmount < o.amount) {
+                revert SignedOfferFillInvalid(fillAmount, remaining);
+            }
+            uint256 postRemainder = remaining - fillAmount;
+            if (postRemainder != 0 && postRemainder < o.amount) {
+                revert SignedOfferFillInvalid(fillAmount, remaining);
+            }
         }
     }
 

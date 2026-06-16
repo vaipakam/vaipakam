@@ -311,15 +311,37 @@ library LibSignedOffer {
         // Principal collapses to the slice (single-value).
         p.amount = fillAmount;
         p.amountMax = fillAmount;
-        // Collateral scales pro-rata to the slice, rounded UP. Denominator is
-        // the offer's principal ceiling (amountMax, collapsing the 0 sentinel
-        // to `amount`).
-        uint256 amtCeiling = o.amountMax == 0 ? o.amount : o.amountMax;
-        uint256 collCeiling =
+        // Collateral: **linearly interpolate between the two SIGNED endpoints**
+        // `(amount, collateralAmount)` and `(amountMax, collateralAmountMax)`,
+        // rounded UP. Pro-rating only from the ceiling under-collateralizes a
+        // range with a non-constant collateral ratio — e.g. amount=1000/
+        // collateralAmount=2000, amountMax=2000/collateralAmountMax=3000: a
+        // 1000 fill must require 2000 (the signed floor at that size), not
+        // 1500. Interpolation honours BOTH endpoints: it returns exactly
+        // collateralAmount at the floor and collateralAmountMax at the ceiling.
+        // The caller (`_vetSignedOfferForMatch`) guarantees
+        // `amount <= fillAmount <= amountMax`, so the interpolation is in-range.
+        uint256 amt = o.amount;
+        uint256 amtMax = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 collMin = o.collateralAmount;
+        uint256 collMax =
             o.collateralAmountMax == 0 ? o.collateralAmount : o.collateralAmountMax;
-        uint256 sliceColl = amtCeiling == 0
-            ? collCeiling
-            : (collCeiling * fillAmount + amtCeiling - 1) / amtCeiling;
+        uint256 sliceColl;
+        if (amtMax <= amt || fillAmount <= amt) {
+            // Single-value range, or a fill at the floor → the signed floor.
+            sliceColl = collMin;
+        } else if (fillAmount >= amtMax) {
+            sliceColl = collMax;
+        } else if (collMax > collMin) {
+            // Normal (collateral non-decreasing in amount): interpolate up.
+            sliceColl = collMin
+                + (((collMax - collMin) * (fillAmount - amt) + (amtMax - amt) - 1)
+                    / (amtMax - amt));
+        } else {
+            // Pathological (collateral non-increasing in amount): the floor is
+            // the larger requirement — keep it (conservative).
+            sliceColl = collMin;
+        }
         p.collateralAmount = sliceColl;
         p.collateralAmountMax = sliceColl;
     }

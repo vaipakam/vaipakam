@@ -20,6 +20,19 @@ collateral and health-factor safety is enforced by the same matching engine
 that protects every on-chain match, so an under-collateralized signed match
 reverts rather than minting a bad loan.
 
+Because slicing rewrites a fill to a single fixed-size on-chain offer, the
+matcher also re-asserts — before slicing — the intent guarantees the signer
+relies on and the matching engine can no longer see once the range is
+collapsed: a partial fill can never be smaller than the signer's stated
+minimum slice, can never leave a sub-minimum remainder stranded off-chain, and
+an all-or-nothing offer signed with a range is rejected as malformed rather
+than silently filled at one end. When a signed range specifies a non-constant
+collateral ratio, a partial slice is collateralized to honour the signer's
+stated floor for that fill size — never a thinner pro-rata of the ceiling that
+would under-collateralize what the signer agreed to. Each transient slice is
+also removed from active-offer discovery once consumed, so a fully-filled
+slice never lingers as a dead offer.
+
 Internally this reused the existing matcher by factoring its execution body into
 a shared core, so both the on-chain matcher and the signed-offer matcher run the
 exact same settlement, lien, and kickback logic — no divergence, and the
