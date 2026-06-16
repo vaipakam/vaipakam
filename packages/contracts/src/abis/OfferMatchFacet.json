@@ -563,6 +563,11 @@
   },
   {
     "type": "error",
+    "name": "LenderIntentFullTermRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderIntentInactive",
     "inputs": []
   },

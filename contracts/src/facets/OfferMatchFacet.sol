@@ -229,6 +229,12 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     error LenderIntentExposureExceeded();
     /// @notice The counterparty offer's term exceeds the intent's `maxDurationDays`.
     error LenderIntentDurationTooLong();
+    /// @notice The counterparty offer disables the full-term-interest floor
+    ///         (`useFullTermInterest == false`). An intent loan must carry the
+    ///         floor so a borrower can't escape the lender's committed interest
+    ///         by repaying / preclosing early (the synthesis E3 election). The
+    ///         solver must pick a counterparty that honours it.
+    error LenderIntentFullTermRequired();
     /// @notice The init-LTV-cap collateral floor is unresolvable (missing oracle
     ///         price / illiquid collateral), so the intent's LTV ceiling can't be
     ///         enforced — refuse rather than open a loan blind to the bound.
@@ -368,6 +374,14 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         if (s.offers[counterpartyOfferId].durationDays > intent.maxDurationDays) {
             revert LenderIntentDurationTooLong();
         }
+        // The loan inherits the accepted (borrower) offer's `useFullTermInterest`
+        // (LoanFacet snapshots it from `counterpartyOfferId`). An intent loan must
+        // carry the full-term floor so a borrower can't post an in-bounds offer
+        // that disables it and then repay/preclose early below the lender's
+        // committed interest (synthesis E3). Require the counterparty honour it.
+        if (!s.offers[counterpartyOfferId].useFullTermInterest) {
+            revert LenderIntentFullTermRequired();
+        }
         // Derive the collateral the intent's init-LTV ceiling requires for this
         // fill. The materialized lender offer demands it; `previewMatch` enforces
         // the borrower posts ≥ it. Unresolvable (missing oracle / illiquid
@@ -405,7 +419,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         s.intentOrigin[loanId] = LibVaipakam.IntentOrigin({
             owner: lender,
             lendingAsset: lendingAsset,
-            collateralAsset: collateralAsset
+            collateralAsset: collateralAsset,
+            amount: fillAmount // release the ORIGINAL fill, not a partial-repaid remainder
         });
 
         // Transient lender-slice cleanup (identical to the signed-lender path):

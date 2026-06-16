@@ -123,7 +123,7 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
     }
@@ -243,11 +243,55 @@ contract LenderIntentMatchTest is SetupTest {
                 expiresAt: 0,
                 fillMode: LibVaipakam.FillMode.Partial,
                 refinanceTargetLoanId: 0,
-                useFullTermInterest: false
+                useFullTermInterest: true
             })
         );
         vm.prank(solver);
         vm.expectRevert(OfferMatchFacet.LenderIntentDurationTooLong.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    function test_matchIntent_fullTermNotHonoured_reverts() public {
+        // A counterparty offer that disables the full-term floor can't fill an
+        // intent (the lender's committed-interest election would be bypassed).
+        _setIntent(MAX_EXPOSURE);
+        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        address b = _newBorrower("b1");
+        vm.prank(b);
+        uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: MIN_RATE_BPS,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 2 * PRINCIPAL,
+                durationDays: MAX_DURATION,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: MIN_RATE_BPS + 100,
+                collateralAmountMax: 2 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false // ← disables the floor
+            })
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentFullTermRequired.selector);
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

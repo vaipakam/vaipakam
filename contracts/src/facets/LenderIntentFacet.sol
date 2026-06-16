@@ -231,11 +231,13 @@ contract LenderIntentFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
         if (io.owner == address(0)) return; // not an intent-originated loan
-        uint256 principal = s.loans[loanId].principal;
+        // Release the ORIGINAL fill amount (`io.amount`), NOT `loan.principal`
+        // (a partial repayment reduces the latter, which would leave the
+        // partial-repaid slice permanently counted against the cap).
         uint256 live =
             s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset];
         s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset] =
-            principal <= live ? live - principal : 0;
+            io.amount <= live ? live - io.amount : 0;
         delete s.intentOrigin[loanId];
     }
 

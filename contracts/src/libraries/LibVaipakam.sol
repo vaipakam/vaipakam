@@ -4073,12 +4073,16 @@ library LibVaipakam {
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
-    ///         recorded per loanId so the terminal-close exposure-release keys
-    ///         off the SIGNER's intent, not the (sale-mutable) current lender.
+    ///         recorded per loanId so the exposure-release keys off the SIGNER's
+    ///         intent, not the (sale-mutable) current lender, and releases the
+    ///         ORIGINAL fill amount (`amount`) — not `loan.principal`, which a
+    ///         partial repayment reduces (otherwise the partial-repaid slice
+    ///         would stay permanently counted against the cap).
     struct IntentOrigin {
         address owner;
         address lendingAsset;
         address collateralAsset;
+        uint256 amount;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.

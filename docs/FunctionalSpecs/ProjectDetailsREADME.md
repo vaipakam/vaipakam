@@ -347,17 +347,20 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   matches it through the same engine (and the same collateral/health-factor
   safety checks) as any on-chain match; the solver earns the same 1% matcher fee.
   Each fill is held to the intent's bounds: not below the minimum fill size, not
-  past the exposure cap, not over the maximum term, and not below the maximum-LTV
+  past the exposure cap, not over the maximum term, not below the maximum-LTV
   collateral requirement (a fill the protocol can't price the collateral for is
-  refused, not opened blind to the bound).
-- **Exposure release + auto-roll.** The principal a lender has live in intent
-  loans is tracked per asset-pair against their exposure cap, and is freed when a
-  loan's principal returns to the lender's vault (at claim). As loans repay, the
-  freed capacity makes the same standing intent fillable again — so a lender's
-  supply re-lends across loans without any new action, closing the between-loans
-  idle gap. The release is tied to the loan's originating intent, so if a lender
-  sells their position mid-loan, the original lender's capacity is the one freed
-  (never the buyer's).
+  refused, not opened blind to the bound), and carrying the lender's full-term-
+  interest floor (a borrower can't escape the lender's committed interest by
+  repaying early).
+- **Exposure cap + release.** The principal a lender has live in intent loans is
+  tracked per asset-pair against their exposure cap, by the original fill amount
+  (a partially-repaid loan still frees its full reserved amount). The cap is
+  freed when the lender claims the loan's proceeds — the point the principal
+  returns to the lender's control — after which it can be deployed again. The
+  release is tied to the loan's originating intent, so if a lender sells their
+  position mid-loan, the original lender's capacity is the one freed (never the
+  buyer's). Re-lending returned proceeds back into the standing intent with no
+  manual step (zero-gap auto-roll) is a planned later capability.
 
 ### Lenders:
 
