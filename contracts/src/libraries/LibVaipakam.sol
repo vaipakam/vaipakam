@@ -1062,6 +1062,38 @@ library LibVaipakam {
         bool cfgAutoLendEnabled;
         bool cfgAutoRefinanceEnabled;
         bool cfgAutoExtendEnabled;
+        // ── #393 v1 — LenderIntentVault master kill-switch ────────────
+        // Gates the standing-intent fill path (`OfferMatchFacet.matchIntent`).
+        // Default `false` on a fresh deploy: a user can `setLenderIntent`
+        // (register standing terms) but no fill executes until governance
+        // flips this on post-bake. Same ship-off / governance-on / break-
+        // glass-off pattern as `partialFillEnabled` / `internalMatchEnabled`.
+        // Setter `ConfigFacet.setLenderIntentEnabled(bool)` (ADMIN_ROLE).
+        bool lenderIntentEnabled;
+    }
+
+    /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
+    ///         terms a permissioned solver materializes concrete offers within,
+    ///         consuming the lender's existing per-user vault balance. The
+    ///         lender-of-record stays the depositing user (`loan.lender` = the
+    ///         intent owner), so every downstream claim / VPFI / KYC / sanctions
+    ///         site is unchanged — the vault is NOT the lender. See
+    ///         docs/DesignsAndPlans/LenderIntentVaultV1Design.md §1.
+    /// @dev    ERC-20-on-ERC-20 only (v1). One intent per (owner, lendingAsset,
+    ///         collateralAsset) — keyed by `lenderIntent[owner][lendingAsset][collateralAsset]`.
+    ///         Bounds are a HARD band a solver's concrete `matchIntent` terms
+    ///         must fall within; the protocol HF/LTV init gate still applies on
+    ///         top. Reservation of in-flight principal reuses the encumbrance
+    ///         sub-ledger (#407) via the materialized slice offer's principal
+    ///         lien — no new lock type.
+    struct LenderIntent {
+        bool active; // false ⇒ no standing intent (default / cancelled)
+        uint256 maxExposure; // hard cap on aggregate LIVE principal out from this intent
+        uint256 minRateBps; // APR floor — a fill below this is rejected
+        uint16 maxInitLtvBps; // the lender's own init-LTV ceiling (on top of the protocol gate)
+        uint32 maxDurationDays; // longest loan term the lender will accept
+        uint256 minFillAmount; // smallest slice a solver may fill (dust floor; > 0)
+        bool requiresKeeperAuth; // true ⇒ only an opted-in solver may fill (v1-c gate)
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -4016,6 +4048,16 @@ library LibVaipakam {
         // address(0) outside an in-flight signed-offer fill — always cleared
         // in the same call; a non-zero value at rest is a bug.
         address signedOfferAcceptor;
+        // #393 v1 — LenderIntentVault. APPEND-ONLY.
+        // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
+        // standing lending terms for that asset-pair (one per pair in v1).
+        // The exposure-counter (`maxExposure` enforcement) + per-loan origin
+        // marker land with the v1-b fill path that writes them — keyed by the
+        // FULL intent (owner, lend, coll) and storing the ORIGINATING owner per
+        // loan (loan.lender is mutated on a lender-position sale, so it can't be
+        // the close-time decrement key — Codex #618 P2). Not scaffolded here.
+        mapping(address => mapping(address => mapping(address => LenderIntent)))
+            lenderIntent;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
@@ -4710,6 +4752,11 @@ library LibVaipakam {
     /// @dev Internal-liquidation match path (B.2) — kill-switch flag.
     function cfgInternalMatchEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.internalMatchEnabled;
+    }
+
+    /// @dev #393 v1 — LenderIntentVault standing-intent fill path kill-switch.
+    function cfgLenderIntentEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.lenderIntentEnabled;
     }
 
     /// @dev #577 / #585 — true when a FallbackPending loan still carries a

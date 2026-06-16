@@ -1,6 +1,8 @@
 import OfferCreateFacetABI from './OfferCreateFacet.json';
 // #396 v0.5 — gasless signed off-chain offer book fill surface.
 import SignedOfferFacetABI from './SignedOfferFacet.json';
+// #393 v1 — LenderIntentVault standing-terms surface.
+import LenderIntentFacetABI from './LenderIntentFacet.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
@@ -90,6 +92,7 @@ import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
 export {
   OfferCreateFacetABI,
   SignedOfferFacetABI,
+  LenderIntentFacetABI,
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
@@ -156,6 +159,7 @@ import type { Abi } from 'viem';
 export const DIAMOND_ABI = [
   ...OfferCreateFacetABI,
   ...SignedOfferFacetABI,
+  ...LenderIntentFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,

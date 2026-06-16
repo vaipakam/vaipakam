@@ -183,7 +183,7 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///         is observable from outside the deploy script.
     function test_DeployedDiamond_HasExactCutFacetCount() public {
         (address diamond,,) = _deploy(true);
-        string[54] memory names = cutFacetNames();
+        string[55] memory names = cutFacetNames();
         uint256 observed = DiamondLoupeFacet(diamond).facetAddresses().length;
         assertEq(
             observed,

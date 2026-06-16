@@ -33,8 +33,9 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayListingAtomicFacet`;
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`;
-    ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`.)
-    function cutFacetNames() internal pure returns (string[54] memory) {
+    ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`;
+    ///      54 → 55 in #393 v1 with `LenderIntentFacet`.)
+    function cutFacetNames() internal pure returns (string[55] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -160,7 +161,12 @@ abstract contract DiamondFacetNames {
             // on-chain offer (OfferCreateFacet.createSignedOffer{Vault,
             // Wallet}) and immediately accepting it. See
             // `SignedOfferFacet.sol` natspec.
-            "SignedOfferFacet"
+            "SignedOfferFacet",
+            // #393 v1 — LenderIntentVault standing-terms surface. A lender
+            // registers set-and-forget lending bounds for an ERC-20 pair; a
+            // permissioned solver fills concrete offers within them via
+            // OfferMatchFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
+            "LenderIntentFacet"
         ];
     }
 }
