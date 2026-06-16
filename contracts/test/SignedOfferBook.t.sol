@@ -131,6 +131,11 @@ contract SignedOfferBookTest is SetupTest {
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.lender, signer, "lender = signer");
         assertEq(loan.borrower, borrower, "borrower = acceptor");
+        // #396 v0.5 P1 regression — on a signed fill `msg.sender` inside
+        // `_acceptOffer` is the diamond; the matcher/filler attribution MUST
+        // resolve to the injected real acceptor, never address(this).
+        assertEq(loan.matcher, borrower, "matcher = real filler, not diamond");
+        assertTrue(loan.matcher != address(diamond), "matcher not the diamond");
         assertEq(loan.principal, PRINCIPAL, "principal matches offer");
         assertEq(loan.interestRateBps, RATE_BPS, "rate matches offer");
         assertEq(
@@ -452,6 +457,25 @@ contract SignedOfferBookTest is SetupTest {
         SignedOfferFacet(address(diamond)).acceptSignedOfferWithPermit(
             o, permit, "", true
         );
+    }
+
+    // ─── 14. v0.5 shape guard: NFT collateral on a signed lender offer ─────
+
+    function testSignedLenderOfferWithNftCollateralReverts() public {
+        // #396 v0.5 P2 — v0.5 is ERC-20-on-ERC-20 only. A signed LENDER offer
+        // requiring NFT collateral must be rejected up front
+        // (SignedOfferUnsupportedShape, raised in the materialize's shape guard
+        // and bubbled out of the cross-facet self-call), never routed through
+        // the untested NFT-collateral accept path. Reverts before any state
+        // change (the consume-ledger write rolls back with the tx).
+        LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(14, 0);
+        o.collateralAssetType = uint8(LibVaipakam.AssetType.ERC721);
+        bytes memory sig = _sign(o);
+        _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        vm.prank(borrower);
+        vm.expectRevert(OfferCreateFacet.SignedOfferUnsupportedShape.selector);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
     }
 }
 

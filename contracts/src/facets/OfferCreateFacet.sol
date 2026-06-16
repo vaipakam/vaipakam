@@ -656,7 +656,15 @@ contract OfferCreateFacet is
         LibVaipakam.CreateOfferParams calldata params
     ) private pure returns (address) {
         if (params.offerType == LibVaipakam.OfferType.Lender) {
-            if (params.assetType != LibVaipakam.AssetType.ERC20) {
+            // BOTH legs must be ERC-20 in v0.5: the principal (the lender's
+            // stake, checked) AND the collateral the borrower will pledge. A
+            // signed lender offer requiring ERC-721/1155 collateral would
+            // otherwise materialize and route through the untested NFT-
+            // collateral accept path (out of v0.5 scope).
+            if (
+                params.assetType != LibVaipakam.AssetType.ERC20 ||
+                params.collateralAssetType != LibVaipakam.AssetType.ERC20
+            ) {
                 revert SignedOfferUnsupportedShape();
             }
             return params.lendingAsset;

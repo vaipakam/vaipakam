@@ -924,10 +924,15 @@ contract OfferAcceptFacet is
                                 offer.lendingAsset,
                                 // Read matcher inline from storage to
                                 // keep this function under viaIR's
-                                // stack-too-deep budget.
+                                // stack-too-deep budget. #396 v0.5: on a
+                                // signed-offer fill `msg.sender` is the
+                                // diamond (cross-facet `acceptOfferInternal`),
+                                // so fall back to the injected real filler.
                                 s.matchOverride.active
                                     ? s.matchOverride.matcher
-                                    : msg.sender,
+                                    : (s.signedOfferAcceptor != address(0)
+                                        ? s.signedOfferAcceptor
+                                        : msg.sender),
                                 matcherCut
                             ),
                             VaultWithdrawFailed.selector
@@ -1098,7 +1103,9 @@ contract OfferAcceptFacet is
         // but recording on every loan keeps the read cheap and uniform.
         s.loans[loanId].matcher = s.matchOverride.active
             ? s.matchOverride.matcher
-            : msg.sender;
+            : (s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender);
 
         // Update offer.
         //
@@ -1249,7 +1256,14 @@ contract OfferAcceptFacet is
         uint256 effFilled = offer.accepted ? effectivePrincipal : offer.amountFilled;
         emit OfferAccepted(
             offerId,
-            msg.sender,
+            // #396 v0.5 — inject the real filler ONLY on the signed-offer path
+            // (where `msg.sender` is the diamond via cross-facet
+            // `acceptOfferInternal`). The matchOffers path keeps emitting
+            // `msg.sender` (the matcher/bot) and legacy direct keeps emitting
+            // the caller — both unchanged, so indexer semantics don't shift.
+            s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender,
             loanId,
             effectivePrincipal,
             effFilled,
