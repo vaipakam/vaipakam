@@ -23,6 +23,8 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
 /**
  * @title OfferCreateFacet
@@ -500,6 +502,137 @@ contract OfferCreateFacet is
             VaultDepositFailed.selector
         );
         _createOfferFinish(msg.sender, offerId, params);
+    }
+
+    /// @notice Funding mode for a materialized signed offer (#396 v0.5).
+    ///         `VaultBacked` (0): the signer pre-funded their vault, so the
+    ///         creator-side stake is already free vault balance — skip the
+    ///         wallet pull, assert the free balance covers the stake, and let
+    ///         `_createOfferFinish`'s offer-principal lien lock it.
+    ///         `WalletWitness` (1): pull the stake from the signer's wallet via
+    ///         Permit2 `permitWitnessTransferFrom`, the offer hash bound as the
+    ///         witness so one signature authorizes the pull AND the terms.
+    enum SignedFunding {
+        VaultBacked,
+        WalletWitness
+    }
+
+    /// @notice The signed offer's shape isn't supported in v0.5 (only ERC-20
+    ///         Lender-principal and ERC-20-collateral Borrower offers; NFT
+    ///         lender / NFT-rental / refinance-tagged are out of v0.5 scope).
+    error SignedOfferUnsupportedShape();
+    /// @notice Vault-backed signed offer: the signer's free vault balance of
+    ///         the staked asset is below the offer stake.
+    error SignedOfferInsufficientFreeBalance(
+        address asset,
+        uint256 free,
+        uint256 needed
+    );
+
+    /// @notice Materialize a signed off-chain offer into a normal on-chain
+    ///         offer at the instant of fill (#396 v0.5). Self-gated cross-facet
+    ///         entry called ONLY by `OfferAcceptFacet`'s signed-offer accept
+    ///         path, which has already verified the signature + nonce/replay
+    ///         ledger. Reuses `_createOfferSetup` + `_createOfferFinish`
+    ///         verbatim (all validation + the NFT mint + the offer-principal
+    ///         lien) and swaps only the asset pull by `fundingMode`.
+    /// @dev    Gated on `msg.sender == address(this)` (diamond) like
+    ///         `createOfferInternal`. `creator` is the real signer (passed
+    ///         on-behalf-of so `offer.creator` + the lien + sanctions all
+    ///         resolve to the signer, not the diamond). v0.5 restricts the
+    ///         shape to the two clean ERC-20 legs the Permit2 / free-balance
+    ///         funding can serve; NFT and refinance-tagged offers revert
+    ///         `SignedOfferUnsupportedShape`.
+    /// @param creator      The offer signer (on-behalf-of address).
+    /// @param params       Offer terms (built from the SignedOffer by caller).
+    /// @param fundingMode  {SignedFunding} — vault-backed or wallet-witness.
+    /// @param permit       Permit2 struct (wallet-witness mode only).
+    /// @param witness      The SignedOffer hash bound as the Permit2 witness
+    ///                     (wallet-witness mode only).
+    /// @param permitSig    The Permit2 witness signature (wallet mode only).
+    /// @return offerId     The materialized on-chain offer id.
+    function createSignedOfferMaterialized(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params,
+        SignedFunding fundingMode,
+        ISignatureTransfer.PermitTransferFrom calldata permit,
+        bytes32 witness,
+        bytes calldata permitSig
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        // v0.5 supported shapes: ERC-20 Lender-principal offer, or
+        // ERC-20-collateral Borrower offer. NFT lender / NFT-rental
+        // (prepay) / refinance-tagged are deferred.
+        address fundedAsset = _resolveSignedOfferStakeAsset(params);
+        if (params.refinanceTargetLoanId != 0) {
+            revert SignedOfferUnsupportedShape();
+        }
+
+        address vault;
+        (offerId, vault) = _createOfferSetup(creator, params);
+        uint256 amount = _creatorPullAmount(offerId, params);
+
+        if (fundingMode == SignedFunding.VaultBacked) {
+            // Funds already sit in the signer's vault as free balance — assert
+            // they cover the stake, then SKIP the wallet pull. The
+            // `_createOfferFinish` offer-principal lien locks the verified free
+            // balance; the immediate accept (caller side) consumes + releases
+            // it. No `recordVaultDepositERC20` — the balance was tracked when
+            // the signer originally deposited it.
+            uint256 raw = LibVaipakam.storageSlot()
+                .protocolTrackedVaultBalance[creator][fundedAsset];
+            uint256 free = LibEncumbrance.freeBalance(creator, fundedAsset, 0, raw);
+            if (free < amount) {
+                revert SignedOfferInsufficientFreeBalance(fundedAsset, free, amount);
+            }
+        } else {
+            // Wallet-witness: one Permit2 signature binds the pull + the terms.
+            LibPermit2.pullWithWitness(
+                creator,
+                vault,
+                fundedAsset,
+                amount,
+                permit,
+                witness,
+                LibSignedOffer.WITNESS_TYPE_STRING,
+                permitSig
+            );
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.recordVaultDepositERC20.selector,
+                    creator,
+                    fundedAsset,
+                    amount
+                ),
+                VaultDepositFailed.selector
+            );
+        }
+        _createOfferFinish(creator, offerId, params);
+    }
+
+    /// @dev Resolve the creator-side staked ERC-20 asset for a signed offer
+    ///      and enforce the v0.5 supported shape. Lender ⇒ `lendingAsset`
+    ///      (principal); ERC-20 Borrower ⇒ `collateralAsset`. Any non-ERC-20
+    ///      leg reverts `SignedOfferUnsupportedShape` (NFT lender + NFT-rental
+    ///      prepay funding are deferred past v0.5).
+    function _resolveSignedOfferStakeAsset(
+        LibVaipakam.CreateOfferParams calldata params
+    ) private pure returns (address) {
+        if (params.offerType == LibVaipakam.OfferType.Lender) {
+            if (params.assetType != LibVaipakam.AssetType.ERC20) {
+                revert SignedOfferUnsupportedShape();
+            }
+            return params.lendingAsset;
+        }
+        if (
+            params.assetType != LibVaipakam.AssetType.ERC20 ||
+            params.collateralAssetType != LibVaipakam.AssetType.ERC20
+        ) {
+            revert SignedOfferUnsupportedShape();
+        }
+        return params.collateralAsset;
     }
 
     /// @dev Shared pre-pull setup. Runs every validation + allocates
