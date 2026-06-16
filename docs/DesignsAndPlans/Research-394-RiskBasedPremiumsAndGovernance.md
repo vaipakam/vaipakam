@@ -92,9 +92,12 @@ layer.
    `AssetRiskParams` + range-checked setters (Piece A). **Audit every HF/threshold consumer to
    read the runtime value, not the constant:** the `MIN_HEALTH_FACTOR` constant is read at the
    `LoanFacet._checkInitialLtvAndHf` init gate (**both** the tiered HF≥1.0 branch and the
-   non-tiered HF≥1.5 branch) and any `RiskFacet` HF reference — every one must switch to the
-   branch-aware runtime floor, or a tunable that only some sites honor would create an inconsistent
-   gate. Enumerate + migrate all call sites in the same change.
+   non-tiered HF≥1.5 branch). The migration step is concrete: **`grep` every `MIN_HEALTH_FACTOR`
+   reference and every health-factor comparison site** across `LoanFacet`, `RiskFacet`,
+   `OfferMatchFacet`/`LibOfferMatch` (the synthetic-HF match gate), and any other facet, and switch
+   each to the branch-aware runtime floor — a tunable that only some sites honor would create an
+   inconsistent gate. Migrate all call sites in the same change. (Note: the **HF<1e18 liquidation
+   threshold** is a *separate* constant from the 1.5e18 init floor — scope which the knob governs.)
 2. **Risk-premium rate content** layered on `IRateModel` (#400) (Piece B) — gated on #400.
 3. **`RISK_STEWARD_ROLE` bounded optimistic setters** + timelock-asymmetric governance.
 

@@ -84,9 +84,12 @@ even a thin inward adapter).
 ## 6. Spin-off implementation issue (only if prioritized)
 
 **Maturity-aware collateral adapter:** governed per-asset allowlist with on-chain maturity +
-deterministic linear-discount-to-par oracle + hard `loanTerm ≤ tokenMaturity` constraint (or
-post-maturity underlying switch with a depeg guard) + liquidation live-pool pre-check. Own design
-doc + heavy test matrix before any contract. **Not** scheduled unless demand is concrete.
+an oracle priced **`min(deterministic linear-discount-to-par, live-market)`** (the live-market cap
+is load-bearing — linear-to-par alone reproduces the par-pricing blowup if the token depegs, §3) +
+a hard **`loanTerm + grace + liquidation window ≤ tokenMaturity`** constraint (grace-inclusive —
+a default sits past term during grace, when the token may be post-maturity) — or a post-maturity
+underlying switch with a depeg guard + liquidation live-pool pre-check. Own design doc + heavy
+test matrix before any contract. **Not** scheduled unless demand is concrete.
 
 ## 7. Sources
 

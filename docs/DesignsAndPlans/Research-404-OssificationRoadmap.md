@@ -126,8 +126,19 @@ guardian-pause add is independently shippable now (pure safety upside); the per-
 1. **Diamond-level guardian-pause** — extend the `GuardianPausable` pattern to the core Diamond
    (guardian pause / owner-timelock unpause; never alters custody). Shippable pre-audit.
 2. **Per-selector cut-freeze mechanism** — one-way, timelocked permanent selector removal from
-   future cuts. Built pre-audit, *exercised* post-audit on custody/accounting selectors.
-3. **Published ossification roadmap** (docs + governance commitment) — post-audit.
+   future cuts. **Must also freeze the cut machinery's OWN selectors** (`diamondCut` + the freeze-
+   enforcing selector) for the frozen set — a freeze enforced only inside `DiamondCutFacet` is
+   bypassable by cutting in a replacement cut-facet. Built pre-audit, *exercised* post-audit on
+   custody/accounting selectors.
+3. **Vault UUPS upgrade-hook freeze** — a one-way `upgradesFrozen` flag that makes the vault's
+   `_authorizeUpgrade` revert forever, **without** renouncing the Diamond's operational ownership
+   (custody is Diamond-mediated and must keep working). Freeze the upgrade hook, keep the owner.
+   Post-audit.
+4. **Bounded-upgradeable oracle/risk controls** — make the oracle-adapter + risk-param surfaces
+   *bounded*-upgradeable (timelock + guardian veto + range-checked setters), NOT free facet
+   replacements — required for the "custody can't change" claim to be honest (a free oracle
+   hot-swap drains without touching custody). Co-designed with #394 governance.
+5. **Published ossification roadmap** (docs + governance commitment) — post-audit.
 
 ## 7. Sources
 

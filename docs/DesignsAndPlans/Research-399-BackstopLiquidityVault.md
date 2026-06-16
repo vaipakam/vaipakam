@@ -134,8 +134,12 @@ backstop.
 ## 7. Spin-off implementation issues
 
 1. **Backstop vault v0 (treasury-seeded):** segregated vault + per-asset capacity cap + posted
-   rate + auto-counterparty origination (backstop→borrower) + liquidator-of-last-resort hook into
-   the FallbackPending custody path. No external LPs, no slashing.
+   rate + auto-counterparty origination (backstop→borrower) triggered on an **on-chain-provable
+   unmatched condition** (an on-chain offer/order past an on-chain deadline with no fill — **never**
+   off-chain "no match found", which is unverifiable/gameable) + liquidator-of-last-resort hook
+   into the FallbackPending custody path that **preserves the borrower cure window** (acts only
+   after the cure window elapses or the lender claims; never short-circuits repay/addCollateral).
+   No external LPs, no slashing.
 2. **Backstop LP tranche v1:** opt-in deposits + first-loss offset/cap + safety incentive +
    auto-burn slashing accounting. Gated on a v0 verdict + its own design doc + audit-scope
    estimate.

@@ -179,9 +179,14 @@ existing `GovernanceConfigDesign` + timelock without touching custody.
    nonce/order-hash registry + cancel + pull-at-accept solvency + under-funded auto-promote.
    *Foundation — do first.*
 2. **Auto-roll LenderIntentVault**: per-user (and per-aggregator) intent vault that re-posts a
-   signed offer when principal returns on terminal close; closes the idle-capital window.
-3. **Competitive matcher upgrade**: extend `matchOffers` to fill signed offers with the
-   existing 1% LIF kickback; bilateral per-offer settlement; flow-cap-bounded auto-fill.
+   signed offer when principal returns on terminal close — **but only when the vault is still the
+   current lender-NFT holder** (positions transfer mid-loan; if transferred, proceeds go to the
+   current holder via the normal claim path and auto-roll is skipped). Thread `beneficialOwner`
+   into attribution/VPFI/keeper-auth.
+3. **Competitive matcher upgrade**: a **signed-offer-aware match entry** (verify-then-materialize,
+   reusing `LibOfferMatch` math — `matchOffers` itself reads on-chain `s.offers` only, so it can't
+   fill a signed off-chain offer unchanged) with the existing 1% LIF kickback; bilateral per-offer
+   settlement; flow-cap-bounded auto-fill; gated by a new signed-fill keeper action bit.
 4. **ERC-4626 aggregator adapter** (the #398 implementation): outward 4626 surface over a
    LenderIntentVault so external aggregators route idle capital in/out.
 5. **(Gated on #399 verdict) Segregated backstop** as auto-counterparty of last resort.

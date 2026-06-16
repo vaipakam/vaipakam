@@ -126,7 +126,11 @@ is decided.
 
 **Signed-offer book v1:** EIP-712 `SignedOffer` schema + domain separator + on-chain nonce
 registry (AON) **and** a per-order-hash remaining-amount ledger (partial) + `acceptSignedOffer`
-(EOA + EIP-1271) + `cancelSignedOffer` + vault-backed and wallet-backed solvency modes + a
+(EOA + EIP-1271) + `cancelSignedOffer` + two solvency modes with **distinct fill semantics**:
+**vault-backed** supports partial fills (Diamond moves vault funds per the remaining-amount
+ledger, no per-fill signature), while **wallet-backed (signature-transfer) is AON-only** (a
+single-use signature authorizes exactly one pull — a partial-fillable wallet-backed offer is
+disallowed unless an allowance-based or per-fill-signature scheme is added) + a
 **new signed-offer-aware match entry** (per §4 — `matchOffers` reads on-chain `s.offers` only, so
 filling a signed offer needs a verify-then-materialize entry that **reuses `LibOfferMatch`
 math**, not `OfferMatchFacet` unchanged) + indexer book + under-funded auto-promote. Reuses

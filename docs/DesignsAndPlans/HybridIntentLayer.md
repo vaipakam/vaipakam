@@ -129,18 +129,21 @@ explicit v1 design item, not a free consequence of "the vault is the offerer."
 ### 3.3 L3 — ERC-4626 aggregator adapter (#398)
 
 A standards-compliant ERC-4626 face over a per-aggregator LenderIntentVault: the aggregator
-`deposit`/`withdraw`/`redeem`s; `totalAssets` reflects idle + outstanding-principal (interest
-handled per the realized-vs-accrued rule in [#398](Research-398-StandardizedYieldWrapperAndOutwardAdapter.md)
-— **unrealized interest is NOT counted as withdrawable**, to avoid share-price inflation /
-withdrawing value that hasn't been collected).
+`deposit`/`withdraw`/`redeem`s; `totalAssets` reflects idle + **risk-adjusted** outstanding-
+principal (active-loan principal marked at a haircut / written down on default, **not full face**,
+and **unrealized interest excluded** — full detail + the withdrawable-vs-marked split in
+[#398](Research-398-StandardizedYieldWrapperAndOutwardAdapter.md)); `maxWithdraw` reflects **idle
+only**.
 
-**Single-principal restriction (E1-critical).** The 4626 adapter must **NOT** be an open vault
-anyone can `deposit` into — an open 4626 face would let *multiple* Vaipakam principals share one
-vault, which is exactly the commingling E1 forbids. Each adapter is bound to **one authorized
-depositor** (the aggregator's strategy address, set at deploy); `deposit`/`mint` revert for any
-other caller. So the ERC-4626 *interface* is exposed (the aggregator's tooling speaks it), but the
-adapter holds exactly one beneficial principal. The aggregator's retail depositors commingle
-*inside the aggregator*, off-Vaipakam. We adopt the interface, never the pooled-share custody.
+**Single-principal restriction (E1-critical).** The 4626 adapter must **NOT** be an open vault —
+an open 4626 face would let *multiple* Vaipakam principals share one vault, the commingling E1
+forbids. Each adapter is bound to **one authorized principal**: both **`deposit`/`mint` are caller-
+restricted** AND the **shares are non-transferable / transfer-allowlisted** (4626 shares are
+ERC-20-transferable, so gating only deposits would let the principal transfer shares and re-create
+multi-principal exposure). So the ERC-4626 *interface* is exposed, but the adapter holds exactly
+one beneficial principal at both the deposit and share layers. The aggregator's retail depositors
+commingle *inside the aggregator*, off-Vaipakam. We adopt the interface, never the pooled-share
+custody.
 
 ### 3.4 LR — Segregated backstop (#399), sequenced last
 
@@ -230,7 +233,8 @@ task flagged as a follow-up, not blocking the design.
   pull-at-accept solvency races, under-funded auto-promote. Self-contained, well-precedented.
 - **v1** — *moderate-high*: a new fund-holding vault contract + factory; auto-roll reentrancy +
   the encumbrance-reservation accounting (reuses #407, lowering risk); solver-impersonation gated
-  by the existing keeper-authorization surface.
+  by a **new dedicated signed-fill keeper action bit** (the existing keeper bitmask has no
+  signed-fill action — see §4.1).
 - **v1.5** — *moderate*: ERC-4626 share-accounting correctness; `totalAssets` mark integrity
   (no inflation/donation attack); the 1-vault-per-aggregator isolation boundary.
 - **v2.5/v3** — *high*: the backstop is the largest surface — auto-counterparty origination,
@@ -239,13 +243,23 @@ task flagged as a follow-up, not blocking the design.
 
 ## 7. Consolidated spin-off implementation issues (dependency-ordered)
 
-1. **Signed-offer book v0.5** (#396 impl) — *foundation, do first.*
-2. **LenderIntentVault + auto-roll** (#393 L1).
-3. **Competitive matcher upgrade** — fill signed offers via `matchOffers` + 1% LIF; flow-cap
-   bounds (#393 L2).
-4. **ERC-4626 aggregator adapter** (#398 outward).
-5. **Pluggable rate model** `IRateModel` (#400) — co-designed with #394.
-6. **Backstop v0 (treasury-seed)** then **v1 (LP tranche)** (#399).
+1. **Signed-offer book v0.5** (#396 impl) — *foundation, do first.* Includes the **signed-offer-
+   aware match entry** (verify-then-materialize, reusing `LibOfferMatch` math — NOT `matchOffers`
+   unchanged, which reads on-chain `s.offers` only) + the per-order-hash remaining-amount ledger
+   (wallet-backed single-signature = AON-only).
+2. **LenderIntentVault + auto-roll** (#393 L1). Must thread **`beneficialOwner`** into loan
+   attribution / VPFI / keeper-auth (the vault is the offerer but the lender-of-record is the
+   depositing user), and **auto-roll only when the vault is still the current lender-NFT holder**
+   (skip + fall to the normal claim path if the position was transferred).
+3. **Competitive matcher upgrade** — fill signed offers via the **signed-offer-aware match entry**
+   (item 1) + 1% LIF; flow-cap bounds; gated by the **new signed-fill keeper action bit** (#393 L2).
+4. **ERC-4626 aggregator adapter** (#398 outward) — single authorized depositor **+ non-
+   transferable shares**; `totalAssets` risk-adjusted; `maxWithdraw` = idle only.
+5. **Pluggable rate model** `IRateModel` (#400) — evaluated at **create/sign only, never at
+   match/accept**; co-designed with #394.
+6. **Backstop v0 (treasury-seed)** then **v1 (LP tranche)** (#399) — **on-chain-provable** unmatched
+   trigger (never off-chain absence); preserve the **FallbackPending borrower cure window** before
+   any backstop close.
 
 Each carries its own focused design doc + tests + the facet-addition checklist before contracts.
 

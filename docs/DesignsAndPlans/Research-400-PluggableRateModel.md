@@ -81,8 +81,11 @@ orthogonal (`useFullTermInterest` is a separate flag).
 ## 5. Spin-off implementation issue
 
 **Pluggable rate-model v1:** `IRateModel` interface + a model registry (timelock-gated) + the
-identity default + `OfferCreate`/`OfferMatch` quote-time hook (snapshot unchanged). Built after
-Cluster A; co-designed with #394.
+identity default + a quote hook at **`OfferCreate` / signed-offer sign-time ONLY** that writes the
+concrete rate into the offer (and EIP-712 digest). **No `OfferMatch`/`acceptOffer` quote hook** —
+match/accept read the stored, already-quoted rate; re-quoting at match would re-introduce the
+bait-and-switch (§3). `initiateLoan` snapshot unchanged. Built after Cluster A; co-designed with
+#394.
 
 ## 6. Sources
 
