@@ -730,6 +730,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("legalFacet",              address(legalFacet));
         Deployments.writeFacet("autoLifecycleFacet",      address(autoLifecycleFacet));
         Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
+        // #393 v1 — LenderIntentVault standing-terms surface.
+        Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1337,11 +1339,12 @@ contract DeployDiamond is Script {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
-        s[3] = LenderIntentFacet.getLenderIntent.selector;
+        s[3] = LenderIntentFacet.isLenderIntentEnabled.selector;
+        s[4] = LenderIntentFacet.getLenderIntent.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

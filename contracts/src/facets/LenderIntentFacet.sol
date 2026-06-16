@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -92,6 +93,12 @@ contract LenderIntentFacet is
     /// @param requiresKeeperAuth When true, only a solver the lender has
     ///                           authorized (v1-c keeper bit) may fill; when
     ///                           false the intent is openly fillable.
+    /// @param riskAndTermsConsent Must be `true`. Mirrors the mandatory
+    ///                           `creatorRiskAndTermsConsent` every offer-create
+    ///                           path records: a standing intent is a lending
+    ///                           commitment, so the lender consents to the
+    ///                           risk/terms framework here, once, at registration
+    ///                           (the loans it later materializes inherit it).
     function setLenderIntent(
         address lendingAsset,
         address collateralAsset,
@@ -100,9 +107,14 @@ contract LenderIntentFacet is
         uint16 maxInitLtvBps,
         uint32 maxDurationDays,
         uint256 minFillAmount,
-        bool requiresKeeperAuth
+        bool requiresKeeperAuth,
+        bool riskAndTermsConsent
     ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
+
+        // Mandatory risk/terms consent — same gate as every offer-create path
+        // (`RiskAndTermsConsentRequired`), captured once for the standing intent.
+        if (!riskAndTermsConsent) revert IVaipakamErrors.RiskAndTermsConsentRequired();
 
         if (lendingAsset == address(0) || collateralAsset == address(0)) {
             revert LenderIntentZeroAddress();
@@ -192,6 +204,12 @@ contract LenderIntentFacet is
     {
         LibVaipakam.storageSlot().protocolCfg.lenderIntentEnabled = enabled;
         emit LenderIntentEnabledSet(enabled);
+    }
+
+    /// @notice Whether the standing-intent fill path is currently enabled
+    ///         (the `setLenderIntentEnabled` kill-switch state).
+    function isLenderIntentEnabled() external view returns (bool) {
+        return LibVaipakam.cfgLenderIntentEnabled();
     }
 
     /// @notice Read a standing intent. `active == false` ⇒ none / cancelled.

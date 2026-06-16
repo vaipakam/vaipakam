@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
 /**
@@ -37,7 +38,8 @@ contract LenderIntentFacetTest is SetupTest {
             MAX_INIT_LTV_BPS,
             MAX_DURATION_DAYS,
             MIN_FILL,
-            false
+            false, // requiresKeeperAuth
+            true // riskAndTermsConsent
         );
     }
 
@@ -63,7 +65,7 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 1 ether, false
+            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 1 ether, false, true
         );
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20);
@@ -100,7 +102,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentZeroAddress.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             address(0), mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -109,7 +111,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 0, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -118,7 +120,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, 100 ether, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, 200 ether, false
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, 200 ether, false, true
         );
     }
 
@@ -127,7 +129,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            0, MAX_DURATION_DAYS, MIN_FILL, false
+            0, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -136,7 +138,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            10_001, MAX_DURATION_DAYS, MIN_FILL, false
+            10_001, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -145,7 +147,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, 0, MIN_FILL, false
+            MAX_INIT_LTV_BPS, 0, MIN_FILL, false, true
         );
     }
 
@@ -155,7 +157,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, 10_001,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -166,7 +168,7 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentSelfCollateralized.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
         );
     }
 
@@ -177,16 +179,36 @@ contract LenderIntentFacetTest is SetupTest {
         vm.expectRevert(LenderIntentFacet.LenderIntentKeeperGateNotEnabled.selector);
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
-            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true, true
+        );
+    }
+
+    function test_noConsent_reverts() public {
+        // riskAndTermsConsent=false → RiskAndTermsConsentRequired (same gate as
+        // offer-create).
+        vm.prank(user);
+        vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, false
         );
     }
 
     // ─── 5. Kill-switch (admin-gated) ──────────────────────────────────────
 
     function test_setLenderIntentEnabled_adminOnly() public {
+        // Default off.
+        assertFalse(
+            LenderIntentFacet(address(diamond)).isLenderIntentEnabled(),
+            "kill-switch default off"
+        );
         // Owner holds ADMIN_ROLE in SetupTest — can toggle.
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(true);
+        assertTrue(
+            LenderIntentFacet(address(diamond)).isLenderIntentEnabled(),
+            "enabled after admin toggle"
+        );
 
         // A non-admin cannot.
         vm.prank(user);

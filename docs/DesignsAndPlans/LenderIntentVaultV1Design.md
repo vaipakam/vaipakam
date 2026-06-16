@@ -79,26 +79,36 @@ collateral, dust/floor/cap guards) is **reused unchanged** from v0.6.
 ```
 struct LenderIntent {
     bool    active;
-    address lendingAsset;        // ERC-20 only (v1)
-    address collateralAsset;     // accepted collateral (single asset, v1; set-extension is v2)
     uint256 maxExposure;         // hard cap on aggregate live principal from this intent
-    uint256 minRateBps;          // APR floor — a fill below this is rejected
-    uint16  maxInitLtvBps;       // the lender's own LTV ceiling (>= protocol gate is still enforced)
+    uint256 minRateBps;          // APR floor — a fill below this is rejected (<= MAX_INTEREST_BPS)
+    uint16  maxInitLtvBps;       // the lender's own LTV ceiling (protocol gate still enforced on top)
     uint32  maxDurationDays;
-    uint8   fillModeFloor;       // min slice as a fraction (mirrors v0.6 min-slice intent)
+    uint256 minFillAmount;       // smallest slice a solver may fill (> 0, <= maxExposure)
     bool    requiresKeeperAuth;  // true = only an opted-in solver may fill (the §3.3 gate)
-    uint256 nonce;               // batch-cancel: bump to invalidate all standing offers at once
 }
-mapping(address => LenderIntent) lenderIntent;          // user => their standing intent (one per asset-pair in v1; see Q1)
-mapping(address => uint256)      lenderIntentLivePrincipal; // user => aggregate live principal currently out from the intent
+// keyed by the FULL intent (owner, lendingAsset, collateralAsset) — one intent per pair (Q1)
+mapping(address => mapping(address => mapping(address => LenderIntent))) lenderIntent;
 ```
 
-The intent is set by `setLenderIntent(LenderIntent)` (the user, direct tx — no contract deploy) and
-torn down by `cancelLenderIntent()` (bumps `nonce`, sets `active=false`). **Reservation uses the
-existing encumbrance sub-ledger (#407)** — the principal a solver is about to consume is locked via
-`createOfferPrincipalLien` on the materialized slice offer exactly as v0.6 does, so a concurrent
-withdraw can't pull principal out from under an in-flight fill. `lenderIntentLivePrincipal` enforces
-the `maxExposure` cap across multiple simultaneous loans.
+`lendingAsset` / `collateralAsset` are the mapping keys, not struct fields. The intent is set by
+`setLenderIntent(lendingAsset, collateralAsset, …, riskAndTermsConsent)` (the user, direct tx — no
+contract deploy; mandatory risk/terms consent, same gate as offer-create) and torn down by
+`cancelLenderIntent(lendingAsset, collateralAsset)` (`active=false`). A live-read each fill makes a
+nonce unnecessary (raising `minRateBps` mid-flight just reverts a stale solver tx). **Reservation
+uses the existing encumbrance sub-ledger (#407)** — the principal a solver is about to consume is
+locked via `createOfferPrincipalLien` on the materialized slice offer exactly as v0.6 does, so a
+concurrent withdraw can't pull principal out from under an in-flight fill.
+
+**Exposure accounting lands with the v1-b fill path, NOT here (v1-a).** The `maxExposure`-enforcing
+live-principal counter MUST be keyed by the full `(owner, lendingAsset, collateralAsset)` intent (two
+intents sharing a lending asset but different collateral must not share a counter), and the per-loan
+origin marker must store the **originating intent owner**, not be read from `loan.lender` at close —
+`loan.lender` is mutated when a lender position is **sold** mid-loan (`migrateLenderPosition` via
+`EarlyWithdrawalFacet.completeLoanSale`), so a close-time decrement keyed off the current
+`loan.lender` would hit the buyer's counter (or none) and strand the original owner's capacity.
+Because both the keying and the loan-sale handling are tied to the code that *writes* them, the
+counter + per-loan marker are defined in v1-b (with tests for the loan-sale path), not scaffolded as
+inert v1-a storage.
 
 ### 3.2 `matchIntent` — the permissioned fill entry (new `OfferMatchFacet` selector)
 

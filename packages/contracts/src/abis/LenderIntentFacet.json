@@ -85,6 +85,19 @@
   },
   {
     "type": "function",
+    "name": "isLenderIntentEnabled",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "setLenderIntent",
     "inputs": [
       {
@@ -124,6 +137,11 @@
       },
       {
         "name": "requiresKeeperAuth",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "riskAndTermsConsent",
         "type": "bool",
         "internalType": "bool"
       }
@@ -292,6 +310,11 @@
   {
     "type": "error",
     "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskAndTermsConsentRequired",
     "inputs": []
   },
   {
