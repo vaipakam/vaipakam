@@ -154,13 +154,17 @@ library LibSignedOffer {
 
     /// @notice The EIP-712 struct hash of a `SignedOffer` (the `hashStruct`,
     ///         NOT the full digest — see {digest}).
-    /// @dev    The encode is split into two `abi.encode` chunks joined with
-    ///         `bytes.concat` rather than one 29-argument `abi.encode`. The
-    ///         single-call form risks "stack too deep" under viaIR on a
-    ///         codebase already near the whole-unit stack ceiling
-    ///         (see `reference_viair_stack_too_deep_lever` / the encumbrance
-    ///         arc); the chunked form keeps peak stack shallow. The two
-    ///         chunks concatenated are byte-identical to the single encode.
+    /// @dev    The encode is split into THREE `abi.encode` chunks of ≤10
+    ///         values joined with `bytes.concat`, rather than one 29-argument
+    ///         `abi.encode`. This library function INLINES into every consumer
+    ///         (internal lib funcs always inline), so a wide single `abi.encode`
+    ///         pushes the consumer over viaIR's whole-unit stack ceiling
+    ///         (observed: "Variable ... too deep by 1 slot" once OfferAcceptFacet
+    ///         inlined it — see `reference_viair_stack_too_deep_lever`). EVERY
+    ///         `SignedOffer` field is a STATIC EIP-712 type (uint/address/bool/
+    ///         bytes32), so `abi.encode` is plain 32-byte-word concatenation and
+    ///         the three chunks concatenated are byte-identical to the single
+    ///         29-arg encode. Keep chunk widths ≤10 if fields are added.
     function hashStruct(SignedOffer memory o) internal pure returns (bytes32) {
         return keccak256(
             bytes.concat(
@@ -173,19 +177,21 @@ library LibSignedOffer {
                     o.interestRateBps,
                     o.interestRateBpsMax,
                     o.collateralAsset,
-                    o.collateralAmount,
+                    o.collateralAmount
+                ),
+                abi.encode(
                     o.collateralAmountMax,
                     o.durationDays,
                     o.assetType,
                     o.collateralAssetType,
                     o.tokenId,
-                    o.quantity
-                ),
-                abi.encode(
+                    o.quantity,
                     o.collateralTokenId,
                     o.collateralQuantity,
                     o.prepayAsset,
-                    o.allowsPartialRepay,
+                    o.allowsPartialRepay
+                ),
+                abi.encode(
                     o.allowsPrepayListing,
                     o.allowsParallelSale,
                     o.expiresAt,

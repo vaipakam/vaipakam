@@ -612,9 +612,18 @@ contract OfferAcceptFacet is
         // two use sites (lender-asset LIF split + `loan.matcher`
         // recording) so we don't pay a stack slot for it. viaIR's
         // stack-too-deep budget is tight in this function.
+        // #396 v0.5 — a signed-offer fill routes through `SignedOfferFacet`,
+        // which cross-facet-calls `acceptOfferInternal` (so `msg.sender` is the
+        // diamond here). It injects the REAL counterparty into
+        // `s.signedOfferAcceptor` for exactly this resolution (set immediately
+        // before the call, cleared immediately after). Same shape as the
+        // `matchOverride` injection. Precedence: an explicit match override
+        // wins, then a signed-offer injection, else the direct caller.
         address acceptor = s.matchOverride.active
             ? s.matchOverride.counterparty
-            : msg.sender;
+            : (s.signedOfferAcceptor != address(0)
+                ? s.signedOfferAcceptor
+                : msg.sender);
 
         // Phase 4.3 — address-level sanctions screening on both sides
         // of the match. The acceptor's check is obvious; the creator's

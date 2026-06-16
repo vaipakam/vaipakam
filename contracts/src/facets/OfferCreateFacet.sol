@@ -543,18 +543,34 @@ contract OfferCreateFacet is
     ///         shape to the two clean ERC-20 legs the Permit2 / free-balance
     ///         funding can serve; NFT and refinance-tagged offers revert
     ///         `SignedOfferUnsupportedShape`.
-    /// @param creator      The offer signer (on-behalf-of address).
-    /// @param params       Offer terms (built from the SignedOffer by caller).
-    /// @param fundingMode  {SignedFunding} — vault-backed or wallet-witness.
-    /// @param permit       Permit2 struct (wallet-witness mode only).
-    /// @param witness      The SignedOffer hash bound as the Permit2 witness
-    ///                     (wallet-witness mode only).
-    /// @param permitSig    The Permit2 witness signature (wallet mode only).
-    /// @return offerId     The materialized on-chain offer id.
-    function createSignedOfferMaterialized(
+    /// @notice Vault-backed materialize entry (narrow ABI boundary — the
+    ///         caller encodes only `(creator, params)`, keeping the
+    ///         cross-facet call site under viaIR's stack ceiling). The
+    ///         signer's stake is already free vault balance.
+    /// @param creator The offer signer (on-behalf-of). @param params Terms.
+    /// @return offerId The materialized on-chain offer id.
+    function createSignedOfferVault(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params
+    ) external whenNotPaused returns (uint256 offerId) {
+        if (msg.sender != address(this)) {
+            revert UnauthorizedCrossFacetCall();
+        }
+        ISignatureTransfer.PermitTransferFrom memory emptyPermit;
+        return _materializeSignedOffer(
+            creator, params, SignedFunding.VaultBacked, emptyPermit, bytes32(0), ""
+        );
+    }
+
+    /// @notice Wallet-backed (Permit2-witness) materialize entry.
+    /// @param creator   The offer signer (on-behalf-of). @param params Terms.
+    /// @param permit    Permit2 struct the signer signed.
+    /// @param witness   The SignedOffer hash bound as the Permit2 witness.
+    /// @param permitSig The Permit2 witness signature.
+    /// @return offerId  The materialized on-chain offer id.
+    function createSignedOfferWallet(
         address creator,
         LibVaipakam.CreateOfferParams calldata params,
-        SignedFunding fundingMode,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes32 witness,
         bytes calldata permitSig
@@ -562,6 +578,25 @@ contract OfferCreateFacet is
         if (msg.sender != address(this)) {
             revert UnauthorizedCrossFacetCall();
         }
+        return _materializeSignedOffer(
+            creator, params, SignedFunding.WalletWitness, permit, witness, permitSig
+        );
+    }
+
+    /// @dev Shared materialize body for both signed-offer funding entries.
+    ///      Reuses `_createOfferSetup` + `_createOfferFinish` verbatim and
+    ///      swaps only the asset pull by `fundingMode`. `creator` is the real
+    ///      signer (passed on-behalf-of so `offer.creator` + the lien +
+    ///      sanctions resolve to the signer, not the diamond). v0.5 restricts
+    ///      the shape to the two clean ERC-20 legs.
+    function _materializeSignedOffer(
+        address creator,
+        LibVaipakam.CreateOfferParams calldata params,
+        SignedFunding fundingMode,
+        ISignatureTransfer.PermitTransferFrom memory permit,
+        bytes32 witness,
+        bytes memory permitSig
+    ) private returns (uint256 offerId) {
         // v0.5 supported shapes: ERC-20 Lender-principal offer, or
         // ERC-20-collateral Borrower offer. NFT lender / NFT-rental
         // (prepay) / refinance-tagged are deferred.
