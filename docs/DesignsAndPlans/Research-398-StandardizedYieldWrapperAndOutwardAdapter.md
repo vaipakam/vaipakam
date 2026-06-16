@@ -54,20 +54,28 @@ This is the direct, concrete mechanism by which an external aggregator "uses" us
   `harvestAndReport` separation is worth borrowing as our deposit / withdraw / mark split.
 - **The recommended shape — a per-aggregator `LenderIntentVault` with a 4626 face:**
   - An aggregator deploys (or is assigned) a **single Vaipakam vault** exposing the ERC-4626
-    interface, but with **`deposit`/`mint` restricted to ONE authorized depositor** (the
-    aggregator's strategy address, set at deploy) — an open 4626 face would let multiple Vaipakam
-    principals share one vault, the exact commingling E1 forbids (same restriction as
-    [HybridIntentLayer §3.3](HybridIntentLayer.md)). The aggregator's strategy treats it as a
-    yield venue.
+    interface, but with **`deposit`/`mint` restricted to ONE authorized depositor** AND **share
+    ownership / transfer restricted to that same principal**. Gating only the depositor is **not
+    enough**: 4626 shares are ERC-20-transferable, so the single depositor could transfer shares to
+    other parties and re-create multi-principal exposure on one Vaipakam vault. So the shares must
+    be **non-transferable** (or transfer-allowlisted to the authorized principal) — otherwise the
+    E1 single-principal property is defeated at the share layer. The aggregator's strategy treats
+    it as a yield venue (same restriction as [HybridIntentLayer §3.3](HybridIntentLayer.md)).
   - Internally, the adapter takes deposited principal and **programmatically posts signed offers**
     (#396) on the aggregator's behalf, **auto-rolls** returned principal on terminal close
     (#393 Layer 1).
   - **`totalAssets` (the share-price mark) ≠ withdrawable liquidity — keep them separate.**
     `totalAssets` = idle + outstanding principal in active loans (the *managed* value, for share
-    pricing). **Withdrawable liquidity = idle balance only** — principal locked in an active loan
-    is not redeemable until that loan settles, so `withdraw`/`redeem` can only draw the idle
-    portion (a redemption that exceeds idle must revert / queue, like any 4626 with illiquid
-    underlying — `maxWithdraw` reflects idle, not `totalAssets`). And **accrued-but-unpaid loan
+    pricing) — **but active-loan principal should be marked at RISK-ADJUSTED value, not full
+    face.** A loan can default and return less than principal; counting every active loan at full
+    outstanding principal overstates `totalAssets` and lets an early redeemer extract value a later
+    redeemer then can't (the classic 4626 illiquid-asset over-mark). A first version can be
+    conservative (mark active-loan principal at a haircut, or only realize gains, leaving default
+    losses to write down `totalAssets` at the time they occur); a richer version marks expected
+    loss per the collateral's risk. **Withdrawable liquidity = idle balance only** — principal
+    locked in an active loan is not redeemable until that loan settles, so `withdraw`/`redeem` can
+    only draw the idle portion (a redemption that exceeds idle must revert / queue, like any 4626
+    with illiquid underlying — `maxWithdraw` reflects idle, not `totalAssets`). And **accrued-but-unpaid loan
     interest is NOT counted in `totalAssets` at all** — counting unrealized interest would inflate
     the share price and let a redeemer draw value not yet collected; interest enters `totalAssets`
     only when **realized** at repay/preclose/refinance settlement. A separate read MAY surface

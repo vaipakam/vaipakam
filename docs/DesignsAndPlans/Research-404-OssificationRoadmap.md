@@ -63,11 +63,16 @@ must trust the timelocked owner won't rewrite custody/accounting.
 | Risk params / curation (#394), rate model (#400), oracle adapters (#392) | upgradeable | **bounded-upgradeable, NOT freely upgradeable** — curation must evolve, but a freely-swappable oracle/risk facet can drain custody indirectly (see ⚠️⚠️ below), so these stay behind timelock-asymmetry + bounded setters + guardian veto, never a free replace |
 | Diamond-cut governance itself | timelock | **freeze the cut path too** (see ⚠️⚠️⚠️) + separated guardian/upgrade multisigs + 48–72h timelock; publish renounce timeline |
 
-**⚠️ Vault proxy, not just impl.** Each user vault is a UUPS **proxy** pointing at the shared
-implementation. Renouncing/freezing the shared impl is **not enough** — if the proxy's upgrade
-path stays live, the Diamond (which owns the proxies) could repoint them at a new impl and bypass
-the freeze. The freeze must **disable the proxy's `upgradeTo` path** (renounce UUPS upgrade
-authority on every vault proxy), not only stop publishing new impls.
+**⚠️ Vault proxy, not just impl — freeze the upgrade hook, don't renounce ownership.** Each user
+vault is a UUPS **proxy**; its `_authorizeUpgrade` is gated to the Diamond (`onlyDiamond`).
+Renouncing/freezing the shared impl is **not enough** — while the upgrade hook is live the Diamond
+could repoint a proxy at a new impl and bypass the freeze. But the fix is **not** to *renounce the
+Diamond's ownership* of the vault: the Diamond needs that authority for **normal custody
+operations** (deposits/withdrawals are Diamond-mediated), so renouncing it would brick the vault.
+The freeze must instead **permanently disable the `_authorizeUpgrade` path specifically** — a
+one-way `upgradesFrozen` flag that makes `_authorizeUpgrade` revert forever, leaving all other
+Diamond-mediated custody functions intact. Freeze the *upgrade hook*, keep the *operational
+owner*.
 
 **⚠️⚠️ Oracle/risk freeze coupling (the load-bearing correction).** "Custody can't be changed" is
 **not honest if oracle adapters and risk curation stay *freely* upgradeable** — a malicious or

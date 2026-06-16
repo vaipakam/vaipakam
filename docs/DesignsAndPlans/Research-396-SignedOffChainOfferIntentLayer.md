@@ -124,11 +124,15 @@ is decided.
 
 ## 6. Spin-off implementation issue
 
-**Signed-offer book v1:** EIP-712 `SignedOffer` schema + domain separator + on-chain nonce/
-order-hash registry + `acceptSignedOffer` (EOA + EIP-1271) + `cancelSignedOffer` +
-vault-backed and wallet-backed solvency modes + indexer book + under-funded auto-promote.
-Reuses `OfferAcceptFacet`/`LoanFacet`/`OfferMatchFacet` unchanged downstream. This is item #1
-of #393's spin-off list and the dependency root for the entire cluster.
+**Signed-offer book v1:** EIP-712 `SignedOffer` schema + domain separator + on-chain nonce
+registry (AON) **and** a per-order-hash remaining-amount ledger (partial) + `acceptSignedOffer`
+(EOA + EIP-1271) + `cancelSignedOffer` + vault-backed and wallet-backed solvency modes + a
+**new signed-offer-aware match entry** (per §4 — `matchOffers` reads on-chain `s.offers` only, so
+filling a signed offer needs a verify-then-materialize entry that **reuses `LibOfferMatch`
+math**, not `OfferMatchFacet` unchanged) + indexer book + under-funded auto-promote. Reuses
+`OfferAcceptFacet`/`LoanFacet` settlement and `LibOfferMatch` midpoint logic downstream; the
+match *entry point* is new. This is item #1 of #393's spin-off list and the dependency root for
+the entire cluster.
 
 ## 7. Sources
 

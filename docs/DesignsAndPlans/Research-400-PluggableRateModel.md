@@ -38,10 +38,15 @@ shared rate-model, not a pool re-pricing live debt.
   `RateModelInput` carries the priced dimensions (lendingAsset, collateralAsset, LTV/HF at init,
   duration, a reference rate, optional VPFI tier). Models are **pure quote functions** — no
   storage write to any live loan.
-- **Where it plugs in:** at **offer creation / match**, an offer may optionally reference a
-  registered rate-model id; `OfferCreateFacet` / `OfferMatchFacet` call `quoteRateBps` to derive
-  the offer's `interestRateBps` (or to bound the acceptable range). At `initiateLoan` the quoted
-  rate is **snapshotted immutably** exactly as today. A live loan never consults a model again.
+- **Where it plugs in: offer creation / sign time ONLY — never at match/accept.** At
+  `OfferCreateFacet` (or signed-offer sign time), the model is evaluated **once** and the resulting
+  concrete `interestRateBps` is written into the offer. `OfferMatchFacet` / `acceptOffer` **must
+  NOT call `quoteRateBps`** — a match is itself an accept-time binding (a counterparty is being
+  committed), so re-quoting live at match has the same bait-and-switch problem as re-quoting at
+  accept (and for a *signed* offer the live quote wouldn't be covered by the signature). The
+  matcher reads the **stored, already-quoted** rate (and the stored range bounds) — it never
+  re-derives. At `initiateLoan` the stored rate is snapshotted immutably as today. A live loan
+  never consults a model again.
 - **⚠️ Bind the quoted rate at sign/create time, never re-quote live at accept.** If an offer
   only stored a *model id* and `quoteRateBps` were evaluated **live at accept**, the rate could
   move between when the offerer signed/created and when a counterparty accepts — the offerer would

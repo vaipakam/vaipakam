@@ -109,10 +109,14 @@ A **segregated backstop vault**, never commingled with ordinary lender/borrower 
 
 ## 5. Why sequence it LAST
 
-It depends on the signed-offer book (#396, to know an offer is genuinely unmatched) and the
-matcher (#393, to route to it only as last resort), and it carries the largest new audit
-surface (a new funded vault + slashing/first-loss accounting + auto-counterparty origination).
-Ship the substrate + matcher + aggregator first; add the backstop once the book exists to
+It depends on the signed-offer book (#396) + matcher (#393) — but, per §4, the backstop triggers
+on an **on-chain-provable** unmatched condition (an on-chain offer/recorded order past an on-chain
+deadline with no fill), **not** on an off-chain "the book found no match" signal, which is
+unverifiable and gameable. So the dependency is "the book + matcher exist and most flow settles
+through them, leaving the backstop a genuine last resort on on-chain state" — not "the backstop
+reads off-chain absence." It also carries the largest new audit surface (a new funded vault +
+slashing/first-loss accounting + auto-counterparty origination). Ship the substrate + matcher +
+aggregator first; add the backstop once the book exists to
 backstop.
 
 ## 6. Open questions

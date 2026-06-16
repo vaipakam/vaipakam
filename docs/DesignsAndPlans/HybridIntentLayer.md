@@ -105,10 +105,17 @@ and 1% kickback apply unchanged.
 A per-user (UUPS, factory-deployed, mirroring the existing vault pattern) vault holding lender
 principal + **standing terms**. A solver/keeper constructs concrete signed offers consuming the
 vault's balance+terms; the vault (via EIP-1271) is the signer. On a loan's terminal close
-(`RepayFacet`/`PrecloseFacet`/etc.), principal flows **back into the vault**, immediately
-re-consumable — closing the idle-capital window from weeks to seconds for active vaults. The
-"reserved for an open signed offer" amount is tracked via the **encumbrance sub-ledger (#407)**,
-not a new lock.
+(`RepayFacet`/`PrecloseFacet`/etc.), principal flows back, immediately re-consumable — closing the
+idle-capital window from weeks to seconds for active vaults. The "reserved for an open signed
+offer" amount is tracked via the **encumbrance sub-ledger (#407)**, not a new lock.
+
+**⚠️ Auto-roll must respect lender-NFT ownership.** Repayment proceeds belong to **whoever holds
+the lender-position NFT at close**, not unconditionally to the original LenderIntentVault — the
+lender position can be sold/transferred mid-loan (claim rights travel with the NFT, today's
+invariant). So auto-roll routes into the vault **only when the vault (or its beneficial owner) is
+still the current lender-NFT holder**; if the position was transferred, proceeds go to the current
+holder via the normal claim path and the auto-roll is skipped for that loan. Auto-roll is an
+optimization layered on top of the existing claim semantics, never a bypass of them.
 
 **Loan-attribution constraint (design-critical).** Today `LoanFacet` attributes the loan to the
 offer **creator** and mints the lender-position NFT to them; downstream claim, keeper-auth, VPFI

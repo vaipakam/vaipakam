@@ -81,8 +81,13 @@ a new mechanism.
 
 ## 5. Spin-off implementation issues
 
-**None required** (card already satisfied). If the optional AMM-TWAP deviation source is ever
-wanted, it is one additional secondary in `_enforceSecondaryQuorum` — a small, contained add.
+**One small, recommended guard** (from the §4 coverage caveat — the quorum soft-falls to
+single-feed where secondaries are unset): a **per-asset minimum-secondary-coverage policy** —
+refuse to classify an asset as *liquid liquidation collateral* unless ≥1 (ideally ≥2) secondary
+oracle is live for it, so a zero-secondary asset can't ride single-feed pricing into a
+liquidation. Small + contained; not a redesign. The core deviation/sequencer/staleness machinery
+needs **no** new work. (Optional, lower-priority: an AMM-TWAP deviation source as one more
+secondary in `_enforceSecondaryQuorum`.)
 
 ## 6. Sources
 

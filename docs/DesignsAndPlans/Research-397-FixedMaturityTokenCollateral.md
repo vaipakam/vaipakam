@@ -55,10 +55,15 @@ therefore **high**, not low.
   guard, see #392) and take the lower. Linear-discount alone is necessary but **not sufficient**;
   the live-market cap is the load-bearing safety. (Dynamic TWAP-of-implied-APY oracles are more
   accurate but more manipulable; not for a first integration.)
-- **Hard term constraint: loan term ≤ token maturity.** The simplest way to dodge the post-
-  maturity discontinuity entirely. If a loan could outlive maturity, the adapter **must** switch
-  to underlying-asset pricing at maturity **with a depeg/price-cap guard** — materially more
-  surface. Recommend **term ≤ maturity** for v1.
+- **Hard term constraint: loan term + grace + liquidation window ≤ token maturity.** Naively
+  `loanTerm ≤ tokenMaturity` is **not enough** — a loan can default at term-end and then sit in
+  its **grace period** + liquidation window *past* the nominal term, during which the collateral
+  may already be **post-maturity** (the discontinuity we're trying to dodge). The bound must
+  therefore be `loanTerm + gracePeriod(durationDays) + a liquidation-completion margin ≤
+  tokenMaturity`, so the token is still pre-maturity through the entire worst-case close-out. If a
+  loan could still outlive maturity, the adapter **must** switch to underlying-asset pricing at
+  maturity **with a depeg/price-cap guard** — materially more surface. Recommend the
+  grace-inclusive bound for v1.
 - **Per-asset allowlist for this collateral class.** These should NOT ride the permissionless
   liquidity classifier; gate them behind an explicit, governed allowlist with a per-asset
   maturity registered on-chain.

@@ -89,7 +89,12 @@ layer.
 ## 6. Spin-off implementation issues
 
 1. **Runtime-tunable bounded health floor** + **per-asset liquidation threshold** in
-   `AssetRiskParams` + range-checked setters (Piece A).
+   `AssetRiskParams` + range-checked setters (Piece A). **Audit every HF/threshold consumer to
+   read the runtime value, not the constant:** the `MIN_HEALTH_FACTOR` constant is read at the
+   `LoanFacet._checkInitialLtvAndHf` init gate (**both** the tiered HF≥1.0 branch and the
+   non-tiered HF≥1.5 branch) and any `RiskFacet` HF reference — every one must switch to the
+   branch-aware runtime floor, or a tunable that only some sites honor would create an inconsistent
+   gate. Enumerate + migrate all call sites in the same change.
 2. **Risk-premium rate content** layered on `IRateModel` (#400) (Piece B) — gated on #400.
 3. **`RISK_STEWARD_ROLE` bounded optimistic setters** + timelock-asymmetric governance.
 
