@@ -1337,12 +1337,11 @@ contract DeployDiamond is Script {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](4);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
         s[3] = LenderIntentFacet.getLenderIntent.selector;
-        s[4] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

@@ -4051,18 +4051,13 @@ library LibVaipakam {
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
         // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
         // standing lending terms for that asset-pair (one per pair in v1).
+        // The exposure-counter (`maxExposure` enforcement) + per-loan origin
+        // marker land with the v1-b fill path that writes them — keyed by the
+        // FULL intent (owner, lend, coll) and storing the ORIGINATING owner per
+        // loan (loan.lender is mutated on a lender-position sale, so it can't be
+        // the close-time decrement key — Codex #618 P2). Not scaffolded here.
         mapping(address => mapping(address => mapping(address => LenderIntent)))
             lenderIntent;
-        // `lenderIntentLivePrincipal[owner][lendingAsset]` — aggregate principal
-        // currently OUT in live loans originated from that owner's intent(s) on
-        // that asset; enforces `maxExposure` across simultaneous fills and is
-        // decremented at each originated loan's terminal close.
-        mapping(address => mapping(address => uint256)) lenderIntentLivePrincipal;
-        // `originatedFromIntent[loanId]` — true when a loan was opened via
-        // `matchIntent` (vs a direct accept / matchOffers / matchSignedOffer),
-        // so the terminal-close hook knows to decrement the live-principal
-        // counter exactly once. Set at origination, read at close.
-        mapping(uint256 => bool) originatedFromIntent;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.

@@ -85,30 +85,6 @@
   },
   {
     "type": "function",
-    "name": "getLenderIntentLivePrincipal",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendingAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "setLenderIntent",
     "inputs": [
       {
@@ -295,7 +271,17 @@
   },
   {
     "type": "error",
+    "name": "LenderIntentKeeperGateNotEnabled",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderIntentNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentSelfCollateralized",
     "inputs": []
   },
   {

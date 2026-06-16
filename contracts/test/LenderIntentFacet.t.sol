@@ -55,15 +55,6 @@ contract LenderIntentFacetTest is SetupTest {
         assertEq(it.maxDurationDays, MAX_DURATION_DAYS, "maxDurationDays");
         assertEq(it.minFillAmount, MIN_FILL, "minFillAmount");
         assertFalse(it.requiresKeeperAuth, "requiresKeeperAuth default false");
-
-        // Live principal starts at zero.
-        assertEq(
-            LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(
-                user, mockERC20
-            ),
-            0,
-            "live principal 0"
-        );
     }
 
     // ─── 2. Overwrite in place ─────────────────────────────────────────────
@@ -72,13 +63,13 @@ contract LenderIntentFacetTest is SetupTest {
         _set(mockERC20, mockCollateralERC20);
         vm.prank(user);
         LenderIntentFacet(address(diamond)).setLenderIntent(
-            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 1 ether, true
+            mockERC20, mockCollateralERC20, 50_000 ether, 500, 5000, 30, 1 ether, false
         );
         LibVaipakam.LenderIntent memory it = LenderIntentFacet(address(diamond))
             .getLenderIntent(user, mockERC20, mockCollateralERC20);
         assertEq(it.maxExposure, 50_000 ether, "overwritten exposure");
         assertEq(it.minRateBps, 500, "overwritten rate");
-        assertTrue(it.requiresKeeperAuth, "overwritten keeper flag");
+        assertEq(it.maxInitLtvBps, 5000, "overwritten ltv");
     }
 
     // ─── 3. Cancel ─────────────────────────────────────────────────────────
@@ -155,6 +146,38 @@ contract LenderIntentFacetTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, 0, MIN_FILL, false
+        );
+    }
+
+    function test_rateAboveMax_reverts() public {
+        // minRateBps above MAX_INTEREST_BPS (10_000) → unfillable; rejected.
+        vm.prank(user);
+        vm.expectRevert(LenderIntentFacet.LenderIntentInvalidBounds.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, 10_001,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+        );
+    }
+
+    function test_selfCollateralized_reverts() public {
+        // lendingAsset == collateralAsset → the fill path's createOffer would
+        // reject SelfCollateralizedOffer; rejected at registration.
+        vm.prank(user);
+        vm.expectRevert(LenderIntentFacet.LenderIntentSelfCollateralized.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false
+        );
+    }
+
+    function test_keeperAuthFlag_reverts_untilGateShips() public {
+        // requiresKeeperAuth=true rejected until the permissioned-solver gate
+        // lands (a later v1 increment) — no false sense of protection.
+        vm.prank(user);
+        vm.expectRevert(LenderIntentFacet.LenderIntentKeeperGateNotEnabled.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, true
         );
     }
 

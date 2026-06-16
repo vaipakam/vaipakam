@@ -56,9 +56,17 @@ contract LenderIntentFacet is
 
     /// @notice A required address argument was the zero address.
     error LenderIntentZeroAddress();
+    /// @notice `lendingAsset == collateralAsset` — a self-collateralized intent
+    ///         the fill path's `createOffer` would reject (`SelfCollateralizedOffer`).
+    error LenderIntentSelfCollateralized();
     /// @notice `maxExposure`, `minRateBps`, `maxInitLtvBps`, or `minFillAmount`
     ///         was outside its valid range (see `setLenderIntent`).
     error LenderIntentInvalidBounds();
+    /// @notice `requiresKeeperAuth == true` is not yet honoured — the
+    ///         permissioned-solver gate ships in a later v1 increment. Rejecting
+    ///         it here prevents a lender registering a "keeper-only" intent that
+    ///         an as-yet-ungated fill path would treat as openly fillable.
+    error LenderIntentKeeperGateNotEnabled();
     /// @notice No active intent exists for the (owner, asset-pair) to cancel.
     error LenderIntentNotActive();
 
@@ -99,14 +107,27 @@ contract LenderIntentFacet is
         if (lendingAsset == address(0) || collateralAsset == address(0)) {
             revert LenderIntentZeroAddress();
         }
+        // A self-collateralized pair is unfillable: the fill path's `createOffer`
+        // rejects `lendingAsset == collateralAsset` (`SelfCollateralizedOffer`),
+        // so an intent advertised as active could never produce a loan.
+        if (lendingAsset == collateralAsset) {
+            revert LenderIntentSelfCollateralized();
+        }
+        // The permissioned-solver gate is not wired yet (later v1 increment);
+        // until it is, a "keeper-only" intent would be indistinguishable from an
+        // open one at the fill path. Reject the flag so no lender registers a
+        // false sense of protection. Lifted when the gate ships.
+        if (requiresKeeperAuth) revert LenderIntentKeeperGateNotEnabled();
         // Bounds sanity: exposure + slice positive, slice within exposure, an
-        // LTV ceiling in (0, 100%], and a positive term. `minRateBps == 0` is
-        // permitted (a 0% floor = "any rate"); `maxInitLtvBps` must be a real
-        // ceiling so the band can never be vacuously wide.
+        // LTV ceiling in (0, 100%], a positive term, and a rate floor at or
+        // below the protocol interest ceiling so a materialized offer can
+        // actually clear `createOffer` (which rejects rates > MAX_INTEREST_BPS).
+        // `minRateBps == 0` is permitted (a 0% floor = "any rate").
         if (
             maxExposure == 0
                 || minFillAmount == 0
                 || minFillAmount > maxExposure
+                || minRateBps > LibVaipakam.MAX_INTEREST_BPS
                 || maxInitLtvBps == 0
                 || maxInitLtvBps > LibVaipakam.BASIS_POINTS
                 || maxDurationDays == 0
@@ -181,18 +202,6 @@ contract LenderIntentFacet is
     ) external view returns (LibVaipakam.LenderIntent memory) {
         return LibVaipakam.storageSlot().lenderIntent[owner][lendingAsset][
             collateralAsset
-        ];
-    }
-
-    /// @notice Aggregate LIVE principal currently out from `owner`'s intents on
-    ///         `lendingAsset` (the figure checked against `maxExposure`).
-    function getLenderIntentLivePrincipal(address owner, address lendingAsset)
-        external
-        view
-        returns (uint256)
-    {
-        return LibVaipakam.storageSlot().lenderIntentLivePrincipal[owner][
-            lendingAsset
         ];
     }
 }
