@@ -103,6 +103,31 @@ library LibSignedOffer {
         ")"
     );
 
+    /// @notice Permit2 witness type declaration for the wallet-backed fill
+    ///         path. Permit2 prepends its own
+    ///         `PermitWitnessTransferFrom(TokenPermissions permitted,address
+    ///         spender,uint256 nonce,uint256 deadline,` stub, then this
+    ///         string. Per EIP-712 `encodeType`, the witness member name
+    ///         comes first (`SignedOffer witness)`), then the referenced
+    ///         struct type definitions in ALPHABETICAL order — `SignedOffer`
+    ///         before `TokenPermissions`. The inner `SignedOffer(...)` body
+    ///         MUST be byte-identical to the body inside
+    ///         {SIGNED_OFFER_TYPEHASH}, or Permit2's reconstructed digest
+    ///         won't match the signer's.
+    string internal constant WITNESS_TYPE_STRING =
+        "SignedOffer witness)"
+        "SignedOffer("
+        "uint8 offerType,address lendingAsset,uint256 amount,uint256 amountMax,"
+        "uint256 interestRateBps,uint256 interestRateBpsMax,address collateralAsset,"
+        "uint256 collateralAmount,uint256 collateralAmountMax,uint256 durationDays,"
+        "uint8 assetType,uint8 collateralAssetType,uint256 tokenId,uint256 quantity,"
+        "uint256 collateralTokenId,uint256 collateralQuantity,address prepayAsset,"
+        "bool allowsPartialRepay,bool allowsPrepayListing,bool allowsParallelSale,"
+        "uint64 expiresAt,uint8 fillMode,uint8 periodicInterestCadence,"
+        "uint256 refinanceTargetLoanId,bool useFullTermInterest,address signer,"
+        "uint256 nonce,uint256 deadline)"
+        "TokenPermissions(address token,uint256 amount)";
+
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
@@ -185,19 +210,31 @@ library LibSignedOffer {
         );
     }
 
-    /// @notice Verify that `o.signer` produced `signature` over `o`'s digest.
+    /// @notice Verify that `o.signer` produced `signature` over `o`'s digest,
+    ///         and return the **struct hash** as the canonical order hash.
     /// @dev    Uses OZ {SignatureChecker.isValidSignatureNow}, which accepts
     ///         BOTH a 65-byte EOA ECDSA signature AND an ERC-1271 contract
     ///         signature — so a smart-contract wallet (Safe, or a future
     ///         LenderIntentVault / aggregator adapter) can sign offers from
-    ///         day one. Returns the digest so callers reuse it as the order
-    ///         hash without recomputing.
+    ///         day one.
+    ///
+    ///         `orderHash` is the **`hashStruct`** (domain-independent), NOT
+    ///         the full digest, so the v0.5 remaining/replay ledger keys on
+    ///         the same value in BOTH funding modes: vault-backed verifies the
+    ///         full digest here, while wallet-backed binds this same
+    ///         `hashStruct` as the Permit2 witness. Chain/domain binding still
+    ///         lives in the signature check (the digest folds in the
+    ///         chain-bound domain separator), so a cross-chain replay fails at
+    ///         signature verification regardless of the ledger key.
     function verify(SignedOffer memory o, bytes memory signature)
         internal
         view
         returns (bool ok, bytes32 orderHash)
     {
-        orderHash = digest(o);
-        ok = SignatureChecker.isValidSignatureNow(o.signer, orderHash, signature);
+        orderHash = hashStruct(o);
+        bytes32 fullDigest = keccak256(
+            abi.encodePacked("\x19\x01", domainSeparator(), orderHash)
+        );
+        ok = SignatureChecker.isValidSignatureNow(o.signer, fullDigest, signature);
     }
 }
