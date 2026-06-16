@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -205,6 +206,46 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         A non-constant ratio is not sliceable; use separate offers or AON.
     error SignedOfferRatioNotConstant();
 
+    // ─── #393 v1-b — LenderIntentVault fill path ─────────────────────────
+
+    /// @notice A keeper/solver filled a lender's standing intent against an
+    ///         on-chain borrower counterparty, materializing the slice loan.
+    event IntentMatched(
+        address indexed lender,
+        address indexed matcher,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 sliceOfferId,
+        uint256 counterpartyOfferId,
+        uint256 loanId,
+        uint256 fillAmount
+    );
+
+    /// @notice No active standing intent for `(lender, lendingAsset, collateralAsset)`.
+    error LenderIntentInactive();
+    /// @notice `fillAmount` is below the intent's `minFillAmount`, or zero.
+    error LenderIntentFillBelowMin();
+    /// @notice This fill would push the intent's live principal past `maxExposure`.
+    error LenderIntentExposureExceeded();
+    /// @notice The counterparty offer's term exceeds the intent's `maxDurationDays`.
+    error LenderIntentDurationTooLong();
+    /// @notice The counterparty offer disables the full-term-interest floor
+    ///         (`useFullTermInterest == false`). An intent loan must carry the
+    ///         floor so a borrower can't escape the lender's committed interest
+    ///         by repaying / preclosing early (the synthesis E3 election). The
+    ///         solver must pick a counterparty that honours it.
+    error LenderIntentFullTermRequired();
+    /// @notice The counterparty offer allows partial repayment
+    ///         (`allowsPartialRepay == true`), which charges only pro-rata
+    ///         interest on the repaid slice and so escapes the committed-interest
+    ///         economics the full-term floor protects. The standing intent has no
+    ///         opt-in for it, so an intent fill must be full-repay-only.
+    error LenderIntentPartialRepayNotAllowed();
+    /// @notice The init-LTV-cap collateral floor is unresolvable (missing oracle
+    ///         price / illiquid collateral), so the intent's LTV ceiling can't be
+    ///         enforced — refuse rather than open a loan blind to the bound.
+    error LenderIntentCollateralUnresolvable();
+
     /// @notice Keeper-matcher fill of a **vault-backed** signed offer against
     ///         an on-chain counterparty offer — full or partial. The keeper
     ///         (`msg.sender`) earns the 1% LIF. Each call materializes EXACTLY
@@ -289,6 +330,189 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         emit SignedOfferMatched(
             orderHash, o.signer, msg.sender, sliceOfferId, counterpartyOfferId, loanId, fillAmount
         );
+    }
+
+    /// @notice #393 v1-b — fill a lender's STANDING INTENT against an on-chain
+    ///         borrower counterparty. The solver (`msg.sender`) earns the 1% LIF.
+    ///         Materializes a single-fill lender offer from the intent's bounds —
+    ///         rate floor `[minRateBps, MAX_INTEREST_BPS]`, the counterparty's
+    ///         term (≤ `maxDurationDays`), and the collateral the intent's
+    ///         `maxInitLtvBps` requires — with `creator = lender`, then routes it
+    ///         through the same audited `_executeMatch` as `matchOffers`. The
+    ///         lender stays lender-of-record (`loan.lender == lender`), so every
+    ///         downstream claim/VPFI/KYC/sanctions site is unchanged.
+    /// @param lender              The standing-intent owner (= loan lender).
+    /// @param lendingAsset        ERC-20 the lender supplies (intent key).
+    /// @param collateralAsset     ERC-20 collateral the lender accepts (intent key).
+    /// @param counterpartyOfferId The on-chain BORROWER offer to fill against.
+    /// @param fillAmount          Principal this match fills.
+    /// @return loanId             The initiated loan.
+    function matchIntent(
+        address lender,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 counterpartyOfferId,
+        uint256 fillAmount
+    ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        LibVaipakam._assertNotSanctioned(msg.sender); // solver = LIF recipient
+        LibVaipakam._assertNotSanctioned(lender);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Master gates: the matcher machinery (partialFillEnabled) + the
+        // intent-path kill-switch. Both default off on a fresh deploy.
+        if (!s.protocolCfg.partialFillEnabled) revert FunctionDisabled(3);
+        if (!s.protocolCfg.lenderIntentEnabled) revert FunctionDisabled(4);
+
+        LibVaipakam.LenderIntent memory intent =
+            s.lenderIntent[lender][lendingAsset][collateralAsset];
+        if (!intent.active) revert LenderIntentInactive();
+        // (intent.requiresKeeperAuth can't be true in v1-b — setLenderIntent
+        // rejects it until the v1-c permissioned-solver gate ships, which is
+        // where the keeper-authorization check on `msg.sender` will land.)
+
+        if (fillAmount < intent.minFillAmount) revert LenderIntentFillBelowMin();
+        uint256 live = s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
+        if (live + fillAmount > intent.maxExposure) {
+            revert LenderIntentExposureExceeded();
+        }
+        // Honour the lender's max term. Offers carry a single `durationDays`, and
+        // `previewMatch` requires both sides match, so the loan term is exactly
+        // the counterparty's — cap it against the intent here.
+        if (s.offers[counterpartyOfferId].durationDays > intent.maxDurationDays) {
+            revert LenderIntentDurationTooLong();
+        }
+        // The loan inherits the accepted (borrower) offer's `useFullTermInterest`
+        // (LoanFacet snapshots it from `counterpartyOfferId`). An intent loan must
+        // carry the full-term floor so a borrower can't post an in-bounds offer
+        // that disables it and then repay/preclose early below the lender's
+        // committed interest (synthesis E3). Require the counterparty honour it.
+        if (!s.offers[counterpartyOfferId].useFullTermInterest) {
+            revert LenderIntentFullTermRequired();
+        }
+        // Likewise reject partial-repay: `repayPartial` charges only pro-rata
+        // interest on the repaid slice, escaping the committed-interest economics
+        // the full-term floor protects. The intent has no opt-in, so an intent
+        // fill is full-repay-only (keeps `loan.principal` == the reserved fill,
+        // and the exposure accounting exact).
+        if (s.offers[counterpartyOfferId].allowsPartialRepay) {
+            revert LenderIntentPartialRepayNotAllowed();
+        }
+        // Derive the collateral the intent's init-LTV ceiling requires for this
+        // fill. The materialized lender offer demands it; `previewMatch` enforces
+        // the borrower posts ≥ it. Unresolvable (missing oracle / illiquid
+        // collateral) ⇒ refuse rather than open a loan blind to the LTV bound.
+        uint256 reqColl = LibRiskMath.minCollateralForLtvCap(
+            fillAmount, lendingAsset, collateralAsset, intent.maxInitLtvBps
+        );
+        if (reqColl == 0 || reqColl == type(uint256).max) {
+            revert LenderIntentCollateralUnresolvable();
+        }
+
+        // Materialize the single-fill lender slice (creator = lender; pulls from
+        // the lender's FREE vault balance + creates the offer-principal lien).
+        uint256 sliceOfferId = _materializeIntentSlice(
+            _intentSliceParams(
+                lendingAsset,
+                collateralAsset,
+                fillAmount,
+                reqColl,
+                intent.minRateBps,
+                s.offers[counterpartyOfferId].durationDays
+            ),
+            lender
+        );
+
+        // Shared core (lender direction; borrower is the counterparty).
+        // `msg.sender` (the solver) is preserved as the matcher because this is
+        // an INTERNAL call.
+        loanId = _executeMatch(sliceOfferId, counterpartyOfferId, 0);
+
+        // Record exposure + the originating intent key (so the terminal-close
+        // release survives a lender-position sale that mutates `loan.lender`).
+        s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset] =
+            live + fillAmount;
+        s.intentOrigin[loanId] = LibVaipakam.IntentOrigin({
+            owner: lender,
+            lendingAsset: lendingAsset,
+            collateralAsset: collateralAsset,
+            amount: fillAmount // release the ORIGINAL fill, not a partial-repaid remainder
+        });
+
+        // Transient lender-slice cleanup (identical to the signed-lender path):
+        // the slice is the match ACCEPTOR, so its own OfferCreated NFT + reverse-
+        // map entry are orphaned. Burn + unmap so it isn't a phantom open offer.
+        LibMetricsHooks.onOfferAccepted(sliceOfferId);
+        uint256 slicePosToken = s.offers[sliceOfferId].positionTokenId;
+        delete s.offerIdByPositionTokenId[slicePosToken];
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector, slicePosToken),
+            NFTBurnFailed.selector
+        );
+
+        emit IntentMatched(
+            lender,
+            msg.sender,
+            lendingAsset,
+            collateralAsset,
+            sliceOfferId,
+            counterpartyOfferId,
+            loanId,
+            fillAmount
+        );
+    }
+
+    /// @dev Build the single-fill lender-slice `CreateOfferParams` for an intent
+    ///      fill. Separate frame keeps `matchIntent`'s stack under the viaIR
+    ///      ceiling (the wide struct build + cross-facet encode). Every field not
+    ///      set is the memory zero-default (ERC20 token ids / quantities = 0,
+    ///      `allows*` = false, `expiresAt`/`refinanceTargetLoanId` = 0).
+    function _intentSliceParams(
+        address lendingAsset,
+        address collateralAsset,
+        uint256 fillAmount,
+        uint256 reqColl,
+        uint256 minRateBps,
+        uint256 durationDays
+    ) private pure returns (LibVaipakam.CreateOfferParams memory p) {
+        p.offerType = LibVaipakam.OfferType.Lender;
+        p.lendingAsset = lendingAsset;
+        p.amount = fillAmount;
+        p.amountMax = fillAmount; // single-fill slice
+        p.interestRateBps = minRateBps; // the lender's floor
+        p.interestRateBpsMax = LibVaipakam.MAX_INTEREST_BPS; // accept any rate ≥ floor
+        p.collateralAsset = collateralAsset;
+        p.collateralAmount = reqColl; // init-LTV-cap requirement
+        p.collateralAmountMax = reqColl;
+        p.durationDays = durationDays; // == counterparty term (≤ maxDuration)
+        p.assetType = LibVaipakam.AssetType.ERC20;
+        p.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        p.prepayAsset = lendingAsset; // unused for ERC20 lend; non-zero placeholder
+        p.creatorRiskAndTermsConsent = true; // consent captured at setLenderIntent
+        p.fillMode = LibVaipakam.FillMode.Partial;
+        p.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.None;
+    }
+
+    /// @dev Materialize an intent slice as an on-chain offer with `creator =
+    ///      lender` via the self-gated vault-backed entry (pull-from-free-balance
+    ///      + offer-principal lien). Bubbles the inner revert.
+    function _materializeIntentSlice(
+        LibVaipakam.CreateOfferParams memory params,
+        address lender
+    ) private returns (uint256 sliceOfferId) {
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory res) = address(this).call(
+            abi.encodeWithSelector(
+                OfferCreateFacet.createSignedOfferVault.selector, lender, params
+            )
+        );
+        if (!ok) {
+            if (res.length > 0) {
+                assembly {
+                    revert(add(res, 0x20), mload(res))
+                }
+            }
+            revert SignedOfferMaterializeFailed();
+        }
+        sliceOfferId = abi.decode(res, (uint256));
     }
 
     /// @dev Pre-fill checks for a signed-offer match: deadline / GTT / nonce /

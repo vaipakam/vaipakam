@@ -8,6 +8,7 @@ import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -547,6 +548,23 @@ contract EarlyWithdrawalFacet is
         );
 
         address originalLender = loan.lender;
+
+        // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
+        // hands the position to the buyer), so release their standing-intent
+        // live-principal cap now rather than waiting for the buyer's eventual
+        // claim (the buyer might never claim, stranding the seller's cap). Keyed
+        // off the ORIGINATING intent so it frees the original owner's counter +
+        // deletes the marker. Gated on the cheap per-loan origin check so a
+        // non-intent loan skips the cross-facet hop entirely (no wasted gas, and
+        // no dependency on LenderIntentFacet being routed).
+        if (s.intentOrigin[loanId].owner != address(0)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // ── Find the temporary loan via O(1) lookup ─────────────────────────
         uint256 tempLoanId = s.offerIdToLoanId[saleOfferId];

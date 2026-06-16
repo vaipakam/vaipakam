@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -326,6 +327,24 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
 
         // Mark claimed before transfer to prevent re-entrancy
         claim.claimed = true;
+
+        // #393 v1-b — if this loan was opened via `matchIntent`, release the
+        // originating lender intent's live-principal cap: the principal is now
+        // returning to the lender's control, so it frees up. Routed to
+        // LenderIntentFacet (the heavy triple-mapping decrement sits behind one
+        // cross-facet boundary, not inlined into every transition facet — RiskFacet
+        // is at the EIP-170 edge). Keyed off the per-loan ORIGINATING intent, so a
+        // sold lender position still releases the original owner's counter. Gated
+        // on the cheap per-loan origin check so a non-intent loan skips the hop
+        // entirely (no wasted gas, no LenderIntentFacet-routing dependency).
+        if (s.intentOrigin[loanId].owner != address(0)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector, loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // #585/#592 — release any VPFI lender-proceeds reservation BEFORE the
         // withdraw, so the vault-withdraw guard sees the proceeds as free

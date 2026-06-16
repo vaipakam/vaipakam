@@ -70,6 +70,8 @@ contract LenderIntentFacet is
     error LenderIntentKeeperGateNotEnabled();
     /// @notice No active intent exists for the (owner, asset-pair) to cancel.
     error LenderIntentNotActive();
+    /// @notice A diamond-internal-only entry was called externally.
+    error OnlyDiamondInternal();
 
     /// @notice Register or overwrite the caller's standing lending intent for an
     ///         ERC-20 asset-pair.
@@ -212,6 +214,33 @@ contract LenderIntentFacet is
         return LibVaipakam.cfgLenderIntentEnabled();
     }
 
+    /// @notice #393 v1-b — release the live-principal a `matchIntent` loan
+    ///         consumed, when its principal returns to the lender's vault at
+    ///         lender-claim time. Self-gated (diamond-internal cross-facet call
+    ///         from ClaimFacet). Keyed off the per-loan ORIGINATING intent —
+    ///         NOT the current `loan.lender` (a lender-position sale mutates it),
+    ///         so a sold position still releases the original owner's counter,
+    ///         and a non-intent loan (`owner == address(0)`) is a no-op. Idempotent:
+    ///         `delete` makes a second call a no-op.
+    /// @dev    Lives here (not in the inlined `onLoanStatusChanged` hook) because
+    ///         that hook inlines into every loan-transition facet and RiskFacet
+    ///         is at the EIP-170 ceiling — the heavy triple-mapping decrement
+    ///         must sit behind a single cross-facet boundary.
+    function releaseIntentExposure(uint256 loanId) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.IntentOrigin memory io = s.intentOrigin[loanId];
+        if (io.owner == address(0)) return; // not an intent-originated loan
+        // Release the ORIGINAL fill amount (`io.amount`), NOT `loan.principal`
+        // (a partial repayment reduces the latter, which would leave the
+        // partial-repaid slice permanently counted against the cap).
+        uint256 live =
+            s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset];
+        s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset] =
+            io.amount <= live ? live - io.amount : 0;
+        delete s.intentOrigin[loanId];
+    }
+
     /// @notice Read a standing intent. `active == false` ⇒ none / cancelled.
     function getLenderIntent(
         address owner,
@@ -221,5 +250,20 @@ contract LenderIntentFacet is
         return LibVaipakam.storageSlot().lenderIntent[owner][lendingAsset][
             collateralAsset
         ];
+    }
+
+    /// @notice Aggregate LIVE principal currently out from `owner`'s intent on
+    ///         the `(lendingAsset, collateralAsset)` pair — the figure
+    ///         `matchIntent` checks against `maxExposure` (#393 v1-b). Keyed by
+    ///         the full intent; decremented at each originated loan's terminal
+    ///         close.
+    function getLenderIntentLivePrincipal(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().lenderIntentLivePrincipal[owner][
+            lendingAsset
+        ][collateralAsset];
     }
 }

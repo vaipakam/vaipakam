@@ -1171,16 +1171,18 @@ contract DeployDiamond is Script {
     ///      matching surface. Carved out of OfferFacet to bring it
     ///      under EIP-170; same selectors, separate facet.
     function _getOfferMatchSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         // `matchOffers` is the write entry bots submit; `previewMatch`
         // is the structured-error view they consult before
         // submitting. `matchSignedOffer` (#396 v0.6) is the keeper entry
         // for filling a signed off-chain offer against an on-chain
-        // counterparty. All gated on the `partialFillEnabled` master
+        // counterparty. `matchIntent` (#393 v1-b) fills a lender's
+        // standing intent. All gated on the `partialFillEnabled` master
         // flag inside the facet body.
         s[0] = OfferMatchFacet.matchOffers.selector;
         s[1] = OfferMatchFacet.previewMatch.selector;
         s[2] = OfferMatchFacet.matchSignedOffer.selector;
+        s[3] = OfferMatchFacet.matchIntent.selector;
     }
 
     /// @dev OfferCancelFacet — cancellation + read views carved out of
@@ -1339,12 +1341,14 @@ contract DeployDiamond is Script {
     }
 
     function _getLenderIntentFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](7);
         s[0] = LenderIntentFacet.setLenderIntent.selector;
         s[1] = LenderIntentFacet.cancelLenderIntent.selector;
         s[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
         s[3] = LenderIntentFacet.isLenderIntentEnabled.selector;
         s[4] = LenderIntentFacet.getLenderIntent.selector;
+        s[5] = LenderIntentFacet.getLenderIntentLivePrincipal.selector;
+        s[6] = LenderIntentFacet.releaseIntentExposure.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

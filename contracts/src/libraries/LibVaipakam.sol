@@ -4058,6 +4058,31 @@ library LibVaipakam {
         // the close-time decrement key — Codex #618 P2). Not scaffolded here.
         mapping(address => mapping(address => mapping(address => LenderIntent)))
             lenderIntent;
+        // #393 v1-b — aggregate LIVE principal currently out in loans originated
+        // from `owner`'s intent on the `(lendingAsset, collateralAsset)` pair.
+        // Keyed by the FULL intent so two intents sharing a lending asset but
+        // different collateral never share a cap. Incremented at `matchIntent`,
+        // decremented once at the loan's terminal close.
+        mapping(address => mapping(address => mapping(address => uint256)))
+            lenderIntentLivePrincipal;
+        // #393 v1-b — per-loan ORIGINATING intent key, so the terminal-close
+        // decrement releases the right (owner, lend, coll) counter even after a
+        // lender-position SALE mutates `loan.lender` (migrateLenderPosition).
+        // `owner == address(0)` ⇒ the loan did NOT originate from an intent.
+        mapping(uint256 => IntentOrigin) intentOrigin;
+    }
+
+    /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
+    ///         recorded per loanId so the exposure-release keys off the SIGNER's
+    ///         intent, not the (sale-mutable) current lender, and releases the
+    ///         ORIGINAL fill amount (`amount`) — not `loan.principal`, which a
+    ///         partial repayment reduces (otherwise the partial-repaid slice
+    ///         would stay permanently counted against the cap).
+    struct IntentOrigin {
+        address owner;
+        address lendingAsset;
+        address collateralAsset;
+        uint256 amount;
     }
 
     /// @notice T-092 — per-loan borrower-side refinance caps.
