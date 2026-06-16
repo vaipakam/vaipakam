@@ -383,7 +383,19 @@ jobs:
     # measurement: ~5:22 wall-clock + ~3.17 GB peak RSS — comfortably
     # under the 16 GB GitHub-hosted ubuntu-latest standard-runner ceiling
     # that was OOM-killing the pre-#290 full-scope build (~17.7 GB).
-    timeout-minutes: 15
+    #
+    # Timeout 15 -> 25 (#396 v0.6, 2026-06-16): the ~5:22 figure is a fast
+    # LOCAL machine; on GitHub-hosted ubuntu-latest (slower CPU, cold solc
+    # cache, + the predeploy-check + cifast `forge test` slice on top of the
+    # compile) the real CI wall-clock is far higher -- PR #615 measured
+    # 14m37s, only 23s under the old 15-min cap. The v0.6 additions
+    # (matchSignedOffer + the new test slice) tipped the grown codebase past
+    # 15 min, so the job kept timing out (GitHub reports a timed-out job as
+    # "cancelled") and burning a full 15 min per attempt. 25 min restores
+    # headroom for continued growth AND is cheaper than the timeout-then-
+    # rerun cycle. RSS is unchanged (this is a wall-clock bound, not memory),
+    # so still well under the OOM ceiling. Revisit if it approaches 25.
+    timeout-minutes: 25
     # #290 — every forge invocation in this job runs under the
     # narrow-scope `cifast` profile defined in `contracts/foundry.toml`.
     # This is what reduces peak RSS from ~17.7 GB → ~3.2 GB and keeps
