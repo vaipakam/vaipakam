@@ -59,10 +59,16 @@ Three backstop archetypes, ranked by how well they fit our no-commingling invari
 
 A **segregated backstop vault**, never commingled with ordinary lender/borrower deposits:
 
-- **Funding:** opt-in LP deposits into a **dedicated backstop vault** (its own isolated vault on
-  the existing `VaipakamVaultImplementation` pattern) **and/or** a treasury seed. Backstop LPs
-  are a distinct, clearly-labeled tranche — they knowingly take first-loss risk for an
-  incentive. Ordinary per-user lending vaults are **untouched and never slashed**.
+- **Funding:** a treasury seed (v0) and/or, in v1, opt-in LP deposits into a **dedicated backstop
+  vault**. **Reconciling the LP tranche with E1 (important):** E1 forbids commingling ordinary
+  *lending* users' principal. A backstop-LP tranche, by its nature, **does pool backstop capital
+  among its own opt-in participants** — this is a **distinct, consented product** (the insurance/
+  umbrella-module shape), categorically separate from the per-user lending vaults, and the
+  participants knowingly accept first-loss pooling for an incentive. That is **the one explicitly-
+  walled-off exception**, not a violation: ordinary lending principal is never in this pool and is
+  **never slashed**. To keep even this exception out of v0, **v0 is treasury-seed-only** (no LP
+  pooling at all); the consented LP tranche is a deliberate v1 decision with its own disclosure +
+  audit. The tranche must be a separate contract/vault, never the lending vaults.
 - **As counterparty-of-last-resort:** when a signed offer goes unmatched past a threshold, the
   backstop may auto-fill it within **curated risk bounds** — a per-asset **capacity cap**
   (debt-ceiling analog) + a **posted backstop rate** (so the backstop's participation is priced,
@@ -70,8 +76,12 @@ A **segregated backstop vault**, never commingled with ordinary lender/borrower 
   never out of a commingled user pool.
 - **As liquidator-of-last-resort:** when a keeper swap fails (the FallbackPending path), the
   backstop can absorb the custodied collateral at an oracle-bounded price and make the lender
-  whole, closing the position. This plugs directly into the existing fallback-custody machinery
-  from the encumbrance arc.
+  whole, closing the position. **It MUST preserve the borrower cure window**: today a
+  FallbackPending loan leaves the borrower able to `repayLoan` / `addCollateral` until the lender
+  claims. The backstop is a last resort that may act only **after** that cure window has elapsed
+  (or the lender has chosen to claim) — it does **not** short-circuit the borrower's right to
+  cure. This plugs into the existing fallback-custody machinery from the encumbrance arc without
+  altering its cure semantics.
 - **Risk bounding (stolen from §3.2 + §3.3):** per-asset **offset / first-loss threshold**
   (protocol/treasury covers the first slice before backstop LPs), per-asset **capacity cap**,
   a **posted rate** that prices the risk, and an **automated first-loss buffer** fed by retained

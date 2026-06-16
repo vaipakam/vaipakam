@@ -49,16 +49,17 @@ The intent layer is mostly *assembly of existing parts*, not green-field:
 - **Range offers + matcher.** `OfferMatchFacet.previewMatch`/`matchOffers` + `LibOfferMatch`
   already do permissionless midpoint matching with a **1% LIF matcher kickback**
   (`cfgLifMatcherFeeBps`). This IS the solver-competition primitive.
-- **Autonomous matcher.** `vaipakam-keeper-bot/src/detectors/offerMatcher.ts` already scans,
-  buckets by continuity, previews, and submits matches. The off-chain solver loop exists.
+- **Autonomous matcher.** The **sibling reference repo** `vaipakam-keeper-bot`
+  (`src/detectors/offerMatcher.ts`, not in this tree) already scans, buckets by continuity,
+  previews, and submits matches. The off-chain solver loop exists.
 - **Signature-transfer pull.** `OfferCreateFacet.createOfferWithPermit` already pulls via an
   EIP-712 signature — we extend it so one signature also binds the *offer terms* (#396).
 - **Per-user vaults.** `VaultFactoryFacet.getOrCreateUserVault` + `VaipakamVaultImplementation`
   give us the isolation primitive the LenderIntentVault and backstop reuse.
 - **Keeper authorization.** `ProfileFacet` keeper surface (per-user opt-in + per-keeper
   per-action bitmask) already gates third-party execution.
-- **Intent seed.** `SwapToRepayIntentFacet` (skeleton) + apps/agent `/intent/fusion/*` prove the
-  signed-order + off-chain-solver + on-chain-settlement pattern in-house.
+- **Intent seed.** `SwapToRepayIntentFacet` (skeleton) + the agent's intent-swap settlement route
+  prove the signed-order + off-chain-solver + on-chain-settlement pattern in-house.
 - **Encumbrance sub-ledger (#407).** Per-loan liens already exist — the LenderIntentVault's
   "reserved for offer X" accounting reuses this rather than inventing a new lock.
 
@@ -109,14 +110,30 @@ re-consumable — closing the idle-capital window from weeks to seconds for acti
 "reserved for an open signed offer" amount is tracked via the **encumbrance sub-ledger (#407)**,
 not a new lock.
 
+**Loan-attribution constraint (design-critical).** Today `LoanFacet` attributes the loan to the
+offer **creator** and mints the lender-position NFT to them; downstream claim, keeper-auth, VPFI
+discount, and sanctions checks all key off that identity. If the *vault contract* is the offerer,
+the lender-of-record cannot naively become the vault — claims/keeper-auth/VPFI must still resolve
+to the **vault's beneficial owner** (the depositing user, or the aggregator for L3). The design
+must therefore carry a `beneficialOwner` through from the signed offer into loan attribution (or
+mint the lender NFT to the vault and route the vault's own claim logic to its owner). This is an
+explicit v1 design item, not a free consequence of "the vault is the offerer."
+
 ### 3.3 L3 — ERC-4626 aggregator adapter (#398)
 
-A standards-compliant ERC-4626 face over a per-aggregator LenderIntentVault: external
-aggregators `deposit`/`withdraw`/`redeem`; `totalAssets` = idle + outstanding-principal +
-accrued-interest; a harvest-equivalent surfaces realized interest so the aggregator's share
-price reflects yield. **E1 holds because the aggregator is one Vaipakam user = one vault** — its
-retail depositors commingle inside the aggregator, never in Vaipakam. We adopt the *interface*,
-never the pooled-share *custody*.
+A standards-compliant ERC-4626 face over a per-aggregator LenderIntentVault: the aggregator
+`deposit`/`withdraw`/`redeem`s; `totalAssets` reflects idle + outstanding-principal (interest
+handled per the realized-vs-accrued rule in [#398](Research-398-StandardizedYieldWrapperAndOutwardAdapter.md)
+— **unrealized interest is NOT counted as withdrawable**, to avoid share-price inflation /
+withdrawing value that hasn't been collected).
+
+**Single-principal restriction (E1-critical).** The 4626 adapter must **NOT** be an open vault
+anyone can `deposit` into — an open 4626 face would let *multiple* Vaipakam principals share one
+vault, which is exactly the commingling E1 forbids. Each adapter is bound to **one authorized
+depositor** (the aggregator's strategy address, set at deploy); `deposit`/`mint` revert for any
+other caller. So the ERC-4626 *interface* is exposed (the aggregator's tooling speaks it), but the
+adapter holds exactly one beneficial principal. The aggregator's retail depositors commingle
+*inside the aggregator*, off-Vaipakam. We adopt the interface, never the pooled-share custody.
 
 ### 3.4 LR — Segregated backstop (#399), sequenced last
 
@@ -135,11 +152,16 @@ caps) uses the timelock-asymmetric pattern.
 
 ## 4. The seven #301 open questions — resolved
 
-1. **MEV on solver competition.** v0/v1: **protocol-permissioned solvers only** (the existing
-   keeper-authorization surface) — no open solver market yet, so no MEV game. v2 (open solvers):
-   bilateral per-offer fills with the signed rate as a hard floor means a filler can never give
-   the user worse than signed; competition drives toward the user-favorable end (Dutch-decay
-   style on the *quoted offer rate*, not on a live loan). No batch, no reorder-MEV surface.
+1. **MEV on solver competition.** v0/v1: **protocol-permissioned solvers only**, but this must be
+   **a real on-chain gate, not an assumption** — note that the *legacy* `matchOffers` is
+   permissionless today, so the new **`acceptSignedOffer` / signed-offer fill path must itself
+   carry a solver-authorization check** (reuse the `ProfileFacet` keeper-authorization surface, or
+   a per-signed-offer "permissioned-fill" flag the signer sets). The signed offer opts into
+   permissioned-only filling; an un-opted offer can still be filled by the open legacy path. With
+   permissioned fills there is no open solver market yet, so no MEV game. v2 (open solvers):
+   bilateral per-offer fills with the signed rate as a hard floor mean a filler can never give the
+   user worse than signed; competition drives toward the user-favorable end (Dutch-decay style on
+   the *quoted offer rate*, not on a live loan). No batch, no reorder-MEV surface.
 2. **Borrower-intent expiry.** Reuse the existing `expiresAt` GTT + `fillMode` (AON/IOC)
    machinery on the signed offer — order-book-style limit by default; optional rate-decay
    (Dutch) on the *new-offer quote* is a v2 enhancement via the rate model, never a live-loan
@@ -186,8 +208,8 @@ supply); (b) auto-roll collapses the *between-loans* idle window from days/weeks
 active vaults — the single biggest realizable uplift, since it compounds over a vault's lifetime;
 (c) the aggregator adapter taps **external** aggregated capital that won't integrate a bespoke
 P2P book but will route into a standard ERC-4626 surface. A real quantified model needs live
-match-latency + offer-lifetime telemetry from the indexer (the `loans`/`offers` D1 tables) — an
-operator-data task flagged as a follow-up, not blocking the design.
+match-latency + offer-lifetime telemetry from the indexer's loan/offer tables — an operator-data
+task flagged as a follow-up, not blocking the design.
 
 **Audit-scope estimate (new attack surface, by phase):**
 - **v0.5** — *moderate*: EIP-712 domain/replay/nonce correctness, EIP-1271 signature-confusion,

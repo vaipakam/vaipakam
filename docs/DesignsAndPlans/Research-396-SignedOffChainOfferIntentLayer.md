@@ -70,18 +70,33 @@ A new **signed-offer accept path** that coexists with the on-chain `Offer` path:
   can never alter them.
 - **Acceptance:** `acceptSignedOffer(SignedOffer, signature, acceptorConsent)` — verify EIP-712
   signature (EOA + EIP-1271 for smart-wallet/aggregator signers), check nonce live + not
-  expired, pull the signer's principal/collateral via the existing signature-transfer (order as
-  witness) **into the existing accept→initiateLoan flow**, snapshot rate immutably. One
-  signature, both authorizations.
+  expired, pull the signer's principal/collateral **into the existing accept→initiateLoan flow**,
+  snapshot rate immutably.
+- **Single-use signature vs partial fills (design-critical).** A signature-transfer
+  authorization (Permit2 `SignatureTransfer` shape) is **single-use** — one signature authorizes
+  exactly **one** pull of one amount. So "one signature binds transfer + terms" holds for a
+  **full** (AON) fill, but a **partial-fillable** signed offer that is matched incrementally
+  CANNOT be served by a single signature-transfer. Partial fills need one of: (a) a **vault-backed
+  offer** (no per-fill signature — the Diamond moves vault funds internally, gated by the
+  signed-offer nonce/remaining accounting), which is the recommended default for partial-fillable
+  signed offers; or (b) an **allowance-based** pull (standing ERC-20 approval to the Diamond, the
+  signature binding only the terms + a per-offer fill ledger); or (c) a **per-fill signature**
+  scheme (a nonce-bitmap the signer tops up). Pick (a) for the common case; the wallet-backed
+  single-signature path is **AON-only**.
 - **Cancellation:** `cancelSignedOffer(nonce)` / `incrementNonce()` on an on-chain
   `signedOfferNonceUsed[signer][nonce]` registry; free off-chain delete handled by the
   indexer/agent book.
 - **Solvency:** pull-at-accept with revert-on-insolvency (already how our vault moves work);
   add the indexer-side "under-funded → hidden, auto-promote when funded" filter so the book
   surfaced to UIs is always fillable.
-- **Range + matcher:** the signed offer carries the same range fields, so `OfferMatchFacet`'s
-  midpoint logic and the 1% LIF kickback apply unchanged; the matcher fills signed offers the
-  same way it fills on-chain ones — bilateral, per-offer (NOT batch-cleared).
+- **Range + matcher (needs a signed-offer-aware entry).** Today `OfferMatchFacet.matchOffers`
+  reads two **on-chain** `s.offers` records by id; a signed off-chain offer is **not** in
+  `s.offers`, so `matchOffers` cannot fill it verbatim. The fix is a **signed-offer-aware match
+  entry** (`matchSignedOffer(signedOffer, sig, counterpartyOfferId)` / pairwise signed-vs-signed)
+  that verifies the signature, **materializes** the offer just-in-time, then **reuses the existing
+  `LibOfferMatch` midpoint logic + 1% LIF kickback** — the matching *math* is reused, the *entry
+  point* is new. Settlement stays bilateral, per-offer (NOT batch-cleared). An on-chain offer can
+  still be matched against a signed offer through this entry.
 
 **Ethos:** E1 — funds stay in the signer's own vault/wallet until the origination instant; no
 pooled custody. E2 — the signed rate is bound in the digest and snapshotted at init; immutable

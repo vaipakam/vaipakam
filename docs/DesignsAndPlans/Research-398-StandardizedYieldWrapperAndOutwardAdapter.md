@@ -57,9 +57,16 @@ This is the direct, concrete mechanism by which an external aggregator "uses" us
     `deposit/withdraw/redeem/totalAssets`. The aggregator's strategy treats it as a yield venue.
   - Internally, the adapter takes deposited principal and **programmatically posts signed offers**
     (#396) on the aggregator's behalf, **auto-rolls** returned principal on terminal close
-    (#393 Layer 1), and marks `totalAssets` = idle + outstanding-principal + accrued-interest.
-  - **`harvestAndReport`-equivalent**: surfaces accrued interest so the aggregator's share price
-    reflects yield, matching the standard the aggregator already speaks.
+    (#393 Layer 1).
+  - **`totalAssets` must count only WITHDRAWABLE value** = idle balance + outstanding principal.
+    **Accrued-but-unpaid loan interest is NOT included as withdrawable** — counting unrealized
+    interest in `totalAssets` would inflate the share price and let a redeemer withdraw value that
+    has not yet been collected (a draw on other principal). Interest enters `totalAssets` only when
+    it is **realized** (paid at repay/preclose/refinance settlement). A separate read MAY surface
+    *accrued/pending* interest for display, but it never backs a redemption.
+  - **`harvestAndReport`-equivalent**: on each settlement, realized interest is folded into
+    `totalAssets`, so the aggregator's share price reflects **collected** yield — matching the
+    standard the aggregator already speaks, without the inflation footgun.
 - **Why this preserves E1 (the load-bearing point):** from Vaipakam's view the aggregator is a
   **single "user" = one vault proxy**. All commingling of the aggregator's retail depositors
   happens **inside the aggregator, off-Vaipakam**. We never hold two Vaipakam-users' principal in
