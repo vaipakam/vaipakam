@@ -12,6 +12,8 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {OfferCreateFacet} from "./OfferCreateFacet.sol";
+import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
 /**
  * @title OfferMatchFacet
@@ -163,6 +165,145 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         }
 
         return _executeMatch(lenderOfferId, borrowerOfferId);
+    }
+
+    // ─── #396 v0.6 — keeper-matcher for signed offers ────────────────────
+
+    /// @notice A signed offer filled by a keeper against an on-chain counterparty.
+    event SignedOfferMatched(
+        bytes32 indexed orderHash,
+        address indexed signer,
+        address indexed matcher,
+        uint256 sliceOfferId,
+        uint256 counterpartyOfferId,
+        uint256 loanId,
+        uint256 fillAmount
+    );
+
+    /// @notice The signed offer is fully filled or cancelled.
+    error SignedOfferConsumed(bytes32 orderHash);
+    /// @notice The signer batch-invalidated this offer's nonce.
+    error SignedOfferNonceBurned(uint256 nonce);
+    /// @notice The signature did not recover to / 1271-validate against `o.signer`.
+    error SignedOfferBadSignature();
+    /// @notice The signed offer's signature deadline has passed.
+    error SignedOfferSigExpired(uint256 deadline);
+    /// @notice The signed offer's GTT window has passed.
+    error SignedOfferGttExpired(uint64 expiresAt);
+    /// @notice `fillAmount` is zero, exceeds the remaining, or violates the
+    ///         signer's AON intent (an AON offer must be filled in full).
+    error SignedOfferFillInvalid(uint256 fillAmount, uint256 remaining);
+    /// @notice The slice materialize cross-facet call reverted with no data.
+    error SignedOfferMaterializeFailed();
+
+    /// @notice Keeper-matcher fill of a **vault-backed** signed offer against
+    ///         an on-chain counterparty offer — full or partial. The keeper
+    ///         (`msg.sender`) earns the 1% LIF. Each call materializes EXACTLY
+    ///         the slice it fills (single-value → fully consumed, no dangling
+    ///         on-chain offer) and decrements the OFF-chain `signedOfferFilled`
+    ///         ledger; successive calls partial-fill the off-chain offer. The
+    ///         match's collateral/HF safety is enforced by
+    ///         `LibOfferMatch.previewMatch` inside `_executeMatch`.
+    /// @param o                   The signed offer terms.
+    /// @param sig                 The signer's EIP-712 signature (EOA / 1271).
+    /// @param counterpartyOfferId The on-chain offer on the OTHER side.
+    /// @param fillAmount          The principal this match fills (≤ remaining).
+    /// @return loanId             The initiated loan.
+    function matchSignedOffer(
+        LibSignedOffer.SignedOffer calldata o,
+        bytes calldata sig,
+        uint256 counterpartyOfferId,
+        uint256 fillAmount
+    ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        LibVaipakam._assertNotSanctioned(msg.sender); // matcher = LIF recipient
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.protocolCfg.partialFillEnabled) {
+            revert FunctionDisabled(3);
+        }
+        bytes32 orderHash = _vetSignedOfferForMatch(o, fillAmount);
+        (bool ok, ) = LibSignedOffer.verify(o, sig);
+        if (!ok) revert SignedOfferBadSignature();
+
+        // CEI: record the slice consumed BEFORE the materialize + match
+        // external calls (bounded by the ceiling in the vet above).
+        s.signedOfferFilled[orderHash] += fillAmount;
+
+        uint256 sliceOfferId = _materializeSlice(o, fillAmount);
+        // Route the slice into the correct side-slot. _executeMatch processes
+        // the BORROWER offer via acceptOfferInternal and injects the LENDER as
+        // the counterparty, so the slice goes in whichever slot matches its
+        // own offerType. `msg.sender` (the keeper) is preserved as the matcher
+        // because _executeMatch is an INTERNAL call.
+        loanId = LibVaipakam.OfferType(o.offerType) == LibVaipakam.OfferType.Lender
+            ? _executeMatch(sliceOfferId, counterpartyOfferId)
+            : _executeMatch(counterpartyOfferId, sliceOfferId);
+
+        emit SignedOfferMatched(
+            orderHash, o.signer, msg.sender, sliceOfferId, counterpartyOfferId, loanId, fillAmount
+        );
+    }
+
+    /// @dev Pre-fill checks for a signed-offer match: deadline / GTT / nonce /
+    ///      remaining + the AON-full-fill guard. Returns the order hash.
+    function _vetSignedOfferForMatch(
+        LibSignedOffer.SignedOffer calldata o,
+        uint256 fillAmount
+    ) private view returns (bytes32 orderHash) {
+        if (o.deadline != 0 && block.timestamp > o.deadline) {
+            revert SignedOfferSigExpired(o.deadline);
+        }
+        if (o.expiresAt != 0 && block.timestamp > o.expiresAt) {
+            revert SignedOfferGttExpired(o.expiresAt);
+        }
+        orderHash = LibSignedOffer.hashStruct(o);
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.signedOfferNonceUsed[o.signer][o.nonce]) {
+            revert SignedOfferNonceBurned(o.nonce);
+        }
+        uint256 ceiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 filled = s.signedOfferFilled[orderHash];
+        if (filled >= ceiling) revert SignedOfferConsumed(orderHash);
+        uint256 remaining = ceiling - filled;
+        if (fillAmount == 0 || fillAmount > remaining) {
+            revert SignedOfferFillInvalid(fillAmount, remaining);
+        }
+        // AON intent: an all-or-nothing signed offer may only be filled in full
+        // (a single match consuming the whole, un-pre-filled offer).
+        if (
+            LibVaipakam.FillMode(o.fillMode) == LibVaipakam.FillMode.Aon
+                && (filled != 0 || fillAmount != ceiling)
+        ) {
+            revert SignedOfferFillInvalid(fillAmount, remaining);
+        }
+    }
+
+    /// @dev Materialize the signed-offer SLICE (size `fillAmount`) as an
+    ///      on-chain offer via the self-gated `OfferCreateFacet.createSigned
+    ///      OfferVault` (vault-backed). Built params + low-level
+    ///      `abi.encodeWithSelector` + `.call` keep the 26-field struct encode
+    ///      under viaIR's stack ceiling (the v0.5 pattern). Bubbles the inner
+    ///      revert (e.g. SignedOfferUnsupportedShape / InsufficientFreeBalance).
+    function _materializeSlice(
+        LibSignedOffer.SignedOffer calldata o,
+        uint256 fillAmount
+    ) private returns (uint256 sliceOfferId) {
+        LibVaipakam.CreateOfferParams memory params =
+            LibSignedOffer.toCreateOfferParams(o, fillAmount);
+        // slither-disable-next-line low-level-calls
+        (bool ok, bytes memory res) = address(this).call(
+            abi.encodeWithSelector(
+                OfferCreateFacet.createSignedOfferVault.selector, o.signer, params
+            )
+        );
+        if (!ok) {
+            if (res.length > 0) {
+                assembly {
+                    revert(add(res, 0x20), mload(res))
+                }
+            }
+            revert SignedOfferMaterializeFailed();
+        }
+        sliceOfferId = abi.decode(res, (uint256));
     }
 
     /// @notice Shared match-execution core for `matchOffers` and the v0.6

@@ -285,4 +285,42 @@ library LibSignedOffer {
         p.refinanceTargetLoanId = o.refinanceTargetLoanId;
         p.useFullTermInterest = o.useFullTermInterest;
     }
+
+    /// @notice Map a `SignedOffer` to a SLICE of it sized `fillAmount` — used
+    ///         by the v0.6 matcher to materialize exactly the portion a single
+    ///         match fills. The principal collapses to `fillAmount`
+    ///         (single-value, so the materialized slice is fully consumed by
+    ///         one match — no dangling on-chain remainder); the collateral
+    ///         scales **pro-rata, rounded UP**; the rate band is kept so the
+    ///         match midpoint with the counterparty still resolves.
+    /// @dev    Rounding-up is the conservative choice, but correctness does NOT
+    ///         depend on the precise slice collateral: `LibOfferMatch.previewMatch`
+    ///         independently computes the real required collateral and enforces
+    ///         `CollateralBelowRequired` + the synthetic HF / LtvAboveTier gates,
+    ///         so a too-low slice collateral reverts the match — it can never
+    ///         mint an under-collateralized loan. The off-chain offer's
+    ///         remaining is tracked by `signedOfferFilled[orderHash]`.
+    /// @param  o          The signed offer.
+    /// @param  fillAmount The principal this slice fills (≤ the offer's remaining).
+    function toCreateOfferParams(SignedOffer memory o, uint256 fillAmount)
+        internal
+        pure
+        returns (LibVaipakam.CreateOfferParams memory p)
+    {
+        p = toCreateOfferParams(o);
+        // Principal collapses to the slice (single-value).
+        p.amount = fillAmount;
+        p.amountMax = fillAmount;
+        // Collateral scales pro-rata to the slice, rounded UP. Denominator is
+        // the offer's principal ceiling (amountMax, collapsing the 0 sentinel
+        // to `amount`).
+        uint256 amtCeiling = o.amountMax == 0 ? o.amount : o.amountMax;
+        uint256 collCeiling =
+            o.collateralAmountMax == 0 ? o.collateralAmount : o.collateralAmountMax;
+        uint256 sliceColl = amtCeiling == 0
+            ? collCeiling
+            : (collCeiling * fillAmount + amtCeiling - 1) / amtCeiling;
+        p.collateralAmount = sliceColl;
+        p.collateralAmountMax = sliceColl;
+    }
 }

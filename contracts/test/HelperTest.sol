@@ -330,9 +330,10 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](3);
         selectors[0] = OfferMatchFacet.matchOffers.selector;
         selectors[1] = OfferMatchFacet.previewMatch.selector;
+        selectors[2] = OfferMatchFacet.matchSignedOffer.selector;
         return selectors;
     }
 
