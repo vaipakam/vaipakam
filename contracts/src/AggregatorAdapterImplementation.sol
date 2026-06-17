@@ -703,7 +703,12 @@ contract AggregatorAdapterImplementation is
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
         if (nft == diamond) revert CannotSweepProtocolNFT();
         _screenPrincipal();
-        IERC721(nft).safeTransferFrom(address(this), authorizedPrincipal, tokenId);
+        // #626 round-10 P3 — plain `transferFrom`, not `safeTransferFrom`: the
+        // principal may be an aggregator CONTRACT without `onERC721Received`, and
+        // a safe transfer would revert and strand the very NFT we're recovering.
+        // The destination is the principal's own explicitly-requested address, so
+        // the safe-transfer acceptance check buys nothing here.
+        IERC721(nft).transferFrom(address(this), authorizedPrincipal, tokenId);
     }
 
     /// @notice Keeper/principal: claim the adapter's finalized interaction
