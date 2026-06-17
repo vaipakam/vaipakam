@@ -60,17 +60,24 @@ Anchors confirmed by scout: `LenderIntentFacet.setLenderIntent` /
 ## 3. Funding — treasury seed (governance only)
 
 Treasury == Diamond today (`treasuryBalances[asset]`, `LibFacet.getTreasury`),
-fees accrue into it (`LibFacet.recordTreasuryAccrual`). Seeding is a governance
-move of treasury ERC20 into the backstop's intent:
+fees accrue into it (`LibFacet.recordTreasuryAccrual`). The two roles need **two
+distinct capital forms** (Codex #629 r2 P1) — Role A originates loans (capital must
+be **liened** intent capital), Role B pays cash for collateral (capital must be a
+**free, unencumbered** balance the backstop can `safeTransfer`). Seeding therefore
+splits into two buckets, both segregated in the backstop's own vault:
 
-- `seedBackstop(lend, coll, amount)` — ADMIN/timelock: moves `treasuryBalances[lend]`
-  → BackstopVault → `fundLenderIntent(lend, coll, amount)`. The capital now sits in
-  the **backstop's own vault**, liened as intent capital — segregated from every
-  user vault.
-- `withdrawBackstopToTreasury(lend, coll, amount)` — governance: pulls **idle**
-  backstop capital back (`withdrawLenderIntentCapital` → treasury). Live capital
-  (out on loans / absorbed collateral) returns to idle as loans resolve, then is
-  withdrawable.
+- **Origination bucket** — `seedBackstopOrigination(lend, coll, amount)`
+  (ADMIN/timelock): `treasuryBalances[lend]` → BackstopVault →
+  `fundLenderIntent(lend, coll, amount)`. Liened as Role-A intent capital.
+- **Absorb-cash bucket** — `seedBackstopAbsorb(lend, amount)` (ADMIN/timelock):
+  `treasuryBalances[lend]` → BackstopVault as a **free, un-liened** balance tracked
+  per asset (`backstopAbsorbCash[lend]`). Role B (`claimAsLenderViaBackstop`) pays
+  out of THIS bucket — it must never draw the liened origination capital (that would
+  silently weaken Role-A funding/exposure guarantees), and the liened capital has no
+  free balance to spend anyway.
+- `withdrawBackstopToTreasury(...)` — governance: pulls **idle** origination capital
+  (`withdrawLenderIntentCapital`) and/or free absorb cash back to treasury. Capital
+  out on loans / warehoused as absorbed collateral returns as it resolves/liquidates.
 
 ## 4. Role A — counterparty-of-last-resort (PR 1)
 
@@ -99,10 +106,13 @@ sub-structing, per the viaIR stack lesson from the encumbrance arc / `reference_
 Set at offer creation in `OfferCreateFacet`:
 - `0` ⇒ not backstop-eligible (default; the offer is filled only by natural
   counterparties / the open path).
-- non-zero ⇒ validated `0 < backstopEligibleAfter < expiresAt` (so a backstop fill
-  has a real window *before* the offer dies; `expiresAt` must therefore be set —
-  a GTC offer with `expiresAt == 0` cannot be backstop-eligible). Pre-live, so the
-  struct change is cheap; ABI re-export + deploy-sanity follow.
+- non-zero ⇒ validated `block.timestamp < backstopEligibleAfter < expiresAt`
+  (Codex #629 r2 P2). It must be in the **future** (and ideally past a governance
+  **minimum-delay** floor, `backstopEligibleAfter >= block.timestamp + minBackstopDelay`)
+  — otherwise a borrower could set it in the past / at creation and make the
+  treasury backstop a **first-choice** lender rather than an unmatched-after-deadline
+  fallback. `expiresAt` must be set (a GTC offer with `expiresAt == 0` cannot be
+  backstop-eligible). Pre-live, so the struct change is cheap; ABI + deploy-sanity follow.
 
 ### 4.2 Fill path — the backstop intent MUST be self-only
 
@@ -168,23 +178,42 @@ collateral slice:
 - **Gate:** loan `FallbackPending`, `FallbackSnapshot.active`, `msg.sender` is the
   current lender-position NFT owner (so it preserves the cure window exactly as the
   normal claim does — the borrower can still cure until the lender chooses to act).
+- **Internal-match-first (Codex #629 r2 P2):** the normal `claimAsLender` path first
+  attempts **claim-time internal-match auto-dispatch + swap retry** (the #585/#591
+  machinery) and only falls back to the recorded collateral split if those fail.
+  `claimAsLenderViaBackstop` MUST run that **same resolution path first** and engage
+  the backstop cash-buyout **only when it fails** — otherwise treasury would spend
+  backstop cash + warehouse collateral on a loan the existing machinery could have
+  closed at full value with no backstop capital. The backstop is the *last* resort.
 - **Lender payout = the claim, in cash:** the backstop pays the lender
-  `FallbackSnapshot.lenderPrincipalDue` in the **principal asset**; the lender's
-  claim is satisfied. Better for the lender than holding illiquid collateral.
+  `FallbackSnapshot.lenderPrincipalDue` in the **principal asset** from the §3
+  **absorb-cash bucket** (never the liened origination capital); the lender's claim
+  is satisfied. Better for the lender than holding illiquid collateral.
 - **Explicit share settlement (Codex #629 P1):** the backstop takes **only the
   `lenderCollateral` slice**. `treasuryCollateral` and `borrowerCollateral` route
   through the **normal `ClaimFacet` split unchanged** — they are not swept into the
   backstop. Per-loan traceability + the treasury/borrower entitlements survive.
-- **Top-up safety (Codex #629 / encumbrance arc #585/#591):** a `FallbackPending`
-  loan that received a borrower `addCollateral` top-up (tracked by
-  `LibVaipakam.hasActiveFallbackTopUp`) is **excluded** from `claimAsLenderViaBackstop`
-  in v0 — the top-up custody split is unwind-sensitive; the lender uses the normal
-  claim there. (Matches how the internal-match path excludes topped-up FallbackPending.)
-- **Shortfall rule (Codex #629 P1):** let `cover = oracleValue(lenderCollateral) ×
-  (1 − safetyMarginBps)`. If `cover < lenderPrincipalDue` (an **underwater** fallback),
-  **revert** `BackstopUndercollateralized` — the backstop never overpays and treasury
-  eats no shortfall in v0; the lender falls back to the normal in-kind claim. (A
-  treasury-budgeted shortfall absorber is a deliberate later decision, not v0.)
+- **Top-up handling (Codex #629 P1 / encumbrance arc #585/#591):** a `FallbackPending`
+  loan that received a borrower `addCollateral` top-up has that top-up liened in the
+  **borrower vault** (NOT in the Diamond-held `FallbackSnapshot`). In v0 such a loan
+  (detected via `LibVaipakam.hasActiveFallbackTopUp`) is **excluded** from
+  `claimAsLenderViaBackstop` and routed to the **normal claim**, whose existing
+  release path already folds the borrower-vault top-up back to the borrower before
+  close (the encumbrance-arc unwind). The backstop must not finalize such a loan
+  itself — that is what would strand/mis-release the lien.
+- **Shortfall rule (corrected — Codex #629 r1+r2 P1):** `lenderCollateral` is itself
+  the oracle-priced collateral equivalent of `lenderPrincipalDue`, so a `(1 −
+  margin)` haircut on that *same slice* would make `cover < lenderPrincipalDue`
+  **always** and revert every absorb. There is no surplus collateral in the lender
+  slice to haircut against (the surplus, if any, is the borrower's). So v0 takes the
+  lender slice **at par**: pay `lenderPrincipalDue`, take `lenderCollateral`; **guard
+  `oracleValue(lenderCollateral) >= lenderPrincipalDue`**, else **revert**
+  `BackstopUndercollateralized` (the underwater / oracle-failure case where the
+  lender slice is worth less than the due — the lender uses the normal in-kind claim
+  instead). **No per-claim payout haircut in v0.** The backstop's risk buffer is the
+  per-asset `backstopAbsorbCap` + the conservative curated-asset set (§5b), not a
+  payout discount; it knowingly bears the post-acquisition price risk on warehoused
+  collateral, bounded by that cap.
 - Finalizes the loan via the lender-claim path's existing terminal transition
   (`FallbackPending` → `Defaulted`/`Settled`), consuming only the lender slice.
 
@@ -196,9 +225,10 @@ not track it (there is no `intentOrigin` release path for an absorbed third-part
 loan). A naive per-call check against the origination cap would let repeated absorbs
 **drain all seeded cash**. So v0 adds a dedicated, per-(principal,collateral)
 **`backstopAbsorbExposure` counter**:
-- **incremented** by `lenderPrincipalDue` (cash out) on each `claimAsLenderViaBackstop`;
+- **incremented** by `lenderPrincipalDue` (the cash debited from the §3
+  **absorb-cash bucket**) on each `claimAsLenderViaBackstop`;
 - **capped** by a governance per-asset `backstopAbsorbCap` (distinct from the Role-A
-  origination `maxExposure`);
+  origination `maxExposure`) — and bounded hard by the absorb-cash bucket balance;
 - **released** when the absorbed collateral is later liquidated/withdrawn to treasury
   (the cash comes back), mirroring how live-principal releases on loan close.
 
@@ -261,8 +291,9 @@ adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
 - Per-asset, Role A (origination): capacity cap (= intent `maxExposure`), posted
   min rate (= `minRateBps`), conservative init-LTV ceiling (= `maxInitLtvBps`).
 - Per-asset, Role B (absorb): `backstopAbsorbCap` (distinct from the origination
-  cap; bounds the §5.1 `backstopAbsorbExposure` counter) + `absorbSafetyMarginBps`
-  (the §5 haircut on collateral the backstop accepts).
+  cap; bounds the §5.1 `backstopAbsorbExposure` counter) + the per-asset
+  absorb-cash bucket balance. (No per-claim payout haircut in v0 — see §5; the
+  lender slice is taken at par with an `oracleValue >= due` guard.)
 - Asymmetric: **raise a cap = timelocked + guardian-revocable; lower a cap / pause =
   instant.** Seed / withdraw = ADMIN/timelock.
 
@@ -326,10 +357,19 @@ tranche + slashing/first-loss accounting are a **separate doc + audit**.
   closing the open-`matchIntent` bypass.
 - **Role B is lender-initiated** via `claimAsLenderViaBackstop` (not a permissionless
   grace trigger) — preserves the cure window + pays the current NFT owner.
-- **Absorb shortfall = revert** (`BackstopUndercollateralized`); the backstop never
-  overpays and treasury eats no shortfall in v0.
+- **Lender slice taken at par, guarded** — pay `lenderPrincipalDue`, take
+  `lenderCollateral` iff `oracleValue(lenderCollateral) >= lenderPrincipalDue`, else
+  revert `BackstopUndercollateralized`. **No per-claim payout haircut** (the lender
+  slice already equals the due in value — a haircut would invert and revert every
+  absorb); the backstop's buffer is the cap + curated assets.
+- **Two seed buckets** — liened origination capital (Role A) vs free absorb cash
+  (Role B); Role B never draws the liened bucket.
+- **Internal-match-first** — `claimAsLenderViaBackstop` runs the existing claim-time
+  internal-match + swap-retry resolution first; backstop cash-buyout only on failure.
 - **Separate `backstopAbsorbExposure` counter + cap** for Role B (origination
   `maxExposure` does not track cash-for-collateral absorbs).
+- **Topped-up FallbackPending excluded** from the backstop path → normal claim folds
+  the borrower-vault top-up.
 - **No auto-roll** — v0 sweeps proceeds to treasury via `backstopClaim` → idle →
   `withdrawBackstopToTreasury`.
 - **Single backstop vault** with per-asset intents (single principal — nothing to
@@ -339,7 +379,11 @@ tranche + slashing/first-loss accounting are a **separate doc + audit**.
 1. **Posted-rate reference** — v0 uses a governance-set per-asset min rate (intent
    `minRateBps`); a market-derived rate (#392/#400) is a later enhancement (v0 needs
    no oracle for rate).
-2. **`absorbSafetyMarginBps` default** — the conservative haircut on absorbed
-   collateral; pick a starting value (e.g. 5–10%) at impl time, range-bounded.
+2. **`minBackstopDelay` floor** — the governance minimum for how long an offer must
+   sit before `backstopEligibleAfter` can fire (so the backstop stays a genuine
+   fallback, not a fast first-choice); pick a starting value at impl time.
 3. **Treasury-budgeted shortfall absorber** — deliberately deferred past v0 (today an
-   underwater fallback simply isn't backstop-absorbable); revisit with the v1 tranche.
+   underwater fallback simply isn't backstop-absorbable; the lender uses the normal
+   in-kind claim); revisit with the v1 LP tranche. There is **no per-claim payout
+   haircut** in v0 — the backstop takes the lender slice at par with the
+   `oracleValue >= due` guard.
