@@ -107,6 +107,11 @@ iff ALL hold on-chain:
    letting a dust lender grief a borrower who opted into last-resort liquidity
    (Codex #629 P2). The backstop fills the **remaining** unfilled slice. (AON offers
    reduce to the same check — full amount or nothing.)
+6. **`!offer.accepted`** — the offer is not terminal (Codex #629 r4 P2). Direct
+   accepts leave `amountFilled == 0`, so the remainder check alone would mis-classify
+   an already-accepted offer as eligible and only fail later inside
+   `matchIntent`/`previewMatch` with `OfferAccepted`. Check the terminal flag in the
+   on-chain trigger itself.
 
 ### 4.1 New opt-in Offer field `backstopEligibleAfter`
 
@@ -124,6 +129,13 @@ Set at offer creation in `OfferCreateFacet`:
   Only the floor's *value* is governance-tunable. `expiresAt` must be set (a GTC
   offer with `expiresAt == 0` cannot be backstop-eligible). Pre-live, so the struct
   change is cheap; ABI + deploy-sanity follow.
+- **Intent-fillability terms validated at opt-in (Codex #629 r4 P2):** backstop
+  fills route through `matchIntent`, which rejects borrower offers that don't set
+  `useFullTermInterest == true` or that set `allowsPartialRepay == true`. So the
+  opt-in validation also requires `useFullTermInterest == true && allowsPartialRepay
+  == false` — otherwise a borrower could opt an offer into the backstop that can
+  *never* be backstop-filled, failing only after the last-resort deadline. Fail at
+  creation instead.
 
 ### 4.2 Fill path — the backstop intent MUST be self-only
 
@@ -203,12 +215,16 @@ backstop cash even when a fresh swap route exists.
   **backstop-specific resolver** routes `treasuryCollateral`/`borrowerCollateral`
   **normally**, transfers **only the lender slice** to the backstop, and marks the
   lender claim **cash-satisfied**.
-- **Lender payout = the full claim, in cash (Codex #629 r3 P1):** the backstop pays
-  the lender `lenderPrincipalDue` **plus any accumulated `heldForLender`** (principal-
-  asset proceeds a *prior partial* internal-match rescue credited to the lender — the
-  normal claim pays this accumulator too; omitting it underpays the current NFT owner
-  and strands the prior proceeds). All from the §3 **absorb-cash bucket** (never the
-  liened origination capital).
+- **Lender payout — backstop cash covers ONLY `lenderPrincipalDue` (Codex #629 r4
+  P1):** the backstop pays the unresolved fallback principal due from the §3
+  **absorb-cash bucket** (never the liened origination capital). Any accumulated
+  **`heldForLender`** (principal-asset proceeds from a *prior partial* internal-match
+  rescue) is **already deposited/reserved in `loan.lender`'s vault** — it is NOT new
+  backstop exposure, so it is released/withdrawn to the current NFT owner through the
+  **normal claim mechanics**, not paid again from treasury. Paying it from the
+  absorb bucket would overpay treasury, strand the existing reservation, and bypass
+  the §5.1 cap (which increments only by `lenderPrincipalDue`). So: backstop cash =
+  `lenderPrincipalDue`; `heldForLender` = its existing vault balance, normal release.
 - **Explicit share settlement (Codex #629 P1):** the backstop takes **only the
   `lenderCollateral` slice**. `treasuryCollateral` and `borrowerCollateral` route
   through the **normal `ClaimFacet` split unchanged** — they are not swept into the
@@ -310,7 +326,11 @@ adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
 
 ## 6. Governance — timelock-asymmetric (#393 §4)
 
-- `backstopEnabled` — master kill-switch, **default OFF**; both roles gated. (Same
+- **Three kill-switches, all default OFF (Codex #629 r4 P2 — split per role):**
+  `backstopEnabled` (master pause, both roles), `backstopFillEnabled` (Role A only),
+  `backstopAbsorbEnabled` (Role B only). The two role gates let PR 2's much-riskier
+  cash-buyout be staged/paused independently of the already-shipped PR 1 auto-fill —
+  an absorb incident must not force disabling Role A, and vice-versa. (Same flag
   shape as the existing `lenderIntentEnabled` / range-order flags in `ProtocolConfig`.)
 - Per-asset, Role A (origination): capacity cap (= intent `maxExposure`), posted
   min rate (= `minRateBps`), conservative init-LTV ceiling (= `maxInitLtvBps`).
@@ -320,6 +340,17 @@ adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
   lender slice is taken at par with an `oracleValue >= due` guard.)
 - Asymmetric: **raise a cap = timelocked + guardian-revocable; lower a cap / pause =
   instant.** Seed / withdraw = ADMIN/timelock.
+
+**Governance mutations run AS the backstop principal (Codex #629 r4 P1).**
+`LenderIntentFacet.setLenderIntent` / `fundLenderIntent` /
+`withdrawLenderIntentCapital` key to `msg.sender`, so a Diamond admin facet calling
+them directly would mutate the *admin's* intent, not the backstop's — leaving the
+backstop intent inactive/stuck. So all intent mutations (set caps/rate, seed, withdraw
+idle) are **owner-only forwarders ON the `BackstopVault`** that call those functions
+**as the vault** (exactly how `AggregatorAdapterImplementation` registers its own
+intent in `initialize`). The Diamond-side governance surface calls the vault
+forwarders (owner = Diamond); it never calls `LenderIntentFacet` for the backstop
+principal itself.
 
 ## 7. Ethos compliance
 
