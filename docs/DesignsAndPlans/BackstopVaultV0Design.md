@@ -48,8 +48,8 @@ not keeper/depositor discretion).**
 
 | Layer | Cardinality | Holds | Reuses |
 | --- | --- | --- | --- |
-| `BackstopAdminFacet` (or fold into `AdminFacet`) | one Diamond facet | seed/withdraw + per-asset caps + posted rate + `backstopEnabled` kill-switch + the backstop registry | governance pattern (#393 §4) |
-| `BackstopVaultImplementation` | one shared logic (UUPS, owner = Diamond) | the code | adapter shape (minus ERC-4626) |
+| `BackstopAdminFacet` (or fold into `AdminFacet`) | one Diamond facet | seed/withdraw + per-asset caps + posted rate + the **three** kill-switches (`backstopEnabled` master + `backstopFillEnabled` + `backstopAbsorbEnabled`, §6) + the backstop registry; calls the vault's owner-only forwarders | governance pattern (#393 §4) |
+| `BackstopVaultImplementation` | one shared logic (UUPS, owner = Diamond) | the code; **`onERC721Received`** (accepts the Diamond's lender-position mint, rejects foreign transfers — `matchIntent` `_safeMint`s the position NFT to the backstop, so without it every Role-A fill reverts, exactly as the adapter needed) | adapter shape (minus ERC-4626) |
 | Backstop `ERC1967Proxy` | **one** (single protocol principal) | treasury-seeded capital, transiently; per-asset-pair `LenderIntent`s | `VaultFactoryFacet` (its own vault), `LenderIntentFacet` |
 | per-user vault | one for the backstop | the backstop's idle/proceeds custody | already UUPS |
 | `LenderIntent` | one per asset-pair | the curated standing-supply bounds | Diamond storage |
@@ -170,12 +170,15 @@ the §4 trigger, then calls `matchIntent` as the intent owner, originating a loa
 **not** recover a resolved loan's principal/interest, which (like any lender) must
 be claimed first. So the backstop needs the adapter's `claimAndCompound`-style path:
 - `backstopClaim(loanId, retryCalls)` — keeper/governance: `claimAsLenderWithRetry`
-  as the backstop (the backstop holds its own lender-position NFT, so it is the
-  current owner), landing proceeds in the backstop vault, then re-funds idle (so the
-  capital is withdrawable to treasury). **No auto-roll in v0** — the backstop is a
-  last resort, not a yield engine; proceeds flow idle → `withdrawBackstopToTreasury`.
-- A raw-balance `sweepToPrincipal(token)` (→ treasury) for any in-kind / non-underlying
-  residue, mirroring the adapter.
+  as the backstop (it holds its own lender-position NFT, so it is the current owner).
+  The normal claim withdraws lender proceeds to **`msg.sender` as a RAW token
+  balance** (ClaimFacet.sol:365-375), NOT into the backstop's per-user vault — so
+  `backstopClaim` must measure the raw balance delta (as the adapter's
+  `claimAndCompound` does), then `sweepToPrincipal` it to treasury. **No auto-roll in
+  v0** — the backstop is a last resort, not a yield engine; claimed proceeds flow
+  raw-balance → treasury directly (no re-lien).
+- A raw-balance `sweepToPrincipal(token)` (→ treasury) for those claimed proceeds and
+  any in-kind / non-underlying residue, mirroring the adapter.
 
 ## 5. Role B — liquidator-of-last-resort (PR 2)
 
@@ -342,15 +345,19 @@ adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
   instant.** Seed / withdraw = ADMIN/timelock.
 
 **Governance mutations run AS the backstop principal (Codex #629 r4 P1).**
-`LenderIntentFacet.setLenderIntent` / `fundLenderIntent` /
-`withdrawLenderIntentCapital` key to `msg.sender`, so a Diamond admin facet calling
-them directly would mutate the *admin's* intent, not the backstop's — leaving the
-backstop intent inactive/stuck. So all intent mutations (set caps/rate, seed, withdraw
-idle) are **owner-only forwarders ON the `BackstopVault`** that call those functions
-**as the vault** (exactly how `AggregatorAdapterImplementation` registers its own
-intent in `initialize`). The Diamond-side governance surface calls the vault
+`LenderIntentFacet.setLenderIntent` / `withdrawLenderIntentCapital` key to
+`msg.sender`, so a Diamond admin facet calling them directly would mutate the
+*admin's* intent, not the backstop's — leaving the backstop intent inactive/stuck.
+So `setLenderIntent` (caps/rate — no token movement) and `withdrawLenderIntentCapital`
+(idle → treasury) are **owner-only forwarders ON the `BackstopVault`** that call those
+functions **as the vault** (exactly how `AggregatorAdapterImplementation` registers
+its own intent in `initialize`). The Diamond-side governance surface calls the vault
 forwarders (owner = Diamond); it never calls `LenderIntentFacet` for the backstop
-principal itself.
+principal itself. **Seeding is NOT one of these forwarders (Codex #629 r5 P1):** it
+must use the §3 dedicated treasury-seed primitive (debit `treasuryBalances` → transfer
+into the vault → `recordVaultDepositERC20` → lien), **never `fundLenderIntent`**,
+which would wallet-pull from the BackstopVault (no balance/allowance) instead of
+liening the already-recorded vault balance.
 
 ## 7. Ethos compliance
 
@@ -366,12 +373,15 @@ principal itself.
 ## 8. New vs. reused (minimise surface)
 
 - **NEW:** `BackstopVaultImplementation` (adapter-shaped, no ERC-4626) with
-  `backstopFill` + `backstopClaim` + `sweepToPrincipal`; the backstop admin/governance
-  surface (seed/withdraw + origination caps + absorb cap/margin + posted rate +
-  `backstopEnabled`); `Offer.backstopEligibleAfter` + its validation; the
-  `claimAsLenderViaBackstop` claim variant in `ClaimFacet` (current-NFT-owner gated,
-  cash-for-lender-slice, explicit share settlement, shortfall revert, top-up
-  exclusion); the §5.1 `backstopAbsorbExposure` counter + cap.
+  `onERC721Received` (accept Diamond mint, reject foreign), `backstopFill`,
+  `backstopClaim`, `sweepToPrincipal`, and the owner-only intent forwarders; the
+  backstop admin/governance surface (seed via the §3 treasury primitive / withdraw +
+  origination caps + absorb cap + posted rate + the three kill-switches — **no
+  absorb-margin knob**, §5); `Offer.backstopEligibleAfter` + its validation; the
+  `claimAsLenderViaBackstop` claim variant in `ClaimFacet` (current-NFT-owner +
+  sanctions gate, resolution-first, cash = `lenderPrincipalDue` only, explicit share
+  settlement, par-with-`oracleValue>=due`, top-up exclusion); the §5.1
+  `backstopAbsorbExposure` counter + cap + its **release-on-realized-cash** path.
 - **REUSED:** `VaultFactoryFacet` (vault), `LenderIntentFacet` (intents,
   **self-only** for the backstop), `OfferMatchFacet.matchIntent` (origination via the
   self-branch), `FallbackSnapshot` + the `claimAsLender` ownership/terminal machinery,
@@ -381,20 +391,24 @@ principal itself.
 ## 9. PR split (two sequential PRs)
 
 - **PR 1 — auto-counterparty:** `BackstopVaultImplementation` (self-only intent +
-  `backstopFill` + `backstopClaim` + `sweepToPrincipal`) + provisioning/governance
-  (seed, origination caps, posted rate, `backstopEnabled`) + `Offer.backstopEligibleAfter`
-  field + validation + the unfilled-remainder/expiry trigger + deploy-sanity + ABI +
-  tests. Codex full security-critical (fund-holding, HIGH).
-- **PR 2 — liquidator-of-last-resort:** the `claimAsLenderViaBackstop(loanId,
-  retryCalls)` claim variant (current-NFT-owner gated + sanctions, resolution-first
-  with a backstop-specific failure branch, cash = `lenderPrincipalDue + heldForLender`
-  from the absorb-cash bucket, par-with-`oracleValue>=due`-guard, explicit share
-  settlement, top-up exclusion) + `seedBackstopAbsorb` + the `backstopAbsorbExposure`
-  counter/cap (released on realized cash) + tests. Codex full security-critical.
+  `onERC721Received` + `backstopFill` + `backstopClaim` + `sweepToPrincipal` +
+  owner-only intent forwarders) + provisioning/governance (seed via the §3 treasury
+  primitive, origination caps, posted rate, `backstopEnabled` + `backstopFillEnabled`)
+  + `Offer.backstopEligibleAfter` field + validation + the `!accepted`/unfilled-
+  remainder/expiry trigger + a test that a backstop loan mints and later claims its
+  lender NFT + deploy-sanity + ABI. Codex full security-critical (fund-holding, HIGH).
+- **PR 2 — liquidator-of-last-resort:** `backstopAbsorbEnabled` gate + the
+  `claimAsLenderViaBackstop(loanId, retryCalls)` claim variant (current-NFT-owner +
+  sanctions gate, resolution-first with a backstop-specific failure branch, backstop
+  cash = `lenderPrincipalDue` ONLY — `heldForLender` is released by the normal claim
+  from its existing vault reservation, not re-paid — par-with-`oracleValue>=due`,
+  explicit share settlement, top-up exclusion) + `seedBackstopAbsorb` + the
+  `backstopAbsorbExposure` counter/cap + the **realized-cash sale/write-off release
+  entry point** that decrements it + tests. Codex full security-critical.
   (No `absorbSafetyMarginBps` — there is no per-claim payout haircut in v0.)
 
-Each is independently kill-switched and degrades gracefully (off ⇒ prior phase
-unaffected).
+Each role is independently kill-switched (master + per-role gates, §6) and degrades
+gracefully (off ⇒ prior phase unaffected).
 
 ## 10. Audit scope — HIGH (HybridIntentLayer §6)
 
