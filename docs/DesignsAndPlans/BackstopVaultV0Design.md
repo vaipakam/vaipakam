@@ -8,10 +8,12 @@ sequential PRs**:
 - **Role A — counterparty-of-last-resort:** auto-fill a still-valid-but-unmatched
   on-chain borrower offer past a dedicated on-chain deadline, within
   governance-curated bounds.
-- **Role B — liquidator-of-last-resort:** on a `FallbackPending` loan (keeper swap
-  failed), after the borrower cure window, absorb the custodied collateral at an
-  oracle-bounded price and make the lender whole — closing the position without a
-  DEX swap.
+- **Role B — liquidator-of-last-resort:** a **lender-initiated** cash buyout of a
+  `FallbackPending` loan (keeper swap failed) — the current lender-NFT owner claims
+  cash from the backstop instead of the illiquid collateral, after the existing
+  claim-time internal-match + swap-retry resolution fails. The borrower cure window
+  stays open until the lender chooses to claim (no grace-elapsed trigger). Closes
+  the position without a DEX swap.
 
 **Verdict basis:** [`Research-399-BackstopLiquidityVault.md`](Research-399-BackstopLiquidityVault.md)
 (ADOPT-adapted, money-market-insurance-module shape, segregation non-negotiable)
@@ -66,11 +68,18 @@ be **liened** intent capital), Role B pays cash for collateral (capital must be 
 **free, unencumbered** balance the backstop can `safeTransfer`). Seeding therefore
 splits into two buckets, both segregated in the backstop's own vault:
 
+**A dedicated treasury-seed primitive is required (Codex #629 r3 P1):** the existing
+`fundLenderIntent` pulls tokens from `msg.sender`'s **wallet** via `vaultDepositERC20`,
+whereas `treasuryBalances` are Diamond-held **accounting**. So seeding cannot route
+through the vanilla fund path. Each seed call must: **debit `treasuryBalances[lend]`
+→ transfer the ERC20 into the backstop's vault → `recordVaultDepositERC20` (create
+the tracked vault balance) →** then (origination only) lien it.
+
 - **Origination bucket** — `seedBackstopOrigination(lend, coll, amount)`
-  (ADMIN/timelock): `treasuryBalances[lend]` → BackstopVault →
-  `fundLenderIntent(lend, coll, amount)`. Liened as Role-A intent capital.
+  (ADMIN/timelock): debit treasury → backstop vault (recorded) → lien as Role-A
+  intent capital. (No wallet pull / allowance round-trip.)
 - **Absorb-cash bucket** — `seedBackstopAbsorb(lend, amount)` (ADMIN/timelock):
-  `treasuryBalances[lend]` → BackstopVault as a **free, un-liened** balance tracked
+  debit treasury → backstop vault (recorded) as a **free, un-liened** balance tracked
   per asset (`backstopAbsorbCash[lend]`). Role B (`claimAsLenderViaBackstop`) pays
   out of THIS bucket — it must never draw the liened origination capital (that would
   silently weaken Role-A funding/exposure guarantees), and the liened capital has no
@@ -106,13 +115,15 @@ sub-structing, per the viaIR stack lesson from the encumbrance arc / `reference_
 Set at offer creation in `OfferCreateFacet`:
 - `0` ⇒ not backstop-eligible (default; the offer is filled only by natural
   counterparties / the open path).
-- non-zero ⇒ validated `block.timestamp < backstopEligibleAfter < expiresAt`
-  (Codex #629 r2 P2). It must be in the **future** (and ideally past a governance
-  **minimum-delay** floor, `backstopEligibleAfter >= block.timestamp + minBackstopDelay`)
-  — otherwise a borrower could set it in the past / at creation and make the
-  treasury backstop a **first-choice** lender rather than an unmatched-after-deadline
-  fallback. `expiresAt` must be set (a GTC offer with `expiresAt == 0` cannot be
-  backstop-eligible). Pre-live, so the struct change is cheap; ABI + deploy-sanity follow.
+- non-zero ⇒ validated **`backstopEligibleAfter >= block.timestamp + minBackstopDelay`
+  AND `backstopEligibleAfter < expiresAt`** (Codex #629 r2/r3 P2). The
+  governance `minBackstopDelay` floor is **mandatory in the validation** (not merely
+  "in the future") — otherwise `backstopEligibleAfter = block.timestamp + 1` would
+  route a borrower to the treasury almost immediately, making the backstop a
+  **first-choice** lender rather than an unmatched-after-a-genuine-interval fallback.
+  Only the floor's *value* is governance-tunable. `expiresAt` must be set (a GTC
+  offer with `expiresAt == 0` cannot be backstop-eligible). Pre-live, so the struct
+  change is cheap; ABI + deploy-sanity follow.
 
 ### 4.2 Fill path — the backstop intent MUST be self-only
 
@@ -171,24 +182,33 @@ the *stale* `loan.lender` rather than the current lender-position NFT owner. Ins
 the backstop is a **standing cash bid** that only the **current lender-NFT owner**
 can hit, *through the existing claim path*:
 
-`claimAsLenderViaBackstop(loanId)` — a claim variant (current-NFT-owner-gated, reusing
-`claimAsLender`'s ownership check) where, instead of receiving the `lenderCollateral`
-**in kind**, the lender is paid **cash** from the backstop and the backstop takes that
-collateral slice:
+`claimAsLenderViaBackstop(loanId, retryCalls)` — a claim variant (current-NFT-owner
+gated, reusing `claimAsLender`'s ownership check) where, instead of receiving the
+`lenderCollateral` **in kind**, the lender is paid **cash** from the backstop and the
+backstop takes that collateral slice. It takes `retryCalls` (Codex #629 r3 P1) so the
+claim-time DEX-swap retry can run — an arg-less variant would skip the retry and burn
+backstop cash even when a fresh swap route exists.
 - **Gate:** loan `FallbackPending`, `FallbackSnapshot.active`, `msg.sender` is the
-  current lender-position NFT owner (so it preserves the cure window exactly as the
-  normal claim does — the borrower can still cure until the lender chooses to act).
-- **Internal-match-first (Codex #629 r2 P2):** the normal `claimAsLender` path first
-  attempts **claim-time internal-match auto-dispatch + swap retry** (the #585/#591
-  machinery) and only falls back to the recorded collateral split if those fail.
-  `claimAsLenderViaBackstop` MUST run that **same resolution path first** and engage
-  the backstop cash-buyout **only when it fails** — otherwise treasury would spend
-  backstop cash + warehouse collateral on a loan the existing machinery could have
-  closed at full value with no backstop capital. The backstop is the *last* resort.
-- **Lender payout = the claim, in cash:** the backstop pays the lender
-  `FallbackSnapshot.lenderPrincipalDue` in the **principal asset** from the §3
-  **absorb-cash bucket** (never the liened origination capital); the lender's claim
-  is satisfied. Better for the lender than holding illiquid collateral.
+  current lender-position NFT owner, **and `_assertNotSanctioned(msg.sender)`** (Codex
+  #629 r3 P1 — the normal claim runs this before any payout; without it a sanctioned
+  lender blocked from normal claims could take treasury cash via the backstop route).
+  Preserves the cure window exactly as the normal claim (borrower can cure until the
+  lender chooses to act).
+- **Resolution-first, then a BACKSTOP-SPECIFIC failure branch (Codex #629 r2/r3 P1):**
+  attempt the claim-time **internal-match auto-dispatch + swap retry** (with
+  `retryCalls`) first; if it resolves, done (no backstop capital spent). On failure,
+  do **NOT** run the vanilla fallback-distribution path — that immediately credits the
+  lender slice **in-kind** to `loan.lender`'s vault and clears `snap.active`, leaving
+  nothing for the backstop to buy while the lender keeps the collateral. Instead a
+  **backstop-specific resolver** routes `treasuryCollateral`/`borrowerCollateral`
+  **normally**, transfers **only the lender slice** to the backstop, and marks the
+  lender claim **cash-satisfied**.
+- **Lender payout = the full claim, in cash (Codex #629 r3 P1):** the backstop pays
+  the lender `lenderPrincipalDue` **plus any accumulated `heldForLender`** (principal-
+  asset proceeds a *prior partial* internal-match rescue credited to the lender — the
+  normal claim pays this accumulator too; omitting it underpays the current NFT owner
+  and strands the prior proceeds). All from the §3 **absorb-cash bucket** (never the
+  liened origination capital).
 - **Explicit share settlement (Codex #629 P1):** the backstop takes **only the
   `lenderCollateral` slice**. `treasuryCollateral` and `borrowerCollateral` route
   through the **normal `ClaimFacet` split unchanged** — they are not swept into the
@@ -229,8 +249,12 @@ loan). A naive per-call check against the origination cap would let repeated abs
   **absorb-cash bucket**) on each `claimAsLenderViaBackstop`;
 - **capped** by a governance per-asset `backstopAbsorbCap` (distinct from the Role-A
   origination `maxExposure`) — and bounded hard by the absorb-cash bucket balance;
-- **released** when the absorbed collateral is later liquidated/withdrawn to treasury
-  (the cash comes back), mirroring how live-principal releases on loan close.
+- **released only on REALIZED principal-asset return** (Codex #629 r3 P2) — when the
+  warehoused collateral is actually **sold back to cash** (or an explicit governance
+  write-off), NOT on a plain collateral transfer to treasury. Merely moving unsold
+  collateral to treasury does not replenish the absorb-cash bucket; releasing the
+  counter then would let governance reseed + keep absorbing while prior, still-unsold
+  collateral risk goes uncounted.
 
 Both roles gated by `backstopEnabled`.
 
@@ -330,10 +354,13 @@ adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
   (seed, origination caps, posted rate, `backstopEnabled`) + `Offer.backstopEligibleAfter`
   field + validation + the unfilled-remainder/expiry trigger + deploy-sanity + ABI +
   tests. Codex full security-critical (fund-holding, HIGH).
-- **PR 2 — liquidator-of-last-resort:** the `claimAsLenderViaBackstop` claim variant
-  (current-NFT-owner gated, cash-for-lender-slice, explicit share settlement,
-  shortfall revert, top-up exclusion) + the `backstopAbsorbExposure` counter + cap +
-  `absorbSafetyMarginBps` + tests. Codex full security-critical.
+- **PR 2 — liquidator-of-last-resort:** the `claimAsLenderViaBackstop(loanId,
+  retryCalls)` claim variant (current-NFT-owner gated + sanctions, resolution-first
+  with a backstop-specific failure branch, cash = `lenderPrincipalDue + heldForLender`
+  from the absorb-cash bucket, par-with-`oracleValue>=due`-guard, explicit share
+  settlement, top-up exclusion) + `seedBackstopAbsorb` + the `backstopAbsorbExposure`
+  counter/cap (released on realized cash) + tests. Codex full security-critical.
+  (No `absorbSafetyMarginBps` — there is no per-claim payout haircut in v0.)
 
 Each is independently kill-switched and degrades gracefully (off ⇒ prior phase
 unaffected).
