@@ -61,11 +61,12 @@ contract ReplaceStaleFacets is Script {
         // pre-T-068 diamond gets via the dedicated CCIP deploy/migration
         // path, not this one-off bytecode-refresh script.
 
-        // 7 cuts:
+        // 9 cuts:
         //   3 Replace (Offer / Oracle / VaultFactory bytecode refresh)
         //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](8);
+        //   1 Replace + 1 Add (OfferAcceptFacet — existing 4 selectors + 1 missing #627 KYC-value view)
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
         cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
         cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
@@ -74,12 +75,16 @@ contract ReplaceStaleFacets is Script {
         cuts[4] = _add(address(configFacet), _configFacetMissingSelectors());
         cuts[5] = _replace(address(oracleAdminFacet), _oracleAdminExistingSelectors());
         cuts[6] = _add(address(oracleAdminFacet), _oracleAdminMissingSelectors());
+        // #627 — Add the new public KYC-value view so the aggregator adapter's
+        // `matchLoan` can call it after an upgrade (a Replace would revert: not
+        // yet routed). Without this, `matchLoan` reverts in the Diamond fallback.
+        cuts[8] = _add(address(offerAcceptFacet), _offerAcceptMissingSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 5 facets replaced + 37 missing selectors added.");
+        console.log("DiamondCut applied: 5 facets replaced + 38 missing selectors added.");
     }
 
     function _add(address facet, bytes4[] memory selectors)
@@ -121,14 +126,31 @@ contract ReplaceStaleFacets is Script {
         s[3] = OfferCreateFacet.createOfferInternal.selector;
     }
 
+    /// @dev The OfferAccept selectors already routed on a live diamond (the
+    ///      original 3 + `previewAccept` from #196, all in
+    ///      `DeployDiamond._getOfferAcceptSelectors()`) — Replace them onto the
+    ///      fresh bytecode. The brand-new `calculateTransactionValueNumeraire`
+    ///      (#627) is NOT yet routed, so it goes in the sibling Add cut
+    ///      ({_offerAcceptMissingSelectors}) — a Replace of an unrouted selector
+    ///      would revert.
     function _offerAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        // Mirrors `DeployDiamond._getOfferAcceptSelectors()` in full —
-        // refresh the whole accept surface (Permit2 accept + the
-        // `matchOffers` internal entry), not just `acceptOffer`.
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
         s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
+        s[3] = OfferAcceptFacet.previewAccept.selector;
+    }
+
+    /// @dev #627 — OfferAccept selectors introduced after the live diamond was
+    ///      cut, so they need an Add (not a Replace). Currently just the public
+    ///      KYC-value view the aggregator adapter calls.
+    function _offerAcceptMissingSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {
