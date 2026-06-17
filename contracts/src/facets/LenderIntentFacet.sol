@@ -99,6 +99,14 @@ contract LenderIntentFacet is
     error LenderIntentNotActive();
     /// @notice A diamond-internal-only entry was called externally.
     error OnlyDiamondInternal();
+    /// @notice VPFI cannot be an intent's LENDING asset (#393 v1-d.1, Codex
+    ///         P2). VPFI's vaulted balance drives the fee-discount tier +
+    ///         staking rewards, which the generic vault chokepoints the intent
+    ///         fund / fill / withdraw paths use do NOT re-stamp
+    ///         (`LibVPFIDiscount.rollupUserDiscount`). Lending VPFI through an
+    ///         intent would silently drift that accounting, so it is rejected
+    ///         at the root (registration) — VPFI as COLLATERAL stays supported.
+    error LenderIntentVpfiLendingUnsupported();
 
     /// @notice Register or overwrite the caller's standing lending intent for an
     ///         ERC-20 asset-pair.
@@ -153,6 +161,16 @@ contract LenderIntentFacet is
         // so an intent advertised as active could never produce a loan.
         if (lendingAsset == collateralAsset) {
             revert LenderIntentSelfCollateralized();
+        }
+        // #393 v1-d.1 (Codex P2) — VPFI may not be the LENDING asset: its vault
+        // balance is load-bearing for the fee-discount tier + staking rewards,
+        // which the generic vault chokepoints used by the intent fund / fill /
+        // withdraw paths don't re-stamp. Reject at the root so no VPFI-lending
+        // intent can ever exist (fund / matchIntent / withdraw all require an
+        // active intent, so this single gate covers the whole lifecycle). VPFI
+        // as collateral is unaffected.
+        if (lendingAsset == LibVaipakam.storageSlot().vpfiToken) {
+            revert LenderIntentVpfiLendingUnsupported();
         }
         // #393 v1-c — `requiresKeeperAuth` is now honoured: a true intent is
         // fillable only by the lender or a solver they've authorized for
@@ -247,6 +265,16 @@ contract LenderIntentFacet is
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
             revert LenderIntentNotActive();
         }
+        // #393 v1-d.1 (Codex P2) — respect the per-asset pause on this on-ramp:
+        // a paused asset must take no NEW custody commitment (mirrors
+        // `createOffer`, which pauses-checks both legs). The exit
+        // (`withdrawLenderIntentCapital`) stays open during a pause so a lender
+        // can always wind down — same "block new, allow exit" posture as the
+        // sanctions Tier-1/Tier-2 split. (VPFI-as-lending is already impossible
+        // here: it's rejected at `setLenderIntent`, and fund requires an active
+        // intent.)
+        LibFacet.requireAssetNotPaused(lendingAsset);
+        LibFacet.requireAssetNotPaused(collateralAsset);
         // Pull wallet → vault via the protocol chokepoint (records the tracked
         // balance under the lender). Same on-ramp `createOffer` /
         // `depositVPFIToVault` use.

@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -169,6 +170,37 @@ contract LenderIntentFacetTest is SetupTest {
         LenderIntentFacet(address(diamond)).setLenderIntent(
             mockERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
             MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
+        );
+    }
+
+    function test_vpfiLendingAsset_reverts() public {
+        // #393 v1-d.1 (Codex P2) — VPFI as the LENDING asset is rejected at the
+        // root: its vault balance drives the fee-discount/staking accounting the
+        // intent fund/fill/withdraw chokepoints don't re-stamp. Configure VPFI
+        // as `mockERC20`, then a mockERC20-lending intent must revert.
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        vm.prank(user);
+        vm.expectRevert(LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
+        );
+    }
+
+    function test_vpfiCollateralAsset_allowed() public {
+        // VPFI as COLLATERAL is unaffected — only the lending leg is blocked.
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockCollateralERC20);
+        vm.prank(user);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockERC20, mockCollateralERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION_DAYS, MIN_FILL, false, true
+        );
+        assertTrue(
+            LenderIntentFacet(address(diamond))
+                .getLenderIntent(user, mockERC20, mockCollateralERC20).active,
+            "VPFI-collateral intent registers"
         );
     }
 

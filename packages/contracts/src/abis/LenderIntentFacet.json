@@ -470,6 +470,17 @@
   },
   {
     "type": "error",
+    "name": "AssetPaused",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "EncumbranceUnderflow",
     "inputs": [
       {
@@ -548,6 +559,11 @@
   {
     "type": "error",
     "name": "LenderIntentSelfCollateralized",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentVpfiLendingUnsupported",
     "inputs": []
   },
   {

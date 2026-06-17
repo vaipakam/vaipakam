@@ -10,6 +10,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -255,6 +256,56 @@ contract LenderIntentCapitalTest is SetupTest {
             mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "residual withdrawable after cancel");
+    }
+
+    // ─── 3b. Per-asset pause — blocks the on-ramp, NOT the exit (#393 v1-d.1) ─
+
+    function test_fund_lendingAssetPaused_reverts() public {
+        _setIntent();
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockERC20);
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), PRINCIPAL);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(IVaipakamErrors.AssetPaused.selector, mockERC20)
+        );
+        LenderIntentFacet(address(diamond)).fundLenderIntent(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+    }
+
+    function test_fund_collateralAssetPaused_reverts() public {
+        _setIntent();
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockCollateralERC20);
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), PRINCIPAL);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.AssetPaused.selector, mockCollateralERC20
+            )
+        );
+        LenderIntentFacet(address(diamond)).fundLenderIntent(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+    }
+
+    /// @dev Exit stays OPEN during a pause: a lender must always be able to
+    ///      wind down standing capital (block-new / allow-exit posture).
+    function test_withdraw_notBlockedByAssetPause() public {
+        _setIntent();
+        _fund(PRINCIPAL); // fund BEFORE the pause
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockERC20);
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+        assertEq(_capital(), 0, "exit succeeds despite asset pause");
     }
 
     // ─── 4. matchIntent draws from the lien (under-funding reverts) ─────────
