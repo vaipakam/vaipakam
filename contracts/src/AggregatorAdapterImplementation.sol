@@ -9,6 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
+import {LibSwap} from "./libraries/LibSwap.sol";
 
 /**
  * @title  IVaipakamIntentSurface
@@ -60,6 +61,11 @@ interface IVaipakamIntentSurface {
     function isSanctionedAddress(address who) external view returns (bool);
 
     function claimAsLender(uint256 loanId) external;
+
+    function claimAsLenderWithRetry(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata retryCalls
+    ) external;
 
     function matchIntent(
         address lender,
@@ -401,6 +407,12 @@ contract AggregatorAdapterImplementation is
         ) {
             revert WithdrawNotPrincipal();
         }
+        // #626 round-3 P1 — funds-OUT to a sanctioned principal is a Tier-1
+        // violation (same as `claimAsLender`). The Diamond-side
+        // `withdrawLenderIntentCapital` gate only sees the clean adapter, so
+        // screen the REAL principal here. Funds stay locked (not released to an
+        // OFAC-listed wallet) until the screen clears.
+        _screenPrincipal();
         IVaipakamIntentSurface(diamond).withdrawLenderIntentCapital(
             asset(),
             collateralAsset,
@@ -495,36 +507,54 @@ contract AggregatorAdapterImplementation is
         emit IntentWoundDown(authorizedPrincipal);
     }
 
-    /// @notice Claim a RESOLVED-but-non-rollable adapter loan's proceeds back
-    ///         into the adapter and best-effort re-fund them into the intent so
-    ///         they re-enter idle (and thus NAV + redeemable value).
-    /// @dev    #626 round-1 P1 + round-2 P1. `rollIntentLoan` only handles clean
-    ///         repaid loans; a default / fallback / paused-asset / cancelled-
-    ///         intent loan settles via the normal lender claim, whose proceeds
-    ///         are owed to the lender-NFT owner — this adapter. The claim ALWAYS
-    ///         executes (recovering value to the adapter); the re-fund is
-    ///         best-effort (`try`/`catch`) because `fundLenderIntent` reverts
-    ///         when the intent is wound down or an asset is paused — in that case
-    ///         the proceeds stay in the adapter, recoverable by the principal via
-    ///         {sweepToPrincipal}. Permissionless: recovery only ever benefits
-    ///         this adapter's own intent.
-    function claimAndCompound(uint256 loanId) external {
+    /// @notice Keeper/principal: claim a RESOLVED-but-non-rollable adapter loan's
+    ///         proceeds back into the adapter and best-effort re-fund them into
+    ///         the intent so they re-enter idle (and thus NAV + redeemable value).
+    /// @dev    #626 rounds 1-3. `rollIntentLoan` only handles clean repaid loans;
+    ///         a default / fallback / paused-asset / cancelled-intent loan settles
+    ///         via the normal lender claim, whose proceeds are owed to the
+    ///         lender-NFT owner — this adapter.
+    ///         - round-3 P1: gated to keeper/principal (NOT permissionless) and
+    ///           takes `retryCalls` → uses `claimAsLenderWithRetry`. A
+    ///           `FallbackPending` loan with an EMPTY retry list finalizes the
+    ///           fallback distribution, forfeiting a viable swap-retry recovery;
+    ///           letting the keeper supply retry calls (and barring randoms from
+    ///           force-finalizing) preserves it. Pass an empty array for a clean
+    ///           Repaid/Defaulted claim.
+    ///         - round-3 P2 + round-1/2: the re-fund is gated by the SAME checks
+    ///           as `rollLoan` (real-principal sanctions + mandatory-floor) AND
+    ///           best-effort (`try`/`catch` for wound-down / paused). If any
+    ///           gate is closed the proceeds stay in the adapter, recoverable by
+    ///           the principal via {sweepToPrincipal}. The claim itself ALWAYS
+    ///           executes (recovery is never blocked).
+    function claimAndCompound(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata retryCalls
+    ) external {
+        _onlyKeeperOrPrincipal();
         address lend = asset();
         uint256 before = IERC20(lend).balanceOf(address(this));
-        IVaipakamIntentSurface(diamond).claimAsLender(loanId);
+        IVaipakamIntentSurface(diamond).claimAsLenderWithRetry(loanId, retryCalls);
         uint256 recovered = IERC20(lend).balanceOf(address(this)) - before;
         if (recovered > 0) {
-            IERC20(lend).forceApprove(diamond, recovered);
-            // Best-effort re-fund — skipped (proceeds stay sweepable) if the
-            // intent is wound down / an asset is paused.
-            try
-                IVaipakamIntentSurface(diamond).fundLenderIntent(
-                    lend,
-                    collateralAsset,
-                    recovered
-                )
-            {} catch {
-                IERC20(lend).forceApprove(diamond, 0); // clear the dangling approval
+            // Re-commit is new lending — apply the SAME gates as `rollLoan`
+            // (real-principal sanctions + mandatory-floor). If either is closed,
+            // or the intent is wound down / asset paused, skip the re-fund and
+            // leave the proceeds sweepable by the principal.
+            bool gatesOpen = !IVaipakamIntentSurface(diamond)
+                .isSanctionedAddress(authorizedPrincipal) &&
+                !_belowMandatoryFloor();
+            if (gatesOpen) {
+                IERC20(lend).forceApprove(diamond, recovered);
+                try
+                    IVaipakamIntentSurface(diamond).fundLenderIntent(
+                        lend,
+                        collateralAsset,
+                        recovered
+                    )
+                {} catch {
+                    IERC20(lend).forceApprove(diamond, 0); // clear approval
+                }
             }
         }
         emit LoanClaimedAndCompounded(loanId, recovered);
@@ -539,6 +569,11 @@ contract AggregatorAdapterImplementation is
     ///         not counted in `totalAssets`, so no shareholder is diluted.
     function sweepToPrincipal(address token) external {
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
+        // #626 round-3 P1 — funds-OUT to the principal: screen it (Tier-1). The
+        // recovered value reached the adapter as the clean claimant, so the
+        // Diamond's funds-out gate never saw the real principal; block release
+        // to an OFAC-listed wallet here.
+        _screenPrincipal();
         uint256 bal = IERC20(token).balanceOf(address(this));
         if (bal > 0) IERC20(token).safeTransfer(authorizedPrincipal, bal);
     }

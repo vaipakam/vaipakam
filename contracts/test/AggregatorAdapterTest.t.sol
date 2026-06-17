@@ -15,6 +15,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {LibSwap} from "../src/libraries/LibSwap.sol";
 
 /**
  * @title  AggregatorAdapterTest
@@ -326,6 +327,29 @@ contract AggregatorAdapterTest is SetupTest {
                 .currentAggregatorAdapterVersion(),
             "adapter migrated to current version"
         );
+    }
+
+    /// @dev #626 round-3 P1 — keeper/principal claims a resolved loan's proceeds
+    ///      back into the adapter (empty retry list for a clean Repaid loan) and
+    ///      re-funds them into idle.
+    function test_claimAndCompound_recoversAndReFunds() public {
+        _deposit(DEPOSIT);
+        uint256 fill = 500 ether;
+        uint256 loanId = _match(fill);
+        address borrower =
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower;
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        // Recover via claimAndCompound (keeper) instead of rollLoan.
+        vm.prank(keeper);
+        adapter.claimAndCompound(loanId, new LibSwap.AdapterCall[](0));
+        assertGt(_idle(), DEPOSIT, "recovered proceeds compounded into idle");
+        // Unauthorized caller is rejected.
+        vm.prank(makeAddr("rando"));
+        vm.expectRevert(
+            AggregatorAdapterImplementation.NotKeeperOrPrincipal.selector
+        );
+        adapter.claimAndCompound(loanId, new LibSwap.AdapterCall[](0));
     }
 
     // ─── 8b. Round-2 gates ──────────────────────────────────────────────────────

@@ -118,6 +118,23 @@
         "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "retryCalls",
+        "type": "tuple[]",
+        "internalType": "struct LibSwap.AdapterCall[]",
+        "components": [
+          {
+            "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "data",
+            "type": "bytes",
+            "internalType": "bytes"
+          }
+        ]
       }
     ],
     "outputs": [],
