@@ -26,6 +26,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -83,6 +84,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -236,6 +238,8 @@ contract SetupTest is Test {
     SignedOfferFacet signedOfferFacet;
     // #393 v1 — LenderIntentVault standing-terms surface.
     LenderIntentFacet lenderIntentFacet;
+    // #398 v1.5 — per-aggregator ERC-4626 adapter factory.
+    AggregatorAdapterFactoryFacet aggregatorAdapterFactoryFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -334,6 +338,7 @@ contract SetupTest is Test {
         encumbranceMutateFacet = new EncumbranceMutateFacet();
         signedOfferFacet = new SignedOfferFacet();
         lenderIntentFacet = new LenderIntentFacet();
+        aggregatorAdapterFactoryFacet = new AggregatorAdapterFactoryFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -397,7 +402,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](56);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](57);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -728,6 +733,12 @@ contract SetupTest is Test {
             facetAddress: address(lenderIntentFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getLenderIntentFacetSelectors()
+        });
+        // #398 v1.5 — per-aggregator ERC-4626 adapter factory.
+        cuts[56] = IDiamondCut.FacetCut({
+            facetAddress: address(aggregatorAdapterFactoryFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getAggregatorAdapterFactoryFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

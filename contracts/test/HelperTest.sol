@@ -32,6 +32,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -522,7 +523,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -557,6 +558,8 @@ contract HelperTest {
         selectors[25] = VaultFactoryFacet.recoveryAckTextHash.selector;
         selectors[26] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[27] = VaultFactoryFacet.vaultBannedSource.selector;
+        // #398 — adapter `_withdrawalsBlocked()` reads the vault-upgrade floor.
+        selectors[28] = VaultFactoryFacet.getVaultVersionInfo.selector;
         return selectors;
     }
 
@@ -731,6 +734,25 @@ contract HelperTest {
         selectors[8] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
         selectors[9] = LenderIntentFacet.getLenderIntentCapital.selector;
         selectors[10] = LenderIntentFacet.rollIntentLoan.selector;
+    }
+
+    function getAggregatorAdapterFactoryFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](11);
+        selectors[0] = AggregatorAdapterFactoryFacet.initializeAdapterImplementation.selector;
+        selectors[1] = AggregatorAdapterFactoryFacet.createAggregatorAdapter.selector;
+        selectors[2] = AggregatorAdapterFactoryFacet.upgradeAdapterImplementation.selector;
+        selectors[3] = AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter.selector;
+        selectors[4] = AggregatorAdapterFactoryFacet.setMandatoryAdapterUpgrade.selector;
+        selectors[5] = AggregatorAdapterFactoryFacet.setAggregatorHaircutBps.selector;
+        selectors[6] = AggregatorAdapterFactoryFacet.aggregatorAdapterTemplate.selector;
+        selectors[7] = AggregatorAdapterFactoryFacet.currentAggregatorAdapterVersion.selector;
+        selectors[8] = AggregatorAdapterFactoryFacet.mandatoryAggregatorAdapterVersion.selector;
+        selectors[9] = AggregatorAdapterFactoryFacet.getAggregatorAdapterVersion.selector;
+        selectors[10] = AggregatorAdapterFactoryFacet.isAggregatorAdapter.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -1499,7 +1521,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1532,6 +1554,7 @@ contract HelperTest {
         selectors[27] = VaultFactoryFacet.recoveryAckTextHash.selector;
         selectors[28] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[29] = VaultFactoryFacet.vaultBannedSource.selector;
+        selectors[30] = VaultFactoryFacet.getVaultVersionInfo.selector;
         return selectors;
     }
 
