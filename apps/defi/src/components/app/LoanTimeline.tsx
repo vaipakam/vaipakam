@@ -67,6 +67,7 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   LiquidationFallback: 'loanTimeline.liquidationFallback',
   LiquidationFallbackSplit: 'loanTimeline.liquidationFallbackSplit',
   LoanSettled: 'loanTimeline.loanSettled',
+  IntentLoanRolled: 'loanTimeline.intentLoanRolled',
   PartialRepaid: 'loanTimeline.partialRepaid',
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   SwapToRepayExecuted: 'loanTimeline.swapToRepayExecuted',
@@ -108,6 +109,7 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   LiquidationFallback: 'warn',
   LiquidationFallbackSplit: 'warn',
   LoanSettled: 'success',
+  IntentLoanRolled: 'success',
   PartialRepaid: 'info',
   // T-090 Sub 3 — full close → success (terminal Repaid); partial →
   // info (loan stays Active).
@@ -134,6 +136,8 @@ function iconForKind(kind: ActivityEventKind) {
     case 'LoanRepaid':
     case 'PartialRepaid':
     case 'LoanSettled':
+    // #393 v1-d.2 — auto-roll is a lender-side close; share the settle icon.
+    case 'IntentLoanRolled':
     // T-090 Sub 3 — swap-to-repay uses the same checkmark as the
     // canonical repay paths.
     case 'SwapToRepayExecuted':

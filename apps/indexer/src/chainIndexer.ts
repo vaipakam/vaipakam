@@ -2882,6 +2882,17 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
+    case 'IntentLoanRolled':
+      // #393 v1-d.2 auto-roll. When the borrower hasn't claimed yet the loan
+      // stays Repaid, so this is the only signal the lender side closed (the
+      // proceeds were re-liened into the owner's intent capital and the lender
+      // NFT burned). Actor = the intent owner whose loan rolled, so it surfaces
+      // on `/activity?actor=<wallet>`.
+      return {
+        actor: (args.owner as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
     case 'InternalMatchExecuted':
       // Indexed leg A as the canonical loanId for the activity
       // event row (the dashboard's loan-timeline query keys on

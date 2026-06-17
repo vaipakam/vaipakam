@@ -559,6 +559,25 @@ contract LenderIntentFacet is
         }
         uint256 rolledAmount = claim.amount; // compound: principal + interest
 
+        // #623 Codex round-2 P2 — assert the proceeds are STILL FREE in the
+        // owner's vault before consuming the claim. They normally sit free (the
+        // repay deposit), but could be encumbered by a VPFI lender-proceeds
+        // RESERVATION (recorded per-loan at repay time if the asset was VPFI
+        // then — even if `vpfiToken` has since rotated away, so the live-token
+        // check above wouldn't catch it) OR already spent / encumbered via
+        // another vault-backed path (e.g. a vault-backed signed offer) before an
+        // authorized keeper rolls. If they're not free, reject to the normal
+        // claim path rather than mint UNBACKED intent capital (which could never
+        // be matched or withdrawn) and strand the real proceeds.
+        uint256 rawBal =
+            s.protocolTrackedVaultBalance[io.owner][io.lendingAsset];
+        if (
+            LibEncumbrance.freeBalance(io.owner, io.lendingAsset, 0, rawBal)
+                < rolledAmount
+        ) {
+            revert LenderIntentLoanNotRollable();
+        }
+
         // Consume the claim BEFORE re-liening, so the proceeds can never be both
         // claimable (NFT) and re-liened (capital) — the two-bucket invariant.
         claim.claimed = true;

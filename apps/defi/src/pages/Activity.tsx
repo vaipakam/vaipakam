@@ -52,6 +52,7 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   LiquidationFallback: 'Liquidation fallback',
   LiquidationFallbackSplit: 'Fallback collateral split',
   LoanSettled: 'Loan settled',
+  IntentLoanRolled: 'Auto-rolled & re-lent',
   PartialRepaid: 'Partial repayment',
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   SwapToRepayExecuted: 'Loan repaid via collateral swap',
@@ -92,6 +93,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   LiquidationFallback: 'failure',
   LiquidationFallbackSplit: 'failure',
   LoanSettled: 'success',
+  IntentLoanRolled: 'success',
   PartialRepaid: 'info',
   // T-090 Sub 3 — `success` for full close (Active → Repaid),
   // `info` for partial (loan stays Active).

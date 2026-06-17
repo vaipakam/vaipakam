@@ -463,6 +463,7 @@
     "liquidationFallback": "清算回退（swap 失败）",
     "liquidationFallbackSplit": "回退抵押品分配",
     "loanSettled": "贷款已结算",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "部分偿还",
     "claimRetryExecuted": "领取时 swap 重试",
     "lifRebateClaimed": "VPFI 费用折扣返还已领取",

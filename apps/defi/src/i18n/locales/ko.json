@@ -463,6 +463,7 @@
     "liquidationFallback": "청산 폴백 (스왑 실패)",
     "liquidationFallbackSplit": "폴백 담보 분배",
     "loanSettled": "대출 정산 완료",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "부분 상환",
     "claimRetryExecuted": "청구 시 스왑 재시도",
     "lifRebateClaimed": "VPFI 수수료 할인 환급 청구됨",
