@@ -4070,6 +4070,21 @@ library LibVaipakam {
         // lender-position SALE mutates `loan.lender` (migrateLenderPosition).
         // `owner == address(0)` ⇒ the loan did NOT originate from an intent.
         mapping(uint256 => IntentOrigin) intentOrigin;
+        // #393 v1-d — un-lent, LIENED working capital a lender has funded into
+        // their vault for `owner`'s intent on the `(lendingAsset,
+        // collateralAsset)` pair. Mirrors an offer's `offerPrincipalLien`: the
+        // amount here is also held in `encumbered[owner][lendingAsset][0]`, so
+        // it is NOT free balance and cannot be drained by any other vault-
+        // withdraw door. `fundLenderIntent` adds; `matchIntent` releases each
+        // fill slice (→ free, consumed by the existing materialize path);
+        // `withdrawLenderIntentCapital` releases the remainder back to the
+        // wallet (the cancel-offer pattern). Keyed by the FULL intent so two
+        // intents sharing a lending asset but different collateral never share
+        // a capital pool. Repaid proceeds NEVER land here — they return as a
+        // separate free-balance + Position-NFT claim — so the exit door can
+        // never double-spend them.
+        mapping(address => mapping(address => mapping(address => uint256)))
+            lenderIntentCapital;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

@@ -6,6 +6,9 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 
 /**
  * @title LenderIntentFacet
@@ -21,11 +24,19 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
  *         sanctions path is the existing, audited one — unchanged. See
  *         docs/DesignsAndPlans/LenderIntentVaultV1Design.md §1 + §3.1.
  *
- * @dev    This facet is the set/cancel/read surface ONLY — no funds move here.
- *         Principal stays in the user's per-user vault; the fill path
- *         (`matchIntent`) reserves it via the encumbrance sub-ledger (#407) at
- *         fill time, exactly as a normal offer does. ERC-20-on-ERC-20 only.
- *         One intent per (owner, lendingAsset, collateralAsset).
+ * @dev    Surface: set/cancel/read the intent terms, PLUS the v1-d working-
+ *         capital lifecycle. `fundLenderIntent` pulls the lender's wallet
+ *         capital into their vault and LIENS it under the intent (mirroring
+ *         how `createOffer` pre-vaults + locks an offer's principal);
+ *         `matchIntent` (OfferMatchFacet) draws fill slices from that lien;
+ *         `withdrawLenderIntentCapital` returns the un-lent remainder to the
+ *         wallet (the `cancelOffer` exit pattern). Liened capital is never
+ *         free balance, so no other vault-withdraw door can reach it — and
+ *         repaid proceeds (which return as free balance + a Position-NFT
+ *         claim) can never be double-spent through the exit door. The
+ *         lender-of-record stays the depositing user (`loan.lender` = the
+ *         intent owner). ERC-20-on-ERC-20 only. One intent per (owner,
+ *         lendingAsset, collateralAsset).
  */
 contract LenderIntentFacet is
     DiamondReentrancyGuard,
@@ -54,6 +65,27 @@ contract LenderIntentFacet is
 
     /// @notice The LenderIntentVault fill-path master kill-switch toggled.
     event LenderIntentEnabledSet(bool enabled);
+
+    /// @notice A lender funded un-lent working capital into a standing intent
+    ///         (#393 v1-d). `newCapital` is the post-fund liened total.
+    event LenderIntentFunded(
+        address indexed owner,
+        address indexed lendingAsset,
+        address indexed collateralAsset,
+        uint256 amount,
+        uint256 newCapital
+    );
+
+    /// @notice A lender withdrew un-lent working capital from a standing intent
+    ///         back to their wallet (#393 v1-d). `remainingCapital` is the
+    ///         post-withdraw liened total.
+    event LenderIntentCapitalWithdrawn(
+        address indexed owner,
+        address indexed lendingAsset,
+        address indexed collateralAsset,
+        uint256 amount,
+        uint256 remainingCapital
+    );
 
     /// @notice A required address argument was the zero address.
     error LenderIntentZeroAddress();
@@ -186,6 +218,111 @@ contract LenderIntentFacet is
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
     }
 
+    /// @notice #393 v1-d — fund (or top up) the caller's standing intent with
+    ///         un-lent working capital. Pulls `amount` of `lendingAsset` from
+    ///         the caller's wallet into their per-user vault and LIENS it under
+    ///         the intent — exactly as `createOffer` pre-vaults and locks an
+    ///         offer's principal. Liened capital is the pool `matchIntent`
+    ///         draws fill slices from; it is NOT free balance, so no other
+    ///         vault-withdraw door can reach it, and it can only leave via a
+    ///         fill or via {withdrawLenderIntentCapital}.
+    /// @dev    Tier-1 sanctions-gated (new lending capital entering the
+    ///         protocol). Requires an ACTIVE intent for the pair — fund follows
+    ///         set, the way staking follows opt-in — so capital is never parked
+    ///         without a governing intent. The caller must have approved the
+    ///         Diamond for exactly `amount` of `lendingAsset` first (the
+    ///         protocol's exact-amount approval convention).
+    /// @param lendingAsset    The ERC-20 the intent supplies (must match an
+    ///                        active intent).
+    /// @param collateralAsset The intent's collateral asset (intent key).
+    /// @param amount          Working capital to pull wallet → vault (> 0).
+    function fundLenderIntent(
+        address lendingAsset,
+        address collateralAsset,
+        uint256 amount
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        if (amount == 0) revert LenderIntentInvalidBounds();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
+            revert LenderIntentNotActive();
+        }
+        // Pull wallet → vault via the protocol chokepoint (records the tracked
+        // balance under the lender). Same on-ramp `createOffer` /
+        // `depositVPFIToVault` use.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultDepositERC20.selector,
+                msg.sender,
+                lendingAsset,
+                amount
+            ),
+            IVaipakamErrors.VaultDepositFailed.selector
+        );
+        // Lien the just-deposited capital under the intent (mirrors an offer's
+        // principal lock). It is now encumbered — not free balance.
+        LibEncumbrance.lienIntentCapital(
+            msg.sender, lendingAsset, collateralAsset, amount
+        );
+        emit LenderIntentFunded(
+            msg.sender,
+            lendingAsset,
+            collateralAsset,
+            amount,
+            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
+        );
+    }
+
+    /// @notice #393 v1-d — withdraw un-lent intent working capital back to the
+    ///         caller's wallet: the standing-capital exit, modelled on
+    ///         `cancelOffer`. Releases `amount` from the intent's capital lien
+    ///         (reverts if it exceeds the un-lent liened capital) and withdraws
+    ///         it from the vault to the caller. Because it only ever touches
+    ///         the distinct intent lien, it can NEVER reach repaid proceeds
+    ///         (which return as free balance + a Position-NFT claim) — so the
+    ///         repaid-proceeds double-spend the #592 VPFI reservation guards
+    ///         against is structurally impossible through this door.
+    /// @dev    Tier-1 sanctions-gated (funds flow OUT to the caller). Does NOT
+    ///         require the intent to still be active — a cancelled intent's
+    ///         residual capital must stay withdrawable so a lender can fully
+    ///         wind down. The lien release runs BEFORE the withdraw so the
+    ///         vault chokepoint's free-balance guard sees the amount as free
+    ///         (same ordering as `ClaimFacet` releasing the proceeds
+    ///         reservation before paying out).
+    /// @param lendingAsset    The intent's lending asset (intent key).
+    /// @param collateralAsset The intent's collateral asset (intent key).
+    /// @param amount          Un-lent capital to return wallet-ward (> 0,
+    ///                        <= the liened capital).
+    function withdrawLenderIntentCapital(
+        address lendingAsset,
+        address collateralAsset,
+        uint256 amount
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        if (amount == 0) revert LenderIntentInvalidBounds();
+        // Release from the lien (reverts `IntentCapitalInsufficient` if it
+        // exceeds the un-lent capital) BEFORE the withdraw, so the chokepoint
+        // guard sees the amount as free balance.
+        LibEncumbrance.unlienIntentCapital(
+            msg.sender, lendingAsset, collateralAsset, amount
+        );
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+            msg.sender,
+            lendingAsset,
+            msg.sender,
+            amount
+        );
+        emit LenderIntentCapitalWithdrawn(
+            msg.sender,
+            lendingAsset,
+            collateralAsset,
+            amount,
+            LibVaipakam.storageSlot().lenderIntentCapital[msg.sender][
+                lendingAsset
+            ][collateralAsset]
+        );
+    }
+
     /// @notice Master kill-switch for the standing-intent fill path
     ///         (`OfferMatchFacet.matchIntent`). Default `false`: lenders can
     ///         register intents but no fill executes until governance flips
@@ -257,6 +394,22 @@ contract LenderIntentFacet is
         address collateralAsset
     ) external view returns (uint256) {
         return LibVaipakam.storageSlot().lenderIntentLivePrincipal[owner][
+            lendingAsset
+        ][collateralAsset];
+    }
+
+    /// @notice #393 v1-d — the un-lent, liened working capital `owner` has
+    ///         funded for the intent on `(lendingAsset, collateralAsset)`: the
+    ///         pool `matchIntent` draws fill slices from, and the amount
+    ///         `withdrawLenderIntentCapital` can return to the wallet. Excludes
+    ///         capital already lent out (tracked by `lenderIntentLivePrincipal`)
+    ///         and repaid proceeds (which return as a Position-NFT claim).
+    function getLenderIntentCapital(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) external view returns (uint256) {
+        return LibVaipakam.storageSlot().lenderIntentCapital[owner][
             lendingAsset
         ][collateralAsset];
     }

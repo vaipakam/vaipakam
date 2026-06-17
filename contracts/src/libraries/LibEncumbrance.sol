@@ -60,6 +60,19 @@ library LibEncumbrance {
     ///         lifecycles each create at most once per key in practice.
     error EncumbranceAlreadyExists(uint256 key);
 
+    /// @notice #393 v1-d — raised when a fill slice or an intent-capital
+    ///         withdraw exceeds the un-lent capital the lender has funded for
+    ///         that `(owner, lend, coll)` intent. A solver can never fill more
+    ///         than was funded, and a lender can never withdraw more un-lent
+    ///         capital than remains liened.
+    error IntentCapitalInsufficient(
+        address owner,
+        address lend,
+        address coll,
+        uint256 requested,
+        uint256 available
+    );
+
     // ─── Collateral lien — per-loan ─────────────────────────────────────
 
     /// @notice Create a collateral lien from a freshly-initiated loan.
@@ -276,6 +289,62 @@ library LibEncumbrance {
         _decrementAggregate(lender, asset, 0, reserved);
         s.lenderProceedsEncumbered[loanId] = 0;
         s.lenderProceedsEncumberedAsset[loanId] = address(0);
+    }
+
+    // ─── Intent working-capital lien — #393 v1-d ────────────────────────
+
+    /// @notice Lien `amount` of `owner`'s just-deposited intent working
+    ///         capital for the `(lend, coll)` pair. Mirrors an offer's
+    ///         principal lock ({createOfferPrincipalLien}): the amount is held
+    ///         BOTH in the per-intent capital counter (`lenderIntentCapital`)
+    ///         AND the shared `encumbered` aggregate (tokenId 0, ERC20) under
+    ///         `owner`. So it is NOT free balance and no vault-withdraw door
+    ///         can drain it except the intent's own exit
+    ///         ({unlienIntentCapital}). The caller MUST have already deposited
+    ///         `amount` into `owner`'s vault. This is what makes the
+    ///         repaid-proceeds double-spend structurally impossible: funded
+    ///         capital lives here (encumbered), repaid proceeds return as
+    ///         separate free balance + a Position-NFT claim — two disjoint
+    ///         buckets the exit door and the claim path each touch exactly one
+    ///         of.
+    function lienIntentCapital(
+        address owner,
+        address lend,
+        address coll,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.lenderIntentCapital[owner][lend][coll] += amount;
+        s.encumbered[owner][lend][0] += amount;
+    }
+
+    /// @notice Release `amount` of `owner`'s un-lent intent capital for the
+    ///         `(lend, coll)` pair from the lien back to FREE balance. Two
+    ///         callers: (1) `OfferMatchFacet.matchIntent` releases each fill
+    ///         slice so the existing materialize path (which asserts free
+    ///         balance) can consume it; (2)
+    ///         `LenderIntentFacet.withdrawLenderIntentCapital` releases the
+    ///         remainder so it can be withdrawn to the lender's wallet — the
+    ///         cancel-offer exit. Reverts {IntentCapitalInsufficient} if
+    ///         `amount` exceeds the liened capital; a fill or withdraw can
+    ///         never exceed what was funded.
+    function unlienIntentCapital(
+        address owner,
+        address lend,
+        address coll,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 liened = s.lenderIntentCapital[owner][lend][coll];
+        if (amount > liened) {
+            revert IntentCapitalInsufficient(owner, lend, coll, amount, liened);
+        }
+        unchecked {
+            s.lenderIntentCapital[owner][lend][coll] = liened - amount;
+        }
+        _decrementAggregate(owner, lend, 0, amount);
     }
 
     /// @notice Re-create a collateral lien from the loan row's

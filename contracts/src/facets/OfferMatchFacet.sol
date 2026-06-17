@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
@@ -414,8 +415,21 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert LenderIntentCollateralUnresolvable();
         }
 
-        // Materialize the single-fill lender slice (creator = lender; pulls from
-        // the lender's FREE vault balance + creates the offer-principal lien).
+        // #393 v1-d — the intent's funded capital is held as a LIEN (it is not
+        // free balance, so no other withdraw door can drain it). Release this
+        // fill's slice from the intent-capital lien FIRST so the materialize
+        // path below sees it as free balance and can re-lock it as the
+        // offer-principal lien. `unlienIntentCapital` reverts
+        // `IntentCapitalInsufficient` if the slice exceeds the funded capital —
+        // a fill can never lend more than the lender has funded. (This is the
+        // hard funding guard; `maxExposure` checked above is the declared cap.)
+        LibEncumbrance.unlienIntentCapital(
+            lender, lendingAsset, collateralAsset, fillAmount
+        );
+
+        // Materialize the single-fill lender slice (creator = lender; consumes
+        // the just-freed slice from the lender's vault + creates the
+        // offer-principal lien).
         uint256 sliceOfferId = _materializeIntentSlice(
             _intentSliceParams(
                 lendingAsset,

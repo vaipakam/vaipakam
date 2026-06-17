@@ -341,12 +341,26 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   authorized (via the platform's per-user keeper-approval mechanism, with a
   dedicated "fill a standing intent" action) may fill it; an intent left open —
   the default — is fillable by any solver.
+- **Funding an intent (working capital).** Separately from registering the
+  terms, a lender funds an intent by moving capital from their wallet into their
+  own vault, where it is **locked to that intent** — the same way creating an
+  offer pre-commits its principal. Locked intent capital is the pool a solver's
+  fills draw from; because it is locked rather than loose vault balance, no other
+  withdrawal path can reach it. The lender may top it up in stages and may
+  **withdraw the un-lent remainder back to their wallet** at any time — the exit
+  stays available even after the intent is cancelled, so capital is never
+  stranded. Crucially, this exit can only ever return *un-lent* locked capital:
+  the proceeds of a loan that has repaid are a **separate** balance the lender
+  collects with their loan-position NFT, so the withdrawal door can never reach —
+  and never double-pay — money already owed as a repayment claim. A fill can
+  never lend more capital than the lender has funded; an under-funded intent
+  cannot be filled until more is added.
 - **Filling an intent.** A solver fills a lender's standing intent against an
   existing on-chain borrower offer: the protocol builds a one-time lender offer
   from the intent — the lender's rate floor, the borrower offer's term (which
   must be within the intent's maximum), and the collateral the intent's maximum
-  loan-to-value requires — funds it from the lender's existing vault balance, and
-  matches it through the same engine (and the same collateral/health-factor
+  loan-to-value requires — funds it from the working capital the lender has
+  locked into the intent, and matches it through the same engine (and the same collateral/health-factor
   safety checks) as any on-chain match; the solver earns the same 1% matcher fee.
   Each fill is held to the intent's bounds: not below the minimum fill size, not
   past the exposure cap, not over the maximum term, not below the maximum-LTV
