@@ -81,9 +81,16 @@ iff ALL hold on-chain:
 1. `offer.offerType == Borrower`;
 2. `offer.backstopEligibleAfter != 0` (the borrower **opted in** — new field, §4.1);
 3. `block.timestamp >= offer.backstopEligibleAfter` (sat unmatched long enough);
-4. `block.timestamp <= offer.expiresAt` (still a **valid, fillable** offer — the
-   backstop fills a live offer, never an expired one);
-5. `offer.amountFilled == 0` (genuinely unmatched — no natural counterparty took it).
+4. **`!isOfferExpired(offer)`** — reuse the shared expiry predicate (which treats
+   `block.timestamp >= expiresAt` as expired), NOT a separate `<= expiresAt` check.
+   A separate boundary would let the backstop gate pass at exactly `expiresAt` while
+   the underlying accept/match path rejects it → a guaranteed revert (Codex #629 P3).
+5. **an unfilled remainder exists** — `offer.amount + (range) − offer.amountFilled > 0`,
+   NOT `amountFilled == 0`. A partial/ranged offer that took a tiny natural fill
+   before `backstopEligibleAfter` would otherwise be **permanently** disqualified,
+   letting a dust lender grief a borrower who opted into last-resort liquidity
+   (Codex #629 P2). The backstop fills the **remaining** unfilled slice. (AON offers
+   reduce to the same check — full amount or nothing.)
 
 ### 4.1 New opt-in Offer field `backstopEligibleAfter`
 
@@ -97,54 +104,165 @@ Set at offer creation in `OfferCreateFacet`:
   a GTC offer with `expiresAt == 0` cannot be backstop-eligible). Pre-live, so the
   struct change is cheap; ABI re-export + deploy-sanity follow.
 
-### 4.2 Fill path (reuses `matchIntent`)
+### 4.2 Fill path — the backstop intent MUST be self-only
 
-`BackstopVault.backstopFill(offerId)` — **permissionless** (every gate is an
-on-chain fact, so no keeper trust / censorship surface): validates the §4 trigger,
-then calls the existing `matchIntent` plumbing as the intent owner, originating a
-loan **backstop-vault → borrower** within:
+**Load-bearing (Codex #629 P1): the backstop's `LenderIntent` must be registered
+`requiresKeeperAuth = true` with NO external keeper approval** — exactly the
+adapter's posture. `matchIntent` is **openly callable** for non-keeper-gated intents,
+so a normal fillable backstop intent would let **any solver call
+`matchIntent(BackstopVault, …)` directly, bypassing `backstopEligibleAfter`,
+the unfilled-remainder check, and `backstopEnabled` entirely.** With the self-only
+gate, the *only* caller that can invoke `matchIntent` for the backstop is
+`BackstopVault.backstopFill` itself (the intent-owner self-branch in
+`LibAuth.requireKeeperForPrincipal`). Every backstop fill therefore passes through
+the §4 gates.
+
+`BackstopVault.backstopFill(offerId)` — **permissionless to call** (every §4 gate is
+an on-chain fact; the self-only intent means the gates can't be skipped): validates
+the §4 trigger, then calls `matchIntent` as the intent owner, originating a loan
+**backstop-vault → borrower** within:
 - **per-asset capacity cap** = the intent `maxExposure` (governance-set, NOT
   self-set as the adapter does);
 - **posted backstop rate** = the intent `minRateBps` (governance-set) — the offer's
   rate must clear it, so the backstop's participation is **priced, never free**;
 - **LTV ceiling** = the intent `maxInitLtvBps`;
-- the existing **HF ≥ 1.5e18 + depth-tiered-LTV gate** inside `initiateLoan`.
+- the existing **HF ≥ 1.5e18 + depth-tiered-LTV gate** inside `initiateLoan`;
+- the §5b collateral-quality gates.
 
-`loan.lender = BackstopVault`; fixed rate snapshotted at init (E2). Proceeds are
-swept to treasury via `withdrawBackstopToTreasury` (no auto-roll in v0 — the
-backstop is a last resort, not a yield engine).
+`loan.lender = BackstopVault`; fixed rate snapshotted at init (E2).
+
+### 4.3 Recovering proceeds (Codex #629 P1)
+
+`withdrawBackstopToTreasury` only releases **idle** intent-capital lien — it does
+**not** recover a resolved loan's principal/interest, which (like any lender) must
+be claimed first. So the backstop needs the adapter's `claimAndCompound`-style path:
+- `backstopClaim(loanId, retryCalls)` — keeper/governance: `claimAsLenderWithRetry`
+  as the backstop (the backstop holds its own lender-position NFT, so it is the
+  current owner), landing proceeds in the backstop vault, then re-funds idle (so the
+  capital is withdrawable to treasury). **No auto-roll in v0** — the backstop is a
+  last resort, not a yield engine; proceeds flow idle → `withdrawBackstopToTreasury`.
+- A raw-balance `sweepToPrincipal(token)` (→ treasury) for any in-kind / non-underlying
+  residue, mirroring the adapter.
 
 ## 5. Role B — liquidator-of-last-resort (PR 2)
 
 When an HF-liquidation's keeper swap fails, the loan goes `FallbackPending` and the
 Diamond holds the collateral with a `FallbackSnapshot` split (lender / treasury /
-borrower shares + oracle-priced `lenderPrincipalDue`). Scout confirms the borrower
-**cure window** stays open on `FallbackPending`: `repayLoan` (RepayFacet.sol:207-211,
-within grace) and `addCollateral` (AddCollateralFacet.sol:104-107, cures if HF
-recovers). The backstop must **never short-circuit that** — it acts only **after**
-the cure deadline elapses (or the lender has chosen to claim).
+borrower collateral shares + oracle-priced `lenderPrincipalDue`). The borrower
+**cure window** stays open: `repayLoan` (RepayFacet.sol:207-211, within grace) and
+`addCollateral` (AddCollateralFacet.sol:104-107) can **reactivate** the loan until
+the lender claim finalizes, and `LibVaipakam` documents that **the lender claim is
+what terminates the state** (not a repay-grace deadline).
 
-`BackstopVault.backstopAbsorb(loanId)`:
-- gate: loan is `FallbackPending`, `FallbackSnapshot.active`, and the cure window
-  has elapsed (the same grace deadline `repayLoan` enforces — exact expression
-  confirmed against `RepayFacet` at impl time);
-- pays the lender `FallbackSnapshot.lenderPrincipalDue` in the **principal asset**
-  from backstop capital (makes the lender whole in cash, better than illiquid
-  collateral);
-- takes the custodied collateral into the backstop vault at an **oracle-bounded
-  price** (oracle value minus a governance safety margin — bounds the backstop's
-  basis risk; the backstop holds the collateral to sell later);
-- finalizes the loan (`FallbackPending` → `Defaulted`/`Settled`) via a new
-  `RiskFacet`/`ClaimFacet` hook that consumes the snapshot, preserving per-loan
-  traceability and the treasury/borrower shares.
+**Reframe (Codex #629 P1 ×2): Role B is LENDER-INITIATED, not a permissionless
+"grace elapsed" trigger.** A permissionless absorb keyed on the repay grace deadline
+would close a loan the borrower could still cure via `addCollateral`, and could pay
+the *stale* `loan.lender` rather than the current lender-position NFT owner. Instead,
+the backstop is a **standing cash bid** that only the **current lender-NFT owner**
+can hit, *through the existing claim path*:
 
-Bounded by the same per-asset capacity cap; gated by `backstopEnabled`.
+`claimAsLenderViaBackstop(loanId)` — a claim variant (current-NFT-owner-gated, reusing
+`claimAsLender`'s ownership check) where, instead of receiving the `lenderCollateral`
+**in kind**, the lender is paid **cash** from the backstop and the backstop takes that
+collateral slice:
+- **Gate:** loan `FallbackPending`, `FallbackSnapshot.active`, `msg.sender` is the
+  current lender-position NFT owner (so it preserves the cure window exactly as the
+  normal claim does — the borrower can still cure until the lender chooses to act).
+- **Lender payout = the claim, in cash:** the backstop pays the lender
+  `FallbackSnapshot.lenderPrincipalDue` in the **principal asset**; the lender's
+  claim is satisfied. Better for the lender than holding illiquid collateral.
+- **Explicit share settlement (Codex #629 P1):** the backstop takes **only the
+  `lenderCollateral` slice**. `treasuryCollateral` and `borrowerCollateral` route
+  through the **normal `ClaimFacet` split unchanged** — they are not swept into the
+  backstop. Per-loan traceability + the treasury/borrower entitlements survive.
+- **Top-up safety (Codex #629 / encumbrance arc #585/#591):** a `FallbackPending`
+  loan that received a borrower `addCollateral` top-up (tracked by
+  `LibVaipakam.hasActiveFallbackTopUp`) is **excluded** from `claimAsLenderViaBackstop`
+  in v0 — the top-up custody split is unwind-sensitive; the lender uses the normal
+  claim there. (Matches how the internal-match path excludes topped-up FallbackPending.)
+- **Shortfall rule (Codex #629 P1):** let `cover = oracleValue(lenderCollateral) ×
+  (1 − safetyMarginBps)`. If `cover < lenderPrincipalDue` (an **underwater** fallback),
+  **revert** `BackstopUndercollateralized` — the backstop never overpays and treasury
+  eats no shortfall in v0; the lender falls back to the normal in-kind claim. (A
+  treasury-budgeted shortfall absorber is a deliberate later decision, not v0.)
+- Finalizes the loan via the lender-claim path's existing terminal transition
+  (`FallbackPending` → `Defaulted`/`Settled`), consuming only the lender slice.
+
+### 5.1 Separate absorb-exposure accounting (Codex #629 P1)
+
+Role B spends seeded **cash** to acquire **collateral** — it is **not** a loan
+origination, so the intent's `maxExposure`/live-principal counter does not and must
+not track it (there is no `intentOrigin` release path for an absorbed third-party
+loan). A naive per-call check against the origination cap would let repeated absorbs
+**drain all seeded cash**. So v0 adds a dedicated, per-(principal,collateral)
+**`backstopAbsorbExposure` counter**:
+- **incremented** by `lenderPrincipalDue` (cash out) on each `claimAsLenderViaBackstop`;
+- **capped** by a governance per-asset `backstopAbsorbCap` (distinct from the Role-A
+  origination `maxExposure`);
+- **released** when the absorbed collateral is later liquidated/withdrawn to treasury
+  (the cash comes back), mirroring how live-principal releases on loan close.
+
+Both roles gated by `backstopEnabled`.
+
+## 5b. Collateral-quality / adverse-selection defense (no human in the loop)
+
+The defining risk of an **automated** counterparty: a malicious borrower posts an
+offer backed by **dummy / illiquid / manipulable collateral** and walks away with
+the lending asset — there is no human lender to eyeball the collateral. This is
+defended in **four layers**, three of which the `matchIntent` substrate already
+enforces (verified in code), plus one the backstop adds explicitly:
+
+1. **The collateral asset is the backstop's curated choice, not the borrower's.**
+   A `LenderIntent` is keyed `lenderIntent[lender][lendingAsset][collateralAsset]`
+   (OfferMatchFacet.sol). `backstopFill` only fills an offer whose
+   `collateralAsset` **equals the intent's vetted pair**. A borrower offering an
+   arbitrary token has **no matching backstop intent** — nothing to fill. The
+   borrower cannot substitute their own collateral asset.
+
+2. **Illiquid / no-oracle / un-listed collateral is refused outright.**
+   `matchIntent` derives `reqColl = LibRiskMath.minCollateralForLtvCap(...)` via the
+   oracle (`_gatherUsd`). No resolvable price (illiquid / no feed) ⇒ `reqColl == 0`;
+   no governance-set LTV (`capBps == 0`, not risk-listed) ⇒ `reqColl ==
+   type(uint256).max`; **either reverts `LenderIntentCollateralUnresolvable`.** The
+   "value illiquid collateral at $0, both parties **explicitly consent**" path is a
+   **human-only** path; the backstop never reaches it — it refuses blind.
+
+3. **Over-collateralization at the oracle price + HF ≥ 1.5e18 at init**, using the
+   Phase-7b multi-venue oracle quorum + depth-tiered LTV + the liquidity
+   classification ($1M volume + AMM depth) + the volatility-collapse threshold —
+   which together defend the "looks liquid but is manipulable" vector.
+
+**What the backstop adds (making the implicit defense first-class + conservative,
+the listed-asset money-market posture):**
+
+- **Governance-curated collateral allowlist.** The backstop registers intents
+  **only** for vetted (lend, coll) pairs. Curation criteria: blue-chip liquid
+  collateral with a robust multi-venue oracle + deep AMM + the existing risk
+  params. This is the auto-fill admission gate; an un-curated asset is simply not
+  a backstop pair.
+- **Conservative LTV ceiling.** Backstop intents use a `maxInitLtvBps` **strictly
+  below** a typical human lender's max — no discretion means a wider safety margin.
+- **Re-assert liquidity at fill time.** `backstopFill` rejects if
+  `checkLiquidity(collateralAsset) != Liquid` even for a once-vetted asset that has
+  since lost depth (today the unresolvable-price revert covers the no-oracle case;
+  an explicit live `checkLiquidity` gate also auto-refuses a *decayed/delisted*
+  asset before originating).
+- **Per-asset capacity cap** (the intent `maxExposure`) bounds concentration so no
+  single manipulable asset can drain the backstop.
+
+The same first three layers answer the identical question for the #398 aggregator
+adapter: an aggregator only ever faces the single vetted collateral asset of its
+adapter's pair, and `matchIntent` refuses unresolvable collateral for it too.
 
 ## 6. Governance — timelock-asymmetric (#393 §4)
 
 - `backstopEnabled` — master kill-switch, **default OFF**; both roles gated. (Same
   shape as the existing `lenderIntentEnabled` / range-order flags in `ProtocolConfig`.)
-- Per-asset: capacity cap, posted min rate, init-LTV ceiling, absorb safety margin.
+- Per-asset, Role A (origination): capacity cap (= intent `maxExposure`), posted
+  min rate (= `minRateBps`), conservative init-LTV ceiling (= `maxInitLtvBps`).
+- Per-asset, Role B (absorb): `backstopAbsorbCap` (distinct from the origination
+  cap; bounds the §5.1 `backstopAbsorbExposure` counter) + `absorbSafetyMarginBps`
+  (the §5 haircut on collateral the backstop accepts).
 - Asymmetric: **raise a cap = timelocked + guardian-revocable; lower a cap / pause =
   instant.** Seed / withdraw = ADMIN/timelock.
 
@@ -161,23 +279,30 @@ Bounded by the same per-asset capacity cap; gated by `backstopEnabled`.
 
 ## 8. New vs. reused (minimise surface)
 
-- **NEW:** `BackstopVaultImplementation` (adapter-shaped, no ERC-4626); the backstop
-  admin/governance surface (seed/withdraw + caps + posted rate + `backstopEnabled`);
-  `backstopFill` + `backstopAbsorb`; `Offer.backstopEligibleAfter` + its validation;
-  one `RiskFacet`/`ClaimFacet` hook for the absorb settlement.
-- **REUSED:** `VaultFactoryFacet` (vault), `LenderIntentFacet` (intents),
-  `OfferMatchFacet.matchIntent` (origination), `FallbackSnapshot` + `ClaimFacet`
-  (liquidator), the governance pattern, treasury balances, deploy-sanity wiring.
+- **NEW:** `BackstopVaultImplementation` (adapter-shaped, no ERC-4626) with
+  `backstopFill` + `backstopClaim` + `sweepToPrincipal`; the backstop admin/governance
+  surface (seed/withdraw + origination caps + absorb cap/margin + posted rate +
+  `backstopEnabled`); `Offer.backstopEligibleAfter` + its validation; the
+  `claimAsLenderViaBackstop` claim variant in `ClaimFacet` (current-NFT-owner gated,
+  cash-for-lender-slice, explicit share settlement, shortfall revert, top-up
+  exclusion); the §5.1 `backstopAbsorbExposure` counter + cap.
+- **REUSED:** `VaultFactoryFacet` (vault), `LenderIntentFacet` (intents,
+  **self-only** for the backstop), `OfferMatchFacet.matchIntent` (origination via the
+  self-branch), `FallbackSnapshot` + the `claimAsLender` ownership/terminal machinery,
+  `LibVaipakam.hasActiveFallbackTopUp` (top-up exclusion), the governance pattern,
+  treasury balances, deploy-sanity wiring.
 
 ## 9. PR split (two sequential PRs)
 
-- **PR 1 — auto-counterparty:** `BackstopVaultImplementation` + provisioning/governance
-  (seed, caps, posted rate, `backstopEnabled`) + `Offer.backstopEligibleAfter` field +
-  validation + `backstopFill` + deploy-sanity + ABI + tests. Codex full
-  security-critical (fund-holding, HIGH).
-- **PR 2 — liquidator-of-last-resort:** `backstopAbsorb` + the FallbackPending
-  settlement hook + cure-window gate + oracle-bounded absorb + tests. Codex full
-  security-critical.
+- **PR 1 — auto-counterparty:** `BackstopVaultImplementation` (self-only intent +
+  `backstopFill` + `backstopClaim` + `sweepToPrincipal`) + provisioning/governance
+  (seed, origination caps, posted rate, `backstopEnabled`) + `Offer.backstopEligibleAfter`
+  field + validation + the unfilled-remainder/expiry trigger + deploy-sanity + ABI +
+  tests. Codex full security-critical (fund-holding, HIGH).
+- **PR 2 — liquidator-of-last-resort:** the `claimAsLenderViaBackstop` claim variant
+  (current-NFT-owner gated, cash-for-lender-slice, explicit share settlement,
+  shortfall revert, top-up exclusion) + the `backstopAbsorbExposure` counter + cap +
+  `absorbSafetyMarginBps` + tests. Codex full security-critical.
 
 Each is independently kill-switched and degrades gracefully (off ⇒ prior phase
 unaffected).
@@ -192,20 +317,29 @@ accepted); the absorb settlement's make-lender-whole correctness + cure-window
 preservation; segregation (no user principal touched); governance caps. The v1 LP
 tranche + slashing/first-loss accounting are a **separate doc + audit**.
 
-## 11. Open questions / alternatives
+## 11. Resolved decisions + remaining open questions
 
-1. **`backstopFill` permissionless vs keeper-gated** — recommend **permissionless**
-   (every gate is on-chain-provable; removes a keeper-trust/censorship surface).
-   Alternative: gate behind a dedicated keeper-action bit if a future reason emerges.
-2. **Posted-rate reference** — v0 uses a **governance-set per-asset min rate**
-   (intent `minRateBps`). A market-derived reference rate (#392/#400) is a later
-   enhancement; v0 deliberately needs no oracle for rate.
-3. **Absorb price bound** — oracle price minus a **governance safety margin**
-   (haircut) so the backstop never overpays for collateral; the margin bounds its
-   basis risk.
-4. **Auto-roll vs sweep** — v0 **sweeps** idle proceeds to treasury (no auto-roll);
-   the backstop is a last resort, not a yield engine. (Auto-roll is an adapter
-   behaviour, not a backstop one.)
-5. **Single backstop vault vs per-asset vaults** — v0 uses a **single** vault with
-   per-asset intents (nothing to segregate among, single principal). Per-asset
-   segregated vaults arrive with the v1 LP tranche (slashing isolation).
+**Resolved (this design / Codex #629 round-1):**
+- **`backstopFill` is permissionless to call, but the intent is self-only** — the
+  caller is permissionless (gates are on-chain facts) while `requiresKeeperAuth =
+  true` (no keeper grant) ensures only `backstopFill` can drive `matchIntent`,
+  closing the open-`matchIntent` bypass.
+- **Role B is lender-initiated** via `claimAsLenderViaBackstop` (not a permissionless
+  grace trigger) — preserves the cure window + pays the current NFT owner.
+- **Absorb shortfall = revert** (`BackstopUndercollateralized`); the backstop never
+  overpays and treasury eats no shortfall in v0.
+- **Separate `backstopAbsorbExposure` counter + cap** for Role B (origination
+  `maxExposure` does not track cash-for-collateral absorbs).
+- **No auto-roll** — v0 sweeps proceeds to treasury via `backstopClaim` → idle →
+  `withdrawBackstopToTreasury`.
+- **Single backstop vault** with per-asset intents (single principal — nothing to
+  segregate among); per-asset segregated vaults arrive with the v1 LP tranche.
+
+**Remaining open questions:**
+1. **Posted-rate reference** — v0 uses a governance-set per-asset min rate (intent
+   `minRateBps`); a market-derived rate (#392/#400) is a later enhancement (v0 needs
+   no oracle for rate).
+2. **`absorbSafetyMarginBps` default** — the conservative haircut on absorbed
+   collateral; pick a starting value (e.g. 5–10%) at impl time, range-bounded.
+3. **Treasury-budgeted shortfall absorber** — deliberately deferred past v0 (today an
+   underwater fallback simply isn't backstop-absorbable); revisit with the v1 tranche.
