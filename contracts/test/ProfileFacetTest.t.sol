@@ -401,14 +401,24 @@ contract ProfileFacetTest is Test {
     }
 
     function testApproveKeeperRevertsOnOutOfRangeActions() public {
-        // T-092 Phase 3 (#503) widened KEEPER_ACTION_ALL 0x1F → 0x3F
-        // (KEEPER_ACTION_EXTEND = 0x20); #393 v1-c widened it 0x3F → 0x7F
-        // (KEEPER_ACTION_SIGNED_FILL = 0x40). Bit 7 (0x80) is now the
-        // first invalid bit.
+        // #393 v1-d.2 widened KEEPER_ACTION_ALL 0x7F → 0xFF with
+        // KEEPER_ACTION_AUTO_ROLL (0x80) — the LAST free bit, so the uint8
+        // keeper bitmask is now FULL. Bit 7 (0x80) is therefore VALID, and the
+        // only out-of-range value left is the empty action set (0x00).
         address k = makeAddr("keeperA");
+        // 0x80 (AUTO_ROLL) is now accepted.
+        vm.prank(user1);
+        ProfileFacet(address(diamond)).approveKeeper(k, 0x80);
+        assertEq(
+            ProfileFacet(address(diamond)).getKeeperActions(user1, k),
+            0x80,
+            "AUTO_ROLL bit accepted"
+        );
+        // The empty action set still reverts.
+        address k2 = makeAddr("keeperB");
         vm.prank(user1);
         vm.expectRevert(IVaipakamErrors.InvalidKeeperActions.selector);
-        ProfileFacet(address(diamond)).approveKeeper(k, 0x80);
+        ProfileFacet(address(diamond)).approveKeeper(k2, 0x00);
     }
 
     function testApproveKeeperRecordsBitmask() public {

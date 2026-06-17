@@ -133,6 +133,14 @@ const LIQUIDATION_FALLBACK_SPLIT_TOPIC0 = id(
   'LiquidationFallbackSplit(uint256,uint256,uint256,uint256)',
 );
 const LOAN_SETTLED_TOPIC0 = id('LoanSettled(uint256)');
+// #393 v1-d.2 — standing-intent auto-roll. Lender-side close signal when the
+// borrower hasn't claimed yet (otherwise only the later LoanSettled fires).
+// Indexed: (owner, roller, loanId); data: (lendingAsset, collateralAsset,
+// rolledAmount, newCapital). Carried in the SECONDARY scan (the bulk OR-list is
+// at its 24 cap), same as the SwapToRepayIntent / LoanExtended topics.
+const INTENT_LOAN_ROLLED_TOPIC0 = id(
+  'IntentLoanRolled(address,address,uint256,address,address,uint256,uint256)',
+);
 const PARTIAL_REPAID_TOPIC0 = id(
   'PartialRepaid(uint256,uint256,uint256)',
 );
@@ -351,6 +359,8 @@ export type ActivityEventKind =
   | 'LiquidationFallback'
   | 'LiquidationFallbackSplit'
   | 'LoanSettled'
+  // #393 v1-d.2 — standing-intent auto-roll (lender-side close + re-lend).
+  | 'IntentLoanRolled'
   | 'PartialRepaid'
   // T-090 Sub 3 — borrower-initiated swap-to-repay surface.
   | 'SwapToRepayExecuted'
@@ -1372,6 +1382,9 @@ async function runScan(
             // Same naming as the existing intent topics: lifecycle-
             // scoped, not strictly SwapToRepay.
             LOAN_EXTENDED_TOPIC0,
+            // #393 v1-d.2 — standing-intent auto-roll close signal. Co-located
+            // here for the same bulk-OR-list-cap reason.
+            INTENT_LOAN_ROLLED_TOPIC0,
           ],
         ],
         fromBlock: cursor,
@@ -1848,6 +1861,34 @@ async function runScan(
         if (topics.length < 2) continue;
         const loanId = BigInt(topics[1]).toString();
         addEvent('LoanSettled', [], { loanId });
+      } else if (topic0 === INTENT_LOAN_ROLLED_TOPIC0) {
+        // #393 v1-d.2 — IntentLoanRolled(owner indexed, roller indexed,
+        // loanId indexed, lendingAsset, collateralAsset, rolledAmount,
+        // newCapital). Lender-side close via auto-roll; surface it on the
+        // OWNER's activity (the intent whose capital grew).
+        if (topics.length < 4) continue;
+        const owner = ('0x' + topics[1].slice(26)).toLowerCase();
+        const roller = ('0x' + topics[2].slice(26)).toLowerCase();
+        const loanId = BigInt(topics[3]).toString();
+        let lendingAsset = ZERO_ADDRESS;
+        let rolledAmount = '0';
+        try {
+          const [la, , ra] = decodeAbiParameters(
+            parseAbiParameters('address, address, uint256, uint256'),
+            event.data,
+          );
+          lendingAsset = (la as string).toLowerCase();
+          rolledAmount = (ra as bigint).toString();
+        } catch {
+          // malformed — keep defaults
+        }
+        addEvent('IntentLoanRolled', [owner], {
+          loanId,
+          owner,
+          roller,
+          lendingAsset,
+          rolledAmount,
+        });
       } else if (topic0 === PARTIAL_REPAID_TOPIC0) {
         // PartialRepaid(loanId indexed, amountRepaid, newPrincipal)
         if (topics.length < 2) continue;

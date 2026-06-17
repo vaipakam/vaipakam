@@ -463,6 +463,7 @@
     "liquidationFallback": "Liquidations-Fallback (Swap fehlgeschlagen)",
     "liquidationFallbackSplit": "Fallback-Sicherheits-Aufteilung",
     "loanSettled": "Kredit abgewickelt",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "Teilrückzahlung",
     "claimRetryExecuted": "Swap-Wiederholung beim Einlösen",
     "lifRebateClaimed": "VPFI-Gebührenrabatt eingelöst",

@@ -463,6 +463,7 @@
     "liquidationFallback": "Liquidation de secours (swap échoué)",
     "liquidationFallbackSplit": "Répartition du collatéral de secours",
     "loanSettled": "Prêt réglé",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "Remboursement partiel",
     "claimRetryExecuted": "Nouvelle tentative de swap au moment du retrait",
     "lifRebateClaimed": "Remboursement de frais VPFI retiré",

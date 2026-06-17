@@ -192,6 +192,19 @@
   },
   {
     "type": "function",
+    "name": "rollIntentLoan",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setLenderIntent",
     "inputs": [
       {
@@ -278,6 +291,55 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "IntentLoanRolled",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "roller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "rolledAmount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newCapital",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
   },
   {
     "type": "event",
@@ -453,6 +515,19 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "LoanSettled",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AccessControlUnauthorizedAccount",
     "inputs": [
@@ -548,12 +623,48 @@
   },
   {
     "type": "error",
+    "name": "InvalidTransition",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      },
+      {
+        "name": "to",
+        "type": "uint8",
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "KeeperAccessRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderIntentInvalidBounds",
     "inputs": []
   },
   {
     "type": "error",
+    "name": "LenderIntentLoanNotRollable",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "LenderIntentNotActive",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentNothingToRoll",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "LenderIntentPositionTransferred",
     "inputs": []
   },
   {

@@ -85,6 +85,32 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
+    function _livePrincipal() internal view returns (uint256) {
+        return LenderIntentFacet(address(diamond)).getLenderIntentLivePrincipal(
+            lender, mockERC20, mockCollateralERC20
+        );
+    }
+
+    /// @dev The borrower from the most recent `_fillAndRepay` (for tests that
+    ///      need to drive the borrower-side claim).
+    address internal lastBorrower;
+
+    /// @dev Fund → fill an intent against a fresh borrower → borrower repays in
+    ///      full. Returns the repaid loan id (status Repaid, lender claim set).
+    function _fillAndRepay() internal returns (uint256 loanId) {
+        _setIntent();
+        _fund(PRINCIPAL);
+        address b = _newBorrower("rollB");
+        lastBorrower = b;
+        uint256 cp = _postBorrower(b);
+        vm.prank(solver);
+        loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+    }
+
     function _newBorrower(string memory name) internal returns (address b) {
         b = makeAddr(name);
         ERC20Mock(mockERC20).mint(b, 1_000_000 ether);
@@ -420,6 +446,191 @@ contract LenderIntentCapitalTest is SetupTest {
             ERC20(mockERC20).balanceOf(lender),
             walletBefore,
             "proceeds claimed via NFT to wallet (the only path)"
+        );
+    }
+
+    // ─── 6. v1-d.2 — zero-gap auto-roll (rollIntentLoan) ────────────────────
+
+    function test_rollIntentLoan_compoundsAndReLiens() public {
+        uint256 loanId = _fillAndRepay();
+        assertEq(_capital(), 0, "capital drawn down by the fill");
+        assertEq(_livePrincipal(), PRINCIPAL, "live until roll");
+
+        // Owner rolls their own repaid loan (no keeper needed for self).
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+
+        // Proceeds (principal + interest) re-liened as capital; exposure freed.
+        assertGt(_capital(), PRINCIPAL, "compounded: principal + interest re-liened");
+        assertEq(_livePrincipal(), 0, "exposure released on roll");
+    }
+
+    /// @dev The headline: rolled capital is immediately re-lendable with NO
+    ///      wallet round-trip (true zero-gap).
+    function test_rollIntentLoan_thenReMatch() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        uint256 capAfterRoll = _capital();
+        assertGt(capAfterRoll, PRINCIPAL, "rolled capital available");
+
+        // A fresh fill consumes the rolled capital directly — no re-funding.
+        address b2 = _newBorrower("reB");
+        uint256 cp2 = _postBorrower(b2);
+        vm.prank(solver);
+        uint256 loan2 = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp2, PRINCIPAL
+        );
+        assertGt(loan2, 0, "re-matched from rolled capital");
+        assertEq(_capital(), capAfterRoll - PRINCIPAL, "rolled capital drawn by re-fill");
+        assertEq(_livePrincipal(), PRINCIPAL, "re-fill live");
+    }
+
+    function test_rollIntentLoan_keeperAuthorized() public {
+        uint256 loanId = _fillAndRepay();
+        // Lender authorizes the solver as an AUTO_ROLL keeper.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            solver, LibVaipakam.KEEPER_ACTION_AUTO_ROLL
+        );
+        vm.prank(solver);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        assertGt(_capital(), PRINCIPAL, "keeper rolled on the lender's behalf");
+    }
+
+    function test_rollIntentLoan_unauthorizedKeeper_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        // `solver` was authorized for the FILL but not for AUTO_ROLL.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            solver, LibVaipakam.KEEPER_ACTION_SIGNED_FILL
+        );
+        vm.prank(solver);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev If the lender SOLD their position, the buyer is owed the proceeds —
+    ///      auto-roll must NOT redirect them into the original owner's intent.
+    ///      The position NFT is lock-restricted (transfers route through the
+    ///      controlled sale flow, not raw `transferFrom` — which SetupTest's
+    ///      diamond doesn't even cut), so we mock the post-sale `ownerOf` to
+    ///      exercise the guard directly: current holder != originating owner.
+    function test_rollIntentLoan_positionSold_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        uint256 lenderTok =
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lenderTokenId;
+        address buyer = makeAddr("positionBuyer");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSignature("ownerOf(uint256)", lenderTok),
+            abi.encode(buyer)
+        );
+        // Even the original owner can't roll a sold position.
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentPositionTransferred.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        vm.clearMockedCalls();
+    }
+
+    function test_rollIntentLoan_notRepaid_reverts() public {
+        // Fill but DON'T repay → loan is Active, not rollable.
+        _setIntent();
+        _fund(PRINCIPAL);
+        address b = _newBorrower("activeB");
+        uint256 cp = _postBorrower(b);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    function test_rollIntentLoan_nonIntentLoan_reverts() public {
+        // A loanId with no intent origin (never matched) is not rollable.
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(999_999);
+    }
+
+    function test_rollIntentLoan_doubleRoll_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        // The origin marker is cleared on the first roll → second is not rollable.
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    // ─── 6b. Codex #623 round-1 — reject edge cases to the normal claim ─────
+
+    /// @dev #623 P2 — VPFI rotated onto the lending asset post-match: RepayFacet
+    ///      reserved the proceeds, which this roll can't release, so the roll is
+    ///      rejected (VPFI winds down via the normal claim).
+    function test_rollIntentLoan_vpfiRotated_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        vm.prank(lender);
+        vm.expectRevert(
+            LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector
+        );
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #623 round-3 P2 — a CANCELLED intent routes its outstanding loans to
+    ///      the normal claim, not auto-roll (honours cancelLenderIntent).
+    function test_rollIntentLoan_intentCancelled_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).cancelLenderIntent(
+            mockERC20, mockCollateralERC20
+        );
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #623 round-3 P2 — a paused asset blocks the roll (new capital
+    ///      commitment); the lender exits via the normal claim instead.
+    function test_rollIntentLoan_assetPaused_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockCollateralERC20);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.AssetPaused.selector, mockCollateralERC20
+            )
+        );
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #623 P3 — when the borrower has already claimed, the roll settles the
+    ///      loan AND emits LoanSettled (parity with the claim path's indexing).
+    function test_rollIntentLoan_settlesAndEmitsWhenBorrowerClaimed() public {
+        uint256 loanId = _fillAndRepay();
+        // Borrower claims their collateral back first.
+        vm.prank(lastBorrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+
+        // Now the lender roll should settle the loan and emit LoanSettled.
+        vm.expectEmit(true, false, false, false, address(diamond));
+        emit LenderIntentFacet.LoanSettled(loanId);
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "loan settled by roll"
         );
     }
 }

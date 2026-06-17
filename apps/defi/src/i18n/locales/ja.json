@@ -463,6 +463,7 @@
     "liquidationFallback": "清算フォールバック（スワップ失敗）",
     "liquidationFallbackSplit": "フォールバック担保分配",
     "loanSettled": "ローン決済完了",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "一部返済",
     "claimRetryExecuted": "請求時のスワップ再試行",
     "lifRebateClaimed": "VPFI手数料割引リベート請求",

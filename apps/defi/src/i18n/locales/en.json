@@ -1109,6 +1109,7 @@
     "liquidationFallback": "Liquidation fallback (swap reverted)",
     "liquidationFallbackSplit": "Fallback collateral split",
     "loanSettled": "Loan settled",
+    "intentLoanRolled": "Auto-rolled & re-lent",
     "partialRepaid": "Partial repayment",
     "swapToRepayExecuted": "Loan repaid via collateral swap",
     "swapToRepayPartialExecuted": "Partial repayment via collateral swap",
