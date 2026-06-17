@@ -375,8 +375,23 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   returns to the lender's control — after which it can be deployed again. The
   release is tied to the loan's originating intent, so if a lender sells their
   position mid-loan, the original lender's capacity is the one freed (never the
-  buyer's). Re-lending returned proceeds back into the standing intent with no
-  manual step (zero-gap auto-roll) is a planned later capability.
+  buyer's).
+- **Zero-gap auto-roll.** When an intent loan is fully repaid, its proceeds can
+  be redeployed automatically instead of being paid to a wallet: the returned
+  principal **and** interest are re-committed straight back into the intent's
+  working capital, so the next match lends the compounded amount again with no
+  manual claim-and-refund step. Rolling is authorized either by the lender
+  themselves or by a keeper the lender granted a dedicated "auto-roll my repaid
+  intent loans" permission (separate from the "fill my intent" permission, so a
+  lender can opt into automated redeployment independently of who may open new
+  loans). Two guards bound it: only a cleanly fully-repaid loan can roll
+  (defaulted / liquidated / fallback loans use the normal claim, as their
+  proceeds may be collateral rather than re-lendable principal); and a loan
+  whose lender position was **sold** before repayment cannot be rolled — the
+  buyer is owed those proceeds and collects them normally, so a sold position's
+  returns are never diverted into the original lender's intent. The repayment
+  claim that would have paid a wallet is consumed in the same step as the
+  re-commitment, so a rolled loan's funds are never both claimable and re-lent.
 
 ### Lenders:
 

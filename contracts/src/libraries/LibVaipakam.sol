@@ -4458,11 +4458,21 @@ library LibVaipakam {
     ///      `LibAuth.requireKeeperForPrincipal`, not the loan-keyed
     ///      `requireKeeperFor`. An un-opted intent stays openly fillable.
     uint8 internal constant KEEPER_ACTION_SIGNED_FILL = 1 << 6; // 0x40
+    /// @dev #393 v1-d.2 — authorize a keeper to AUTO-ROLL the principal owner's
+    ///      repaid standing-intent loans (`LenderIntentFacet.rollIntentLoan`):
+    ///      re-lien the repaid principal + interest back into the intent's
+    ///      capital pool for zero-gap redeployment, instead of paying it to the
+    ///      lender's wallet. PRE-/cross-loan and principal-keyed (authority is
+    ///      "act for this lender"), so checked via `requireKeeperForPrincipal`.
+    ///      This is the LAST free bit of the uint8 keeper bitmask; a 9th action
+    ///      requires widening `approvedKeeperActions` to uint16.
+    uint8 internal constant KEEPER_ACTION_AUTO_ROLL = 1 << 7; // 0x80
     /// @dev All actions — convenience for "grant everything" UX
     ///      flows. T-092 Phase 3 (#503) widened this from 0x1F to
     ///      0x3F at the same time the `extendLoanInPlace` executor
-    ///      landed; #393 v1-c widened it 0x3F → 0x7F with SIGNED_FILL.
-    uint8 internal constant KEEPER_ACTION_ALL = 0x7F;
+    ///      landed; #393 v1-c widened it 0x3F → 0x7F with SIGNED_FILL;
+    ///      #393 v1-d.2 widened it 0x7F → 0xFF with AUTO_ROLL (bitmask full).
+    uint8 internal constant KEEPER_ACTION_ALL = 0xFF;
 
     /**
      * @notice Retrieves the Vaipakam storage slot.
