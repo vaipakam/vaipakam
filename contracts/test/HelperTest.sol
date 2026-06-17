@@ -289,7 +289,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
         // path is governed by the platform-level consent flag set via
         // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
@@ -303,6 +303,8 @@ contract HelperTest {
         // keeper. Pure view; consumers `staticcall` it from the
         // OfferDetails + AcceptOffer modal.
         selectors[3] = OfferAcceptFacet.previewAccept.selector;
+        // #627 — public KYC-value view (aggregator adapter principal screen).
+        selectors[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         return selectors;
     }
 

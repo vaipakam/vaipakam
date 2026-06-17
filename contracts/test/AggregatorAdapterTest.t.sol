@@ -634,4 +634,40 @@ contract AggregatorAdapterTest is SetupTest {
         );
         adapter.claimInteractionRewards();
     }
+
+    // ─── 11. #627 — principal KYC screen (fork-only; inert on retail) ───────────
+
+    /// @dev #627 — when KYC enforcement is ON, matchLoan screens the REAL
+    ///      principal at the exact accept-path valuation. A fill of 500 (lending)
+    ///      + 1000 (collateral) ≈ 1500 numeraire sits in the Tier1 band ([1k,10k)),
+    ///      so an unverified aggregator is blocked BEFORE the match (the screen
+    ///      fires ahead of the Diamond's acceptor check on the adapter).
+    function test_matchLoan_principalKyc_blocksUnverified() public {
+        _deposit(DEPOSIT);
+        vm.prank(owner);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        uint256 fill = 500 ether;
+        uint256 cp = _postBorrower(fill); // borrower is Tier2; value ≈ 1500
+        vm.prank(keeper);
+        vm.expectRevert(
+            AggregatorAdapterImplementation.PrincipalNotKYCd.selector
+        );
+        adapter.matchLoan(cp, fill);
+    }
+
+    /// @dev #627 — with KYC ON, a Tier1 aggregator (and Tier1 adapter, the
+    ///      on-chain lender) clears both the principal screen and the Diamond's
+    ///      acceptor check, so the fill proceeds.
+    function test_matchLoan_principalKyc_allowsVerified() public {
+        _deposit(DEPOSIT);
+        vm.startPrank(owner);
+        AdminFacet(address(diamond)).setKYCEnforcement(true);
+        ProfileFacet(address(diamond))
+            .updateKYCTier(aggregator, LibVaipakam.KYCTier.Tier1);
+        ProfileFacet(address(diamond))
+            .updateKYCTier(address(adapter), LibVaipakam.KYCTier.Tier1);
+        vm.stopPrank();
+        uint256 loanId = _match(500 ether);
+        assertGt(loanId, 0, "verified principal + adapter -> fill succeeds");
+    }
 }

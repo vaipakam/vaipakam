@@ -1325,6 +1325,29 @@ contract OfferAcceptFacet is
         }
     }
 
+    /// @notice #627 — public view exposing the canonical KYC transaction value
+    ///         (`_calculateTransactionValueNumeraire`) so an off-loan caller can
+    ///         apply the SAME numeraire valuation the accept path uses.
+    /// @dev    Lets the ERC-4626 aggregator adapter screen its real principal's
+    ///         KYC at the EXACT value the Diamond would otherwise apply to the
+    ///         adapter (the resolved acceptor) — closing the clean-adapter KYC
+    ///         bypass without re-deriving (and risking drift from) the oracle
+    ///         valuation. Pure read; no state change.
+    /// @param  offerId The counterparty (borrower) offer being filled.
+    /// @param  lendingAmount The loan principal for this fill (numeraire value
+    ///         folds in the offer's liquid collateral, mirroring the accept path).
+    /// @return valueNumeraire The transaction value, scaled to 1e18.
+    function calculateTransactionValueNumeraire(
+        uint256 offerId,
+        uint256 lendingAmount
+    ) external view returns (uint256 valueNumeraire) {
+        return
+            _calculateTransactionValueNumeraire(
+                LibVaipakam.storageSlot().offers[offerId],
+                lendingAmount
+            );
+    }
+
     // ═════════════════════════════════════════════════════════════════
     // previewAccept — direct-accept dry-run for the frontend (#196)
     // ═════════════════════════════════════════════════════════════════

@@ -1158,7 +1158,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](5);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1172,6 +1172,9 @@ contract DeployDiamond is Script {
         // keeper. Pure view; mirrors the `_acceptOffer` precondition
         // chain and the `LoanFacet` direct-accept role-aware mapping.
         s[3] = OfferAcceptFacet.previewAccept.selector;
+        // #627 — public KYC-value view; the aggregator adapter calls it to
+        // screen its real principal at the exact accept-path valuation.
+        s[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.

@@ -87,17 +87,20 @@ sanctioned keeper can't originate), self-trade-screened (`matchLoan` rejects a
 counterparty offer the principal itself posted), and halted below a mandatory
 upgrade floor. The adapter reads the resulting intent state for NAV.
 
-**Compliance scope — KYC is fork-deferred (#626 round-9 P2):** the forwarders
-screen the real principal for *sanctions* (Tier-1, binary — no value needed). The
-*threshold* KYC check (`meetsKYCRequirement(user, numeraireValue)`) is **not**
-re-applied to the principal here. On the retail deploy this is a non-issue —
-`kycEnforcementEnabled` is permanently `false`, so the gate short-circuits `true`
-for every lender and there is no "blocked" state to bypass. The industrial fork
-that enables KYC would see the Diamond apply the threshold to the adapter
-(`lender == adapter`) rather than the aggregator; screening the principal there
-requires threading the loan's oracle-valued numeraire into the forwarder, which
-belongs in the fork's adapter variant (it must not approximate the value in the
-retail contract). Tracked as a follow-up for the industrial-fork adapter.
+**Compliance scope — real-principal screening (#626 round-9 P2 + #627):** the
+forwarders screen the real principal for *sanctions* (Tier-1, binary) AND for
+*KYC*. `matchLoan` calls `OfferAcceptFacet.calculateTransactionValueNumeraire`
+(the public view exposing the accept path's own oracle valuation) and screens
+`meetsKYCRequirement(authorizedPrincipal, value)` at the **exact** value the
+Diamond would otherwise apply to the adapter (the resolved acceptor) — no
+re-derivation, no drift. This closes the clean-adapter KYC bypass: the match
+path resolves the lender as the adapter, so the Diamond's threshold check lands
+on the adapter, not the aggregator that controls the capital; the explicit
+principal screen restores it. On the **retail** deploy this is fully inert —
+`kycEnforcementEnabled` is permanently `false`, so `meetsKYCRequirement`
+short-circuits `true` for every address (identical to every other call site, e.g.
+`OfferFacet`). On the **industrial fork** (KYC on) a downgraded/insufficient
+aggregator is blocked exactly as a direct lender address would be. (#627 closed.)
 
 ## 5. NAV — `totalAssets()` (conservative-haircut, ratified 2026-06-17)
 
