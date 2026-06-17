@@ -1070,6 +1070,18 @@ library LibVaipakam {
         // glass-off pattern as `partialFillEnabled` / `internalMatchEnabled`.
         // Setter `ConfigFacet.setLenderIntentEnabled(bool)` (ADMIN_ROLE).
         bool lenderIntentEnabled;
+        // ── #399 backstop v0 (Role A) kill-switches — both default OFF ──────
+        // Master pause for the treasury backstop (both roles). `backstopFillEnabled`
+        // gates Role A (auto-counterparty) independently so it can be paused without
+        // touching Role B (the v2 absorb path, gated by a separate
+        // `backstopAbsorbEnabled` flag added in PR 2). See
+        // `docs/DesignsAndPlans/BackstopVaultV0Design.md` §6.
+        bool backstopEnabled;
+        bool backstopFillEnabled;
+        // Minimum seconds an offer must sit before its `backstopEligibleAfter`
+        // can fire (mandatory floor in the createOffer validation, §4.1). 0 ⇒
+        // the library default `BACKSTOP_MIN_DELAY_DEFAULT`.
+        uint64 minBackstopDelay;
     }
 
     /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
@@ -1453,6 +1465,19 @@ library LibVaipakam {
         // carry-over offer deposited NO collateral, so a flipped "not
         // carry-over" read would withdraw/settle a batch that never existed).
         bool refinanceCarryOver;
+        // Slot 23 (packed alongside refinanceCarryOver) — #399 backstop v0
+        // (Role A). Borrower's opt-in deadline after which the treasury
+        // backstop may auto-fill this still-valid-but-unmatched offer
+        // (`BackstopFacet.backstopFill`). `0` ⇒ NOT backstop-eligible (default).
+        // Non-zero is validated at `createOffer` as
+        // `>= block.timestamp + minBackstopDelay && < expiresAt` (a genuine
+        // unmatched interval before the offer dies — never a first-choice
+        // route), AND the offer must be intent-fillable
+        // (`useFullTermInterest == true && allowsPartialRepay == false`, since
+        // the backstop fills via `matchIntent`). Append-only; flat (no
+        // sub-structing — viaIR stack). See
+        // `docs/DesignsAndPlans/BackstopVaultV0Design.md` §4.1.
+        uint64 backstopEligibleAfter;
     }
 
     /**
@@ -4095,6 +4120,12 @@ library LibVaipakam {
         uint256 mandatoryAdapterVersion;          // min required; 0 = none
         mapping(address => uint256) adapterVersion;   // adapter proxy => version stamp
         mapping(address => bool) isAggregatorAdapter; // adapters this factory deployed
+        // ── #399 backstop v0 — the single treasury-seeded backstop vault ────
+        // One protocol-owned BackstopVault (no per-aggregator multiplicity, no
+        // ERC-4626 shares — single principal). Provisioned once by governance;
+        // holds per-asset-pair LenderIntents (Role A) + (PR 2) a free
+        // absorb-cash bucket. See BackstopVaultV0Design.md §2.
+        address backstopVault;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4440,6 +4471,12 @@ library LibVaipakam {
     ///      cap the tunable to a credible per-tier USD window.
     uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MIN_FLOOR = 100e18; // $100
     uint256 internal constant KYC_THRESHOLD_NUMERAIRE_MAX_CEIL = 1_000_000e18; // $1M
+
+    /// @notice #399 backstop v0 — default minimum seconds an offer must sit
+    ///         unmatched before its `backstopEligibleAfter` may fire (used when
+    ///         `protocolCfg.minBackstopDelay == 0`). 1 day: the backstop is a
+    ///         genuine unmatched-after-interval fallback, never first-choice.
+    uint64 internal constant BACKSTOP_MIN_DELAY_DEFAULT = 1 days;
 
     uint256 internal constant MAX_APPROVED_KEEPERS = 5;
 
@@ -4823,6 +4860,28 @@ library LibVaipakam {
     /// @dev #393 v1 — LenderIntentVault standing-intent fill path kill-switch.
     function cfgLenderIntentEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.lenderIntentEnabled;
+    }
+
+    /// @dev #399 backstop v0 — master backstop pause (both roles).
+    function cfgBackstopEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.backstopEnabled;
+    }
+
+    /// @dev #399 backstop v0 — Role A (auto-counterparty) kill-switch.
+    function cfgBackstopFillEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.backstopFillEnabled;
+    }
+
+    /// @dev #399 backstop v0 — mandatory min seconds before an offer's
+    ///      `backstopEligibleAfter` may fire; 0 ⇒ `BACKSTOP_MIN_DELAY_DEFAULT`.
+    function cfgMinBackstopDelay() internal view returns (uint64) {
+        uint64 v = storageSlot().protocolCfg.minBackstopDelay;
+        return v == 0 ? BACKSTOP_MIN_DELAY_DEFAULT : v;
+    }
+
+    /// @dev #399 backstop v0 — the provisioned treasury BackstopVault (0 = unset).
+    function getBackstopVault() internal view returns (address) {
+        return storageSlot().backstopVault;
     }
 
     /// @dev #577 / #585 — true when a FallbackPending loan still carries a
