@@ -91,12 +91,17 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
+    /// @dev The borrower from the most recent `_fillAndRepay` (for tests that
+    ///      need to drive the borrower-side claim).
+    address internal lastBorrower;
+
     /// @dev Fund → fill an intent against a fresh borrower → borrower repays in
     ///      full. Returns the repaid loan id (status Repaid, lender claim set).
     function _fillAndRepay() internal returns (uint256 loanId) {
         _setIntent();
         _fund(PRINCIPAL);
         address b = _newBorrower("rollB");
+        lastBorrower = b;
         uint256 cp = _postBorrower(b);
         vm.prank(solver);
         loanId = OfferMatchFacet(address(diamond)).matchIntent(
@@ -562,5 +567,42 @@ contract LenderIntentCapitalTest is SetupTest {
         vm.prank(lender);
         vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    // ─── 6b. Codex #623 round-1 — reject edge cases to the normal claim ─────
+
+    /// @dev #623 P2 — VPFI rotated onto the lending asset post-match: RepayFacet
+    ///      reserved the proceeds, which this roll can't release, so the roll is
+    ///      rejected (VPFI winds down via the normal claim).
+    function test_rollIntentLoan_vpfiRotated_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        vm.prank(lender);
+        vm.expectRevert(
+            LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector
+        );
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #623 P3 — when the borrower has already claimed, the roll settles the
+    ///      loan AND emits LoanSettled (parity with the claim path's indexing).
+    function test_rollIntentLoan_settlesAndEmitsWhenBorrowerClaimed() public {
+        uint256 loanId = _fillAndRepay();
+        // Borrower claims their collateral back first.
+        vm.prank(lastBorrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+
+        // Now the lender roll should settle the loan and emit LoanSettled.
+        vm.expectEmit(true, false, false, false, address(diamond));
+        emit LenderIntentFacet.LoanSettled(loanId);
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Settled),
+            "loan settled by roll"
+        );
     }
 }

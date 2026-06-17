@@ -109,6 +109,12 @@ contract LenderIntentFacet is
         uint256 newCapital
     );
 
+    /// @notice A loan reached the terminal Settled state. Mirrors the canonical
+    ///         `ClaimFacet.LoanSettled` (same signature ⇒ same topic) so an
+    ///         auto-roll-driven settle is indexed identically to a claim-driven
+    ///         one (#393 v1-d.2, Codex #623 P3).
+    event LoanSettled(uint256 indexed loanId);
+
     /// @notice A required address argument was the zero address.
     error LenderIntentZeroAddress();
     /// @notice `lendingAsset == collateralAsset` — a self-collateralized intent
@@ -506,10 +512,34 @@ contract LenderIntentFacet is
         if (loan.status != LibVaipakam.LoanStatus.Repaid) {
             revert LenderIntentLoanNotRollable();
         }
+        // #623 Codex round-1 P1 — the re-lien targets `io.owner`'s vault, but
+        // RepayFacet deposits the proceeds into `loan.lender`'s vault. A loan
+        // sale (`sellLoanViaBuyOffer`) migrates `loan.lender` to a buyer WITHOUT
+        // clearing `intentOrigin`, and the buyer could transfer the position NFT
+        // back to `io.owner` — passing the `ownerOf` guard below while the
+        // proceeds sit in the buyer's vault. Require `loan.lender == io.owner`
+        // too, so the vault we re-lien from is the one that actually holds the
+        // proceeds. (Both guards: `loan.lender` = where the funds are;
+        // `ownerOf` = who's entitled to the claim.)
+        if (loan.lender != io.owner) revert LenderIntentPositionTransferred();
         // Lender-position-sale guard — roll only if the original owner STILL
         // holds the position NFT (else the buyer is owed the proceeds).
         if (IERC721(address(this)).ownerOf(loan.lenderTokenId) != io.owner) {
             revert LenderIntentPositionTransferred();
+        }
+        // #623 Codex round-1 P1 — a loan carrying preclose / transfer-obligation
+        // HELD proceeds (`heldForLender`) has a SECOND lender payout the normal
+        // claim makes but this roll doesn't. Rather than strand it (the NFT is
+        // about to burn), reject the loan to the normal claim path.
+        if (s.heldForLender[loanId] != 0) revert LenderIntentLoanNotRollable();
+        // #623 Codex round-1 P2 — VPFI rotated onto the lending asset post-match
+        // means RepayFacet RESERVED the proceeds (`lenderProceedsEncumbered`);
+        // this roll can't release that reservation, and consuming the claim
+        // would block the normal claim from releasing it either → vault stuck
+        // over-encumbered. Reject — VPFI winds down via the normal claim.
+        // (Consistent with v1-d.1's VPFI-lending blocks.)
+        if (io.lendingAsset == s.vpfiToken) {
+            revert LenderIntentVpfiLendingUnsupported();
         }
         // Authorize the roller for the owner (owner-self or an AUTO_ROLL keeper).
         LibAuth.requireKeeperForPrincipal(
@@ -589,6 +619,7 @@ contract LenderIntentFacet is
             s.borrowerLifRebate[loanId].rebateAmount == 0;
         if (borrowerClaim.claimed || borrowerHasNothing) {
             LibLifecycle.transitionFromAny(loan, LibVaipakam.LoanStatus.Settled);
+            emit LoanSettled(loanId);
         }
     }
 
