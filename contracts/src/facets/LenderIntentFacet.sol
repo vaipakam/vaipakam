@@ -265,14 +265,25 @@ contract LenderIntentFacet is
         if (!s.lenderIntent[msg.sender][lendingAsset][collateralAsset].active) {
             revert LenderIntentNotActive();
         }
+        // #393 v1-d.1 (Codex round-2 P2) — re-assert the VPFI-lending block at
+        // the on-ramp, BEFORE custody moves. The `setLenderIntent` gate alone
+        // isn't airtight: `vpfiToken` can be configured/rotated AFTER an intent
+        // row was stored (or a pre-gate intent could survive an upgrade), and
+        // such a row would otherwise fund VPFI through the generic chokepoint
+        // with no discount/staking rollup. Blocking funding here transitively
+        // blocks `matchIntent` too (it can only draw funded capital), so no
+        // VPFI-denominated intent capital can ever form. The exit
+        // (`withdrawLenderIntentCapital`) stays open so any pre-existing such
+        // capital can still be wound down.
+        if (lendingAsset == s.vpfiToken) {
+            revert LenderIntentVpfiLendingUnsupported();
+        }
         // #393 v1-d.1 (Codex P2) — respect the per-asset pause on this on-ramp:
         // a paused asset must take no NEW custody commitment (mirrors
         // `createOffer`, which pauses-checks both legs). The exit
         // (`withdrawLenderIntentCapital`) stays open during a pause so a lender
         // can always wind down — same "block new, allow exit" posture as the
-        // sanctions Tier-1/Tier-2 split. (VPFI-as-lending is already impossible
-        // here: it's rejected at `setLenderIntent`, and fund requires an active
-        // intent.)
+        // sanctions Tier-1/Tier-2 split.
         LibFacet.requireAssetNotPaused(lendingAsset);
         LibFacet.requireAssetNotPaused(collateralAsset);
         // Pull wallet → vault via the protocol chokepoint (records the tracked

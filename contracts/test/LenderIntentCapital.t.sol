@@ -11,6 +11,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -306,6 +307,34 @@ contract LenderIntentCapitalTest is SetupTest {
             mockERC20, mockCollateralERC20, PRINCIPAL
         );
         assertEq(_capital(), 0, "exit succeeds despite asset pause");
+    }
+
+    /// @dev #393 v1-d.1 Codex round-2 — the root `setLenderIntent` VPFI gate
+    ///      isn't airtight: `vpfiToken` can be rotated to an asset AFTER an
+    ///      intent on it was already stored + funded. The fund on-ramp
+    ///      re-asserts the block before custody moves; the exit stays open so
+    ///      pre-existing capital can be wound down.
+    function test_fund_blockedAfterAssetBecomesVPFI() public {
+        _setIntent();
+        _fund(PRINCIPAL); // funds fine — mockERC20 isn't VPFI yet
+        // Operator rotates vpfiToken to the lending asset post-hoc.
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        // A top-up now reverts at the on-ramp (defense-in-depth).
+        ERC20Mock(mockERC20).mint(lender, PRINCIPAL);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), PRINCIPAL);
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentVpfiLendingUnsupported.selector);
+        LenderIntentFacet(address(diamond)).fundLenderIntent(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+        // Exit stays open — the already-funded capital is still withdrawable.
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+        assertEq(_capital(), 0, "pre-existing capital still withdrawable");
     }
 
     // ─── 4. matchIntent draws from the lien (under-funding reverts) ─────────
