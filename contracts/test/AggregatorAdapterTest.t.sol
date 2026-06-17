@@ -10,6 +10,8 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {AggregatorAdapterImplementation} from "../src/AggregatorAdapterImplementation.sol";
@@ -498,5 +500,29 @@ contract AggregatorAdapterTest is SetupTest {
         assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed while paused");
         assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed while paused");
         assertEq(adapter.maxDeposit(aggregator), 0, "maxDeposit zeroed while paused");
+    }
+
+    /// @dev #626 round-7 P2 — a mandatory VAULT upgrade (distinct from the adapter
+    ///      upgrade floor) makes the adapter's `withdrawLenderIntentCapital` revert
+    ///      `VaultUpgradeRequired`, so the withdraw max methods must advertise 0.
+    function test_vaultUpgradeRequired_zerosWithdrawCapacity() public {
+        _deposit(DEPOSIT); // adapter now has a vault at the current version
+        assertEq(adapter.maxWithdraw(aggregator), DEPOSIT, "withdrawable before");
+        // Publish a new vault impl (bumps currentVaultVersion) + mandate it.
+        VaipakamVaultImplementation newVaultImpl = new VaipakamVaultImplementation();
+        vm.startPrank(owner);
+        VaultFactoryFacet(address(diamond))
+            .upgradeVaultImplementation(address(newVaultImpl));
+        (, uint256 currentVaultVersion, , ) = VaultFactoryFacet(address(diamond))
+            .getVaultVersionInfo(address(adapter));
+        VaultFactoryFacet(address(diamond))
+            .setMandatoryVaultUpgrade(currentVaultVersion);
+        vm.stopPrank();
+        // The adapter's vault is now below the mandatory floor.
+        (, , , bool upgradeRequired) = VaultFactoryFacet(address(diamond))
+            .getVaultVersionInfo(address(adapter));
+        assertTrue(upgradeRequired, "adapter vault below mandatory floor");
+        assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed");
+        assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed");
     }
 }

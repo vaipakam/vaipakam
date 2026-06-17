@@ -92,6 +92,19 @@ interface IVaipakamIntentSurface {
 
     function paused() external view returns (bool);
 
+    /// @dev The 4th return value `upgradeRequired` is true iff `user` has a vault
+    ///      below a mandatory vault-upgrade floor — every Diamond-driven vault
+    ///      touch then reverts `VaultUpgradeRequired` until the vault is migrated.
+    function getVaultVersionInfo(address user)
+        external
+        view
+        returns (
+            uint256 userVersion,
+            uint256 currentVersion,
+            uint256 mandatoryVersion,
+            bool upgradeRequired
+        );
+
     function getAggregatorAdapterVersion(address adapter)
         external
         view
@@ -599,11 +612,15 @@ contract AggregatorAdapterImplementation is
         uint256 recovered = IERC20(lend).balanceOf(address(this)) - before;
         if (recovered > 0) {
             // Re-commit is new lending — apply the SAME gates as `rollLoan`
-            // (real-principal sanctions + mandatory-floor). If either is closed,
-            // or the intent is wound down / asset paused, skip the re-fund and
-            // leave the proceeds sweepable by the principal.
+            // (real-principal sanctions + mandatory-floor + #626 round-7 P2: the
+            // CALLER, since the Diamond only sees the clean adapter, mirroring
+            // `_screenCaller()` on match/roll). If any is closed, or the intent is
+            // wound down / asset paused, skip the re-fund and leave the proceeds
+            // sweepable by the principal. The CLAIM itself always ran above —
+            // recovery is never blocked (Tier-2 close-out).
             bool gatesOpen = !IVaipakamIntentSurface(diamond)
                 .isSanctionedAddress(authorizedPrincipal) &&
+                !IVaipakamIntentSurface(diamond).isSanctionedAddress(msg.sender) &&
                 !_belowMandatoryFloor();
             if (gatesOpen) {
                 IERC20(lend).forceApprove(diamond, recovered);
@@ -715,7 +732,16 @@ contract AggregatorAdapterImplementation is
     ///        `whenNotPaused`). Idle capital is still illiquid until unpause.
     function _withdrawalsBlocked() private view returns (bool) {
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
-        return d.isSanctionedAddress(authorizedPrincipal) || d.paused();
+        if (d.isSanctionedAddress(authorizedPrincipal) || d.paused()) {
+            return true;
+        }
+        // #626 round-7 P2 — a mandatory VAULT upgrade (distinct from the adapter
+        // upgrade floor) makes `getOrCreateUserVault(adapter)` revert
+        // `VaultUpgradeRequired`, so `withdrawLenderIntentCapital` deterministically
+        // reverts until the adapter's underlying vault is migrated. Advertise 0.
+        (, , , bool vaultUpgradeRequired) =
+            d.getVaultVersionInfo(address(this));
+        return vaultUpgradeRequired;
     }
 
     /// @dev Tier-1 screen on the CALLER of a new-lending forwarder (#626 round-6

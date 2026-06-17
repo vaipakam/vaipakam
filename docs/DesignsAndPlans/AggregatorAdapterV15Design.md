@@ -106,9 +106,10 @@ totalAssets = idle + riskAdjustedLive
 - Defaults are realized as a write-down: on default-claim, `releaseIntentExposure`
   drops `live`; recovered collateral the keeper claims + re-funds (`fundLenderIntent`)
   re-enters `idle`. Pre-re-fund the mark conservatively understates (safe).
-- `haircutBps` is a per-asset governance param in Diamond config
-  (`AdminFacet.setAggregatorHaircutBps(asset, bps)`, range-bounded ≤ some max),
-  read by the adapter via a view. Default a conservative non-zero value.
+- `haircutBps` is an **adapter-scoped** governance param stored on each adapter
+  (set via `AggregatorAdapterFactoryFacet.setAggregatorHaircutBps(address adapter,
+  uint16 bps)`, `VAULT_ADMIN_ROLE`, range-bounded ≤ `MAX_HAIRCUT_BPS` = 5000).
+  The adapter reads its own `haircutBps`. Default a conservative non-zero value.
 
 **Known limitation — defaulted-but-unclaimed window (#626 round-6 P2, accepted):**
 `getLenderIntentLivePrincipal` is decremented only by `releaseIntentExposure`,
@@ -172,7 +173,8 @@ depositors) get notice.
 - Diamond wiring: add the facet to `DiamondFacetNames.cutFacetNames()`,
   `_getAggregatorAdapterFactorySelectors()` in `DeployDiamond.s.sol` + `HelperTest.sol`,
   and `SelectorCoverageTest`.
-- `AdminFacet.setAggregatorHaircutBps` (range-bounded).
+- `AggregatorAdapterFactoryFacet.setAggregatorHaircutBps(adapter, bps)`
+  (adapter-scoped, range-bounded ≤ `MAX_HAIRCUT_BPS`).
 - Tests: `AggregatorAdapterTest.t.sol` — provision; deposit→fundIntent→matchIntent
   (NAV reflects idle→live haircut); roll compounds (NAV up by realized interest);
   withdraw capped to idle; redeem-over-idle reverts; share non-transfer reverts;

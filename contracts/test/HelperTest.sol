@@ -523,7 +523,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](28);
+        selectors = new bytes4[](29);
         selectors[0] = VaultFactoryFacet
             .initializeVaultImplementation
             .selector;
@@ -558,6 +558,8 @@ contract HelperTest {
         selectors[25] = VaultFactoryFacet.recoveryAckTextHash.selector;
         selectors[26] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[27] = VaultFactoryFacet.vaultBannedSource.selector;
+        // #398 — adapter `_withdrawalsBlocked()` reads the vault-upgrade floor.
+        selectors[28] = VaultFactoryFacet.getVaultVersionInfo.selector;
         return selectors;
     }
 
@@ -1519,7 +1521,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
         selectors[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
         selectors[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
@@ -1552,6 +1554,7 @@ contract HelperTest {
         selectors[27] = VaultFactoryFacet.recoveryAckTextHash.selector;
         selectors[28] = VaultFactoryFacet.recoveryNonce.selector;
         selectors[29] = VaultFactoryFacet.vaultBannedSource.selector;
+        selectors[30] = VaultFactoryFacet.getVaultVersionInfo.selector;
         return selectors;
     }
 

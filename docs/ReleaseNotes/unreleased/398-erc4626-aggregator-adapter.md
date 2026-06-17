@@ -28,8 +28,14 @@ down by a governance-set per-asset haircut, with not-yet-collected interest
 excluded until it is actually collected. Interest enters the value only when a
 loan repays and its proceeds compound back into idle capital. Withdrawals are
 limited to idle (un-lent) capital — capital out on live loans becomes
-withdrawable as those loans mature. This keeps the share price from ever
-overstating value, which protects the aggregator's downstream depositors.
+withdrawable as those loans mature. The intent is to keep the share price from
+overstating value, protecting the aggregator's downstream depositors. One
+documented edge remains conservative-*pending-claim*: between the moment a loan
+defaults and the moment a keeper claims its recovery, the failed loan's principal
+is still marked at face-minus-haircut, so if the realized loss exceeds the haircut
+the value can briefly overstate until the claim realizes the write-down.
+Aggregators are advised to run a keeper that promptly claims terminal loans and to
+treat the reported value as conservative-pending-claim.
 
 **Aggregator-controlled upgrades.** The adapter is upgradeable, but on the same
 model as the per-user vault: governance publishes a new version, and each
