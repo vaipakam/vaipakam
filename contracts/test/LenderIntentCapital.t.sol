@@ -357,6 +357,26 @@ contract LenderIntentCapitalTest is SetupTest {
         );
     }
 
+    /// @dev #393 v1-d.1 Codex round-3 — a fill is blocked too if `vpfiToken`
+    ///      rotates onto the lending asset of an already-funded intent (the
+    ///      fund/root gates can't catch a row funded before the rotation).
+    ///      Leaves only the wind-down exit (which checkpoints the VPFI rollup).
+    function test_matchIntent_blockedAfterAssetBecomesVPFI() public {
+        _setIntent();
+        _fund(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b);
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        vm.prank(solver);
+        vm.expectRevert(
+            OfferMatchFacet.LenderIntentVpfiLendingUnsupported.selector
+        );
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
     // ─── 5. The crux — repaid proceeds can't be double-spent via the exit ───
 
     function test_doubleSpend_repaidProceedsNotWithdrawableAsCapital() public {

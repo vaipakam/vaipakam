@@ -8,7 +8,10 @@ import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
  * @title LenderIntentFacet
@@ -345,6 +348,28 @@ contract LenderIntentFacet is
         LibEncumbrance.unlienIntentCapital(
             msg.sender, lendingAsset, collateralAsset, amount
         );
+        // #393 v1-d.1 (Codex round-3 P2) — this is the ONLY VPFI-as-lending path
+        // left open (fund + matchIntent reject VPFI): the wind-down of capital
+        // that became VPFI-denominated via a post-funding `vpfiToken` rotation.
+        // The generic withdraw below doesn't re-stamp the VPFI discount/staking
+        // accounting, so do it here (mirrors `VPFIDiscountFacet.withdrawVPFIFromVault`)
+        // — else a lender keeps a stale high VPFI tier after pulling the VPFI
+        // out. No-op for every non-VPFI lending asset (the common case).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (lendingAsset == s.vpfiToken) {
+            address vault = s.userVaipakamVaults[msg.sender];
+            uint256 prevBal = IERC20(lendingAsset).balanceOf(vault);
+            uint256 prevTracked = s.protocolTrackedVaultBalance[msg.sender][
+                lendingAsset
+            ];
+            // Post-withdraw vault VPFI, clamped to the tracked counter so
+            // unsolicited dust can't inflate the re-stamped tier.
+            uint256 newBal = LibVPFIDiscount.clampToTracked(
+                prevBal - amount, prevTracked - amount
+            );
+            LibVPFIDiscount.rollupUserDiscount(msg.sender, newBal);
+            LibStakingRewards.updateUser(msg.sender, newBal);
+        }
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,
             lendingAsset,
@@ -356,9 +381,7 @@ contract LenderIntentFacet is
             lendingAsset,
             collateralAsset,
             amount,
-            LibVaipakam.storageSlot().lenderIntentCapital[msg.sender][
-                lendingAsset
-            ][collateralAsset]
+            s.lenderIntentCapital[msg.sender][lendingAsset][collateralAsset]
         );
     }
 
