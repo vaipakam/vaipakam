@@ -82,8 +82,22 @@ principal — the Diamond only ever sees the clean adapter):
   adapter and best-effort re-funds them into idle.
 
 Each forwarder is keeper/principal-gated, `_screenPrincipal()`-gated (Tier-1
-sanctions on the REAL aggregator), and halted below a mandatory upgrade floor.
-The adapter reads the resulting intent state for NAV.
+sanctions on the REAL aggregator), caller-screened (`_screenCaller()` — a
+sanctioned keeper can't originate), self-trade-screened (`matchLoan` rejects a
+counterparty offer the principal itself posted), and halted below a mandatory
+upgrade floor. The adapter reads the resulting intent state for NAV.
+
+**Compliance scope — KYC is fork-deferred (#626 round-9 P2):** the forwarders
+screen the real principal for *sanctions* (Tier-1, binary — no value needed). The
+*threshold* KYC check (`meetsKYCRequirement(user, numeraireValue)`) is **not**
+re-applied to the principal here. On the retail deploy this is a non-issue —
+`kycEnforcementEnabled` is permanently `false`, so the gate short-circuits `true`
+for every lender and there is no "blocked" state to bypass. The industrial fork
+that enables KYC would see the Diamond apply the threshold to the adapter
+(`lender == adapter`) rather than the aggregator; screening the principal there
+requires threading the loan's oracle-valued numeraire into the forwarder, which
+belongs in the fork's adapter variant (it must not approximate the value in the
+retail contract). Tracked as a follow-up for the industrial-fork adapter.
 
 ## 5. NAV — `totalAssets()` (conservative-haircut, ratified 2026-06-17)
 

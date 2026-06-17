@@ -8,6 +8,7 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 import {LibSwap} from "./libraries/LibSwap.sol";
 
@@ -87,6 +88,14 @@ interface IVaipakamIntentSurface {
         external
         view
         returns (LibVaipakam.Loan memory);
+
+    function getOffer(uint256 offerId)
+        external
+        view
+        returns (LibVaipakam.Offer memory);
+
+    /// @dev Pays the caller (`msg.sender`) any finalized interaction rewards.
+    function claimInteractionRewards() external;
 
     function isAssetPaused(address asset) external view returns (bool);
 
@@ -215,6 +224,16 @@ contract AggregatorAdapterImplementation is
     /// @notice Raised when a safe-transferred ERC721 isn't this adapter's own
     ///         lender-position mint from the Diamond (#626 round-8 P2).
     error UnexpectedNFT();
+
+    /// @notice Raised when `matchLoan`'s counterparty offer was posted by the
+    ///         adapter's own principal — a self-trade the protocol forbids
+    ///         (#626 round-9 P2).
+    error SelfTrade();
+
+    /// @notice Raised when {sweepNFTToPrincipal} targets a Vaipakam protocol NFT
+    ///         (the position-NFT facet) — the adapter's own lender position must
+    ///         stay put, so protocol NFTs are never sweepable (#626 round-9 P2).
+    error CannotSweepProtocolNFT();
 
     /// @notice The governance haircut was updated.
     event HaircutBpsSet(uint16 oldBps, uint16 newBps);
@@ -519,6 +538,17 @@ contract AggregatorAdapterImplementation is
         _screenCaller(); // #626 round-6 P2 — screen the keeper, not just the principal
         _screenPrincipal();
         _requireUpToDate();
+        // #626 round-9 P2 — preserve the protocol's self-trade guard. The Diamond
+        // sees `lender == adapter` and only knows `borrower == offer.creator`, so
+        // its `lender == borrower` check can't fire when the adapter's own
+        // principal posted the borrower offer. Screen it here: a principal lending
+        // (via the adapter) to itself is the self-loan / reward-denominator
+        // pollution the self-trade ADR closed.
+        if (
+            IVaipakamIntentSurface(diamond)
+                .getOffer(counterpartyOfferId)
+                .creator == authorizedPrincipal
+        ) revert SelfTrade();
         address lend = asset();
         // #626 round-6 P2 — `matchIntent` records `msg.sender` (this adapter) as
         // `loan.matcher`, so a matcher LIF kickback paid in the LENDING asset would
@@ -658,6 +688,35 @@ contract AggregatorAdapterImplementation is
         _screenPrincipal();
         uint256 bal = IERC20(token).balanceOf(address(this));
         if (bal > 0) IERC20(token).safeTransfer(authorizedPrincipal, bal);
+    }
+
+    /// @notice Principal-only: recover a FOREIGN ERC721 that landed on the adapter
+    ///         via a non-safe `transferFrom` (which never triggers
+    ///         {onERC721Received}, so the safe-transfer reject can't catch it).
+    /// @dev    #626 round-9 P2 — the adapter is ERC20-on-ERC20 with no NFT use, so
+    ///         any ERC721 here is unwanted. Vaipakam PROTOCOL NFTs (the position-
+    ///         NFT facet, `nft == diamond`) are NOT sweepable: the adapter's own
+    ///         lender-position NFT is the claim it settles via {claimAndCompound}
+    ///         and must stay put. Every other (non-protocol) NFT is returned to
+    ///         the principal. Screened (Tier-1 funds/asset-out to the principal).
+    function sweepNFTToPrincipal(address nft, uint256 tokenId) external {
+        if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
+        if (nft == diamond) revert CannotSweepProtocolNFT();
+        _screenPrincipal();
+        IERC721(nft).safeTransferFrom(address(this), authorizedPrincipal, tokenId);
+    }
+
+    /// @notice Keeper/principal: claim the adapter's finalized interaction
+    ///         rewards. Loans opened through the adapter set `loan.lender ==
+    ///         adapter`, so lender-side VPFI emissions accrue under the adapter;
+    ///         `claimInteractionRewards` pays `msg.sender`, so only the adapter
+    ///         (as the lender-of-record) can collect them.
+    /// @dev    #626 round-9 P3 — the claimed VPFI lands raw on the adapter and is
+    ///         forwarded to the principal via {sweepToPrincipal} (the principal's
+    ///         earned yield; not part of the underlying-denominated NAV).
+    function claimInteractionRewards() external {
+        _onlyKeeperOrPrincipal();
+        IVaipakamIntentSurface(diamond).claimInteractionRewards();
     }
 
     // ─── ERC721 receiver (#626 Codex P1) ────────────────────────────────────

@@ -9,6 +9,7 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
@@ -542,5 +543,95 @@ contract AggregatorAdapterTest is SetupTest {
             AggregatorAdapterImplementation.UnexpectedNFT.selector
         );
         nft.safeTransferFrom(holder, address(adapter), 1);
+    }
+
+    /// @dev #626 round-9 P2 — a foreign NFT dumped via NON-safe `transferFrom`
+    ///      (no receiver hook) is recoverable by the principal; a Vaipakam
+    ///      protocol NFT (nft == diamond) is never sweepable.
+    function test_sweepNFTToPrincipal_recoversForeignNft() public {
+        ERC4907Mock nft = new ERC4907Mock("Foreign", "FRGN");
+        nft.mint(address(adapter), 7); // _mint — no hook, lands on the adapter
+        // Protocol NFTs can't be swept (the adapter's own position must stay).
+        vm.prank(aggregator);
+        vm.expectRevert(
+            AggregatorAdapterImplementation.CannotSweepProtocolNFT.selector
+        );
+        adapter.sweepNFTToPrincipal(address(diamond), 7);
+        // Non-principal can't sweep.
+        vm.prank(keeper);
+        vm.expectRevert(
+            AggregatorAdapterImplementation.NotAuthorizedPrincipal.selector
+        );
+        adapter.sweepNFTToPrincipal(address(nft), 7);
+        // Principal recovers the foreign NFT.
+        vm.prank(aggregator);
+        adapter.sweepNFTToPrincipal(address(nft), 7);
+        assertEq(nft.ownerOf(7), aggregator, "foreign NFT returned to principal");
+    }
+
+    /// @dev #626 round-9 P2 — the protocol's self-trade guard is preserved: the
+    ///      principal can't fill its own intent against a borrow offer it posted.
+    function test_matchLoan_selfTrade_reverts() public {
+        _deposit(DEPOSIT);
+        // The aggregator (principal) posts a borrower offer itself.
+        ERC20Mock(mockCollateralERC20).mint(aggregator, 1_000_000 ether);
+        vm.prank(aggregator);
+        ERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+        vm.prank(aggregator);
+        ProfileFacet(address(diamond)).setUserCountry("US");
+        uint256 fill = 500 ether;
+        vm.prank(aggregator);
+        uint256 selfOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: fill,
+                interestRateBps: MIN_RATE,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 2 * fill,
+                durationDays: MAX_DUR,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: fill,
+                interestRateBpsMax: MIN_RATE + 100,
+                collateralAmountMax: 2 * fill,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+        vm.prank(keeper);
+        vm.expectRevert(AggregatorAdapterImplementation.SelfTrade.selector);
+        adapter.matchLoan(selfOffer, fill);
+    }
+
+    /// @dev #626 round-9 P3 — the reward-claim forwarder is keeper/principal-gated
+    ///      (loans' lender-side emissions accrue under the adapter; only the
+    ///      adapter can collect them, then they're swept to the principal).
+    function test_claimInteractionRewards_gated() public {
+        vm.prank(makeAddr("rando"));
+        vm.expectRevert(
+            AggregatorAdapterImplementation.NotKeeperOrPrincipal.selector
+        );
+        adapter.claimInteractionRewards();
+        // Keeper passes the adapter gate and forwards to the Diamond — which
+        // reverts here because emissions aren't launched in this harness. The
+        // protocol-side revert proves the forwarder reached the Diamond.
+        vm.prank(keeper);
+        vm.expectRevert(
+            IVaipakamErrors.InteractionEmissionsNotStarted.selector
+        );
+        adapter.claimInteractionRewards();
     }
 }

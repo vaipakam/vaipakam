@@ -142,6 +142,13 @@
   },
   {
     "type": "function",
+    "name": "claimInteractionRewards",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "collateralAsset",
     "inputs": [],
     "outputs": [
@@ -690,6 +697,24 @@
   },
   {
     "type": "function",
+    "name": "sweepNFTToPrincipal",
+    "inputs": [
+      {
+        "name": "nft",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "sweepToPrincipal",
     "inputs": [
       {
@@ -1092,6 +1117,11 @@
   },
   {
     "type": "error",
+    "name": "CannotSweepProtocolNFT",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -1353,6 +1383,11 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "SelfTrade",
+    "inputs": []
   },
   {
     "type": "error",
