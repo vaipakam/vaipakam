@@ -50,12 +50,12 @@ is the single provisioning funnel, the impl is shared + upgradeable.
 ## 4. Capital flow
 
 **Provisioning (`AggregatorAdapterFactoryFacet.createAggregatorAdapter`)** — deploys
-the proxy + `initialize(diamond, authorizedPrincipal, lendingAsset,
-collateralAsset, intentBounds)`. On init the adapter, acting as itself
-(`msg.sender == adapter`), calls the Diamond: `setLenderIntent(bounds)` +
-`ProfileFacet.setKeeperAccess(true)` + `approveKeeper(designatedKeeper,
-KEEPER_ACTION_SIGNED_FILL | KEEPER_ACTION_AUTO_ROLL)`. The intent's
-`requiresKeeperAuth = true` (only the aggregator's curated keeper fills/rolls).
+the proxy + `initialize(...)` (gated to the Diamond deploy path). On init the
+adapter, acting as itself (`msg.sender == adapter`), calls the Diamond:
+`setLenderIntent(bounds)` with `requiresKeeperAuth = true` and records the
+designated `keeper`. It grants **no Diamond-level keeper authority** — matching +
+auto-roll run only through the adapter's own screened forwarders (below), and the
+keeper-gated intent means no external solver can fill it on the Diamond directly.
 
 **Deposit** (`deposit(assets, receiver)`):
 1. gate `caller == receiver == authorizedPrincipal`;
@@ -70,10 +70,20 @@ KEEPER_ACTION_SIGNED_FILL | KEEPER_ACTION_AUTO_ROLL)`. The intent's
 assets)` (vault→adapter), then OZ `_withdraw` burns shares + transfers assets
 adapter→aggregator.
 
-**Matching + compounding** — keeper-driven on the Diamond, no adapter code:
-`matchIntent` deploys idle capital to borrowers; `rollIntentLoan` re-liens repaid
-principal+interest into idle (compounding). The adapter just reads the resulting
-state for NAV.
+**Matching + compounding + recovery** — keeper/principal-driven through the
+adapter's SCREENED forwarders (so every value-moving path screens the real
+principal — the Diamond only ever sees the clean adapter):
+- `matchLoan(cp, fill)` → calls `matchIntent` as the intent owner (keeper-gate
+  self-branch); deploys idle capital to a borrower.
+- `rollLoan(loanId)` → calls `rollIntentLoan`; re-liens repaid principal+interest
+  into idle (compounding).
+- `claimAndCompound(loanId, retryCalls)` → for a resolved-but-non-rollable loan
+  (default/fallback), `claimAsLenderWithRetry` recovers the proceeds to the
+  adapter and best-effort re-funds them into idle.
+
+Each forwarder is keeper/principal-gated, `_screenPrincipal()`-gated (Tier-1
+sanctions on the REAL aggregator), and halted below a mandatory upgrade floor.
+The adapter reads the resulting intent state for NAV.
 
 ## 5. NAV — `totalAssets()` (conservative-haircut, ratified 2026-06-17)
 

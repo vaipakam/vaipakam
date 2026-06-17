@@ -83,6 +83,11 @@ interface IVaipakamIntentSurface {
         address collateralAsset
     ) external view returns (LibVaipakam.LenderIntent memory);
 
+    function getLoanDetails(uint256 loanId)
+        external
+        view
+        returns (LibVaipakam.Loan memory);
+
     function isAssetPaused(address asset) external view returns (bool);
 
     function getAggregatorAdapterVersion(address adapter)
@@ -185,6 +190,12 @@ contract AggregatorAdapterImplementation is
     /// @notice Raised when the adapter is below a mandated upgrade floor and a
     ///         new deposit is attempted (upgrade-or-halt; exit stays open).
     error AdapterUpgradeRequired();
+    /// @notice Raised when `initialize` is called by anyone other than the
+    ///         Diamond (the factory deploy path) — blocks rogue adapter proxies.
+    error NotDiamond();
+    /// @notice Raised when `claimAndCompound` targets a loan this adapter is not
+    ///         the lender-of-record on (a foreign position NFT dumped on it).
+    error NotAdapterLoan();
 
     /// @notice The governance haircut was updated.
     event HaircutBpsSet(uint16 oldBps, uint16 newBps);
@@ -236,6 +247,12 @@ contract AggregatorAdapterImplementation is
         uint32 intentMaxDurationDays,
         uint256 intentMinFillAmount
     ) external initializer {
+        // #626 round-4 P2 — only the Diamond (the factory deploy path) may
+        // initialize an adapter. The factory deploys the proxy from the Diamond's
+        // context, so the constructor's delegatecall to `initialize` preserves
+        // `msg.sender == diamondAddress`. A rogue proxy over the shared impl
+        // (msg.sender = attacker ≠ the real Diamond) is rejected.
+        if (msg.sender != diamondAddress) revert NotDiamond();
         if (
             diamondAddress == address(0) ||
             principal == address(0) ||
@@ -532,6 +549,14 @@ contract AggregatorAdapterImplementation is
         LibSwap.AdapterCall[] calldata retryCalls
     ) external {
         _onlyKeeperOrPrincipal();
+        // #626 round-4 P2 — only this adapter's OWN intent loans may be claimed
+        // here (the adapter is their lender-of-record). A foreign lender-position
+        // NFT transferred onto the adapter must not let its proceeds be absorbed
+        // into this aggregator's intent/NAV.
+        if (
+            IVaipakamIntentSurface(diamond).getLoanDetails(loanId).lender !=
+            address(this)
+        ) revert NotAdapterLoan();
         address lend = asset();
         uint256 before = IERC20(lend).balanceOf(address(this));
         IVaipakamIntentSurface(diamond).claimAsLenderWithRetry(loanId, retryCalls);
@@ -618,6 +643,9 @@ contract AggregatorAdapterImplementation is
     function _fundingOpen() private view returns (bool) {
         if (_belowMandatoryFloor()) return false;
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
+        // reverts), so advertise 0.
+        if (d.isSanctionedAddress(authorizedPrincipal)) return false;
         if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
             return false;
         }

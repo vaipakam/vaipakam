@@ -16,6 +16,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 /**
  * @title  AggregatorAdapterTest
@@ -350,6 +351,24 @@ contract AggregatorAdapterTest is SetupTest {
             AggregatorAdapterImplementation.NotKeeperOrPrincipal.selector
         );
         adapter.claimAndCompound(loanId, new LibSwap.AdapterCall[](0));
+    }
+
+    /// @dev #626 round-4 P2 — `initialize` is gated to the Diamond deploy path;
+    ///      a rogue proxy over the shared impl can't initialize against the real
+    ///      Diamond.
+    function test_initialize_onlyDiamond_reverts() public {
+        AggregatorAdapterImplementation impl =
+            new AggregatorAdapterImplementation();
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), "");
+        AggregatorAdapterImplementation rogue =
+            AggregatorAdapterImplementation(address(proxy));
+        // msg.sender == this test contract != the real Diamond → NotDiamond.
+        vm.expectRevert(AggregatorAdapterImplementation.NotDiamond.selector);
+        rogue.initialize(
+            address(diamond), aggregator, mockERC20, mockCollateralERC20,
+            HAIRCUT_BPS, keeper, "x", "x",
+            MAX_EXPOSURE, MIN_RATE, MAX_LTV, MAX_DUR, MIN_FILL
+        );
     }
 
     // ─── 8b. Round-2 gates ──────────────────────────────────────────────────────

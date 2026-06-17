@@ -1293,7 +1293,17 @@
   },
   {
     "type": "error",
+    "name": "NotAdapterLoan",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAuthorizedPrincipal",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotDiamond",
     "inputs": []
   },
   {
