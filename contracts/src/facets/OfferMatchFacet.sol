@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
@@ -246,6 +247,13 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         price / illiquid collateral), so the intent's LTV ceiling can't be
     ///         enforced — refuse rather than open a loan blind to the bound.
     error LenderIntentCollateralUnresolvable();
+    /// @notice VPFI cannot be filled as an intent's lending asset (#393 v1-d.1
+    ///         Codex round-3). Catches the rotation/pre-gate edge where a row's
+    ///         `lendingAsset` became `vpfiToken` after it was funded — filling
+    ///         it would disburse VPFI through the generic path, bypassing the
+    ///         discount/staking rollup. Same selector as
+    ///         `LenderIntentFacet.LenderIntentVpfiLendingUnsupported`.
+    error LenderIntentVpfiLendingUnsupported();
 
     /// @notice Keeper-matcher fill of a **vault-backed** signed offer against
     ///         an on-chain counterparty offer — full or partial. The keeper
@@ -366,6 +374,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentInactive();
+        // #393 v1-d.1 (Codex round-3 P2) — block a VPFI-lending FILL even for a
+        // pre-existing intent whose `lendingAsset` became `vpfiToken` via a
+        // post-funding rotation (the fund/root gates can't catch a row funded
+        // before the rotation). Without this, the unlien + materialize below
+        // would disburse VPFI through the generic vault/offer path, bypassing
+        // the discount/staking rollup. Leaves only the wind-down exit
+        // (`withdrawLenderIntentCapital`, which checkpoints the rollup).
+        if (lendingAsset == s.vpfiToken) {
+            revert LenderIntentVpfiLendingUnsupported();
+        }
         // #393 v1-c — permissioned-solver gate. A `requiresKeeperAuth` intent may
         // only be filled by the lender themselves or a solver the lender has
         // authorized for `KEEPER_ACTION_SIGNED_FILL` (pre-loan, principal-keyed).
@@ -414,8 +432,21 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert LenderIntentCollateralUnresolvable();
         }
 
-        // Materialize the single-fill lender slice (creator = lender; pulls from
-        // the lender's FREE vault balance + creates the offer-principal lien).
+        // #393 v1-d — the intent's funded capital is held as a LIEN (it is not
+        // free balance, so no other withdraw door can drain it). Release this
+        // fill's slice from the intent-capital lien FIRST so the materialize
+        // path below sees it as free balance and can re-lock it as the
+        // offer-principal lien. `unlienIntentCapital` reverts
+        // `IntentCapitalInsufficient` if the slice exceeds the funded capital —
+        // a fill can never lend more than the lender has funded. (This is the
+        // hard funding guard; `maxExposure` checked above is the declared cap.)
+        LibEncumbrance.unlienIntentCapital(
+            lender, lendingAsset, collateralAsset, fillAmount
+        );
+
+        // Materialize the single-fill lender slice (creator = lender; consumes
+        // the just-freed slice from the lender's vault + creates the
+        // offer-principal lien).
         uint256 sliceOfferId = _materializeIntentSlice(
             _intentSliceParams(
                 lendingAsset,

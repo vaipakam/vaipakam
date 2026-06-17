@@ -135,11 +135,34 @@ contract LenderIntentMatchTest is SetupTest {
         );
     }
 
+    /// @dev #393 v1-d — fund the lender's (already-active) intent with working
+    ///      capital via the on-ramp: mint wallet balance, approve the Diamond
+    ///      for exactly `amount` (exact-amount approval convention), then
+    ///      `fundLenderIntent` (wallet → vault + intent-capital lien). The
+    ///      intent MUST be set first (fund follows set). This replaces the old
+    ///      `_fundActorVault` free-balance seeding — `matchIntent` now draws
+    ///      strictly from the intent-capital lien, not raw free balance.
+    function _fundIntent(uint256 amount) internal {
+        ERC20Mock(mockERC20).mint(lender, amount);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(address(diamond), amount);
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).fundLenderIntent(
+            mockERC20, mockCollateralERC20, amount
+        );
+    }
+
+    function _intentCapital() internal view returns (uint256) {
+        return LenderIntentFacet(address(diamond)).getLenderIntentCapital(
+            lender, mockERC20, mockCollateralERC20
+        );
+    }
+
     // ─── 1. Happy path — fill + lender-of-record + exposure increment ───────
 
     function test_matchIntent_fillsAndAttributesToLender() public {
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
 
@@ -158,6 +181,9 @@ contract LenderIntentMatchTest is SetupTest {
         assertEq(loan.principal, PRINCIPAL, "principal == fill");
         // Exposure counter tracks the live principal.
         assertEq(_livePrincipal(), PRINCIPAL, "live principal == fill");
+        // #393 v1-d — the fill drew its slice from the intent-capital lien:
+        // funded PRINCIPAL, lent PRINCIPAL ⇒ 0 un-lent capital remains.
+        assertEq(_intentCapital(), 0, "intent capital drawn down by the fill");
     }
 
     // ─── 2. Exposure cap across simultaneous fills ──────────────────────────
@@ -165,7 +191,7 @@ contract LenderIntentMatchTest is SetupTest {
     function test_matchIntent_exposureCap_enforced() public {
         // Cap at 1.5x PRINCIPAL: one PRINCIPAL fill fits; a second would exceed.
         _setIntent(3 * PRINCIPAL / 2);
-        _fundActorVault(lender, mockERC20, 3 * PRINCIPAL);
+        _fundIntent(3 * PRINCIPAL);
         address b1 = _newBorrower("b1");
         address b2 = _newBorrower("b2");
         uint256 cp1 = _postBorrower(b1, PRINCIPAL, 2 * PRINCIPAL);
@@ -188,8 +214,9 @@ contract LenderIntentMatchTest is SetupTest {
     // ─── 3. Bounds reverts ──────────────────────────────────────────────────
 
     function test_matchIntent_inactiveIntent_reverts() public {
-        // No intent set.
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        // No intent set — and with no active intent the lender cannot even
+        // fund capital (`fundLenderIntent` reverts), so there's nothing to
+        // seed; `matchIntent` rejects on the inactive-intent gate first.
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(solver);
@@ -201,7 +228,7 @@ contract LenderIntentMatchTest is SetupTest {
 
     function test_matchIntent_belowMinFill_reverts() public {
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(solver);
@@ -214,7 +241,7 @@ contract LenderIntentMatchTest is SetupTest {
     function test_matchIntent_durationTooLong_reverts() public {
         // Intent caps duration at 30; post a 60-day borrower offer.
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         vm.prank(b);
         uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
@@ -258,7 +285,7 @@ contract LenderIntentMatchTest is SetupTest {
         // A counterparty offer that disables the full-term floor can't fill an
         // intent (the lender's committed-interest election would be bypassed).
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         vm.prank(b);
         uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
@@ -302,7 +329,7 @@ contract LenderIntentMatchTest is SetupTest {
         // A partial-repay counterparty can't fill an intent (it would let the
         // borrower escape the committed-interest economics via pro-rata repays).
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         vm.prank(b);
         uint256 cp = OfferCreateFacet(address(diamond)).createOffer(
@@ -348,7 +375,7 @@ contract LenderIntentMatchTest is SetupTest {
         vm.prank(owner);
         LenderIntentFacet(address(diamond)).setLenderIntentEnabled(false);
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(solver);
@@ -364,7 +391,7 @@ contract LenderIntentMatchTest is SetupTest {
 
     function test_matchIntent_lenderClaim_releasesExposure() public {
         _setIntent(MAX_EXPOSURE);
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
 
@@ -380,11 +407,15 @@ contract LenderIntentMatchTest is SetupTest {
         RepayFacet(address(diamond)).repayLoan(loanId);
         assertEq(_livePrincipal(), PRINCIPAL, "exposure held until claim");
 
-        // Lender (holds the loan lender-position NFT) claims → exposure released,
-        // and the principal is back in their vault, re-lendable.
+        // Lender (holds the loan lender-position NFT) claims → exposure
+        // released. In v1-d.1 the repaid proceeds are withdrawn to the lender's
+        // WALLET via the Position-NFT claim (NOT re-liened into the intent —
+        // that zero-gap re-credit is v1-d.2). The intent-capital lien stays at
+        // 0 (drawn down by the fill, not refilled by the claim).
         vm.prank(lender);
         ClaimFacet(address(diamond)).claimAsLender(loanId);
         assertEq(_livePrincipal(), 0, "exposure released on lender claim");
+        assertEq(_intentCapital(), 0, "intent capital not auto-refilled (v1-d.1)");
     }
 
     // ─── 6. Permissioned-solver gate (#393 v1-c) ────────────────────────────
@@ -401,7 +432,7 @@ contract LenderIntentMatchTest is SetupTest {
 
     function test_matchIntent_keeperGated_unauthorizedSolver_reverts() public {
         _setIntentKeeperGated();
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         // The solver isn't authorized for KEEPER_ACTION_SIGNED_FILL → rejected.
@@ -414,7 +445,7 @@ contract LenderIntentMatchTest is SetupTest {
 
     function test_matchIntent_keeperGated_authorizedSolver_succeeds() public {
         _setIntentKeeperGated();
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         // The lender opts the solver in for SIGNED_FILL.
         vm.prank(lender);
         ProfileFacet(address(diamond)).setKeeperAccess(true);
@@ -434,7 +465,7 @@ contract LenderIntentMatchTest is SetupTest {
     function test_matchIntent_keeperGated_lenderSelf_succeeds() public {
         // The lender can always fill their own keeper-gated intent.
         _setIntentKeeperGated();
-        _fundActorVault(lender, mockERC20, PRINCIPAL);
+        _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
         uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
         vm.prank(lender);
