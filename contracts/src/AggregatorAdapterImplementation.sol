@@ -94,6 +94,21 @@ interface IVaipakamIntentSurface {
         view
         returns (LibVaipakam.Offer memory);
 
+    /// @dev Canonical KYC transaction value for a fill (lending + liquid
+    ///      collateral, oracle-valued, 1e18) — the same value the accept path
+    ///      applies; used to screen the real principal's KYC (#627).
+    function calculateTransactionValueNumeraire(
+        uint256 offerId,
+        uint256 lendingAmount
+    ) external view returns (uint256);
+
+    /// @dev True when `user`'s KYC tier permits a transaction of `valueNumeraire`
+    ///      (always true while KYC enforcement is disabled — the retail default).
+    function meetsKYCRequirement(address user, uint256 valueNumeraire)
+        external
+        view
+        returns (bool);
+
     /// @dev Pays the caller (`msg.sender`) any finalized interaction rewards.
     function claimInteractionRewards() external;
 
@@ -229,6 +244,11 @@ contract AggregatorAdapterImplementation is
     ///         adapter's own principal — a self-trade the protocol forbids
     ///         (#626 round-9 P2).
     error SelfTrade();
+
+    /// @notice Raised when the real principal's KYC tier doesn't permit a fill of
+    ///         this value (#627). Inert on retail (KYC enforcement off → the
+    ///         Diamond's `meetsKYCRequirement` short-circuits true).
+    error PrincipalNotKYCd();
 
     /// @notice Raised when {sweepNFTToPrincipal} targets a Vaipakam protocol NFT
     ///         (the position-NFT facet) — the adapter's own lender position must
@@ -549,6 +569,21 @@ contract AggregatorAdapterImplementation is
                 .getOffer(counterpartyOfferId)
                 .creator == authorizedPrincipal
         ) revert SelfTrade();
+        // #627 — screen the REAL principal's KYC. The match path resolves the
+        // lender as this (clean) adapter, so the Diamond's threshold KYC check in
+        // OfferAcceptFacet is applied to the adapter, not the aggregator that
+        // controls the capital. Screen the principal here at the EXACT accept-path
+        // valuation. Inert on retail (KYC enforcement off → always true); the
+        // industrial fork's downgraded/insufficient aggregator is blocked just as
+        // a direct lender address would be.
+        uint256 kycValue = IVaipakamIntentSurface(diamond)
+            .calculateTransactionValueNumeraire(counterpartyOfferId, fillAmount);
+        if (
+            !IVaipakamIntentSurface(diamond).meetsKYCRequirement(
+                authorizedPrincipal,
+                kycValue
+            )
+        ) revert PrincipalNotKYCd();
         address lend = asset();
         // #626 round-6 P2 — `matchIntent` records `msg.sender` (this adapter) as
         // `loan.matcher`, so a matcher LIF kickback paid in the LENDING asset would

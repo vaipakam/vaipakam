@@ -1,0 +1,5 @@
+### #627 — Aggregator adapter screens its real principal's KYC
+
+The ERC-4626 aggregator lender-adapter (#398) lends as the on-chain lender-of-record, so when a deploy enables KYC enforcement the protocol's threshold KYC check landed on the adapter rather than on the aggregator that actually controls the capital. The adapter now screens its real principal's KYC inside `matchLoan`, at the exact transaction value the accept path itself computes (a new public view exposes that valuation, so there's no risk of a re-derived value drifting from the protocol's own).
+
+This has no effect on the retail product, where KYC enforcement is permanently off — the check short-circuits to "allowed" for every address, exactly like every other KYC call site. It matters only for the separate industrial-fork deploy that turns KYC on: there, an aggregator whose verification is missing or downgraded is blocked from originating new loans through the adapter, just as a direct lender would be. Completes the "screen the real principal" posture the adapter already applied to sanctions.
