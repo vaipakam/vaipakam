@@ -13,7 +13,7 @@ free-balance aggregate:
 
 | Pool | Lien | Filled by | Under what terms |
 | --- | --- | --- | --- |
-| Offer principal (`createOffer`) | `offerPrincipalLien[offerId]` | anyone via `matchOffers` / `matchSignedOffer` | the offer's **exact** snapshotted terms |
+| Offer principal (`createOffer`) | `offerPrincipalLien[offerId]` | anyone via `matchOffers` (permissionless) or direct `acceptOffer` | the offer's **exact** snapshotted terms |
 | Intent capital (`fundLenderIntent`) | `lenderIntentCapital[owner][lend][coll]` | a (permissioned) solver via `matchIntent` | within the intent's **bounds** (min-rate, max-LTV, max-term) |
 
 Should a solver/aggregator be able to *also* draw on offer-committed capital — i.e.
@@ -21,11 +21,21 @@ unify the two into one fillable pool?
 
 ## 2. Code reality — they are NOT walled off from solvers
 
-Critically, offer capital is **already** solver-accessible today: any solver
-(including a keeper/aggregator) can fill a standing offer through `matchOffers`
-(on-chain book) or `matchSignedOffer` (gasless book), partial or AON, at the
-offer's terms. The `requiresKeeperAuth` flag on a signed offer already provides a
-*permissioned-solver* mode (controls **who** may fill, not the terms).
+Critically, offer-committed capital is **already** solver-accessible today: any
+solver (including a keeper/aggregator) can fill a standing `createOffer` principal
+through `matchOffers` (permissionless on-chain match) or a direct `acceptOffer`,
+partial or AON, **at the offer's exact terms**.
+
+(Two clarifications — verified against the v0.6 code, since the surface is easy to
+mis-read: (a) `matchSignedOffer` is **not** a fill path for already-committed
+`offerPrincipalLien` capital — it materializes a *separate* signed order from the
+signer's free wallet/vault balance and only then creates a transient lien; the
+permissionless path for *committed* `createOffer` principal is `matchOffers` /
+`acceptOffer`. (b) There is currently **no permissioned-solver gate on signed
+offers** — `matchSignedOffer` verifies the signature and materializes the slice
+with no `requireKeeperForPrincipal` check; only `matchIntent` enforces a keeper
+gate today. The `requiresKeeperAuth` opt-in for signed offers is **deferred / not
+yet built** — see §5.)
 
 So "the aggregator can't use offer capital" is a false premise. What "unification"
 would actually mean is: **let the matching layer redeploy offer-committed capital
@@ -70,19 +80,39 @@ chose), when no offer-matching borrower exists.
 **Verdict: keep the offer-principal and intent-capital pools ISOLATED (Option 1).**
 The matching layer already reaches both — offers at their exact terms, intents
 within bounds — under distinct, consent-preserving paths. No new "draw on offer
-capital" mechanism is needed or desirable. The `requiresKeeperAuth` signed-offer
-opt-in (already specced, deferred) is the only "aggregator-eligibility" knob that
-is consent-safe, because it controls *who fills*, never *re-pricing*.
+capital" mechanism is needed or desirable. The (deferred, not-yet-built)
+`requiresKeeperAuth` opt-in for signed offers is the only "aggregator-eligibility"
+knob that is consent-safe, because it would control *who fills*, never
+*re-pricing*.
 
 **This simplifies #398 (v1.5 ERC-4626 adapter):** an external aggregator deposits
 into its per-aggregator `LenderIntentVault` and its capital is intent-capital,
 fillable only via `matchIntent` within the aggregator's bounds. The adapter never
-touches offer liens, and there is no cross-pool accounting to reconcile —
-`totalAssets` is exactly the aggregator's intent capital + its live intent
-principal + claimable proceeds. The isolation verdict is a precondition that keeps
-the adapter's share-accounting honest.
+touches offer liens, so there is no cross-pool accounting to reconcile.
+
+**`totalAssets` mark — preserve the #398 risk-adjusted requirement (do NOT mark at
+face).** The mark is **NOT** "intent capital + live intent principal + claimable
+proceeds" at face — that would value active-loan principal at full face and let a
+redeemer (here, the aggregator's downstream depositors, who DO have inter-depositor
+fairness) draw value against default-risk / not-yet-collected assets. Per #398, and
+ratified for the build (2026-06-17): **conservative-haircut mark** —
+`totalAssets` = idle intent capital (which already includes collected + auto-rolled
+interest as realized yield) **+ risk-adjusted live principal** (face minus a
+per-asset governance haircut, written down further on default) **+ realized /
+claimable proceeds**; **accrued-but-unpaid interest is EXCLUDED** until collected;
+and `maxWithdraw` = **idle only** (capital locked in live loans is not withdrawable).
+This keeps the share price conservative and honest. (See the #398 design doc for
+the exact formula + the withdrawable-vs-marked split.)
+
+**Reconciliation with the older #398 / HybridIntentLayer wording:** those specs
+describe the adapter as "posting signed offers" via the signed-offer matcher. This
+verdict **supersedes** that for the adapter's integration path — post-#393 the
+adapter funds a **`LenderIntent`** (`fundLenderIntent` → `matchIntent` → auto-roll),
+which is the standing-supply primitive purpose-built for this and keeps the capital
+cleanly intent-side. The #398 design doc + HybridIntentLayer §3.3 should be updated
+to the LenderIntent path when #398 is built.
 
 **Follow-up that remains real (not unification):** the deferred `requiresKeeperAuth`
-opt-in for `matchSignedOffer` (a v0.6 EIP-712 schema change) — it gives offers a
-permissioned-solver mode without touching terms. Tracked separately; out of scope
-here.
+opt-in for signed offers (a v0.6 EIP-712 schema change) — it would give signed
+offers a permissioned-solver mode without touching terms. Tracked separately; out
+of scope here.
