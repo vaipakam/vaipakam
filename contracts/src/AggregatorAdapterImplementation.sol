@@ -8,6 +8,7 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {LibVaipakam} from "./libraries/LibVaipakam.sol";
 
 /**
  * @title  IVaipakamIntentSurface
@@ -56,13 +57,34 @@ interface IVaipakamIntentSurface {
         address collateralAsset
     ) external view returns (uint256);
 
-    function setKeeperAccess(bool enabled) external;
-
-    function approveKeeper(address keeper, uint8 actions) external;
-
     function isSanctionedAddress(address who) external view returns (bool);
 
     function claimAsLender(uint256 loanId) external;
+
+    function matchIntent(
+        address lender,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 counterpartyOfferId,
+        uint256 fillAmount
+    ) external returns (uint256 loanId);
+
+    function rollIntentLoan(uint256 loanId) external;
+
+    function getLenderIntent(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) external view returns (LibVaipakam.LenderIntent memory);
+
+    function isAssetPaused(address asset) external view returns (bool);
+
+    function getAggregatorAdapterVersion(address adapter)
+        external
+        view
+        returns (uint256);
+
+    function mandatoryAggregatorAdapterVersion() external view returns (uint256);
 }
 
 /**
@@ -126,6 +148,13 @@ contract AggregatorAdapterImplementation is
     /// @notice Per-asset NAV haircut applied to live (outstanding) principal in
     ///         `totalAssets`. Governance-settable (owner = Diamond).
     uint16 public haircutBps;
+    /// @notice The designated keeper that drives matching + auto-roll — but ONLY
+    ///         through this adapter's `matchLoan` / `rollLoan` forwarders, never
+    ///         the Diamond directly (the intent is keeper-gated and the adapter
+    ///         grants no Diamond-level keeper authority). Routing through the
+    ///         adapter is what lets every value-moving path screen the REAL
+    ///         principal (#626 round-2 P1).
+    address public keeper;
 
     /// @notice Raised on a share transfer between non-zero holders (shares are
     ///         non-transferable to preserve the E1 single-principal property).
@@ -144,6 +173,12 @@ contract AggregatorAdapterImplementation is
     /// @notice Raised when a withdraw/redeem caller, owner, or receiver isn't
     ///         the authorized principal (no approved-spender exit).
     error WithdrawNotPrincipal();
+    /// @notice Raised when a match/roll forwarder caller is neither the
+    ///         designated keeper nor the authorized principal.
+    error NotKeeperOrPrincipal();
+    /// @notice Raised when the adapter is below a mandated upgrade floor and a
+    ///         new deposit is attempted (upgrade-or-halt; exit stays open).
+    error AdapterUpgradeRequired();
 
     /// @notice The governance haircut was updated.
     event HaircutBpsSet(uint16 oldBps, uint16 newBps);
@@ -170,7 +205,7 @@ contract AggregatorAdapterImplementation is
      * @param lendingAsset       ERC-4626 underlying = the asset lent.
      * @param collateralAsset_   The collateral the intent accepts.
      * @param haircutBps_        Initial NAV haircut on live principal.
-     * @param keeper             The designated keeper authorized to fill +
+     * @param keeper_            The designated keeper authorized to fill +
      *                           auto-roll this adapter's intent.
      * @param name_              ERC-20 share name.
      * @param symbol_            ERC-20 share symbol.
@@ -186,7 +221,7 @@ contract AggregatorAdapterImplementation is
         address lendingAsset,
         address collateralAsset_,
         uint16 haircutBps_,
-        address keeper,
+        address keeper_,
         string memory name_,
         string memory symbol_,
         uint256 intentMaxExposure,
@@ -200,7 +235,7 @@ contract AggregatorAdapterImplementation is
             principal == address(0) ||
             lendingAsset == address(0) ||
             collateralAsset_ == address(0) ||
-            keeper == address(0)
+            keeper_ == address(0)
         ) revert ZeroAddress();
         if (haircutBps_ > MAX_HAIRCUT_BPS) revert HaircutTooHigh();
 
@@ -212,12 +247,16 @@ contract AggregatorAdapterImplementation is
         authorizedPrincipal = principal;
         collateralAsset = collateralAsset_;
         haircutBps = haircutBps_;
+        keeper = keeper_;
 
-        // Register the standing intent as ourselves, keeper-gated, and authorize
-        // the designated keeper for fills + auto-roll. `requiresKeeperAuth=true`
-        // so only the curated keeper fills/rolls this adapter's capital.
-        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamondAddress);
-        d.setLenderIntent(
+        // Register the standing intent as ourselves, KEEPER-GATED. We grant NO
+        // Diamond-level keeper authority: matching + auto-roll run ONLY through
+        // this adapter's `matchLoan` / `rollLoan` forwarders (which call the
+        // Diamond as the intent owner — the self-branch of the keeper gate — and
+        // screen the real principal first). Keeper-gating the intent means no
+        // external solver can fill it on the Diamond directly, so every
+        // value-moving path passes through the principal screen (#626 round-2 P1).
+        IVaipakamIntentSurface(diamondAddress).setLenderIntent(
             lendingAsset,
             collateralAsset_,
             intentMaxExposure,
@@ -225,11 +264,9 @@ contract AggregatorAdapterImplementation is
             intentMaxInitLtvBps,
             intentMaxDurationDays,
             intentMinFillAmount,
-            true, // requiresKeeperAuth
+            true, // requiresKeeperAuth — only the owner (this adapter) may fill
             true // riskAndTermsConsent
         );
-        d.setKeeperAccess(true);
-        d.approveKeeper(keeper, _signedFillAndAutoRollMask());
     }
 
     // ─── NAV (conservative-haircut mark) ────────────────────────────────────
@@ -285,22 +322,24 @@ contract AggregatorAdapterImplementation is
     }
 
     /// @inheritdoc ERC4626Upgradeable
-    /// @dev #626 Codex P2 — only the authorized principal can deposit, so the
-    ///      max methods must advertise 0 for everyone else (ERC-4626 routers
-    ///      read these before depositing).
+    /// @dev #626 Codex P2 — advertise 0 for any receiver other than the
+    ///      principal, AND 0 whenever a deposit would revert because funding the
+    ///      intent isn't currently possible (wound down, asset paused, or below
+    ///      a mandated upgrade floor) — ERC-4626 routers read this before
+    ///      depositing.
     function maxDeposit(address receiver)
         public
         view
         override
         returns (uint256)
     {
-        if (receiver != authorizedPrincipal) return 0;
+        if (receiver != authorizedPrincipal || !_fundingOpen()) return 0;
         return super.maxDeposit(receiver);
     }
 
     /// @inheritdoc ERC4626Upgradeable
     function maxMint(address receiver) public view override returns (uint256) {
-        if (receiver != authorizedPrincipal) return 0;
+        if (receiver != authorizedPrincipal || !_fundingOpen()) return 0;
         return super.maxMint(receiver);
     }
 
@@ -317,14 +356,16 @@ contract AggregatorAdapterImplementation is
         if (caller != authorizedPrincipal || receiver != authorizedPrincipal) {
             revert NotAuthorizedPrincipal();
         }
-        // #626 Codex P1 — Tier-1 sanctions screen on the REAL principal. The
+        // #626 round-1 P1 — Tier-1 sanctions screen on the REAL principal. The
         // Diamond's `fundLenderIntent` gate only sees `msg.sender == this`
         // (always clean), so a sanctioned aggregator could otherwise fund new
-        // capital through its clean adapter. Screen the principal here, on the
-        // new-funding (Tier-1) path. (Withdraw stays open — Tier-2 wind-down.)
-        if (IVaipakamIntentSurface(diamond).isSanctionedAddress(authorizedPrincipal)) {
-            revert PrincipalSanctioned();
-        }
+        // capital through its clean adapter. (Withdraw stays open — Tier-2.)
+        _screenPrincipal();
+        // #626 round-2 P1 — enforce the mandatory upgrade floor on new deposits
+        // (upgrade-or-halt). `fundLenderIntent` doesn't know the adapter version,
+        // so check it here; the intent-active + asset-pause cases are enforced
+        // downstream by `fundLenderIntent` itself.
+        _requireUpToDate();
         // OZ: safeTransferFrom(caller -> this, assets) + _mint(receiver, shares).
         super._deposit(caller, receiver, assets, shares);
         // Deploy the just-pulled assets into the intent: approve the Diamond's
@@ -384,36 +425,89 @@ contract AggregatorAdapterImplementation is
         super._update(from, to, value);
     }
 
-    // ─── Principal wind-down + recovery (#626 Codex P2/P1) ──────────────────
+    // ─── Keeper-driven matching + auto-roll (screened forwarders) ───────────
 
-    /// @notice Principal-only: wind the standing intent down — cancel it and
-    ///         revoke keeper access — so no keeper can re-match/re-roll returned
-    ///         idle capital while the aggregator exits. The intent row is keyed
-    ///         to the adapter (not the principal), so the principal cannot do
-    ///         this by calling the Diamond directly; this is the gated forwarder.
-    ///         After wind-down the aggregator withdraws idle as live loans
-    ///         mature.
+    /// @dev Caller must be the designated keeper or the principal.
+    function _onlyKeeperOrPrincipal() private view {
+        if (msg.sender != keeper && msg.sender != authorizedPrincipal) {
+            revert NotKeeperOrPrincipal();
+        }
+    }
+
+    /// @dev Tier-1 screen on the REAL aggregator. Routing match/roll through the
+    ///      adapter (which knows the principal) is the only way to screen it —
+    ///      the Diamond only ever sees `msg.sender == adapter` (always clean).
+    function _screenPrincipal() private view {
+        if (
+            IVaipakamIntentSurface(diamond).isSanctionedAddress(
+                authorizedPrincipal
+            )
+        ) revert PrincipalSanctioned();
+    }
+
+    /// @notice Keeper/principal: fill this adapter's intent against an on-chain
+    ///         borrower offer. Routed through the adapter (calling `matchIntent`
+    ///         as the intent owner, the keeper-gate self-branch) so the REAL
+    ///         principal is sanctions-screened before new lending — closing the
+    ///         clean-adapter bypass (#626 round-2 P1).
+    function matchLoan(uint256 counterpartyOfferId, uint256 fillAmount)
+        external
+        returns (uint256 loanId)
+    {
+        _onlyKeeperOrPrincipal();
+        _screenPrincipal();
+        _requireUpToDate();
+        loanId = IVaipakamIntentSurface(diamond).matchIntent(
+            address(this),
+            asset(),
+            collateralAsset,
+            counterpartyOfferId,
+            fillAmount
+        );
+    }
+
+    /// @notice Keeper/principal: auto-roll a repaid adapter loan (re-lien its
+    ///         proceeds into the intent). Same principal-screen as `matchLoan` —
+    ///         re-committing proceeds is new lending, so a sanctioned aggregator
+    ///         cannot keep compounding through the clean adapter.
+    function rollLoan(uint256 loanId) external {
+        _onlyKeeperOrPrincipal();
+        _screenPrincipal();
+        _requireUpToDate();
+        IVaipakamIntentSurface(diamond).rollIntentLoan(loanId);
+    }
+
+    // ─── Principal wind-down + recovery (#626 Codex P1/P2) ──────────────────
+
+    /// @notice Principal-only: wind the standing intent down by cancelling it.
+    ///         An inactive intent blocks both `matchLoan` (matchIntent rejects
+    ///         inactive) and `rollLoan` (rollIntentLoan rejects a cancelled
+    ///         intent), so no keeper can re-deploy returned capital while the
+    ///         aggregator exits. The intent is keyed to the adapter, so this
+    ///         gated forwarder is the only way for the principal to cancel it.
+    ///         Idle capital is withdrawn as live loans mature.
     function windDownIntent() external {
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
-        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
-        d.cancelLenderIntent(asset(), collateralAsset);
-        d.setKeeperAccess(false);
+        IVaipakamIntentSurface(diamond).cancelLenderIntent(
+            asset(),
+            collateralAsset
+        );
         emit IntentWoundDown(authorizedPrincipal);
     }
 
     /// @notice Claim a RESOLVED-but-non-rollable adapter loan's proceeds back
-    ///         into the adapter and re-fund them into the intent so they
-    ///         re-enter idle (and thus NAV + redeemable value).
-    /// @dev    #626 Codex P1. `rollIntentLoan` only handles clean repaid loans;
-    ///         a default / fallback / paused-asset / cancelled-intent loan
-    ///         settles via the normal lender claim, whose proceeds are owed to
-    ///         the lender-NFT owner — this adapter. Without a forwarder those
-    ///         proceeds are stranded outside `idleAssets()`. Permissionless
-    ///         (recovery only ever benefits this adapter's own intent); the
-    ///         proceeds land in the adapter, then re-fund into idle. Requires
-    ///         the intent active (re-fund needs it) — if wound down, re-fund is
-    ///         skipped and the recovered assets stay claimable by the principal
-    ///         via {sweepToPrincipal}.
+    ///         into the adapter and best-effort re-fund them into the intent so
+    ///         they re-enter idle (and thus NAV + redeemable value).
+    /// @dev    #626 round-1 P1 + round-2 P1. `rollIntentLoan` only handles clean
+    ///         repaid loans; a default / fallback / paused-asset / cancelled-
+    ///         intent loan settles via the normal lender claim, whose proceeds
+    ///         are owed to the lender-NFT owner — this adapter. The claim ALWAYS
+    ///         executes (recovering value to the adapter); the re-fund is
+    ///         best-effort (`try`/`catch`) because `fundLenderIntent` reverts
+    ///         when the intent is wound down or an asset is paused — in that case
+    ///         the proceeds stay in the adapter, recoverable by the principal via
+    ///         {sweepToPrincipal}. Permissionless: recovery only ever benefits
+    ///         this adapter's own intent.
     function claimAndCompound(uint256 loanId) external {
         address lend = asset();
         uint256 before = IERC20(lend).balanceOf(address(this));
@@ -421,27 +515,32 @@ contract AggregatorAdapterImplementation is
         uint256 recovered = IERC20(lend).balanceOf(address(this)) - before;
         if (recovered > 0) {
             IERC20(lend).forceApprove(diamond, recovered);
-            IVaipakamIntentSurface(diamond).fundLenderIntent(
-                lend,
-                collateralAsset,
-                recovered
-            );
+            // Best-effort re-fund — skipped (proceeds stay sweepable) if the
+            // intent is wound down / an asset is paused.
+            try
+                IVaipakamIntentSurface(diamond).fundLenderIntent(
+                    lend,
+                    collateralAsset,
+                    recovered
+                )
+            {} catch {
+                IERC20(lend).forceApprove(diamond, 0); // clear the dangling approval
+            }
         }
         emit LoanClaimedAndCompounded(loanId, recovered);
     }
 
-    /// @notice Principal-only: sweep any raw lending-asset balance sitting in
-    ///         the adapter (not in the intent) to the principal. Used after a
-    ///         wind-down when {claimAndCompound} couldn't re-fund (intent
-    ///         cancelled), so recovered proceeds aren't stranded. Safe: the
-    ///         adapter is single-principal (the principal owns 100% of the
-    ///         non-transferable shares), and this raw balance is not counted in
-    ///         `totalAssets`, so no shareholder is diluted.
-    function sweepToPrincipal() external {
+    /// @notice Principal-only: sweep any raw `token` balance sitting in the
+    ///         adapter (not in the intent) to the principal — including
+    ///         COLLATERAL-token proceeds from an in-kind default claim (#626
+    ///         round-2 P2), and lending-asset proceeds that couldn't be re-funded
+    ///         during a wind-down. Safe: the adapter is single-principal (it owns
+    ///         100% of the non-transferable shares) and these raw balances are
+    ///         not counted in `totalAssets`, so no shareholder is diluted.
+    function sweepToPrincipal(address token) external {
         if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
-        IERC20 a = IERC20(asset());
-        uint256 bal = a.balanceOf(address(this));
-        if (bal > 0) a.safeTransfer(authorizedPrincipal, bal);
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        if (bal > 0) IERC20(token).safeTransfer(authorizedPrincipal, bal);
     }
 
     // ─── ERC721 receiver (#626 Codex P1) ────────────────────────────────────
@@ -477,9 +576,33 @@ contract AggregatorAdapterImplementation is
 
     // ─── helpers ────────────────────────────────────────────────────────────
 
-    /// @dev `KEEPER_ACTION_SIGNED_FILL (0x40) | KEEPER_ACTION_AUTO_ROLL (0x80)`.
-    ///      Inlined to avoid importing LibVaipakam into the adapter.
-    function _signedFillAndAutoRollMask() private pure returns (uint8) {
-        return 0x40 | 0x80; // 0xC0
+    /// @dev True when a NEW deposit would fund the intent: at/above any
+    ///      mandatory-upgrade floor, intent active, and neither asset paused.
+    ///      Used by `maxDeposit`/`maxMint` to advertise 0 when a deposit can't
+    ///      succeed.
+    function _fundingOpen() private view returns (bool) {
+        if (_belowMandatoryFloor()) return false;
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
+            return false;
+        }
+        if (d.isAssetPaused(asset()) || d.isAssetPaused(collateralAsset)) {
+            return false;
+        }
+        return true;
+    }
+
+    /// @dev True when a mandatory upgrade floor is set and this adapter is below
+    ///      it. New activity (deposit / match / roll) halts until migrated;
+    ///      exit + recovery (withdraw / claim / sweep / wind-down) stay open.
+    function _belowMandatoryFloor() private view returns (bool) {
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        uint256 floor = d.mandatoryAggregatorAdapterVersion();
+        return floor > 0 && d.getAggregatorAdapterVersion(address(this)) < floor;
+    }
+
+    /// @dev Revert if below a mandated upgrade floor (upgrade-or-halt).
+    function _requireUpToDate() private view {
+        if (_belowMandatoryFloor()) revert AdapterUpgradeRequired();
     }
 }

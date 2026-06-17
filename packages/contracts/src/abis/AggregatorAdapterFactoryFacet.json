@@ -359,6 +359,11 @@
   },
   {
     "type": "error",
+    "name": "NotAdapterPrincipal",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAnAggregatorAdapter",
     "inputs": []
   }

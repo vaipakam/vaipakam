@@ -280,7 +280,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "keeper",
+        "name": "keeper_",
         "type": "address",
         "internalType": "address"
       },
@@ -321,6 +321,43 @@
       }
     ],
     "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "keeper",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "matchLoan",
+    "inputs": [
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
     "stateMutability": "nonpayable"
   },
   {
@@ -610,6 +647,19 @@
   },
   {
     "type": "function",
+    "name": "rollLoan",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setHaircutBps",
     "inputs": [
       {
@@ -624,7 +674,13 @@
   {
     "type": "function",
     "name": "sweepToPrincipal",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -1003,6 +1059,11 @@
   },
   {
     "type": "error",
+    "name": "AdapterUpgradeRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AddressEmptyCode",
     "inputs": [
       {
@@ -1221,6 +1282,11 @@
   {
     "type": "error",
     "name": "NotInitializing",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotKeeperOrPrincipal",
     "inputs": []
   },
   {

@@ -71,6 +71,9 @@ contract AggregatorAdapterFactoryFacet is
     error NotAnAggregatorAdapter();
     /// @notice The UUPS upgrade call on the adapter proxy reverted.
     error AdapterUpgradeFailed();
+    /// @notice A voluntary (non-mandated) adapter migration was attempted by
+    ///         someone other than the adapter's authorized principal.
+    error NotAdapterPrincipal();
 
     /**
      * @notice One-time deploy of the shared adapter implementation.
@@ -198,14 +201,28 @@ contract AggregatorAdapterFactoryFacet is
 
     /**
      * @notice Migrate an adapter proxy to the current shared impl.
-     * @dev Permissionless trigger (typically the aggregator). The Diamond owns
-     *      the proxy (UUPS `_authorizeUpgrade` is `onlyOwner`), so this call —
-     *      from the Diamond's context — authorizes the upgrade. Aggregator-pull:
-     *      no silent push.
+     * @dev Aggregator-PULL: a *voluntary* migration is gated to the adapter's
+     *      authorized principal — so behaviour can't change under a live ERC-4626
+     *      integration without the aggregator opting in (#626 round-2 P2). The
+     *      exception is a *mandated* migration: when the adapter is below
+     *      `mandatoryAdapterVersion`, anyone may force it (the upgrade-or-halt
+     *      backstop, so a critical fix can be pushed even if the aggregator
+     *      stalls). The Diamond owns the proxy (UUPS `_authorizeUpgrade` is
+     *      `onlyOwner`), so this call — from the Diamond's context — authorizes
+     *      the upgrade.
      */
     function upgradeAggregatorAdapter(address adapter) external {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.isAggregatorAdapter[adapter]) revert NotAnAggregatorAdapter();
+        bool mandated = s.mandatoryAdapterVersion > 0 &&
+            s.adapterVersion[adapter] < s.mandatoryAdapterVersion;
+        if (
+            !mandated &&
+            msg.sender !=
+            AggregatorAdapterImplementation(adapter).authorizedPrincipal()
+        ) {
+            revert NotAdapterPrincipal();
+        }
         (bool success, ) = adapter.call(
             abi.encodeWithSelector(
                 UUPSUpgradeable.upgradeToAndCall.selector,

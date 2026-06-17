@@ -133,13 +133,11 @@ contract AggregatorAdapterTest is SetupTest {
     }
 
     /// @dev Keeper fills the adapter's intent against a fresh borrower for
-    ///      `fillAmount`. Returns the loan id.
+    ///      `fillAmount`, through the adapter's screened `matchLoan` forwarder.
     function _match(uint256 fillAmount) internal returns (uint256 loanId) {
         uint256 cp = _postBorrower(fillAmount);
         vm.prank(keeper);
-        loanId = OfferMatchFacet(address(diamond)).matchIntent(
-            address(adapter), mockERC20, mockCollateralERC20, cp, fillAmount
-        );
+        loanId = adapter.matchLoan(cp, fillAmount);
     }
 
     function _idle() internal view returns (uint256) {
@@ -259,9 +257,10 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(borrower);
         RepayFacet(address(diamond)).repayLoan(loanId);
 
-        // Keeper auto-rolls: proceeds (principal + interest) re-lien into idle.
+        // Keeper auto-rolls via the adapter's screened forwarder: proceeds
+        // (principal + interest) re-lien into idle.
         vm.prank(keeper);
-        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        adapter.rollLoan(loanId);
 
         // idle is back up to deposit + realized interest; live is 0.
         assertGt(_idle(), DEPOSIT, "idle compounded above deposit");
@@ -315,7 +314,9 @@ contract AggregatorAdapterTest is SetupTest {
         vm.prank(owner);
         AggregatorAdapterFactoryFacet(address(diamond))
             .upgradeAdapterImplementation(address(newImpl));
-        // Aggregator pulls the migration (permissionless trigger).
+        // Aggregator pulls the migration (gated to the principal for voluntary
+        // upgrades — no silent push under a live integration).
+        vm.prank(aggregator);
         AggregatorAdapterFactoryFacet(address(diamond))
             .upgradeAggregatorAdapter(address(adapter));
         assertEq(
@@ -325,6 +326,54 @@ contract AggregatorAdapterTest is SetupTest {
                 .currentAggregatorAdapterVersion(),
             "adapter migrated to current version"
         );
+    }
+
+    // ─── 8b. Round-2 gates ──────────────────────────────────────────────────────
+
+    function test_matchLoan_unauthorizedCaller_reverts() public {
+        _deposit(DEPOSIT);
+        uint256 cp = _postBorrower(500 ether);
+        vm.prank(makeAddr("notKeeper"));
+        vm.expectRevert(
+            AggregatorAdapterImplementation.NotKeeperOrPrincipal.selector
+        );
+        adapter.matchLoan(cp, 500 ether);
+    }
+
+    /// @dev #626 round-2 P1 — a mandated upgrade floor halts new deposits
+    ///      (upgrade-or-halt); withdraw stays open.
+    function test_mandatoryFloor_blocksDeposit() public {
+        _deposit(DEPOSIT); // funds fine before the mandate
+        // Adapter is at version 0; mandate version 1 → below floor.
+        vm.prank(owner);
+        AggregatorAdapterFactoryFacet(address(diamond))
+            .setMandatoryAdapterUpgrade(1);
+        assertEq(adapter.maxDeposit(aggregator), 0, "deposit advertised closed");
+        ERC20Mock(mockERC20).mint(aggregator, DEPOSIT);
+        vm.prank(aggregator);
+        ERC20(mockERC20).approve(address(adapter), DEPOSIT);
+        vm.prank(aggregator);
+        vm.expectRevert();
+        adapter.deposit(DEPOSIT, aggregator);
+        // Exit still works under the mandate.
+        vm.prank(aggregator);
+        adapter.withdraw(DEPOSIT, aggregator, aggregator);
+    }
+
+    /// @dev #626 round-2 P2 — a voluntary (non-mandated) migration is gated to
+    ///      the principal; nobody else can change adapter behaviour silently.
+    function test_voluntaryUpgrade_nonPrincipal_reverts() public {
+        AggregatorAdapterImplementation newImpl =
+            new AggregatorAdapterImplementation();
+        vm.prank(owner);
+        AggregatorAdapterFactoryFacet(address(diamond))
+            .upgradeAdapterImplementation(address(newImpl));
+        vm.prank(makeAddr("rando"));
+        vm.expectRevert(
+            AggregatorAdapterFactoryFacet.NotAdapterPrincipal.selector
+        );
+        AggregatorAdapterFactoryFacet(address(diamond))
+            .upgradeAggregatorAdapter(address(adapter));
     }
 
     // ─── 9. Governance haircut ──────────────────────────────────────────────────
