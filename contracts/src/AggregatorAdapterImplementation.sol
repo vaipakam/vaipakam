@@ -90,6 +90,8 @@ interface IVaipakamIntentSurface {
 
     function isAssetPaused(address asset) external view returns (bool);
 
+    function paused() external view returns (bool);
+
     function getAggregatorAdapterVersion(address adapter)
         external
         view
@@ -332,6 +334,13 @@ contract AggregatorAdapterImplementation is
         override
         returns (uint256)
     {
+        // #626 round-5 P2 — `_withdraw` screens the principal (funds-out Tier-1),
+        // so advertise 0 when the principal is sanctioned (withdraw would revert).
+        if (
+            IVaipakamIntentSurface(diamond).isSanctionedAddress(
+                authorizedPrincipal
+            )
+        ) return 0;
         uint256 byShares = super.maxWithdraw(owner);
         uint256 idle = idleAssets();
         return byShares < idle ? byShares : idle;
@@ -339,6 +348,11 @@ contract AggregatorAdapterImplementation is
 
     /// @inheritdoc ERC4626Upgradeable
     function maxRedeem(address owner) public view override returns (uint256) {
+        if (
+            IVaipakamIntentSurface(diamond).isSanctionedAddress(
+                authorizedPrincipal
+            )
+        ) return 0;
         uint256 byShares = super.maxRedeem(owner);
         uint256 idleShares = convertToShares(idleAssets()); // rounds down
         return byShares < idleShares ? byShares : idleShares;
@@ -643,6 +657,9 @@ contract AggregatorAdapterImplementation is
     function _fundingOpen() private view returns (bool) {
         if (_belowMandatoryFloor()) return false;
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        // #626 round-5 P2 — a global Diamond pause makes `fundLenderIntent`
+        // (`whenNotPaused`) revert, so advertise 0 during an incident pause.
+        if (d.paused()) return false;
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
