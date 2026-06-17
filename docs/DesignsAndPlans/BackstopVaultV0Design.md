@@ -162,6 +162,18 @@ the §4 trigger, then calls `matchIntent` as the intent owner, originating a loa
 - the existing **HF ≥ 1.5e18 + depth-tiered-LTV gate** inside `initiateLoan`;
 - the §5b collateral-quality gates.
 
+(On KYC-enabled deploys the BackstopVault must itself be KYC-provisioned — see §9
+PR-1 deploy requirements.)
+
+**`onERC721Received` accepts BOTH transient and final Diamond mints (Codex #629 r6
+P1).** A Role-A fill mints the backstop **two** NFTs: `_materializeIntentSlice` →
+`OfferCreateFacet` `_safeMint`s a *transient* `OfferCreated` NFT to the backstop,
+which `_executeMatch` later burns before minting the actual lender-position NFT. So
+the hook must use the adapter's predicate — **accept any Diamond mint
+(`msg.sender == diamond && from == address(0)`)**, covering both the transient offer
+NFT and the final lender NFT, while still rejecting holder→backstop transfers. A
+"lender-position-mint-only" hook would revert at the transient mint and break every fill.
+
 `loan.lender = BackstopVault`; fixed rate snapshotted at init (E2).
 
 ### 4.3 Recovering proceeds (Codex #629 P1)
@@ -169,16 +181,24 @@ the §4 trigger, then calls `matchIntent` as the intent owner, originating a loa
 `withdrawBackstopToTreasury` only releases **idle** intent-capital lien — it does
 **not** recover a resolved loan's principal/interest, which (like any lender) must
 be claimed first. So the backstop needs the adapter's `claimAndCompound`-style path:
-- `backstopClaim(loanId, retryCalls)` — keeper/governance: `claimAsLenderWithRetry`
-  as the backstop (it holds its own lender-position NFT, so it is the current owner).
-  The normal claim withdraws lender proceeds to **`msg.sender` as a RAW token
-  balance** (ClaimFacet.sol:365-375), NOT into the backstop's per-user vault — so
-  `backstopClaim` must measure the raw balance delta (as the adapter's
-  `claimAndCompound` does), then `sweepToPrincipal` it to treasury. **No auto-roll in
-  v0** — the backstop is a last resort, not a yield engine; claimed proceeds flow
-  raw-balance → treasury directly (no re-lien).
-- A raw-balance `sweepToPrincipal(token)` (→ treasury) for those claimed proceeds and
-  any in-kind / non-underlying residue, mirroring the adapter.
+- `backstopClaim(loanId, retryCalls)` — keeper/governance. **First gate (Codex #629
+  r6 P2): `getLoanDetails(loanId).lender == address(this)`** — only the backstop's
+  OWN originated loans (mirrors the adapter's `NotAdapterLoan` guard); a foreign
+  lender-position NFT `transferFrom`'d onto the backstop (bypassing the receiver hook)
+  must not be claimable + swept to treasury instead of its real lender. Then
+  `claimAsLenderWithRetry` as the backstop. The normal claim withdraws lender proceeds
+  to **`msg.sender` as a RAW token balance** (ClaimFacet.sol:365-375), NOT the per-user
+  vault — so `backstopClaim` measures the raw balance delta (as `claimAndCompound`
+  does), then sweeps it to treasury (below). **No auto-roll in v0.**
+- **Treasury sweep MUST record `treasuryBalances` (Codex #629 r6 P1).** When treasury
+  == Diamond, a plain ERC20 transfer of claimed proceeds / idle-withdraw returns /
+  realized-sale cash from the BackstopVault to the Diamond leaves them as **untracked
+  raw Diamond balance** — `TreasuryFacet.claimTreasuryFees`/conversion read
+  `treasuryBalances`, which only changes via Diamond-side `recordTreasuryAccrual`. So
+  the return path is a **Diamond-side sweep-and-record primitive** that transfers AND
+  updates `treasuryBalances` atomically (not an adapter-style raw `sweepToPrincipal`).
+- A `sweepNFTToPrincipal`-style recovery (→ treasury) for any foreign protocol NFT or
+  in-kind residue, mirroring the adapter.
 
 ## 5. Role B — liquidator-of-last-resort (PR 2)
 
@@ -197,22 +217,32 @@ the *stale* `loan.lender` rather than the current lender-position NFT owner. Ins
 the backstop is a **standing cash bid** that only the **current lender-NFT owner**
 can hit, *through the existing claim path*:
 
-`claimAsLenderViaBackstop(loanId, retryCalls)` — a claim variant (current-NFT-owner
-gated, reusing `claimAsLender`'s ownership check) where, instead of receiving the
-`lenderCollateral` **in kind**, the lender is paid **cash** from the backstop and the
-backstop takes that collateral slice. It takes `retryCalls` (Codex #629 r3 P1) so the
-claim-time DEX-swap retry can run — an arg-less variant would skip the retry and burn
-backstop cash even when a fresh swap route exists.
-- **Gate:** loan `FallbackPending`, `FallbackSnapshot.active`, `msg.sender` is the
-  current lender-position NFT owner, **and `_assertNotSanctioned(msg.sender)`** (Codex
-  #629 r3 P1 — the normal claim runs this before any payout; without it a sanctioned
-  lender blocked from normal claims could take treasury cash via the backstop route).
-  Preserves the cure window exactly as the normal claim (borrower can cure until the
-  lender chooses to act).
+`claimAsLenderViaBackstop(loanId, retryCalls)` — a claim variant where, instead of
+receiving the `lenderCollateral` **in kind**, the lender is paid **cash** from the
+backstop and the backstop takes that collateral slice.
+- **Lender-authorized, KEEPER-executed with an OBJECTIVE retry (Codex #629 r3/r6 P1):**
+  the spend must not hinge on caller-controlled "retry failure" — a lender could pass
+  an empty or deliberately-reverting `retryCalls` to *force* a buyout even when a live
+  DEX route exists. So the cash buyout is **executed by the backstop's designated
+  keeper** (the same role that runs liquidations), which supplies a *genuine
+  best-effort* `retryCalls`; the lender (current NFT owner) **authorizes** taking the
+  cash exit (an on-chain opt-in flag on their FallbackPending claim). The lender always
+  retains the normal self-service in-kind claim independently — the keeper buyout is an
+  additional cash exit, never worse for the lender (cash at `lenderPrincipalDue` ≥ the
+  in-kind value by the §guard). **Belt-and-suspenders:** even if a retry were skipped,
+  the backstop is not harmed — it acquires collateral worth ≥ the cash it paid
+  (the par guard below) and can run the same swap post-acquisition; the
+  internal-match auto-dispatch (calldata-free, objective) always runs regardless.
+- **Gate:** loan `FallbackPending`, `FallbackSnapshot.active`, the lender opt-in flag
+  set by the current lender-position NFT owner, **and `_assertNotSanctioned`** on both
+  the NFT owner and the executing keeper (Codex #629 r3 P1 — the normal claim screens
+  before payout). Preserves the cure window: the borrower can cure (`addCollateral`/
+  `repayLoan`) until the lender opts in (the lender choosing the cash exit is the
+  lender choosing to claim — the existing state-terminating action).
 - **Resolution-first, then a BACKSTOP-SPECIFIC failure branch (Codex #629 r2/r3 P1):**
-  attempt the claim-time **internal-match auto-dispatch + swap retry** (with
-  `retryCalls`) first; if it resolves, done (no backstop capital spent). On failure,
-  do **NOT** run the vanilla fallback-distribution path — that immediately credits the
+  attempt the claim-time **internal-match auto-dispatch + the keeper's objective swap
+  retry** first; if it resolves, done (no backstop capital spent). On failure, do
+  **NOT** run the vanilla fallback-distribution path — that immediately credits the
   lender slice **in-kind** to `loan.lender`'s vault and clears `snap.active`, leaving
   nothing for the backstop to buy while the lender keeps the collateral. Instead a
   **backstop-specific resolver** routes `treasuryCollateral`/`borrowerCollateral`
@@ -246,7 +276,12 @@ backstop cash even when a fresh swap route exists.
   **always** and revert every absorb. There is no surplus collateral in the lender
   slice to haircut against (the surplus, if any, is the borrower's). So v0 takes the
   lender slice **at par**: pay `lenderPrincipalDue`, take `lenderCollateral`; **guard
-  `oracleValue(lenderCollateral) >= lenderPrincipalDue`**, else **revert**
+  `oracleValue(lenderCollateral) >= lenderPrincipalDue`** using the **same
+  round-up/dust-tolerant equivalence the fallback snapshot used** (Codex #629 r6 P2 —
+  `lenderCollateral` came from the snapshot's integer-division split, so an exact
+  `>=` would spuriously reject solvent absorbs off by rounding dust; reuse
+  `LibFallback`'s collateral-equivalent math / a 1-wei tolerance so the guard is
+  consistent with the protocol's own fair-value split), else **revert**
   `BackstopUndercollateralized` (the underwater / oracle-failure case where the
   lender slice is worth less than the due — the lender uses the normal in-kind claim
   instead). **No per-claim payout haircut in v0.** The backstop's risk buffer is the
@@ -396,7 +431,11 @@ liening the already-recorded vault balance.
   primitive, origination caps, posted rate, `backstopEnabled` + `backstopFillEnabled`)
   + `Offer.backstopEligibleAfter` field + validation + the `!accepted`/unfilled-
   remainder/expiry trigger + a test that a backstop loan mints and later claims its
-  lender NFT + deploy-sanity + ABI. Codex full security-critical (fund-holding, HIGH).
+  lender NFT + deploy-sanity + ABI. **Deploy requirement (Codex #629 r6 P2):** on a
+  KYC-enabled deploy the BackstopVault must be KYC-provisioned (governance grants it a
+  tier), else `matchIntent` → `OfferAcceptFacet` applies the threshold to the backstop
+  address and large fills revert `KYCRequired`; inert on retail (KYC off). The #627
+  analog for the backstop. Codex full security-critical (fund-holding, HIGH).
 - **PR 2 — liquidator-of-last-resort:** `backstopAbsorbEnabled` gate + the
   `claimAsLenderViaBackstop(loanId, retryCalls)` claim variant (current-NFT-owner +
   sanctions gate, resolution-first with a backstop-specific failure branch, backstop
@@ -427,8 +466,10 @@ tranche + slashing/first-loss accounting are a **separate doc + audit**.
   caller is permissionless (gates are on-chain facts) while `requiresKeeperAuth =
   true` (no keeper grant) ensures only `backstopFill` can drive `matchIntent`,
   closing the open-`matchIntent` bypass.
-- **Role B is lender-initiated** via `claimAsLenderViaBackstop` (not a permissionless
-  grace trigger) — preserves the cure window + pays the current NFT owner.
+- **Role B is lender-AUTHORIZED, keeper-executed** via `claimAsLenderViaBackstop`
+  (not a permissionless grace trigger) — the current NFT owner opts into the cash
+  exit; the backstop keeper executes with an objective retry; preserves the cure
+  window + pays the current NFT owner.
 - **Lender slice taken at par, guarded** — pay `lenderPrincipalDue`, take
   `lenderCollateral` iff `oracleValue(lenderCollateral) >= lenderPrincipalDue`, else
   revert `BackstopUndercollateralized`. **No per-claim payout haircut** (the lender
@@ -442,8 +483,11 @@ tranche + slashing/first-loss accounting are a **separate doc + audit**.
   `maxExposure` does not track cash-for-collateral absorbs).
 - **Topped-up FallbackPending excluded** from the backstop path → normal claim folds
   the borrower-vault top-up.
-- **No auto-roll** — v0 sweeps proceeds to treasury via `backstopClaim` → idle →
-  `withdrawBackstopToTreasury`.
+- **No auto-roll** — v0 recovers proceeds via `backstopClaim` (own-loan guarded;
+  proceeds land as a RAW balance) → **Diamond-side sweep-and-record to treasury**
+  (updates `treasuryBalances`), never re-funded through intent capital (§4.3).
+- **Role B retry is keeper-executed + objective** (not caller-supplied), so a lender
+  can't fake a retry-failure to force a buyout; bounded-safe by the par guard + cap.
 - **Single backstop vault** with per-asset intents (single principal — nothing to
   segregate among); per-asset segregated vaults arrive with the v1 LP tranche.
 
