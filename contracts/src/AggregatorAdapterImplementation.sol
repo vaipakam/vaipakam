@@ -301,6 +301,13 @@ contract AggregatorAdapterImplementation is
     ///      + live principal marked at FACE − `haircutBps`. Unrealized interest
     ///      is excluded (live counts original principal only; a roll realizes
     ///      interest into idle). See design §5.
+    /// @dev #626 round-6 P2 (accepted limitation): a Defaulted/FallbackPending
+    ///      loan stays in `live` (marked face−haircut) until the keeper's
+    ///      `claimAndCompound` realizes the write-down via `releaseIntentExposure`,
+    ///      so NAV is conservative-PENDING-CLAIM and can briefly overstate a
+    ///      default. Safe at the adapter (single-principal: no inter-holder
+    ///      extraction); precise per-loan exclusion needs loan enumeration the
+    ///      aggregate intent counters don't expose — see design §5.
     function totalAssets() public view override returns (uint256) {
         IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
         address lend = asset();
@@ -334,13 +341,11 @@ contract AggregatorAdapterImplementation is
         override
         returns (uint256)
     {
-        // #626 round-5 P2 — `_withdraw` screens the principal (funds-out Tier-1),
-        // so advertise 0 when the principal is sanctioned (withdraw would revert).
-        if (
-            IVaipakamIntentSurface(diamond).isSanctionedAddress(
-                authorizedPrincipal
-            )
-        ) return 0;
+        // #626 round-5/6 P2 — mirror the conditions under which `_withdraw`
+        // reverts (sanctioned principal funds-out screen; global Diamond pause
+        // freezing `withdrawLenderIntentCapital`), so routers don't read a
+        // non-zero availability that would then revert.
+        if (_withdrawalsBlocked()) return 0;
         uint256 byShares = super.maxWithdraw(owner);
         uint256 idle = idleAssets();
         return byShares < idle ? byShares : idle;
@@ -348,11 +353,7 @@ contract AggregatorAdapterImplementation is
 
     /// @inheritdoc ERC4626Upgradeable
     function maxRedeem(address owner) public view override returns (uint256) {
-        if (
-            IVaipakamIntentSurface(diamond).isSanctionedAddress(
-                authorizedPrincipal
-            )
-        ) return 0;
+        if (_withdrawalsBlocked()) return 0;
         uint256 byShares = super.maxRedeem(owner);
         uint256 idleShares = convertToShares(idleAssets()); // rounds down
         return byShares < idleShares ? byShares : idleShares;
@@ -498,15 +499,35 @@ contract AggregatorAdapterImplementation is
         returns (uint256 loanId)
     {
         _onlyKeeperOrPrincipal();
+        _screenCaller(); // #626 round-6 P2 — screen the keeper, not just the principal
         _screenPrincipal();
         _requireUpToDate();
+        address lend = asset();
+        // #626 round-6 P2 — `matchIntent` records `msg.sender` (this adapter) as
+        // `loan.matcher`, so a matcher LIF kickback paid in the LENDING asset would
+        // land raw on the adapter, outside `totalAssets()`. Capture the delta and
+        // re-lien it into idle so it re-enters NAV. (The kickback is paid in VPFI
+        // today — `LibVPFIDiscount`, a non-underlying token — so this delta is
+        // normally 0 and that VPFI is recovered via {sweepToPrincipal}; the delta
+        // capture makes the adapter robust if a same-asset kickback path is ever
+        // added.)
+        uint256 before = IERC20(lend).balanceOf(address(this));
         loanId = IVaipakamIntentSurface(diamond).matchIntent(
             address(this),
-            asset(),
+            lend,
             collateralAsset,
             counterpartyOfferId,
             fillAmount
         );
+        uint256 kickback = IERC20(lend).balanceOf(address(this)) - before;
+        if (kickback > 0) {
+            IERC20(lend).forceApprove(diamond, kickback);
+            IVaipakamIntentSurface(diamond).fundLenderIntent(
+                lend,
+                collateralAsset,
+                kickback
+            );
+        }
     }
 
     /// @notice Keeper/principal: auto-roll a repaid adapter loan (re-lien its
@@ -515,6 +536,7 @@ contract AggregatorAdapterImplementation is
     ///         cannot keep compounding through the clean adapter.
     function rollLoan(uint256 loanId) external {
         _onlyKeeperOrPrincipal();
+        _screenCaller(); // #626 round-6 P2 — screen the keeper, not just the principal
         _screenPrincipal();
         _requireUpToDate();
         IVaipakamIntentSurface(diamond).rollIntentLoan(loanId);
@@ -684,5 +706,27 @@ contract AggregatorAdapterImplementation is
     /// @dev Revert if below a mandated upgrade floor (upgrade-or-halt).
     function _requireUpToDate() private view {
         if (_belowMandatoryFloor()) revert AdapterUpgradeRequired();
+    }
+
+    /// @dev True when a withdraw/redeem would revert on the Diamond side, so
+    ///      `maxWithdraw`/`maxRedeem` advertise 0 (#626 round-5/6 P2):
+    ///      - principal sanctioned (`_withdraw` runs the funds-out screen), or
+    ///      - Diamond globally paused (`withdrawLenderIntentCapital` is
+    ///        `whenNotPaused`). Idle capital is still illiquid until unpause.
+    function _withdrawalsBlocked() private view returns (bool) {
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        return d.isSanctionedAddress(authorizedPrincipal) || d.paused();
+    }
+
+    /// @dev Tier-1 screen on the CALLER of a new-lending forwarder (#626 round-6
+    ///      P2). The keeper-callable forwarders call `matchIntent`/`rollIntentLoan`
+    ///      as the adapter, so the Diamond's own `msg.sender` sanctions gate only
+    ///      ever sees the clean adapter — never the external keeper. Screen the
+    ///      keeper here so a keeper that becomes sanctioned cannot originate new
+    ///      adapter loans (a direct `matchIntent` call would reject it).
+    function _screenCaller() private view {
+        if (IVaipakamIntentSurface(diamond).isSanctionedAddress(msg.sender)) {
+            revert PrincipalSanctioned();
+        }
     }
 }

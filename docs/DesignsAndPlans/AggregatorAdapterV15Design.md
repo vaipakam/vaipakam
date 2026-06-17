@@ -110,6 +110,29 @@ totalAssets = idle + riskAdjustedLive
   (`AdminFacet.setAggregatorHaircutBps(asset, bps)`, range-bounded ≤ some max),
   read by the adapter via a view. Default a conservative non-zero value.
 
+**Known limitation — defaulted-but-unclaimed window (#626 round-6 P2, accepted):**
+`getLenderIntentLivePrincipal` is decremented only by `releaseIntentExposure`,
+which fires on the lender *claim* (`claimAndCompound`) — not at the moment a loan
+becomes `Defaulted`/`FallbackPending`. So between default and claim, a failed
+loan's original principal stays in `live` and is marked at `face − haircut`,
+which can briefly *overstate* NAV (the default loss may exceed the haircut).
+Why this is accepted rather than precisely excluded:
+- The adapter is **single-principal** (the aggregator owns 100% of the
+  non-transferable shares), so an overstated NAV cannot let one adapter
+  shareholder extract value from another — there is no early-vs-late redeemer at
+  the adapter boundary. The fairness that matters is among the aggregator's *own*
+  downstream depositors, off-Vaipakam.
+- The mitigation is operational + structural: the keeper is expected to run
+  `claimAndCompound` promptly on any resolved loan, which calls
+  `releaseIntentExposure` and *realizes* the write-down; and the standing
+  `haircutBps` is a continuous markdown on all live principal.
+- Precise per-loan default exclusion would require enumerating the adapter's live
+  loans and reading each one's status; the intent layer exposes only the
+  *aggregate* live principal, so exact exclusion is deferred (the same
+  conservative-cap precision limitation documented for #393 v1-b partial
+  liquidation). Aggregators are advised to treat NAV as conservative-pending-claim
+  and to keep a keeper claiming terminal loans.
+
 **`convertToShares`/`convertToAssets`** use this `totalAssets` — so the aggregator's
 share price reflects conservative, realized NAV (protecting *its* downstream
 depositors' fairness).

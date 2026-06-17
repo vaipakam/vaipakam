@@ -9,6 +9,8 @@ import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {AggregatorAdapterImplementation} from "../src/AggregatorAdapterImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -223,10 +225,16 @@ contract AggregatorAdapterTest is SetupTest {
         uint256 fill = 500 ether;
         _match(fill);
 
-        // idle ~ deposit - fill (the match path has sub-wei interpolation
-        // rounding; the adapter NAV formula is what we assert exactly below).
+        // idle ~ (deposit - fill) PLUS the matcher LIF kickback this adapter
+        // earned on the fill — it is recorded as `loan.matcher`, so the Diamond
+        // pays it the LIF kickback in the LENDING asset. #626 round-6 P2 re-liens
+        // that raw balance into idle so it re-enters NAV (instead of stranding
+        // outside ERC-4626 accounting until a manual sweep). So idle is STRICTLY
+        // ABOVE (deposit - fill) by the kickback (1% of the 0.1% LIF on the fill).
         uint256 idle = _idle();
-        assertApproxEqAbs(idle, DEPOSIT - fill, 2, "idle ~ deposit - fill");
+        assertGt(idle, DEPOSIT - fill, "matcher kickback re-funded into idle");
+        // ...but the kickback is a small fee, not a double-count of the fill.
+        assertApproxEqAbs(idle, DEPOSIT - fill, 0.01 ether, "idle ~ deposit - fill + kickback");
         uint256 live = LenderIntentFacet(address(diamond))
             .getLenderIntentLivePrincipal(
                 address(adapter), mockERC20, mockCollateralERC20
@@ -440,5 +448,55 @@ contract AggregatorAdapterTest is SetupTest {
             idle + (live * (BPS - 1000)) / BPS,
             "NAV reflects new haircut"
         );
+    }
+
+    // ─── 10. Round-6 gates ──────────────────────────────────────────────────────
+
+    /// @dev #626 round-6 P2 — the keeper-callable forwarders call `matchIntent`/
+    ///      `rollIntentLoan` AS the adapter, so the Diamond's own `msg.sender`
+    ///      sanctions gate only sees the clean adapter. The adapter must screen the
+    ///      keeper itself so a keeper that becomes sanctioned can't originate loans.
+    function test_sanctionedKeeper_cannotMatch() public {
+        _deposit(DEPOSIT);
+        MockSanctionsList oracle = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        oracle.setFlagged(keeper, true); // principal stays clean
+
+        uint256 cp = _postBorrower(500 ether);
+        vm.prank(keeper);
+        vm.expectRevert(
+            AggregatorAdapterImplementation.PrincipalSanctioned.selector
+        );
+        adapter.matchLoan(cp, 500 ether);
+        // The clean principal can still match through its own self-branch.
+        vm.prank(aggregator);
+        adapter.matchLoan(cp, 500 ether);
+    }
+
+    /// @dev #626 round-5 P2 — a sanctioned principal can't withdraw (the funds-out
+    ///      screen reverts), so the max methods must advertise 0 to routers.
+    function test_sanctionedPrincipal_zerosWithdrawCapacity() public {
+        _deposit(DEPOSIT);
+        assertEq(adapter.maxWithdraw(aggregator), DEPOSIT, "withdrawable before");
+        MockSanctionsList oracle = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+        oracle.setFlagged(aggregator, true);
+        assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed");
+        assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed");
+    }
+
+    /// @dev #626 round-6 P2 — a global Diamond pause freezes
+    ///      `withdrawLenderIntentCapital` (`whenNotPaused`), so the withdraw max
+    ///      methods must advertise 0 while paused (they did still report idle).
+    function test_globalPause_zerosWithdrawCapacity() public {
+        _deposit(DEPOSIT);
+        assertEq(adapter.maxWithdraw(aggregator), DEPOSIT, "withdrawable before");
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pause();
+        assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed while paused");
+        assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed while paused");
+        assertEq(adapter.maxDeposit(aggregator), 0, "maxDeposit zeroed while paused");
     }
 }
