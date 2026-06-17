@@ -3,6 +3,11 @@ import OfferCreateFacetABI from './OfferCreateFacet.json';
 import SignedOfferFacetABI from './SignedOfferFacet.json';
 // #393 v1 — LenderIntentVault standing-terms surface.
 import LenderIntentFacetABI from './LenderIntentFacet.json';
+// #398 v1.5 — ERC-4626 aggregator adapter factory (facet) + the adapter impl
+// (standalone per-aggregator contract; named export only, NOT spread into the
+// combined Diamond ABI since its functions live on the adapter, not the Diamond).
+import AggregatorAdapterFactoryFacetABI from './AggregatorAdapterFactoryFacet.json';
+import AggregatorAdapterImplementationABI from './AggregatorAdapterImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
 import OfferMatchFacetABI from './OfferMatchFacet.json';
@@ -93,6 +98,8 @@ export {
   OfferCreateFacetABI,
   SignedOfferFacetABI,
   LenderIntentFacetABI,
+  AggregatorAdapterFactoryFacetABI,
+  AggregatorAdapterImplementationABI,
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
@@ -160,6 +167,10 @@ export const DIAMOND_ABI = [
   ...OfferCreateFacetABI,
   ...SignedOfferFacetABI,
   ...LenderIntentFacetABI,
+  // #398 — AggregatorAdapterFactoryFacet IS a Diamond facet → spread into the
+  // combined Diamond ABI. AggregatorAdapterImplementation is a STANDALONE
+  // adapter contract (named export above only) — deliberately NOT spread here.
+  ...AggregatorAdapterFactoryFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,

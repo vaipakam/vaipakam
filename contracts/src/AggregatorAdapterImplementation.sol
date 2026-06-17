@@ -7,6 +7,7 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeab
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 /**
  * @title  IVaipakamIntentSurface
@@ -58,6 +59,10 @@ interface IVaipakamIntentSurface {
     function setKeeperAccess(bool enabled) external;
 
     function approveKeeper(address keeper, uint8 actions) external;
+
+    function isSanctionedAddress(address who) external view returns (bool);
+
+    function claimAsLender(uint256 loanId) external;
 }
 
 /**
@@ -97,7 +102,8 @@ interface IVaipakamIntentSurface {
 contract AggregatorAdapterImplementation is
     ERC4626Upgradeable,
     OwnableUpgradeable,
-    UUPSUpgradeable
+    UUPSUpgradeable,
+    IERC721Receiver
 {
     using SafeERC20 for IERC20;
 
@@ -131,9 +137,21 @@ contract AggregatorAdapterImplementation is
     error HaircutTooHigh();
     /// @notice Raised on a zero-address constructor/init argument.
     error ZeroAddress();
+    /// @notice Raised when the authorized principal is sanctioned and tries to
+    ///         deposit new capital (Tier-1 — funding screens the REAL principal,
+    ///         not the always-clean adapter address).
+    error PrincipalSanctioned();
+    /// @notice Raised when a withdraw/redeem caller, owner, or receiver isn't
+    ///         the authorized principal (no approved-spender exit).
+    error WithdrawNotPrincipal();
 
     /// @notice The governance haircut was updated.
     event HaircutBpsSet(uint16 oldBps, uint16 newBps);
+    /// @notice The principal wound the standing intent down (cancel + keeper off).
+    event IntentWoundDown(address indexed principal);
+    /// @notice A resolved-but-non-rollable loan's proceeds were claimed back into
+    ///         the adapter and re-funded into the intent (re-entering idle/NAV).
+    event LoanClaimedAndCompounded(uint256 indexed loanId, uint256 amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -266,6 +284,26 @@ contract AggregatorAdapterImplementation is
         return byShares < idleShares ? byShares : idleShares;
     }
 
+    /// @inheritdoc ERC4626Upgradeable
+    /// @dev #626 Codex P2 — only the authorized principal can deposit, so the
+    ///      max methods must advertise 0 for everyone else (ERC-4626 routers
+    ///      read these before depositing).
+    function maxDeposit(address receiver)
+        public
+        view
+        override
+        returns (uint256)
+    {
+        if (receiver != authorizedPrincipal) return 0;
+        return super.maxDeposit(receiver);
+    }
+
+    /// @inheritdoc ERC4626Upgradeable
+    function maxMint(address receiver) public view override returns (uint256) {
+        if (receiver != authorizedPrincipal) return 0;
+        return super.maxMint(receiver);
+    }
+
     // ─── Deposit / withdraw — route through the intent layer ────────────────
 
     /// @dev Gate to the single authorized principal, then pull + mint via OZ,
@@ -278,6 +316,14 @@ contract AggregatorAdapterImplementation is
     ) internal override {
         if (caller != authorizedPrincipal || receiver != authorizedPrincipal) {
             revert NotAuthorizedPrincipal();
+        }
+        // #626 Codex P1 — Tier-1 sanctions screen on the REAL principal. The
+        // Diamond's `fundLenderIntent` gate only sees `msg.sender == this`
+        // (always clean), so a sanctioned aggregator could otherwise fund new
+        // capital through its clean adapter. Screen the principal here, on the
+        // new-funding (Tier-1) path. (Withdraw stays open — Tier-2 wind-down.)
+        if (IVaipakamIntentSurface(diamond).isSanctionedAddress(authorizedPrincipal)) {
+            revert PrincipalSanctioned();
         }
         // OZ: safeTransferFrom(caller -> this, assets) + _mint(receiver, shares).
         super._deposit(caller, receiver, assets, shares);
@@ -303,6 +349,17 @@ contract AggregatorAdapterImplementation is
         uint256 assets,
         uint256 shares
     ) internal override {
+        // #626 Codex P2 — the share token is non-transferable, but ERC-4626
+        // `withdraw`/`redeem` would still let an ERC-20-APPROVED spender pull
+        // idle assets to an arbitrary receiver, re-creating multi-principal
+        // exposure. Require all three roles to be the principal.
+        if (
+            caller != authorizedPrincipal ||
+            owner != authorizedPrincipal ||
+            receiver != authorizedPrincipal
+        ) {
+            revert WithdrawNotPrincipal();
+        }
         IVaipakamIntentSurface(diamond).withdrawLenderIntentCapital(
             asset(),
             collateralAsset,
@@ -325,6 +382,80 @@ contract AggregatorAdapterImplementation is
             revert SharesNonTransferable();
         }
         super._update(from, to, value);
+    }
+
+    // ─── Principal wind-down + recovery (#626 Codex P2/P1) ──────────────────
+
+    /// @notice Principal-only: wind the standing intent down — cancel it and
+    ///         revoke keeper access — so no keeper can re-match/re-roll returned
+    ///         idle capital while the aggregator exits. The intent row is keyed
+    ///         to the adapter (not the principal), so the principal cannot do
+    ///         this by calling the Diamond directly; this is the gated forwarder.
+    ///         After wind-down the aggregator withdraws idle as live loans
+    ///         mature.
+    function windDownIntent() external {
+        if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
+        IVaipakamIntentSurface d = IVaipakamIntentSurface(diamond);
+        d.cancelLenderIntent(asset(), collateralAsset);
+        d.setKeeperAccess(false);
+        emit IntentWoundDown(authorizedPrincipal);
+    }
+
+    /// @notice Claim a RESOLVED-but-non-rollable adapter loan's proceeds back
+    ///         into the adapter and re-fund them into the intent so they
+    ///         re-enter idle (and thus NAV + redeemable value).
+    /// @dev    #626 Codex P1. `rollIntentLoan` only handles clean repaid loans;
+    ///         a default / fallback / paused-asset / cancelled-intent loan
+    ///         settles via the normal lender claim, whose proceeds are owed to
+    ///         the lender-NFT owner — this adapter. Without a forwarder those
+    ///         proceeds are stranded outside `idleAssets()`. Permissionless
+    ///         (recovery only ever benefits this adapter's own intent); the
+    ///         proceeds land in the adapter, then re-fund into idle. Requires
+    ///         the intent active (re-fund needs it) — if wound down, re-fund is
+    ///         skipped and the recovered assets stay claimable by the principal
+    ///         via {sweepToPrincipal}.
+    function claimAndCompound(uint256 loanId) external {
+        address lend = asset();
+        uint256 before = IERC20(lend).balanceOf(address(this));
+        IVaipakamIntentSurface(diamond).claimAsLender(loanId);
+        uint256 recovered = IERC20(lend).balanceOf(address(this)) - before;
+        if (recovered > 0) {
+            IERC20(lend).forceApprove(diamond, recovered);
+            IVaipakamIntentSurface(diamond).fundLenderIntent(
+                lend,
+                collateralAsset,
+                recovered
+            );
+        }
+        emit LoanClaimedAndCompounded(loanId, recovered);
+    }
+
+    /// @notice Principal-only: sweep any raw lending-asset balance sitting in
+    ///         the adapter (not in the intent) to the principal. Used after a
+    ///         wind-down when {claimAndCompound} couldn't re-fund (intent
+    ///         cancelled), so recovered proceeds aren't stranded. Safe: the
+    ///         adapter is single-principal (the principal owns 100% of the
+    ///         non-transferable shares), and this raw balance is not counted in
+    ///         `totalAssets`, so no shareholder is diluted.
+    function sweepToPrincipal() external {
+        if (msg.sender != authorizedPrincipal) revert NotAuthorizedPrincipal();
+        IERC20 a = IERC20(asset());
+        uint256 bal = a.balanceOf(address(this));
+        if (bal > 0) a.safeTransfer(authorizedPrincipal, bal);
+    }
+
+    // ─── ERC721 receiver (#626 Codex P1) ────────────────────────────────────
+
+    /// @notice The adapter is the Vaipakam lender, so `matchIntent` mints it a
+    ///         lender-position NFT via `_safeMint` — which requires this hook.
+    ///         Without it, every fill reverts and capital can never be lent.
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes calldata
+    ) external pure override returns (bytes4) {
+        return IERC721Receiver.onERC721Received.selector;
     }
 
     // ─── Governance ─────────────────────────────────────────────────────────

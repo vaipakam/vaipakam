@@ -32,6 +32,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -167,6 +168,9 @@ contract DeployDiamond is Script {
         SignedOfferFacet signedOfferFacet = new SignedOfferFacet();
         // #393 v1 — LenderIntentVault standing-terms surface.
         LenderIntentFacet lenderIntentFacet = new LenderIntentFacet();
+        // #398 v1.5 — per-aggregator ERC-4626 adapter factory.
+        AggregatorAdapterFactoryFacet aggregatorAdapterFactoryFacet =
+            new AggregatorAdapterFactoryFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -230,7 +234,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](55);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](56);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -407,6 +411,12 @@ contract DeployDiamond is Script {
         cuts[54] = _buildCut(
             address(lenderIntentFacet),
             _getLenderIntentFacetSelectors()
+        );
+        // #398 v1.5 — per-aggregator ERC-4626 adapter factory (provision +
+        // version registry + aggregator-pull migration + mandatory floor).
+        cuts[55] = _buildCut(
+            address(aggregatorAdapterFactoryFacet),
+            _getAggregatorAdapterFactorySelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1353,6 +1363,25 @@ contract DeployDiamond is Script {
         s[8] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
         s[9] = LenderIntentFacet.getLenderIntentCapital.selector;
         s[10] = LenderIntentFacet.rollIntentLoan.selector;
+    }
+
+    function _getAggregatorAdapterFactorySelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](11);
+        s[0] = AggregatorAdapterFactoryFacet.initializeAdapterImplementation.selector;
+        s[1] = AggregatorAdapterFactoryFacet.createAggregatorAdapter.selector;
+        s[2] = AggregatorAdapterFactoryFacet.upgradeAdapterImplementation.selector;
+        s[3] = AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter.selector;
+        s[4] = AggregatorAdapterFactoryFacet.setMandatoryAdapterUpgrade.selector;
+        s[5] = AggregatorAdapterFactoryFacet.setAggregatorHaircutBps.selector;
+        s[6] = AggregatorAdapterFactoryFacet.aggregatorAdapterTemplate.selector;
+        s[7] = AggregatorAdapterFactoryFacet.currentAggregatorAdapterVersion.selector;
+        s[8] = AggregatorAdapterFactoryFacet.mandatoryAggregatorAdapterVersion.selector;
+        s[9] = AggregatorAdapterFactoryFacet.getAggregatorAdapterVersion.selector;
+        s[10] = AggregatorAdapterFactoryFacet.isAggregatorAdapter.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

@@ -34,8 +34,9 @@ abstract contract DiamondFacetNames {
     ///      41 → 42 in T-086 Round-7 (#355) with
     ///      `NFTPrepayAutoListFacet`;
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`;
-    ///      54 → 55 in #393 v1 with `LenderIntentFacet`.)
-    function cutFacetNames() internal pure returns (string[55] memory) {
+    ///      54 → 55 in #393 v1 with `LenderIntentFacet`;
+    ///      55 → 56 in #398 v1.5 with `AggregatorAdapterFactoryFacet`.)
+    function cutFacetNames() internal pure returns (string[56] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -166,7 +167,10 @@ abstract contract DiamondFacetNames {
             // registers set-and-forget lending bounds for an ERC-20 pair; a
             // permissioned solver fills concrete offers within them via
             // OfferMatchFacet.matchIntent. See `LenderIntentFacet.sol` natspec.
-            "LenderIntentFacet"
+            "LenderIntentFacet",
+            // #398 v1.5 — provisions + version-manages the per-aggregator
+            // ERC-4626 lender adapters (HybridIntentLayer L3).
+            "AggregatorAdapterFactoryFacet"
         ];
     }
 }

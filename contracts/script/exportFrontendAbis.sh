@@ -93,6 +93,11 @@ FACETS=(
   "SignedOfferFacet"
   # #393 v1 — LenderIntentVault standing-terms surface.
   "LenderIntentFacet"
+  # #398 v1.5 — ERC-4626 aggregator adapter factory + the adapter impl (the
+  # adapter is a standalone per-aggregator contract, not a facet, but the dapp
+  # needs its ABI to interact with adapter instances).
+  "AggregatorAdapterFactoryFacet"
+  "AggregatorAdapterImplementation"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"

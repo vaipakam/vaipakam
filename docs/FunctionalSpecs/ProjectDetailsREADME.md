@@ -392,6 +392,20 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   returns are never diverted into the original lender's intent. The repayment
   claim that would have paid a wallet is consumed in the same step as the
   re-commitment, so a rolled loan's funds are never both claimable and re-lent.
+- **External aggregator access (ERC-4626).** A yield aggregator can supply capital
+  through a standard ERC-4626 vault interface: it is provisioned its own adapter
+  that places deposited capital behind a standing intent (matched + auto-rolled by
+  keepers as above). Each aggregator gets its own adapter — a single shared one
+  would pool multiple aggregators into one share token, which the no-commingling
+  principle forbids — so deposits are restricted to the one authorized aggregator
+  and its shares are non-transferable. The adapter reports value conservatively
+  (idle capital + outstanding principal marked down by a governance haircut,
+  excluding not-yet-collected interest) and allows withdrawal only of idle (un-lent)
+  capital. The adapter is upgradeable on the same aggregator-pull model as the
+  per-user vault (the aggregator migrates its own adapter when a new version is
+  published; governance can mandate a floor only for a critical fix), with a
+  principal-only wind-down and a recovery path for loans that resolve outside the
+  normal auto-roll.
 
 ### Lenders:
 

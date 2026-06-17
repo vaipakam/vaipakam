@@ -32,6 +32,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -731,6 +732,25 @@ contract HelperTest {
         selectors[8] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
         selectors[9] = LenderIntentFacet.getLenderIntentCapital.selector;
         selectors[10] = LenderIntentFacet.rollIntentLoan.selector;
+    }
+
+    function getAggregatorAdapterFactoryFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](11);
+        selectors[0] = AggregatorAdapterFactoryFacet.initializeAdapterImplementation.selector;
+        selectors[1] = AggregatorAdapterFactoryFacet.createAggregatorAdapter.selector;
+        selectors[2] = AggregatorAdapterFactoryFacet.upgradeAdapterImplementation.selector;
+        selectors[3] = AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter.selector;
+        selectors[4] = AggregatorAdapterFactoryFacet.setMandatoryAdapterUpgrade.selector;
+        selectors[5] = AggregatorAdapterFactoryFacet.setAggregatorHaircutBps.selector;
+        selectors[6] = AggregatorAdapterFactoryFacet.aggregatorAdapterTemplate.selector;
+        selectors[7] = AggregatorAdapterFactoryFacet.currentAggregatorAdapterVersion.selector;
+        selectors[8] = AggregatorAdapterFactoryFacet.mandatoryAggregatorAdapterVersion.selector;
+        selectors[9] = AggregatorAdapterFactoryFacet.getAggregatorAdapterVersion.selector;
+        selectors[10] = AggregatorAdapterFactoryFacet.isAggregatorAdapter.selector;
     }
 
     function getDefaultedFacetSelectors()
