@@ -541,6 +541,35 @@ contract LenderIntentFacet is
         if (io.lendingAsset == s.vpfiToken) {
             revert LenderIntentVpfiLendingUnsupported();
         }
+        // #623 Codex round-3 P1 — reject directly on the PER-LOAN lender-proceeds
+        // reservation, not just the aggregate free balance. If the asset was VPFI
+        // at repay (even if `vpfiToken` has since rotated away, so the live-token
+        // check above misses it) AND the owner happens to hold ≥ rolledAmount of
+        // OTHER free balance in the same token, the free-balance assert below
+        // would pass while THIS loan's reservation stays live — and consuming the
+        // claim + burning the NFT here would leave the normal claim unable to
+        // ever call `releaseLenderProceeds`, stranding the reservation. Reject to
+        // the normal claim path, which releases it.
+        if (s.lenderProceedsEncumbered[loanId] != 0) {
+            revert LenderIntentLoanNotRollable();
+        }
+        // #623 Codex round-3 P2 — honour a CANCELLED intent. If the lender wound
+        // the intent down (`cancelLenderIntent`) while this loan was outstanding,
+        // a globally-authorized keeper must not re-lien the proceeds into the now
+        // inactive intent (idle encumbered capital `matchIntent` won't touch) —
+        // that contradicts cancel's promise that open loans settle via the normal
+        // path. Reject to the normal claim instead.
+        if (
+            !s.lenderIntent[io.owner][io.lendingAsset][io.collateralAsset].active
+        ) {
+            revert LenderIntentLoanNotRollable();
+        }
+        // #623 Codex round-3 P2 — honour per-asset pauses (block-new / allow-exit),
+        // mirroring `fundLenderIntent`. The roll is a NEW standing-capital
+        // commitment, so a paused leg must route the lender to the normal claim
+        // exit rather than re-lien into the paused pair.
+        LibFacet.requireAssetNotPaused(io.lendingAsset);
+        LibFacet.requireAssetNotPaused(io.collateralAsset);
         // Authorize the roller for the owner (owner-self or an AUTO_ROLL keeper).
         LibAuth.requireKeeperForPrincipal(
             LibVaipakam.KEEPER_ACTION_AUTO_ROLL, io.owner

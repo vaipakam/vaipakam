@@ -585,6 +585,34 @@ contract LenderIntentCapitalTest is SetupTest {
         LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
     }
 
+    /// @dev #623 round-3 P2 — a CANCELLED intent routes its outstanding loans to
+    ///      the normal claim, not auto-roll (honours cancelLenderIntent).
+    function test_rollIntentLoan_intentCancelled_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).cancelLenderIntent(
+            mockERC20, mockCollateralERC20
+        );
+        vm.prank(lender);
+        vm.expectRevert(LenderIntentFacet.LenderIntentLoanNotRollable.selector);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
+    /// @dev #623 round-3 P2 — a paused asset blocks the roll (new capital
+    ///      commitment); the lender exits via the normal claim instead.
+    function test_rollIntentLoan_assetPaused_reverts() public {
+        uint256 loanId = _fillAndRepay();
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockCollateralERC20);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.AssetPaused.selector, mockCollateralERC20
+            )
+        );
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+    }
+
     /// @dev #623 P3 — when the borrower has already claimed, the roll settles the
     ///      loan AND emits LoanSettled (parity with the claim path's indexing).
     function test_rollIntentLoan_settlesAndEmitsWhenBorrowerClaimed() public {
