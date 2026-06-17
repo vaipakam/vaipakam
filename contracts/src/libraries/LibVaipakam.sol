@@ -4125,7 +4125,8 @@ library LibVaipakam {
         // ERC-4626 shares — single principal). Provisioned once by governance;
         // holds per-asset-pair LenderIntents (Role A) + (PR 2) a free
         // absorb-cash bucket. See BackstopVaultV0Design.md §2.
-        address backstopVault;
+        address backstopVaultTemplate; // shared UUPS BackstopVault impl
+        address backstopVault;         // the provisioned proxy (0 = unprovisioned)
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
