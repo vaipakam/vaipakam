@@ -212,6 +212,10 @@ contract AggregatorAdapterImplementation is
     ///         the lender-of-record on (a foreign position NFT dumped on it).
     error NotAdapterLoan();
 
+    /// @notice Raised when a safe-transferred ERC721 isn't this adapter's own
+    ///         lender-position mint from the Diamond (#626 round-8 P2).
+    error UnexpectedNFT();
+
     /// @notice The governance haircut was updated.
     event HaircutBpsSet(uint16 oldBps, uint16 newBps);
     /// @notice The principal wound the standing intent down (cancel + keeper off).
@@ -661,12 +665,20 @@ contract AggregatorAdapterImplementation is
     /// @notice The adapter is the Vaipakam lender, so `matchIntent` mints it a
     ///         lender-position NFT via `_safeMint` — which requires this hook.
     ///         Without it, every fill reverts and capital can never be lent.
+    /// @dev    #626 round-8 P2 — accept ONLY the Diamond's mint of this adapter's
+    ///         own lender-position NFT (`msg.sender == diamond` — the position NFT
+    ///         is a Diamond facet — AND `from == address(0)`, i.e. a fresh mint,
+    ///         not a holder→adapter transfer). The adapter is ERC20-on-ERC20 only
+    ///         and has no NFT sweep, so any other safe-transferred ERC721 (incl. a
+    ///         foreign lender-position NFT, which `claimAndCompound` would reject
+    ///         with `NotAdapterLoan`) would be permanently stuck. Reject it.
     function onERC721Received(
         address,
-        address,
+        address from,
         uint256,
         bytes calldata
-    ) external pure override returns (bytes4) {
+    ) external view override returns (bytes4) {
+        if (msg.sender != diamond || from != address(0)) revert UnexpectedNFT();
         return IERC721Receiver.onERC721Received.selector;
     }
 
@@ -702,6 +714,11 @@ contract AggregatorAdapterImplementation is
         // #626 round-4 P2 — a sanctioned principal can't deposit (`_deposit`
         // reverts), so advertise 0.
         if (d.isSanctionedAddress(authorizedPrincipal)) return false;
+        // #626 round-8 P2 — a mandatory VAULT upgrade makes the deposit path
+        // (`fundLenderIntent` → `getOrCreateUserVault(adapter)`) revert
+        // `VaultUpgradeRequired` until the adapter's vault is migrated. Advertise 0.
+        (, , , bool vaultUpgradeRequired) = d.getVaultVersionInfo(address(this));
+        if (vaultUpgradeRequired) return false;
         if (!d.getLenderIntent(address(this), asset(), collateralAsset).active) {
             return false;
         }

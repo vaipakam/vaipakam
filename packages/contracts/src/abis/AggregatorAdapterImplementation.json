@@ -500,7 +500,7 @@
         "internalType": "address"
       },
       {
-        "name": "",
+        "name": "from",
         "type": "address",
         "internalType": "address"
       },
@@ -522,7 +522,7 @@
         "internalType": "bytes4"
       }
     ],
-    "stateMutability": "pure"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -1374,6 +1374,11 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedNFT",
+    "inputs": []
   },
   {
     "type": "error",

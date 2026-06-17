@@ -17,6 +17,7 @@ import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFact
 import {AggregatorAdapterImplementation} from "../src/AggregatorAdapterImplementation.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC4907Mock} from "./mocks/ERC4907Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -524,5 +525,22 @@ contract AggregatorAdapterTest is SetupTest {
         assertTrue(upgradeRequired, "adapter vault below mandatory floor");
         assertEq(adapter.maxWithdraw(aggregator), 0, "maxWithdraw zeroed");
         assertEq(adapter.maxRedeem(aggregator), 0, "maxRedeem zeroed");
+        // #626 round-8 P2 — deposit path also reverts under a vault mandate.
+        assertEq(adapter.maxDeposit(aggregator), 0, "maxDeposit zeroed");
+    }
+
+    /// @dev #626 round-8 P2 — the adapter is ERC20-on-ERC20 and has no NFT sweep,
+    ///      so it must reject any safe-transferred ERC721 (only its own Diamond
+    ///      lender-position mint is accepted). A foreign NFT would otherwise be
+    ///      permanently stuck.
+    function test_onERC721Received_rejectsForeignNft() public {
+        ERC4907Mock nft = new ERC4907Mock("Foreign", "FRGN");
+        address holder = makeAddr("nftHolder");
+        nft.mint(holder, 1);
+        vm.prank(holder);
+        vm.expectRevert(
+            AggregatorAdapterImplementation.UnexpectedNFT.selector
+        );
+        nft.safeTransferFrom(holder, address(adapter), 1);
     }
 }
