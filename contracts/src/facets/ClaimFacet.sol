@@ -11,6 +11,7 @@ import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -147,6 +148,11 @@ contract ClaimFacet is
     ///         keeper must supply a real `retryCalls` try-list (or one must have
     ///         run via a prior claim) so resolution-first isn't bypassed.
     error BackstopRetryRequired();
+    /// @notice The loan's principal asset is the live VPFI token (e.g. after a
+    ///         `vpfiToken` rotation onto a seeded pair) — VPFI's discount/staking
+    ///         accounting can't be bypassed by a generic cash payout, so the
+    ///         absorb refuses (mirrors the seed-time VPFI guard).
+    error BackstopVpfiPrincipalUnsupported();
 
     /// @notice A lender (current NFT owner) opted a FallbackPending loan into the
     ///         Role-B cash exit (or revoked it).
@@ -167,6 +173,17 @@ contract ClaimFacet is
         address indexed lenderNftOwner,
         uint256 cashPaid,
         uint256 collateralAbsorbed
+    );
+    /// @notice Mirror of {DefaultedFacet.LoanDefaulted} (same signature ⇒ same
+    ///         topic hash) emitted when the Role-B keeper path resolves a
+    ///         FallbackPending loan to Defaulted via the retry swap (no buyout),
+    ///         so the indexer flips the loan terminal even though no claim event
+    ///         fires in this tx. Indexer-handled.
+    /// @custom:event-category state-change/loan-mutation
+    event LoanDefaulted(
+        uint256 indexed loanId,
+        bool riskAndTermsConsentFromBoth,
+        LibVaipakam.LoanStatus newStatus
     );
 
     // ─── External Functions ───────────────────────────────────────────────────
@@ -326,6 +343,14 @@ contract ClaimFacet is
             LibVaipakam.hasActiveFallbackTopUp(loanId)
         ) revert NotBackstopAbsorbable();
 
+        // The absorb pays cash in the loan's principal asset. If `vpfiToken` was
+        // rotated onto it after the bucket was seeded, refuse — VPFI's
+        // discount/staking accounting must not be bypassed by a generic payout
+        // (mirrors the seed-time guard; Role A's matchIntent re-checks similarly).
+        if (loan.principalAsset == s.vpfiToken) {
+            revert BackstopVpfiPrincipalUnsupported();
+        }
+
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
@@ -351,6 +376,12 @@ contract ClaimFacet is
                     loan,
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
+                );
+                // Emit a terminal signal: no claim/absorb event fires in this
+                // keeper tx, so without this the indexer would leave the loan
+                // stuck pre-terminal until the lender later claims.
+                emit LoanDefaulted(
+                    loanId, loan.riskAndTermsConsentFromBoth, loan.status
                 );
                 return;
             }
@@ -507,6 +538,16 @@ contract ClaimFacet is
             LibVaipakam.LoanStatus.FallbackPending,
             LibVaipakam.LoanStatus.Defaulted
         );
+
+        // Terminal hooks the direct default/liquidation paths run (DefaultedFacet /
+        // RiskFacet) but the deferred FallbackPending entry did NOT: forfeit any
+        // up-front borrower LIF VPFI to treasury (a default is not a proper close)
+        // and close interaction-reward accounting (borrower forfeits, lender keeps).
+        // Both are no-ops when there's nothing held/open; the full-internal-match
+        // path returns earlier (these don't double-run). Per the CLAUDE.md invariant
+        // that every default terminal MUST forfeitBorrowerLif.
+        LibVPFIDiscount.forfeitBorrowerLif(loan);
+        LibInteractionRewards.closeLoan(loanId, false, false);
 
         // #569 borrower-lien fold (same as the vanilla Defaulted path): record the
         // re-liened borrower residual as the borrower claim so the verified

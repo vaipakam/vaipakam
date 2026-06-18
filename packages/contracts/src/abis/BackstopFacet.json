@@ -413,6 +413,29 @@
   },
   {
     "type": "function",
+    "name": "withdrawBackstopAbsorbToTreasury",
+    "inputs": [
+      {
+        "name": "principal",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateral",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "withdrawBackstopToTreasury",
     "inputs": [
       {
@@ -512,6 +535,31 @@
   {
     "type": "event",
     "name": "BackstopAbsorbSeeded",
+    "inputs": [
+      {
+        "name": "principal",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "collateral",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "BackstopAbsorbWithdrawn",
     "inputs": [
       {
         "name": "principal",

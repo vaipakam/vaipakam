@@ -2892,6 +2892,14 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: null,
       };
+    case 'BackstopAbsorbedLoan':
+      // #630 backstop Role B — surface the cash buyout on the loan timeline and
+      // the lender's activity feed. Actor = the paid lender-NFT owner.
+      return {
+        actor: (args.lenderNftOwner as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: null,
+      };
     case 'IntentLoanRolled':
       // #393 v1-d.2 auto-roll. When the borrower hasn't claimed yet the loan
       // stays Repaid, so this is the only signal the lender side closed (the

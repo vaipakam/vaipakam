@@ -765,7 +765,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](22);
+        selectors = new bytes4[](23);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -789,6 +789,7 @@ contract HelperTest {
         selectors[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
         selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
         selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
+        selectors[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
     }
 
     function getDefaultedFacetSelectors()

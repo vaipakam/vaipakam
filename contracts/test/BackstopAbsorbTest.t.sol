@@ -425,6 +425,34 @@ contract BackstopAbsorbTest is SetupTest {
         assertEq(IERC20(mockCollateralERC20).balanceOf(gov), LENDER_COL, "swept to gov");
     }
 
+    function test_withdrawAbsorbToTreasury_returnsCash() public {
+        uint256 before =
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+        vm.prank(owner);
+        BackstopFacet(address(diamond)).withdrawBackstopAbsorbToTreasury(
+            mockERC20, mockCollateralERC20, 100 ether
+        );
+        (uint256 cash, , ) =
+            BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
+        assertEq(cash, SEED_CASH - 100 ether, "bucket debited");
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20),
+            before + 100 ether,
+            "treasury re-credited"
+        );
+    }
+
+    function test_absorb_vpfiPrincipal_reverts() public {
+        address lender_ = makeAddr("lender7");
+        _fallbackOptedIn(lender_, makeAddr("borrower7"));
+        // Rotate vpfiToken onto the loan's principal asset AFTER seeding/opt-in.
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+        vm.prank(owner);
+        vm.expectRevert(ClaimFacet.BackstopVpfiPrincipalUnsupported.selector);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+    }
+
     function test_seedAbsorb_vpfiLending_reverts() public {
         vm.startPrank(owner);
         // Rotate vpfiToken onto the seed's principal asset.

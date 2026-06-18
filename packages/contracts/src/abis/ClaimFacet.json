@@ -457,6 +457,31 @@
   },
   {
     "type": "event",
+    "name": "LoanDefaulted",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "riskAndTermsConsentFromBoth",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
+      {
+        "name": "newStatus",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "enum LibVaipakam.LoanStatus"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "LoanSettled",
     "inputs": [
       {
@@ -619,6 +644,11 @@
   {
     "type": "error",
     "name": "BackstopVaultUnset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BackstopVpfiPrincipalUnsupported",
     "inputs": []
   },
   {
@@ -1236,6 +1266,17 @@
         "type": "uint8",
         "internalType": "uint8"
       },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SafeCastOverflowedUintToInt",
+    "inputs": [
       {
         "name": "value",
         "type": "uint256",

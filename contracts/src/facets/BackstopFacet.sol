@@ -92,6 +92,12 @@ contract BackstopFacet is
         address indexed collateral,
         uint256 amount
     );
+    /// @notice Unused absorb cash was returned from the bucket to treasury.
+    event BackstopAbsorbWithdrawn(
+        address indexed principal,
+        address indexed collateral,
+        uint256 amount
+    );
     /// @notice Warehoused absorb collateral was swept out of the backstop vault.
     event BackstopAbsorbCollateralSwept(
         address indexed collateral,
@@ -625,6 +631,36 @@ contract BackstopFacet is
         LibVaipakam.recordVaultDeposit(vault, principal, amount);
         s.backstopAbsorbCash[principal][collateral] += amount;
         emit BackstopAbsorbSeeded(principal, collateral, amount);
+    }
+
+    /// @notice Return UNUSED absorb cash from the bucket back to treasury (Role B).
+    /// @dev VAULT_ADMIN. The counterpart to {seedBackstopAbsorb}: debits
+    ///      `backstopAbsorbCash` and withdraws the free (un-spent) principal from
+    ///      the backstop vault to the Diamond, re-crediting `treasuryBalances` —
+    ///      so over-seeded / paused / retired-pair cash is recoverable by
+    ///      governance, not stuck until an upgrade. Requires Diamond-as-treasury.
+    function withdrawBackstopAbsorbToTreasury(
+        address principal,
+        address collateral,
+        uint256 amount
+    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+        if (amount == 0) revert ZeroAmount();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vault = s.backstopVault;
+        if (vault == address(0)) revert BackstopNotProvisioned();
+        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        uint256 bucket = s.backstopAbsorbCash[principal][collateral];
+        if (amount > bucket) revert TreasuryInsufficient();
+        s.backstopAbsorbCash[principal][collateral] = bucket - amount;
+        // Pull the free cash from the vault back to the Diamond (treasury custody).
+        VaultFactoryFacet(address(this)).vaultWithdrawERC20(
+            vault,
+            principal,
+            address(this),
+            amount
+        );
+        s.treasuryBalances[principal] += amount;
+        emit BackstopAbsorbWithdrawn(principal, collateral, amount);
     }
 
     /// @notice Sweep WAREHOUSED absorb collateral out of the backstop vault (e.g.
