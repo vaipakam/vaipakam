@@ -1872,6 +1872,10 @@ async function processLoanLogs(
       // FallbackPending in the index (it emits no `LenderFundsClaimed`).
       const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
       if (r) statusUpdates++;
+      // Mirror LoanDefaulted/LoanLiquidated: clear any indexed prepay-listing
+      // row on this terminal so the frontend can't serve a stale live listing
+      // (the on-chain LibPrepayCleanup clear emits no cancel event).
+      await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
@@ -1967,7 +1971,12 @@ async function processLoanLogs(
         const newCollateral = BigInt(cur.collateral_amount) - collateralDelta;
         if (newPrincipal === 0n) {
           await env.DB.prepare(
-            `UPDATE loans SET principal = ?, collateral_amount = ?, status = 'internal_matched', terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status = 'active'`,
+            // #630 — also flip a 'fallback_pending' row: the backstop keeper's
+            // claimAsLenderViaBackstop runs the same internal-match auto-dispatch,
+            // which can FULLY rescue a FallbackPending loan to InternalMatched.
+            // Without 'fallback_pending' here that loan would stay indexed as
+            // fallback-pending forever (no claim event follows the keeper call).
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = 'internal_matched', terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
               newPrincipal.toString(),

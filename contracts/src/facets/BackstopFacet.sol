@@ -691,6 +691,14 @@ contract BackstopFacet is
             to,
             amount
         );
+        // Write-off-to-treasury path: if the recipient is the Diamond itself (in
+        // Diamond-as-treasury mode), record the treasury credit — otherwise the
+        // swept tokens would sit as raw Diamond balance that `TreasuryFacet`
+        // can't claim (it only sweeps tracked `treasuryBalances`). Mirrors the
+        // other backstop recovery paths.
+        if (to == address(this) && s.treasury == address(this)) {
+            s.treasuryBalances[collateral] += amount;
+        }
         emit BackstopAbsorbCollateralSwept(collateral, to, amount);
     }
 

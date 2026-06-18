@@ -394,6 +394,14 @@ contract ClaimFacet is
             }
         }
 
+        // A PARTIAL internal-match rescue can scale the snapshot's lender slice to
+        // zero (proceeds recorded in `heldForLender`) while leaving the loan
+        // FallbackPending with `snap.active` still true. There is nothing for the
+        // backstop to buy — return WITHOUT spending absorb cash (reverting here
+        // would roll back that objective rescue); the lender finalizes via the
+        // normal claim, which pays the `heldForLender`.
+        if (snap.lenderCollateral == 0) return;
+
         // Require an OBJECTIVE retry to have actually been attempted (this call or
         // a prior `claimAsLenderWithRetry`) before any backstop cash is spent — the
         // advertised resolution-first swap must run, not be skipped by passing an

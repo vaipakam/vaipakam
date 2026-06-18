@@ -453,6 +453,26 @@ contract BackstopAbsorbTest is SetupTest {
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
     }
 
+    function test_sweepAbsorbCollateral_toDiamond_creditsTreasury() public {
+        address lender_ = makeAddr("lender7");
+        _fallbackOptedIn(lender_, makeAddr("borrower7"));
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+
+        uint256 before =
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20);
+        // Write-off path: sweep the warehoused collateral to the Diamond (treasury).
+        vm.prank(owner);
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
+            mockCollateralERC20, address(diamond), LENDER_COL
+        );
+        assertEq(
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockCollateralERC20) - before,
+            LENDER_COL,
+            "Diamond-bound sweep credits treasury"
+        );
+    }
+
     function test_seedAbsorb_vpfiLending_reverts() public {
         vm.startPrank(owner);
         // Rotate vpfiToken onto the seed's principal asset.
