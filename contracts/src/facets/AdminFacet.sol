@@ -326,7 +326,18 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        LibVaipakam.storageSlot().protocolCfg.peerLtvReadsPaused = value;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.protocolCfg.peerLtvReadsPaused = value;
+        // #633 (Codex r3 P1) — invalidate the peer-LTV cache on every toggle.
+        // Otherwise UNPAUSING would immediately re-trust any still-fresh cached
+        // entry — including the compromised reading the pause was meant to
+        // neutralize — before `refreshTierLtvCache()` (which can't run while
+        // paused) is re-run. Zeroing `lastRefreshedAt` forces
+        // `effectiveTierMaxInitLtvBps` to use the governance cap until a fresh
+        // post-unpause refresh succeeds.
+        for (uint8 t = 1; t <= LibVaipakam.MAX_LIQUIDITY_TIER; ++t) {
+            s.tierLtvCache[t].lastRefreshedAt = 0;
+        }
         emit PeerLtvReadsPausedSet(value);
     }
 
