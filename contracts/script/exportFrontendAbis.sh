@@ -98,6 +98,9 @@ FACETS=(
   # needs its ABI to interact with adapter instances).
   "AggregatorAdapterFactoryFacet"
   "AggregatorAdapterImplementation"
+  # #399 v2.5 — backstop facet (Diamond) + the standalone treasury BackstopVault.
+  "BackstopFacet"
+  "BackstopVaultImplementation"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"

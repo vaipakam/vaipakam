@@ -35,8 +35,9 @@ abstract contract DiamondFacetNames {
     ///      `NFTPrepayAutoListFacet`;
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`;
     ///      54 → 55 in #393 v1 with `LenderIntentFacet`;
-    ///      55 → 56 in #398 v1.5 with `AggregatorAdapterFactoryFacet`.)
-    function cutFacetNames() internal pure returns (string[56] memory) {
+    ///      55 → 56 in #398 v1.5 with `AggregatorAdapterFactoryFacet`;
+    ///      56 → 57 in #399 v2.5 with `BackstopFacet`.)
+    function cutFacetNames() internal pure returns (string[57] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -170,7 +171,10 @@ abstract contract DiamondFacetNames {
             "LenderIntentFacet",
             // #398 v1.5 — provisions + version-manages the per-aggregator
             // ERC-4626 lender adapters (HybridIntentLayer L3).
-            "AggregatorAdapterFactoryFacet"
+            "AggregatorAdapterFactoryFacet",
+            // #399 v2.5 — treasury-seeded backstop vault governance + Role-A
+            // auto-counterparty drive (HybridIntentLayer LR).
+            "BackstopFacet"
         ];
     }
 }

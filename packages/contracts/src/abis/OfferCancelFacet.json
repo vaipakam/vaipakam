@@ -246,6 +246,11 @@
             "name": "refinanceCarryOver",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "backstopEligibleAfter",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
@@ -452,6 +457,11 @@
             "name": "refinanceCarryOver",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "backstopEligibleAfter",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
