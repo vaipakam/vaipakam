@@ -19,6 +19,25 @@
   },
   {
     "type": "function",
+    "name": "claimInteractionRewardsToDiamond",
+    "inputs": [
+      {
+        "name": "vpfi",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "recovered",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "diamond",
     "inputs": [],
     "outputs": [

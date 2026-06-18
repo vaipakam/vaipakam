@@ -1401,7 +1401,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](15);
+        s = new bytes4[](16);
         s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         s[1] = BackstopFacet.provisionBackstopVault.selector;
         s[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1413,10 +1413,11 @@ contract DeployDiamond is Script {
         s[8] = BackstopFacet.backstopClaim.selector;
         s[9] = BackstopFacet.sweepBackstopToken.selector;
         s[10] = BackstopFacet.sweepBackstopNFT.selector;
-        s[11] = BackstopFacet.setBackstopEnabled.selector;
-        s[12] = BackstopFacet.setBackstopFillEnabled.selector;
-        s[13] = BackstopFacet.setMinBackstopDelay.selector;
-        s[14] = BackstopFacet.getBackstopVault.selector;
+        s[11] = BackstopFacet.claimBackstopRewards.selector;
+        s[12] = BackstopFacet.setBackstopEnabled.selector;
+        s[13] = BackstopFacet.setBackstopFillEnabled.selector;
+        s[14] = BackstopFacet.setMinBackstopDelay.selector;
+        s[15] = BackstopFacet.getBackstopVault.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

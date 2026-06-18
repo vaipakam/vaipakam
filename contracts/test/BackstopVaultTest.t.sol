@@ -165,6 +165,17 @@ contract BackstopVaultTest is SetupTest {
         assertTrue(vault != address(0), "non-zero");
     }
 
+    /// @dev Provisioning stamps the vault as a top-tier compliant entity so a
+    ///      backstop fill (which routes `acceptOfferInternal`'s acceptor-KYC check)
+    ///      doesn't revert on a KYC-enforced deployment. (No-op on retail.)
+    function test_provision_stampsVaultKYCTier() public view {
+        assertEq(
+            uint8(ProfileFacet(address(diamond)).getKYCTier(vault)),
+            uint8(LibVaipakam.KYCTier.Tier2),
+            "vault provisioned at Tier2"
+        );
+    }
+
     function test_provision_alreadyProvisioned_reverts() public {
         vm.prank(owner);
         vm.expectRevert(BackstopFacet.BackstopAlreadyProvisioned.selector);

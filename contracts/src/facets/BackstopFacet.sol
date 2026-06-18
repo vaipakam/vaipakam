@@ -76,6 +76,9 @@ contract BackstopFacet is
         uint256 tokenId,
         address indexed to
     );
+    /// @notice VPFI interaction rewards earned by the backstop were claimed to
+    ///         treasury.
+    event BackstopRewardsClaimed(address indexed vpfi, uint256 amount);
     /// @notice A borrower opted their offer into backstop eligibility.
     event OfferBackstopEligibilitySet(
         uint256 indexed offerId,
@@ -98,6 +101,7 @@ contract BackstopFacet is
     error OfferNotBackstopFillable();
     error BackstopDisabled();
     error UpgradeFailed();
+    error VPFINotConfigured();
 
     // ─── Provisioning + impl (VAULT_ADMIN / timelock) ───────────────────────
 
@@ -132,6 +136,15 @@ contract BackstopFacet is
         );
         vault = address(new ERC1967Proxy(s.backstopVaultTemplate, data));
         s.backstopVault = vault;
+        // Provision the vault as an inherently compliant protocol entity: a
+        // backstop fill routes `acceptOfferInternal`, which checks the acceptor's
+        // (the vault's) KYC tier on a KYC-enforced deployment. Stamp the top tier
+        // here so above-threshold fills don't revert pending an out-of-band admin
+        // step. No-op on the retail deploy (enforcement off ⇒ the check short-
+        // circuits true); load-bearing only on the KYC-enforced industrial fork.
+        // (Country-pair gating on that fork remains operator-provisioned config.)
+        s.kycTier[vault] = LibVaipakam.KYCTier.Tier2;
+        s.kycVerified[vault] = true;
         emit BackstopVaultProvisioned(vault);
     }
 
@@ -243,6 +256,26 @@ contract BackstopFacet is
 
     // ─── Borrower opt-in (offer creator) ────────────────────────────────────
 
+    /// @notice Revert unless `o` is a shape the backstop can actually fill.
+    /// @dev Checked at BOTH opt-in ({setOfferBackstopEligible}) AND fill
+    ///      ({backstopFill}) — the offer can be mutated via `OfferMutateFacet`
+    ///      AFTER opt-in (e.g. fixed-size → ranged), and `backstopEligibleAfter`
+    ///      is not cleared on mutation, so the opt-in check alone is not load-
+    ///      bearing. Rejects the shapes the later `matchIntent` path rejects:
+    ///        • refinance-tagged (direct-accept-only, #576 — `_executeMatch` rejects);
+    ///        • non-ERC20-on-ERC20 (the backstop intent + vault are ERC20-on-ERC20;
+    ///          `previewMatch` rejects an asset-type mismatch);
+    ///        • a genuine principal range (`amountMax != amount`) — the backstop
+    ///          fills the WHOLE offer in one shot; ranged offers are v0-out-of-scope.
+    function _assertBackstopShape(LibVaipakam.Offer storage o) private view {
+        if (
+            o.refinanceTargetLoanId != 0 ||
+            o.assetType != LibVaipakam.AssetType.ERC20 ||
+            o.collateralAssetType != LibVaipakam.AssetType.ERC20 ||
+            o.amountMax != o.amount
+        ) revert OfferNotBackstopEligible();
+    }
+
     /// @notice Borrower opt-in: mark `offerId` backstop-eligible after
     ///         `eligibleAfter`. Creator-only. Validated against a future mandatory
     ///         delay + the offer's own expiry + intent-fillability terms — so an
@@ -257,23 +290,10 @@ contract BackstopFacet is
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }
-        // Shape gate — this setter is the ONLY opt-in validation, so reject here
-        // any offer the later `matchIntent` path could never fill, rather than
-        // letting the borrower wait out the deadline only for every `backstopFill`
-        // to revert:
-        //   • refinance-tagged offers are direct-accept-only (#576) — `_executeMatch`
-        //     rejects them, so the backstop's `matchIntent` would too;
-        //   • the backstop is ERC20-on-ERC20 (its intent + vault are; `previewMatch`
-        //     rejects an asset-type mismatch);
-        //   • the backstop fills the WHOLE offer in one shot, so a genuine
-        //     principal range (`amountMax != amount`) has no single fill amount —
-        //     v0 keeps ranged borrower offers out of scope (see `backstopFill`).
-        if (
-            o.refinanceTargetLoanId != 0 ||
-            o.assetType != LibVaipakam.AssetType.ERC20 ||
-            o.collateralAssetType != LibVaipakam.AssetType.ERC20 ||
-            o.amountMax != o.amount
-        ) revert OfferNotBackstopEligible();
+        // Shape gate — reject any offer the later `matchIntent` path could never
+        // fill, so the borrower fails fast at opt-in (re-asserted at fill time, see
+        // {backstopFill}, because the offer can be mutated after opt-in).
+        _assertBackstopShape(o);
         // Future deadline past the mandatory floor, strictly before expiry
         // (so a fill has a real window before the offer dies; expiresAt must
         // be set). And intent-fillable (matchIntent rejects otherwise).
@@ -321,11 +341,14 @@ contract BackstopFacet is
             LibVaipakam.isOfferExpired(o) ||
             o.accepted
         ) revert OfferNotBackstopFillable();
+        // Re-assert the fillable SHAPE here, not just at opt-in: the offer may have
+        // been mutated (e.g. fixed-size → ranged, or retagged) after opt-in, and
+        // `backstopEligibleAfter` is not cleared on mutation.
+        _assertBackstopShape(o);
         // Effective unfilled capacity = ceiling − filled (the `LibOfferMatch`
-        // formula). `setOfferBackstopEligible` already rejected ranged offers
-        // (`amountMax == amount`), so this equals the whole offer today; using the
-        // ceiling stays correct if borrower partial-fill (#102) ever starts writing
-        // `amountFilled`, and never underflows.
+        // formula). The shape gate above guarantees `amountMax == amount`, so this
+        // equals the whole offer; using the ceiling stays correct if borrower
+        // partial-fill (#102) ever starts writing `amountFilled`, and never underflows.
         uint256 remainder = o.amountMax - o.amountFilled;
         if (remainder == 0) revert OfferNotBackstopFillable();
         if (
@@ -424,6 +447,31 @@ contract BackstopFacet is
         if (vault == address(0)) revert BackstopNotProvisioned();
         BackstopVaultImplementation(vault).sweepNFT(nft, tokenId, to);
         emit BackstopNFTSwept(nft, tokenId, to);
+    }
+
+    /// @notice Claim the VPFI interaction rewards the backstop accrued as a lender
+    ///         and credit them to treasury.
+    /// @dev VAULT_ADMIN / timelock. Backstop-originated loans book interaction
+    ///      rewards under the vault (the lender-of-record); `claimInteractionRewards`
+    ///      only pays its caller, so the vault must claim them itself via this
+    ///      forwarder, otherwise they're stuck while still diluting the emission
+    ///      denominators. Requires Diamond-as-treasury so the recovered VPFI is
+    ///      tracked, mirroring seed/withdraw/claim/sweep.
+    function claimBackstopRewards()
+        external
+        onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
+        returns (uint256 amount)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vault = s.backstopVault;
+        if (vault == address(0)) revert BackstopNotProvisioned();
+        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) revert VPFINotConfigured();
+        amount = BackstopVaultImplementation(vault)
+            .claimInteractionRewardsToDiamond(vpfi);
+        if (amount > 0) s.treasuryBalances[vpfi] += amount;
+        emit BackstopRewardsClaimed(vpfi, amount);
     }
 
     // ─── Kill-switches + config (VAULT_ADMIN / timelock) ────────────────────

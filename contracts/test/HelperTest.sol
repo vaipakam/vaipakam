@@ -763,7 +763,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](15);
+        selectors = new bytes4[](16);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -775,10 +775,11 @@ contract HelperTest {
         selectors[8] = BackstopFacet.backstopClaim.selector;
         selectors[9] = BackstopFacet.sweepBackstopToken.selector;
         selectors[10] = BackstopFacet.sweepBackstopNFT.selector;
-        selectors[11] = BackstopFacet.setBackstopEnabled.selector;
-        selectors[12] = BackstopFacet.setBackstopFillEnabled.selector;
-        selectors[13] = BackstopFacet.setMinBackstopDelay.selector;
-        selectors[14] = BackstopFacet.getBackstopVault.selector;
+        selectors[11] = BackstopFacet.claimBackstopRewards.selector;
+        selectors[12] = BackstopFacet.setBackstopEnabled.selector;
+        selectors[13] = BackstopFacet.setBackstopFillEnabled.selector;
+        selectors[14] = BackstopFacet.setMinBackstopDelay.selector;
+        selectors[15] = BackstopFacet.getBackstopVault.selector;
     }
 
     function getDefaultedFacetSelectors()

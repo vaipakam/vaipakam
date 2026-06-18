@@ -53,6 +53,10 @@ interface IBackstopDiamond {
         LibSwap.AdapterCall[] calldata retryCalls
     ) external;
 
+    function claimInteractionRewards()
+        external
+        returns (uint256 paid, uint256 fromDay, uint256 toDay);
+
     function getLoanDetails(uint256 loanId)
         external
         view
@@ -241,6 +245,29 @@ contract BackstopVaultImplementation is
         IBackstopDiamond(diamond).withdrawLenderIntentCapital(lend, coll, amount);
         returned = IERC20(lend).balanceOf(address(this)) - before;
         if (returned > 0) IERC20(lend).safeTransfer(diamond, returned);
+    }
+
+    /**
+     * @notice Claim the VPFI interaction-emission rewards this vault accrued as a
+     *         lender-of-record on backstop-originated loans, and forward them to
+     *         the Diamond (treasury).
+     * @dev onlyOwner. `LoanFacet.registerLoan` books interaction rewards under the
+     *      loan's lender (this vault), and `claimInteractionRewards` only ever pays
+     *      `msg.sender` — so without this owner-only forwarder those protocol-owned
+     *      rewards would be unclaimable yet still counted in the emission
+     *      denominators, diluting every other lender. The Diamond pays the VPFI to
+     *      this vault as a raw balance; we forward the delta on. `vpfi` is supplied
+     *      by the facet (which reads `s.vpfiToken`). Returns the forwarded amount.
+     */
+    function claimInteractionRewardsToDiamond(address vpfi)
+        external
+        onlyOwner
+        returns (uint256 recovered)
+    {
+        uint256 before = IERC20(vpfi).balanceOf(address(this));
+        IBackstopDiamond(diamond).claimInteractionRewards();
+        recovered = IERC20(vpfi).balanceOf(address(this)) - before;
+        if (recovered > 0) IERC20(vpfi).safeTransfer(diamond, recovered);
     }
 
     /**
