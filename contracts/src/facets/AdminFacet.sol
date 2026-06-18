@@ -259,7 +259,20 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (adapter == address(0)) revert InvalidAddress();
-        LibVaipakam.storageSlot().swapAdapterDisabled[adapter] = disabled;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Reject typo/stale addresses: routing only consults swapAdapterDisabled
+        // for adapters present in `swapAdapters`, so pausing an unregistered
+        // address would be a silent no-op that leaves the intended venue usable.
+        uint256 n = s.swapAdapters.length;
+        bool found;
+        for (uint256 i = 0; i < n; ++i) {
+            if (s.swapAdapters[i] == adapter) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) revert SwapAdapterNotRegistered();
+        s.swapAdapterDisabled[adapter] = disabled;
         emit SwapAdapterDisabledSet(adapter, disabled);
     }
 

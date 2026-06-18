@@ -2941,14 +2941,6 @@ library LibVaipakam {
         ///      that routes liquidations must populate this array
         ///      before the first loan settles.
         address[] swapAdapters;
-        // ─── #633 — per-venue swap-adapter pause ────────────────────────
-        /// @dev Keyed by adapter ADDRESS (robust to `swapAdapters` reordering /
-        ///      removal). `true` ⇒ {LibSwap} skips this adapter in the failover /
-        ///      split routing, so governance can pause a compromised or illiquid
-        ///      venue (0x / 1inch / UniV3 / Balancer) WITHOUT `removeSwapAdapter`
-        ///      shifting every other adapter's index out from under live keeper
-        ///      try-lists. Default `false` = active. Set via `AdminFacet`.
-        mapping(address => bool) swapAdapterDisabled;
         // ─── Phase 7b: multi-venue oracle liquidity check ───────────────
         /// @dev PancakeSwap V3 factory address on this chain. PancakeV3
         ///      is a Uniswap V3 fork — same `IUniswapV3Factory.getPool`
@@ -4204,6 +4196,15 @@ library LibVaipakam {
         // so a sweep can never reach the seeded absorb CASH that shares the same
         // vault when one pair's collateral token equals another pair's principal.
         mapping(address => uint256) backstopWarehousedCollateral;
+        // ─── #633 — per-venue swap-adapter pause (APPEND-ONLY tail) ─────────
+        /// @dev Keyed by adapter ADDRESS (robust to `swapAdapters` reordering /
+        ///      removal). `true` ⇒ {LibSwap} / the claim retry loop skip this
+        ///      adapter, so governance can pause a compromised or illiquid venue
+        ///      (0x / 1inch / UniV3 / Balancer) WITHOUT `removeSwapAdapter`
+        ///      shifting every other adapter's index. Declared at the struct TAIL
+        ///      so in-place storage upgrades don't shift existing slots. Default
+        ///      `false` = active. Set via `AdminFacet.setSwapAdapterDisabled`.
+        mapping(address => bool) swapAdapterDisabled;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -5663,9 +5664,13 @@ library LibVaipakam {
         Storage storage s = storageSlot();
         // #633 — while peer-LTV reads are paused, IGNORE the cached peer-derived
         // value (it may be the compromised reading the pause is meant to neutralize)
-        // and fall back to the governance/library default for the whole pause
-        // window, not just until the cache TTL expires.
-        if (s.protocolCfg.peerLtvReadsPaused) return tierLtvLibraryDefaultBps(tier);
+        // and fall back to the GOVERNANCE-configured tier cap (which itself
+        // defaults to the library value when unset) for the whole pause window —
+        // so a governance-tightened Tier-2/3 cap is enforced, not the looser
+        // hard-coded default.
+        if (s.protocolCfg.peerLtvReadsPaused) {
+            return uint16(cfgTierMaxInitLtvBps(tier));
+        }
         TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
         if (
             entry.lastRefreshedAt > 0 &&

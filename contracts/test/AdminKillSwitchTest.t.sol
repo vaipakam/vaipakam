@@ -53,6 +53,9 @@ contract AdminKillSwitchTest is SetupTest {
 
     function test_swapAdapterDisabled_roundTrip() public {
         address venue = makeAddr("venue");
+        // Must be a REGISTERED adapter (the setter rejects unknown addresses).
+        vm.prank(owner);
+        AdminFacet(address(diamond)).addSwapAdapter(venue);
         assertFalse(AdminFacet(address(diamond)).isSwapAdapterDisabled(venue), "default active");
         vm.prank(owner);
         AdminFacet(address(diamond)).setSwapAdapterDisabled(venue, true);
