@@ -68,6 +68,14 @@ contract BackstopFacet is
         address indexed asset,
         uint256 recovered
     );
+    /// @notice Raw ERC20 residue on the backstop vault was swept to treasury.
+    event BackstopTokenSwept(address indexed token, uint256 amount);
+    /// @notice A foreign ERC721 on the backstop vault was swept out.
+    event BackstopNFTSwept(
+        address indexed nft,
+        uint256 tokenId,
+        address indexed to
+    );
     /// @notice A borrower opted their offer into backstop eligibility.
     event OfferBackstopEligibilitySet(
         uint256 indexed offerId,
@@ -86,6 +94,7 @@ contract BackstopFacet is
     error NotOfferCreator();
     error OfferNotBorrowerType();
     error InvalidBackstopDeadline();
+    error OfferNotBackstopEligible();
     error OfferNotBackstopFillable();
     error BackstopDisabled();
     error UpgradeFailed();
@@ -248,6 +257,23 @@ contract BackstopFacet is
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }
+        // Shape gate — this setter is the ONLY opt-in validation, so reject here
+        // any offer the later `matchIntent` path could never fill, rather than
+        // letting the borrower wait out the deadline only for every `backstopFill`
+        // to revert:
+        //   • refinance-tagged offers are direct-accept-only (#576) — `_executeMatch`
+        //     rejects them, so the backstop's `matchIntent` would too;
+        //   • the backstop is ERC20-on-ERC20 (its intent + vault are; `previewMatch`
+        //     rejects an asset-type mismatch);
+        //   • the backstop fills the WHOLE offer in one shot, so a genuine
+        //     principal range (`amountMax != amount`) has no single fill amount —
+        //     v0 keeps ranged borrower offers out of scope (see `backstopFill`).
+        if (
+            o.refinanceTargetLoanId != 0 ||
+            o.assetType != LibVaipakam.AssetType.ERC20 ||
+            o.collateralAssetType != LibVaipakam.AssetType.ERC20 ||
+            o.amountMax != o.amount
+        ) revert OfferNotBackstopEligible();
         // Future deadline past the mandatory floor, strictly before expiry
         // (so a fill has a real window before the offer dies; expiresAt must
         // be set). And intent-fillable (matchIntent rejects otherwise).
@@ -295,7 +321,12 @@ contract BackstopFacet is
             LibVaipakam.isOfferExpired(o) ||
             o.accepted
         ) revert OfferNotBackstopFillable();
-        uint256 remainder = o.amount - o.amountFilled; // borrower offer: single amount
+        // Effective unfilled capacity = ceiling − filled (the `LibOfferMatch`
+        // formula). `setOfferBackstopEligible` already rejected ranged offers
+        // (`amountMax == amount`), so this equals the whole offer today; using the
+        // ceiling stays correct if borrower partial-fill (#102) ever starts writing
+        // `amountFilled`, and never underflows.
+        uint256 remainder = o.amountMax - o.amountFilled;
         if (remainder == 0) revert OfferNotBackstopFillable();
         if (
             OracleFacet(address(this)).checkLiquidity(o.collateralAsset) !=
@@ -316,6 +347,18 @@ contract BackstopFacet is
     ///      credit. NOT `nonReentrant`: the vault's `executeClaim` re-enters the
     ///      Diamond's own `nonReentrant` `claimAsLenderWithRetry` (the real guard);
     ///      the `treasuryBalances` credit happens after that returns.
+    ///
+    ///      Requires Diamond-as-treasury (like seed/withdraw). If governance moved
+    ///      `treasury` away from the Diamond, we MUST revert rather than forward
+    ///      the recovered tokens to the Diamond and skip the credit — that would
+    ///      strand them as untracked raw Diamond balance `TreasuryFacet` can't
+    ///      reach. Reverting keeps the loan claimable once treasury is the Diamond
+    ///      again; nothing is lost.
+    ///
+    ///      Credits BOTH legs the vault forwards: principal on a normal resolution,
+    ///      and the raw collateral on a no-swap default (collateral that went
+    ///      illiquid AFTER a liquid-at-fill origination). See
+    ///      {BackstopVaultImplementation.executeClaim}.
     function backstopClaim(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata retryCalls
@@ -323,13 +366,64 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
+        if (s.treasury != address(this)) revert TreasuryNotDiamond();
         if (s.loans[loanId].lender != vault) revert NotBackstopLoan();
-        (address asset, uint256 recovered) = BackstopVaultImplementation(vault)
-            .executeClaim(loanId, retryCalls);
-        if (recovered > 0 && s.treasury == address(this)) {
-            s.treasuryBalances[asset] += recovered;
+        (
+            address principalAsset,
+            uint256 principalRecovered,
+            address collateralAsset,
+            uint256 collateralRecovered
+        ) = BackstopVaultImplementation(vault).executeClaim(loanId, retryCalls);
+        if (principalRecovered > 0) {
+            s.treasuryBalances[principalAsset] += principalRecovered;
         }
-        emit BackstopLoanClaimed(loanId, asset, recovered);
+        if (collateralRecovered > 0) {
+            s.treasuryBalances[collateralAsset] += collateralRecovered;
+        }
+        emit BackstopLoanClaimed(loanId, principalAsset, principalRecovered);
+        if (collateralRecovered > 0) {
+            emit BackstopLoanClaimed(loanId, collateralAsset, collateralRecovered);
+        }
+    }
+
+    /// @notice Sweep a raw ERC20 balance off the backstop vault into treasury.
+    /// @dev VAULT_ADMIN / timelock. Recovers residue that lands raw on the vault
+    ///      and is NOT captured by {backstopClaim} — e.g. a VPFI matcher kickback,
+    ///      an airdrop, or dust. The vault is owned by the Diamond, so without this
+    ///      wrapper there is no selector to drive its `sweepToken`. Requires
+    ///      Diamond-as-treasury so the recovered value is tracked, mirroring
+    ///      seed/withdraw/claim.
+    function sweepBackstopToken(address token)
+        external
+        onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
+        returns (uint256 amount)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vault = s.backstopVault;
+        if (vault == address(0)) revert BackstopNotProvisioned();
+        if (s.treasury != address(this)) revert TreasuryNotDiamond();
+        amount = BackstopVaultImplementation(vault).sweepToken(
+            token,
+            address(this)
+        );
+        if (amount > 0) s.treasuryBalances[token] += amount;
+        emit BackstopTokenSwept(token, amount);
+    }
+
+    /// @notice Sweep a FOREIGN ERC721 off the backstop vault to `to`.
+    /// @dev VAULT_ADMIN / timelock. For an NFT sent to the vault via a non-safe
+    ///      `transferFrom` (the `onERC721Received` hook rejects safe transfers of
+    ///      foreign NFTs). The vault's `sweepNFT` refuses to move Vaipakam protocol
+    ///      NFTs (`nft == diamond`), so a live lender-position NFT can't be pulled.
+    function sweepBackstopNFT(address nft, uint256 tokenId, address to)
+        external
+        onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vault = s.backstopVault;
+        if (vault == address(0)) revert BackstopNotProvisioned();
+        BackstopVaultImplementation(vault).sweepNFT(nft, tokenId, to);
+        emit BackstopNFTSwept(nft, tokenId, to);
     }
 
     // ─── Kill-switches + config (VAULT_ADMIN / timelock) ────────────────────

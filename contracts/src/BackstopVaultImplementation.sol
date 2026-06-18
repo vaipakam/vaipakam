@@ -173,21 +173,57 @@ contract BackstopVaultImplementation is
      * @notice Claim a resolved backstop loan's proceeds and forward them to the
      *         Diamond (treasury) for recording by the facet.
      * @dev onlyOwner. `claimAsLenderWithRetry` pays the lender (this vault) the
-     *      proceeds as a RAW token balance (not into the per-user vault); the
-     *      delta is measured and transferred to the Diamond, which the facet then
-     *      records into `treasuryBalances`. Returns the principal asset + amount
-     *      so the facet can record it. The facet has already verified the loan is
+     *      proceeds as a RAW token balance (not into the per-user vault). The
+     *      paid asset is NOT always `principalAsset`: on a proper repayment (or a
+     *      retry that swaps collateral→principal) the vault receives principal, but
+     *      on a default/fallback that resolves WITHOUT a swap — e.g. the collateral
+     *      went illiquid or value-collapsed AFTER origination (it was liquid at
+     *      `backstopFill` time, so the loan was allowed) — `claimAsLenderWithRetry`
+     *      pays out the raw COLLATERAL token instead. So we measure and forward the
+     *      deltas of BOTH the principal and the collateral asset, returning both so
+     *      the facet credits each to `treasuryBalances`. Snapshot both balances
+     *      BEFORE the claim (the principal forward below would otherwise corrupt a
+     *      same-asset collateral delta). The facet has already verified the loan is
      *      a backstop-originated loan (`lender == this`).
      */
     function executeClaim(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata retryCalls
-    ) external onlyOwner returns (address asset, uint256 recovered) {
-        asset = IBackstopDiamond(diamond).getLoanDetails(loanId).principalAsset;
-        uint256 before = IERC20(asset).balanceOf(address(this));
+    )
+        external
+        onlyOwner
+        returns (
+            address principalAsset,
+            uint256 principalRecovered,
+            address collateralAsset,
+            uint256 collateralRecovered
+        )
+    {
+        LibVaipakam.Loan memory loan = IBackstopDiamond(diamond).getLoanDetails(
+            loanId
+        );
+        principalAsset = loan.principalAsset;
+        collateralAsset = loan.collateralAsset;
+        uint256 principalBefore = IERC20(principalAsset).balanceOf(address(this));
+        bool distinctCollateral = collateralAsset != principalAsset;
+        uint256 collateralBefore = distinctCollateral
+            ? IERC20(collateralAsset).balanceOf(address(this))
+            : 0;
         IBackstopDiamond(diamond).claimAsLenderWithRetry(loanId, retryCalls);
-        recovered = IERC20(asset).balanceOf(address(this)) - before;
-        if (recovered > 0) IERC20(asset).safeTransfer(diamond, recovered);
+        principalRecovered =
+            IERC20(principalAsset).balanceOf(address(this)) - principalBefore;
+        if (principalRecovered > 0) {
+            IERC20(principalAsset).safeTransfer(diamond, principalRecovered);
+        }
+        // Only forward the collateral leg when it is a DISTINCT token; a
+        // same-asset loan already counted the whole delta as `principalRecovered`.
+        if (distinctCollateral) {
+            collateralRecovered =
+                IERC20(collateralAsset).balanceOf(address(this)) - collateralBefore;
+            if (collateralRecovered > 0) {
+                IERC20(collateralAsset).safeTransfer(diamond, collateralRecovered);
+            }
+        }
     }
 
     /**

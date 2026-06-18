@@ -59,12 +59,22 @@
     ],
     "outputs": [
       {
-        "name": "asset",
+        "name": "principalAsset",
         "type": "address",
         "internalType": "address"
       },
       {
-        "name": "recovered",
+        "name": "principalRecovered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralRecovered",
         "type": "uint256",
         "internalType": "uint256"
       }

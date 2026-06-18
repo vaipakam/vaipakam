@@ -289,6 +289,50 @@ contract BackstopVaultTest is SetupTest {
         );
     }
 
+    /// @dev A genuinely RANGED borrower offer (amountMax > amount) can't be
+    ///      backstop-filled (the backstop fills the whole offer in one shot), so
+    ///      opt-in must reject it up-front rather than let it wait out the deadline.
+    function test_setOfferBackstopEligible_rangedAmount_reverts() public {
+        address borrower = _newBorrower("rangedBorrower");
+        vm.prank(borrower);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: MIN_RATE,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: 2 * PRINCIPAL,
+                durationDays: MAX_DUR,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: 2 * PRINCIPAL, // genuine range ⇒ rejected
+                interestRateBpsMax: MIN_RATE + 100,
+                collateralAmountMax: 4 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: base + 7 days,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+        vm.prank(borrower);
+        vm.expectRevert(BackstopFacet.OfferNotBackstopEligible.selector);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(
+            offerId,
+            base + 2 days
+        );
+    }
+
     // ─── 6. backstopClaim own-loan guard ───────────────────────────────────────
 
     function test_backstopClaim_foreignLoan_reverts() public {
@@ -301,5 +345,27 @@ contract BackstopVaultTest is SetupTest {
             999_999,
             new LibSwap.AdapterCall[](0)
         );
+    }
+
+    // ─── 7. Residue sweep ──────────────────────────────────────────────────────
+
+    /// @dev Raw ERC20 residue that lands on the vault (e.g. a VPFI matcher cut or
+    ///      airdrop) is recoverable to treasury via the facet wrapper — the vault's
+    ///      `sweepToken` is owner-only with the Diamond as owner, so it's only
+    ///      reachable through this selector.
+    function test_sweepBackstopToken_recoversResidueToTreasury() public {
+        uint256 residue = 42 ether;
+        ERC20Mock(mockERC20).mint(vault, residue);
+
+        uint256 before =
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+        vm.prank(owner);
+        uint256 swept = BackstopFacet(address(diamond)).sweepBackstopToken(mockERC20);
+        uint256 afterBal =
+            TreasuryFacet(address(diamond)).getTreasuryBalance(mockERC20);
+
+        assertEq(swept, residue, "swept == residue");
+        assertEq(afterBal, before + residue, "treasury credited the residue");
+        assertEq(ERC20(mockERC20).balanceOf(vault), 0, "vault drained");
     }
 }
