@@ -1082,6 +1082,14 @@ library LibVaipakam {
         // can fire (mandatory floor in the createOffer validation, §4.1). 0 ⇒
         // the library default `BACKSTOP_MIN_DELAY_DEFAULT`.
         uint64 minBackstopDelay;
+        // ── #399 backstop v0 (Role B) kill-switch — default OFF ─────────────
+        // Gates Role B (liquidator-of-last-resort, the cash buyout of a
+        // FallbackPending loan via `claimAsLenderViaBackstop`) INDEPENDENTLY of
+        // Role A's `backstopFillEnabled`, so the much-riskier absorb path can be
+        // staged/paused on its own — an absorb incident must not force disabling
+        // Role A, and vice-versa. Still subordinate to the `backstopEnabled`
+        // master pause. See BackstopVaultV0Design.md §6.
+        bool backstopAbsorbEnabled;
     }
 
     /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
@@ -4127,6 +4135,31 @@ library LibVaipakam {
         // absorb-cash bucket. See BackstopVaultV0Design.md §2.
         address backstopVaultTemplate; // shared UUPS BackstopVault impl
         address backstopVault;         // the provisioned proxy (0 = unprovisioned)
+        // ── #399 backstop v0 Role B (PR 2) — absorb (liquidator-of-last-resort) ──
+        // Per-(principalAsset, collateralAsset) FREE absorb-cash bucket: governance
+        // seeds it via the §3 treasury-seed primitive into the backstop vault's
+        // per-user vault as an UN-liened tracked balance (distinct from Role A's
+        // LIENED origination capital). Decremented by `lenderPrincipalDue` on each
+        // `claimAsLenderViaBackstop`; replenished by `seedBackstopAbsorb`. The cash
+        // physically lives in the vault; this counter is the accounting ceiling on
+        // what Role B may spend per pair.
+        mapping(address => mapping(address => uint256)) backstopAbsorbCash;
+        // Per-(principal, collateral) OUTSTANDING absorb exposure: cumulative
+        // `lenderPrincipalDue` cash spent on collateral NOT yet sold back to cash.
+        // Incremented on absorb, released ONLY on realized-cash sale / governance
+        // write-off (§5.1) — NOT on a plain collateral move. Bounded by
+        // `backstopAbsorbCap`.
+        mapping(address => mapping(address => uint256)) backstopAbsorbExposure;
+        // Governance per-(principal, collateral) cap on `backstopAbsorbExposure`
+        // (distinct from Role A's origination `maxExposure`). 0 ⇒ absorb disabled
+        // for the pair (no implicit capacity).
+        mapping(address => mapping(address => uint256)) backstopAbsorbCap;
+        // Per-loan lender opt-in to the Role B cash exit. Set ONLY by the current
+        // lender-position-NFT owner; the keeper-executed `claimAsLenderViaBackstop`
+        // requires it. Lets the lender authorize the cash buyout while preserving
+        // the borrower cure window (the opt-in is the lender's state-terminating
+        // choice). See §5.
+        mapping(uint256 => bool) lenderBackstopOptIn;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4871,6 +4904,11 @@ library LibVaipakam {
     /// @dev #399 backstop v0 — Role A (auto-counterparty) kill-switch.
     function cfgBackstopFillEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.backstopFillEnabled;
+    }
+
+    /// @dev #399 backstop v0 — Role B (liquidator-of-last-resort) kill-switch.
+    function cfgBackstopAbsorbEnabled() internal view returns (bool) {
+        return storageSlot().protocolCfg.backstopAbsorbEnabled;
     }
 
     /// @dev #399 backstop v0 — mandatory min seconds before an offer's
