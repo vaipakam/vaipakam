@@ -129,6 +129,7 @@ contract BackstopFacet is
     error UpgradeFailed();
     error VPFINotConfigured();
     error VpfiLendingUnsupported();
+    error BackstopAbsorbCollateralInsufficient();
 
     // ─── Provisioning + impl (VAULT_ADMIN / timelock) ───────────────────────
 
@@ -640,6 +641,14 @@ contract BackstopFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();
+        // Bound the sweep to WAREHOUSED absorb collateral for this token — the
+        // backstop vault also holds seeded absorb CASH, which (when one pair's
+        // collateral token equals another pair's principal) shares the same vault
+        // balance. Without this bound a sweep could withdraw that cash without
+        // debiting `backstopAbsorbCash`, overstating the bucket.
+        uint256 warehoused = s.backstopWarehousedCollateral[collateral];
+        if (amount > warehoused) revert BackstopAbsorbCollateralInsufficient();
+        s.backstopWarehousedCollateral[collateral] = warehoused - amount;
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             vault,
             collateral,

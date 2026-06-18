@@ -143,6 +143,10 @@ contract ClaimFacet is
     error BackstopAbsorbCapExceeded();
     /// @notice The per-pair absorb-cash bucket has insufficient seeded cash.
     error BackstopAbsorbInsufficientCash();
+    /// @notice No objective swap retry was attempted before the buyout — the
+    ///         keeper must supply a real `retryCalls` try-list (or one must have
+    ///         run via a prior claim) so resolution-first isn't bypassed.
+    error BackstopRetryRequired();
 
     /// @notice A lender (current NFT owner) opted a FallbackPending loan into the
     ///         Role-B cash exit (or revoked it).
@@ -258,7 +262,9 @@ contract ClaimFacet is
                 LibVaipakam.hasActiveFallbackTopUp(loanId)
             ) revert NotBackstopAbsorbable();
         }
-        s.lenderBackstopOptIn[loanId] = optIn;
+        // Store the AUTHORIZING owner (not a bare bool): the keeper buyout requires
+        // the authorizer to still be the current NFT owner, so a transfer voids it.
+        s.lenderBackstopOptIn[loanId] = optIn ? msg.sender : address(0);
         emit LenderBackstopOptInSet(loanId, msg.sender, optIn);
     }
 
@@ -309,15 +315,18 @@ contract ClaimFacet is
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
         LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
+        // The cash recipient is the CURRENT lender-NFT owner (the keeper is just
+        // the executor). The opt-in must have been set by THIS owner — a transfer
+        // after opt-in voids it (the stored authorizer no longer matches).
+        address nftOwner = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         if (
             loan.status != LibVaipakam.LoanStatus.FallbackPending ||
             !snap.active ||
-            !s.lenderBackstopOptIn[loanId] ||
+            s.lenderBackstopOptIn[loanId] != nftOwner ||
             LibVaipakam.hasActiveFallbackTopUp(loanId)
         ) revert NotBackstopAbsorbable();
 
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
-        address nftOwner = IERC721(address(this)).ownerOf(loan.lenderTokenId);
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
 
@@ -347,6 +356,13 @@ contract ClaimFacet is
             }
         }
 
+        // Require an OBJECTIVE retry to have actually been attempted (this call or
+        // a prior `claimAsLenderWithRetry`) before any backstop cash is spent — the
+        // advertised resolution-first swap must run, not be skipped by passing an
+        // empty `retryCalls`. The calldata-free internal-match auto-dispatch above
+        // always runs regardless; this gate adds the swap leg.
+        if (!snap.retryAttempted) revert BackstopRetryRequired();
+
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }
@@ -367,13 +383,16 @@ contract ClaimFacet is
         address c = loan.collateralAsset;
         uint256 due = snap.lenderPrincipalDue;
 
-        // Par-guard (dust-tolerant): the lender slice must be worth >= the due at
-        // the CURRENT oracle, using the SAME collateral-equivalent math the
-        // snapshot split used. `req == 0` ⇒ oracle unavailable ⇒ refuse (can't
-        // value the slice). `+ 1` wei tolerates the snapshot's integer-division
-        // rounding dust so a solvent absorb isn't spuriously rejected.
-        uint256 req = LibFallback.collateralEquivalent(address(this), due, c, p);
-        if (req == 0 || snap.lenderCollateral + 1 < req) {
+        // Par-guard — compare the lender slice's oracle VALUE directly (not the
+        // rounded-down required-collateral, which could accept a low-decimal slice
+        // up to one base unit of value below par). `sliceValue == 0` ⇒ oracle
+        // unavailable ⇒ refuse. Tolerate only 1 PRINCIPAL wei (sub-economic) for
+        // the snapshot's integer-division rounding, so a solvent absorb isn't
+        // spuriously rejected while an underwater slice still reverts.
+        uint256 sliceValue = LibFallback.principalEquivalent(
+            address(this), snap.lenderCollateral, c, p
+        );
+        if (sliceValue == 0 || sliceValue + 1 < due) {
             revert BackstopUndercollateralized();
         }
 
@@ -413,6 +432,9 @@ contract ClaimFacet is
             address bsVault = LibFacet.getOrCreateVault(vault);
             IERC20(c).safeTransfer(bsVault, absorbed);
             LibVaipakam.recordVaultDeposit(vault, c, absorbed);
+            // Track the warehoused collateral so `sweepBackstopAbsorbCollateral`
+            // can never reach seeded absorb CASH sharing the same vault/token.
+            s.backstopWarehousedCollateral[c] += absorbed;
         }
         snap.active = false;
         // The lender claim is cash-satisfied here (not paid via the record).
@@ -461,7 +483,7 @@ contract ClaimFacet is
             );
         }
 
-        s.lenderBackstopOptIn[loanId] = false;
+        s.lenderBackstopOptIn[loanId] = address(0);
 
         // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
         LibFacet.crossFacetCall(

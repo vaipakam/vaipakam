@@ -802,6 +802,11 @@
   },
   {
     "type": "error",
+    "name": "BackstopAbsorbCollateralInsufficient",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BackstopAlreadyInitialized",
     "inputs": []
   },

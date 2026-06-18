@@ -4154,12 +4154,21 @@ library LibVaipakam {
         // (distinct from Role A's origination `maxExposure`). 0 ⇒ absorb disabled
         // for the pair (no implicit capacity).
         mapping(address => mapping(address => uint256)) backstopAbsorbCap;
-        // Per-loan lender opt-in to the Role B cash exit. Set ONLY by the current
-        // lender-position-NFT owner; the keeper-executed `claimAsLenderViaBackstop`
-        // requires it. Lets the lender authorize the cash buyout while preserving
-        // the borrower cure window (the opt-in is the lender's state-terminating
-        // choice). See §5.
-        mapping(uint256 => bool) lenderBackstopOptIn;
+        // Per-loan lender opt-in to the Role B cash exit. Stores the AUTHORIZING
+        // lender-position-NFT owner (not a bare bool): `claimAsLenderViaBackstop`
+        // requires `lenderBackstopOptIn[loanId] == ownerOf(lenderTokenId)`, so a
+        // post-opt-in NFT transfer voids the authorization (the new owner must
+        // re-opt-in). Cleared (→ address(0)) when a FallbackPending loan is CURED
+        // back to Active (AddCollateralFacet / RepayFacet), so a stale opt-in can't
+        // carry into a later, distinct fallback episode. Preserves the borrower
+        // cure window (the opt-in is the lender's state-terminating choice). See §5.
+        mapping(uint256 => address) lenderBackstopOptIn;
+        // Per-collateral-token aggregate of absorb collateral WAREHOUSED in the
+        // backstop vault (Role B). Incremented when an absorb deposits the lender
+        // slice; `sweepBackstopAbsorbCollateral` is bounded by it + decrements it,
+        // so a sweep can never reach the seeded absorb CASH that shares the same
+        // vault when one pair's collateral token equals another pair's principal.
+        mapping(address => uint256) backstopWarehousedCollateral;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

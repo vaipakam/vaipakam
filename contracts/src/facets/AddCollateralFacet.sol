@@ -248,6 +248,9 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         delete s.fallbackSnapshot[loanId];
         delete s.lenderClaims[loanId];
         delete s.borrowerClaims[loanId];
+        // #630 — drop any Role-B cash-exit opt-in: this fallback episode is over,
+        // so a later, distinct fallback must be re-authorized by the then-owner.
+        delete s.lenderBackstopOptIn[loanId];
 
         // Cure path: FallbackPending -> Active.
         LibLifecycle.transition(

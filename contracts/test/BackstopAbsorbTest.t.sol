@@ -129,7 +129,10 @@ contract BackstopAbsorbTest is SetupTest {
             lenderPrincipalDue: DUE,
             treasuryPrincipalDue: TREASURY_COL,
             active: true,
-            retryAttempted: false
+            // Simulate a prior claimAsLenderWithRetry having attempted the
+            // objective swap (so the empty-retryCalls absorb path is allowed —
+            // the dedicated retry-required gate is covered separately).
+            retryAttempted: true
         });
         TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(id, snap);
         TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
@@ -345,6 +348,81 @@ contract BackstopAbsorbTest is SetupTest {
         (, uint256 exposureAfter, ) =
             BackstopFacet(address(diamond)).getBackstopAbsorbInfo(mockERC20, mockCollateralERC20);
         assertEq(exposureAfter, 0, "exposure released");
+    }
+
+    function test_absorb_noRetryAttempted_reverts() public {
+        // Fresh fixture with retryAttempted = false + empty retryCalls ⇒ the
+        // objective resolution-first swap never ran ⇒ buyout refused.
+        address lender_ = makeAddr("lender7");
+        address borrower_ = makeAddr("borrower7");
+        _seedLoan(LOAN, lender_, borrower_);
+        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
+        vm.prank(bVault);
+        IERC20(mockCollateralERC20).transfer(address(diamond), COLLATERAL);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower_, mockCollateralERC20, 0
+        );
+        LibVaipakam.FallbackSnapshot memory snap = LibVaipakam.FallbackSnapshot({
+            lenderCollateral: LENDER_COL,
+            treasuryCollateral: TREASURY_COL,
+            borrowerCollateral: BORROWER_COL,
+            lenderPrincipalDue: DUE,
+            treasuryPrincipalDue: TREASURY_COL,
+            active: true,
+            retryAttempted: false
+        });
+        TestMutatorFacet(address(diamond)).setFallbackSnapshotRaw(LOAN, snap);
+        TestMutatorFacet(address(diamond)).scaffoldLoanStatusChange(
+            LOAN, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.FallbackPending
+        );
+        _mockLenderNft(LOAN, lender_);
+        vm.prank(lender_);
+        ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
+
+        vm.prank(owner);
+        vm.expectRevert(ClaimFacet.BackstopRetryRequired.selector);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+    }
+
+    function test_absorb_optInVoidedByTransfer_reverts() public {
+        // A opts in; the NFT then "transfers" to B (re-mock ownerOf → B). The
+        // stale A-authorization must not let the keeper buy out for B.
+        address a = makeAddr("lenderA");
+        address b = makeAddr("lenderB");
+        _seedLoan(LOAN, a, makeAddr("borrower7"));
+        _moveToFallbackPending(LOAN, makeAddr("borrower7"), LENDER_COL);
+        _mockLenderNft(LOAN, a);
+        vm.prank(a);
+        ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
+        // NFT transferred to B.
+        _mockLenderNft(LOAN, b);
+        vm.prank(owner);
+        vm.expectRevert(ClaimFacet.NotBackstopAbsorbable.selector);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+    }
+
+    // ─── collateral sweep ─────────────────────────────────────────────────────
+
+    function test_sweepAbsorbCollateral_boundedToWarehoused() public {
+        address lender_ = makeAddr("lender7");
+        _fallbackOptedIn(lender_, makeAddr("borrower7"));
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+
+        // Over-sweep (more than warehoused LENDER_COL) reverts.
+        vm.prank(owner);
+        vm.expectRevert(BackstopFacet.BackstopAbsorbCollateralInsufficient.selector);
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
+            mockCollateralERC20, makeAddr("gov"), LENDER_COL + 1
+        );
+
+        // Exact warehoused amount sweeps to the recipient.
+        address gov = makeAddr("gov");
+        vm.prank(owner);
+        BackstopFacet(address(diamond)).sweepBackstopAbsorbCollateral(
+            mockCollateralERC20, gov, LENDER_COL
+        );
+        assertEq(IERC20(mockCollateralERC20).balanceOf(gov), LENDER_COL, "swept to gov");
     }
 
     function test_seedAbsorb_vpfiLending_reverts() public {

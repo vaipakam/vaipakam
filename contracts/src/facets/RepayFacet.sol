@@ -575,6 +575,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 );
             }
             delete s.fallbackSnapshot[loanId];
+            // #630 — drop any Role-B cash-exit opt-in on cure; a later fallback
+            // must be re-authorized by the then-current lender-NFT owner.
+            delete s.lenderBackstopOptIn[loanId];
         }
 
         // §3.7 — full repay terminates the loan: outstandingPrincipal &
