@@ -1346,6 +1346,9 @@ contract ClaimFacet is
                 revert LibSwap.AdapterIndexOutOfRange(idx, registered);
             }
             address adapter = s.swapAdapters[idx];
+            // #633 — skip a governance-paused venue (mirrors LibSwap.swapWithFailover),
+            // so the per-venue kill-switch also covers claim/backstop retry swaps.
+            if (s.swapAdapterDisabled[adapter]) continue;
             SafeERC20.forceApprove(IERC20(inputToken), adapter, 0);
             SafeERC20.forceApprove(IERC20(inputToken), adapter, inputAmount);
             try

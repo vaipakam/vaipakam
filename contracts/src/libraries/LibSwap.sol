@@ -278,7 +278,15 @@ library LibSwap {
             if (amount == 0) continue; // zero-amount legs no-op cleanly
             uint256 idx = splits[i].adapterIdx;
             address adapter = s.swapAdapters[idx];
-
+            // #633 — NOTE: the per-venue pause is NOT enforced on this atomic
+            // split path. `swapWithSplit` is called only by
+            // `RiskFacet.triggerLiquidationSplit`, which is already at the EIP-170
+            // ceiling (#66); inlining the check there tips it over. The split is
+            // protected instead by the total-minOutput slippage guard below (a
+            // paused/compromised venue can't exfiltrate — output is checked) and
+            // the keeper builds split lists excluding paused venues
+            // (`isSwapAdapterDisabled`). The PRIMARY failover path
+            // (`swapWithFailover`, claim/backstop retries) DOES skip paused venues.
             input.forceApprove(adapter, 0);
             input.forceApprove(adapter, amount);
 

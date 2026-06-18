@@ -300,6 +300,13 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit KeepersPausedSet(value);
     }
 
+    /// @notice #633 — the global delegated-keeper pause flag. External so the
+    ///         aggregator adapters (which gate their keeper forwarders on it) and
+    ///         the frontend can read it.
+    function keepersPaused() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.keepersPaused;
+    }
+
     /// @notice Pause/unpause optional peer-protocol (Aave/Compound) LTV reads;
     ///         when paused the depth-tiered LTV falls back to governance defaults.
     function setPeerLtvReadsPaused(bool value)

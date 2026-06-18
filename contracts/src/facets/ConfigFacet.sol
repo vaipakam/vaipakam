@@ -1679,6 +1679,10 @@ contract ConfigFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.KEEPER_ROLE)
     {
+        // #633 — the global keeper pause must also freeze this risk-affecting
+        // keeper write (it feeds loan-init LTV limits); else a compromised keeper
+        // key could still move tiers while keepers appear paused.
+        if (LibVaipakam.cfgKeepersPaused()) revert IVaipakamErrors.KeeperAccessRequired();
         if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
         if (tier == 0 || tier > LibVaipakam.MAX_LIQUIDITY_TIER) revert InvalidLiquidityTier(tier);
         // Capture pre-write value so the emitted event carries the full

@@ -5661,6 +5661,11 @@ library LibVaipakam {
     function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
         if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
         Storage storage s = storageSlot();
+        // #633 — while peer-LTV reads are paused, IGNORE the cached peer-derived
+        // value (it may be the compromised reading the pause is meant to neutralize)
+        // and fall back to the governance/library default for the whole pause
+        // window, not just until the cache TTL expires.
+        if (s.protocolCfg.peerLtvReadsPaused) return tierLtvLibraryDefaultBps(tier);
         TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
         if (
             entry.lastRefreshedAt > 0 &&

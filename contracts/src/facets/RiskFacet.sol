@@ -866,16 +866,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // facets a la carte). When no v1.1 intent commit is live for
         // this loan, the cross-facet call is skipped entirely and we
         // proceed straight to the standard liquidation flow.
-        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
+        // #633 — cache the storage pointer once (was read twice: here + below).
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.intentCommits[loanId].orderHash != bytes32(0)) {
             SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
         }
         // Sanctions / sequencer / HF / liquidity gates — identical to
         // {triggerLiquidation}.
         LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
         if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
-        s; // suppress unused-storage warning; the library reads it.
         // T-086 step 10 — see {triggerLiquidation}'s sibling block.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
         // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
