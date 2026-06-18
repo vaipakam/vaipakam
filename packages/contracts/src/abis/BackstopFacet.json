@@ -653,6 +653,11 @@
   },
   {
     "type": "error",
+    "name": "VpfiLendingUnsupported",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "ZeroAmount",
     "inputs": []
   }

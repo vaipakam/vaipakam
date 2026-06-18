@@ -102,6 +102,7 @@ contract BackstopFacet is
     error BackstopDisabled();
     error UpgradeFailed();
     error VPFINotConfigured();
+    error VpfiLendingUnsupported();
 
     // ─── Provisioning + impl (VAULT_ADMIN / timelock) ───────────────────────
 
@@ -218,6 +219,13 @@ contract BackstopFacet is
         if (!s.lenderIntent[vault][lend][coll].active) {
             revert BackstopIntentInactive();
         }
+        // VPFI can't back generic intent capital — its discount/staking accounting
+        // is bypassed by the generic-custody path, so `fundLenderIntent` /
+        // `matchIntent` reject VPFI-denominated lending. `setLenderIntent` blocks it
+        // at the root, but `vpfiToken` can be ROTATED onto `lend` AFTER the intent
+        // row was created; re-check here so this direct treasury seed can't stage
+        // VPFI capital that `matchIntent` would then refuse to fill.
+        if (lend == s.vpfiToken) revert VpfiLendingUnsupported();
         uint256 bal = s.treasuryBalances[lend];
         if (bal < amount) revert TreasuryInsufficient();
         s.treasuryBalances[lend] = bal - amount;
@@ -283,6 +291,7 @@ contract BackstopFacet is
     ///         deadline. Set as an Offer struct field (not via CreateOfferParams).
     function setOfferBackstopEligible(uint256 offerId, uint64 eligibleAfter)
         external
+        whenNotPaused
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
@@ -294,6 +303,18 @@ contract BackstopFacet is
         // fill, so the borrower fails fast at opt-in (re-asserted at fill time, see
         // {backstopFill}, because the offer can be mutated after opt-in).
         _assertBackstopShape(o);
+        // The backstop must already be able to fill this pair, or opting in is an
+        // empty promise: the borrower would wait out a last-resort deadline only
+        // for `backstopFill` → `matchIntent` to revert `BackstopNotProvisioned` /
+        // `LenderIntentInactive`. Require the vault provisioned + a live intent row
+        // for the offer's exact (lend, coll) pair. (Finer term checks — rate
+        // overlap, LTV, exposure — stay at fill time; they depend on live oracle /
+        // exposure state, not on stable opt-in-time facts.)
+        address bv = s.backstopVault;
+        if (bv == address(0)) revert BackstopNotProvisioned();
+        if (!s.lenderIntent[bv][o.lendingAsset][o.collateralAsset].active) {
+            revert BackstopIntentInactive();
+        }
         // Future deadline past the mandatory floor, strictly before expiry
         // (so a fill has a real window before the offer dies; expiresAt must
         // be set). And intent-fillable (matchIntent rejects otherwise).

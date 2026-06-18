@@ -9,6 +9,7 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
+import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -356,6 +357,69 @@ contract BackstopVaultTest is SetupTest {
             999_999,
             new LibSwap.AdapterCall[](0)
         );
+    }
+
+    /// @dev Opt-in must reject when the backstop has no live intent for the
+    ///      offer's exact (lend, coll) pair — otherwise the borrower waits out a
+    ///      last-resort deadline for an offer the backstop can never fill. Here the
+    ///      role-swapped pair (mockCollateralERC20 lent vs mockERC20 collateral) has
+    ///      no registered backstop intent.
+    function test_setOfferBackstopEligible_noIntent_reverts() public {
+        address borrower = _newBorrower("noIntentBorrower");
+        vm.prank(borrower);
+        uint256 offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockCollateralERC20,
+                amount: PRINCIPAL,
+                interestRateBps: MIN_RATE,
+                collateralAsset: mockERC20,
+                collateralAmount: 2 * PRINCIPAL,
+                durationDays: MAX_DUR,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockCollateralERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: MIN_RATE + 100,
+                collateralAmountMax: 2 * PRINCIPAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: base + 7 days,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: true
+            })
+        );
+        vm.prank(borrower);
+        vm.expectRevert(BackstopFacet.BackstopIntentInactive.selector);
+        BackstopFacet(address(diamond)).setOfferBackstopEligible(
+            offerId,
+            base + 2 days
+        );
+    }
+
+    /// @dev If `vpfiToken` is rotated onto the seed's `lend` asset AFTER the intent
+    ///      row was created, the direct treasury seed must reject it (VPFI can't
+    ///      back generic intent capital — mirrors fundLenderIntent/matchIntent).
+    function test_seedBackstopOrigination_vpfiLending_reverts() public {
+        vm.startPrank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20); // rotate onto lend
+        ERC20Mock(mockERC20).mint(address(diamond), SEED);
+        TestMutatorFacet(address(diamond)).setTreasuryBalanceRaw(mockERC20, SEED);
+        vm.expectRevert(BackstopFacet.VpfiLendingUnsupported.selector);
+        BackstopFacet(address(diamond)).seedBackstopOrigination(
+            mockERC20,
+            mockCollateralERC20,
+            SEED
+        );
+        vm.stopPrank();
     }
 
     // ─── 7. Residue sweep ──────────────────────────────────────────────────────
