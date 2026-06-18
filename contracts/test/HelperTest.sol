@@ -75,7 +75,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](84);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -239,6 +239,8 @@ contract HelperTest {
         // residual tests (drain-block + claimability).
         selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
         selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
+        // #399 backstop v0 Role B — isolate the absorb insufficient-cash guard.
+        selectors[83] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
         return selectors;
     }
 
@@ -763,7 +765,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](16);
+        selectors = new bytes4[](22);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -780,6 +782,13 @@ contract HelperTest {
         selectors[13] = BackstopFacet.setBackstopFillEnabled.selector;
         selectors[14] = BackstopFacet.setMinBackstopDelay.selector;
         selectors[15] = BackstopFacet.getBackstopVault.selector;
+        // #399 backstop v0 Role B — absorb governance.
+        selectors[16] = BackstopFacet.setBackstopAbsorbEnabled.selector;
+        selectors[17] = BackstopFacet.setBackstopAbsorbCap.selector;
+        selectors[18] = BackstopFacet.seedBackstopAbsorb.selector;
+        selectors[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
+        selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
+        selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
     }
 
     function getDefaultedFacetSelectors()
@@ -848,7 +857,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = ClaimFacet.claimAsLender.selector;
         selectors[1] = ClaimFacet.claimAsBorrower.selector;
         selectors[2] = ClaimFacet.getClaimableAmount.selector;
@@ -856,6 +865,9 @@ contract HelperTest {
         selectors[4] = ClaimFacet.getBorrowerLifRebate.selector;
         selectors[5] = ClaimFacet.claimAsLenderWithRetry.selector;
         selectors[6] = ClaimFacet.getFallbackSnapshot.selector;
+        // #399 backstop v0 Role B — liquidator-of-last-resort.
+        selectors[7] = ClaimFacet.setLenderBackstopOptIn.selector;
+        selectors[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
         return selectors;
     }
 

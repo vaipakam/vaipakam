@@ -7,10 +7,13 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibFallback} from "../libraries/LibFallback.sol";
+import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -37,7 +40,12 @@ import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
  *      Custom errors, ReentrancyGuard, Pausable. Cross-facet calls for vault and NFT operations.
  *      Expand for Phase 2 (e.g., partial claims, time-locked claims, NFT-based access control delegation).
  */
-contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors {
+contract ClaimFacet is
+    DiamondReentrancyGuard,
+    DiamondPausable,
+    DiamondAccessControl,
+    IVaipakamErrors
+{
     using SafeERC20 for IERC20;
 
     // ─── Events ──────────────────────────────────────────────────────────────
@@ -119,6 +127,44 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error NothingToClaim();
     // InvalidLoanStatus and CrossFacetCallFailed inherited from IVaipakamErrors
 
+    // ── #399 backstop v0 Role B (liquidator-of-last-resort) ─────────────────
+    /// @notice Role B (absorb) is not currently enabled (master or absorb switch off).
+    error BackstopAbsorbDisabled();
+    /// @notice The backstop vault has not been provisioned (Role A PR1 step).
+    error BackstopVaultUnset();
+    /// @notice The loan is not in a state the backstop can absorb (not
+    ///         FallbackPending / no active snapshot / topped-up / no lender opt-in).
+    error NotBackstopAbsorbable();
+    /// @notice The lender slice is worth less than `lenderPrincipalDue` at the
+    ///         current oracle (underwater / oracle-unavailable) — absorb refused;
+    ///         the lender uses the normal in-kind claim instead.
+    error BackstopUndercollateralized();
+    /// @notice The absorb would exceed the governance per-pair absorb cap.
+    error BackstopAbsorbCapExceeded();
+    /// @notice The per-pair absorb-cash bucket has insufficient seeded cash.
+    error BackstopAbsorbInsufficientCash();
+
+    /// @notice A lender (current NFT owner) opted a FallbackPending loan into the
+    ///         Role-B cash exit (or revoked it).
+    /// @custom:event-category state-change/claim-mutation
+    event LenderBackstopOptInSet(
+        uint256 indexed loanId,
+        address indexed lenderNftOwner,
+        bool optedIn
+    );
+
+    /// @notice The backstop absorbed a FallbackPending loan's lender slice for
+    ///         cash (Role B). The current lender-NFT owner was paid
+    ///         `lenderPrincipalDue` from the absorb-cash bucket; the backstop
+    ///         warehouses `lenderCollateral`.
+    /// @custom:event-category state-change/loan-mutation
+    event BackstopAbsorbedLoan(
+        uint256 indexed loanId,
+        address indexed lenderNftOwner,
+        uint256 cashPaid,
+        uint256 collateralAbsorbed
+    );
+
     // ─── External Functions ───────────────────────────────────────────────────
 
     /**
@@ -178,6 +224,303 @@ contract ClaimFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             });
         }
         _claimAsLenderImpl(loanId, copied);
+    }
+
+    // ─── #399 backstop v0 Role B — liquidator-of-last-resort ──────────────────
+
+    /**
+     * @notice Lender opt-in to the Role-B cash exit on a FallbackPending loan.
+     * @dev Only the CURRENT lender-position NFT owner may authorize (or revoke)
+     *      the backstop cash buyout — this opt-in is the lender's
+     *      state-terminating choice, so the borrower cure window
+     *      (`addCollateral`/`repayLoan`) stays open until the keeper actually
+     *      executes. The flag is re-checked at execution, so a later borrower
+     *      cure (loan leaves FallbackPending) harmlessly voids it. Setting
+     *      `optIn = true` requires the absorbable shape now; revoking
+     *      (`false`) is always allowed. See BackstopVaultV0Design.md §5.
+     */
+    function setLenderBackstopOptIn(uint256 loanId, bool optIn)
+        external
+        nonReentrant
+        whenNotPaused
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibAuth.requireLenderNftOwner(loan);
+        // Tier-1 sanctions: the opt-in authorizes a future fund flow to this owner.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        if (optIn) {
+            // Absorbable shape: FallbackPending + live snapshot + NOT topped-up
+            // (a top-up routes the normal claim, see {claimAsLenderViaBackstop}).
+            if (
+                loan.status != LibVaipakam.LoanStatus.FallbackPending ||
+                !s.fallbackSnapshot[loanId].active ||
+                LibVaipakam.hasActiveFallbackTopUp(loanId)
+            ) revert NotBackstopAbsorbable();
+        }
+        s.lenderBackstopOptIn[loanId] = optIn;
+        emit LenderBackstopOptInSet(loanId, msg.sender, optIn);
+    }
+
+    /**
+     * @notice Role B — keeper-executed cash buyout of a FallbackPending loan's
+     *         lender slice. The current lender-NFT owner is paid
+     *         `lenderPrincipalDue` in cash from the backstop's absorb bucket and
+     *         the backstop warehouses `lenderCollateral`; treasury + borrower
+     *         slices route exactly as the normal fallback distribution.
+     * @dev `KEEPER_ROLE`-gated (the protocol's designated keeper, the same actor
+     *      that drives liquidations) so the objective swap retry isn't
+     *      caller-gameable — a lender can't force a buyout by passing a
+     *      deliberately-reverting `retryCalls`. Lender authorizes via
+     *      {setLenderBackstopOptIn}; the par-guard is the real safety (the
+     *      backstop acquires collateral worth >= the cash it pays).
+     *      Resolution-first: the calldata-free internal-match auto-dispatch + the
+     *      keeper's best-effort retry run first — if either clears the loan, no
+     *      backstop capital is spent and the lender claims the principal proceeds
+     *      through the normal path. Topped-up loans are excluded (normal claim).
+     */
+    function claimAsLenderViaBackstop(
+        uint256 loanId,
+        LibSwap.AdapterCall[] calldata retryCalls
+    ) external nonReentrant whenNotPaused onlyRole(LibAccessControl.KEEPER_ROLE) {
+        uint256 n = retryCalls.length;
+        LibSwap.AdapterCall[] memory copied = new LibSwap.AdapterCall[](n);
+        for (uint256 i = 0; i < n; ++i) {
+            copied[i] = LibSwap.AdapterCall({
+                adapterIdx: retryCalls[i].adapterIdx,
+                data: retryCalls[i].data
+            });
+        }
+        _claimViaBackstopImpl(loanId, copied);
+    }
+
+    function _claimViaBackstopImpl(
+        uint256 loanId,
+        LibSwap.AdapterCall[] memory retryCalls
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Role-B gates: master pause + the independent absorb switch.
+        if (
+            !LibVaipakam.cfgBackstopEnabled() ||
+            !LibVaipakam.cfgBackstopAbsorbEnabled()
+        ) revert BackstopAbsorbDisabled();
+        address vault = s.backstopVault;
+        if (vault == address(0)) revert BackstopVaultUnset();
+
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibVaipakam.FallbackSnapshot storage snap = s.fallbackSnapshot[loanId];
+        if (
+            loan.status != LibVaipakam.LoanStatus.FallbackPending ||
+            !snap.active ||
+            !s.lenderBackstopOptIn[loanId] ||
+            LibVaipakam.hasActiveFallbackTopUp(loanId)
+        ) revert NotBackstopAbsorbable();
+
+        // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
+        address nftOwner = IERC721(address(this)).ownerOf(loan.lenderTokenId);
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibVaipakam._assertNotSanctioned(nftOwner);
+
+        // ── Resolution-first. The internal-match auto-dispatch is calldata-free
+        //    and objective; it always runs. A FULL match clears `snap.active`
+        //    (loan → InternalMatched, lender paid in principal + recorded as a
+        //    claim) — no backstop spend, lender claims normally.
+        RiskMatchLiquidationFacet(address(this))
+            .attemptInternalMatchAutoDispatch(loanId, msg.sender);
+        if (!snap.active) return;
+
+        // The keeper's best-effort retry swap. Success → distribute principal
+        // proceeds + go terminal; lender claims normally (no backstop spend).
+        if (retryCalls.length > 0 && !snap.retryAttempted) {
+            snap.retryAttempted = true;
+            (bool ok, uint256 proceeds) = _attemptRetrySwap(loanId, loan, retryCalls);
+            emit ClaimRetryExecuted(loanId, ok, proceeds);
+            if (ok) {
+                _distributeRetryProceeds(loanId, loan, snap, proceeds);
+                snap.active = false;
+                LibLifecycle.transition(
+                    loan,
+                    LibVaipakam.LoanStatus.FallbackPending,
+                    LibVaipakam.LoanStatus.Defaulted
+                );
+                return;
+            }
+        }
+
+        // ── Resolution failed → the backstop buys the lender slice for cash.
+        _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
+    }
+
+    /// @dev The backstop-specific failure branch (§5). Routes treasury + borrower
+    ///      slices EXACTLY as the vanilla fallback distribution; diverts ONLY the
+    ///      lender slice to the backstop vault; pays the lender cash from the
+    ///      absorb bucket; marks the lender claim cash-satisfied; goes terminal.
+    function _absorbLenderSlice(
+        uint256 loanId,
+        LibVaipakam.Loan storage loan,
+        LibVaipakam.FallbackSnapshot storage snap,
+        address vault,
+        address nftOwner
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address p = loan.principalAsset;
+        address c = loan.collateralAsset;
+        uint256 due = snap.lenderPrincipalDue;
+
+        // Par-guard (dust-tolerant): the lender slice must be worth >= the due at
+        // the CURRENT oracle, using the SAME collateral-equivalent math the
+        // snapshot split used. `req == 0` ⇒ oracle unavailable ⇒ refuse (can't
+        // value the slice). `+ 1` wei tolerates the snapshot's integer-division
+        // rounding dust so a solvent absorb isn't spuriously rejected.
+        uint256 req = LibFallback.collateralEquivalent(address(this), due, c, p);
+        if (req == 0 || snap.lenderCollateral + 1 < req) {
+            revert BackstopUndercollateralized();
+        }
+
+        // Absorb-cash + cap accounting. The exposure counter tracks cash spent on
+        // collateral NOT yet resold; released only on realized-cash sale (§5.1).
+        if (s.backstopAbsorbCash[p][c] < due) {
+            revert BackstopAbsorbInsufficientCash();
+        }
+        if (s.backstopAbsorbExposure[p][c] + due > s.backstopAbsorbCap[p][c]) {
+            revert BackstopAbsorbCapExceeded();
+        }
+        s.backstopAbsorbCash[p][c] -= due;
+        s.backstopAbsorbExposure[p][c] += due;
+
+        // ── Distribute the Diamond-held collateral. Treasury + borrower slices
+        //    route exactly as {_distributeFallbackCollateral}; ONLY the lender
+        //    slice is diverted to the backstop vault (warehoused for resale).
+        if (snap.treasuryCollateral > 0) {
+            IERC20(c).safeTransfer(s.treasury, snap.treasuryCollateral);
+            LibFacet.recordTreasuryAccrual(c, snap.treasuryCollateral);
+        }
+        if (snap.borrowerCollateral > 0) {
+            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            IERC20(c).safeTransfer(borrowerVault, snap.borrowerCollateral);
+            LibVaipakam.recordVaultDeposit(loan.borrower, c, snap.borrowerCollateral);
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.incrementCollateralLien.selector,
+                    loanId,
+                    snap.borrowerCollateral
+                ),
+                bytes4(0)
+            );
+        }
+        uint256 absorbed = snap.lenderCollateral;
+        if (absorbed > 0) {
+            address bsVault = LibFacet.getOrCreateVault(vault);
+            IERC20(c).safeTransfer(bsVault, absorbed);
+            LibVaipakam.recordVaultDeposit(vault, c, absorbed);
+        }
+        snap.active = false;
+        // The lender claim is cash-satisfied here (not paid via the record).
+        s.lenderClaims[loanId].claimed = true;
+
+        // Release the originating intent's exposure + any VPFI reservation, like
+        // the normal claim — the lender's principal returns to their control.
+        if (s.intentOrigin[loanId].owner != address(0)) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    LenderIntentFacet.releaseIntentExposure.selector,
+                    loanId
+                ),
+                bytes4(0)
+            );
+        }
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+
+        // Pay the lender (current NFT owner) CASH = lenderPrincipalDue from the
+        // backstop vault's absorb-cash balance.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                vault,
+                p,
+                nftOwner,
+                due
+            ),
+            VaultWithdrawFailed.selector
+        );
+
+        // Release any heldForLender (prior partial-rescue proceeds) from the
+        // lender's OWN vault reservation to the NFT owner — its existing balance,
+        // NOT re-paid from the absorb bucket (§5). FallbackPending ⇒ ERC20 loan.
+        uint256 held = s.heldForLender[loanId];
+        if (held > 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    VaultFactoryFacet.vaultWithdrawERC20.selector,
+                    loan.lender,
+                    p,
+                    nftOwner,
+                    held
+                ),
+                VaultWithdrawFailed.selector
+            );
+        }
+
+        s.lenderBackstopOptIn[loanId] = false;
+
+        // Burn the lender NFT + go terminal (mirrors the vanilla claim tail).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                loan.lenderTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanClosed
+            ),
+            NFTStatusUpdateFailed.selector
+        );
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.burnNFT.selector,
+                loan.lenderTokenId
+            ),
+            NFTBurnFailed.selector
+        );
+        LibLifecycle.transition(
+            loan,
+            LibVaipakam.LoanStatus.FallbackPending,
+            LibVaipakam.LoanStatus.Defaulted
+        );
+
+        // #569 borrower-lien fold (same as the vanilla Defaulted path): record the
+        // re-liened borrower residual as the borrower claim so the verified
+        // borrower-NFT owner can withdraw + release it atomically.
+        {
+            LibVaipakam.ClaimInfo storage bClaim = s.borrowerClaims[loanId];
+            LibVaipakam.Encumbrance storage lienRow = s.loanCollateralLien[loanId];
+            uint256 owedCollateral = lienRow.released ? 0 : lienRow.amount;
+            if (
+                owedCollateral > 0 &&
+                (bClaim.amount == 0 || bClaim.asset == c)
+            ) {
+                bClaim.asset = c;
+                bClaim.amount = owedCollateral;
+                bClaim.assetType = LibVaipakam.AssetType.ERC20;
+                bClaim.tokenId = 0;
+                bClaim.quantity = 0;
+                bClaim.claimed = false;
+            }
+        }
+
+        emit BackstopAbsorbedLoan(loanId, nftOwner, due, absorbed);
+
+        // Settle if the borrower side is already done / has nothing.
+        LibVaipakam.ClaimInfo storage borrowerClaim = s.borrowerClaims[loanId];
+        bool borrowerHasNothing = borrowerClaim.amount == 0 &&
+            borrowerClaim.assetType == LibVaipakam.AssetType.ERC20 &&
+            s.borrowerLifRebate[loanId].rebateAmount == 0;
+        if (borrowerClaim.claimed || borrowerHasNothing) {
+            LibLifecycle.transition(
+                loan,
+                LibVaipakam.LoanStatus.Defaulted,
+                LibVaipakam.LoanStatus.Settled
+            );
+            emit LoanSettled(loanId);
+        }
     }
 
     function _claimAsLenderImpl(

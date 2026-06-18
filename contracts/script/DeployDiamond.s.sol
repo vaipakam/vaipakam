@@ -1401,7 +1401,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](16);
+        s = new bytes4[](22);
         s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         s[1] = BackstopFacet.provisionBackstopVault.selector;
         s[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1418,6 +1418,13 @@ contract DeployDiamond is Script {
         s[13] = BackstopFacet.setBackstopFillEnabled.selector;
         s[14] = BackstopFacet.setMinBackstopDelay.selector;
         s[15] = BackstopFacet.getBackstopVault.selector;
+        // #399 backstop v0 Role B — absorb governance.
+        s[16] = BackstopFacet.setBackstopAbsorbEnabled.selector;
+        s[17] = BackstopFacet.setBackstopAbsorbCap.selector;
+        s[18] = BackstopFacet.seedBackstopAbsorb.selector;
+        s[19] = BackstopFacet.sweepBackstopAbsorbCollateral.selector;
+        s[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
+        s[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
@@ -1474,7 +1481,7 @@ contract DeployDiamond is Script {
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = ClaimFacet.claimAsLender.selector;
         s[1] = ClaimFacet.claimAsBorrower.selector;
         s[2] = ClaimFacet.getClaimableAmount.selector;
@@ -1482,6 +1489,9 @@ contract DeployDiamond is Script {
         s[4] = ClaimFacet.getBorrowerLifRebate.selector;
         s[5] = ClaimFacet.claimAsLenderWithRetry.selector;
         s[6] = ClaimFacet.getFallbackSnapshot.selector;
+        // #399 backstop v0 Role B — liquidator-of-last-resort.
+        s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
+        s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
     }
 
     function _getAddCollateralSelectors() internal pure returns (bytes4[] memory s) {

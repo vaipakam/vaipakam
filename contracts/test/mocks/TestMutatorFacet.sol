@@ -369,6 +369,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().treasuryBalances[asset] = amount;
     }
 
+    /// @notice Write `s.backstopAbsorbCash[principal][collateral]` directly.
+    ///         Used by `BackstopAbsorbTest` to isolate the insufficient-cash
+    ///         guard without spending the seeded bucket down.
+    function setBackstopAbsorbCashRaw(
+        address principal,
+        address collateral,
+        uint256 amount
+    ) external {
+        LibVaipakam.storageSlot().backstopAbsorbCash[principal][collateral] = amount;
+    }
+
     /// @notice Write `s.saleOfferToLoanId[offerId] = loanId` directly.
     ///         Used by tests scaffolding lender-sale completion without
     ///         running the full sale flow.
