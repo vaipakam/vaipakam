@@ -377,6 +377,13 @@ contract ClaimFacet is
                     LibVaipakam.LoanStatus.FallbackPending,
                     LibVaipakam.LoanStatus.Defaulted
                 );
+                // Terminal default hooks — same as the absorb branch: the retry
+                // swap is an HF-liquidation outcome (collateral sold to cover the
+                // lender), so the borrower forfeits any LIF VPFI and interaction
+                // rewards close. The deferred fallback entry never ran them; no
+                // double-run (this returns; the absorb branch isn't reached).
+                LibVPFIDiscount.forfeitBorrowerLif(loan);
+                LibInteractionRewards.closeLoan(loanId, false, false);
                 // Emit a terminal signal: no claim/absorb event fires in this
                 // keeper tx, so without this the indexer would leave the loan
                 // stuck pre-terminal until the lender later claims.
