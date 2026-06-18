@@ -1862,6 +1862,16 @@ async function processLoanLogs(
       const r = await flipLoanStatus(env, chainId, a, log, 'liquidated');
       if (r) statusUpdates++;
       await _deletePrepayListing(env, chainId, Number(a.loanId as bigint));
+    } else if (log.eventName === 'BackstopAbsorbedLoan') {
+      // #630 backstop Role B — the liquidator-of-last-resort bought out the
+      // lender slice of a FallbackPending loan for cash. This is the lender-side
+      // terminal: the loan goes Defaulted (the backstop took the collateral; the
+      // borrower keeps any residual claim). A co-emitted `LoanSettled` in the same
+      // tx (when the borrower has nothing left) then flips defaulted → settled via
+      // the handler below. Without this branch an absorbed loan would never leave
+      // FallbackPending in the index (it emits no `LenderFundsClaimed`).
+      const r = await flipLoanStatus(env, chainId, a, log, 'defaulted');
+      if (r) statusUpdates++;
     } else if (log.eventName === 'LoanSettled') {
       // LoanSettled fires when both sides have claimed and the loan
       // is fully wound down. We re-flip whatever the prior terminal
