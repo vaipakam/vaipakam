@@ -5662,23 +5662,24 @@ library LibVaipakam {
     function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
         if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
         Storage storage s = storageSlot();
-        // #633 — while peer-LTV reads are paused, IGNORE the cached peer-derived
-        // value (it may be the compromised reading the pause is meant to neutralize)
-        // and fall back to the GOVERNANCE-configured tier cap (which itself
-        // defaults to the library value when unset) for the whole pause window —
-        // so a governance-tightened Tier-2/3 cap is enforced, not the looser
-        // hard-coded default.
-        if (s.protocolCfg.peerLtvReadsPaused) {
-            return uint16(cfgTierMaxInitLtvBps(tier));
+        // #633 — only trust the cached peer-derived value when peer reads are NOT
+        // paused. While paused (and in the window after an unpause, before a fresh
+        // refresh, when the cache was invalidated) the cache is skipped.
+        if (!s.protocolCfg.peerLtvReadsPaused) {
+            TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
+            if (
+                entry.lastRefreshedAt > 0 &&
+                block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
+            ) {
+                return entry.ltvBps;
+            }
         }
-        TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
-        if (
-            entry.lastRefreshedAt > 0 &&
-            block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
-        ) {
-            return entry.ltvBps;
-        }
-        return tierLtvLibraryDefaultBps(tier);
+        // #633 — the cache-miss / paused fallback is the GOVERNANCE-configured tier
+        // cap (which itself defaults to the library value when unset), NOT the bare
+        // library default — so a governance-tightened Tier-2/3 cap is enforced both
+        // during a pause AND in the post-unpause window before a fresh refresh,
+        // never temporarily reopening at the looser hard-coded default.
+        return uint16(cfgTierMaxInitLtvBps(tier));
     }
 
     // ─── FlashLoanLiquidationPath.md — per-tier discount accessors ─────

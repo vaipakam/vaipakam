@@ -1,64 +1,7 @@
 [
   {
     "type": "function",
-    "name": "calculateHealthFactor",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "healthFactor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "calculateLTV",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ltv",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isCollateralValueCollapsed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "isCollateralCollapsed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "triggerLiquidation",
+    "name": "triggerLiquidationSplit",
     "inputs": [
       {
         "name": "loanId",
@@ -66,12 +9,17 @@
         "internalType": "uint256"
       },
       {
-        "name": "adapterCalls",
+        "name": "splits",
         "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
+        "internalType": "struct LibSwap.SplitCall[]",
         "components": [
           {
             "name": "adapterIdx",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "splitAmount",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -81,92 +29,6 @@
             "internalType": "bytes"
           }
         ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "triggerLiquidationDiscounted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "triggerPartialLiquidation",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "fractionBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "adapterCalls",
-        "type": "tuple[]",
-        "internalType": "struct LibSwap.AdapterCall[]",
-        "components": [
-          {
-            "name": "adapterIdx",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "data",
-            "type": "bytes",
-            "internalType": "bytes"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "updateRiskParams",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "loanInitMaxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqBonusBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reserveFactorBps",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -190,186 +52,6 @@
       },
       {
         "name": "proceeds",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidationDiscounted",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liquidator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "recipient",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "tier",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      },
-      {
-        "name": "discountBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalDebt",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralSeized",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "borrowerSurplus",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidationFallback",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidationFallbackOracleUnavailable",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LiquidationFallbackSplit",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "LoanPartiallyLiquidated",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liquidator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "fractionBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "swappedCollateral",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "proceeds",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "principalRepaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interestRepaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "hfAfter",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RiskParamsUpdated",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "loanInitMaxLtvBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqBonusBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reserveFactorBps",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -438,35 +120,6 @@
       }
     ],
     "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "SwapAllAdaptersFailed",
-    "inputs": [
-      {
-        "name": "loanId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AccessControlUnauthorizedAccount",
-    "inputs": [
-      {
-        "name": "account",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "neededRole",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -585,11 +238,6 @@
   },
   {
     "type": "error",
-    "name": "DiscountPathDisabled",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ERC721NonexistentToken",
     "inputs": [
       {
@@ -598,6 +246,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "EmptySplitList",
+    "inputs": []
   },
   {
     "type": "error",
@@ -684,22 +337,6 @@
   },
   {
     "type": "error",
-    "name": "InternalMatchOnlyBand",
-    "inputs": [
-      {
-        "name": "currentLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "windowCeilingBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -727,22 +364,6 @@
     "type": "error",
     "name": "InvalidLoanStatus",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidPartialFraction",
-    "inputs": [
-      {
-        "name": "fractionBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "capBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -927,22 +548,6 @@
   },
   {
     "type": "error",
-    "name": "OracleStaleForDiscount",
-    "inputs": [
-      {
-        "name": "principalAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -987,59 +592,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PartialAfterMaturity",
-    "inputs": [
-      {
-        "name": "endTime",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "nowTs",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PartialFullyClosedUseFull",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "PartialMustImproveHF",
-    "inputs": [
-      {
-        "name": "hfBefore",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "hfAfter",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PartialMustRestoreHF",
-    "inputs": [
-      {
-        "name": "hfAfter",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PartialSwapAllFailed",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1258,7 +810,44 @@
   },
   {
     "type": "error",
+    "name": "SplitMinOutputUnderfilled",
+    "inputs": [
+      {
+        "name": "totalOutput",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minOutputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SplitSumMismatch",
+    "inputs": [
+      {
+        "name": "sum",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inputAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "StakingPoolExhausted",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SwapVenuePaused",
     "inputs": []
   },
   {
@@ -1270,17 +859,6 @@
     "type": "error",
     "name": "UnauthorizedCrossFacetCall",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UntierableCollateral",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1365,16 +943,6 @@
   {
     "type": "error",
     "name": "VpfiNotAllowedAsRentalPrepay",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroCollateral",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ZeroRecipient",
     "inputs": []
   }
 ]

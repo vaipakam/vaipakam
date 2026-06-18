@@ -36,6 +36,7 @@ import {
   LoanFacetABI,
   OracleFacetABI,
   RiskFacetABI,
+  RiskSplitLiquidationFacetABI,
 } from '@vaipakam/contracts/abis';
 import { orchestrateDexDirectQuotes } from './dexDirectQuotes';
 import type { ChainConfig, Env } from './env';
@@ -173,7 +174,11 @@ function pickSplitLegs(
 // change. Importing the compiled-bytecode ABI makes that drift
 // structurally impossible: the JSON regenerates from the contract
 // source on every deploy via `exportFrontendAbis.sh`.
-const TRIGGER_ABI = RiskFacetABI;       // hosts triggerLiquidation
+// `triggerLiquidation` lives on RiskFacet; the higher-LTV-aware
+// `triggerLiquidationSplit` was carved out into RiskSplitLiquidationFacet
+// (#66 + #633) for EIP-170 headroom. Merge both facet ABIs so viem can
+// encode either call against the single Diamond address.
+const TRIGGER_ABI = [...RiskFacetABI, ...RiskSplitLiquidationFacetABI];
 const LOAN_DETAILS_ABI = LoanFacetABI;  // hosts getLoanDetails
 const ORACLE_ABI = OracleFacetABI;      // hosts getAssetRiskProfile
 

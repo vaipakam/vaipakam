@@ -22,7 +22,12 @@ the same posture as the existing backstop switches.
   (e.g. one DEX aggregator) so liquidation routing skips it and fails over to the
   remaining venues, without de-registering it and reshuffling the others. A
   compromised or temporarily-illiquid venue can be sidelined instantly and
-  re-activated later.
+  re-activated later. The pause is honoured on **both** liquidation routes: the
+  single-route failover path skips a paused venue, and the multi-route split path
+  now **rejects** a paused venue on-chain rather than relying on the off-chain
+  keeper to omit it — closing the gap where a split leg (which carries no
+  per-leg slippage floor of its own) could otherwise have been routed through a
+  compromised venue.
 
 - **Peer-data reads.** Governance can pause the optional reads of peer lending
   protocols used to refine the depth-tiered collateral limits; while paused the

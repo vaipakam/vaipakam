@@ -51,6 +51,30 @@ library LibEntitlement {
         return proRataInterest(loan.principal, loan.interestRateBps, elapsedDays);
     }
 
+    /// @notice Seconds-precise current borrow balance — `principal +
+    ///         continuously-accrued interest` from `loan.startTime` to now.
+    /// @dev    DISTINCT from {accruedInterestToTime}: the HF / liquidation
+    ///         paths accrue interest by the *second* (`elapsed /
+    ///         SECONDS_PER_YEAR`) so a loan's debt — and therefore its
+    ///         liquidation proceeds split — is exact at the block of
+    ///         liquidation, whereas settlement-time math rounds down to
+    ///         whole days (borrower-favourable). Do not substitute one for
+    ///         the other: it would shift the liquidation debt by up to a
+    ///         day's interest. Rounds DOWN (borrower-favourable by <=1 wei),
+    ///         multiplying first to preserve numerator precision. Shared by
+    ///         {RiskFacet} (HF / single-route + partial liquidation) and
+    ///         {RiskMatchLiquidationFacet} (split-route liquidation) since
+    ///         the #66 facet split — one accrual model, one audit surface.
+    function currentBorrowBalance(
+        LibVaipakam.Loan memory loan
+    ) internal view returns (uint256) {
+        uint256 elapsed = block.timestamp - loan.startTime;
+        uint256 accruedInterest = (loan.principal *
+            loan.interestRateBps *
+            elapsed) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
+        return loan.principal + accruedInterest;
+    }
+
     /// @notice #408/#410/#413 (2026-06-12) — Gross interest owed on an
     ///         ERC-20 loan at settlement time, per the full-term FLOOR
     ///         model:

@@ -126,6 +126,7 @@ FACETS=(
   "RewardReporterFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"
+  "RiskSplitLiquidationFacet"
   "StakingRewardsFacet"
   "SwapToRepayFacet"
   "SwapToRepayIntentFacet"
