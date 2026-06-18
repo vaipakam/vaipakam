@@ -907,6 +907,11 @@
   },
   {
     "type": "error",
+    "name": "PeerLtvReadsPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PeriodicInterestDisabled",
     "inputs": []
   },

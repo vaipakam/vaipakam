@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
@@ -307,6 +308,17 @@ contract BackstopAbsorbTest is SetupTest {
         // no opt-in
         vm.prank(owner);
         vm.expectRevert(ClaimFacet.NotBackstopAbsorbable.selector);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+    }
+
+    function test_absorb_keepersPaused_reverts() public {
+        // #633 — the global keeper pause also freezes the KEEPER_ROLE backstop path.
+        address lender_ = makeAddr("lender7");
+        _fallbackOptedIn(lender_, makeAddr("borrower7"));
+        vm.prank(owner);
+        AdminFacet(address(diamond)).setKeepersPaused(true);
+        vm.prank(owner);
+        vm.expectRevert(ClaimFacet.KeepersPaused.selector);
         ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
     }
 

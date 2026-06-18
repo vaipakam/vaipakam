@@ -1090,6 +1090,33 @@ library LibVaipakam {
         // Role A, and vice-versa. Still subordinate to the `backstopEnabled`
         // master pause. See BackstopVaultV0Design.md §6.
         bool backstopAbsorbEnabled;
+        // ── #633 admin/governance kill-switches over CURRENTLY-ON features ──
+        // PAUSE semantics (not enable): default `false` = feature ACTIVE, so a
+        // fresh deploy preserves current behaviour with no init and no test
+        // breakage; admin/governance flips to `true` to disable in an incident
+        // (→ Governance Safe / Timelock after handover). Distinct from the
+        // `*Enabled` flags above, which gate OFF-by-default features.
+        //
+        // Freezes the #398 ERC-4626 aggregator-adapter feature: new-adapter
+        // onboarding (`createAggregatorAdapter` / `publishAdapterImplementation`)
+        // AND fills of an existing adapter's intent (gated in `matchIntent` on
+        // `isAggregatorAdapter[lender]`). Narrower than the blunt
+        // `lenderIntentEnabled` master, which also freezes user intents + backstop.
+        bool aggregatorAdaptersPaused;
+        // Global keeper pause: freezes every DELEGATED keeper action
+        // (`LibAuth.requireKeeperFor` / `requireKeeperForPrincipal` + the
+        // `KEEPER_ROLE` backstop absorb) protocol-wide. NFT owners can still act
+        // on their own positions directly (the owner short-circuit runs first);
+        // permissionless HF-liquidation is intentionally NOT gated (must stay
+        // always-available). Complements the per-user `keeperAccessEnabled[user]`.
+        bool keepersPaused;
+        // Freezes the optional peer-protocol LTV reads (Aave / Compound, via
+        // `LibPeerLTV` in `OracleFacet.refreshTierLtvCache`) so the depth-tiered
+        // LTV falls back to the governance-set defaults if a peer source is
+        // compromised. Does NOT touch the protocol's own core oracle / liquidity
+        // layer (that's governed separately by the oracle-admin config + the
+        // multi-venue quorum, not an optional peer dependency).
+        bool peerLtvReadsPaused;
     }
 
     /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
@@ -2914,6 +2941,14 @@ library LibVaipakam {
         ///      that routes liquidations must populate this array
         ///      before the first loan settles.
         address[] swapAdapters;
+        // ─── #633 — per-venue swap-adapter pause ────────────────────────
+        /// @dev Keyed by adapter ADDRESS (robust to `swapAdapters` reordering /
+        ///      removal). `true` ⇒ {LibSwap} skips this adapter in the failover /
+        ///      split routing, so governance can pause a compromised or illiquid
+        ///      venue (0x / 1inch / UniV3 / Balancer) WITHOUT `removeSwapAdapter`
+        ///      shifting every other adapter's index out from under live keeper
+        ///      try-lists. Default `false` = active. Set via `AdminFacet`.
+        mapping(address => bool) swapAdapterDisabled;
         // ─── Phase 7b: multi-venue oracle liquidity check ───────────────
         /// @dev PancakeSwap V3 factory address on this chain. PancakeV3
         ///      is a Uniswap V3 fork — same `IUniswapV3Factory.getPool`
@@ -4918,6 +4953,21 @@ library LibVaipakam {
     /// @dev #399 backstop v0 — Role B (liquidator-of-last-resort) kill-switch.
     function cfgBackstopAbsorbEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.backstopAbsorbEnabled;
+    }
+
+    /// @dev #633 — aggregator-adapter (#398) feature pause (default false=active).
+    function cfgAggregatorAdaptersPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.aggregatorAdaptersPaused;
+    }
+
+    /// @dev #633 — global delegated-keeper pause (default false=active).
+    function cfgKeepersPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.keepersPaused;
+    }
+
+    /// @dev #633 — peer-protocol LTV reads pause (default false=active).
+    function cfgPeerLtvReadsPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.peerLtvReadsPaused;
     }
 
     /// @dev #399 backstop v0 — mandatory min seconds before an offer's

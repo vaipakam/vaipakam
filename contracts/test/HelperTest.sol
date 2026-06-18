@@ -366,7 +366,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](39);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -407,6 +407,12 @@ contract HelperTest {
         selectors[31] = AdminFacet.getAutoLendEnabled.selector;
         selectors[32] = AdminFacet.getAutoRefinanceEnabled.selector;
         selectors[33] = AdminFacet.getAutoExtendEnabled.selector;
+        // #633 — per-venue swap-adapter pause + feature kill-switches.
+        selectors[34] = AdminFacet.setSwapAdapterDisabled.selector;
+        selectors[35] = AdminFacet.isSwapAdapterDisabled.selector;
+        selectors[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        selectors[37] = AdminFacet.setKeepersPaused.selector;
+        selectors[38] = AdminFacet.setPeerLtvReadsPaused.selector;
         return selectors;
     }
 

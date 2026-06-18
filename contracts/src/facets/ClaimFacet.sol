@@ -148,6 +148,8 @@ contract ClaimFacet is
     ///         keeper must supply a real `retryCalls` try-list (or one must have
     ///         run via a prior claim) so resolution-first isn't bypassed.
     error BackstopRetryRequired();
+    /// @notice #633 — delegated keepers are globally paused by governance.
+    error KeepersPaused();
     /// @notice The loan's principal asset is the live VPFI token (e.g. after a
     ///         `vpfiToken` rotation onto a seeded pair) — VPFI's discount/staking
     ///         accounting can't be bypassed by a generic cash payout, so the
@@ -327,6 +329,8 @@ contract ClaimFacet is
             !LibVaipakam.cfgBackstopEnabled() ||
             !LibVaipakam.cfgBackstopAbsorbEnabled()
         ) revert BackstopAbsorbDisabled();
+        // #633 — global keeper pause also freezes this KEEPER_ROLE-driven path.
+        if (LibVaipakam.cfgKeepersPaused()) revert KeepersPaused();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopVaultUnset();
 

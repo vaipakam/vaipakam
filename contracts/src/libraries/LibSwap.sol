@@ -169,6 +169,9 @@ library LibSwap {
                 revert AdapterIndexOutOfRange(idx, registeredCount);
             }
             address adapter = s.swapAdapters[idx];
+            // #633 — skip a governance-paused venue and fail over to the next
+            // entry, so a compromised/illiquid adapter doesn't abort the chain.
+            if (s.swapAdapterDisabled[adapter]) continue;
 
             // Exact-scope approval — zero first (handles USDT-style
             // non-zero-approve guards), then set to inputAmount for

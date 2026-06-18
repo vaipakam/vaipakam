@@ -59,6 +59,8 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
  *      state in risk math.
  */
 contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessControl, IVaipakamErrors {
+    /// @notice #633 — peer-protocol LTV reads are paused by governance.
+    error PeerLtvReadsPaused();
     error NoPriceFeed();
     error NoDexPool();
     error StalePriceData();
@@ -1260,6 +1262,10 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
      *         when peer governance changes.
      */
     function refreshTierLtvCache() external {
+        // #633 — when peer-protocol LTV reads are paused, don't refresh the
+        // tier cache from Aave/Compound; the depth-tiered LTV keeps using the
+        // last cached values / governance defaults until peers are re-enabled.
+        if (LibVaipakam.cfgPeerLtvReadsPaused()) revert PeerLtvReadsPaused();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address aave = s.aaveV3PoolDataProvider;
         address comet = s.compoundV3Comet;

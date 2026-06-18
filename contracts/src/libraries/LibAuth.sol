@@ -100,6 +100,12 @@ library LibAuth {
         uint256 tokenId = lenderSide ? loan.lenderTokenId : loan.borrowerTokenId;
         address nftOwner = IERC721(address(this)).ownerOf(tokenId);
         if (msg.sender == nftOwner) return;
+        // #633 — global delegated-keeper pause. The owner short-circuit above
+        // means owners can still act on their own positions; only third-party
+        // keepers are frozen.
+        if (LibVaipakam.cfgKeepersPaused()) {
+            revert IVaipakamErrors.KeeperAccessRequired();
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (
             !s.keeperAccessEnabled[nftOwner] ||
@@ -125,6 +131,10 @@ library LibAuth {
     {
         if (msg.sender == address(this)) return; // diamond-internal
         if (msg.sender == principal) return; // self
+        // #633 — global delegated-keeper pause (principal can still self-act).
+        if (LibVaipakam.cfgKeepersPaused()) {
+            revert IVaipakamErrors.KeeperAccessRequired();
+        }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (
             !s.keeperAccessEnabled[principal] ||

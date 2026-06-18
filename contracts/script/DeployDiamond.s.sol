@@ -877,7 +877,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](39);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -921,6 +921,12 @@ contract DeployDiamond is Script {
         s[31] = AdminFacet.getAutoLendEnabled.selector;
         s[32] = AdminFacet.getAutoRefinanceEnabled.selector;
         s[33] = AdminFacet.getAutoExtendEnabled.selector;
+        // #633 — per-venue swap-adapter pause + feature kill-switches.
+        s[34] = AdminFacet.setSwapAdapterDisabled.selector;
+        s[35] = AdminFacet.isSwapAdapterDisabled.selector;
+        s[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        s[37] = AdminFacet.setKeepersPaused.selector;
+        s[38] = AdminFacet.setPeerLtvReadsPaused.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
