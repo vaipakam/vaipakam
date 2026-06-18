@@ -423,10 +423,31 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   collateral assets the backstop will accept, and the minimum wait before a fill can
   fire — so a borrower can never be funded against an arbitrary or illiquid token.
   The backstop becomes the lender of record and later recovers the repaid principal
-  and interest back to the treasury. The liquidator-of-last-resort half of the
-  backstop (buying out a stuck, thin-market liquidation to make a lender whole) is a
-  separate later increment; both halves remain inert until governance enables and
-  seeds the backstop.
+  and interest back to the treasury.
+
+- **Treasury-seeded backstop, liquidator-of-last-resort (Role B).** The backstop's
+  second role makes a lender whole when a liquidation's market swap fails and the
+  loan is left in the fallback-pending state holding collateral. It is gated by its
+  own independent kill-switch (separate from Role A's) and funded from a dedicated,
+  finite treasury cash bucket. The current lender-position holder may opt such a
+  loan into a backstop cash exit; the borrower's cure window (top-up / repay) stays
+  open until the lender does so. Once opted in, the protocol's designated keeper can
+  execute the buyout, which always tries to resolve the loan on the open market
+  first (an internal match plus a best-effort swap) — if that clears the loan, no
+  backstop capital is spent and the lender is paid normally. Only on continued
+  market failure does the backstop pay the lender their principal-and-fees due in
+  cash, take the lender's collateral slice to warehouse, and route the treasury and
+  borrower slices exactly as an ordinary settlement. The buyout is self-protecting:
+  it executes only if the collateral slice it receives is worth at least the cash it
+  pays at the protocol oracle (dust-tolerant; an underwater or unpriceable position
+  is refused, and the lender uses the normal in-kind claim instead), governance caps
+  the cash that may be tied up in unsold collateral per asset pair, and loans that
+  received a borrower top-up are excluded and routed to the normal claim. The lender
+  always retains their ordinary self-service claim — the cash exit is strictly an
+  additional option. When the warehoused collateral is later sold back to cash or
+  written off, a governance action records the realized return and frees the
+  exposure headroom. Both backstop roles remain inert until governance enables and
+  seeds them; the pooled-LP / first-loss variant is a separate later effort.
 
 ### Lenders:
 

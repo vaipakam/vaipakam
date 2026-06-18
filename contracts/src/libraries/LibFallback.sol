@@ -77,6 +77,34 @@ library LibFallback {
             (colPrice * (10 ** prinTokenDec) * (10 ** prinFeedDec));
     }
 
+    /// @notice The principal-asset VALUE of `collateralAmount` at the current
+    ///         oracle (the inverse of {collateralEquivalent}).
+    /// @dev Returns 0 if either leg's oracle is unavailable (mirrors
+    ///      {collateralEquivalent}), so callers can treat 0 as "can't value ⇒
+    ///      refuse". Used by the #399 backstop Role-B par-guard to check the
+    ///      lender slice's value directly (`value >= lenderPrincipalDue`) rather
+    ///      than round the required collateral down — the latter would let a
+    ///      low-decimal slice be accepted up to one base unit of value below par.
+    function principalEquivalent(
+        address diamond,
+        uint256 collateralAmount,
+        address collateralAsset,
+        address principalAsset
+    ) internal view returns (uint256) {
+        (bool colOk, uint256 colPrice, uint8 colFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(collateralAsset);
+        (bool prinOk, uint256 prinPrice, uint8 prinFeedDec) = OracleFacet(diamond)
+            .tryGetAssetPrice(principalAsset);
+        if (!colOk || !prinOk) return 0;
+        if (colPrice == 0 || prinPrice == 0) return 0;
+        uint8 colTokenDec = IERC20Metadata(collateralAsset).decimals();
+        uint8 prinTokenDec = IERC20Metadata(principalAsset).decimals();
+        return
+            (collateralAmount * colPrice * (10 ** prinTokenDec) *
+                (10 ** prinFeedDec)) /
+            (prinPrice * (10 ** colTokenDec) * (10 ** colFeedDec));
+    }
+
     /// @dev README §7 three-way split: lender gets collateral equivalent of
     ///      (principal + accrued interest + 3% of principal); treasury gets
     ///      2% of principal equivalent; borrower gets the remainder. Late
