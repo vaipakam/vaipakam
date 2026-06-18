@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -226,6 +227,12 @@ contract BackstopFacet is
         // row was created; re-check here so this direct treasury seed can't stage
         // VPFI capital that `matchIntent` would then refuse to fill.
         if (lend == s.vpfiToken) revert VpfiLendingUnsupported();
+        // Honor asset pauses, like `fundLenderIntent` does on the normal on-ramp —
+        // an asset-pause incident must not let this seed stage new fillable
+        // exposure for the paused pair (it would fill the instant the asset
+        // unpauses, never passing a live healthy-market check).
+        LibFacet.requireAssetNotPaused(lend);
+        LibFacet.requireAssetNotPaused(coll);
         uint256 bal = s.treasuryBalances[lend];
         if (bal < amount) revert TreasuryInsufficient();
         s.treasuryBalances[lend] = bal - amount;
@@ -299,6 +306,18 @@ contract BackstopFacet is
         if (o.offerType != LibVaipakam.OfferType.Borrower) {
             revert OfferNotBorrowerType();
         }
+        // Don't stage eligibility while the backstop is switched off: in a
+        // break-glass / off-by-default period a borrower could otherwise let the
+        // mandatory delay elapse and have the offer become immediately fillable on
+        // re-enable — the same no-staging posture the pause gate enforces.
+        if (
+            !s.protocolCfg.backstopEnabled || !s.protocolCfg.backstopFillEnabled
+        ) revert BackstopDisabled();
+        // Honor per-asset pauses too (create/mutate/accept/fund all do): an
+        // asset-pause incident must not let eligibility be staged during the freeze
+        // and fire the instant the asset unpauses, skipping the healthy-market wait.
+        LibFacet.requireAssetNotPaused(o.lendingAsset);
+        LibFacet.requireAssetNotPaused(o.collateralAsset);
         // Shape gate — reject any offer the later `matchIntent` path could never
         // fill, so the borrower fails fast at opt-in (re-asserted at fill time, see
         // {backstopFill}, because the offer can be mutated after opt-in).
