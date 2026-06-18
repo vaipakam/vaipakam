@@ -407,6 +407,27 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   principal-only wind-down and a recovery path for loans that resolve outside the
   normal auto-roll.
 
+- **Treasury-seeded backstop, counterparty-of-last-resort (Role A).** Governance
+  may run an optional, protocol-funded backstop that steps in as the lender when a
+  borrow offer would otherwise sit unmatched. The backstop is funded only from
+  treasury capital, holds it in its own isolated vault (never commingled with user
+  deposits), and is off by default behind two independent kill-switches (a master
+  pause and a separate Role-A switch). A borrower opts an individual borrow offer
+  into backstop eligibility by setting a future deadline; that deadline must fall a
+  genuine minimum interval after the offer is posted and strictly before it expires.
+  Once the deadline passes and if the offer is still valid, unfilled, and backed by
+  liquid oracle-priced collateral within the protocol's risk limits, anyone may
+  trigger the backstop to fund the loan from treasury at the backstop's
+  governance-posted terms (rate, max-LTV, max-duration, minimum fill). Governance
+  controls every parameter: per-asset capacity caps, the posted rate, the specific
+  collateral assets the backstop will accept, and the minimum wait before a fill can
+  fire — so a borrower can never be funded against an arbitrary or illiquid token.
+  The backstop becomes the lender of record and later recovers the repaid principal
+  and interest back to the treasury. The liquidator-of-last-resort half of the
+  backstop (buying out a stuck, thin-market liquidation to make a lender whole) is a
+  separate later increment; both halves remain inert until governance enables and
+  seeds the backstop.
+
 ### Lenders:
 
 - **For ERC-20 Tokens:**

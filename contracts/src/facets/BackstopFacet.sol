@@ -209,11 +209,17 @@ contract BackstopFacet is
     }
 
     /// @notice Return idle (un-lent) backstop capital to treasury.
+    /// @dev NOT `nonReentrant`: calls the vault, which re-enters the Diamond's
+    ///      own `nonReentrant` `withdrawLenderIntentCapital` — the shared Diamond
+    ///      lock would collide. That inner function is the real guard (mirrors
+    ///      `createAggregatorAdapter`). The `treasuryBalances` credit happens
+    ///      after the vault call returns (lock released), with no external call
+    ///      in between.
     function withdrawBackstopToTreasury(
         address lend,
         address coll,
         uint256 amount
-    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         if (amount == 0) revert ZeroAmount();
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
@@ -263,9 +269,12 @@ contract BackstopFacet is
     ///         opted into, past its `backstopEligibleAfter`. Permissionless: every
     ///         gate is an on-chain fact. The vault (self-only intent) executes
     ///         `matchIntent`, so loan.lender = the backstop.
+    /// @dev NOT `nonReentrant`: the vault's `executeFill` re-enters the Diamond's
+    ///      own `nonReentrant` `matchIntent` (the real guard) — the shared lock
+    ///      would otherwise collide. This wrapper writes no facet state; a
+    ///      re-entry would itself hit `matchIntent`'s held lock and revert.
     function backstopFill(uint256 offerId)
         external
-        nonReentrant
         whenNotPaused
         returns (uint256 loanId)
     {
@@ -304,11 +313,13 @@ contract BackstopFacet is
     /// @notice Claim a resolved backstop loan's proceeds back to treasury.
     /// @dev Own-loan guarded (`loan.lender == backstopVault`). The vault claims +
     ///      forwards the raw proceeds to the Diamond; this records the treasury
-    ///      credit.
+    ///      credit. NOT `nonReentrant`: the vault's `executeClaim` re-enters the
+    ///      Diamond's own `nonReentrant` `claimAsLenderWithRetry` (the real guard);
+    ///      the `treasuryBalances` credit happens after that returns.
     function backstopClaim(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata retryCalls
-    ) external nonReentrant onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.VAULT_ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         address vault = s.backstopVault;
         if (vault == address(0)) revert BackstopNotProvisioned();

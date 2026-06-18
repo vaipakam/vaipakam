@@ -33,6 +33,7 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
+import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -755,6 +756,27 @@ contract HelperTest {
         selectors[8] = AggregatorAdapterFactoryFacet.mandatoryAggregatorAdapterVersion.selector;
         selectors[9] = AggregatorAdapterFactoryFacet.getAggregatorAdapterVersion.selector;
         selectors[10] = AggregatorAdapterFactoryFacet.isAggregatorAdapter.selector;
+    }
+
+    function getBackstopFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](13);
+        selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
+        selectors[1] = BackstopFacet.provisionBackstopVault.selector;
+        selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
+        selectors[3] = BackstopFacet.setBackstopIntent.selector;
+        selectors[4] = BackstopFacet.seedBackstopOrigination.selector;
+        selectors[5] = BackstopFacet.withdrawBackstopToTreasury.selector;
+        selectors[6] = BackstopFacet.setOfferBackstopEligible.selector;
+        selectors[7] = BackstopFacet.backstopFill.selector;
+        selectors[8] = BackstopFacet.backstopClaim.selector;
+        selectors[9] = BackstopFacet.setBackstopEnabled.selector;
+        selectors[10] = BackstopFacet.setBackstopFillEnabled.selector;
+        selectors[11] = BackstopFacet.setMinBackstopDelay.selector;
+        selectors[12] = BackstopFacet.getBackstopVault.selector;
     }
 
     function getDefaultedFacetSelectors()

@@ -33,6 +33,7 @@ import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
+import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -171,6 +172,8 @@ contract DeployDiamond is Script {
         // #398 v1.5 — per-aggregator ERC-4626 adapter factory.
         AggregatorAdapterFactoryFacet aggregatorAdapterFactoryFacet =
             new AggregatorAdapterFactoryFacet();
+        // #399 v2.5 — treasury-seeded backstop vault governance + Role-A drive.
+        BackstopFacet backstopFacet = new BackstopFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -234,7 +237,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](56);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](57);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -417,6 +420,12 @@ contract DeployDiamond is Script {
         cuts[55] = _buildCut(
             address(aggregatorAdapterFactoryFacet),
             _getAggregatorAdapterFactorySelectors()
+        );
+        // #399 v2.5 — treasury-seeded backstop vault governance (provision +
+        // seed + caps + kill-switches) + Role-A auto-counterparty drive.
+        cuts[56] = _buildCut(
+            address(backstopFacet),
+            _getBackstopFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1385,6 +1394,27 @@ contract DeployDiamond is Script {
         s[8] = AggregatorAdapterFactoryFacet.mandatoryAggregatorAdapterVersion.selector;
         s[9] = AggregatorAdapterFactoryFacet.getAggregatorAdapterVersion.selector;
         s[10] = AggregatorAdapterFactoryFacet.isAggregatorAdapter.selector;
+    }
+
+    function _getBackstopFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](13);
+        s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
+        s[1] = BackstopFacet.provisionBackstopVault.selector;
+        s[2] = BackstopFacet.upgradeBackstopVault.selector;
+        s[3] = BackstopFacet.setBackstopIntent.selector;
+        s[4] = BackstopFacet.seedBackstopOrigination.selector;
+        s[5] = BackstopFacet.withdrawBackstopToTreasury.selector;
+        s[6] = BackstopFacet.setOfferBackstopEligible.selector;
+        s[7] = BackstopFacet.backstopFill.selector;
+        s[8] = BackstopFacet.backstopClaim.selector;
+        s[9] = BackstopFacet.setBackstopEnabled.selector;
+        s[10] = BackstopFacet.setBackstopFillEnabled.selector;
+        s[11] = BackstopFacet.setMinBackstopDelay.selector;
+        s[12] = BackstopFacet.getBackstopVault.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {
