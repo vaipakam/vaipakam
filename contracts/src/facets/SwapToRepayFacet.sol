@@ -748,8 +748,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             HealthFactorCalculationFailed.selector
         );
         uint256 hf = abi.decode(hfResult, (uint256));
-        // #394 Lever A — runtime admission floor (default 1.5e18, tunable).
-        if (hf < LibVaipakam.minHealthFactor()) revert HealthFactorTooLow();
+        // #394 Lever A (Codex #647 P1) — this loan's snapshotted admission
+        // floor (immutable post-admission), not the live knob.
+        if (hf < LibVaipakam.effectiveLoanMinHealthFactor(loan.minHealthFactorAtInit))
+            revert HealthFactorTooLow();
 
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
         // (current borrower-NFT owner, not stale `loan.borrower`)

@@ -71,21 +71,29 @@ library LibRiskMath {
             _gatherUsd(amountMax, principalAsset, collateralAsset);
         if (principalUsd == 0 || priceCollateral == 0) return 0;
 
-        // Solve for collateralUsd where HF == the runtime admission floor
-        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable), so
-        // the preview tracks whatever governance has the admission gate set to:
+        // Solve for collateralUsd where HF == the create-time admission floor.
+        // BRANCH-AWARE (#394 Lever A, Codex #647 P2): in the depth-tiered
+        // regime the admission floor is the fixed `HF_LIQUIDATION_THRESHOLD`
+        // (1e18) — the LTV tier cap is the binding constraint there — so the
+        // tunable `minHealthFactor()` must NOT leak into tiered offer-creation
+        // (raising it to 1.8 would wrongly tighten tiered range offers the
+        // tiered admission path would accept). Only the non-tiered floor is
+        // the tunable knob.
         //   collateralUsd × liqThresholdBps / BASIS_POINTS
-        //     == principalUsd × minHealthFactor / HF_SCALE
+        //     == principalUsd × hfFloor / HF_SCALE
         //   collateralUsd
-        //     == (principalUsd × minHealthFactor × BASIS_POINTS)
+        //     == (principalUsd × hfFloor × BASIS_POINTS)
         //        / (HF_SCALE × liqThresholdBps)
         // BPS multiplications fit comfortably under uint256 since
         // principalUsd here is the (price-scaled but token-unscaled) raw
         // numerator of the USD figure RiskFacet uses; see _gatherUsd
         // below — it intentionally returns the un-divided-by-1e18 form
         // so the rest of the math stays in integers.
+        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         uint256 collateralUsd =
-            (principalUsd * LibVaipakam.minHealthFactor() * LibVaipakam.BASIS_POINTS)
+            (principalUsd * hfFloor * LibVaipakam.BASIS_POINTS)
             / (LibVaipakam.HF_SCALE * liqThresholdBps);
 
         // Convert collateralUsd back to collateral-asset native units.
@@ -181,14 +189,20 @@ library LibRiskMath {
             return type(uint256).max;
         }
 
-        // Solve for principalUsd where HF == the runtime admission floor
-        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable):
+        // Solve for principalUsd where HF == the create-time admission floor.
+        // BRANCH-AWARE (#394 Lever A, Codex #647 P2): tiered regime uses the
+        // fixed `HF_LIQUIDATION_THRESHOLD` (1e18); only the non-tiered floor is
+        // the tunable `minHealthFactor()` knob — so the knob never leaks into
+        // tiered offer-creation bounds.
         //   principalUsd
         //     == (collateralUsd × liqThresholdBps × HF_SCALE)
-        //        / (BASIS_POINTS × minHealthFactor)
+        //        / (BASIS_POINTS × hfFloor)
+        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         uint256 principalUsd =
             (collateralUsd * liqThresholdBps * LibVaipakam.HF_SCALE)
-            / (LibVaipakam.BASIS_POINTS * LibVaipakam.minHealthFactor());
+            / (LibVaipakam.BASIS_POINTS * hfFloor);
 
         // Truncating division here is borrower-friendly: the returned
         // ceiling is the largest amount that can definitely satisfy

@@ -1968,7 +1968,7 @@ contract ConfigFacet is DiamondAccessControl {
     ///                               exceed this).
     function getProtocolConstants()
         external
-        pure
+        view
         returns (
             uint256 minHealthFactor,
             uint256 vpfiStakingPoolCap,
@@ -1977,7 +1977,12 @@ contract ConfigFacet is DiamondAccessControl {
         )
     {
         return (
-            LibVaipakam.MIN_HEALTH_FACTOR,
+            // #394 Lever A (Codex #647 P2) — the LIVE admission HF floor (the
+            // runtime knob, default 1.5e18), NOT the raw constant, so the
+            // frontend config bundle + market-rate min-collateral math track a
+            // governance retune instead of silently quoting the stale 1.5.
+            // This makes the function `view` (was `pure`).
+            LibVaipakam.minHealthFactor(),
             LibVaipakam.VPFI_STAKING_POOL_CAP,
             LibVaipakam.VPFI_INTERACTION_POOL_CAP,
             LibVaipakam.MAX_INTERACTION_CLAIM_DAYS

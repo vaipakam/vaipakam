@@ -154,6 +154,12 @@ FACETS=(
   # `DIAMOND_ABI` in the barrel; the keeper bot in `apps/keeper`
   # constructs calls to it directly by named ABI export.
   "FlashLoanLiquidator"
+  # #394 Lever B — standalone dual-factor risk-premium rate model
+  # (an `IRateModel` registered via `AdminFacet.setRateModel`). NOT a
+  # diamond facet, so deliberately NOT spread into `DIAMOND_ABI` in the
+  # barrel; admin tooling / keeper construct calls (setTierPremiumBps,
+  # getTierPremiums, …) to it directly by named ABI export.
+  "RiskPremiumRateModel"
 )
 
 echo "Exporting ABIs to $OUT_DIR"

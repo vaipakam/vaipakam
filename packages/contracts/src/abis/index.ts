@@ -96,6 +96,11 @@ import NFTPrepayAutoListFacetABI from './NFTPrepayAutoListFacet.json';
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
+// #394 Lever B — standalone dual-factor risk-premium rate model (an
+// `IRateModel` registered via `AdminFacet.setRateModel`). Named export only;
+// deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
+// selector set) — admin tooling / keeper call it as a separate contract.
+import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
 
 export {
   OfferCreateFacetABI,
@@ -158,6 +163,7 @@ export {
   NFTPrepayListingAtomicFacetABI,
   NFTPrepayAutoListFacetABI,
   FlashLoanLiquidatorABI,
+  RiskPremiumRateModelABI,
 };
 
 import type { Abi } from 'viem';

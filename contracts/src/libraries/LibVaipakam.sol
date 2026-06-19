@@ -1761,6 +1761,18 @@ library LibVaipakam {
         // Append-only field (storage layout discipline). Zero on
         // every existing loan at deploy time.
         uint256 interestSettled;
+        // #394 Lever A (Codex #647 P1) — the loan-ADMISSION Health Factor
+        // floor SNAPSHOTTED at init from the live `minHealthFactor()` knob.
+        // Every post-admission HF check for THIS loan
+        // (partial-withdrawal, fallback-cure, partial-repay / swap-to-repay
+        // guards) reads this snapshot — NOT the live knob — so a later
+        // governance retune of the admission floor never retroactively
+        // loosens (or tightens) an open loan's collateral buffer. Same
+        // immutable-at-init discipline as `liquidationLtvBpsAtInit`. Zero on
+        // an illiquid loan (HF math never runs) or a pre-#394 loan ⇒
+        // `effectiveLoanMinHealthFactor` falls back to `MIN_HEALTH_FACTOR`.
+        // Append-only tail field. uint64 holds ≫ the 2.0e18 ceiling.
+        uint64 minHealthFactorAtInit;
     }
 
     /**
@@ -4896,6 +4908,17 @@ library LibVaipakam {
     function minHealthFactor() internal view returns (uint256) {
         uint64 v = storageSlot().minHealthFactorOverride;
         return v == 0 ? MIN_HEALTH_FACTOR : uint256(v);
+    }
+
+    /// @dev #394 Lever A (Codex #647 P1) — the admission HF floor a SPECIFIC
+    ///      open loan was created under, read from its `minHealthFactorAtInit`
+    ///      snapshot. Every post-admission HF check for that loan uses this
+    ///      (NOT the live `minHealthFactor()`), so a governance retune never
+    ///      retroactively moves an open loan's collateral buffer. `0` (illiquid
+    ///      or pre-#394 loan) ⇒ `MIN_HEALTH_FACTOR` (1.5e18) — the conservative
+    ///      legacy floor.
+    function effectiveLoanMinHealthFactor(uint64 atInit) internal pure returns (uint256) {
+        return atInit == 0 ? MIN_HEALTH_FACTOR : uint256(atInit);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by
