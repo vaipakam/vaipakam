@@ -887,7 +887,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](42);
+        s = new bytes4[](47);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -941,6 +941,12 @@ contract DeployDiamond is Script {
         // #395 — graduated partial-liquidation sizing (Approach A).
         s[40] = AdminFacet.setPartialLiquidationSizing.selector;
         s[41] = AdminFacet.getPartialLiquidationSizing.selector;
+        // #400 -- pluggable quote-time rate model.
+        s[42] = AdminFacet.setRateModel.selector;
+        s[43] = AdminFacet.getRateModel.selector;
+        s[44] = AdminFacet.disableRateModel.selector;
+        s[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
+        s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1158,7 +1164,7 @@ contract DeployDiamond is Script {
     ///      `_getOfferSelectors()` seven entries are partitioned across
     ///      the two getters below; selector VALUES are unchanged.
     function _getOfferCreateSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](7);
         s[0] = OfferCreateFacet.createOffer.selector;
         s[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -1174,6 +1180,9 @@ contract DeployDiamond is Script {
         // witness). `address(this)`-only gated inside the facet body.
         s[4] = OfferCreateFacet.createSignedOfferVault.selector;
         s[5] = OfferCreateFacet.createSignedOfferWallet.selector;
+        // #400 — quote-time rate-model resolver (read-only guidance / the
+        // entry automated pricing flows call; manual offers are untouched).
+        s[6] = OfferCreateFacet.quoteOfferRateBps.selector;
     }
 
     /// @dev T-086 Round-8 (#358) — borrow-OR-sell parallel-sale facet

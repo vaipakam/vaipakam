@@ -131,6 +131,44 @@ much* collateral a partial sells (via HF/value bounds) — never how the loan is
 priced — and leaves full liquidation (`triggerLiquidation`) unchanged as the
 alternative.
 
+### Quote-time interest-rate model (#400)
+
+(`AdminFacet.setRateModel(address)` / `getRateModel()`.) The active
+`IRateModel` — a pluggable, view-only quote function used for **rate
+guidance + automated/delegated pricing**, NOT to override human-typed offer
+rates. **Default `address(0)` = the IDENTITY model: the user-supplied rate
+stands, today's behaviour, zero-config.** Vaipakam's market rate is set by the
+human P2P order book (price discovery); registering a model never rewrites a
+manually-created offer — it is consulted only by the dApp (as a suggestion)
+and by automated flows (auto-lend / auto-roll / keeper-posted intents, #393;
+risk premiums, #394) that price the offers they post on a user's behalf.
+
+- **Enable-slow / disable-fast asymmetry.** REGISTERING / changing a model
+  (`setRateModel`, non-zero, risk-increasing) is ADMIN → governance **timelock**
+  after handover. DISABLING it (`disableRateModel()` → identity) is the fast
+  risk-decreasing path: callable by **WATCHER_ROLE** (the constrained
+  fast-incident key, like `autoPause`) *or* ADMIN, so a misbehaving model is
+  killed instantly without waiting on the enable-side timelock. `setRateModel`
+  rejects `address(0)` (`UseDisableRateModel`) — disabling always goes through
+  the fast path. A non-zero model must be a contract (`RateModelNotContract`
+  on an EOA).
+- **On-chain deviation cap (anti-rate-setting guarantee).**
+  `setRateModelMaxDeviationBps(uint16)` / `getRateModelMaxDeviationBps()` —
+  default `500` (5%), range `[50, 2500]` (0.5%–25%). The resolver **clamps**
+  the model's output to `±maxDeviation` of the caller's reference (market)
+  rate, so a registered model — even buggy or adversarial — can only nudge the
+  rate around the market anchor, never drive an automated offer far off-market
+  (instant-loss-fill if too low, idle capital if too high). This is enforced in
+  the substrate (`OfferCreateFacet.quoteOfferRateBps`) so every consumer
+  inherits it, not trusted to each caller.
+- **E2-safe.** A model only ever sets the value written into a *new* offer; a
+  matched / live loan's rate is snapshotted immutably at init and never
+  re-priced.
+- **Consumers still market-anchor.** The clamp bounds deviation from whatever
+  reference is supplied, so automated callers (#393/#394) must still pass the
+  **live cleared-market rate** as the reference (the clamp then bounds drift
+  from the real market). The registry itself never auto-posts.
+
 ### Swap-to-Repay max slippage (T-090)
 
 (`setMaxSwapToRepaySlippageBps` / `getMaxSwapToRepaySlippageBps`)

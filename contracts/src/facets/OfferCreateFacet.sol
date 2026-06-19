@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {IRateModel} from "../interfaces/IRateModel.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
@@ -502,6 +503,48 @@ contract OfferCreateFacet is
             VaultDepositFailed.selector
         );
         _createOfferFinish(msg.sender, offerId, params);
+    }
+
+    /// @notice #400 — resolve the active quote-time {IRateModel} for a given
+    ///         input. Returns `input.referenceRateBps` verbatim when no model
+    ///         is registered (the IDENTITY default), else the model's quote.
+    /// @dev    PURE READ — this never mutates an offer and is never called by
+    ///         the manual create path (a human's typed rate is binding). It is
+    ///         the single resolver the dApp calls for rate *guidance* and the
+    ///         automated/delegated-pricing flows (#393 auto-lend / auto-roll /
+    ///         keeper-posted intents, #394 risk premiums) call to price the
+    ///         offers they create on a user's behalf — they then pass the
+    ///         result as that offer's rate via the normal create path. Keeping
+    ///         pricing in the *caller* (not forced on every offer) is what
+    ///         preserves the human order book's market-driven price discovery.
+    ///         The returned value is still subject to the usual
+    ///         range-ordering + `MAX_INTEREST_BPS` checks when an offer is
+    ///         actually created with it.
+    function quoteOfferRateBps(
+        IRateModel.RateModelInput calldata input
+    ) external view returns (uint256 rateBps) {
+        address rateModel = LibVaipakam.cfgRateModel();
+        if (rateModel == address(0)) return input.referenceRateBps; // identity
+
+        uint256 quoted = IRateModel(rateModel).quoteRateBps(input);
+
+        // #400 (hardening) — CLAMP the model to within ±maxDeviation of the
+        // reference (market) rate. This is the anti-rate-setting guarantee: a
+        // registered model — even a buggy or adversarial one — can only nudge
+        // the rate around the market anchor the caller supplies, never drive an
+        // automated offer far off-market (instant-loss-fill if too low,
+        // idle-capital if too high). Enforced HERE in the substrate so every
+        // consumer inherits it, not trusted to each caller.
+        uint256 ref = input.referenceRateBps;
+        uint256 dev = LibVaipakam.cfgRateModelMaxDeviationBps();
+        uint256 lo = ref > dev ? ref - dev : 0;
+        uint256 hi = ref + dev;
+        if (quoted < lo) quoted = lo;
+        else if (quoted > hi) quoted = hi;
+        // The usual protocol ceiling still binds when an offer is created with
+        // this rate; mirror it here so a guidance read never returns above it.
+        if (quoted > LibVaipakam.MAX_INTEREST_BPS) quoted = LibVaipakam.MAX_INTEREST_BPS;
+        return quoted;
     }
 
     /// @notice Funding mode for a materialized signed offer (#396 v0.5).
@@ -1496,6 +1539,17 @@ contract OfferCreateFacet is
         }
         offer.amountMax = params.amountMax;
         offer.interestRateBpsMax = params.interestRateBpsMax;
+        // #400 — NOTE: the rate a human creator types is BINDING and is NOT
+        // transformed by any rate model. Vaipakam's market rate is set by the
+        // human-driven P2P order book (price discovery), not a protocol curve —
+        // overwriting a creator's rate here would erase that differentiation.
+        // The pluggable {IRateModel} is exposed as a QUOTE (`quoteOfferRateBps`
+        // below) for (a) dApp rate *guidance* a human may take or ignore, and
+        // (b) automated/delegated pricing (#393 auto-lend / auto-roll /
+        // keeper-posted intents, #394 risk premiums) where the user opted into
+        // having their liquidity priced for them. Those callers pass the quote
+        // result as the offer rate themselves; this manual create path never
+        // calls the model.
         offer.amountFilled = 0;
         offer.createdAt = uint64(block.timestamp);
 
