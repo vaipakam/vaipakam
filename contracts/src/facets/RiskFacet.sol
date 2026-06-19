@@ -200,6 +200,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///         partial. Keeper picks a larger fraction or falls back to
     ///         full {triggerLiquidation}.
     error PartialMustRestoreHF(uint256 hfAfter);
+    /// @notice #395 — a routine partial over-liquidated: it left the borrower
+    ///         above the governance target-HF ceiling without being in a
+    ///         deep-underwater or dust-residual escalation case. Sizing must
+    ///         stay "as much as needed" — the keeper picks a smaller fraction.
+    error PartialOverLiquidates(uint256 hfAfter, uint256 ceiling);
     /// @notice Partial swap proceeds were large enough to retire all
     ///         outstanding principal — at that point the loan is no
     ///         longer "partially" anything, the keeper should be using
@@ -1104,6 +1109,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hfAfter = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hfAfter <= hfBefore) revert PartialMustImproveHF(hfBefore, hfAfter);
         if (hfAfter < LibVaipakam.HF_SCALE) revert PartialMustRestoreHF(hfAfter);
+        // #395 (Approach A) — "size to need": a routine partial may not leave
+        // the borrower above the governance target-HF ceiling, UNLESS the
+        // position was deep-underwater at entry or the residual would be dust.
+        // E2-safe: this only constrains HOW MUCH collateral is sold (via HF
+        // bounds), never re-prices the loan. `loan` is already post-mutation
+        // here, so `_assertPartialSizing` reads residual values directly.
+        _assertPartialSizing(loan, hfBefore, hfAfter);
 
         emit LoanPartiallyLiquidated(
             loanId,
@@ -1732,6 +1744,42 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint8 collateralTokenDecimals = IERC20Metadata(loan.collateralAsset).decimals();
         collateralValueNumeraire = (loan.collateralAmount * collateralPrice) /
             (10 ** collateralFeedDecimals) / (10 ** collateralTokenDecimals);
+    }
+
+    /// @dev #395 (Approach A) graduated-close-factor guard. Reverts
+    ///      {PartialOverLiquidates} when a *routine* partial would leave the
+    ///      borrower above the governance target-HF ceiling — i.e. it sold
+    ///      more collateral than needed. The ceiling is WAIVED in two
+    ///      escalation cases so solvency / dust-cleanup is never blocked:
+    ///        1. deep-underwater — `hfBefore` ≤ the configured threshold; the
+    ///           position needs aggressive delevering, so overshoot is fine.
+    ///        2. dust residual — residual debt OR residual collateral (valued
+    ///           in the active numeraire) is below the dust floor; clearing
+    ///           more avoids stranding un-liquidatable dust.
+    ///      Ordered so the oracle read ({_computeNumeraireValues}) only runs
+    ///      when the partial actually breaches the ceiling AND isn't deep-
+    ///      underwater — the common in-band case returns immediately. `loan`
+    ///      MUST be post-mutation so the reused helper returns *residual*
+    ///      values. Thresholds are range-clamped at the setter.
+    function _assertPartialSizing(
+        LibVaipakam.Loan storage loan,
+        uint256 hfBefore,
+        uint256 hfAfter
+    ) private view {
+        uint256 ceiling = (LibVaipakam.cfgPartialLiqTargetHfCeilingBps() *
+            LibVaipakam.HF_SCALE) / LibVaipakam.BASIS_POINTS;
+        if (hfAfter <= ceiling) return; // within band — sized to need.
+
+        // Over the ceiling — permitted only under an escalation case.
+        uint256 deepThreshold = (LibVaipakam.cfgPartialLiqDeepUnderwaterHfBps() *
+            LibVaipakam.HF_SCALE) / LibVaipakam.BASIS_POINTS;
+        if (hfBefore <= deepThreshold) return; // deep underwater — delever OK.
+
+        uint256 dustFloor = LibVaipakam.cfgLiquidationDustFloorNumeraire();
+        (uint256 residualDebtNum, uint256 residualCollNum) = _computeNumeraireValues(loan);
+        if (residualDebtNum < dustFloor || residualCollNum < dustFloor) return; // dust.
+
+        revert PartialOverLiquidates(hfAfter, ceiling);
     }
 
     // `_getZeroExProxy` + `_getAllowanceTarget` (previously here)

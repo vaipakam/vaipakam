@@ -887,7 +887,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](40);
+        s = new bytes4[](41);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -938,6 +938,8 @@ contract DeployDiamond is Script {
         s[37] = AdminFacet.setKeepersPaused.selector;
         s[38] = AdminFacet.setPeerLtvReadsPaused.selector;
         s[39] = AdminFacet.keepersPaused.selector;
+        // #395 — graduated partial-liquidation sizing (Approach A).
+        s[40] = AdminFacet.setPartialLiquidationSizing.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {

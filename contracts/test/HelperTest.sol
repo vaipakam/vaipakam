@@ -367,7 +367,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](40);
+        selectors = new bytes4[](41);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -415,6 +415,7 @@ contract HelperTest {
         selectors[37] = AdminFacet.setKeepersPaused.selector;
         selectors[38] = AdminFacet.setPeerLtvReadsPaused.selector;
         selectors[39] = AdminFacet.keepersPaused.selector;
+        selectors[40] = AdminFacet.setPartialLiquidationSizing.selector;
         return selectors;
     }
 

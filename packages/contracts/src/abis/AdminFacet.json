@@ -397,6 +397,29 @@
   },
   {
     "type": "function",
+    "name": "setPartialLiquidationSizing",
+    "inputs": [
+      {
+        "name": "targetHfCeilingBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "deepUnderwaterHfBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setPeerLtvReadsPaused",
     "inputs": [
       {
@@ -700,6 +723,31 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PartialLiquidationSizingSet",
+    "inputs": [
+      {
+        "name": "targetHfCeilingBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "deepUnderwaterHfBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1107,6 +1155,11 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPartialLiqSizing",
     "inputs": []
   },
   {

@@ -3752,4 +3752,123 @@ contract RiskFacetTest is Test {
 
         vm.clearMockedCalls();
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // #395 — graduated partial-liquidation sizing (Approach A)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /// @dev Stage a liquidatable loan for the #395 sizing tests. Drops the
+    ///      collateral price (HF < 1), mocks the vault withdraw, funds the
+    ///      Diamond + swap mock, and sets a price-anchored 0.8 swap ratio so
+    ///      a partial restores HF by a controllable amount. Fixture:
+    ///      collateral 1800 @ `collPriceE8`, principal 1000 @ $1, liqThr 0.85.
+    function _setupPartialSizing(uint256 collPriceE8) private returns (uint256 loanId) {
+        loanId = createAndAcceptOffer();
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, mockCollateralERC20),
+            abi.encode(collPriceE8, uint8(8))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        // 0.8 principal-per-collateral token ratio — above the $0.65/$0.60
+        // fair value, so the slice clears the slippage floor AND yields the
+        // surplus a partial needs to lift HF.
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(8, 10);
+    }
+
+    /// @dev HF_SCALE-relative ceiling the routine guard enforces (default 1.20).
+    function _ceiling() private pure returns (uint256) {
+        return (HF_SCALE * 12_000) / 10_000;
+    }
+
+    /// @notice A routine partial that lands HF inside the [1.0, ceiling] band
+    ///         is accepted. (collPrice $0.65 ⇒ HF_before ≈ 0.9945; 20% slice ⇒
+    ///         HF_after ≈ 1.09.) Dust neutralised so the pass is purely the
+    ///         in-band branch, not a dust waiver.
+    function testPartialSizing_WithinBand_Passes() public {
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 2_000, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory la = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(la.status), uint8(LibVaipakam.LoanStatus.Active), "loan stays Active");
+        uint256 hfAfter = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertGe(hfAfter, HF_SCALE, "HF restored");
+        assertLe(hfAfter, _ceiling(), "HF within the target band");
+        vm.clearMockedCalls();
+    }
+
+    /// @notice A routine partial that over-restores past the ceiling — while
+    ///         NOT deep-underwater and NOT leaving dust — is rejected, so the
+    ///         keeper can't over-liquidate. (HF_before ≈ 0.9945 > 0.95; 50%
+    ///         slice ⇒ HF_after ≈ 1.57 > 1.20; dust neutralised.)
+    function testPartialSizing_OverLiquidates_Reverts() public {
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+
+        // selector-only match — the error carries (hfAfter, ceiling) args.
+        vm.expectPartialRevert(RiskFacet.PartialOverLiquidates.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Deep-underwater (HF_before ≤ 0.95) waives the ceiling so the
+    ///         keeper can delever aggressively to restore solvency. (collPrice
+    ///         $0.60 ⇒ HF_before ≈ 0.918; 50% slice ⇒ HF_after ≈ 1.45 > 1.20,
+    ///         allowed.) Dust neutralised so deep-underwater is the only waiver.
+    function testPartialSizing_DeepUnderwater_AllowsOverCeiling() public {
+        uint256 loanId = _setupPartialSizing(0.60e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory la = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(la.status), uint8(LibVaipakam.LoanStatus.Active), "loan stays Active");
+        uint256 hfAfter = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertGt(hfAfter, _ceiling(), "HF exceeded ceiling yet was allowed (deep-underwater)");
+        vm.clearMockedCalls();
+    }
+
+    /// @notice A sub-dust residual (residual debt < dust floor) waives the
+    ///         ceiling so no un-liquidatable dust is stranded. (collPrice $0.65
+    ///         ⇒ HF_before ≈ 0.9945 — NOT deep-underwater; 50% slice ⇒
+    ///         residual debt ≈ $316 < the $1k default floor ⇒ allowed even
+    ///         though HF_after ≈ 1.57 > 1.20.)
+    function testPartialSizing_DustResidual_AllowsOverCeiling() public {
+        uint256 loanId = _setupPartialSizing(0.65e8); // default dust floor ($1k)
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+
+        LibVaipakam.Loan memory la = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(uint8(la.status), uint8(LibVaipakam.LoanStatus.Active), "loan stays Active");
+        uint256 hfAfter = RiskFacet(address(diamond)).calculateHealthFactor(loanId);
+        assertGt(hfAfter, _ceiling(), "HF exceeded ceiling yet was allowed (dust residual)");
+        vm.clearMockedCalls();
+    }
+
+    /// @notice The sizing setter range-checks every parameter and is ADMIN-only.
+    function testSetPartialLiquidationSizing_BoundsAndAccess() public {
+        // ceiling below the HF 1.05 minimum
+        vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(10_000, 0, 0);
+        // deep-underwater above the HF 0.99 maximum
+        vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 10_000, 0);
+        // dust floor above the $100k maximum
+        vm.expectRevert(AdminFacet.InvalidPartialLiqSizing.selector);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 100_001);
+        // valid set — no revert
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(11_000, 9_000, 5_000);
+        // non-admin rejected
+        vm.prank(borrower);
+        vm.expectRevert();
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
+    }
 }

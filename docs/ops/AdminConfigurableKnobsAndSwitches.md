@@ -79,6 +79,42 @@ bounded by its own `MAX_*_BPS` cap. The `liqBonusBps` per asset (set
 via `updateRiskParams`) cannot exceed the chain-level
 `maxLiquidatorIncentiveBps` — the latter is the hard ceiling.
 
+### Graduated partial-liquidation sizing (#395)
+
+(3 values, set together via `AdminFacet.setPartialLiquidationSizing` —
+hosted on `AdminFacet` rather than `ConfigFacet` because the latter is at
+the EIP-170 ceiling, same as the #633 kill-switches). These bound how much
+collateral a single *intentional* partial liquidation
+(`RiskFacet.triggerPartialLiquidation`) may sell, so a routine partial sizes
+itself to "as much as needed" and can't over-liquidate the borrower. Each
+parameter accepts `0` to reset to its library default, and any non-zero
+value is range-checked, so the reads are trusted unconditionally.
+
+- **`partialLiqTargetHfCeilingBps`** — the upper health-factor a *routine*
+  partial may leave the borrower at, in BPS of `HF_SCALE` (default `12_000`
+  = HF 1.20). A partial that lands the borrower above this — i.e. it sold
+  more than needed — reverts `PartialOverLiquidates`, unless an escalation
+  case below applies. Bounded `[10_500, 15_000]` (HF 1.05–1.50) so it always
+  sits strictly above the HF-1.00 restore floor.
+- **`partialLiqDeepUnderwaterHfBps`** — the health factor at/below which the
+  ceiling is **waived** so a keeper may delever aggressively to restore
+  solvency, in BPS of `HF_SCALE` (default `9_500` = HF 0.95). Bounded
+  `[8_000, 9_900]` (HF 0.80–0.99), always strictly below the restore floor.
+- **`liquidationDustFloorNumeraire`** — if a routine partial would leave
+  residual debt OR residual collateral valued below this, the ceiling is
+  **waived** so the slice can be enlarged and no un-liquidatable dust is
+  stranded (default `1_000` = ~$1,000). **Units: whole-numeraire**, the same
+  scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
+  8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
+  ($100k) so a misconfigured floor can't turn every routine partial into a
+  full close. It only ever *widens* what a keeper may do, so there is no
+  "disable" need; set a tiny value to effectively neutralise.
+
+All three default to sensible values, so the guardrail is active on a fresh
+deploy with no operator action. It governs only *how much* collateral a
+partial sells (via HF/value bounds) — never how the loan is priced — and
+leaves full liquidation (`triggerLiquidation`) unchanged as the alternative.
+
 ### Swap-to-Repay max slippage (T-090)
 
 (`setMaxSwapToRepaySlippageBps` / `getMaxSwapToRepaySlippageBps`)
