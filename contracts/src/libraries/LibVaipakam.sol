@@ -337,15 +337,16 @@ library LibVaipakam {
     uint256 constant PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS_DEFAULT = 9_500;
     uint256 constant MIN_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 8_000; // HF 0.80
     uint256 constant MAX_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 9_900; // HF 0.99
-    //  - Dust floor: residual debt/collateral below this waives the ceiling
-    //    so no un-liquidatable dust is stranded. Default $1k, capped at $100k
-    //    so a misconfigured floor can't turn every routine partial into a
-    //    full close. UNITS: the same whole-numeraire scale that
-    //    {RiskFacet._computeNumeraireValues} returns — with standard
-    //    8-decimal price feeds that is whole-USD (an integer), NOT 1e18-
-    //    scaled. So $1k == 1_000, not 1_000e18. (The numeraire values are
-    //    consumed by HF as a ratio, so their absolute scale is whole-unit.)
-    uint256 constant LIQUIDATION_DUST_FLOOR_NUMERAIRE_DEFAULT = 1_000;
+    //  - Dust floor: gates the dust waiver/prevention. UNITS: the same
+    //    whole-numeraire scale {RiskFacet._computeNumeraireValues} returns
+    //    (whole-USD with 8-decimal feeds; NOT 1e18-scaled). DEFAULT 0 ⇒
+    //    DISABLED (Codex r3 P2): there is no universally-correct default
+    //    because the active numeraire can be rotated away from USD, so a
+    //    hard-coded $1k default would mis-classify ordinary loans as dust on
+    //    a non-USD deployment. Governance sets an explicit floor in the
+    //    active numeraire to switch dust handling on. Capped at 100_000 so a
+    //    misconfigured floor can't turn every routine partial into a full
+    //    close.
     uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
     // Fallback-path split (README §7): lender gets principal + accrued
@@ -4250,12 +4251,14 @@ library LibVaipakam {
         uint16 partialLiqDeepUnderwaterHfBps; // 0 ⇒ default (9_500)
         /// @dev Dust floor in the whole-numeraire scale
         ///      {RiskFacet._computeNumeraireValues} returns (whole-USD with
-        ///      8-decimal feeds; $1k == 1_000, NOT 1e18-scaled). A position whose
-        ///      PRE-partial debt OR collateral is below this waives the ceiling
-        ///      so a genuinely-tiny loan isn't blocked from clearing. Keyed on
-        ///      PRE-partial size (not post-mutation residual) so a keeper can't
-        ///      manufacture dust by over-liquidating.
-        uint256 liquidationDustFloorNumeraire; // 0 ⇒ default (1_000)
+        ///      8-decimal feeds; NOT 1e18-scaled). 0 ⇒ dust handling DISABLED
+        ///      (Codex r3 P2 — no USD-scaled default that would misfire on a
+        ///      rotated numeraire). When governance sets it (> 0), it both
+        ///      WAIVES the over-liquidation ceiling for a PRE-partial dust
+        ///      position (keyed on entry size, not the manufacturable residual)
+        ///      AND PREVENTS a routine partial from leaving a fresh dust
+        ///      position out of a non-dust loan (forces full liquidation).
+        uint256 liquidationDustFloorNumeraire; // 0 ⇒ DISABLED
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4813,9 +4816,12 @@ library LibVaipakam {
         return v == 0 ? PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS_DEFAULT : uint256(v);
     }
 
+    /// @dev 0 ⇒ dust handling DISABLED (no default substitution) — see the
+    ///      storage-field note. Governance opts in with a floor in the active
+    ///      numeraire; `RiskFacet._assertPartialSizing` skips both the dust
+    ///      waiver and the dust-prevention check while this is 0.
     function cfgLiquidationDustFloorNumeraire() internal view returns (uint256) {
-        uint256 v = storageSlot().liquidationDustFloorNumeraire;
-        return v == 0 ? LIQUIDATION_DUST_FLOOR_NUMERAIRE_DEFAULT : v;
+        return storageSlot().liquidationDustFloorNumeraire;
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

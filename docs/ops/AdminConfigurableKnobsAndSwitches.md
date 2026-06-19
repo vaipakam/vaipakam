@@ -100,13 +100,19 @@ value is range-checked, so the reads are trusted unconditionally.
   ceiling is **waived** so a keeper may delever aggressively to restore
   solvency, in BPS of `HF_SCALE` (default `9_500` = HF 0.95). Bounded
   `[8_000, 9_900]` (HF 0.80–0.99), always strictly below the restore floor.
-- **`liquidationDustFloorNumeraire`** — if the **pre-partial** position
-  (its debt OR collateral at entry) is valued below this, the ceiling is
-  **waived** so a genuinely-tiny loan isn't blocked from clearing (default
-  `1_000` = ~$1,000). The waiver keys off the *pre-partial* size, **not** the
-  post-mutation residual, so a keeper cannot manufacture a sub-dust residual
-  by over-liquidating and self-waive the ceiling; a larger position that
-  can't partial cleanly falls back to full liquidation. **Units:
+- **`liquidationDustFloorNumeraire`** — governs dust handling. **Default `0`
+  = DISABLED** (there is no universally-correct default because the active
+  oracle numeraire can be rotated away from USD, so a hard-coded value would
+  mis-classify ordinary loans as dust on a non-USD deployment — governance
+  sets an explicit floor *in the active numeraire* to switch it on). When set
+  (`> 0`) it does two things: (1) **waives** the over-liquidation ceiling for
+  a position that was **already** dust-sized at entry (its pre-partial debt OR
+  collateral below the floor) so a genuinely-tiny loan isn't blocked from
+  clearing — keyed on *entry* size, not the manufacturable residual, so a
+  keeper can't self-waive by over-liquidating; and (2) **prevents** a routine
+  partial from leaving a *fresh* dust position out of a non-dust loan (both
+  residual debt AND collateral below the floor) — that reverts
+  `PartialLeavesDust` and the keeper must use full liquidation. **Units:
   whole-numeraire**, the same
   scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
   8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`

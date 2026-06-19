@@ -17,13 +17,22 @@ borrower comfortably healthier than that ceiling — i.e. it sold more than need
 - **Deep underwater** — if the position was already below a configurable health
   threshold (default 0.95) before the partial, the keeper may delever
   aggressively to restore solvency.
-- **Pre-existing dust** — if the position was *already* tiny at entry (its debt
-  or collateral worth less than a configurable dust floor, default ~$1,000), the
-  ceiling is waived so a genuinely-small loan isn't blocked from clearing. This
-  keys off the position's size *before* the partial, never the leftover after it,
-  so a keeper can't manufacture a tiny leftover by over-selling and bypass the
-  guard; a larger position that can't be partialled cleanly simply falls back to
-  full liquidation.
+- **Pre-existing dust** — when governance has switched dust handling on (it is
+  off by default), a position that was *already* tiny at entry (debt or
+  collateral below the dust floor) isn't blocked from clearing. This keys off
+  the position's size *before* the partial, never the leftover after it, so a
+  keeper can't manufacture a tiny leftover by over-selling and bypass the guard.
+
+When dust handling is on, the reverse is also enforced: a routine partial may
+**not** *leave* a fresh tiny position (both leftover debt and collateral below
+the floor) out of a normal loan — it must use full liquidation instead, so no
+un-liquidatable scrap is stranded. Dust handling is **off by default** because
+the right floor depends on the active price numeraire, which a deployment can
+rotate away from US dollars; governance sets an explicit floor to turn it on.
+
+Finally, an intentional partial now **defers to the internal-match priority
+window** exactly as full liquidation does — a keeper can no longer use a partial
+to sell collateral externally while an internal match still has priority.
 
 This only governs *how much* collateral a partial may sell; it never changes how
 the loan is priced, and full liquidation remains available unchanged as the

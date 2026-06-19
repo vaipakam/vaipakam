@@ -1011,6 +1011,22 @@
   },
   {
     "type": "error",
+    "name": "PartialLeavesDust",
+    "inputs": [
+      {
+        "name": "residualDebt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "residualCollateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PartialMustImproveHF",
     "inputs": [
       {

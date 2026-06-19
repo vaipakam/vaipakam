@@ -3806,7 +3806,7 @@ contract RiskFacetTest is Test {
     ///         in-band branch, not a dust waiver.
     function testPartialSizing_WithinBand_Passes() public {
         uint256 loanId = _setupPartialSizing(0.65e8);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
 
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 2_000, defaultAdapterCalls());
 
@@ -3824,7 +3824,7 @@ contract RiskFacetTest is Test {
     ///         slice ⇒ HF_after ≈ 1.57 > 1.20; dust neutralised.)
     function testPartialSizing_OverLiquidates_Reverts() public {
         uint256 loanId = _setupPartialSizing(0.65e8);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
 
         // selector-only match — the error carries (hfAfter, ceiling) args.
         vm.expectPartialRevert(RiskFacet.PartialOverLiquidates.selector);
@@ -3838,7 +3838,7 @@ contract RiskFacetTest is Test {
     ///         allowed.) Dust neutralised so deep-underwater is the only waiver.
     function testPartialSizing_DeepUnderwater_AllowsOverCeiling() public {
         uint256 loanId = _setupPartialSizing(0.60e8);
-        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
 
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
 
@@ -3872,15 +3872,36 @@ contract RiskFacetTest is Test {
 
     /// @notice Anti-gaming (Codex r1 P1 #2): a keeper CANNOT bypass the ceiling
     ///         by oversizing a slice to manufacture a sub-dust *residual*. With
-    ///         the default $1k floor and a $1k-debt position (entry size NOT
-    ///         below the floor), a 50% slice lands HF ≈ 1.57 > 1.20 and leaves
-    ///         ~$316 residual — but because the PRE-partial position wasn't
-    ///         dust, the waiver does not fire and the call reverts.
+    ///         a $1k floor and a $1k-debt position (entry size NOT below the
+    ///         floor), a 50% slice lands HF ≈ 1.57 > 1.20 and leaves ~$316
+    ///         residual — but because the PRE-partial position wasn't dust, the
+    ///         waiver does not fire and the call reverts.
     function testPartialSizing_KeeperCreatedDust_DoesNotWaive() public {
-        uint256 loanId = _setupPartialSizing(0.65e8); // default $1k floor; pre-debt $1k (not < floor)
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        // $1k floor: residual ($316) is sub-dust but the $1k entry isn't.
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 1_000);
 
         vm.expectPartialRevert(RiskFacet.PartialOverLiquidates.selector);
         RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 5_000, defaultAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Dust-prevention (Codex r3 P2): a within-band partial that would
+    ///         leave a FRESH dust position out of a NON-dust loan reverts
+    ///         `PartialLeavesDust`, forcing the keeper to full liquidation
+    ///         rather than stranding an un-liquidatable scrap. Floor $500: the
+    ///         $1k / $1,170 entry is non-dust, but a 65% slice (rate 0.63) lands
+    ///         HF ≈ 1.16 (in band) while leaving residual debt ≈ $300 and
+    ///         collateral ≈ $409 — both below $500.
+    function testPartialSizing_LeavesFreshDust_Reverts() public {
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        // rate 0.63 — modest realized slippage; the larger slice still lifts HF
+        // into the band while shrinking both residuals below the floor.
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(63, 100);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500);
+
+        vm.expectPartialRevert(RiskFacet.PartialLeavesDust.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 6_500, defaultAdapterCalls());
         vm.clearMockedCalls();
     }
 
