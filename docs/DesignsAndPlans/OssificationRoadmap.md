@@ -131,8 +131,8 @@ surface in stages. Targets by surface:
 | --- | --- | --- |
 | Fund custody + core accounting (loan lifecycle, repayment, claim, vault transfers) | upgradeable | **Freeze first** — the highest-trust surface; freeze its cut path on the published schedule once the audit + bake confirm stability. |
 | Per-user vault implementation (`VaipakamVaultImplementation`, UUPS, `_authorizeUpgrade` is `onlyOwner` = the Diamond) | upgradeable | **Part of the custody-freeze commitment.** A vault-impl upgrade is custody-moving (it runs in the proxy that holds user assets). The actual gate is **`VAULT_ADMIN_ROLE`**, *not* the Diamond's ERC-173 owner: `upgradeVaultImplementation` / `setMandatoryVaultUpgrade` (both `VAULT_ADMIN_ROLE`-only) set *which* template the proxies point at, and `upgradeUserVault(user)` is permissionless **but safe** — it can only migrate a proxy to that admin-set template, never to a caller-chosen impl. `VAULT_ADMIN_ROLE` rotates to the **timelock** at handover, so the template choice is timelock-delayed; this row is a freeze candidate on the same schedule as the cut path — explicitly, not just the Diamond facets. |
-| Other Diamond-owned UUPS custody surfaces — the ERC-4626 aggregator adapter proxies (hold aggregator principal), the protocol backstop vault (`BackstopFacet.upgradeBackstopVault`, holds backstop lending capital), and the Seaport collateral-sale executor (`CollateralListingExecutor`, UUPS `_authorizeUpgrade` is `onlyOwner`, validates/finalizes prepay collateral sales against the Diamond) | upgradeable | **Also part of the custody-freeze commitment.** These are *separate* UUPS upgrade hooks from the per-user vault, each on its own admin surface. As with the vault, the governance-controlled hook is the **template / implementation setter** — for the aggregator that is `upgradeAdapterImplementation(newImplementation)` (`VAULT_ADMIN_ROLE`), while `upgradeAggregatorAdapter(adapter)` is only the permissionless-but-safe migrate trigger (it can move a proxy to the published template or a mandated version, never to a caller-chosen impl). A malicious template cut in here moves aggregator / backstop / collateral-sale custody without ever touching the per-user vault path, so the **implementation setters** carry the **same timelock + freeze-candidate** treatment as the vault impl. (The aggregator and backstop products themselves are later-phase; until they ship those rows are forward-looking, but the freeze guarantee names them explicitly so they can't slip the net when they do.) |
-| Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind a **timelock**, and — for the *numeric* knobs (risk params, admission floor, rate-model premiums) — **range-checked setters** that evolve only within hard bounds, never via a free facet replace. **Honest caveat (gate + bound).** *Gate:* the `OracleAdminFacet` address setters are **owner-gated**, not role-gated — they route to `LibVaipakam` functions guarded by `LibDiamond.enforceIsContractOwner()` (the Diamond's ERC-173 owner). `ORACLE_ADMIN_ROLE` is *defined / exported but never used as an `onlyRole` gate* — so oracle hardening must target the **owner** path (post-handover the owner is the Timelock, so these *are* timelock-delayed; the role is a red herring here, not the lever). *Bound:* the address swaps are **not** range-bounded — they forward an arbitrary address into storage, so the timelock delay is their only bound (a queued, arbitrary feed replacement is still custody-moving). The surface is the **whole** address-setter set, not a short list — the price feeds + denominators (`setChainlinkRegistry`, `setEthUsdFeed`, `setStableTokenFeed`, `setFeedOverride`, `setSequencerUptimeFeed`, `setUsdChainlinkDenominator`, `setEthChainlinkDenominator`), the secondary-quorum oracles (`setTellorOracle`, `setApi3ServerV1`, `setDIAOracleV2`, `setPythOracle`), the liquidity-classification inputs (`setWethContract`, `setUniswapV3Factory`), and the risk/peer inputs (`setPeerProtocolAddresses`, `setTierReferenceAssets`) all take a free address. An on-chain **allowlist** constraining *which* addresses are settable is outstanding hardening, not in place today; **#651** tracks a code-derived census so the allowlist/freeze scope covers every such setter (the lists here are representative, not exhaustive). During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
+| Other Diamond-owned UUPS custody surfaces — the ERC-4626 aggregator adapter proxies (hold aggregator principal), the protocol backstop vault (`BackstopFacet.upgradeBackstopVault`, holds backstop lending capital), and the Seaport collateral-sale executor (`CollateralListingExecutor`, UUPS `_authorizeUpgrade` is `onlyOwner`, validates/finalizes prepay collateral sales against the Diamond) | upgradeable | **Also part of the custody-freeze commitment.** These are *separate* UUPS upgrade hooks from the per-user vault, each on its own admin surface. As with the vault, the governance-controlled hook is the **template / implementation setter** — for the aggregator that is `upgradeAdapterImplementation(newImplementation)` (`VAULT_ADMIN_ROLE`), while `upgradeAggregatorAdapter(adapter)` is only the permissionless-but-safe migrate trigger (it can move a proxy to the published template or a mandated version, never to a caller-chosen impl). A malicious template cut in here moves aggregator / backstop / collateral-sale custody without ever touching the per-user vault path, so the **implementation setters** carry the **same timelock + freeze-candidate** treatment as the vault impl. **The executor is the exception to watch:** unlike the Diamond-template surfaces, `CollateralListingExecutor` is upgraded via its **own Ownable owner** (`__Ownable_init(_owner)` = the admin multisig at deploy), *not* a Diamond role / template setter — the Diamond only stores the current executor address via `setCollateralListingExecutor`. So a freeze scoped to Diamond template setters / `VAULT_ADMIN_ROLE` would miss it; its **own owner** must be rotated to the timelock and frozen separately. (The aggregator and backstop products themselves are later-phase; until they ship those rows are forward-looking, but the freeze guarantee names them explicitly so they can't slip the net when they do.) |
+| Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind a **timelock**, and — for the *numeric* knobs (risk params, admission floor, rate-model premiums) — **range-checked setters** that evolve only within hard bounds, never via a free facet replace. **Honest caveat (gate + bound).** *Gate:* the `OracleAdminFacet` address setters are **owner-gated**, not role-gated — they route to `LibVaipakam` functions guarded by `LibDiamond.enforceIsContractOwner()` (the Diamond's ERC-173 owner). `ORACLE_ADMIN_ROLE` is *defined / exported but never used as an `onlyRole` gate* — so oracle hardening must target the **owner** path (post-handover the owner is the Timelock, so these *are* timelock-delayed; the role is a red herring here, not the lever). *Bound:* the address swaps are **not** range-bounded — they forward an arbitrary address into storage, so the timelock delay is their only bound (a queued, arbitrary feed replacement is still custody-moving). The surface is the **whole** address-setter set, not a short list — the price feeds + denominators (`setChainlinkRegistry`, `setEthUsdFeed`, `setStableTokenFeed`, `setFeedOverride`, `setSequencerUptimeFeed`, `setUsdChainlinkDenominator`, `setEthChainlinkDenominator`), the secondary-quorum oracles (`setTellorOracle`, `setApi3ServerV1`, `setDIAOracleV2`, `setPythOracle`), the liquidity-classification inputs (`setWethContract`, `setUniswapV3Factory`), and the risk/peer inputs (`setPeerProtocolAddresses`, `setTierReferenceAssets`) all take a free address. An on-chain **allowlist** constraining *which* addresses are settable is outstanding hardening, not in place today; **#651** tracks a code-derived census so the allowlist/freeze scope covers every such setter (the lists here are representative, not exhaustive). **Same class for the rate model:** the #400 *output* is range-bounded (deviation-clamped to the market band), but the *active model implementation* is a **free address swap** — `AdminFacet.setRateModel(address)` accepts any nonzero contract under `ADMIN_ROLE` (only a `code.length > 0` check). So a misconfigured/malicious model can't push an automated quote off-market (the clamp holds), but swapping the model pointer is itself an unbounded-address lever and is in the #651 census / freeze scope alongside the oracle setters. During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
 | Curation / parameters (fees, tiers, kill-switches) | upgradeable | Stays upgradeable (bounded) — curation must keep evolving. |
 | Diamond-cut governance itself | timelock | **Freeze the whole cut path** — Add **and** Replace/Remove (freezing only existing selectors would still let a new facet add custody-moving code) — on the published schedule (post-audit), behind separated guardian/upgrade multisigs + timelock until then. |
 
@@ -143,16 +143,28 @@ detect-and-exit, and a freeze *candidate*, never a free replace).
 
 **Honest carve-out (a custody-moving path that is *not* behind the timelock).**
 The rule above governs the *upgrade/parameter* surface. One operational debit
-sits outside it by design: `LoanFacet.markNotifBilled` (`NOTIF_BILLER_ROLE`)
-calls `LibNotificationFee.bill`, which pulls a fixed VPFI notification fee
-directly from a user's vault to the treasury — no timelock, and `Handover.s.sol`
-keeps `NOTIF_BILLER_ROLE` on the ops bot (outside the timelock) until the
-separate per-bot rotation. This is a bounded, opted-in, fixed-rate micro-debit
-for a service the user subscribed to (not a governance lever that can re-point
-custody), so it is intentionally fast-path — but it **is** a role-gated path that
-moves user funds without the delay, and is named here rather than hidden under
-the load-bearing rule. Constraining or timelocking the biller role is in the
-#651 census scope.
+sits outside it: `LoanFacet.markNotifBilled` (`NOTIF_BILLER_ROLE`) calls
+`LibNotificationFee.bill`, which pulls a fixed VPFI notification fee directly
+from a loan party's vault to the treasury — no timelock. Two honest sharp edges,
+not glossed:
+- **There is no on-chain paid-tier / subscription check.** `markNotifBilled`
+  debits whichever side it's told (`loan.lender` / `loan.borrower`); the only
+  on-chain guard is *idempotency* (the per-side `…NotifBilled` flag stops a
+  second debit), **not authorization**. "Opted-in" is enforced off-chain by the
+  biller, not by the contract — so a holder of `NOTIF_BILLER_ROLE` can debit the
+  fixed fee from **any** active loan's parties.
+- **The role is a hot key until rotation.** `Handover.s.sol` leaves
+  `NOTIF_BILLER_ROLE` on the **ADMIN EOA** (not even an ops bot, and outside the
+  timelock) until a separate per-bot rotation. So the realistic blast radius of
+  a compromised biller key today is: one fixed VPFI fee skimmed from every
+  billable loan side, once each (bounded by the idempotency flag and the fixed
+  fee, but real).
+The fee is fixed and capped-per-loan-side, and the role can't re-point custody
+rules — so it's a fast-path *by necessity*, not a governance lever — but it is a
+role-gated path that moves user funds without the delay **and** without an
+on-chain authorization check, named here rather than hidden. Adding an on-chain
+subscription gate, and constraining / timelocking + promptly rotating the biller
+role off the ADMIN EOA, is in the #651 census scope.
 
 **What "detect-and-exit" does and does not mean (honest):** the delay buys
 users a window to *observe* a queued custody-moving change and exit (repay,
@@ -178,10 +190,13 @@ team time to cancel — it does not preserve the exit window it freezes.
   upgrade (the cut path is intentionally not pause-gated, for recovery).
 - **Remaining gap — the root `DEFAULT_ADMIN_ROLE` is not itself timelocked.**
   At handover `DEFAULT_ADMIN_ROLE` moves to the **governance Safe** (a multisig,
-  not the timelock). Because that role is the `roleAdmin` of `ORACLE_ADMIN_ROLE`,
-  `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`, and `UNPAUSER_ROLE`, a holder of
-  `DEFAULT_ADMIN_ROLE` can **grant itself any of those immediately** and then
-  change oracle/risk/vault settings (or unpause) **without** the 48–72h delay.
+  not the timelock). Because that role is the `roleAdmin` of **`ADMIN_ROLE`**,
+  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`, and
+  `UNPAUSER_ROLE`, a holder of `DEFAULT_ADMIN_ROLE` can **grant itself any of
+  those immediately** and then call any `ADMIN_ROLE`-gated setter (e.g.
+  `setRateModel`, treasury / fee config), change oracle/risk/vault settings, or
+  unpause — all **without** the 48–72h delay. (And via `transferAdmin` it can
+  move ERC-173 ownership wholesale, per the §1 caveat.)
   So the "custody-moving changes sit behind the timelock" guarantee is, today,
   only as strong as the governance Safe's threshold/honesty — it is **not**
   code-enforced for the role-grant path. Closing this (timelocking
@@ -213,10 +228,19 @@ team time to cancel — it does not preserve the exit window it freezes.
   - **Add (new selectors / facets), not just Replace/Remove.** Freezing only
     the existing selectors would still let a new facet introduce custody-moving
     code. The freeze scope is the *whole* cut path — Add included.
-  - **The per-user vault UUPS upgrade path** (`VaipakamVaultImplementation`,
-    `_authorizeUpgrade onlyOwner` = the Diamond). It is custody-moving (it runs
-    inside the proxy that holds user assets) and is part of the same post-audit
-    freeze, on the same schedule as the Diamond cut path — not just the facets.
+  - **Every UUPS custody upgrade path — not just the per-user vault.** The §2
+    table lists them all and each has its *own* control gate, so the freeze
+    checklist must cover the full set, not the vault alone: the per-user vault
+    (`VaipakamVaultImplementation`, `_authorizeUpgrade onlyOwner` = the Diamond,
+    template set by `VAULT_ADMIN_ROLE`), the aggregator-adapter **template**
+    (`upgradeAdapterImplementation`, `VAULT_ADMIN_ROLE`), the backstop vault
+    (`BackstopFacet.upgradeBackstopVault`), and the Seaport collateral-sale
+    **executor** (`CollateralListingExecutor`, upgraded via its **own Ownable
+    owner**, *not* a Diamond role — so freezing only Diamond template setters /
+    `VAULT_ADMIN_ROLE` would miss it; its owner must be rotated to the timelock
+    and frozen on the same schedule). All are custody-moving and ride the same
+    post-audit freeze as the Diamond cut path — not just the facets. (#651
+    enumerates the full set from code so none is missed.)
   - **Independent canceller** for queued timelock ops (a guardian that can
     cancel but not propose), so a compromised proposer key can be stopped
     without itself holding the only cancel lever (see §0).
