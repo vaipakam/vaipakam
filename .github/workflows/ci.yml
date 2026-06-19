@@ -625,9 +625,15 @@ jobs:
     # on any test file triggered a full-scope re-compile (which is what
     # timed this job out under #295's narrowed `contracts-fast` cache).
     # Running under FOUNDRY_PROFILE=cifast aligns this job's compile
-    # graph with contracts-fast's cache, so a warm restore is now a
-    # no-op compile + just the NatSpec → mdbook rendering step (~3-5 min).
-    timeout-minutes: 15
+    # graph with contracts-fast's cache, so a warm restore is a no-op
+    # compile + just the NatSpec → mdbook rendering step. On a cache MISS
+    # though, forge doc still drives its own cold src compile, and as the
+    # src/ surface has grown (RiskSplitLiquidationFacet, #395 sizing, …)
+    # that cold path now overruns 15 min on a slow runner — #640 hit the
+    # cap mid-`forge doc --build`. Raised to 30 (in line with the heavier
+    # forge jobs: contracts-fast 25, slither 20) so a cold-cache run has
+    # headroom; a warm run is still the usual few minutes.
+    timeout-minutes: 30
     env:
       FOUNDRY_PROFILE: cifast
     defaults:
