@@ -1469,12 +1469,15 @@ contract DeployDiamond is Script {
         // `_getRiskSplitLiquidationSelectors`) so the `LibSwap.swapWithSplit`
         // inline lands in fresh headroom rather than tipping RiskFacet over
         // the EIP-170 limit.
-        s = new bytes4[](7);
+        s = new bytes4[](9);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
+        // #394 Lever A — runtime, range-bounded loan-admission HF floor.
+        s[7] = RiskFacet.setMinHealthFactor.selector;
+        s[8] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict

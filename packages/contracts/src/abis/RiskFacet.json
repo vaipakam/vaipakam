@@ -39,6 +39,19 @@
   },
   {
     "type": "function",
+    "name": "getMinHealthFactor",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isCollateralValueCollapsed",
     "inputs": [
       {
@@ -55,6 +68,19 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "setMinHealthFactor",
+    "inputs": [
+      {
+        "name": "newMinHealthFactor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -339,6 +365,19 @@
       },
       {
         "name": "hfAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "MinHealthFactorSet",
+    "inputs": [
+      {
+        "name": "newMinHealthFactor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

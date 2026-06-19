@@ -1542,4 +1542,102 @@ contract LoanFacetTest is Test {
             "switch off -> tier ignored, legacy gates pass"
         );
     }
+
+    // ── #394 Lever A — runtime, range-bounded admission HF floor ───────────
+
+    /// @dev Unset override ⇒ the live floor is the `MIN_HEALTH_FACTOR`
+    ///      constant (1.5e18) — today's behaviour, nothing moves until set.
+    function testMinHealthFactor_defaultIsLegacy() public view {
+        assertEq(
+            RiskFacet(address(diamond)).getMinHealthFactor(),
+            150 * 1e16,
+            "default admission floor is 1.5e18"
+        );
+    }
+
+    /// @dev RISK_ADMIN-gated + hard range-bounded `[1.2e18, 2.0e18]`.
+    function testMinHealthFactor_setterAccessAndBounds() public {
+        // non-RISK_ADMIN rejected
+        vm.prank(borrower);
+        vm.expectRevert();
+        RiskFacet(address(diamond)).setMinHealthFactor(160 * 1e16);
+
+        // below the 1.2e18 floor rejected
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("minHealthFactor"),
+                uint256(119 * 1e16),
+                uint256(120 * 1e16),
+                uint256(200 * 1e16)
+            )
+        );
+        RiskFacet(address(diamond)).setMinHealthFactor(119 * 1e16);
+
+        // above the 2.0e18 ceiling rejected
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IVaipakamErrors.ParameterOutOfRange.selector,
+                bytes32("minHealthFactor"),
+                uint256(201 * 1e16),
+                uint256(120 * 1e16),
+                uint256(200 * 1e16)
+            )
+        );
+        RiskFacet(address(diamond)).setMinHealthFactor(201 * 1e16);
+
+        // valid set (owner holds RISK_ADMIN_ROLE) + getter reflects
+        RiskFacet(address(diamond)).setMinHealthFactor(170 * 1e16);
+        assertEq(
+            RiskFacet(address(diamond)).getMinHealthFactor(),
+            170 * 1e16,
+            "floor retuned to 1.7e18"
+        );
+    }
+
+    /// @dev The non-tiered init gate reads the RUNTIME floor: a loan whose HF
+    ///      (1.6e18) clears the 1.5e18 default is REJECTED once governance
+    ///      raises the floor to 1.8e18 — then ADMITTED again after lowering it
+    ///      back. Proves the migration from the hard-coded `150*1e16` to
+    ///      `minHealthFactor()` is load-bearing, and round-trips on one offer.
+    function testMinHealthFactor_initGate_honorsRuntimeFloor() public {
+        // Switch OFF (default) — exercise the non-tiered branch.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector),
+            abi.encode(uint256(6000))
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(16 * 1e17)) // 1.6e18 — above 1.5 default, below 1.8
+        );
+
+        uint256 offerId = createOffer(
+            mockERC20,
+            mockCollateralERC20,
+            LibVaipakam.AssetType.ERC20,
+            1000 ether,
+            1500 ether,
+            30,
+            0,
+            0
+        );
+
+        // Raise the floor above the loan's HF → admission blocked.
+        RiskFacet(address(diamond)).setMinHealthFactor(180 * 1e16); // 1.8e18
+        vm.prank(borrower);
+        vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+
+        // Lower it back below the HF → the SAME offer now admits.
+        RiskFacet(address(diamond)).setMinHealthFactor(150 * 1e16); // 1.5e18
+        vm.prank(borrower);
+        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "lowered floor -> HF 1.6e18 clears 1.5e18 -> Active"
+        );
+    }
 }

@@ -823,7 +823,8 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 HealthFactorCalculationFailed.selector
             );
             uint256 hf = abi.decode(result, (uint256));
-            if (hf < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
+            // #394 Lever A — runtime admission floor (default 1.5e18, tunable).
+            if (hf < LibVaipakam.minHealthFactor()) revert HealthFactorTooLow();
         }
     }
 

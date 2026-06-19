@@ -205,7 +205,8 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // can still claim at any time.
         if (
             loan.status == LibVaipakam.LoanStatus.FallbackPending &&
-            newHf >= LibVaipakam.MIN_HEALTH_FACTOR &&
+            // #394 Lever A — runtime admission floor (default 1.5e18, tunable).
+            newHf >= LibVaipakam.minHealthFactor() &&
             newLtv <= s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
         ) {
             _cureFallback(loanId, loan, borrowerVault);

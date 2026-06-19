@@ -826,12 +826,15 @@ contract HelperTest {
     {
         // `triggerLiquidationSplit` relocated to RiskSplitLiquidationFacet
         // (#66 + #633) — see getRiskSplitLiquidationFacetSelectors.
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
+        // #394 Lever A — runtime, range-bounded loan-admission HF floor.
+        selectors[7] = RiskFacet.setMinHealthFactor.selector;
+        selectors[8] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict

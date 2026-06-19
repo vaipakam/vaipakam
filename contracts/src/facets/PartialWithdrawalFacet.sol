@@ -109,7 +109,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             ctx.collateralPriceDivisor;
 
         uint256 simulatedHf = _hfFromContext(ctx, collateralUsd);
-        if (simulatedHf < LibVaipakam.MIN_HEALTH_FACTOR)
+        // #394 Lever A — runtime admission floor (default 1.5e18, tunable).
+        if (simulatedHf < LibVaipakam.minHealthFactor())
             revert HealthFactorTooLow();
 
         uint256 simulatedLtv = _ltvFromContext(ctx, collateralUsd);
@@ -212,7 +213,8 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             uint256 simHf = _hfFromContext(ctx, collateralUsd);
             uint256 simLtv = _ltvFromContext(ctx, collateralUsd);
 
-            if (simHf >= LibVaipakam.MIN_HEALTH_FACTOR && simLtv <= loanInitMaxLtvBps) {
+            // #394 Lever A — runtime admission floor (default 1.5e18, tunable).
+            if (simHf >= LibVaipakam.minHealthFactor() && simLtv <= loanInitMaxLtvBps) {
                 low = mid;
             } else {
                 high = mid - 1;

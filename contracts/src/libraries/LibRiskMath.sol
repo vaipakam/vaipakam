@@ -71,11 +71,13 @@ library LibRiskMath {
             _gatherUsd(amountMax, principalAsset, collateralAsset);
         if (principalUsd == 0 || priceCollateral == 0) return 0;
 
-        // Solve for collateralUsd where HF == MIN_HEALTH_FACTOR (1.5e18):
+        // Solve for collateralUsd where HF == the runtime admission floor
+        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable), so
+        // the preview tracks whatever governance has the admission gate set to:
         //   collateralUsd × liqThresholdBps / BASIS_POINTS
-        //     == principalUsd × MIN_HEALTH_FACTOR / HF_SCALE
+        //     == principalUsd × minHealthFactor / HF_SCALE
         //   collateralUsd
-        //     == (principalUsd × MIN_HEALTH_FACTOR × BASIS_POINTS)
+        //     == (principalUsd × minHealthFactor × BASIS_POINTS)
         //        / (HF_SCALE × liqThresholdBps)
         // BPS multiplications fit comfortably under uint256 since
         // principalUsd here is the (price-scaled but token-unscaled) raw
@@ -83,7 +85,7 @@ library LibRiskMath {
         // below — it intentionally returns the un-divided-by-1e18 form
         // so the rest of the math stays in integers.
         uint256 collateralUsd =
-            (principalUsd * LibVaipakam.MIN_HEALTH_FACTOR * LibVaipakam.BASIS_POINTS)
+            (principalUsd * LibVaipakam.minHealthFactor() * LibVaipakam.BASIS_POINTS)
             / (LibVaipakam.HF_SCALE * liqThresholdBps);
 
         // Convert collateralUsd back to collateral-asset native units.
@@ -179,13 +181,14 @@ library LibRiskMath {
             return type(uint256).max;
         }
 
-        // Solve for principalUsd where HF == MIN_HEALTH_FACTOR:
+        // Solve for principalUsd where HF == the runtime admission floor
+        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable):
         //   principalUsd
         //     == (collateralUsd × liqThresholdBps × HF_SCALE)
-        //        / (BASIS_POINTS × MIN_HEALTH_FACTOR)
+        //        / (BASIS_POINTS × minHealthFactor)
         uint256 principalUsd =
             (collateralUsd * liqThresholdBps * LibVaipakam.HF_SCALE)
-            / (LibVaipakam.BASIS_POINTS * LibVaipakam.MIN_HEALTH_FACTOR);
+            / (LibVaipakam.BASIS_POINTS * LibVaipakam.minHealthFactor());
 
         // Truncating division here is borrower-friendly: the returned
         // ceiling is the largest amount that can definitely satisfy

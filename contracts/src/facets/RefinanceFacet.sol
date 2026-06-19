@@ -603,10 +603,11 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         );
         uint256 newHf = abi.decode(hfResult, (uint256));
         // Tier-ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Tier-OFF ⇒ legacy HF ≥ 1.5.
+        // cap is the binding buffer). Tier-OFF ⇒ the runtime admission floor
+        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable).
         uint256 hfFloor = tieredOn
             ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.MIN_HEALTH_FACTOR;
+            : LibVaipakam.minHealthFactor();
         if (newHf < hfFloor) revert HealthFactorTooLow();
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid

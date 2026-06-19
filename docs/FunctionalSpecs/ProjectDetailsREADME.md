@@ -220,7 +220,8 @@ The platform distinguishes between liquid and illiquid assets, which affects how
   - There must be no governance per-asset allowlist that upgrades a collateral asset into a higher tier. Governance may pause or blacklist assets through existing remove-only safety levers, but tier authority comes from the on-chain measurement plus the keeper confidence floor below.
   - The effective tier is `min(onChainTier, keeperConfidenceTier)`. New assets default to keeper tier `1`; a keeper can lower an asset immediately and can promote only up to the on-chain-measured tier after off-chain aggregator checks have remained healthy. The keeper role must not be able to raise an asset above what the on-chain route and manipulation guards validate.
   - Depth-tiered LTV is controlled by a master enable switch that deploys disabled. While disabled, loan initiation must follow the existing conservative LTV / Health Factor behavior exactly.
-  - When the switch is enabled, new ERC-20 loans are capped at the smaller of the existing asset ceiling and the effective tier's current max-init-LTV value. Tier `0` collateral cannot support a new borrow. In this mode the loan-initiation Health Factor floor may be relaxed from `1.5` to `1.0` because the tier ceiling becomes the binding buffer below liquidation.
+  - When the switch is enabled, new ERC-20 loans are capped at the smaller of the existing asset ceiling and the effective tier's current max-init-LTV value. Tier `0` collateral cannot support a new borrow. In this mode the loan-initiation Health Factor floor may be relaxed from the standard admission floor to `1.0` because the tier ceiling becomes the binding buffer below liquidation.
+  - The standard (non-tiered) loan-admission Health Factor floor is a governance-tunable knob, range-bounded to `[1.2, 2.0]` and defaulting to `1.5`. Governance (risk-admin) may retune it without a contract change to tighten admission in a volatile regime or loosen it for a proven-safe book. The retune is branch-aware — it moves only the standard admission floor, never the tiered-regime `1.0` floor and never the liquidation trigger (`HF < 1.0`), so a retune can never make an open loan liquidatable — and it applies only to loans admitted after the change; open loans keep the terms they were admitted under. Every health-floor check the protocol enforces — admission, collateral-top-up cure, partial withdrawal, repay/swap-to-repay guards, and the min-collateral / max-borrow previews — uses the same runtime value so they stay mutually consistent.
   - The tier-to-LTV mapping is data-derived rather than manually set per asset. `OracleFacet.refreshTierLtvCache()` should be permissionless and should refresh per-tier cached max-init-LTV values from peer lending protocol configurations. The cache is fresh for `14 days`; after that, loan initiation falls back to library defaults of `50%`, `62%`, and `73%` for tiers `1`, `2`, and `3`, respectively. A cache-stale-warning event should fire when values are older than `7 days` but still usable.
   - Peer LTV reads should normalize Aave V3 and Compound V3 values into BPS through low-level staticcalls that return clean `ok = false` flags for not-listed or reverted reads. Aave reserves must be active and not frozen; Compound asset info must match the queried asset. Morpho Blue support is a planned follow-up because market-id enumeration is per market rather than per asset.
   - Each tier refresh should read configured reference assets against configured peer protocols, accept a reference asset only when at least two peers agree within `15` percentage points, then accept a tier only when at least two reference assets contribute. The tier candidate is the resulting median minus the tier haircut.
@@ -527,6 +528,13 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 - With **no model registered (the default), nothing changes** — every offer
   carries exactly the rate its creator set. A model never re-prices a matched or
   live loan: the rate is fixed at loan initiation for the life of the position.
+- When a risk-premium model is registered, its premium is **dual-factor**: it
+  adds a collateral-risk premium (keyed on the collateral's liquidity tier —
+  thinner liquidity costs more, and an unknown or unpriceable collateral costs
+  the most) plus a tenor premium that scales with loan duration and is capped.
+  The premium only ever *adds* to the live market reference, and the market-band
+  clamp above bounds the result — so even a misconfigured premium can never push
+  an automated offer off-market; it fails toward the band edge, never wildly.
 
 ### Offer modification — in-place edit without cancel-and-re-post
 

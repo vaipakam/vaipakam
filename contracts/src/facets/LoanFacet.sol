@@ -628,8 +628,13 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
         uint256 hf = abi.decode(hfResult, (uint256));
         // Switch ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Switch OFF ⇒ today's HF ≥ 1.5.
-        uint256 hfFloor = tieredOn ? LibVaipakam.HF_LIQUIDATION_THRESHOLD : 150 * 1e16;
+        // cap is the binding buffer). Switch OFF ⇒ the runtime admission
+        // floor (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable
+        // in `[1.2e18, 2.0e18]`). Branch-aware by construction: only the
+        // non-tiered floor moves; the tiered regime keeps the 1e18 trigger.
+        uint256 hfFloor = tieredOn
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         if (hf < hfFloor) revert HealthFactorTooLow();
     }
 
