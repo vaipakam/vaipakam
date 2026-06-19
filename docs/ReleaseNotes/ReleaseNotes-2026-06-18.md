@@ -1,3 +1,10 @@
+# Release Notes — 2026-06-18
+
+Three PRs landed the outward-facing aggregator path and the first half of the
+protocol backstop: the ERC-4626 aggregator lender-adapter (#398 v1.5), backstop
+v0 Role A (#399, counterparty-of-last-resort), and real-principal KYC screening
+on the aggregator adapter (#627).
+
 ## Thread — ERC-4626 aggregator lender-adapter (v1.5)
 
 Yield aggregators (Yearn-style) can now supply capital to Vaipakam through a
@@ -48,3 +55,38 @@ resolved outside the normal auto-roll (e.g. a default) back into the adapter.
 Part of #398 / the #401 hybrid intent/liquidity program (phase v1.5). Builds on
 the standing-intent layer (#393); the offer-vs-intent capital isolation it relies
 on was settled in #621.
+
+### #399 — Treasury-seeded backstop, v0 Role A (counterparty-of-last-resort)
+
+The platform now has an optional, protocol-funded backstop that can step in as the
+lender when a borrower's offer would otherwise sit unmatched. It is governance-run,
+funded only from treasury capital, and off by default behind two independent
+kill-switches.
+
+How it works for a borrower: when posting a borrow offer, the borrower can opt it
+into backstop eligibility by setting a future deadline (which must be a genuine
+interval after posting and before the offer expires). If no ordinary lender takes
+the offer by that deadline — and the offer is still valid, unfilled, and backed by
+liquid, oracle-priced collateral within the protocol's risk limits — anyone can
+trigger the backstop to fund it from treasury at the backstop's posted terms. The
+borrower gets last-resort liquidity; the backstop becomes the lender of record and
+later recovers the repaid principal and interest back to the treasury.
+
+Governance controls every parameter: a master pause and a separate Role-A switch
+(both default off), per-asset capacity caps, the posted backstop rate, the
+collateral types the backstop will accept, and the minimum wait before a backstop
+fill can fire. The backstop holds its capital in its own isolated vault, never
+commingled with ordinary user deposits, and only ever lends against the specific,
+governance-vetted collateral assets it is configured for — a borrower cannot get
+funded against an arbitrary or illiquid token.
+
+This is the first half of the backstop. The liquidator-of-last-resort half (the
+backstop buying out a stuck, thin-market liquidation to make a lender whole) is a
+separate follow-up. Both remain off until governance explicitly enables and seeds
+the backstop.
+
+### #627 — Aggregator adapter screens its real principal's KYC
+
+The ERC-4626 aggregator lender-adapter (#398) lends as the on-chain lender-of-record, so when a deploy enables KYC enforcement the protocol's threshold KYC check landed on the adapter rather than on the aggregator that actually controls the capital. The adapter now screens its real principal's KYC inside `matchLoan`, at the exact transaction value the accept path itself computes (a new public view exposes that valuation, so there's no risk of a re-derived value drifting from the protocol's own).
+
+This has no effect on the retail product, where KYC enforcement is permanently off — the check short-circuits to "allowed" for every address, exactly like every other KYC call site. It matters only for the separate industrial-fork deploy that turns KYC on: there, an aggregator whose verification is missing or downgraded is blocked from originating new loans through the adapter, just as a direct lender would be. Completes the "screen the real principal" posture the adapter already applied to sanctions.
