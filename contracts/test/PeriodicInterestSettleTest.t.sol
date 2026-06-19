@@ -9,6 +9,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -34,7 +35,7 @@ contract PeriodicInterestSettleTest is SetupTest {
         setupHelper();
         // Enable the feature.
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
         // Bump the max offer duration so a 90-day loan with monthly
         // cadence fits without tripping the existing duration cap.
         vm.prank(owner);
@@ -206,7 +207,7 @@ contract PeriodicInterestSettleTest is SetupTest {
 
     function testSettle_RevertsWhenKillSwitchOff() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(false);
         vm.warp(startTs + 30 days + 1 days + 1);
         vm.expectRevert(IVaipakamErrors.PeriodicInterestDisabled.selector);
         RepayPeriodicFacet(address(diamond)).settlePeriodicInterest(loanId, _emptyAdapterCalls());

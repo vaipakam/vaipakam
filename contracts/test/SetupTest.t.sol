@@ -101,6 +101,7 @@ import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 // #229 — Close the remaining test-vs-prod facet drift. Post-#228
 // SetupTest cut 27 production facets + TestMutatorFacet (test-only)
 // = 28 cut[] entries; production cuts 36 (per
@@ -258,6 +259,7 @@ contract SetupTest is Test {
     VPFITokenFacet vpfiTokenFacet;
     TestMutatorFacet testMutatorFacet;
     ConfigFacet configFacet;
+    NumeraireConfigFacet numeraireConfigFacet;
     // #168 Track A — Phase-2 facet quartet routed to close the
     // test-vs-prod drift. Imports + cut entries below.
     EarlyWithdrawalFacet earlyWithdrawalFacet;
@@ -359,6 +361,7 @@ contract SetupTest is Test {
         vpfiTokenFacet = new VPFITokenFacet();
         testMutatorFacet = new TestMutatorFacet();
         configFacet = new ConfigFacet();
+        numeraireConfigFacet = new NumeraireConfigFacet();
         // #168 Track A — Phase-2 facet quartet construction (cut below).
         earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         partialWithdrawalFacet = new PartialWithdrawalFacet();
@@ -410,7 +413,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](59);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](60);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -505,6 +508,13 @@ contract SetupTest is Test {
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConfigFacetSelectors()
+        });
+        // #394 (Codex #647) — numeraire / PAD / periodic-interest config
+        // surface carved off ConfigFacet to keep it under EIP-170.
+        cuts[59] = IDiamondCut.FacetCut({
+            facetAddress: address(numeraireConfigFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getNumeraireConfigFacetSelectors()
         });
         // OfferCancelFacet — cancelOffer + read views, carved out of
         // OfferFacet for the EIP-170 split. Same selectors land on

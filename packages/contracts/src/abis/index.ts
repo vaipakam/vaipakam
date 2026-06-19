@@ -72,6 +72,7 @@ import VpfiBuyAdapterABI from './VpfiBuyAdapter.json';
 import VpfiBuyReceiverABI from './VpfiBuyReceiver.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
+import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
 // T-086 step 5 — executor↔diamond trust boundary for Seaport
 // prepay collateral sales (see contracts/src/seaport/CollateralListingExecutor.sol).
@@ -156,6 +157,7 @@ export {
   VpfiBuyReceiverABI,
   RewardReporterFacetABI,
   ConfigFacetABI,
+  NumeraireConfigFacetABI,
   LegalFacetABI,
   PrepayListingFacetABI,
   NFTPrepayListingFacetABI,
@@ -230,6 +232,7 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,
   ...ConfigFacetABI,
+  ...NumeraireConfigFacetABI,
   ...LegalFacetABI,
   ...PrepayListingFacetABI,
   ...NFTPrepayListingFacetABI,

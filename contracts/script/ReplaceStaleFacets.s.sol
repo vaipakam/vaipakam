@@ -9,6 +9,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -212,25 +213,29 @@ contract ReplaceStaleFacets is Script {
         s[5] = ConfigFacet.getGraceBuckets.selector;
         s[6] = ConfigFacet.getEffectiveGraceSeconds.selector;
         s[7] = ConfigFacet.getGraceSlotBounds.selector;
-        s[8] = ConfigFacet.setNumeraire.selector;
-        s[9] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
-        s[10] = ConfigFacet.setPreNotifyDays.selector;
-        s[11] = ConfigFacet.setPeriodicInterestEnabled.selector;
-        s[12] = ConfigFacet.setNumeraireSwapEnabled.selector;
-        s[13] = ConfigFacet.getPeriodicInterestConfig.selector;
-        s[14] = ConfigFacet.getNumeraireSymbol.selector;
-        s[15] = ConfigFacet.getEthNumeraireFeed.selector;
-        s[16] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
-        s[17] = ConfigFacet.getPreNotifyDays.selector;
-        s[18] = ConfigFacet.getPeriodicInterestEnabled.selector;
-        s[19] = ConfigFacet.getNumeraireSwapEnabled.selector;
-        s[20] = ConfigFacet.setPredominantDenominator.selector;
-        s[21] = ConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
-        s[22] = ConfigFacet.getPredominantDenominator.selector;
-        s[23] = ConfigFacet.getPredominantDenominatorSymbol.selector;
-        s[24] = ConfigFacet.getEthPadFeed.selector;
-        s[25] = ConfigFacet.getPadNumeraireRateFeed.selector;
-        s[26] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // #394 (Codex #647) — these 19 numeraire / PAD / periodic-interest
+        // selectors moved to `NumeraireConfigFacet`. The selector value is
+        // the signature hash (identical regardless of declaring contract);
+        // repointed so the host facet matches the post-split deploy.
+        s[8] = NumeraireConfigFacet.setNumeraire.selector;
+        s[9] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
+        s[10] = NumeraireConfigFacet.setPreNotifyDays.selector;
+        s[11] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
+        s[12] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
+        s[13] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
+        s[14] = NumeraireConfigFacet.getNumeraireSymbol.selector;
+        s[15] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
+        s[16] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
+        s[17] = NumeraireConfigFacet.getPreNotifyDays.selector;
+        s[18] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
+        s[19] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
+        s[20] = NumeraireConfigFacet.setPredominantDenominator.selector;
+        s[21] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        s[22] = NumeraireConfigFacet.getPredominantDenominator.selector;
+        s[23] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
+        s[24] = NumeraireConfigFacet.getEthPadFeed.selector;
+        s[25] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
+        s[26] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
     }
 
     /// @dev The 20 OracleAdminFacet selectors registered on the live

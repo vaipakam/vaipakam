@@ -78,6 +78,7 @@ FACETS=(
   "AdminFacet"
   "ClaimFacet"
   "ConfigFacet"
+  "NumeraireConfigFacet"
   "DefaultedFacet"
   "DiamondLoupeFacet"
   "EarlyWithdrawalFacet"
