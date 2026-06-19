@@ -69,6 +69,8 @@ contract AggregatorAdapterFactoryFacet is
     error AdapterAlreadyInitialized();
     /// @notice The address is not a factory-deployed aggregator adapter.
     error NotAnAggregatorAdapter();
+    /// @notice The #398 aggregator-adapter feature is paused by governance (#633).
+    error AggregatorAdaptersPaused();
     /// @notice The UUPS upgrade call on the adapter proxy reverted.
     error AdapterUpgradeFailed();
     /// @notice A voluntary (non-mandated) adapter migration was attempted by
@@ -141,6 +143,11 @@ contract AggregatorAdapterFactoryFacet is
         // Safe to omit: VAULT_ADMIN-gated, moves no funds, and the callbacks
         // target trusted intent/profile facets that never re-enter this factory.
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #633 — governance kill-switch: freeze new-adapter onboarding when the
+        // aggregator feature is paused (fills are gated in `matchIntent`).
+        if (LibVaipakam.cfgAggregatorAdaptersPaused()) {
+            revert AggregatorAdaptersPaused();
+        }
         if (s.aggregatorAdapterTemplate == address(0)) {
             revert AdapterTemplateNotSet();
         }

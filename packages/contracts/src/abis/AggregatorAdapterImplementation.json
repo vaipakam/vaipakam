@@ -1323,6 +1323,11 @@
   },
   {
     "type": "error",
+    "name": "KeepersGloballyPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAdapterLoan",
     "inputs": []
   },

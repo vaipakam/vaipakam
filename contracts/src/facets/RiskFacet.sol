@@ -638,7 +638,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 proceeds = proceedsFromSwap;
 
         // Calculate debt: principal + accrued interest + late fees (per README Section 7).
-        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
+        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         uint256 totalDebt = currentBorrowBalance + lateFee;
@@ -813,248 +813,6 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
     }
 
-
-
-    /**
-     * @notice HF-based liquidation via a **sum-to-input multi-route
-     *         split swap** — the higher-LTV-aware sibling of
-     *         {triggerLiquidation}. Used when off-chain quote analysis
-     *         shows a single adapter can't absorb the full liquidation
-     *         size at acceptable slippage but splitting across two-or-
-     *         more adapters can (depth-tiered LTV regime, the design's
-     *         "thinner cushion at liquidation" branch).
-     *
-     *         Routes the collateral through `LibSwap.swapWithSplit`
-     *         instead of `swapWithFailover`. Critically: **split is
-     *         atomic — any single leg revert reverts the whole tx, no
-     *         soft-failure / full-collateral-transfer fallback path.**
-     *         The keeper rationally only uses split when every leg's
-     *         quote analysis says it'll succeed; if a leg reverts
-     *         on-chain (price moved between quote and submission), the
-     *         retry path is {triggerLiquidation} (failover), which
-     *         handles soft-failure cleanly.
-     *
-     *         All other surface — pre-checks (sanctions, sequencer
-     *         circuit-breaker, HF<1, liquid-asset gate), collateral
-     *         withdrawal, expected-proceeds + minOutputAmount math, and
-     *         the entire post-swap distribution (dynamic incentive,
-     *         tiered-KYC, treasury / lender / borrower-surplus split,
-     *         lifecycle transition Active→Defaulted, VPFI forfeit,
-     *         interaction-rewards close, NFT-status updates,
-     *         `HFLiquidationTriggered` event) — is identical to
-     *         {triggerLiquidation}. The duplication is deliberate: keeps
-     *         the existing battle-tested path untouched. A future PR
-     *         (alongside partial-liquidation work — item 2 of the
-     *         liquidator-hardening list) can consolidate both into
-     *         shared helpers.
-     * @param loanId   Loan being liquidated. Must be Active with HF<1.
-     * @param splits   The split spec — `sum(splitAmount) == loan.collateralAmount`,
-     *                 each `adapterIdx` ∈ `[0, swapAdapters.length)`,
-     *                 each `data` is the keeper-supplied per-adapter
-     *                 calldata (aggregator routes recommended; raw V3 /
-     *                 Balancer adapters offer no slippage protection
-     *                 in split mode — see LibSwap.swapWithSplit).
-     */
-    function triggerLiquidationSplit(
-        uint256 loanId,
-        LibSwap.SplitCall[] calldata splits
-    ) external nonReentrant whenNotPaused {
-        // T-090 v1.1 (#389) §5.8 layer 2 — see `triggerLiquidation`.
-        // Inline storage pre-check so this entry point stays callable on
-        // diamonds that haven't cut `SwapToRepayIntentFacet` (the
-        // scenario suite + other diamond test harnesses that select
-        // facets a la carte). When no v1.1 intent commit is live for
-        // this loan, the cross-facet call is skipped entirely and we
-        // proceed straight to the standard liquidation flow.
-        if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
-            SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
-        }
-        // Sanctions / sequencer / HF / liquidity gates — identical to
-        // {triggerLiquidation}.
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Loan storage loan = s.loans[loanId];
-        if (loan.status != LibVaipakam.LoanStatus.Active) revert InvalidLoan();
-        s; // suppress unused-storage warning; the library reads it.
-        // T-086 step 10 — see {triggerLiquidation}'s sibling block.
-        LibPrepayCleanup.clearActiveListing(loan, loanId);
-        // #407 PR 4 (T-407-B) — see {triggerLiquidation}'s sibling block.
-        _releaseLienAtLiquidation(loanId);
-        if (!OracleFacet(address(this)).sequencerHealthy()) {
-            revert SequencerUnhealthy();
-        }
-        uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
-        if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
-        LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
-            .checkLiquidityOnActiveNetwork(loan.collateralAsset);
-        if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
-            revert NonLiquidAsset();
-
-        // Withdraw collateral to Diamond for the split swap.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                loan.collateralAmount
-            ),
-            VaultWithdrawFailed.selector
-        );
-
-        // Oracle-derived total minOutputAmount — same formula as the
-        // failover path. swapWithSplit enforces it on the *total* (not
-        // per-leg) so leg-asymmetric outcomes don't pessimistically fail.
-        uint256 expectedProceeds = LibFallback.expectedSwapOutput(
-            address(this),
-            loan.collateralAsset,
-            loan.principalAsset,
-            loan.collateralAmount
-        );
-        uint256 maxSlippageBps = LibVaipakam.cfgMaxLiquidationSlippageBps();
-        uint256 minOutputAmount = (expectedProceeds *
-            (LibVaipakam.BASIS_POINTS - maxSlippageBps)) /
-            LibVaipakam.BASIS_POINTS;
-
-        // The split swap. Reverts on sum mismatch, any leg revert, or
-        // total < minOutputAmount — no soft-failure return path.
-        uint256 proceeds = LibSwap.swapWithSplit(
-            loanId,
-            loan.collateralAsset,
-            loan.principalAsset,
-            loan.collateralAmount,
-            minOutputAmount,
-            address(this),
-            splits
-        );
-
-        // Calculate debt — identical to {triggerLiquidation}.
-        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
-        uint256 totalDebt = currentBorrowBalance + lateFee;
-        uint256 interestPortion = totalDebt - loan.principal;
-
-        // Dynamic liquidator incentive — identical to {triggerLiquidation}.
-        uint256 realizedSlippageBps;
-        if (proceeds < expectedProceeds) {
-            realizedSlippageBps = ((expectedProceeds - proceeds) * LibVaipakam.BASIS_POINTS)
-                / expectedProceeds;
-            if (realizedSlippageBps > maxSlippageBps) {
-                realizedSlippageBps = maxSlippageBps;
-            }
-        }
-        uint256 maxIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
-        uint256 incentiveBps = maxSlippageBps - realizedSlippageBps;
-        if (incentiveBps > maxIncentiveBps) {
-            incentiveBps = maxIncentiveBps;
-        }
-        uint256 assetCapBps = s.assetRiskParams[loan.collateralAsset].liqBonusBps;
-        if (assetCapBps != 0 && incentiveBps > assetCapBps) incentiveBps = assetCapBps;
-        uint256 bonus = (proceeds * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        if (bonus > proceeds) bonus = proceeds;
-
-        // Tiered-KYC check for the liquidator — identical to {triggerLiquidation}.
-        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-            .getAssetPrice(loan.principalAsset);
-        uint8 tokenDecimals = IERC20Metadata(loan.principalAsset).decimals();
-        uint256 bonusNumeraire = (bonus * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        if (!ProfileFacet(address(this)).meetsKYCRequirement(msg.sender, bonusNumeraire))
-            revert KYCRequired();
-
-        // Bonus to liquidator + treasury handling fee — identical.
-        if (bonus > 0) {
-            IERC20(loan.principalAsset).safeTransfer(msg.sender, bonus);
-        }
-        uint256 handlingFee = (proceeds * LibVaipakam.cfgLiquidationHandlingFeeBps())
-            / LibVaipakam.BASIS_POINTS;
-        if (bonus + handlingFee > proceeds) {
-            handlingFee = proceeds - bonus;
-        }
-
-        // Distribution — identical to {triggerLiquidation}.
-        uint256 afterFees = proceeds - bonus - handlingFee;
-        address treasury = s.treasury;
-        uint256 allocated = afterFees > totalDebt ? totalDebt : afterFees;
-        uint256 borrowerSurplus = afterFees > totalDebt ? afterFees - totalDebt : 0;
-        uint256 treasuryInterestFee;
-        uint256 lenderProceeds;
-        if (allocated > loan.principal) {
-            uint256 interestRecovered = allocated - loan.principal;
-            if (interestRecovered > interestPortion) interestRecovered = interestPortion;
-            (treasuryInterestFee, ) = LibEntitlement.splitTreasury(interestRecovered);
-            lenderProceeds = allocated - treasuryInterestFee;
-        } else {
-            treasuryInterestFee = 0;
-            lenderProceeds = allocated;
-        }
-        uint256 toTreasury = handlingFee + treasuryInterestFee;
-        if (toTreasury > 0) {
-            IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
-            LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
-        }
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
-        s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: lenderProceeds,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: false
-        });
-        // #592 — reserve VPFI lender proceeds against the unstake path until
-        // the current holder claims; ClaimFacet releases. No-op for non-VPFI.
-        if (loan.principalAsset == s.vpfiToken) {
-            LibEncumbrance.encumberLenderProceeds(
-                loanId, loan.lender, loan.principalAsset, lenderProceeds
-            );
-        }
-        if (borrowerSurplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
-        }
-        s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
-            asset: loan.principalAsset,
-            amount: borrowerSurplus,
-            assetType: LibVaipakam.AssetType.ERC20,
-            tokenId: 0,
-            quantity: 0,
-            claimed: borrowerSurplus == 0
-        });
-
-        // Close loan + VPFI forfeit + rewards + NFT status — identical.
-        LibLifecycle.transition(
-            loan,
-            LibVaipakam.LoanStatus.Active,
-            LibVaipakam.LoanStatus.Defaulted
-        );
-        LibVPFIDiscount.forfeitBorrowerLif(loan);
-        LibInteractionRewards.closeLoan(loanId, false, false);
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.lenderTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanLiquidated
-            ),
-            NFTStatusUpdateFailed.selector
-        );
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaipakamNFTFacet.updateNFTStatus.selector,
-                loan.borrowerTokenId,
-                loanId,
-                LibVaipakam.LoanPositionStatus.LoanLiquidated
-            ),
-            NFTStatusUpdateFailed.selector
-        );
-        emit HFLiquidationTriggered(loanId, msg.sender, proceeds);
-    }
 
     /**
      * @notice HF-restoring **partial** liquidation — the higher-LTV-aware
@@ -1244,7 +1002,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Debt accounting at partial time. Late fee = 0 by the in-term
         // guard above. interestPortion = currentBorrow - principal.
-        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
+        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
         uint256 interestPortion = currentBorrowBalance - loan.principal;
 
         // Dynamic-incentive bonus — same formula as full, scoped to slice.
@@ -1550,7 +1308,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
         // Debt — same shape as atomic path.
-        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
+        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         uint256 totalDebt = currentBorrowBalance + lateFee;
@@ -1946,19 +1704,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     }
 
     // Internal helper for current borrow balance with accrued interest
-    function _calculateCurrentBorrowBalance(
-        LibVaipakam.Loan memory loan
-    ) internal view returns (uint256) {
-        uint256 elapsed = block.timestamp - loan.startTime;
-        // Rounds DOWN — borrower-favourable by <=1 wei of principal token,
-        // following the standard simple-interest accrual convention.
-        // Multiplication happens first (principal * rate * elapsed) so the
-        // numerator keeps full precision before the divide.
-        uint256 accruedInterest = (loan.principal *
-            loan.interestRateBps *
-            elapsed) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
-        return loan.principal + accruedInterest;
-    }
+    /// @dev `_calculateCurrentBorrowBalance` (seconds-precise borrow balance)
+    ///      was promoted to {LibEntitlement.currentBorrowBalance} in the #66
+    ///      RiskFacet/RiskMatchLiquidationFacet split so both facets share
+    ///      one accrual model. Call sites here now read the library helper.
 
     /// @dev Fetch oracle prices and ERC20 decimals for principal and
     ///      collateral, returning each side's value quoted in the active
@@ -1970,7 +1719,7 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     function _computeNumeraireValues(
         LibVaipakam.Loan storage loan
     ) internal view returns (uint256 borrowValueNumeraire, uint256 collateralValueNumeraire) {
-        uint256 currentBorrowBalance = _calculateCurrentBorrowBalance(loan);
+        uint256 currentBorrowBalance = LibEntitlement.currentBorrowBalance(loan);
 
         (uint256 borrowPrice, uint8 borrowFeedDecimals) = OracleFacet(address(this))
             .getAssetPrice(loan.principalAsset);

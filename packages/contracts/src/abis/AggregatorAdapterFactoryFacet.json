@@ -354,6 +354,11 @@
   },
   {
     "type": "error",
+    "name": "AggregatorAdaptersPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "EnforcedPause",
     "inputs": []
   },

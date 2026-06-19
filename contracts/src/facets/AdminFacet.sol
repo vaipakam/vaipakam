@@ -128,6 +128,9 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
     /// @custom:event-category informational/config
     event SwapAdapterRemoved(uint256 indexed index, address indexed adapter);
 
+    /// @notice #633 — emitted when a swap venue is paused/unpaused by address.
+    event SwapAdapterDisabledSet(address indexed adapter, bool disabled);
+
     /// @notice Emitted when the swap adapter chain is reordered. The
     ///         full new ordering is emitted so off-chain monitors can
     ///         pick it up atomically. Phase 7a.
@@ -240,6 +243,102 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
             }
         }
         revert SwapAdapterNotRegistered();
+    }
+
+    /// @notice #633 — pause/unpause a single swap venue without de-registering it.
+    /// @dev ADMIN_ROLE-only (Timelock post-handover). Keyed by adapter ADDRESS,
+    ///      so it survives `swapAdapters` reordering/removal (unlike an index).
+    ///      A disabled adapter is SKIPPED by {LibSwap}'s failover + split routing,
+    ///      so a compromised or illiquid venue can be paused while liquidations
+    ///      keep routing through the remaining venues. Default `false` = active.
+    ///      Emits {SwapAdapterDisabledSet}.
+    /// @param adapter  The registered adapter to toggle.
+    /// @param disabled True to pause, false to re-activate.
+    function setSwapAdapterDisabled(address adapter, bool disabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (adapter == address(0)) revert InvalidAddress();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Reject typo/stale addresses: routing only consults swapAdapterDisabled
+        // for adapters present in `swapAdapters`, so pausing an unregistered
+        // address would be a silent no-op that leaves the intended venue usable.
+        uint256 n = s.swapAdapters.length;
+        bool found;
+        for (uint256 i = 0; i < n; ++i) {
+            if (s.swapAdapters[i] == adapter) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) revert SwapAdapterNotRegistered();
+        s.swapAdapterDisabled[adapter] = disabled;
+        emit SwapAdapterDisabledSet(adapter, disabled);
+    }
+
+    /// @notice #633 — whether a swap venue is currently paused (skipped by routing).
+    function isSwapAdapterDisabled(address adapter) external view returns (bool) {
+        return LibVaipakam.storageSlot().swapAdapterDisabled[adapter];
+    }
+
+    // ─── #633 feature kill-switches (pause semantics; default false = active) ───
+    // Housed on AdminFacet (not ConfigFacet, which is at the EIP-170 edge);
+    // cohesive with the swap-venue pause above. ADMIN_ROLE now, Timelock after
+    // handover. Default active ⇒ fresh deploy preserves current behaviour.
+
+    /// @notice Emitted when the #398 aggregator-adapter feature is paused/unpaused.
+    event AggregatorAdaptersPausedSet(bool paused);
+    /// @notice Emitted when the global delegated-keeper pause is toggled.
+    event KeepersPausedSet(bool paused);
+    /// @notice Emitted when peer-protocol LTV reads are paused/unpaused.
+    event PeerLtvReadsPausedSet(bool paused);
+
+    /// @notice Pause/unpause the #398 ERC-4626 aggregator-adapter feature
+    ///         (new-adapter onboarding + adapter-intent fills).
+    function setAggregatorAdaptersPaused(bool value)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.aggregatorAdaptersPaused = value;
+        emit AggregatorAdaptersPausedSet(value);
+    }
+
+    /// @notice Globally pause/unpause DELEGATED keeper actions (NFT owners can
+    ///         still act directly; permissionless liquidation is unaffected).
+    function setKeepersPaused(bool value)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().protocolCfg.keepersPaused = value;
+        emit KeepersPausedSet(value);
+    }
+
+    /// @notice #633 — the global delegated-keeper pause flag. External so the
+    ///         aggregator adapters (which gate their keeper forwarders on it) and
+    ///         the frontend can read it.
+    function keepersPaused() external view returns (bool) {
+        return LibVaipakam.storageSlot().protocolCfg.keepersPaused;
+    }
+
+    /// @notice Pause/unpause optional peer-protocol (Aave/Compound) LTV reads;
+    ///         when paused the depth-tiered LTV falls back to governance defaults.
+    function setPeerLtvReadsPaused(bool value)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.protocolCfg.peerLtvReadsPaused = value;
+        // #633 (Codex r3 P1) — invalidate the peer-LTV cache on every toggle.
+        // Otherwise UNPAUSING would immediately re-trust any still-fresh cached
+        // entry — including the compromised reading the pause was meant to
+        // neutralize — before `refreshTierLtvCache()` (which can't run while
+        // paused) is re-run. Zeroing `lastRefreshedAt` forces
+        // `effectiveTierMaxInitLtvBps` to use the governance cap until a fresh
+        // post-unpause refresh succeeds.
+        for (uint8 t = 1; t <= LibVaipakam.MAX_LIQUIDITY_TIER; ++t) {
+            s.tierLtvCache[t].lastRefreshedAt = 0;
+        }
+        emit PeerLtvReadsPausedSet(value);
     }
 
     /// @notice Replace the adapter order with an explicit permutation.

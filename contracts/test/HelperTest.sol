@@ -22,6 +22,7 @@ import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicF
 import {NFTPrepayAutoListFacet} from "../src/facets/NFTPrepayAutoListFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
@@ -366,7 +367,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](34);
+        selectors = new bytes4[](40);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -407,6 +408,13 @@ contract HelperTest {
         selectors[31] = AdminFacet.getAutoLendEnabled.selector;
         selectors[32] = AdminFacet.getAutoRefinanceEnabled.selector;
         selectors[33] = AdminFacet.getAutoExtendEnabled.selector;
+        // #633 — per-venue swap-adapter pause + feature kill-switches.
+        selectors[34] = AdminFacet.setSwapAdapterDisabled.selector;
+        selectors[35] = AdminFacet.isSwapAdapterDisabled.selector;
+        selectors[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        selectors[37] = AdminFacet.setKeepersPaused.selector;
+        selectors[38] = AdminFacet.setPeerLtvReadsPaused.selector;
+        selectors[39] = AdminFacet.keepersPaused.selector;
         return selectors;
     }
 
@@ -807,21 +815,19 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](8);
+        // `triggerLiquidationSplit` relocated to RiskSplitLiquidationFacet
+        // (#66 + #633) — see getRiskSplitLiquidationFacetSelectors.
+        selectors = new bytes4[](7);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
-        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
-        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
-        // atomic-revert-on-leg-failure (no soft-failure fallback).
-        selectors[5] = RiskFacet.triggerLiquidationSplit.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
-        selectors[6] = RiskFacet.triggerPartialLiquidation.selector;
+        selectors[5] = RiskFacet.triggerPartialLiquidation.selector;
         // Flash-loan / liquidator-buys-at-discount path
         // (`docs/DesignsAndPlans/FlashLoanLiquidationPath.md`). Caller
         // pays `totalDebt` in principal-asset; protocol seizes
@@ -829,7 +835,7 @@ contract HelperTest {
         // `recipient`. Master kill-switch `discountPathEnabled` is off
         // by default — the selector is wired but the entry-point
         // reverts `DiscountPathDisabled` until governance flips it.
-        selectors[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        selectors[6] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @notice Selectors for `RiskMatchLiquidationFacet` — the
@@ -851,6 +857,20 @@ contract HelperTest {
             RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         selectors[1] =
             RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+    }
+
+    /// @notice Selectors for `RiskSplitLiquidationFacet` — the split-route
+    ///         HF liquidator carved out of `RiskFacet` (#66 + #633) so the
+    ///         `LibSwap.swapWithSplit` inline lands in fresh headroom rather
+    ///         than tipping RiskFacet over the EIP-170 size limit.
+    function getRiskSplitLiquidationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] =
+            RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
     function getClaimFacetSelectors()

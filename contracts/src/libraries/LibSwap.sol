@@ -93,6 +93,9 @@ library LibSwap {
 
     error NoSwapAdaptersConfigured();
     error AdapterIndexOutOfRange(uint256 adapterIdx, uint256 registeredCount);
+    /// @notice #633 — a governance-paused swap venue was supplied to an atomic
+    ///         split route (no-arg to minimise inlined bytecode in RiskFacet).
+    error SwapVenuePaused();
     error SplitSumMismatch(uint256 sum, uint256 inputAmount);
     error SplitMinOutputUnderfilled(uint256 totalOutput, uint256 minOutputAmount);
     error EmptySplitList();
@@ -169,6 +172,9 @@ library LibSwap {
                 revert AdapterIndexOutOfRange(idx, registeredCount);
             }
             address adapter = s.swapAdapters[idx];
+            // #633 — skip a governance-paused venue and fail over to the next
+            // entry, so a compromised/illiquid adapter doesn't abort the chain.
+            if (s.swapAdapterDisabled[adapter]) continue;
 
             // Exact-scope approval — zero first (handles USDT-style
             // non-zero-approve guards), then set to inputAmount for
@@ -275,7 +281,12 @@ library LibSwap {
             if (amount == 0) continue; // zero-amount legs no-op cleanly
             uint256 idx = splits[i].adapterIdx;
             address adapter = s.swapAdapters[idx];
-
+            // #633 — split liquidation is atomic + its entry point is
+            // permissionless, and each leg carries minOutput=0 (only the
+            // *total* is floored), so a governance-disabled venue could
+            // otherwise be called here with an unprotected per-leg output.
+            // Reject it on-chain; reverting unwinds the earlier legs.
+            if (s.swapAdapterDisabled[adapter]) revert SwapVenuePaused();
             input.forceApprove(adapter, 0);
             input.forceApprove(adapter, amount);
 

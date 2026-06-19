@@ -1090,6 +1090,33 @@ library LibVaipakam {
         // Role A, and vice-versa. Still subordinate to the `backstopEnabled`
         // master pause. See BackstopVaultV0Design.md §6.
         bool backstopAbsorbEnabled;
+        // ── #633 admin/governance kill-switches over CURRENTLY-ON features ──
+        // PAUSE semantics (not enable): default `false` = feature ACTIVE, so a
+        // fresh deploy preserves current behaviour with no init and no test
+        // breakage; admin/governance flips to `true` to disable in an incident
+        // (→ Governance Safe / Timelock after handover). Distinct from the
+        // `*Enabled` flags above, which gate OFF-by-default features.
+        //
+        // Freezes the #398 ERC-4626 aggregator-adapter feature: new-adapter
+        // onboarding (`createAggregatorAdapter` / `publishAdapterImplementation`)
+        // AND fills of an existing adapter's intent (gated in `matchIntent` on
+        // `isAggregatorAdapter[lender]`). Narrower than the blunt
+        // `lenderIntentEnabled` master, which also freezes user intents + backstop.
+        bool aggregatorAdaptersPaused;
+        // Global keeper pause: freezes every DELEGATED keeper action
+        // (`LibAuth.requireKeeperFor` / `requireKeeperForPrincipal` + the
+        // `KEEPER_ROLE` backstop absorb) protocol-wide. NFT owners can still act
+        // on their own positions directly (the owner short-circuit runs first);
+        // permissionless HF-liquidation is intentionally NOT gated (must stay
+        // always-available). Complements the per-user `keeperAccessEnabled[user]`.
+        bool keepersPaused;
+        // Freezes the optional peer-protocol LTV reads (Aave / Compound, via
+        // `LibPeerLTV` in `OracleFacet.refreshTierLtvCache`) so the depth-tiered
+        // LTV falls back to the governance-set defaults if a peer source is
+        // compromised. Does NOT touch the protocol's own core oracle / liquidity
+        // layer (that's governed separately by the oracle-admin config + the
+        // multi-venue quorum, not an optional peer dependency).
+        bool peerLtvReadsPaused;
     }
 
     /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
@@ -4169,6 +4196,15 @@ library LibVaipakam {
         // so a sweep can never reach the seeded absorb CASH that shares the same
         // vault when one pair's collateral token equals another pair's principal.
         mapping(address => uint256) backstopWarehousedCollateral;
+        // ─── #633 — per-venue swap-adapter pause (APPEND-ONLY tail) ─────────
+        /// @dev Keyed by adapter ADDRESS (robust to `swapAdapters` reordering /
+        ///      removal). `true` ⇒ {LibSwap} / the claim retry loop skip this
+        ///      adapter, so governance can pause a compromised or illiquid venue
+        ///      (0x / 1inch / UniV3 / Balancer) WITHOUT `removeSwapAdapter`
+        ///      shifting every other adapter's index. Declared at the struct TAIL
+        ///      so in-place storage upgrades don't shift existing slots. Default
+        ///      `false` = active. Set via `AdminFacet.setSwapAdapterDisabled`.
+        mapping(address => bool) swapAdapterDisabled;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4920,6 +4956,21 @@ library LibVaipakam {
         return storageSlot().protocolCfg.backstopAbsorbEnabled;
     }
 
+    /// @dev #633 — aggregator-adapter (#398) feature pause (default false=active).
+    function cfgAggregatorAdaptersPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.aggregatorAdaptersPaused;
+    }
+
+    /// @dev #633 — global delegated-keeper pause (default false=active).
+    function cfgKeepersPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.keepersPaused;
+    }
+
+    /// @dev #633 — peer-protocol LTV reads pause (default false=active).
+    function cfgPeerLtvReadsPaused() internal view returns (bool) {
+        return storageSlot().protocolCfg.peerLtvReadsPaused;
+    }
+
     /// @dev #399 backstop v0 — mandatory min seconds before an offer's
     ///      `backstopEligibleAfter` may fire; 0 ⇒ `BACKSTOP_MIN_DELAY_DEFAULT`.
     function cfgMinBackstopDelay() internal view returns (uint64) {
@@ -5611,14 +5662,24 @@ library LibVaipakam {
     function effectiveTierMaxInitLtvBps(uint8 tier) internal view returns (uint16) {
         if (tier == 0 || tier > MAX_LIQUIDITY_TIER) return 0;
         Storage storage s = storageSlot();
-        TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
-        if (
-            entry.lastRefreshedAt > 0 &&
-            block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
-        ) {
-            return entry.ltvBps;
+        // #633 — only trust the cached peer-derived value when peer reads are NOT
+        // paused. While paused (and in the window after an unpause, before a fresh
+        // refresh, when the cache was invalidated) the cache is skipped.
+        if (!s.protocolCfg.peerLtvReadsPaused) {
+            TierLtvCacheEntry storage entry = s.tierLtvCache[tier];
+            if (
+                entry.lastRefreshedAt > 0 &&
+                block.timestamp - uint256(entry.lastRefreshedAt) <= TIER_LTV_CACHE_HARD_TTL
+            ) {
+                return entry.ltvBps;
+            }
         }
-        return tierLtvLibraryDefaultBps(tier);
+        // #633 — the cache-miss / paused fallback is the GOVERNANCE-configured tier
+        // cap (which itself defaults to the library value when unset), NOT the bare
+        // library default — so a governance-tightened Tier-2/3 cap is enforced both
+        // during a pause AND in the post-unpause window before a fresh refresh,
+        // never temporarily reopening at the looser hard-coded default.
+        return uint16(cfgTierMaxInitLtvBps(tier));
     }
 
     // ─── FlashLoanLiquidationPath.md — per-tier discount accessors ─────

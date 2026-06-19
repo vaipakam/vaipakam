@@ -37,6 +37,7 @@ import IntentConfigFacetABI from './IntentConfigFacet.json';
 import DefaultedFacetABI from './DefaultedFacet.json';
 import RiskFacetABI from './RiskFacet.json';
 import RiskMatchLiquidationFacetABI from './RiskMatchLiquidationFacet.json';
+import RiskSplitLiquidationFacetABI from './RiskSplitLiquidationFacet.json';
 import ClaimFacetABI from './ClaimFacet.json';
 import OracleFacetABI from './OracleFacet.json';
 import OracleAdminFacetABI from './OracleAdminFacet.json';
@@ -121,6 +122,7 @@ export {
   DefaultedFacetABI,
   RiskFacetABI,
   RiskMatchLiquidationFacetABI,
+  RiskSplitLiquidationFacetABI,
   ClaimFacetABI,
   OracleFacetABI,
   OracleAdminFacetABI,
@@ -195,6 +197,7 @@ export const DIAMOND_ABI = [
   ...DefaultedFacetABI,
   ...RiskFacetABI,
   ...RiskMatchLiquidationFacetABI,
+  ...RiskSplitLiquidationFacetABI,
   ...ClaimFacetABI,
   ...OracleFacetABI,
   ...OracleAdminFacetABI,

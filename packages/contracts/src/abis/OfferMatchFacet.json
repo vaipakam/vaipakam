@@ -481,6 +481,11 @@
   },
   {
     "type": "error",
+    "name": "AggregatorAdaptersPaused",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AmountNoOverlap",
     "inputs": []
   },

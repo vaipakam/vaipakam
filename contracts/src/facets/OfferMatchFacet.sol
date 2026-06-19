@@ -105,6 +105,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         that only the direct accept-and-refinance path can honour
     ///         atomically, so they are excluded from the partial-fill matcher.
     error RefinanceTaggedOfferNotMatchable();
+    /// @notice #633 — the #398 aggregator-adapter feature is paused by governance,
+    ///         so an aggregator's intent cannot be filled (user intents still can).
+    error AggregatorAdaptersPaused();
 
     /// @notice Range Orders Phase 1 — bot-facing preview of a candidate
     ///         (lender, borrower) match. Pure view; runs the validity
@@ -370,6 +373,12 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         // intent-path kill-switch. Both default off on a fresh deploy.
         if (!s.protocolCfg.partialFillEnabled) revert FunctionDisabled(3);
         if (!s.protocolCfg.lenderIntentEnabled) revert FunctionDisabled(4);
+        // #633 — when the aggregator-adapter feature is paused, freeze fills of an
+        // aggregator's intent specifically (user/backstop intents keep matching).
+        if (
+            s.isAggregatorAdapter[lender] &&
+            LibVaipakam.cfgAggregatorAdaptersPaused()
+        ) revert AggregatorAdaptersPaused();
 
         LibVaipakam.LenderIntent memory intent =
             s.lenderIntent[lender][lendingAsset][collateralAsset];

@@ -114,6 +114,9 @@ interface IVaipakamIntentSurface {
 
     function isAssetPaused(address asset) external view returns (bool);
 
+    /// @dev #633 — the Diamond's global delegated-keeper pause flag.
+    function keepersPaused() external view returns (bool);
+
     function paused() external view returns (bool);
 
     /// @dev The 4th return value `upgradeRequired` is true iff `user` has a vault
@@ -226,6 +229,9 @@ contract AggregatorAdapterImplementation is
     /// @notice Raised when a match/roll forwarder caller is neither the
     ///         designated keeper nor the authorized principal.
     error NotKeeperOrPrincipal();
+    /// @notice #633 — the Diamond's global delegated-keeper pause is active, so the
+    ///         adapter's keeper cannot drive match/roll/claim through the adapter.
+    error KeepersGloballyPaused();
     /// @notice Raised when the adapter is below a mandated upgrade floor and a
     ///         new deposit is attempted (upgrade-or-halt; exit stays open).
     error AdapterUpgradeRequired();
@@ -529,8 +535,14 @@ contract AggregatorAdapterImplementation is
 
     /// @dev Caller must be the designated keeper or the principal.
     function _onlyKeeperOrPrincipal() private view {
-        if (msg.sender != keeper && msg.sender != authorizedPrincipal) {
-            revert NotKeeperOrPrincipal();
+        if (msg.sender == authorizedPrincipal) return; // principal always allowed
+        if (msg.sender != keeper) revert NotKeeperOrPrincipal();
+        // #633 — the delegated KEEPER path honours the Diamond's global keeper
+        // pause (the adapter's keeper is authorized on the adapter, not via the
+        // Diamond's per-loan keeper system, so it would otherwise bypass it). The
+        // principal acting for itself is never gated by the keeper pause.
+        if (IVaipakamIntentSurface(diamond).keepersPaused()) {
+            revert KeepersGloballyPaused();
         }
     }
 

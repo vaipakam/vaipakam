@@ -31,6 +31,7 @@ import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -227,6 +228,7 @@ contract SetupTest is Test {
     DefaultedFacet defaultFacet;
     RiskFacet riskFacet; // Added
     RiskMatchLiquidationFacet riskMatchLiquidationFacet;
+    RiskSplitLiquidationFacet riskSplitLiquidationFacet;
     RepayFacet repayFacet;
     RepayPeriodicFacet repayPeriodicFacet;
     SwapToRepayFacet swapToRepayFacet;
@@ -333,6 +335,7 @@ contract SetupTest is Test {
         defaultFacet = new DefaultedFacet();
         riskFacet = new RiskFacet();
         riskMatchLiquidationFacet = new RiskMatchLiquidationFacet();
+        riskSplitLiquidationFacet = new RiskSplitLiquidationFacet();
         repayFacet = new RepayFacet();
         repayPeriodicFacet = new RepayPeriodicFacet();
         swapToRepayFacet = new SwapToRepayFacet();
@@ -407,7 +410,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](58);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](59);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -527,6 +530,12 @@ contract SetupTest is Test {
             facetAddress: address(riskMatchLiquidationFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskMatchLiquidationFacetSelectors()
+        });
+        // #66 + #633 — split-route HF liquidator carved out of RiskFacet.
+        cuts[58] = IDiamondCut.FacetCut({
+            facetAddress: address(riskSplitLiquidationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskSplitLiquidationFacetSelectors()
         });
         // OfferMatchFacet — Range Orders Phase 1 matching surface
         // (`matchOffers` + `previewMatch`). The production deploy cuts

@@ -38,6 +38,7 @@ import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
@@ -182,6 +183,8 @@ contract DeployDiamond is Script {
         RiskFacet riskFacet = new RiskFacet();
         RiskMatchLiquidationFacet riskMatchLiquidationFacet =
             new RiskMatchLiquidationFacet();
+        RiskSplitLiquidationFacet riskSplitLiquidationFacet =
+            new RiskSplitLiquidationFacet();
         ClaimFacet claimFacet = new ClaimFacet();
         AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
         TreasuryFacet treasuryFacet = new TreasuryFacet();
@@ -237,7 +240,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](57);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](58);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -276,6 +279,11 @@ contract DeployDiamond is Script {
         cuts[34] = _buildCut(
             address(riskMatchLiquidationFacet),
             _getRiskMatchLiquidationSelectors()
+        );
+        // #66 + #633 — split-route HF liquidator carved out of RiskFacet.
+        cuts[57] = _buildCut(
+            address(riskSplitLiquidationFacet),
+            _getRiskSplitLiquidationSelectors()
         );
         // Issue #67 — OfferFacet's accept half. The create half is
         // cuts[9]; both replace the former single `offerFacet` cut.
@@ -725,6 +733,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("defaultedFacet",          address(defaultedFacet));
         Deployments.writeFacet("riskFacet",               address(riskFacet));
         Deployments.writeFacet("riskMatchLiquidationFacet", address(riskMatchLiquidationFacet));
+        Deployments.writeFacet("riskSplitLiquidationFacet", address(riskSplitLiquidationFacet));
         Deployments.writeFacet("claimFacet",              address(claimFacet));
         Deployments.writeFacet("addCollateralFacet",      address(addCollateralFacet));
         Deployments.writeFacet("treasuryFacet",           address(treasuryFacet));
@@ -785,6 +794,7 @@ contract DeployDiamond is Script {
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("RiskMatchLiquidationFacet:", address(riskMatchLiquidationFacet));
+        console.log("RiskSplitLiquidationFacet:", address(riskSplitLiquidationFacet));
         console.log("ClaimFacet:           ", address(claimFacet));
         console.log("AddCollateralFacet:   ", address(addCollateralFacet));
         console.log("TreasuryFacet:        ", address(treasuryFacet));
@@ -877,7 +887,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](34);
+        s = new bytes4[](40);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -921,6 +931,13 @@ contract DeployDiamond is Script {
         s[31] = AdminFacet.getAutoLendEnabled.selector;
         s[32] = AdminFacet.getAutoRefinanceEnabled.selector;
         s[33] = AdminFacet.getAutoExtendEnabled.selector;
+        // #633 — per-venue swap-adapter pause + feature kill-switches.
+        s[34] = AdminFacet.setSwapAdapterDisabled.selector;
+        s[35] = AdminFacet.isSwapAdapterDisabled.selector;
+        s[36] = AdminFacet.setAggregatorAdaptersPaused.selector;
+        s[37] = AdminFacet.setKeepersPaused.selector;
+        s[38] = AdminFacet.setPeerLtvReadsPaused.selector;
+        s[39] = AdminFacet.keepersPaused.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
@@ -1435,28 +1452,29 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](8);
+        // `triggerLiquidationSplit` was relocated to
+        // `RiskSplitLiquidationFacet` (#66 + #633 split — see
+        // `_getRiskSplitLiquidationSelectors`) so the `LibSwap.swapWithSplit`
+        // inline lands in fresh headroom rather than tipping RiskFacet over
+        // the EIP-170 limit.
+        s = new bytes4[](7);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
-        // Higher-LTV-aware liquidator (Piece B follow-up — split-route).
-        // Sum-to-input multi-route swap via `LibSwap.swapWithSplit`;
-        // atomic-revert-on-leg-failure (no soft-failure fallback path).
-        s[5] = RiskFacet.triggerLiquidationSplit.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
         // HF-improves + HF>=1 post-mutation gates.
-        s[6] = RiskFacet.triggerPartialLiquidation.selector;
+        s[5] = RiskFacet.triggerPartialLiquidation.selector;
         // FlashLoanLiquidationPath.md — liquidator-buys-at-discount.
         // Caller pays `totalDebt` in principal-asset; protocol seizes
         // collateral at per-tier discount and delivers to `recipient`.
         // Master kill-switch `discountPathEnabled` off by default — the
         // selector is wired but the entry-point reverts
         // `DiscountPathDisabled` until governance flips it on per chain.
-        s[7] = RiskFacet.triggerLiquidationDiscounted.selector;
+        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
     }
 
     /// @dev Selectors for `RiskMatchLiquidationFacet` — the internal-match
@@ -1479,6 +1497,21 @@ contract DeployDiamond is Script {
         s = new bytes4[](2);
         s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
         s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+    }
+
+    /// @dev Selectors for `RiskSplitLiquidationFacet` — the higher-LTV-aware
+    ///      split-route HF liquidator carved out of `RiskFacet` (#66 + #633)
+    ///      so the `LibSwap.swapWithSplit` inline (incl. the disabled-venue
+    ///      guard) lands in fresh headroom instead of tipping RiskFacet over
+    ///      the EIP-170 size limit. Single entry point; permissionless;
+    ///      atomic-revert-on-leg-failure with no soft-failure fallback.
+    function _getRiskSplitLiquidationSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
+        s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
     function _getClaimSelectors() internal pure returns (bytes4[] memory s) {

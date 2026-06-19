@@ -36,8 +36,10 @@ abstract contract DiamondFacetNames {
     ///      49 → 50 in T-087 Sub 3.B with `IntentDispatchFacet`;
     ///      54 → 55 in #393 v1 with `LenderIntentFacet`;
     ///      55 → 56 in #398 v1.5 with `AggregatorAdapterFactoryFacet`;
-    ///      56 → 57 in #399 v2.5 with `BackstopFacet`.)
-    function cutFacetNames() internal pure returns (string[57] memory) {
+    ///      56 → 57 in #399 v2.5 with `BackstopFacet`;
+    ///      57 → 58 in #633 with `RiskSplitLiquidationFacet` (split-route
+    ///      HF liquidator carved out of `RiskFacet` for EIP-170 headroom).)
+    function cutFacetNames() internal pure returns (string[58] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -107,6 +109,7 @@ abstract contract DiamondFacetNames {
             "RewardReporterFacet",
             "RiskFacet",
             "RiskMatchLiquidationFacet",
+            "RiskSplitLiquidationFacet",
             "StakingRewardsFacet",
             "SwapToRepayFacet",
             "SwapToRepayIntentFacet",
