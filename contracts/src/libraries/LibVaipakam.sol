@@ -322,6 +322,34 @@ library LibVaipakam {
     // ceiling is also the hard upper bound at the setter: a partial
     // can never swap more than 100% of remaining collateral, by definition.
     uint256 constant MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT = 10_000;
+    // #395 graduated partial-liquidation sizing (Approach A). The two HF
+    // thresholds are BPS-of-HF_SCALE; the dust floor is whole-numeraire — the
+    // same scale {RiskFacet._computeNumeraireValues} returns ($1k == 1_000
+    // with 8-decimal feeds, NOT 1e18-scaled). See the per-field notes below.
+    //  - Target HF ceiling: a routine partial may not leave the borrower
+    //    above this HF (prevents over-liquidation). Default HF 1.20.
+    //    Bounded (1.05, 1.50] so it always sits strictly above the HF=1.00
+    //    restore floor and never above MIN_HEALTH_FACTOR (1.50).
+    uint256 constant PARTIAL_LIQ_TARGET_HF_CEILING_BPS_DEFAULT = 12_000;
+    uint256 constant MIN_PARTIAL_LIQ_TARGET_HF_CEILING_BPS = 10_500; // HF 1.05
+    uint256 constant MAX_PARTIAL_LIQ_TARGET_HF_CEILING_BPS = 15_000; // HF 1.50
+    //  - Deep-underwater HF: at/below this HF the ceiling is waived (allow
+    //    aggressive delever to the hard close-factor cap). Default HF 0.95.
+    //    Bounded [0.80, 0.99] — always strictly below the HF=1.00 floor.
+    uint256 constant PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS_DEFAULT = 9_500;
+    uint256 constant MIN_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 8_000; // HF 0.80
+    uint256 constant MAX_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS = 9_900; // HF 0.99
+    //  - Dust floor: gates the dust waiver/prevention. UNITS: the same
+    //    whole-numeraire scale {RiskFacet._computeNumeraireValues} returns
+    //    (whole-USD with 8-decimal feeds; NOT 1e18-scaled). DEFAULT 0 ⇒
+    //    DISABLED (Codex r3 P2): there is no universally-correct default
+    //    because the active numeraire can be rotated away from USD, so a
+    //    hard-coded $1k default would mis-classify ordinary loans as dust on
+    //    a non-USD deployment. Governance sets an explicit floor in the
+    //    active numeraire to switch dust handling on. Capped at 100_000 so a
+    //    misconfigured floor can't turn every routine partial into a full
+    //    close.
+    uint256 constant MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE = 100_000;
     uint256 constant LOAN_INITIATION_FEE_BPS = 10; // 0.1% fee deducted from ERC-20 principal at loan initiation (README §6 lines 280, 332)
     // Fallback-path split (README §7): lender gets principal + accrued
     // interest + {FALLBACK_LENDER_BONUS_BPS} of principal; treasury gets
@@ -1117,6 +1145,11 @@ library LibVaipakam {
         // layer (that's governed separately by the oracle-admin config + the
         // multi-venue quorum, not an optional peer dependency).
         bool peerLtvReadsPaused;
+        // NOTE: #395 graduated partial-liquidation sizing knobs are NOT here —
+        // appending to `ProtocolConfig` (embedded before live `Storage` fields
+        // like `borrowerLifRebate` / `swapAdapters`) would shift every
+        // subsequent top-level slot. They live at the append-only TAIL of
+        // `Storage` instead (search `partialLiqTargetHfCeilingBps`).
     }
 
     /// @notice #393 v1 — a lender's STANDING INTENT: set-and-forget lending
@@ -4205,6 +4238,29 @@ library LibVaipakam {
         ///      so in-place storage upgrades don't shift existing slots. Default
         ///      `false` = active. Set via `AdminFacet.setSwapAdapterDisabled`.
         mapping(address => bool) swapAdapterDisabled;
+        // ─── #395 — graduated partial-liquidation sizing (APPEND-ONLY tail) ──
+        // Declared at the `Storage` tail (NOT inside `ProtocolConfig`, which is
+        // embedded before live fields) so an in-place upgrade never shifts
+        // existing slots — same discipline as `swapAdapterDisabled` above.
+        // Consumed by `RiskFacet._assertPartialSizing`; each `0 ⇒ library
+        // default`; values range-clamped at `AdminFacet.setPartialLiquidationSizing`.
+        /// @dev Upper HF (BPS of HF_SCALE; 12_000 = HF 1.20) a *routine* partial
+        ///      may leave the borrower at — caps over-liquidation. Waived when
+        ///      deep-underwater or the PRE-partial position is dust.
+        uint16 partialLiqTargetHfCeilingBps; // 0 ⇒ default (12_000)
+        /// @dev HF (BPS of HF_SCALE; 9_500 = HF 0.95) at/below which the ceiling
+        ///      is waived so a keeper may delever aggressively to restore solvency.
+        uint16 partialLiqDeepUnderwaterHfBps; // 0 ⇒ default (9_500)
+        /// @dev Dust floor in the whole-numeraire scale
+        ///      {RiskFacet._computeNumeraireValues} returns (whole-USD with
+        ///      8-decimal feeds; NOT 1e18-scaled). 0 ⇒ dust handling DISABLED
+        ///      (Codex r3 P2 — no USD-scaled default that would misfire on a
+        ///      rotated numeraire). When governance sets it (> 0), it both
+        ///      WAIVES the over-liquidation ceiling for a PRE-partial dust
+        ///      position (keyed on entry size, not the manufacturable residual)
+        ///      AND PREVENTS a routine partial from leaving a fresh dust
+        ///      position out of a non-dust loan (forces full liquidation).
+        uint256 liquidationDustFloorNumeraire; // 0 ⇒ DISABLED
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4746,6 +4802,28 @@ library LibVaipakam {
     function cfgMaxPartialLiquidationCloseFactorBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.maxPartialLiquidationCloseFactorBps;
         return v == 0 ? MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev #395 — graduated partial-liquidation sizing (Approach A). All
+    ///      three read `protocolCfg` with a `0 ⇒ library default` fallback;
+    ///      `RiskFacet._assertPartialSizing` consumes them. Values are
+    ///      range-clamped at the setter, so reads are trusted unconditionally.
+    function cfgPartialLiqTargetHfCeilingBps() internal view returns (uint256) {
+        uint16 v = storageSlot().partialLiqTargetHfCeilingBps;
+        return v == 0 ? PARTIAL_LIQ_TARGET_HF_CEILING_BPS_DEFAULT : uint256(v);
+    }
+
+    function cfgPartialLiqDeepUnderwaterHfBps() internal view returns (uint256) {
+        uint16 v = storageSlot().partialLiqDeepUnderwaterHfBps;
+        return v == 0 ? PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev 0 ⇒ dust handling DISABLED (no default substitution) — see the
+    ///      storage-field note. Governance opts in with a floor in the active
+    ///      numeraire; `RiskFacet._assertPartialSizing` skips both the dust
+    ///      waiver and the dust-prevention check while this is 0.
+    function cfgLiquidationDustFloorNumeraire() internal view returns (uint256) {
+        return storageSlot().liquidationDustFloorNumeraire;
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

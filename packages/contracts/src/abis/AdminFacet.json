@@ -92,6 +92,29 @@
   },
   {
     "type": "function",
+    "name": "getPartialLiquidationSizing",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "targetHfCeilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deepUnderwaterHfBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getSushiswapV2Factory",
     "inputs": [],
     "outputs": [
@@ -390,6 +413,29 @@
         "name": "newFactory",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setPartialLiquidationSizing",
+    "inputs": [
+      {
+        "name": "targetHfCeilingBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "deepUnderwaterHfBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -700,6 +746,31 @@
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PartialLiquidationSizingSet",
+    "inputs": [
+      {
+        "name": "targetHfCeilingBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "deepUnderwaterHfBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -1107,6 +1178,11 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidPartialLiqSizing",
     "inputs": []
   },
   {

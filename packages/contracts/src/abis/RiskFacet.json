@@ -1011,6 +1011,22 @@
   },
   {
     "type": "error",
+    "name": "PartialLeavesDust",
+    "inputs": [
+      {
+        "name": "residualDebt",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "residualCollateral",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "PartialMustImproveHF",
     "inputs": [
       {
@@ -1031,6 +1047,22 @@
     "inputs": [
       {
         "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PartialOverLiquidates",
+    "inputs": [
+      {
+        "name": "hfAfter",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "ceiling",
         "type": "uint256",
         "internalType": "uint256"
       }

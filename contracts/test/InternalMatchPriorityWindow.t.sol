@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
@@ -212,5 +213,78 @@ contract InternalMatchPriorityWindowTest is SetupTest {
             )
         );
         RiskFacet(address(diamond)).triggerLiquidation(LOAN_ID, _adapterCalls());
+    }
+
+    /// @notice #395 (Codex r3 P2) — `triggerPartialLiquidation` must defer to
+    ///         the internal-match priority window too, or a keeper could use a
+    ///         partial to dump collateral externally mid-window and bypass the
+    ///         ordering. Same in-window LTV → same `InternalMatchOnlyBand`
+    ///         revert as the full-liquidation path above. The loan is
+    ///         re-stamped in-term so the partial passes its maturity gate and
+    ///         reaches the priority block.
+    function test_partial_killSwitchOn_ltvBelowWindowCeiling_reverts() public {
+        LibVaipakam.Loan memory l;
+        l.id = LOAN_ID;
+        l.status = LibVaipakam.LoanStatus.Active;
+        l.lender = lender;
+        l.borrower = borrower;
+        l.principalAsset = mockERC20;
+        l.collateralAsset = mockCollateralERC20;
+        l.principal = 1000;
+        l.collateralAmount = 1500;
+        l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        l.liquidationLtvBpsAtInit = 8_500;
+        l.startTime = uint64(block.timestamp);
+        l.durationDays = 30; // in-term so the partial maturity gate passes
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
+
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+
+        // LTV inside the window (floor 8500, window 200, ceiling 8700).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_600))
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InternalMatchOnlyBand.selector,
+                uint256(8_600),
+                uint256(8_700)
+            )
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            LOAN_ID, 5_000, _adapterCalls()
+        );
+    }
+
+    /// @notice #395 (Codex r5 P2) — `triggerLiquidationSplit` must defer to the
+    ///         internal-match priority window too, or a keeper could route an
+    ///         in-window loan through the split path and bypass the ordering.
+    ///         Same in-window LTV → same `InternalMatchOnlyBand` revert (the
+    ///         gate fires before any swap, so an empty split spec is fine).
+    function test_split_killSwitchOn_ltvBelowWindowCeiling_reverts() public {
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setInternalMatchEnabled(true);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, LOAN_ID),
+            abi.encode(uint256(8_600))
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskFacet.InternalMatchOnlyBand.selector,
+                uint256(8_600),
+                uint256(8_700)
+            )
+        );
+        RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(
+            LOAN_ID, new LibSwap.SplitCall[](0)
+        );
     }
 }

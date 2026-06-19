@@ -341,6 +341,91 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         emit PeerLtvReadsPausedSet(value);
     }
 
+    /// @notice Emitted on every change to the #395 graduated partial-
+    ///         liquidation sizing parameters.
+    /// @custom:event-category informational/config
+    event PartialLiquidationSizingSet(
+        uint16 targetHfCeilingBps,
+        uint16 deepUnderwaterHfBps,
+        uint256 dustFloorNumeraire
+    );
+
+    /// @notice A #395 sizing parameter was outside its governance range.
+    error InvalidPartialLiqSizing();
+
+    /// @notice Set the #395 graduated partial-liquidation sizing knobs in one
+    ///         atomic write (Approach A). Hosted here (not `ConfigFacet`)
+    ///         because `ConfigFacet` is at the EIP-170 ceiling — same reason
+    ///         the #633 kill-switch setters live here.
+    /// @dev    ADMIN_ROLE-only. Each parameter accepts `0` to mean "reset to
+    ///         the library default"; any non-zero value is range-checked so
+    ///         the reads in `RiskFacet._assertPartialSizing` are trusted
+    ///         unconditionally:
+    ///           - `targetHfCeilingBps`  ∈ [MIN, MAX]_PARTIAL_LIQ_TARGET_HF_CEILING_BPS
+    ///             (HF 1.05–1.50) — the routine over-liquidation ceiling.
+    ///           - `deepUnderwaterHfBps` ∈ [MIN, MAX]_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS
+    ///             (HF 0.80–0.99) — must stay below the HF=1.0 restore floor.
+    ///           - `dustFloorNumeraire`  ≤ MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE
+    ///             ($100k) — caps a misconfig that would turn every routine
+    ///             partial into a full close.
+    /// @param  targetHfCeilingBps   Routine over-liquidation HF ceiling (BPS of HF_SCALE), or 0.
+    /// @param  deepUnderwaterHfBps  Deep-underwater escalation HF (BPS of HF_SCALE), or 0.
+    /// @param  dustFloorNumeraire   Dust floor in the whole-numeraire scale
+    ///         `_computeNumeraireValues` returns (whole-USD with 8-decimal
+    ///         feeds; $1k == 1_000), or 0 to reset to the default.
+    function setPartialLiquidationSizing(
+        uint16 targetHfCeilingBps,
+        uint16 deepUnderwaterHfBps,
+        uint256 dustFloorNumeraire
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (
+            targetHfCeilingBps != 0 &&
+            (targetHfCeilingBps < LibVaipakam.MIN_PARTIAL_LIQ_TARGET_HF_CEILING_BPS ||
+                targetHfCeilingBps > LibVaipakam.MAX_PARTIAL_LIQ_TARGET_HF_CEILING_BPS)
+        ) revert InvalidPartialLiqSizing();
+        if (
+            deepUnderwaterHfBps != 0 &&
+            (deepUnderwaterHfBps < LibVaipakam.MIN_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS ||
+                deepUnderwaterHfBps > LibVaipakam.MAX_PARTIAL_LIQ_DEEP_UNDERWATER_HF_BPS)
+        ) revert InvalidPartialLiqSizing();
+        if (dustFloorNumeraire > LibVaipakam.MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE) {
+            revert InvalidPartialLiqSizing();
+        }
+        // #395 sizing knobs live at the `Storage` tail (layout-safe), NOT in
+        // `ProtocolConfig` — see the LibVaipakam declarations.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.partialLiqTargetHfCeilingBps = targetHfCeilingBps;
+        s.partialLiqDeepUnderwaterHfBps = deepUnderwaterHfBps;
+        s.liquidationDustFloorNumeraire = dustFloorNumeraire;
+        emit PartialLiquidationSizingSet(
+            targetHfCeilingBps,
+            deepUnderwaterHfBps,
+            dustFloorNumeraire
+        );
+    }
+
+    /// @notice The #395 partial-liquidation sizing knobs currently in EFFECT
+    ///         (governance value, or the library default where unset). Codex
+    ///         r1 P2 — keeper bots read this to size a partial that will pass
+    ///         `RiskFacet.triggerPartialLiquidation` after a governance change,
+    ///         rather than guessing defaults or decoding raw storage.
+    /// @return targetHfCeilingBps   Effective routine over-liquidation HF ceiling (BPS of HF_SCALE).
+    /// @return deepUnderwaterHfBps  Effective deep-underwater escalation HF (BPS of HF_SCALE).
+    /// @return dustFloorNumeraire   Effective dust floor (whole-numeraire; $1k == 1_000).
+    function getPartialLiquidationSizing()
+        external
+        view
+        returns (
+            uint256 targetHfCeilingBps,
+            uint256 deepUnderwaterHfBps,
+            uint256 dustFloorNumeraire
+        )
+    {
+        targetHfCeilingBps = LibVaipakam.cfgPartialLiqTargetHfCeilingBps();
+        deepUnderwaterHfBps = LibVaipakam.cfgPartialLiqDeepUnderwaterHfBps();
+        dustFloorNumeraire = LibVaipakam.cfgLiquidationDustFloorNumeraire();
+    }
+
     /// @notice Replace the adapter order with an explicit permutation.
     /// @dev ADMIN_ROLE-only. `newOrder` must contain exactly the same
     ///      set of addresses currently registered (same length, same

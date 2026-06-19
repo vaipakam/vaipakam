@@ -79,6 +79,58 @@ bounded by its own `MAX_*_BPS` cap. The `liqBonusBps` per asset (set
 via `updateRiskParams`) cannot exceed the chain-level
 `maxLiquidatorIncentiveBps` — the latter is the hard ceiling.
 
+### Graduated partial-liquidation sizing (#395)
+
+(3 values, set together via `AdminFacet.setPartialLiquidationSizing` —
+hosted on `AdminFacet` rather than `ConfigFacet` because the latter is at
+the EIP-170 ceiling, same as the #633 kill-switches). These bound how much
+collateral a single *intentional* partial liquidation
+(`RiskFacet.triggerPartialLiquidation`) may sell, so a routine partial sizes
+itself to "as much as needed" and can't over-liquidate the borrower. Each
+parameter accepts `0` to reset to its library default, and any non-zero
+value is range-checked, so the reads are trusted unconditionally.
+
+- **`partialLiqTargetHfCeilingBps`** — the upper health-factor a *routine*
+  partial may leave the borrower at, in BPS of `HF_SCALE` (default `12_000`
+  = HF 1.20). A partial that lands the borrower above this — i.e. it sold
+  more than needed — reverts `PartialOverLiquidates`, unless an escalation
+  case below applies. Bounded `[10_500, 15_000]` (HF 1.05–1.50) so it always
+  sits strictly above the HF-1.00 restore floor.
+- **`partialLiqDeepUnderwaterHfBps`** — the health factor at/below which the
+  ceiling is **waived** so a keeper may delever aggressively to restore
+  solvency, in BPS of `HF_SCALE` (default `9_500` = HF 0.95). Bounded
+  `[8_000, 9_900]` (HF 0.80–0.99), always strictly below the restore floor.
+- **`liquidationDustFloorNumeraire`** — governs dust handling. **Default `0`
+  = DISABLED** (there is no universally-correct default because the active
+  oracle numeraire can be rotated away from USD, so a hard-coded value would
+  mis-classify ordinary loans as dust on a non-USD deployment — governance
+  sets an explicit floor *in the active numeraire* to switch it on). When set
+  (`> 0`) it does two things: (1) **waives** the over-liquidation ceiling for
+  a position that was **already** dust-sized at entry (its pre-partial debt OR
+  collateral below the floor) so a genuinely-tiny loan isn't blocked from
+  clearing — keyed on *entry* size, not the manufacturable residual, so a
+  keeper can't self-waive by over-liquidating; and (2) **prevents** a routine
+  partial from leaving a *fresh* dust position out of a non-dust loan (both
+  residual debt AND collateral below the floor) — that reverts
+  `PartialLeavesDust` and the keeper must use full liquidation. **Units:
+  whole-numeraire**, the same
+  scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
+  8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
+  ($100k) so a misconfigured floor can't turn every routine partial into a
+  full close. **Setting a nonzero floor both widens (the pre-existing-dust
+  waiver) AND narrows (the leave-fresh-dust prevention) what a keeper may do —
+  it is not a harmless one-way knob — and `0` is the explicit disable path.**
+  Plan for keeper partials to start reverting `PartialLeavesDust` (and require
+  full liquidation) on small loans once a floor is set.
+
+The over-liquidation **ceiling** and **deep-underwater** thresholds default to
+sensible values and are active on a fresh deploy with no operator action; the
+**dust floor defaults to `0` (disabled)** and is opt-in (set it in the active
+numeraire to switch dust handling on). The whole guardrail governs only *how
+much* collateral a partial sells (via HF/value bounds) — never how the loan is
+priced — and leaves full liquidation (`triggerLiquidation`) unchanged as the
+alternative.
+
 ### Swap-to-Repay max slippage (T-090)
 
 (`setMaxSwapToRepaySlippageBps` / `getMaxSwapToRepaySlippageBps`)

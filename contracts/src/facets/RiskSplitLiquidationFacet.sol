@@ -67,6 +67,10 @@ contract RiskSplitLiquidationFacet is
     /// @notice l2 sequencer is offline or still in its recovery grace window;
     ///         HF-based liquidation is blocked to avoid swapping on stale prices.
     error SequencerUnhealthy();
+    /// @notice #395 (Codex r5) — the loan's LTV is still inside the
+    ///         internal-match priority window, so the external split route
+    ///         must defer. Same signature as {RiskFacet.InternalMatchOnlyBand}.
+    error InternalMatchOnlyBand(uint256 currentLtvBps, uint256 windowCeilingBps);
 
     /// @notice Emitted on a successful HF-based liquidation (split route).
     ///         Identical signature to {RiskFacet.HFLiquidationTriggered} so
@@ -144,6 +148,22 @@ contract RiskSplitLiquidationFacet is
             .checkLiquidityOnActiveNetwork(loan.collateralAsset);
         if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert NonLiquidAsset();
+
+        // #395 (Codex r5 P2) — preserve internal-match priority on the split
+        // route too. `triggerLiquidation` and `triggerPartialLiquidation`
+        // already defer to the priority window; without the same gate here a
+        // keeper could route an in-window loan through the split path and
+        // bypass the ordering. A split is a full external liquidation, so it
+        // simply declines inside the window (the dedicated internal-match path
+        // / full-liquidation auto-dispatch handles the in-window resolution).
+        if (s.protocolCfg.internalMatchEnabled) {
+            uint256 windowLtv = RiskFacet(address(this)).calculateLTV(loanId);
+            uint256 floorBps = uint256(loan.liquidationLtvBpsAtInit);
+            uint256 windowCeiling = floorBps + LibVaipakam.cfgExternalLiquidationPriorityWindowBps();
+            if (floorBps > 0 && windowLtv < windowCeiling) {
+                revert InternalMatchOnlyBand(windowLtv, windowCeiling);
+            }
+        }
 
         // Withdraw collateral to Diamond for the split swap.
         LibFacet.crossFacetCall(

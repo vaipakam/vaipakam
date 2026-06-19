@@ -32,6 +32,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  AdminFacetABI,
   FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
@@ -92,6 +93,13 @@ function computeOptimalPartialFractionBps(
   minFractionBps: number = 200,
   maxFractionBps: number = 7_500,
   safetyMargin: number = 1.05,
+  // #395 (Codex r4 P2) — the on-chain over-liquidation ceiling
+  // (`AdminFacet.getPartialLiquidationSizing().targetHfCeilingBps`, default
+  // 12_000 = HF 1.20). The keeper must not size a partial that lands HF
+  // ABOVE this, or `triggerPartialLiquidation` reverts `PartialOverLiquidates`.
+  // We clamp the (safety-padded) fraction to the one that achieves a target a
+  // little UNDER the ceiling, so the slice stays in the [1.0, ceiling] band.
+  ceilingHfBps: number = 11_800,
 ): bigint {
   if (liqThresholdBps <= 0n) return 0n;
   if (hfRaw <= 0n) return 0n;
@@ -117,8 +125,27 @@ function computeOptimalPartialFractionBps(
   if (fRaw <= 0) return 0n;
   if (fRaw >= 1) return BigInt(maxFractionBps); // signal "too distressed for partial"
 
-  // Pad with the safety margin, ceil to the next BPS, then clamp.
-  const fBps = Math.ceil(fRaw * safetyMargin * 10_000);
+  // Pad with the safety margin, ceil to the next BPS.
+  let fBps = Math.ceil(fRaw * safetyMargin * 10_000);
+
+  // #395 (Codex r4 P2) — clamp DOWN so the slice can't over-restore past the
+  // on-chain ceiling. `fCeiling` is the fraction that lands HF exactly at
+  // `ceilingHfBps`; sizing above it would revert `PartialOverLiquidates`. The
+  // ceiling-achieving fraction is the same closed form with the ceiling HF as
+  // the target. Only clamps when the padded fraction would overshoot — a
+  // partial that legitimately needs more than `fCeiling` to restore HF >= 1 is
+  // "too distressed for a routine partial" and is steered to full liquidation
+  // by the caller (and, defensively, by the on-chain revert + keeper fallback).
+  const ceilingTarget = ceilingHfBps / 10_000;
+  const ceilDenom = hf * (T - ceilingTarget * k);
+  if (ceilDenom !== 0) {
+    const fCeilingRaw = (T * (hf - ceilingTarget)) / ceilDenom;
+    if (fCeilingRaw > 0 && fCeilingRaw < 1) {
+      const fCeilingBps = Math.floor(fCeilingRaw * 10_000);
+      if (fBps > fCeilingBps) fBps = fCeilingBps;
+    }
+  }
+
   if (fBps < minFractionBps) return BigInt(minFractionBps);
   if (fBps > maxFractionBps) return BigInt(maxFractionBps);
   return BigInt(fBps);
@@ -312,9 +339,36 @@ export async function maybeAutonomousLiquidate(
     const nowTs = BigInt(Math.floor(Date.now() / 1000));
     const inTerm = nowTs < endTime;
 
+    // #395 (Codex r5 P2) — read the LIVE on-chain over-liquidation ceiling so
+    // the keeper tracks a governance change. If governance lowers
+    // `partialLiqTargetHfCeilingBps` below the default, a stale hard-coded
+    // clamp would size a partial the contract rejects, and the fallback would
+    // then close the WHOLE loan even though a smaller in-band partial was
+    // allowed. Read it, subtract a small margin, and feed it to the sizer. On
+    // a read failure we keep the conservative 11_800 default (the on-chain
+    // guard + keeper fallback remain the backstop).
+    let ceilingHfBps = 11_800;
+    try {
+      const sizing = (await publicClient.readContract({
+        address: ctx.diamond,
+        abi: AdminFacetABI,
+        functionName: 'getPartialLiquidationSizing',
+      })) as readonly [bigint, bigint, bigint];
+      // [targetHfCeilingBps, deepUnderwaterHfBps, dustFloorNumeraire]
+      const liveCeiling = Number(sizing[0]);
+      if (liveCeiling > 10_000) ceilingHfBps = Math.max(10_500, liveCeiling - 200);
+    } catch {
+      /* keep the conservative default */
+    }
     const optimalPartialFractionBps = computeOptimalPartialFractionBps(
       hfRaw,
       liqThresholdBps,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ceilingHfBps,
     );
     // Partial path is feasible when: in-term, HF below 1 but not so
     // deeply distressed the per-asset math says we need > 75% (the
@@ -423,18 +477,67 @@ export async function maybeAutonomousLiquidate(
       effectivePartialQuotes &&
       effectivePartialQuotes.calls.length > 0
     ) {
-      const hash = await ctx.wallet.writeContract({
-        address: ctx.diamond,
-        abi: TRIGGER_ABI,
-        functionName: 'triggerPartialLiquidation',
-        args: [loanIdBig, effectivePartialFractionBps, effectivePartialQuotes.calls],
-        account,
-        chain: ctx.wallet.chain,
-      });
-      console.log(
-        `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=${effectivePartialFractionBps}bps liqThreshold=${liqThresholdBps}bps via=${effectivePartialQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${effectivePartialQuotes.ranked[0].expectedOutput}`,
-      );
-      return true;
+      // #395 (Codex r4 P2) — the partial may revert under the new on-chain
+      // sizing guards: `PartialOverLiquidates` (slice over the HF ceiling),
+      // `InternalMatchOnlyBand` (loan still inside the internal-match priority
+      // window), or `PartialLeavesDust` (would strand a sub-dust position). In
+      // ALL three the correct resolution is FULL liquidation — it has no
+      // over-liquidation ceiling, auto-dispatches an in-window internal match,
+      // and closes a tiny position cleanly. `writeContract` estimates gas
+      // first, so a guard revert throws here BEFORE any tx is broadcast; catch
+      // it and fall THROUGH to the split/full path below instead of returning
+      // (which previously left the loan unresolved and re-attempted next tick).
+      try {
+        const hash = await ctx.wallet.writeContract({
+          address: ctx.diamond,
+          abi: TRIGGER_ABI,
+          functionName: 'triggerPartialLiquidation',
+          args: [loanIdBig, effectivePartialFractionBps, effectivePartialQuotes.calls],
+          account,
+          chain: ctx.wallet.chain,
+        });
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} submitted-partial tx=${hash} fraction=${effectivePartialFractionBps}bps liqThreshold=${liqThresholdBps}bps via=${effectivePartialQuotes.ranked[0].kind} hfBefore=${hfRaw} expected=${effectivePartialQuotes.ranked[0].expectedOutput}`,
+        );
+        return true;
+      } catch (partialErr) {
+        // #395 (Codex r6/r7 P2) — classify the partial revert into two
+        // actions:
+        //   ESCALATE → full liquidation (fall through): the guard says a
+        //     partial is the wrong tool for this loan right now —
+        //       · InternalMatchOnlyBand  (in the priority window → full
+        //         auto-dispatches the reserved internal match),
+        //       · PartialLeavesDust      (a clean partial would strand dust),
+        //       · InvalidPartialFraction (governance lowered the close-factor
+        //         cap below any usable slice),
+        //       · PartialFullyClosedUseFull (slice would retire all principal),
+        //       · PartialAfterMaturity   (past maturity — full/default path).
+        //   RE-SIZE → skip this tick, recompute next tick (do NOT close the
+        //     whole loan): the slice itself was just mis-sized / the route
+        //     failed, and a smaller/re-quoted partial can still restore HF and
+        //     preserve the borrower's position —
+        //       · PartialOverLiquidates  (slice too big → pick a smaller one),
+        //       · PartialMustRestoreHF / PartialMustImproveHF (too small),
+        //       · PartialSwapAllFailed   (route failed), and any unknown error.
+        // viem surfaces the decoded error name in the message string.
+        const msg = String(partialErr);
+        const escalate =
+          msg.includes('InternalMatchOnlyBand') ||
+          msg.includes('PartialLeavesDust') ||
+          msg.includes('InvalidPartialFraction') ||
+          msg.includes('PartialFullyClosedUseFull') ||
+          msg.includes('PartialAfterMaturity');
+        if (!escalate) {
+          console.log(
+            `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`,
+          );
+          return false;
+        }
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-escalation (${msg.slice(0, 140)}) — falling back to split/full liquidation`,
+        );
+        // escalation case — fall THROUGH to the split / full branches below.
+      }
     }
 
     // Split-route decision: when ≥2 distinct-adapter quotes succeeded at
@@ -451,19 +554,33 @@ export async function maybeAutonomousLiquidate(
         { adapterIdx: split.a.call.adapterIdx, splitAmount: halfAmount, data: split.a.call.data },
         { adapterIdx: split.b.call.adapterIdx, splitAmount: otherHalf, data: split.b.call.data },
       ];
-      const hash = await ctx.wallet.writeContract({
-        address: ctx.diamond,
-        abi: TRIGGER_ABI,
-        functionName: 'triggerLiquidationSplit',
-        args: [loanIdBig, splits],
-        account,
-        chain: ctx.wallet.chain,
-      });
-      const improvementBps = (split.gainBps);
-      console.log(
-        `[keeper] loan=${loanId} chain=${chain.name} submitted-split tx=${hash} via=${split.a.kind}+${split.b.kind} expected=${split.totalExpected} improvement=${improvementBps}bps over single-route`,
-      );
-      return true;
+      // #395 (Codex r5 P2) — the split route now also defers to the
+      // internal-match priority window (`triggerLiquidationSplit` reverts
+      // `InternalMatchOnlyBand` in-window), so wrap it the same way the
+      // partial branch is wrapped: on ANY split revert, fall THROUGH to full
+      // `triggerLiquidation`, which runs `attemptInternalMatchAutoDispatch`
+      // first — so the in-window internal match the window was reserving
+      // actually gets dispatched instead of the loan being skipped this tick.
+      try {
+        const hash = await ctx.wallet.writeContract({
+          address: ctx.diamond,
+          abi: TRIGGER_ABI,
+          functionName: 'triggerLiquidationSplit',
+          args: [loanIdBig, splits],
+          account,
+          chain: ctx.wallet.chain,
+        });
+        const improvementBps = (split.gainBps);
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} submitted-split tx=${hash} via=${split.a.kind}+${split.b.kind} expected=${split.totalExpected} improvement=${improvementBps}bps over single-route`,
+        );
+        return true;
+      } catch (splitErr) {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
+        );
+        // do NOT return — fall through to the full `triggerLiquidation` below.
+      }
     }
 
     // Default path: failover via `triggerLiquidation` — unchanged.
