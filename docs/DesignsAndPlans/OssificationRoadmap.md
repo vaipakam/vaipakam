@@ -115,6 +115,18 @@ that window, cancellation is the timelock proposer's), and is a freeze
   guardian halts user activity and the timelock proposer (governance) can
   cancel the queued operation. The guardian does **not** itself block the
   upgrade (the cut path is intentionally not pause-gated, for recovery).
+- **Remaining gap — the root `DEFAULT_ADMIN_ROLE` is not itself timelocked.**
+  At handover `DEFAULT_ADMIN_ROLE` moves to the **governance Safe** (a multisig,
+  not the timelock). Because that role is the `roleAdmin` of `ORACLE_ADMIN_ROLE`,
+  `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`, and `UNPAUSER_ROLE`, a holder of
+  `DEFAULT_ADMIN_ROLE` can **grant itself any of those immediately** and then
+  change oracle/risk/vault settings (or unpause) **without** the 48–72h delay.
+  So the "custody-moving changes sit behind the timelock" guarantee is, today,
+  only as strong as the governance Safe's threshold/honesty — it is **not**
+  code-enforced for the role-grant path. Closing this (timelocking
+  `DEFAULT_ADMIN_ROLE` so even a role grant respects the delay, or splitting
+  these admin roles' `roleAdmin` onto the timelock) is a **freeze-stage
+  commitment**, called out here rather than glossed over.
 - **No on-chain quorum yet** (acknowledged gap, shared with #394's governance
   gap). The bounded-steward + timelock-asymmetry + guardian-pause fabric is the
   same one the risk knobs ride on; an on-chain quorum is a later addition, not
