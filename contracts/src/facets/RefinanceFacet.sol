@@ -576,21 +576,24 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             LTVCalculationFailed.selector
         );
         uint256 newLtv = abi.decode(ltvResult, (uint256));
-        uint256 loanInitMaxLtvBps = s
-            .assetRiskParams[oldLoan.collateralAsset]
-            .loanInitMaxLtvBps;
-        bool tieredOn = LibVaipakam.cfgDepthTieredLtvEnabled();
-        if (tieredOn) {
-            uint8 effTier = OracleFacet(address(this))
-                .getEffectiveLiquidityTier(oldLoan.collateralAsset);
-            uint256 tierCap = uint256(
-                LibVaipakam.effectiveTierMaxInitLtvBps(effTier)
-            );
-            uint256 cap = loanInitMaxLtvBps < tierCap ? loanInitMaxLtvBps : tierCap;
-            if (newLtv > cap) {
+        // #394 Lever A (Codex #647 round-4) — compare against the replacement
+        // loan's SNAPSHOTTED admission init-LTV cap (acceptOffer stored it when
+        // it admitted `newLoan`; the snapshot already encodes the tiered
+        // `min(assetCap, tierCap)` vs non-tiered `assetCap` branch), NOT a
+        // freshly-recomputed live asset/tier cap. Re-deriving live would make a
+        // governance / tier-cache tightening between accept and `refinanceLoan`
+        // retroactive, stranding an accepted replacement loan the borrower can't
+        // close into — exactly the race the HF gate below also closes.
+        uint256 cap = LibVaipakam.effectiveLoanInitLtvCapBps(
+            newLoan.initLtvCapBpsAtInit,
+            s.assetRiskParams[oldLoan.collateralAsset].loanInitMaxLtvBps
+        );
+        if (newLtv > cap) {
+            // Preserve the regime-specific error (cosmetic; the cap value is the
+            // load-bearing part and comes from the snapshot either way).
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
                 revert IVaipakamErrors.InitLtvAboveTier(newLtv, cap);
             }
-        } else if (newLtv > loanInitMaxLtvBps) {
             revert LTVExceeded();
         }
 

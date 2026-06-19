@@ -114,10 +114,20 @@ library LibRiskMath {
         // `_checkInitialLtvAndHf` with `LTVExceeded`. Clamp the create-time floor
         // UP to the init-LTV-cap floor so it never under-sizes vs the binding
         // admission gate. (`capBps == 0` ⇒ no per-asset cap configured ⇒ skip.)
+        // #394 Lever A (Codex #647 round-3 + round-4) — the binding init-LTV cap
+        // is `min(per-asset cap, tier cap)` in the depth-tiered regime (the same
+        // `min` `_checkInitialLtvAndHf` applies), else the per-asset cap. Using
+        // only the per-asset cap would still under-size a tiered range offer
+        // that the tier gate later rejects with `InitLtvAboveTier`. `tier` here
+        // is ≥ 1 (tier 0 returned early above).
         uint256 capBps = LibVaipakam
             .storageSlot()
             .assetRiskParams[collateralAsset]
             .loanInitMaxLtvBps;
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
+            if (tierCap < capBps) capBps = tierCap;
+        }
         if (capBps != 0) {
             uint256 ltvNum = principalUsd * LibVaipakam.BASIS_POINTS;
             uint256 ltvCollateralUsd = ltvNum / capBps;
@@ -237,10 +247,17 @@ library LibRiskMath {
         // the admission gate then rejects with `LTVExceeded`. Clamp the ceiling
         // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟺
         // debtUSD ≤ collateralUsd × cap / BASIS_POINTS`).
+        // #394 Lever A (Codex #647 round-3 + round-4) — `min(per-asset cap,
+        // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`);
+        // `tier` is ≥ 1 (tier 0 returned early above).
         uint256 capBps = LibVaipakam
             .storageSlot()
             .assetRiskParams[collateralAsset]
             .loanInitMaxLtvBps;
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
+            if (tierCap < capBps) capBps = tierCap;
+        }
         if (capBps != 0) {
             uint256 ltvPrincipalUsd =
                 (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;

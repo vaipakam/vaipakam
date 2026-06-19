@@ -82,12 +82,28 @@ contract RedeployFacets is Script {
     // ── Selector arrays (mirror DeployDiamond.s.sol) ────────────────────
 
     function _riskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        // Mirrors `DeployDiamond._getRiskFacetSelectors` (kept in lockstep).
+        // Was stale at 5 — missing the #395 partial/discounted liquidators and
+        // the #394 runtime HF-floor knob (Codex #647 round-4), so a same-version
+        // testnet redeploy through this script silently dropped routing for
+        // `setMinHealthFactor`/`getMinHealthFactor` and governance could not use
+        // the no-redeploy risk-appetite knob. Now the full 9.
+        // NOTE: this `Replace` assumes the target diamond was deployed with the
+        // current `DeployDiamond` (all 9 already routed) — the realistic
+        // pre-live / testnet flow. Cross-version upgrades of a PRE-#394 diamond
+        // (where the last 2 are genuinely new and need an `Add`, not `Replace`)
+        // are handled by the comprehensive deploy-modernization track, not this
+        // same-version bytecode-refresh script.
+        s = new bytes4[](9);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
+        s[5] = RiskFacet.triggerPartialLiquidation.selector;
+        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
+        s[7] = RiskFacet.setMinHealthFactor.selector;
+        s[8] = RiskFacet.getMinHealthFactor.selector;
     }
 
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
