@@ -868,12 +868,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // parties agreed to these specific splits.
         loan.fallbackLenderBonusBpsAtInit = uint16(LibVaipakam.cfgFallbackLenderBonusBps());
         loan.fallbackTreasuryBpsAtInit = uint16(LibVaipakam.cfgFallbackTreasuryBps());
-        // #394 Lever A (Codex #647 P1) — snapshot the live admission HF floor
-        // so this loan keeps its own floor for every post-admission HF check;
-        // a later `setMinHealthFactor` retune never moves an open loan's
-        // collateral buffer. Snapshotted unconditionally (cheap; the HF
-        // consumers only read it for liquid loans). Fits uint64: ceiling 2e18.
-        loan.minHealthFactorAtInit = uint64(LibVaipakam.minHealthFactor());
+        // #394 Lever A (Codex #647 P1 + round-2 P2) — snapshot the admission
+        // HF floor THIS loan is actually gated at, so every post-admission HF
+        // check keeps that floor and a later `setMinHealthFactor` retune is
+        // prospective only. BRANCH-AWARE: it must mirror `_checkInitialLtvAndHf`
+        // exactly — the depth-tiered regime admits at `HF_LIQUIDATION_THRESHOLD`
+        // (1e18), only the non-tiered regime uses the tunable `minHealthFactor()`
+        // knob. Snapshotting the non-tiered knob for a tiered loan would saddle
+        // it with a stricter post-admission floor than it was born under. Fits
+        // uint64 (ceiling 2e18).
+        loan.minHealthFactorAtInit = uint64(
+            LibVaipakam.cfgDepthTieredLtvEnabled()
+                ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+                : LibVaipakam.minHealthFactor()
+        );
         // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
         // internal-match work, 2026-05-14). Replaces the retired
         // per-asset `RiskParams.liqThresholdBps`. Read by

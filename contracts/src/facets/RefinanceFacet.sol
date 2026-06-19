@@ -602,12 +602,17 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             HealthFactorCalculationFailed.selector
         );
         uint256 newHf = abi.decode(hfResult, (uint256));
-        // Tier-ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Tier-OFF ⇒ the runtime admission floor
-        // (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable).
-        uint256 hfFloor = tieredOn
-            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
-            : LibVaipakam.minHealthFactor();
+        // #394 Lever A (Codex #647 round-2 P2) — `acceptOffer` already created
+        // and ADMITTED `newLoan`, snapshotting the (branch-aware) floor it was
+        // gated at onto `newLoan.minHealthFactorAtInit`. Compare against THAT
+        // snapshot, not the live `minHealthFactor()` knob: re-reading the live
+        // knob here would make a governance retune between accept and
+        // `refinanceLoan` retroactive — a replacement loan accepted at HF ≥ 1.5
+        // could revert if the floor were raised to 1.8 first, stranding the
+        // borrower with an accepted replacement they cannot close into. The
+        // snapshot already encodes the tiered (1e18) vs non-tiered branch.
+        uint256 hfFloor =
+            LibVaipakam.effectiveLoanMinHealthFactor(newLoan.minHealthFactorAtInit);
         if (newHf < hfFloor) revert HealthFactorTooLow();
 
         // Update old loan NFTs: mark lender NFT as Loan Repaid
