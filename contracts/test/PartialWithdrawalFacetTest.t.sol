@@ -330,10 +330,17 @@ contract PartialWithdrawalFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 300, 1000);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
-        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > loanInitMaxLtvBps=1000 → LTVExceeded
+        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 → LTVExceeded.
+        // #394 Lever A (Codex #647 round-3 P1) — the withdrawal LTV gate now
+        // enforces the loan's SNAPSHOTTED admission init-LTV cap
+        // (`initLtvCapBpsAtInit`), not the live per-asset `loanInitMaxLtvBps`
+        // (so a governance retune can't retroactively re-gate an open loan).
+        // Snapshot a 10% cap onto the loan to exercise the gate; the
+        // `updateRiskParams(1000)` above keeps the live + snapshot consistent.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         loan.principal = 1000 ether;
         loan.collateralAmount = 1800 ether;
+        loan.initLtvCapBpsAtInit = 1000;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));

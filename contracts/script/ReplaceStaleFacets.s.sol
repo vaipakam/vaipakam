@@ -47,11 +47,17 @@ contract ReplaceStaleFacets is Script {
         VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
         OracleAdminFacet oracleAdminFacet = new OracleAdminFacet();
+        // #394 (Codex #647 round-3) — the numeraire / PAD / periodic-interest
+        // selectors were carved out of ConfigFacet into NumeraireConfigFacet.
+        // They must be cut to THIS facet's address, not ConfigFacet's, or they
+        // misroute to ConfigFacet bytecode that no longer implements them.
+        NumeraireConfigFacet numeraireConfigFacet = new NumeraireConfigFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
         console.log("VaultFactoryFacet:  ", address(vaultFactoryFacet));
         console.log("ConfigFacet:         ", address(configFacet));
+        console.log("NumeraireConfigFacet:", address(numeraireConfigFacet));
         console.log("OracleAdminFacet:    ", address(oracleAdminFacet));
 
         // T-068: RewardReporterFacet is intentionally NOT refreshed here.
@@ -62,12 +68,13 @@ contract ReplaceStaleFacets is Script {
         // pre-T-068 diamond gets via the dedicated CCIP deploy/migration
         // path, not this one-off bytecode-refresh script.
 
-        // 9 cuts:
+        // 10 cuts:
         //   3 Replace (Offer / Oracle / VaultFactory bytecode refresh)
-        //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 27 missing for protocol-console knobs)
+        //   1 Replace + 1 Add (ConfigFacet — existing 28 selectors + 8 missing for protocol-console knobs)
+        //   1 Add (NumeraireConfigFacet — 19 numeraire/PAD/periodic selectors carved out of ConfigFacet)
         //   1 Replace + 1 Add (OracleAdminFacet — existing 20 + 10 missing Pyth/admin getters)
         //   1 Replace + 1 Add (OfferAcceptFacet — existing 4 selectors + 1 missing #627 KYC-value view)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _replace(address(offerCreateFacet), _offerCreateSelectors());
         cuts[7] = _replace(address(offerAcceptFacet), _offerAcceptSelectors());
         cuts[1] = _replace(address(oracleFacet), _oracleSelectors());
@@ -80,6 +87,9 @@ contract ReplaceStaleFacets is Script {
         // `matchLoan` can call it after an upgrade (a Replace would revert: not
         // yet routed). Without this, `matchLoan` reverts in the Diamond fallback.
         cuts[8] = _add(address(offerAcceptFacet), _offerAcceptMissingSelectors());
+        // #394 (Codex #647 round-3) — Add the carved-out numeraire/PAD/periodic
+        // selectors to the NumeraireConfigFacet address (NOT ConfigFacet).
+        cuts[9] = _add(address(numeraireConfigFacet), _getNumeraireConfigSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
@@ -204,7 +214,13 @@ contract ReplaceStaleFacets is Script {
     ///      reads). Add cut points at the same fresh ConfigFacet
     ///      bytecode used in the Replace cut above.
     function _configFacetMissingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
+        // ONLY the selectors ConfigFacet still implements post-split. The
+        // numeraire / PAD / periodic-interest selectors moved out and are
+        // cut to NumeraireConfigFacet's address via
+        // `_getNumeraireConfigSelectors()` (see cuts[9]); routing them to
+        // ConfigFacet here would misroute to bytecode that no longer
+        // implements them (Codex #647 round-3).
+        s = new bytes4[](8);
         s[0] = ConfigFacet.getRangeAmountEnabled.selector;
         s[1] = ConfigFacet.getRangeRateEnabled.selector;
         s[2] = ConfigFacet.getPartialFillEnabled.selector;
@@ -213,29 +229,34 @@ contract ReplaceStaleFacets is Script {
         s[5] = ConfigFacet.getGraceBuckets.selector;
         s[6] = ConfigFacet.getEffectiveGraceSeconds.selector;
         s[7] = ConfigFacet.getGraceSlotBounds.selector;
-        // #394 (Codex #647) — these 19 numeraire / PAD / periodic-interest
-        // selectors moved to `NumeraireConfigFacet`. The selector value is
-        // the signature hash (identical regardless of declaring contract);
-        // repointed so the host facet matches the post-split deploy.
-        s[8] = NumeraireConfigFacet.setNumeraire.selector;
-        s[9] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
-        s[10] = NumeraireConfigFacet.setPreNotifyDays.selector;
-        s[11] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
-        s[12] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
-        s[13] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
-        s[14] = NumeraireConfigFacet.getNumeraireSymbol.selector;
-        s[15] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
-        s[16] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
-        s[17] = NumeraireConfigFacet.getPreNotifyDays.selector;
-        s[18] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
-        s[19] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
-        s[20] = NumeraireConfigFacet.setPredominantDenominator.selector;
-        s[21] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
-        s[22] = NumeraireConfigFacet.getPredominantDenominator.selector;
-        s[23] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
-        s[24] = NumeraireConfigFacet.getEthPadFeed.selector;
-        s[25] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
-        s[26] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+    }
+
+    /// @dev #394 (Codex #647 round-3) — the 19 numeraire / PAD /
+    ///      periodic-interest selectors carved out of ConfigFacet into
+    ///      `NumeraireConfigFacet`. Added to the NumeraireConfigFacet address
+    ///      so a live pre-split diamond routes them to bytecode that
+    ///      implements them. Mirrors `DeployDiamond._getNumeraireConfigSelectors`.
+    function _getNumeraireConfigSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](19);
+        s[0] = NumeraireConfigFacet.setNumeraire.selector;
+        s[1] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
+        s[2] = NumeraireConfigFacet.setPreNotifyDays.selector;
+        s[3] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
+        s[4] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
+        s[5] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
+        s[6] = NumeraireConfigFacet.getNumeraireSymbol.selector;
+        s[7] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
+        s[8] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
+        s[9] = NumeraireConfigFacet.getPreNotifyDays.selector;
+        s[10] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
+        s[11] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
+        s[12] = NumeraireConfigFacet.setPredominantDenominator.selector;
+        s[13] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        s[14] = NumeraireConfigFacet.getPredominantDenominator.selector;
+        s[15] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
+        s[16] = NumeraireConfigFacet.getEthPadFeed.selector;
+        s[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
+        s[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
     }
 
     /// @dev The 20 OracleAdminFacet selectors registered on the live

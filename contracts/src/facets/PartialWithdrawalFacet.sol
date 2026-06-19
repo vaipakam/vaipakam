@@ -115,7 +115,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
             revert HealthFactorTooLow();
 
         uint256 simulatedLtv = _ltvFromContext(ctx, collateralUsd);
-        uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
+        // #394 Lever A (Codex #647 round-3 P1) — enforce THIS loan's snapshotted
+        // admission init-LTV cap (tier buffer included), not just the live
+        // per-asset cap, so a depth-tiered loan can't shed its tier buffer.
+        uint256 loanInitMaxLtvBps = LibVaipakam.effectiveLoanInitLtvCapBps(
+            loan.initLtvCapBpsAtInit,
+            s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+        );
         if (simulatedLtv > loanInitMaxLtvBps) revert LTVExceeded();
 
         // #569 §4.2 (2026-06-13) — decrement the collateral lien by the
@@ -201,7 +207,13 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // which each re-ran 2 × getAssetPrice + 2 × decimals() — ~60 loop
         // iterations × 8 staticcalls = 480 duplicated cross-facet calls.
         ValuationContext memory ctx = _loadValuationContext(loan);
-        uint256 loanInitMaxLtvBps = s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps;
+        // #394 Lever A (Codex #647 round-3 P1) — bound by THIS loan's
+        // snapshotted admission init-LTV cap (the tier buffer for a depth-tiered
+        // loan), not the looser live per-asset cap.
+        uint256 loanInitMaxLtvBps = LibVaipakam.effectiveLoanInitLtvCapBps(
+            loan.initLtvCapBpsAtInit,
+            s.assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+        );
 
         uint256 low = 0;
         uint256 high = loan.collateralAmount;

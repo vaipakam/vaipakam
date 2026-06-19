@@ -106,6 +106,27 @@ library LibRiskMath {
         if ((collateralUsd * collateralScale) % priceCollateral != 0) {
             floor += 1;
         }
+
+        // #394 Lever A (Codex #647 round-3 P2) — the HF-derived floor can fall
+        // BELOW the per-asset init-LTV cap once the (non-tiered) admission floor
+        // is lowered (e.g. cap 50%, liq-LTV 80%, floor 1.2). A range offer sized
+        // to the HF floor would then exceed the LTV cap and revert later at
+        // `_checkInitialLtvAndHf` with `LTVExceeded`. Clamp the create-time floor
+        // UP to the init-LTV-cap floor so it never under-sizes vs the binding
+        // admission gate. (`capBps == 0` ⇒ no per-asset cap configured ⇒ skip.)
+        uint256 capBps = LibVaipakam
+            .storageSlot()
+            .assetRiskParams[collateralAsset]
+            .loanInitMaxLtvBps;
+        if (capBps != 0) {
+            uint256 ltvNum = principalUsd * LibVaipakam.BASIS_POINTS;
+            uint256 ltvCollateralUsd = ltvNum / capBps;
+            if (ltvNum % capBps != 0) ltvCollateralUsd += 1;
+            uint256 ltvNum2 = ltvCollateralUsd * collateralScale;
+            uint256 ltvFloor = ltvNum2 / priceCollateral;
+            if (ltvNum2 % priceCollateral != 0) ltvFloor += 1;
+            if (ltvFloor > floor) floor = ltvFloor;
+        }
     }
 
     /// @notice Smallest collateral amount (collateral-asset native units)
@@ -208,6 +229,24 @@ library LibRiskMath {
         // ceiling is the largest amount that can definitely satisfy
         // HF >= 1.5 — any larger amount might fail the runtime gate.
         ceiling = (principalUsd * principalScale) / pricePrincipal;
+
+        // #394 Lever A (Codex #647 round-3 P2) — symmetric to the
+        // `minCollateralForLending` clamp: a lowered (non-tiered) admission
+        // floor raises this HF-derived ceiling above what the per-asset
+        // init-LTV cap permits, so the borrower could accept a lending amount
+        // the admission gate then rejects with `LTVExceeded`. Clamp the ceiling
+        // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟺
+        // debtUSD ≤ collateralUsd × cap / BASIS_POINTS`).
+        uint256 capBps = LibVaipakam
+            .storageSlot()
+            .assetRiskParams[collateralAsset]
+            .loanInitMaxLtvBps;
+        if (capBps != 0) {
+            uint256 ltvPrincipalUsd =
+                (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;
+            uint256 ltvCeiling = (ltvPrincipalUsd * principalScale) / pricePrincipal;
+            if (ltvCeiling < ceiling) ceiling = ltvCeiling;
+        }
     }
 
     /// @notice Largest lending amount (principal-asset wei) the borrower

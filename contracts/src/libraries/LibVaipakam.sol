@@ -1773,6 +1773,17 @@ library LibVaipakam {
         // `effectiveLoanMinHealthFactor` falls back to `MIN_HEALTH_FACTOR`.
         // Append-only tail field. uint64 holds ≫ the 2.0e18 ceiling.
         uint64 minHealthFactorAtInit;
+        // #394 Lever A (Codex #647 round-3 P1) — the EFFECTIVE loan-admission
+        // init-LTV cap (bps) THIS loan was gated at, snapshotted at init.
+        // Mirrors `_checkInitialLtvAndHf`: depth-tiered ⇒ `min(per-asset
+        // loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`; non-tiered ⇒
+        // the per-asset `loanInitMaxLtvBps`. Post-admission collateral
+        // withdrawal / max-withdrawable / fallback-cure enforce THIS cap (via
+        // `effectiveLoanInitLtvCapBps`) so a tiered loan can't shed the tier
+        // buffer the lender accepted at origination — the branch-aware HF-floor
+        // snapshot alone doesn't bound LTV. `0` (illiquid or pre-#394 loan) ⇒
+        // fall back to the live per-asset `loanInitMaxLtvBps`. Append-only tail.
+        uint16 initLtvCapBpsAtInit;
     }
 
     /**
@@ -4919,6 +4930,20 @@ library LibVaipakam {
     ///      legacy floor.
     function effectiveLoanMinHealthFactor(uint64 atInit) internal pure returns (uint256) {
         return atInit == 0 ? MIN_HEALTH_FACTOR : uint256(atInit);
+    }
+
+    /// @dev #394 Lever A (Codex #647 round-3 P1) — the init-LTV cap a SPECIFIC
+    ///      open loan was admitted under, from its `initLtvCapBpsAtInit`
+    ///      snapshot. Post-admission withdrawal / max-withdrawable / cure
+    ///      enforce this (not the live per-asset cap), so a depth-tiered loan
+    ///      keeps the tighter `min(assetCap, tierCap)` buffer it was born with.
+    ///      `0` (illiquid or pre-#394 loan) ⇒ the live per-asset
+    ///      `loanInitMaxLtvBps` passed in as `liveCapBps`.
+    function effectiveLoanInitLtvCapBps(
+        uint16 atInit,
+        uint256 liveCapBps
+    ) internal pure returns (uint256) {
+        return atInit == 0 ? liveCapBps : uint256(atInit);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

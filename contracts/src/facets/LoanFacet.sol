@@ -912,6 +912,21 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             );
             uint8 effTier = ok ? abi.decode(ret, (uint8)) : 0;
             loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
+            // #394 Lever A (Codex #647 round-3 P1) — snapshot the EFFECTIVE
+            // init-LTV cap this loan is admitted under, identical to the
+            // `_checkInitialLtvAndHf` gate: depth-tiered ⇒ min(per-asset cap,
+            // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
+            // withdrawal / cure enforce this snapshot so the tier buffer can't
+            // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).
+            uint256 assetCap = LibVaipakam
+                .storageSlot()
+                .assetRiskParams[loan.collateralAsset]
+                .loanInitMaxLtvBps;
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+                if (tierCap < assetCap) assetCap = tierCap;
+            }
+            loan.initLtvCapBpsAtInit = uint16(assetCap);
         }
     }
 
