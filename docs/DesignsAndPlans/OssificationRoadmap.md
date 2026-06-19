@@ -24,13 +24,24 @@ yet. Instead we commit to:
 
 We deliberately do **not** over-promise immutability we don't have. Anything
 that can move user funds — directly or via price/risk inputs — stays behind a
-**48–72h timelock** (the delay is long enough to detect and exit a malicious
-change) until it is frozen on the published schedule. To be precise about the
-guardian's reach: the guardian-pause **halts user flows** during that delay
-window, but it does **not** cancel a queued upgrade — the diamond-cut path is
-intentionally left callable while paused (it is the incident recovery lever),
-and cancelling a scheduled timelock operation is the **timelock proposer's**
-(governance multisig's) lever, not the guardian's.
+**timelock** until it is frozen on the published schedule. Two honesty notes on
+that delay and the cancel lever:
+
+- The **48–72h** figure is the *operational deploy commitment*, not a
+  code-enforced floor. `DeployTimelock.s.sol` reads `TIMELOCK_MIN_DELAY` from
+  env (default `172800` = 48h); the OpenZeppelin `TimelockController` enforces
+  whatever value was set at deploy, and changing the delay itself goes through
+  the timelock. The commitment is therefore "deploy with ≥ 48h and never lower
+  it below that without the delay" — verified at the deploy ceremony, not by a
+  hard-coded minimum.
+- The guardian-pause **halts user flows** during the delay window but does
+  **not** cancel a queued upgrade — the diamond-cut path is intentionally left
+  callable while paused (it's the incident recovery lever). Cancelling a
+  scheduled timelock op is the **timelock canceller's** lever, and today the
+  canceller **is the proposer** (the governance multisig) — so cancellation
+  assumes the proposer key is not itself the compromised one. An **independent
+  canceller** role (a separate guardian that can cancel but not propose) is a
+  hardening item, not wired today.
 
 ## 1. Guardian fast-pause — already in place
 
@@ -86,7 +97,7 @@ surface in stages. Targets by surface:
 | Per-user vault implementation (`VaipakamVaultImplementation`, UUPS, `_authorizeUpgrade` is `onlyOwner` = the Diamond) | upgradeable | **Part of the custody-freeze commitment.** A vault-impl upgrade is custody-moving (it runs in the proxy that holds user assets), so it stays behind the Diamond owner = **timelock** and is a freeze candidate on the same schedule as the cut path — explicitly, not just the Diamond facets. |
 | Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind **a timelock + range-checked setters** — they evolve, but only within hard bounds and never via a free facet replace. During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
 | Curation / parameters (fees, tiers, kill-switches) | upgradeable | Stays upgradeable (bounded) — curation must keep evolving. |
-| Diamond-cut governance itself | timelock | **Freeze the cut path** on the published schedule (post-audit), behind separated guardian/upgrade multisigs + 48–72h timelock until then. |
+| Diamond-cut governance itself | timelock | **Freeze the whole cut path** — Add **and** Replace/Remove (freezing only existing selectors would still let a new facet add custody-moving code) — on the published schedule (post-audit), behind separated guardian/upgrade multisigs + timelock until then. |
 
 Guiding rule (the load-bearing line): **anything that can move custody —
 directly or through a price/risk input — can only change behind the 48–72h
@@ -124,7 +135,18 @@ that window, cancellation is the timelock proposer's), and is a freeze
 - **Post-audit:** the per-selector diamond-cut **freeze** mechanism (staged
   renounce of the cut path), the formal on-chain renounce timeline, and the
   on-chain quorum. These are deliberately deferred — freezing the cut path is
-  irreversible and must follow the audit + a stability bake.
+  irreversible and must follow the audit + a stability bake. Two things this
+  freeze must explicitly cover, beyond replacing/removing existing selectors:
+  - **Add (new selectors / facets), not just Replace/Remove.** Freezing only
+    the existing selectors would still let a new facet introduce custody-moving
+    code. The freeze scope is the *whole* cut path — Add included.
+  - **The per-user vault UUPS upgrade path** (`VaipakamVaultImplementation`,
+    `_authorizeUpgrade onlyOwner` = the Diamond). It is custody-moving (it runs
+    inside the proxy that holds user assets) and is part of the same post-audit
+    freeze, on the same schedule as the Diamond cut path — not just the facets.
+  - **Independent canceller** for queued timelock ops (a guardian that can
+    cancel but not propose), so a compromised proposer key can be stopped
+    without itself holding the only cancel lever (see §0).
 
 ## 5. Honesty clause
 
