@@ -675,7 +675,7 @@ export default function Dashboard() {
                     <td>{bpsToPercent(loan.interestRateBps)}</td>
                     <td>{loan.durationDays.toString()} days</td>
                     <td><LoanLtvCell risk={risks.get(loan.id.toString())} /></td>
-                    <td><LoanHfCell risk={risks.get(loan.id.toString())} /></td>
+                    <td><LoanHfCell risk={risks.get(loan.id.toString())} initMin={loan.minHealthFactorAtInit ? Number(loan.minHealthFactorAtInit) / 1e18 : undefined} /></td>
                     <td>
                       <span className={`status-badge ${LOAN_STATUS_LABELS[loan.status].toLowerCase()}`}>
                         {LOAN_STATUS_LABELS[loan.status]}
@@ -807,8 +807,10 @@ function LoanLtvCell({ risk }: { risk: LoanRisk | undefined }) {
   return <LTVChip percent={ltv === null ? null : Number(ltv) / 1e16} />;
 }
 
-function LoanHfCell({ risk }: { risk: LoanRisk | undefined }) {
+function LoanHfCell({ risk, initMin }: { risk: LoanRisk | undefined; initMin?: number }) {
   const hf = risk?.hf ?? null;
-  return <HealthFactorChip value={hf === null ? null : Number(hf) / 1e18} />;
+  // #394 Lever A (Codex #647 round-5) — colour this OPEN loan against the floor
+  // IT was admitted under (its snapshot), not a stale 1.5 default.
+  return <HealthFactorChip value={hf === null ? null : Number(hf) / 1e18} initMin={initMin} />;
 }
 

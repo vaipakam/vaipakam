@@ -31,6 +31,7 @@ function makeLoan(overrides: Partial<LoanSummary>): LoanSummary {
     borrowerTokenId: 0n,
     allowsPartialRepay: false,
     liquidationLtvBpsAtInit: 7500,
+    minHealthFactorAtInit: 15n * 10n ** 17n, // 1.5e18 (#394)
     ...overrides,
   };
 }

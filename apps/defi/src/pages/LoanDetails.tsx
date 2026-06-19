@@ -917,7 +917,12 @@ export default function LoanDetails() {
               </div>
               <div className="data-row">
                 <span className="data-label">{t('loanDetails.healthFactor')}</span>
-                <HealthFactorGauge value={hfScaled} />
+                {/* #394 Lever A (Codex #647 round-5) — colour against the floor
+                    this loan was admitted under (its snapshot), not a stale 1.5. */}
+                <HealthFactorGauge
+                  value={hfScaled}
+                  initMin={loan?.minHealthFactorAtInit ? Number(loan.minHealthFactorAtInit) / 1e18 : undefined}
+                />
               </div>
               {riskError && (
                 <div className="data-row">

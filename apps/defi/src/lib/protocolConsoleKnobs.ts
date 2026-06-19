@@ -54,6 +54,7 @@ export type KnobUnit =
   | 'wholeNumber' // raw int (e.g. VPFI per ETH ratio)
   | 'usd1e18' // 1e18-scaled USD — display as $X
   | 'tokens1e18' // 1e18-scaled token amount
+  | 'hf1e18' // 1e18-scaled Health Factor ratio — display as X.XX (#394)
   | 'address' // 0x… — no slider, surfaces as text + checksum
   | 'bytes32' // bytes32 — text input
   | 'bool'; // toggle switch
@@ -211,6 +212,36 @@ export const ADMIN_KNOBS: KnobMeta[] = [
       args: [{ name: 'aprBps', type: 'uint16' }],
     },
     infoAnchor: 'staking-apr',
+    hasNumericRange: true,
+  },
+
+  // ─── Risk admission ──────────────────────────────────────────────
+
+  {
+    // #394 Lever A (Codex #647 round-5) — surface the runtime loan-admission
+    // Health Factor floor so governance can view / propose / track it through
+    // the operator console instead of hand-rolling calldata.
+    id: 'minHealthFactor',
+    label: 'Loan-admission HF floor',
+    short:
+      'Minimum Health Factor a NEW loan must clear at admission (non-tiered regime). Prospective only — open loans keep their snapshotted floor.',
+    category: 'risk',
+    unit: 'hf1e18',
+    hardMin: '1200000000000000000', // MIN_ADMISSION_HEALTH_FACTOR = 1.2e18
+    hardMax: '2000000000000000000', // MAX_ADMISSION_HEALTH_FACTOR = 2.0e18
+    safeMin: '1400000000000000000', // 1.4 — keep a healthy buffer
+    safeMax: '1700000000000000000', // 1.7
+    midMin: '1200000000000000000',
+    midMax: '2000000000000000000',
+    getter: { facet: 'RiskFacet', fn: 'getMinHealthFactor', returns: 'uint256' },
+    setter: {
+      facet: 'RiskFacet',
+      fn: 'setMinHealthFactor',
+      args: [{ name: 'newMinHealthFactor', type: 'uint256' }],
+    },
+    infoAnchor: 'loan-admission-hf-floor',
+    // Unset on-chain override (0) ⇒ the MIN_HEALTH_FACTOR default (1.5e18).
+    defaultFallback: '1500000000000000000',
     hasNumericRange: true,
   },
 

@@ -131,6 +131,34 @@ much* collateral a partial sells (via HF/value bounds) — never how the loan is
 priced — and leaves full liquidation (`triggerLiquidation`) unchanged as the
 alternative.
 
+### Loan-admission HF floor (#394)
+
+(`RiskFacet.setMinHealthFactor(uint256)` / `getMinHealthFactor()`,
+`RISK_ADMIN_ROLE`.) The minimum Health Factor a **new** loan must clear at
+admission in the standard (non-depth-tiered) regime. Defaults to `1.5e18`
+(the `MIN_HEALTH_FACTOR` library default) when the on-chain override is unset
+(`0`); range-bounded `[1.2e18, 2.0e18]`. This is the protocol's per-deploy
+risk-appetite dial — tighten it in a volatile regime, loosen it for a
+proven-safe book — **without a contract redeploy**.
+
+Three properties keep it safe:
+
+- **Prospective only.** Each loan snapshots the floor it was admitted under
+  (`Loan.minHealthFactorAtInit`) plus the effective init-LTV cap
+  (`Loan.initLtvCapBpsAtInit`); every post-admission check (collateral
+  withdrawal, fallback-cure, partial-repay / swap-to-repay guards, refinance)
+  reads that snapshot, so a retune never retroactively loosens *or* tightens
+  an open position's buffer.
+- **Branch-aware.** The dial moves only the non-tiered admission floor. The
+  depth-tiered regime keeps its `1.0` not-born-liquidatable floor, and the
+  liquidation trigger (`HF < 1.0`) is untouched in both regimes — so because
+  the dial is bounded `≥ 1.2`, no retune can make an open loan liquidatable.
+- **Discoverable.** Surfaced in the protocol console catalogue (Risk
+  Parameters) so governance can view / propose / track it via the operator
+  surface; the dApp's HF gauges colour each open loan against its snapshot.
+
+It does **not** change how any loan is priced — only the admission gate.
+
 ### Quote-time interest-rate model (#400)
 
 (`AdminFacet.setRateModel(address)` / `getRateModel()`.) The active

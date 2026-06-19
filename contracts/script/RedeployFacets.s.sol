@@ -52,19 +52,25 @@ contract RedeployFacets is Script {
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
         cuts[5] = _replace(address(profileFacet), _profileSelectors());
+        // #394 (Codex #647 round-5) — the runtime HF-floor knob selectors are
+        // NEW (not on a pre-#394 diamond), so they must be ADDED, not Replaced.
+        // `LibDiamond.replaceFunctions` reverts when the old facet address is
+        // zero, so folding them into the Replace above would brick this upgrade
+        // before governance could expose the knob.
+        cuts[6] = _add(address(riskFacet), _riskAddSelectors());
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced.");
+        console.log("DiamondCut applied: 6 facets replaced + 2 risk selectors added.");
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -75,6 +81,20 @@ contract RedeployFacets is Script {
         return IDiamondCut.FacetCut({
             facetAddress: facet,
             action: IDiamondCut.FacetCutAction.Replace,
+            functionSelectors: selectors
+        });
+    }
+
+    /// @dev #394 (Codex #647 round-5) — Add cut for brand-new selectors not yet
+    ///      routed on the target diamond (Replace would revert on a zero old facet).
+    function _add(address facet, bytes4[] memory selectors)
+        internal
+        pure
+        returns (IDiamondCut.FacetCut memory)
+    {
+        return IDiamondCut.FacetCut({
+            facetAddress: facet,
+            action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
     }
@@ -94,7 +114,10 @@ contract RedeployFacets is Script {
         // (where the last 2 are genuinely new and need an `Add`, not `Replace`)
         // are handled by the comprehensive deploy-modernization track, not this
         // same-version bytecode-refresh script.
-        s = new bytes4[](9);
+        // The 7 selectors a pre-#394 (post-#395) diamond already routes — safe
+        // to Replace. The two #394 HF-floor selectors are NEW and go through
+        // `_riskAddSelectors()` (an Add cut) instead — see the cut wiring above.
+        s = new bytes4[](7);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
@@ -102,8 +125,14 @@ contract RedeployFacets is Script {
         s[4] = RiskFacet.triggerLiquidation.selector;
         s[5] = RiskFacet.triggerPartialLiquidation.selector;
         s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
-        s[7] = RiskFacet.setMinHealthFactor.selector;
-        s[8] = RiskFacet.getMinHealthFactor.selector;
+    }
+
+    /// @dev #394 (Codex #647 round-5) — the runtime HF-floor knob selectors,
+    ///      ADDED (not Replaced) because they don't exist on a pre-#394 diamond.
+    function _riskAddSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RiskFacet.setMinHealthFactor.selector;
+        s[1] = RiskFacet.getMinHealthFactor.selector;
     }
 
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
