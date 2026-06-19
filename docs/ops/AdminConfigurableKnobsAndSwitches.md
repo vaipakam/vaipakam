@@ -100,10 +100,14 @@ value is range-checked, so the reads are trusted unconditionally.
   ceiling is **waived** so a keeper may delever aggressively to restore
   solvency, in BPS of `HF_SCALE` (default `9_500` = HF 0.95). Bounded
   `[8_000, 9_900]` (HF 0.80–0.99), always strictly below the restore floor.
-- **`liquidationDustFloorNumeraire`** — if a routine partial would leave
-  residual debt OR residual collateral valued below this, the ceiling is
-  **waived** so the slice can be enlarged and no un-liquidatable dust is
-  stranded (default `1_000` = ~$1,000). **Units: whole-numeraire**, the same
+- **`liquidationDustFloorNumeraire`** — if the **pre-partial** position
+  (its debt OR collateral at entry) is valued below this, the ceiling is
+  **waived** so a genuinely-tiny loan isn't blocked from clearing (default
+  `1_000` = ~$1,000). The waiver keys off the *pre-partial* size, **not** the
+  post-mutation residual, so a keeper cannot manufacture a sub-dust residual
+  by over-liquidating and self-waive the ceiling; a larger position that
+  can't partial cleanly falls back to full liquidation. **Units:
+  whole-numeraire**, the same
   scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
   8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
   ($100k) so a misconfigured floor can't turn every routine partial into a

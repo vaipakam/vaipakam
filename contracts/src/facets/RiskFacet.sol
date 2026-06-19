@@ -1091,6 +1091,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
 
+        // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
+        // BEFORE the mutation below. The dust waiver keys off this pre-existing
+        // size, never the post-mutation residual: otherwise a keeper could
+        // over-liquidate to manufacture a sub-dust residual and self-waive the
+        // over-liquidation ceiling. Only a genuinely-tiny position (which can't
+        // restore within the ceiling without leaving dust) is waived; a larger
+        // position that can't partial cleanly falls back to full liquidation.
+        (uint256 preDebtNum, uint256 preCollNum) = _computeNumeraireValues(loan);
+
         // Mutate the loan: reduce collateral + principal, restart the
         // interest clock at now, shorten `durationDays` so `endTime` is
         // preserved exactly. The lender's term is unchanged.
@@ -1111,11 +1120,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (hfAfter < LibVaipakam.HF_SCALE) revert PartialMustRestoreHF(hfAfter);
         // #395 (Approach A) — "size to need": a routine partial may not leave
         // the borrower above the governance target-HF ceiling, UNLESS the
-        // position was deep-underwater at entry or the residual would be dust.
+        // position was deep-underwater at entry or was already dust-sized.
         // E2-safe: this only constrains HOW MUCH collateral is sold (via HF
-        // bounds), never re-prices the loan. `loan` is already post-mutation
-        // here, so `_assertPartialSizing` reads residual values directly.
-        _assertPartialSizing(loan, hfBefore, hfAfter);
+        // bounds), never re-prices the loan.
+        _assertPartialSizing(hfBefore, hfAfter, preDebtNum, preCollNum);
 
         emit LoanPartiallyLiquidated(
             loanId,
@@ -1753,18 +1761,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
     ///      escalation cases so solvency / dust-cleanup is never blocked:
     ///        1. deep-underwater — `hfBefore` ≤ the configured threshold; the
     ///           position needs aggressive delevering, so overshoot is fine.
-    ///        2. dust residual — residual debt OR residual collateral (valued
-    ///           in the active numeraire) is below the dust floor; clearing
-    ///           more avoids stranding un-liquidatable dust.
-    ///      Ordered so the oracle read ({_computeNumeraireValues}) only runs
-    ///      when the partial actually breaches the ceiling AND isn't deep-
-    ///      underwater — the common in-band case returns immediately. `loan`
-    ///      MUST be post-mutation so the reused helper returns *residual*
-    ///      values. Thresholds are range-clamped at the setter.
+    ///        2. pre-existing dust — the position was ALREADY dust-sized
+    ///           (PRE-partial debt OR collateral below the dust floor), so a
+    ///           routine partial can't restore within the ceiling without
+    ///           leaving dust. Codex r1 P1 #2: this keys off the PRE-partial
+    ///           values (`preDebtNum` / `preCollNum`, snapshotted before the
+    ///           mutation by the caller), NOT the post-mutation residual —
+    ///           otherwise a keeper could over-liquidate to manufacture a
+    ///           sub-dust residual and self-waive the ceiling. A larger
+    ///           position that can't partial cleanly falls back to full
+    ///           liquidation (which closes the whole position, no dust).
+    ///      Thresholds are range-clamped at the setter, so reads are trusted.
     function _assertPartialSizing(
-        LibVaipakam.Loan storage loan,
         uint256 hfBefore,
-        uint256 hfAfter
+        uint256 hfAfter,
+        uint256 preDebtNum,
+        uint256 preCollNum
     ) private view {
         uint256 ceiling = (LibVaipakam.cfgPartialLiqTargetHfCeilingBps() *
             LibVaipakam.HF_SCALE) / LibVaipakam.BASIS_POINTS;
@@ -1776,8 +1788,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (hfBefore <= deepThreshold) return; // deep underwater — delever OK.
 
         uint256 dustFloor = LibVaipakam.cfgLiquidationDustFloorNumeraire();
-        (uint256 residualDebtNum, uint256 residualCollNum) = _computeNumeraireValues(loan);
-        if (residualDebtNum < dustFloor || residualCollNum < dustFloor) return; // dust.
+        // Pre-partial dust — ungameable: a keeper cannot shrink the position's
+        // entry size, only its (irrelevant-here) residual.
+        if (preDebtNum < dustFloor || preCollNum < dustFloor) return;
 
         revert PartialOverLiquidates(hfAfter, ceiling);
     }

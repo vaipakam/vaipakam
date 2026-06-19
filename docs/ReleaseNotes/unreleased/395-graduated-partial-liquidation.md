@@ -17,10 +17,13 @@ borrower comfortably healthier than that ceiling — i.e. it sold more than need
 - **Deep underwater** — if the position was already below a configurable health
   threshold (default 0.95) before the partial, the keeper may delever
   aggressively to restore solvency.
-- **Dust residual** — if a routine partial would leave residual debt or residual
-  collateral worth less than a configurable dust floor (default ~$1,000), the
-  ceiling is waived so the slice can be enlarged and no un-liquidatable dust is
-  stranded.
+- **Pre-existing dust** — if the position was *already* tiny at entry (its debt
+  or collateral worth less than a configurable dust floor, default ~$1,000), the
+  ceiling is waived so a genuinely-small loan isn't blocked from clearing. This
+  keys off the position's size *before* the partial, never the leftover after it,
+  so a keeper can't manufacture a tiny leftover by over-selling and bypass the
+  guard; a larger position that can't be partialled cleanly simply falls back to
+  full liquidation.
 
 This only governs *how much* collateral a partial may sell; it never changes how
 the loan is priced, and full liquidation remains available unchanged as the

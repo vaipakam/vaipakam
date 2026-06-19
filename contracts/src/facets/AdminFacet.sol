@@ -391,15 +391,39 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         if (dustFloorNumeraire > LibVaipakam.MAX_LIQUIDATION_DUST_FLOOR_NUMERAIRE) {
             revert InvalidPartialLiqSizing();
         }
-        LibVaipakam.ProtocolConfig storage cfg = LibVaipakam.storageSlot().protocolCfg;
-        cfg.partialLiqTargetHfCeilingBps = targetHfCeilingBps;
-        cfg.partialLiqDeepUnderwaterHfBps = deepUnderwaterHfBps;
-        cfg.liquidationDustFloorNumeraire = dustFloorNumeraire;
+        // #395 sizing knobs live at the `Storage` tail (layout-safe), NOT in
+        // `ProtocolConfig` — see the LibVaipakam declarations.
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        s.partialLiqTargetHfCeilingBps = targetHfCeilingBps;
+        s.partialLiqDeepUnderwaterHfBps = deepUnderwaterHfBps;
+        s.liquidationDustFloorNumeraire = dustFloorNumeraire;
         emit PartialLiquidationSizingSet(
             targetHfCeilingBps,
             deepUnderwaterHfBps,
             dustFloorNumeraire
         );
+    }
+
+    /// @notice The #395 partial-liquidation sizing knobs currently in EFFECT
+    ///         (governance value, or the library default where unset). Codex
+    ///         r1 P2 — keeper bots read this to size a partial that will pass
+    ///         `RiskFacet.triggerPartialLiquidation` after a governance change,
+    ///         rather than guessing defaults or decoding raw storage.
+    /// @return targetHfCeilingBps   Effective routine over-liquidation HF ceiling (BPS of HF_SCALE).
+    /// @return deepUnderwaterHfBps  Effective deep-underwater escalation HF (BPS of HF_SCALE).
+    /// @return dustFloorNumeraire   Effective dust floor (whole-numeraire; $1k == 1_000).
+    function getPartialLiquidationSizing()
+        external
+        view
+        returns (
+            uint256 targetHfCeilingBps,
+            uint256 deepUnderwaterHfBps,
+            uint256 dustFloorNumeraire
+        )
+    {
+        targetHfCeilingBps = LibVaipakam.cfgPartialLiqTargetHfCeilingBps();
+        deepUnderwaterHfBps = LibVaipakam.cfgPartialLiqDeepUnderwaterHfBps();
+        dustFloorNumeraire = LibVaipakam.cfgLiquidationDustFloorNumeraire();
     }
 
     /// @notice Replace the adapter order with an explicit permutation.
