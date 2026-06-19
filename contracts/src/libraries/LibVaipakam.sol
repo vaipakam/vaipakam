@@ -322,8 +322,10 @@ library LibVaipakam {
     // ceiling is also the hard upper bound at the setter: a partial
     // can never swap more than 100% of remaining collateral, by definition.
     uint256 constant MAX_PARTIAL_LIQUIDATION_CLOSE_FACTOR_BPS_DEFAULT = 10_000;
-    // #395 graduated partial-liquidation sizing (Approach A). All three are
-    // BPS-of-HF_SCALE except the dust floor (1e18-scaled numeraire).
+    // #395 graduated partial-liquidation sizing (Approach A). The two HF
+    // thresholds are BPS-of-HF_SCALE; the dust floor is whole-numeraire — the
+    // same scale {RiskFacet._computeNumeraireValues} returns ($1k == 1_000
+    // with 8-decimal feeds, NOT 1e18-scaled). See the per-field notes below.
     //  - Target HF ceiling: a routine partial may not leave the borrower
     //    above this HF (prevents over-liquidation). Default HF 1.20.
     //    Bounded (1.05, 1.50] so it always sits strictly above the HF=1.00

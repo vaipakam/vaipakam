@@ -117,13 +117,19 @@ value is range-checked, so the reads are trusted unconditionally.
   scale `RiskFacet._computeNumeraireValues` returns (whole-USD with standard
   8-decimal feeds — `$1k == 1_000`, NOT `1e18`-scaled). Capped at `100_000`
   ($100k) so a misconfigured floor can't turn every routine partial into a
-  full close. It only ever *widens* what a keeper may do, so there is no
-  "disable" need; set a tiny value to effectively neutralise.
+  full close. **Setting a nonzero floor both widens (the pre-existing-dust
+  waiver) AND narrows (the leave-fresh-dust prevention) what a keeper may do —
+  it is not a harmless one-way knob — and `0` is the explicit disable path.**
+  Plan for keeper partials to start reverting `PartialLeavesDust` (and require
+  full liquidation) on small loans once a floor is set.
 
-All three default to sensible values, so the guardrail is active on a fresh
-deploy with no operator action. It governs only *how much* collateral a
-partial sells (via HF/value bounds) — never how the loan is priced — and
-leaves full liquidation (`triggerLiquidation`) unchanged as the alternative.
+The over-liquidation **ceiling** and **deep-underwater** thresholds default to
+sensible values and are active on a fresh deploy with no operator action; the
+**dust floor defaults to `0` (disabled)** and is opt-in (set it in the active
+numeraire to switch dust handling on). The whole guardrail governs only *how
+much* collateral a partial sells (via HF/value bounds) — never how the loan is
+priced — and leaves full liquidation (`triggerLiquidation`) unchanged as the
+alternative.
 
 ### Swap-to-Repay max slippage (T-090)
 
