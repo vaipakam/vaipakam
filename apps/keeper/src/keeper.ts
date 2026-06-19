@@ -501,22 +501,35 @@ export async function maybeAutonomousLiquidate(
         );
         return true;
       } catch (partialErr) {
-        // #395 (Codex r6 P2) — only the on-chain SIZING-GUARD reverts mean
-        // "escalate this loan to full liquidation": `PartialOverLiquidates`
-        // (slice over the ceiling), `InternalMatchOnlyBand` (in the priority
-        // window), `PartialLeavesDust` (would strand dust). For ANY other
-        // revert — e.g. `PartialMustRestoreHF` (the slice was undersized after
-        // quote slippage / stale sizing) or a swap-route failure — a resized
-        // partial may still preserve the borrower's position, so do NOT close
-        // the whole loan: skip and re-evaluate (re-quote + re-size) next tick.
+        // #395 (Codex r6/r7 P2) — classify the partial revert into two
+        // actions:
+        //   ESCALATE → full liquidation (fall through): the guard says a
+        //     partial is the wrong tool for this loan right now —
+        //       · InternalMatchOnlyBand  (in the priority window → full
+        //         auto-dispatches the reserved internal match),
+        //       · PartialLeavesDust      (a clean partial would strand dust),
+        //       · InvalidPartialFraction (governance lowered the close-factor
+        //         cap below any usable slice),
+        //       · PartialFullyClosedUseFull (slice would retire all principal),
+        //       · PartialAfterMaturity   (past maturity — full/default path).
+        //   RE-SIZE → skip this tick, recompute next tick (do NOT close the
+        //     whole loan): the slice itself was just mis-sized / the route
+        //     failed, and a smaller/re-quoted partial can still restore HF and
+        //     preserve the borrower's position —
+        //       · PartialOverLiquidates  (slice too big → pick a smaller one),
+        //       · PartialMustRestoreHF / PartialMustImproveHF (too small),
+        //       · PartialSwapAllFailed   (route failed), and any unknown error.
+        // viem surfaces the decoded error name in the message string.
         const msg = String(partialErr);
         const escalate =
-          msg.includes('PartialOverLiquidates') ||
           msg.includes('InternalMatchOnlyBand') ||
-          msg.includes('PartialLeavesDust');
+          msg.includes('PartialLeavesDust') ||
+          msg.includes('InvalidPartialFraction') ||
+          msg.includes('PartialFullyClosedUseFull') ||
+          msg.includes('PartialAfterMaturity');
         if (!escalate) {
           console.log(
-            `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-nonescalation (${msg.slice(0, 140)}) — skipping; re-size next tick`,
+            `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`,
           );
           return false;
         }

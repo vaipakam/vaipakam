@@ -1820,24 +1820,35 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 dustFloor = LibVaipakam.cfgLiquidationDustFloorNumeraire();
         bool preDust = dustFloor > 0 &&
             (preDebtNum < dustFloor || preCollNum < dustFloor);
+        // (B) Leaves a FRESH dust position — both residual sides below the
+        // floor, out of a non-pre-dust loan. Computed up front because it must
+        // be enforced in BOTH the within-band AND the over-ceiling/deep-
+        // underwater branches (Codex r7: a deep-underwater aggressive slice can
+        // restore HF above the ceiling AND shrink both residuals to dust; that
+        // must still escalate to full, not slip through the deep-water waiver).
+        bool leavesFreshDust = dustFloor > 0 && !preDust &&
+            postDebtNum < dustFloor && postCollNum < dustFloor;
 
         uint256 ceiling = (LibVaipakam.cfgPartialLiqTargetHfCeilingBps() *
             LibVaipakam.HF_SCALE) / LibVaipakam.BASIS_POINTS;
 
         if (hfAfter > ceiling) {
-            // (A) Over the ceiling — permitted only under an escalation case.
+            // (A) Over the ceiling. A routine over-liquidation (not deep-
+            // underwater, not pre-dust) is "sized too big" — revert
+            // PartialOverLiquidates so the keeper re-sizes a SMALLER slice.
             uint256 deepThreshold = (LibVaipakam.cfgPartialLiqDeepUnderwaterHfBps() *
                 LibVaipakam.HF_SCALE) / LibVaipakam.BASIS_POINTS;
             if (hfBefore > deepThreshold && !preDust) {
                 revert PartialOverLiquidates(hfAfter, ceiling);
             }
-            return; // deep-underwater or pre-existing-dust escalation.
+            // Deep-underwater or pre-existing-dust: the ceiling is waived, BUT
+            // the slice still may not strand fresh dust.
+            if (leavesFreshDust) revert PartialLeavesDust(postDebtNum, postCollNum);
+            return;
         }
 
-        // (B) Within band — must not leave a FRESH dust position. Only when a
-        // floor is configured and the loan wasn't already dust at entry.
-        if (dustFloor > 0 && !preDust &&
-            postDebtNum < dustFloor && postCollNum < dustFloor) {
+        // Within band — must not leave a FRESH dust position either.
+        if (leavesFreshDust) {
             revert PartialLeavesDust(postDebtNum, postCollNum);
         }
     }

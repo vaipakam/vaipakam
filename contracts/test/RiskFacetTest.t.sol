@@ -3886,6 +3886,23 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @notice Codex r7 P2 — the deep-underwater waiver does NOT let a partial
+    ///         strand fresh dust. collPrice $0.60 ⇒ HF_before ≈ 0.918 (deep
+    ///         underwater, so the over-ceiling slice is waived); floor $500;
+    ///         non-dust $1k/$1,080 entry; a 70% slice (rate 0.70) over-restores
+    ///         to HF ≈ 1.70 BUT shrinks both residuals (~$162 debt / ~$324
+    ///         collateral) below $500 — so it reverts `PartialLeavesDust`
+    ///         rather than slipping through the deep-underwater waiver.
+    function testPartialSizing_DeepUnderwaterLeavesDust_Reverts() public {
+        uint256 loanId = _setupPartialSizing(0.60e8);
+        ZeroExProxyMock(address(mockZeroExProxy)).setRate(70, 100);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 500);
+
+        vm.expectPartialRevert(RiskFacet.PartialLeavesDust.selector);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(loanId, 7_000, defaultAdapterCalls());
+        vm.clearMockedCalls();
+    }
+
     /// @notice Dust-prevention (Codex r3 P2): a within-band partial that would
     ///         leave a FRESH dust position out of a NON-dust loan reverts
     ///         `PartialLeavesDust`, forcing the keeper to full liquidation
