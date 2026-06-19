@@ -81,7 +81,14 @@ export function OfferRiskPreview({
   // becomes the binding safety buffer). Mirror that here so the
   // preview's "worst-case HF below floor" warning fires at the same
   // threshold the diamond would actually reject at.
-  const initHfFloor = protocolConfig?.depthTieredLtvEnabled ? 1.0 : 1.5;
+  // #394 Lever A (Codex #647 round-5) — the non-tiered floor is the LIVE
+  // governance knob (`getProtocolConstants().minHealthFactor`), not a
+  // hard-coded 1.5, so this preview's "worst-case HF below floor" warning AND
+  // the gauge colouring track a retune. Tiered regime stays at the relaxed 1.0.
+  const liveAdmissionFloor = protocolConfig?.minHealthFactor
+    ? Number(protocolConfig.minHealthFactor) / 1e18
+    : 1.5;
+  const initHfFloor = protocolConfig?.depthTieredLtvEnabled ? 1.0 : liveAdmissionFloor;
   const [risk, setRisk] = useState<RiskInputs | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -250,14 +257,14 @@ export function OfferRiskPreview({
                   <span style={{ fontSize: '0.72rem', opacity: 0.7 }}>
                     worst
                   </span>
-                  <HealthFactorGauge value={projection.hfWorst} />
+                  <HealthFactorGauge value={projection.hfWorst} initMin={initHfFloor} />
                   <span style={{ fontSize: '0.72rem', opacity: 0.7 }}>
                     best
                   </span>
-                  <HealthFactorGauge value={projection.hfBest} />
+                  <HealthFactorGauge value={projection.hfBest} initMin={initHfFloor} />
                 </>
               ) : (
-                <HealthFactorGauge value={projection.hfBest} />
+                <HealthFactorGauge value={projection.hfBest} initMin={initHfFloor} />
               )}
             </span>
           </div>

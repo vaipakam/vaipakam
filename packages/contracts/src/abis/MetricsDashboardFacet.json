@@ -208,6 +208,11 @@
                 "name": "liquidationLtvBpsAtInit",
                 "type": "uint16",
                 "internalType": "uint16"
+              },
+              {
+                "name": "minHealthFactorAtInit",
+                "type": "uint64",
+                "internalType": "uint64"
               }
             ]
           },
@@ -346,6 +351,11 @@
                 "name": "liquidationLtvBpsAtInit",
                 "type": "uint16",
                 "internalType": "uint16"
+              },
+              {
+                "name": "minHealthFactorAtInit",
+                "type": "uint64",
+                "internalType": "uint64"
               }
             ]
           },

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -52,19 +53,41 @@ contract RedeployFacets is Script {
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](6);
+        // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
+        // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
+        // a zero old facet) but a Replace on a SAME-VERSION diamond (already
+        // routed → Add reverts as "exists"). A static choice can't serve both,
+        // so partition them by the live diamond's routing via the loupe: Add the
+        // unrouted, Replace the already-routed. This makes the script correct
+        // against any target diamond.
+        (bytes4[] memory hfToAdd, bytes4[] memory hfToReplace) =
+            _partitionByRouting(diamond, _riskAddSelectors());
+
+        uint256 nExtra =
+            (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0);
+        IDiamondCut.FacetCut[] memory cuts =
+            new IDiamondCut.FacetCut[](6 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
         cuts[5] = _replace(address(profileFacet), _profileSelectors());
+        uint256 idx = 6;
+        if (hfToReplace.length > 0) {
+            cuts[idx++] = _replace(address(riskFacet), hfToReplace);
+        }
+        if (hfToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskFacet), hfToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
         console.log("DiamondCut applied: 6 facets replaced.");
+        console.log("  HF selectors added:   ", hfToAdd.length);
+        console.log("  HF selectors replaced:", hfToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -79,15 +102,84 @@ contract RedeployFacets is Script {
         });
     }
 
+    /// @dev #394 (Codex #647 round-5) — Add cut for brand-new selectors not yet
+    ///      routed on the target diamond (Replace would revert on a zero old facet).
+    function _add(address facet, bytes4[] memory selectors)
+        internal
+        pure
+        returns (IDiamondCut.FacetCut memory)
+    {
+        return IDiamondCut.FacetCut({
+            facetAddress: facet,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: selectors
+        });
+    }
+
+    /// @dev #394 (Codex #647 round-7) — split `selectors` into those NOT yet
+    ///      routed on `diamond` (need Add) and those already routed (need
+    ///      Replace), using the loupe's `facetAddress` (returns `address(0)`
+    ///      for an unrouted selector). Lets one script serve both a pre-#394
+    ///      diamond (selectors new) and a same-version diamond (selectors
+    ///      present) without `Add`/`Replace` reverting on the wrong one.
+    function _partitionByRouting(address diamond, bytes4[] memory selectors)
+        internal
+        view
+        returns (bytes4[] memory toAdd, bytes4[] memory toReplace)
+    {
+        bool[] memory routed = new bool[](selectors.length);
+        uint256 addN;
+        uint256 replN;
+        for (uint256 i; i < selectors.length; i++) {
+            routed[i] =
+                IDiamondLoupe(diamond).facetAddress(selectors[i]) != address(0);
+            if (routed[i]) replN++;
+            else addN++;
+        }
+        toAdd = new bytes4[](addN);
+        toReplace = new bytes4[](replN);
+        uint256 a;
+        uint256 r;
+        for (uint256 i; i < selectors.length; i++) {
+            if (routed[i]) toReplace[r++] = selectors[i];
+            else toAdd[a++] = selectors[i];
+        }
+    }
+
     // ── Selector arrays (mirror DeployDiamond.s.sol) ────────────────────
 
     function _riskSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        // Mirrors `DeployDiamond._getRiskFacetSelectors` (kept in lockstep).
+        // Was stale at 5 — missing the #395 partial/discounted liquidators and
+        // the #394 runtime HF-floor knob (Codex #647 round-4), so a same-version
+        // testnet redeploy through this script silently dropped routing for
+        // `setMinHealthFactor`/`getMinHealthFactor` and governance could not use
+        // the no-redeploy risk-appetite knob. Now the full 9.
+        // NOTE: this `Replace` assumes the target diamond was deployed with the
+        // current `DeployDiamond` (all 9 already routed) — the realistic
+        // pre-live / testnet flow. Cross-version upgrades of a PRE-#394 diamond
+        // (where the last 2 are genuinely new and need an `Add`, not `Replace`)
+        // are handled by the comprehensive deploy-modernization track, not this
+        // same-version bytecode-refresh script.
+        // The 7 selectors a pre-#394 (post-#395) diamond already routes — safe
+        // to Replace. The two #394 HF-floor selectors are NEW and go through
+        // `_riskAddSelectors()` (an Add cut) instead — see the cut wiring above.
+        s = new bytes4[](7);
         s[0] = RiskFacet.updateRiskParams.selector;
         s[1] = RiskFacet.calculateLTV.selector;
         s[2] = RiskFacet.calculateHealthFactor.selector;
         s[3] = RiskFacet.isCollateralValueCollapsed.selector;
         s[4] = RiskFacet.triggerLiquidation.selector;
+        s[5] = RiskFacet.triggerPartialLiquidation.selector;
+        s[6] = RiskFacet.triggerLiquidationDiscounted.selector;
+    }
+
+    /// @dev #394 (Codex #647 round-5) — the runtime HF-floor knob selectors,
+    ///      ADDED (not Replaced) because they don't exist on a pre-#394 diamond.
+    function _riskAddSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RiskFacet.setMinHealthFactor.selector;
+        s[1] = RiskFacet.getMinHealthFactor.selector;
     }
 
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {

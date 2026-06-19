@@ -40,6 +40,10 @@ export function formatKnobValue(raw: RawValue, knob: KnobMeta): string {
     case 'tokens1e18':
       if (typeof raw !== 'bigint') return '—';
       return formatTokens(raw, 18, 2);
+    case 'hf1e18':
+      // #394 — 1e18-scaled Health Factor → ratio with 2 decimals (1.5e18 → 1.50).
+      if (typeof raw !== 'bigint') return '—';
+      return formatTokens(raw, 18, 2);
     case 'wholeNumber':
       if (typeof raw !== 'bigint') return '—';
       return raw.toString();
@@ -69,6 +73,8 @@ export function formatBound(raw: bigint | string, unit: KnobUnit): string {
       return `$${formatTokens(raw, 18, 0)}`;
     case 'tokens1e18':
       return formatTokens(raw, 18, 0);
+    case 'hf1e18':
+      return formatTokens(raw, 18, 2); // #394 — keep 2 decimals for HF bounds (1.20 / 2.00)
     case 'bool':
       return raw === 1n ? 'on' : 'off';
     default:

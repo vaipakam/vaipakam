@@ -85,6 +85,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 reserveFactorBps
     );
 
+    /// @notice #394 Lever A — emitted when governance retunes the runtime
+    ///         loan-admission Health Factor floor.
+    /// @param newMinHealthFactor The new admission floor (1e18-scaled).
+    event MinHealthFactorSet(uint256 newMinHealthFactor);
+
     /// @notice Emitted when a liquidation is triggered via HF.
     /// @param loanId The ID of the liquidated loan.
     /// @param liquidator The caller who triggered.
@@ -349,6 +354,55 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             liqBonusBps,
             reserveFactorBps
         );
+    }
+
+    /**
+     * @notice #394 Lever A — retune the runtime loan-ADMISSION Health Factor
+     *         floor (the non-tiered init gate + every restore/maintain/preview
+     *         HF check). This is the protocol's per-deploy risk-appetite knob:
+     *         tighten it in a volatile regime, loosen it for a proven-safe
+     *         book — WITHOUT a contract redeploy.
+     * @dev    Range-bounded to `[MIN_ADMISSION_HEALTH_FACTOR,
+     *         MAX_ADMISSION_HEALTH_FACTOR]` (1.2e18 … 2.0e18); the default
+     *         (unset) is `MIN_HEALTH_FACTOR` (1.5e18). RISK_ADMIN_ROLE-gated,
+     *         same as {updateRiskParams}. The optimistic delta+cooldown
+     *         "risk-steward" machinery is intentionally deferred to the
+     *         governance card (#404) — this ships the bounded direct setter.
+     *
+     *         Deliberately does NOT touch the *liquidation* trigger
+     *         (`HF_LIQUIDATION_THRESHOLD`, 1e18) or the tiered-regime init
+     *         floor (also 1e18) — only the admission floor moves. Because the
+     *         floor is range-bounded ≥ 1.2e18 (> the 1e18 liquidation
+     *         trigger), an admitted loan can never be born already
+     *         liquidatable, in either regime. The new floor applies only to
+     *         loans admitted AFTER the change — open loans were gated at their
+     *         own admission time and are never retro-checked (ethos E2).
+     * @param newMinHealthFactor The new admission floor, 1e18-scaled.
+     */
+    function setMinHealthFactor(
+        uint256 newMinHealthFactor
+    ) external whenNotPaused onlyRole(LibAccessControl.RISK_ADMIN_ROLE) {
+        if (
+            newMinHealthFactor < LibVaipakam.MIN_ADMISSION_HEALTH_FACTOR ||
+            newMinHealthFactor > LibVaipakam.MAX_ADMISSION_HEALTH_FACTOR
+        ) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "minHealthFactor",
+                newMinHealthFactor,
+                LibVaipakam.MIN_ADMISSION_HEALTH_FACTOR,
+                LibVaipakam.MAX_ADMISSION_HEALTH_FACTOR
+            );
+        }
+        // Fits uint64 by construction: the ceiling 2.0e18 < ~18.4e18.
+        LibVaipakam.storageSlot().minHealthFactorOverride = uint64(newMinHealthFactor);
+        emit MinHealthFactorSet(newMinHealthFactor);
+    }
+
+    /// @notice #394 Lever A — the live loan-admission Health Factor floor
+    ///         (1e18-scaled). Returns the `MIN_HEALTH_FACTOR` default when no
+    ///         override has been set.
+    function getMinHealthFactor() external view returns (uint256) {
+        return LibVaipakam.minHealthFactor();
     }
 
     /**

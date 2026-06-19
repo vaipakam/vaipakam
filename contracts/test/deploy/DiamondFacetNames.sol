@@ -38,14 +38,18 @@ abstract contract DiamondFacetNames {
     ///      55 → 56 in #398 v1.5 with `AggregatorAdapterFactoryFacet`;
     ///      56 → 57 in #399 v2.5 with `BackstopFacet`;
     ///      57 → 58 in #633 with `RiskSplitLiquidationFacet` (split-route
-    ///      HF liquidator carved out of `RiskFacet` for EIP-170 headroom).)
-    function cutFacetNames() internal pure returns (string[58] memory) {
+    ///      HF liquidator carved out of `RiskFacet` for EIP-170 headroom);
+    ///      58 → 59 in #394 with `NumeraireConfigFacet` (numeraire / PAD /
+    ///      periodic-interest config carved out of `ConfigFacet` for
+    ///      EIP-170 headroom, Codex #647).)
+    function cutFacetNames() internal pure returns (string[59] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
             "AdminFacet",
             "ClaimFacet",
             "ConfigFacet",
+            "NumeraireConfigFacet",
             "DefaultedFacet",
             "DiamondLoupeFacet",
             "EarlyWithdrawalFacet",

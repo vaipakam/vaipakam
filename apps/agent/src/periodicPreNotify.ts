@@ -24,7 +24,7 @@
  */
 
 import { createPublicClient, http, type Address } from 'viem';
-import { ConfigFacetABI } from '@vaipakam/contracts/abis';
+import { NumeraireConfigFacetABI } from '@vaipakam/contracts/abis';
 import type { Env } from './env';
 import { getChainConfigs } from './env';
 import { sendPush } from './push';
@@ -50,10 +50,14 @@ function intervalDays(cadence: number): number {
   }
 }
 
-// `getPreNotifyDays` lives on ConfigFacet — sourced via the compiled
-// ABI bundle so a future config-getter rename lands as a TypeScript
-// error here instead of a silent runtime FunctionDoesNotExist.
-const PRE_NOTIFY_DAYS_ABI = ConfigFacetABI;
+// `getPreNotifyDays` moved to NumeraireConfigFacet in the #394 ConfigFacet
+// split (Codex #647 round-3) — it's no longer in ConfigFacet's ABI, so
+// encoding it from ConfigFacetABI would make viem throw before the RPC call
+// and the catch silently fall back to the default. Source it from the facet
+// that actually implements it so a future rename lands as a TypeScript error
+// here instead of a silent runtime FunctionDoesNotExist. (The selector still
+// routes through the Diamond at runtime — same address, just a different ABI.)
+const PRE_NOTIFY_DAYS_ABI = NumeraireConfigFacetABI;
 
 interface LoanRow {
   loan_id: number;

@@ -205,6 +205,10 @@ export function useUserLoans(address: string | null) {
           liquidationLtvBpsAtInit: Number(
             (loan.liquidationLtvBpsAtInit as bigint | number | undefined) ?? 0n,
           ),
+          // #394 Lever A (Codex #647 round-5) — snapshotted admission HF floor
+          // (1e18-scaled bigint); 0n on pre-#394 loans ⇒ gauge defaults to 1.5.
+          minHealthFactorAtInit:
+            (loan.minHealthFactorAtInit as bigint | undefined) ?? 0n,
         });
       }
       setLoans(found);

@@ -8,25 +8,6 @@
   },
   {
     "type": "function",
-    "name": "getAssetNumeraireDirectFeedOverride",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getDepthTierConfigBundle",
     "inputs": [],
     "outputs": [
@@ -116,32 +97,6 @@
         "name": "graceSeconds",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getEthNumeraireFeed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getEthPadFeed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "stateMutability": "view"
@@ -364,19 +319,6 @@
   },
   {
     "type": "function",
-    "name": "getMinPrincipalForFinerCadence",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getNotificationFeeConfig",
     "inputs": [],
     "outputs": [
@@ -389,32 +331,6 @@
         "name": "feesAccrued",
         "type": "uint256",
         "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getNumeraireSwapEnabled",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getNumeraireSymbol",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -434,19 +350,6 @@
   },
   {
     "type": "function",
-    "name": "getPadNumeraireRateFeed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getPartialFillEnabled",
     "inputs": [],
     "outputs": [
@@ -454,91 +357,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPeriodicInterestConfig",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "symbol",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "threshold",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "preNotify",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "periodicEnabled",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "numeraireSwapEnabled_",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPeriodicInterestEnabled",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPreNotifyDays",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPredominantDenominator",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getPredominantDenominatorSymbol",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes32",
-        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -657,7 +475,7 @@
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "pure"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -926,24 +744,6 @@
   },
   {
     "type": "function",
-    "name": "setAssetNumeraireDirectFeedOverride",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "feed",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setAutoPauseDurationSeconds",
     "inputs": [
       {
@@ -1209,19 +1009,6 @@
   },
   {
     "type": "function",
-    "name": "setMinPrincipalForFinerCadence",
-    "inputs": [
-      {
-        "name": "newThreshold",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setMirrorTierMaxAgeSec",
     "inputs": [
       {
@@ -1248,67 +1035,6 @@
   },
   {
     "type": "function",
-    "name": "setNumeraire",
-    "inputs": [
-      {
-        "name": "ethNumeraireFeed",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "numeraireChainlinkDenominator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "numeraireSymbol",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "pythCrossCheckFeedId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "newThresholdInNewNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newNotificationFeeInNewNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newKycTier0InNewNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newKycTier1InNewNumeraire",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setNumeraireSwapEnabled",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setPaaAssets",
     "inputs": [
       {
@@ -1328,60 +1054,6 @@
         "name": "enabled",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPeriodicInterestEnabled",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPreNotifyDays",
-    "inputs": [
-      {
-        "name": "newDays",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setPredominantDenominator",
-    "inputs": [
-      {
-        "name": "newDenominator",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "newSymbol",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "newEthPadFeed",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "newPadNumeraireRateFeed",
-        "type": "address",
-        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -1802,31 +1474,6 @@
   },
   {
     "type": "event",
-    "name": "AssetNumeraireDirectFeedOverrideSet",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "previous",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "next",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "AutoPauseDurationSet",
     "inputs": [
       {
@@ -2095,19 +1742,6 @@
   },
   {
     "type": "event",
-    "name": "MinPrincipalForFinerCadenceSet",
-    "inputs": [
-      {
-        "name": "newThreshold",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MirrorTierMaxAgeSecSet",
     "inputs": [
       {
@@ -2134,44 +1768,6 @@
   },
   {
     "type": "event",
-    "name": "NumeraireSwapEnabledSet",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NumeraireUpdated",
-    "inputs": [
-      {
-        "name": "oldEthFeed",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newEthFeed",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "numeraireSymbol",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "PaaAssetsSet",
     "inputs": [
       {
@@ -2192,69 +1788,6 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PeriodicInterestEnabledSet",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PreNotifyDaysSet",
-    "inputs": [
-      {
-        "name": "newDays",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "PredominantDenominatorUpdated",
-    "inputs": [
-      {
-        "name": "oldDenominator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newDenominator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newSymbol",
-        "type": "bytes32",
-        "indexed": false,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "newEthPadFeed",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "newPadNumeraireRateFeed",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -2810,11 +2343,6 @@
   },
   {
     "type": "error",
-    "name": "InvalidAddress",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAsset",
     "inputs": []
   },
@@ -3206,11 +2734,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "NumeraireSwapDisabled",
-    "inputs": []
   },
   {
     "type": "error",

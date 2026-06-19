@@ -56,6 +56,11 @@ library LibMetricsTypes {
         uint256 borrowerTokenId;
         bool allowsPartialRepay;
         uint16 liquidationLtvBpsAtInit;
+        // #394 Lever A (Codex #647 round-6) — the loan's snapshotted admission
+        // HF floor (1e18-scaled). Carried in the dashboard projection so the HF
+        // gauge colours each open loan against the floor IT was admitted under
+        // (not a stale 1.5) after a governance retune. uint64 holds ≫ 2e18.
+        uint64 minHealthFactorAtInit;
     }
 
     function toOfferSummary(LibVaipakam.Offer storage o)
@@ -86,7 +91,8 @@ library LibMetricsTypes {
             collateralAssetType: l.collateralAssetType, collateralTokenId: l.collateralTokenId,
             lenderTokenId: l.lenderTokenId, borrowerTokenId: l.borrowerTokenId,
             allowsPartialRepay: l.allowsPartialRepay,
-            liquidationLtvBpsAtInit: l.liquidationLtvBpsAtInit
+            liquidationLtvBpsAtInit: l.liquidationLtvBpsAtInit,
+            minHealthFactorAtInit: l.minHealthFactorAtInit
         });
     }
 }

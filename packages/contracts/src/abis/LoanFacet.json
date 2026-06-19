@@ -243,6 +243,16 @@
             "name": "interestSettled",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "minHealthFactorAtInit",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "initLtvCapBpsAtInit",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

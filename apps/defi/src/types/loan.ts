@@ -103,6 +103,10 @@ export interface LoanDetails {
    *  Dashboard's near-internal-match banner. Zero on illiquid
    *  loans that never enter the HF path. */
   liquidationLtvBpsAtInit: bigint;
+  /** #394 Lever A — snapshotted admission Health Factor floor (1e18-scaled)
+   *  this loan was gated at; the HF gauge colours the open loan against it.
+   *  `0n` on illiquid / pre-#394 loans ⇒ gauge falls back to the 1.5 default. */
+  minHealthFactorAtInit: bigint;
   /** T-086 step 4 — lender's prepay-listing consent flag snapshotted
    *  from the source `Offer.allowsPrepayListing` at loan-init.
    *  Immutable for the loan's lifetime. The
@@ -167,6 +171,13 @@ export interface LoanSummary {
    *  within 5% of (but still below) this floor. Zero on illiquid
    *  loans that never enter the HF path. */
   liquidationLtvBpsAtInit: number;
+  /** #394 Lever A — the loan's snapshotted admission Health Factor floor
+   *  (1e18-scaled). The Dashboard HF chip colours an OPEN loan against the
+   *  floor it was admitted under, not a stale 1.5 default, so a governance
+   *  retune doesn't mis-colour open positions. `0n` (illiquid / pre-#394
+   *  loan) ⇒ the chip falls back to the 1.5 default. Kept as bigint —
+   *  values up to 2e18 exceed Number.MAX_SAFE_INTEGER. */
+  minHealthFactorAtInit: bigint;
 }
 
 /**

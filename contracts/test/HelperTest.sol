@@ -67,6 +67,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 contract HelperTest {
@@ -826,12 +827,15 @@ contract HelperTest {
     {
         // `triggerLiquidationSplit` relocated to RiskSplitLiquidationFacet
         // (#66 + #633) — see getRiskSplitLiquidationFacetSelectors.
-        selectors = new bytes4[](7);
+        selectors = new bytes4[](9);
         selectors[0] = RiskFacet.updateRiskParams.selector;
         selectors[1] = RiskFacet.calculateLTV.selector;
         selectors[2] = RiskFacet.calculateHealthFactor.selector;
         selectors[3] = RiskFacet.isCollateralValueCollapsed.selector;
         selectors[4] = RiskFacet.triggerLiquidation.selector;
+        // #394 Lever A — runtime, range-bounded loan-admission HF floor.
+        selectors[7] = RiskFacet.setMinHealthFactor.selector;
+        selectors[8] = RiskFacet.getMinHealthFactor.selector;
         // Partial HF-restore liquidator (Piece B follow-up — partials).
         // Sweeps only `fractionBps` of remaining collateral, leaves loan
         // Active with reduced size and unchanged maturity. Strict
@@ -1339,7 +1343,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](92);
+        selectors = new bytes4[](73);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1375,115 +1379,125 @@ contract HelperTest {
         selectors[23] = ConfigFacet.getGraceBuckets.selector;
         selectors[24] = ConfigFacet.getEffectiveGraceSeconds.selector;
         selectors[25] = ConfigFacet.getGraceSlotBounds.selector;
-        // T-034 — Periodic Interest Payment knobs + master kill-switches.
-        selectors[26] = ConfigFacet.setNumeraire.selector;
-        selectors[27] = ConfigFacet.setMinPrincipalForFinerCadence.selector;
-        selectors[28] = ConfigFacet.setPreNotifyDays.selector;
-        selectors[29] = ConfigFacet.setPeriodicInterestEnabled.selector;
-        selectors[30] = ConfigFacet.setNumeraireSwapEnabled.selector;
-        selectors[31] = ConfigFacet.getPeriodicInterestConfig.selector;
-        // Individual getters used by the protocol-console knob card
-        // reader (which expects one function per knob). Numeraire generalization (b1) —
-        // the per-knob `getNumeraireOracle` was retired (no
-        // INumeraireOracle anymore); replaced with feed-side getters
-        // (`getNumeraireSymbol`, `getEthNumeraireFeed`) that surface
-        // the new numeraire-rotation surface.
-        selectors[32] = ConfigFacet.getNumeraireSymbol.selector;
-        selectors[33] = ConfigFacet.getEthNumeraireFeed.selector;
-        selectors[34] = ConfigFacet.getMinPrincipalForFinerCadence.selector;
-        selectors[35] = ConfigFacet.getPreNotifyDays.selector;
-        selectors[36] = ConfigFacet.getPeriodicInterestEnabled.selector;
-        selectors[37] = ConfigFacet.getNumeraireSwapEnabled.selector;
-        // T-048 — Predominantly Available Denominator (PAD).
-        // Atomic rotation setter + per-asset numeraire-direct override
-        // setter, plus 5 individual getters consumed by the protocol-
-        // console knob registry.
-        selectors[38] = ConfigFacet.setPredominantDenominator.selector;
-        selectors[39] = ConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
-        selectors[40] = ConfigFacet.getPredominantDenominator.selector;
-        selectors[41] = ConfigFacet.getPredominantDenominatorSymbol.selector;
-        selectors[42] = ConfigFacet.getEthPadFeed.selector;
-        selectors[43] = ConfigFacet.getPadNumeraireRateFeed.selector;
-        selectors[44] = ConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
+        // T-034 / T-048 numeraire / PAD / periodic-interest knobs were
+        // carved out into `NumeraireConfigFacet` (#394 Codex #647) — see
+        // `getNumeraireConfigFacetSelectors()`.
         // Single-field fee getters added for the protocol-console knob
         // schema (per-knob single-value getters; tuple-returning
         // getFeesConfig doesn't fit the schema).
-        selectors[45] = ConfigFacet.getTreasuryFeeBps.selector;
-        selectors[46] = ConfigFacet.getLoanInitiationFeeBps.selector;
-        selectors[47] = ConfigFacet.getLifMatcherFeeBps.selector;
+        selectors[26] = ConfigFacet.getTreasuryFeeBps.selector;
+        selectors[27] = ConfigFacet.getLoanInitiationFeeBps.selector;
+        selectors[28] = ConfigFacet.getLifMatcherFeeBps.selector;
         // Range Orders Phase 1 master kill-switch flags + companion
         // single-field getters (matches DeployDiamond's full surface).
-        selectors[48] = ConfigFacet.setRangeAmountEnabled.selector;
-        selectors[49] = ConfigFacet.setRangeRateEnabled.selector;
-        selectors[50] = ConfigFacet.setPartialFillEnabled.selector;
-        selectors[51] = ConfigFacet.getMasterFlags.selector;
-        selectors[52] = ConfigFacet.getRangeAmountEnabled.selector;
-        selectors[53] = ConfigFacet.getRangeRateEnabled.selector;
-        selectors[54] = ConfigFacet.getPartialFillEnabled.selector;
+        selectors[29] = ConfigFacet.setRangeAmountEnabled.selector;
+        selectors[30] = ConfigFacet.setRangeRateEnabled.selector;
+        selectors[31] = ConfigFacet.setPartialFillEnabled.selector;
+        selectors[32] = ConfigFacet.getMasterFlags.selector;
+        selectors[33] = ConfigFacet.getRangeAmountEnabled.selector;
+        selectors[34] = ConfigFacet.getRangeRateEnabled.selector;
+        selectors[35] = ConfigFacet.getPartialFillEnabled.selector;
         // Depth-tiered LTV (Piece B) — governance setters + the
         // liquidity-confidence relay write + getters / bundle.
-        selectors[55] = ConfigFacet.setDepthTieredLtvEnabled.selector;
-        selectors[56] = ConfigFacet.setLiquiditySlippageBps.selector;
-        selectors[57] = ConfigFacet.setTwapGuard.selector;
-        selectors[58] = ConfigFacet.setLiquidityTierSizes.selector;
-        selectors[59] = ConfigFacet.setTierMaxInitLtvBps.selector;
-        selectors[60] = ConfigFacet.setPaaAssets.selector;
-        selectors[61] = ConfigFacet.setKeeperTier.selector;
-        selectors[62] = ConfigFacet.getDepthTieredLtvEnabled.selector;
-        selectors[63] = ConfigFacet.getPaaAssets.selector;
-        selectors[64] = ConfigFacet.getKeeperTier.selector;
-        selectors[65] = ConfigFacet.getDepthTierConfigBundle.selector;
+        selectors[36] = ConfigFacet.setDepthTieredLtvEnabled.selector;
+        selectors[37] = ConfigFacet.setLiquiditySlippageBps.selector;
+        selectors[38] = ConfigFacet.setTwapGuard.selector;
+        selectors[39] = ConfigFacet.setLiquidityTierSizes.selector;
+        selectors[40] = ConfigFacet.setTierMaxInitLtvBps.selector;
+        selectors[41] = ConfigFacet.setPaaAssets.selector;
+        selectors[42] = ConfigFacet.setKeeperTier.selector;
+        selectors[43] = ConfigFacet.getDepthTieredLtvEnabled.selector;
+        selectors[44] = ConfigFacet.getPaaAssets.selector;
+        selectors[45] = ConfigFacet.getKeeperTier.selector;
+        selectors[46] = ConfigFacet.getDepthTierConfigBundle.selector;
         // Liquidator hardening (item 2) — close-factor ceiling setter
         // for `RiskFacet.triggerPartialLiquidation`. Default 10_000 = no
         // cap; governance may tighten per docs/RangeOffersDesign.md.
-        selectors[66] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
+        selectors[47] = ConfigFacet.setMaxPartialLiquidationCloseFactorBps.selector;
         // Phase 7 of AutonomousLtvAndOracleFallback.md — per-tier
         // LTV safety-box parameters (atomic governance setter +
         // bundle getter).
-        selectors[67] = ConfigFacet.setTierLtvParams.selector;
-        selectors[68] = ConfigFacet.getTierLtvParams.selector;
+        selectors[48] = ConfigFacet.setTierLtvParams.selector;
+        selectors[49] = ConfigFacet.getTierLtvParams.selector;
         // FlashLoanLiquidationPath.md — per-tier liquidator-discount
         // governance setters (master kill-switch +
         // atomic per-tier values + bundle view). All ADMIN_ROLE-
         // gated (TimelockController post-handover); the kill-switch
         // defaults `false` so a fresh deploy ships with the discount
         // path inert.
-        selectors[69] = ConfigFacet.setDiscountPathEnabled.selector;
-        selectors[70] = ConfigFacet.setTierLiqDiscountBps.selector;
-        selectors[71] = ConfigFacet.getTierLiqDiscountBps.selector;
+        selectors[50] = ConfigFacet.setDiscountPathEnabled.selector;
+        selectors[51] = ConfigFacet.setTierLiqDiscountBps.selector;
+        selectors[52] = ConfigFacet.getTierLiqDiscountBps.selector;
         // PR2 of internal-match work (2026-05-14) — per-tier
         // LIQUIDATION threshold setter + view. Replaces the retired
         // per-asset `RiskParams.liqThresholdBps`.
-        selectors[72] = ConfigFacet.setTierLiquidationLtvBps.selector;
-        selectors[73] = ConfigFacet.getTierLiquidationLtvBps.selector;
+        selectors[53] = ConfigFacet.setTierLiquidationLtvBps.selector;
+        selectors[54] = ConfigFacet.getTierLiquidationLtvBps.selector;
         // PR3 of internal-match work — kill-switch + tunables setter
         // + bundle view for the internal-liquidation match path.
-        selectors[74] = ConfigFacet.setInternalMatchEnabled.selector;
-        selectors[75] = ConfigFacet.setInternalMatchConfig.selector;
-        selectors[76] = ConfigFacet.getInternalMatchConfigBundle.selector;
+        selectors[55] = ConfigFacet.setInternalMatchEnabled.selector;
+        selectors[56] = ConfigFacet.setInternalMatchConfig.selector;
+        selectors[57] = ConfigFacet.getInternalMatchConfigBundle.selector;
         // T-600 — treasury-conversion knobs.
-        selectors[77] = ConfigFacet.setTreasuryConvertTargets.selector;
-        selectors[78] = ConfigFacet.setTreasuryConvertThresholds.selector;
-        selectors[79] = ConfigFacet.getTreasuryConvertConfig.selector;
+        selectors[58] = ConfigFacet.setTreasuryConvertTargets.selector;
+        selectors[59] = ConfigFacet.setTreasuryConvertThresholds.selector;
+        selectors[60] = ConfigFacet.getTreasuryConvertConfig.selector;
         // Issue #164 — borrower-side collateral range master flag.
-        selectors[80] = ConfigFacet.setRangeCollateralEnabled.selector;
+        selectors[61] = ConfigFacet.setRangeCollateralEnabled.selector;
         // T-086 step 6 — prepay-listing safety buffer setter.
-        selectors[81] = ConfigFacet.setPrepayListingBufferBps.selector;
+        selectors[62] = ConfigFacet.setPrepayListingBufferBps.selector;
         // T-086 step 6 — prepay-listing master kill-switch setter.
-        selectors[82] = ConfigFacet.setPrepayListingEnabled.selector;
+        selectors[63] = ConfigFacet.setPrepayListingEnabled.selector;
         // T-086 Round-7 (#355) — Dutch B-cond-3b safe-margin + auto-list
         // default conduit-key setters.
-        selectors[83] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
-        selectors[84] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
+        selectors[64] = ConfigFacet.setPrepayListingDutchGraceMarginSec.selector;
+        selectors[65] = ConfigFacet.setPrepayListingAutoListConduitKey.selector;
         // T-090 — Borrower-initiated swap-to-repay slippage cap.
-        selectors[85] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
-        selectors[86] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
+        selectors[66] = ConfigFacet.setMaxSwapToRepaySlippageBps.selector;
+        selectors[67] = ConfigFacet.getMaxSwapToRepaySlippageBps.selector;
         // T-087 Sub 1.A — ring-buffer TWA + mirror-cache knob setters.
-        selectors[87] = ConfigFacet.setTwaRecentDays.selector;
-        selectors[88] = ConfigFacet.setTwaWindowDays.selector;
-        selectors[89] = ConfigFacet.setTwaRecentWeight.selector;
-        selectors[90] = ConfigFacet.setTwaMinStakedDays.selector;
-        selectors[91] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
+        selectors[68] = ConfigFacet.setTwaRecentDays.selector;
+        selectors[69] = ConfigFacet.setTwaWindowDays.selector;
+        selectors[70] = ConfigFacet.setTwaRecentWeight.selector;
+        selectors[71] = ConfigFacet.setTwaMinStakedDays.selector;
+        selectors[72] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
+        return selectors;
+    }
+
+    /// T-034 / T-048 numeraire / PAD / periodic-interest config surface.
+    /// Carved into its own `NumeraireConfigFacet` (#394 Codex #647) to
+    /// keep `ConfigFacet` under EIP-170. Mirrors DeployDiamond's
+    /// `_getNumeraireConfigSelectors()`.
+    function getNumeraireConfigFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](19);
+        // T-034 Periodic Interest Payment knobs + master kill-switches +
+        // individual getters.
+        selectors[0] = NumeraireConfigFacet.setNumeraire.selector;
+        selectors[1] = NumeraireConfigFacet.setMinPrincipalForFinerCadence.selector;
+        selectors[2] = NumeraireConfigFacet.setPreNotifyDays.selector;
+        selectors[3] = NumeraireConfigFacet.setPeriodicInterestEnabled.selector;
+        selectors[4] = NumeraireConfigFacet.setNumeraireSwapEnabled.selector;
+        selectors[5] = NumeraireConfigFacet.getPeriodicInterestConfig.selector;
+        selectors[6] = NumeraireConfigFacet.getNumeraireSymbol.selector;
+        selectors[7] = NumeraireConfigFacet.getEthNumeraireFeed.selector;
+        selectors[8] = NumeraireConfigFacet.getMinPrincipalForFinerCadence.selector;
+        selectors[9] = NumeraireConfigFacet.getPreNotifyDays.selector;
+        selectors[10] = NumeraireConfigFacet.getPeriodicInterestEnabled.selector;
+        selectors[11] = NumeraireConfigFacet.getNumeraireSwapEnabled.selector;
+        // T-048 Predominantly Available Denominator (PAD) — atomic
+        // rotation setter + per-asset numeraire-direct override setter
+        // + 5 individual getters.
+        selectors[12] = NumeraireConfigFacet.setPredominantDenominator.selector;
+        selectors[13] = NumeraireConfigFacet.setAssetNumeraireDirectFeedOverride.selector;
+        selectors[14] = NumeraireConfigFacet.getPredominantDenominator.selector;
+        selectors[15] = NumeraireConfigFacet.getPredominantDenominatorSymbol.selector;
+        selectors[16] = NumeraireConfigFacet.getEthPadFeed.selector;
+        selectors[17] = NumeraireConfigFacet.getPadNumeraireRateFeed.selector;
+        selectors[18] = NumeraireConfigFacet.getAssetNumeraireDirectFeedOverride.selector;
         return selectors;
     }
 

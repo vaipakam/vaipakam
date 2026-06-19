@@ -71,19 +71,29 @@ library LibRiskMath {
             _gatherUsd(amountMax, principalAsset, collateralAsset);
         if (principalUsd == 0 || priceCollateral == 0) return 0;
 
-        // Solve for collateralUsd where HF == MIN_HEALTH_FACTOR (1.5e18):
+        // Solve for collateralUsd where HF == the create-time admission floor.
+        // BRANCH-AWARE (#394 Lever A, Codex #647 P2): in the depth-tiered
+        // regime the admission floor is the fixed `HF_LIQUIDATION_THRESHOLD`
+        // (1e18) — the LTV tier cap is the binding constraint there — so the
+        // tunable `minHealthFactor()` must NOT leak into tiered offer-creation
+        // (raising it to 1.8 would wrongly tighten tiered range offers the
+        // tiered admission path would accept). Only the non-tiered floor is
+        // the tunable knob.
         //   collateralUsd × liqThresholdBps / BASIS_POINTS
-        //     == principalUsd × MIN_HEALTH_FACTOR / HF_SCALE
+        //     == principalUsd × hfFloor / HF_SCALE
         //   collateralUsd
-        //     == (principalUsd × MIN_HEALTH_FACTOR × BASIS_POINTS)
+        //     == (principalUsd × hfFloor × BASIS_POINTS)
         //        / (HF_SCALE × liqThresholdBps)
         // BPS multiplications fit comfortably under uint256 since
         // principalUsd here is the (price-scaled but token-unscaled) raw
         // numerator of the USD figure RiskFacet uses; see _gatherUsd
         // below — it intentionally returns the un-divided-by-1e18 form
         // so the rest of the math stays in integers.
+        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         uint256 collateralUsd =
-            (principalUsd * LibVaipakam.MIN_HEALTH_FACTOR * LibVaipakam.BASIS_POINTS)
+            (principalUsd * hfFloor * LibVaipakam.BASIS_POINTS)
             / (LibVaipakam.HF_SCALE * liqThresholdBps);
 
         // Convert collateralUsd back to collateral-asset native units.
@@ -95,6 +105,37 @@ library LibRiskMath {
         // satisfies the >= relation strictly under integer truncation.
         if ((collateralUsd * collateralScale) % priceCollateral != 0) {
             floor += 1;
+        }
+
+        // #394 Lever A (Codex #647 round-3 P2) — the HF-derived floor can fall
+        // BELOW the per-asset init-LTV cap once the (non-tiered) admission floor
+        // is lowered (e.g. cap 50%, liq-LTV 80%, floor 1.2). A range offer sized
+        // to the HF floor would then exceed the LTV cap and revert later at
+        // `_checkInitialLtvAndHf` with `LTVExceeded`. Clamp the create-time floor
+        // UP to the init-LTV-cap floor so it never under-sizes vs the binding
+        // admission gate. (`capBps == 0` ⇒ no per-asset cap configured ⇒ skip.)
+        // #394 Lever A (Codex #647 round-3 + round-4) — the binding init-LTV cap
+        // is `min(per-asset cap, tier cap)` in the depth-tiered regime (the same
+        // `min` `_checkInitialLtvAndHf` applies), else the per-asset cap. Using
+        // only the per-asset cap would still under-size a tiered range offer
+        // that the tier gate later rejects with `InitLtvAboveTier`. `tier` here
+        // is ≥ 1 (tier 0 returned early above).
+        uint256 capBps = LibVaipakam
+            .storageSlot()
+            .assetRiskParams[collateralAsset]
+            .loanInitMaxLtvBps;
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
+            if (tierCap < capBps) capBps = tierCap;
+        }
+        if (capBps != 0) {
+            uint256 ltvNum = principalUsd * LibVaipakam.BASIS_POINTS;
+            uint256 ltvCollateralUsd = ltvNum / capBps;
+            if (ltvNum % capBps != 0) ltvCollateralUsd += 1;
+            uint256 ltvNum2 = ltvCollateralUsd * collateralScale;
+            uint256 ltvFloor = ltvNum2 / priceCollateral;
+            if (ltvNum2 % priceCollateral != 0) ltvFloor += 1;
+            if (ltvFloor > floor) floor = ltvFloor;
         }
     }
 
@@ -179,18 +220,50 @@ library LibRiskMath {
             return type(uint256).max;
         }
 
-        // Solve for principalUsd where HF == MIN_HEALTH_FACTOR:
+        // Solve for principalUsd where HF == the create-time admission floor.
+        // BRANCH-AWARE (#394 Lever A, Codex #647 P2): tiered regime uses the
+        // fixed `HF_LIQUIDATION_THRESHOLD` (1e18); only the non-tiered floor is
+        // the tunable `minHealthFactor()` knob — so the knob never leaks into
+        // tiered offer-creation bounds.
         //   principalUsd
         //     == (collateralUsd × liqThresholdBps × HF_SCALE)
-        //        / (BASIS_POINTS × MIN_HEALTH_FACTOR)
+        //        / (BASIS_POINTS × hfFloor)
+        uint256 hfFloor = LibVaipakam.cfgDepthTieredLtvEnabled()
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         uint256 principalUsd =
             (collateralUsd * liqThresholdBps * LibVaipakam.HF_SCALE)
-            / (LibVaipakam.BASIS_POINTS * LibVaipakam.MIN_HEALTH_FACTOR);
+            / (LibVaipakam.BASIS_POINTS * hfFloor);
 
         // Truncating division here is borrower-friendly: the returned
         // ceiling is the largest amount that can definitely satisfy
         // HF >= 1.5 — any larger amount might fail the runtime gate.
         ceiling = (principalUsd * principalScale) / pricePrincipal;
+
+        // #394 Lever A (Codex #647 round-3 P2) — symmetric to the
+        // `minCollateralForLending` clamp: a lowered (non-tiered) admission
+        // floor raises this HF-derived ceiling above what the per-asset
+        // init-LTV cap permits, so the borrower could accept a lending amount
+        // the admission gate then rejects with `LTVExceeded`. Clamp the ceiling
+        // DOWN to the init-LTV-cap ceiling (`LTV = debt/coll ≤ cap ⟺
+        // debtUSD ≤ collateralUsd × cap / BASIS_POINTS`).
+        // #394 Lever A (Codex #647 round-3 + round-4) — `min(per-asset cap,
+        // tier cap)` in the depth-tiered regime (mirrors `_checkInitialLtvAndHf`);
+        // `tier` is ≥ 1 (tier 0 returned early above).
+        uint256 capBps = LibVaipakam
+            .storageSlot()
+            .assetRiskParams[collateralAsset]
+            .loanInitMaxLtvBps;
+        if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+            uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(tier));
+            if (tierCap < capBps) capBps = tierCap;
+        }
+        if (capBps != 0) {
+            uint256 ltvPrincipalUsd =
+                (collateralUsd * capBps) / LibVaipakam.BASIS_POINTS;
+            uint256 ltvCeiling = (ltvPrincipalUsd * principalScale) / pricePrincipal;
+            if (ltvCeiling < ceiling) ceiling = ltvCeiling;
+        }
     }
 
     /// @notice Largest lending amount (principal-asset wei) the borrower

@@ -153,6 +153,11 @@ contract SwapToRepayFacetTest is SetupTest {
         loan.useFullTermInterest = useFullTermInterest;
         loan.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         loan.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        // #394 Lever A (Codex #647 round-6) — a real admitted loan carries a
+        // positive snapshotted init-LTV cap; stamp 80% so the post-swap
+        // LTV-cap re-check in `swapToRepayPartial` has a realistic ceiling
+        // (the partial paths leave the loan well under it).
+        loan.initLtvCapBpsAtInit = 8000;
         TestMutatorFacet(address(diamond)).setLoan(loanId, loan);
     }
 

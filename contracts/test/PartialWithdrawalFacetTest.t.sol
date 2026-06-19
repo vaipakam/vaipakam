@@ -330,10 +330,17 @@ contract PartialWithdrawalFacetTest is Test {
         RiskFacet(address(diamond)).updateRiskParams(mockCollateralERC20, 1000, 300, 1000);
 
         // Set principal = 1000 ether; collateral = 1800 ether via mutator.
-        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 > loanInitMaxLtvBps=1000 → LTVExceeded
+        // After withdrawal of 30: LTV = 1000/1770 * 10000 ≈ 5650 → LTVExceeded.
+        // #394 Lever A (Codex #647 round-3 P1) — the withdrawal LTV gate now
+        // enforces the loan's SNAPSHOTTED admission init-LTV cap
+        // (`initLtvCapBpsAtInit`), not the live per-asset `loanInitMaxLtvBps`
+        // (so a governance retune can't retroactively re-gate an open loan).
+        // Snapshot a 10% cap onto the loan to exercise the gate; the
+        // `updateRiskParams(1000)` above keeps the live + snapshot consistent.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         loan.principal = 1000 ether;
         loan.collateralAmount = 1800 ether;
+        loan.initLtvCapBpsAtInit = 1000;
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
 
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
@@ -369,5 +376,40 @@ contract PartialWithdrawalFacetTest is Test {
         TestMutatorFacet(address(diamond)).setLoan(activeLoanId, loan);
 
         assertEq(PartialWithdrawalFacet(address(diamond)).calculateMaxWithdrawable(activeLoanId), 0);
+    }
+
+    // ─── #394 Lever A (Codex #647 P1) — admission-floor snapshot ──────────────
+
+    /// @dev An open loan keeps the admission HF floor it was created under for
+    ///      every post-admission withdrawal — a later governance retune of the
+    ///      live floor is PROSPECTIVE only and must NOT retroactively move an
+    ///      open position's buffer. The loan here was admitted at the default
+    ///      1.5e18; raising the live floor to 1.8e18 must not block a 30-ether
+    ///      withdrawal that leaves HF ≈ 1.5045 (clears the 1.5 snapshot, would
+    ///      fail the 1.8 live floor). If the gate read the live knob this would
+    ///      revert HealthFactorTooLow.
+    function testPartialWithdraw_usesAdmissionFloorSnapshot_notLiveKnob() public {
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).minHealthFactorAtInit,
+            uint64(150 * 1e16),
+            "admission floor snapshotted at 1.5e18"
+        );
+
+        // Governance raises the GLOBAL admission floor (applies to NEW loans).
+        RiskFacet(address(diamond)).setMinHealthFactor(180 * 1e16); // 1.8e18
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.prank(borrower);
+        PartialWithdrawalFacet(address(diamond)).partialWithdrawCollateral(activeLoanId, 30 ether);
+
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).collateralAmount,
+            COLLATERAL - 30 ether,
+            "withdrawal honored under the 1.5 snapshot despite the raised 1.8 live floor"
+        );
     }
 }

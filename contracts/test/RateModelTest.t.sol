@@ -7,7 +7,9 @@ import {IRateModel} from "../src/interfaces/IRateModel.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RateModelMock} from "./mocks/RateModelMock.sol";
+import {RiskPremiumRateModel} from "../src/models/RiskPremiumRateModel.sol";
 
 /// @title RateModelTest
 /// @notice #400 — pluggable quote-time rate model. Asserts the resolver view +
@@ -174,5 +176,40 @@ contract RateModelTest is SetupTest {
         LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
         assertEq(o.interestRateBps, 500, "human-typed rate is binding (NOT model-adjusted to 800)");
         assertEq(o.interestRateBpsMax, 600, "human-typed range max is binding (NOT 900)");
+    }
+
+    // ── #394 Lever B × #400 substrate ────────────────────────────────────────
+
+    /// @notice The real {RiskPremiumRateModel} (#394 Lever B) registered through
+    ///         the #400 resolver: its dual-factor premium is APPLIED, but the
+    ///         resolver's deviation clamp BOUNDS it to `ref ± δ`. With a tier-0
+    ///         (illiquid) collateral the model quotes ref + 800 (+ tenor), yet
+    ///         the default 500-bps cap clamps the resolver output to ref + 500 —
+    ///         proving Lever B inherits the substrate's anti-off-market guard
+    ///         rather than re-implementing it.
+    function test_riskPremiumModel_clampedByResolverDeviationBand() public {
+        uint16[4] memory tp = [uint16(800), uint16(500), uint16(300), uint16(100)];
+        RiskPremiumRateModel premium = new RiskPremiumRateModel(
+            owner,
+            address(diamond),
+            tp,
+            1_000, // 10%/yr tenor
+            2_000  // 20% tenor cap
+        );
+        vm.prank(owner);
+        AdminFacet(address(diamond)).setRateModel(address(premium));
+
+        // Tier-0 (illiquid) collateral → highest (800-bps) premium.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(0))
+        );
+
+        uint256 q = OfferCreateFacet(address(diamond)).quoteOfferRateBps(_input(500));
+        assertEq(q, 1_000, "ref 500 + premium clamped to the default 500-bps deviation band");
     }
 }

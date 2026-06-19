@@ -38,6 +38,8 @@ interface ContractLoanShape {
   borrowerTokenId: bigint;
   allowsPartialRepay: boolean;
   liquidationLtvBpsAtInit?: number | bigint;
+  // #394 Lever A — the loan's snapshotted admission HF floor (1e18-scaled).
+  minHealthFactorAtInit?: bigint;
 }
 
 /**
@@ -76,6 +78,11 @@ export function loanWithRiskAndSideToSummary(
     // match work). Consumers treat 0 as "no near-liquidation
     // banner" — exactly the same render as today for those loans.
     liquidationLtvBpsAtInit: Number(loan.liquidationLtvBpsAtInit ?? 0),
+    // #394 Lever A (Codex #647 round-5) — kept as bigint (1e18-scaled, up to
+    // 2e18 > Number.MAX_SAFE_INTEGER); the HF gauge divides by 1e18 to colour
+    // an OPEN loan against the floor IT was admitted under. 0 ⇒ pre-#394 loan
+    // ⇒ the gauge falls back to the 1.5 default.
+    minHealthFactorAtInit: loan.minHealthFactorAtInit ?? 0n,
   };
 }
 

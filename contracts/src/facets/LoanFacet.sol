@@ -628,8 +628,13 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         );
         uint256 hf = abi.decode(hfResult, (uint256));
         // Switch ON ⇒ HF ≥ 1.0 (not born already-liquidatable; the tier
-        // cap is the binding buffer). Switch OFF ⇒ today's HF ≥ 1.5.
-        uint256 hfFloor = tieredOn ? LibVaipakam.HF_LIQUIDATION_THRESHOLD : 150 * 1e16;
+        // cap is the binding buffer). Switch OFF ⇒ the runtime admission
+        // floor (#394 Lever A — `minHealthFactor()`, default 1.5e18, tunable
+        // in `[1.2e18, 2.0e18]`). Branch-aware by construction: only the
+        // non-tiered floor moves; the tiered regime keeps the 1e18 trigger.
+        uint256 hfFloor = tieredOn
+            ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+            : LibVaipakam.minHealthFactor();
         if (hf < hfFloor) revert HealthFactorTooLow();
     }
 
@@ -863,6 +868,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // parties agreed to these specific splits.
         loan.fallbackLenderBonusBpsAtInit = uint16(LibVaipakam.cfgFallbackLenderBonusBps());
         loan.fallbackTreasuryBpsAtInit = uint16(LibVaipakam.cfgFallbackTreasuryBps());
+        // #394 Lever A (Codex #647 P1 + round-2 P2) — snapshot the admission
+        // HF floor THIS loan is actually gated at, so every post-admission HF
+        // check keeps that floor and a later `setMinHealthFactor` retune is
+        // prospective only. BRANCH-AWARE: it must mirror `_checkInitialLtvAndHf`
+        // exactly — the depth-tiered regime admits at `HF_LIQUIDATION_THRESHOLD`
+        // (1e18), only the non-tiered regime uses the tunable `minHealthFactor()`
+        // knob. Snapshotting the non-tiered knob for a tiered loan would saddle
+        // it with a stricter post-admission floor than it was born under. Fits
+        // uint64 (ceiling 2e18).
+        loan.minHealthFactorAtInit = uint64(
+            LibVaipakam.cfgDepthTieredLtvEnabled()
+                ? LibVaipakam.HF_LIQUIDATION_THRESHOLD
+                : LibVaipakam.minHealthFactor()
+        );
         // Snapshot the effective per-tier LIQUIDATION threshold (PR2 of
         // internal-match work, 2026-05-14). Replaces the retired
         // per-asset `RiskParams.liqThresholdBps`. Read by
@@ -893,6 +912,21 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             );
             uint8 effTier = ok ? abi.decode(ret, (uint8)) : 0;
             loan.liquidationLtvBpsAtInit = uint16(LibVaipakam.cfgTierLiquidationLtvBps(effTier));
+            // #394 Lever A (Codex #647 round-3 P1) — snapshot the EFFECTIVE
+            // init-LTV cap this loan is admitted under, identical to the
+            // `_checkInitialLtvAndHf` gate: depth-tiered ⇒ min(per-asset cap,
+            // tier cap); non-tiered ⇒ the per-asset cap. Post-admission
+            // withdrawal / cure enforce this snapshot so the tier buffer can't
+            // be shed later (the branch-aware HF snapshot alone doesn't bound LTV).
+            uint256 assetCap = LibVaipakam
+                .storageSlot()
+                .assetRiskParams[loan.collateralAsset]
+                .loanInitMaxLtvBps;
+            if (LibVaipakam.cfgDepthTieredLtvEnabled()) {
+                uint256 tierCap = uint256(LibVaipakam.effectiveTierMaxInitLtvBps(effTier));
+                if (tierCap < assetCap) assetCap = tierCap;
+            }
+            loan.initLtvCapBpsAtInit = uint16(assetCap);
         }
     }
 

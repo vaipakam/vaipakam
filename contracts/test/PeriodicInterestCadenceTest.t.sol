@@ -7,6 +7,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -47,7 +48,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function _enableFeature() internal {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
     }
 
     function _baseLenderParams(
@@ -132,12 +133,12 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testToggleEnabledFlag() public {
         (, , , bool periodicEnabled, ) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertFalse(periodicEnabled, "default off");
 
         _enableFeature();
         (, , , periodicEnabled, ) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertTrue(periodicEnabled, "after enable");
     }
 
@@ -310,13 +311,13 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testSetPreNotifyDays_DefaultThenSet() public {
         (, , uint8 preNotify, ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT);
 
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPreNotifyDays(7);
+        NumeraireConfigFacet(address(diamond)).setPreNotifyDays(7);
         (, , preNotify, ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, 7);
     }
 
@@ -324,16 +325,16 @@ contract PeriodicInterestCadenceTest is SetupTest {
         // Floor is 1; pass an out-of-range value (15) above the ceiling (14).
         vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPreNotifyDays(15);
+        NumeraireConfigFacet(address(diamond)).setPreNotifyDays(15);
     }
 
     function testSetPreNotifyDays_ZeroResetsToDefault() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPreNotifyDays(7);
+        NumeraireConfigFacet(address(diamond)).setPreNotifyDays(7);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setPreNotifyDays(0);
+        NumeraireConfigFacet(address(diamond)).setPreNotifyDays(0);
         (, , uint8 preNotify, ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(preNotify, LibVaipakam.PERIODIC_PRE_NOTIFY_DAYS_DEFAULT);
     }
 
@@ -341,7 +342,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         // Ceiling is 10M*1e18; pass 10M*1e18 + 1.
         vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(
+        NumeraireConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(
             LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_CEIL + 1
         );
     }
@@ -349,16 +350,16 @@ contract PeriodicInterestCadenceTest is SetupTest {
     function testSetMinPrincipalForFinerCadence_BelowFloorReverts() public {
         vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(
+        NumeraireConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(
             LibVaipakam.PERIODIC_MIN_PRINCIPAL_FOR_FINER_CADENCE_FLOOR - 1
         );
     }
 
     function testSetMinPrincipalForFinerCadence_InRange() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(50_000 * 1e18);
+        NumeraireConfigFacet(address(diamond)).setMinPrincipalForFinerCadence(50_000 * 1e18);
         (, uint256 threshold, , ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(threshold, 50_000 * 1e18);
     }
 
@@ -369,7 +370,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         address fakeDenom = makeAddr("fakeDenom");
         vm.expectRevert(IVaipakamErrors.NumeraireSwapDisabled.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
             fakeFeed, fakeDenom, bytes32("eur"), bytes32(0), 50_000 * 1e18, 0, 0, 0
         );
@@ -377,10 +378,10 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testSetNumeraire_RejectsZeroEthFeed() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
             address(0), makeAddr("denom"), bytes32("eur"), bytes32(0), 0, 0, 0, 0
         );
@@ -388,10 +389,10 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testSetNumeraire_RejectsZeroDenominator() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         vm.expectRevert(IVaipakamErrors.InvalidAddress.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
             // forge-lint: disable-next-line(unsafe-typecast)
             makeAddr("ethFeed"), address(0), bytes32("eur"), bytes32(0), 0, 0, 0, 0
         );
@@ -399,17 +400,17 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testSetNumeraire_RejectsZeroSymbol() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         vm.expectPartialRevert(IVaipakamErrors.ParameterOutOfRange.selector);
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
             makeAddr("ethFeed"), makeAddr("denom"), bytes32(0), bytes32(0), 0, 0, 0, 0
         );
     }
 
     function testSetNumeraire_AcceptsValidEurRotation() public {
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setNumeraireSwapEnabled(true);
         // Hypothetical EUR rotation: ETH/EUR Chainlink feed +
         // Chainlink Feed Registry's Denominations.EUR constant +
         // bytes32("eur") for symbol-derived secondary queries +
@@ -422,25 +423,25 @@ contract PeriodicInterestCadenceTest is SetupTest {
         bytes32 pythEurFeedId = bytes32(uint256(0xCAFEBABE));
         uint256 thresholdInEur = 5_000 * 1e18;
         vm.prank(owner);
-        ConfigFacet(address(diamond)).setNumeraire(
+        NumeraireConfigFacet(address(diamond)).setNumeraire(
             ethEurFeed, eurDenom, eurSymbol, pythEurFeedId,
             thresholdInEur, 0, 0, 0
         );
         (bytes32 sym, uint256 threshold, , ,) =
-            ConfigFacet(address(diamond)).getPeriodicInterestConfig();
+            NumeraireConfigFacet(address(diamond)).getPeriodicInterestConfig();
         assertEq(sym, eurSymbol);
         assertEq(threshold, thresholdInEur);
-        assertEq(ConfigFacet(address(diamond)).getEthNumeraireFeed(), ethEurFeed);
+        assertEq(NumeraireConfigFacet(address(diamond)).getEthNumeraireFeed(), ethEurFeed);
     }
 
     function testNonAdmin_SetterReverts() public {
         // Sanity: setters are ADMIN_ROLE-gated. Non-admin reverts.
         vm.prank(makeAddr("attacker"));
         vm.expectRevert();
-        ConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
+        NumeraireConfigFacet(address(diamond)).setPeriodicInterestEnabled(true);
 
         vm.prank(makeAddr("attacker"));
         vm.expectRevert();
-        ConfigFacet(address(diamond)).setPreNotifyDays(5);
+        NumeraireConfigFacet(address(diamond)).setPreNotifyDays(5);
     }
 }

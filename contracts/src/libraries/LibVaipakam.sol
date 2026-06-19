@@ -63,7 +63,14 @@ library LibVaipakam {
         0x76f6f3ffb4e1cbadb2d289330bfeb7bd9d50e6e2407a61733161f6e3e1d10e00;
 
     // Constants (configurable via governance in Phase 2)
-    uint256 constant MIN_HEALTH_FACTOR = 150 * 1e16; // 1.5 scaled to 1e18
+    uint256 constant MIN_HEALTH_FACTOR = 150 * 1e16; // 1.5 scaled to 1e18 — default admission floor (#394: now a runtime override default)
+    /// @dev #394 Lever A — hard range-bounds for the runtime admission-HF-floor
+    ///      override (`minHealthFactor()`). Floor 1.2e18: never let admission
+    ///      drop into the thin <20%-buffer zone. Ceiling 2.0e18: a floor above
+    ///      2.0 would make most liquid collateral un-borrowable. The constant
+    ///      `MIN_HEALTH_FACTOR` (1.5e18) sits inside the band as the default.
+    uint256 constant MIN_ADMISSION_HEALTH_FACTOR = 120 * 1e16; // 1.2e18
+    uint256 constant MAX_ADMISSION_HEALTH_FACTOR = 200 * 1e16; // 2.0e18
     uint256 constant TREASURY_FEE_BPS = 100; // 1% of interest
     uint256 constant BASIS_POINTS = 10000;
     uint256 constant HF_SCALE = 1e18; // Health Factor precision
@@ -1754,6 +1761,29 @@ library LibVaipakam {
         // Append-only field (storage layout discipline). Zero on
         // every existing loan at deploy time.
         uint256 interestSettled;
+        // #394 Lever A (Codex #647 P1) — the loan-ADMISSION Health Factor
+        // floor SNAPSHOTTED at init from the live `minHealthFactor()` knob.
+        // Every post-admission HF check for THIS loan
+        // (partial-withdrawal, fallback-cure, partial-repay / swap-to-repay
+        // guards) reads this snapshot — NOT the live knob — so a later
+        // governance retune of the admission floor never retroactively
+        // loosens (or tightens) an open loan's collateral buffer. Same
+        // immutable-at-init discipline as `liquidationLtvBpsAtInit`. Zero on
+        // an illiquid loan (HF math never runs) or a pre-#394 loan ⇒
+        // `effectiveLoanMinHealthFactor` falls back to `MIN_HEALTH_FACTOR`.
+        // Append-only tail field. uint64 holds ≫ the 2.0e18 ceiling.
+        uint64 minHealthFactorAtInit;
+        // #394 Lever A (Codex #647 round-3 P1) — the EFFECTIVE loan-admission
+        // init-LTV cap (bps) THIS loan was gated at, snapshotted at init.
+        // Mirrors `_checkInitialLtvAndHf`: depth-tiered ⇒ `min(per-asset
+        // loanInitMaxLtvBps, effectiveTierMaxInitLtvBps(tier))`; non-tiered ⇒
+        // the per-asset `loanInitMaxLtvBps`. Post-admission collateral
+        // withdrawal / max-withdrawable / fallback-cure enforce THIS cap (via
+        // `effectiveLoanInitLtvCapBps`) so a tiered loan can't shed the tier
+        // buffer the lender accepted at origination — the branch-aware HF-floor
+        // snapshot alone doesn't bound LTV. `0` (illiquid or pre-#394 loan) ⇒
+        // fall back to the live per-asset `loanInitMaxLtvBps`. Append-only tail.
+        uint16 initLtvCapBpsAtInit;
     }
 
     /**
@@ -4285,6 +4315,20 @@ library LibVaipakam {
         ///      rather than trusted to each consumer). 0 ⇒
         ///      RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT. Range-clamped at the setter.
         uint16 rateModelMaxDeviationBps; // 0 ⇒ default (500 = 5%)
+        /// @dev #394 Lever A — runtime override for the loan-admission Health
+        ///      Factor floor (the value the NON-tiered init gate, and every
+        ///      restore/maintain/preview HF check, compares against). `0` ⇒
+        ///      the `MIN_HEALTH_FACTOR` constant (1.5e18 — today's behaviour),
+        ///      so the protocol's live floor is unchanged until governance sets
+        ///      it. Range-clamped at the setter to
+        ///      `[MIN_ADMISSION_HEALTH_FACTOR, MAX_ADMISSION_HEALTH_FACTOR]`.
+        ///      Packs into the high bytes of the `rateModel`+deviation slot, so
+        ///      the upgrade shifts no existing slot. uint64 holds up to
+        ///      ~18.4e18 — comfortably above the 2.0e18 ceiling.
+        ///      NOTE: this is the *admission* floor only; the *liquidation*
+        ///      trigger (`HF_LIQUIDATION_THRESHOLD`, 1e18) and the tiered-regime
+        ///      init floor (also 1e18) are deliberately NOT touched by it.
+        uint64 minHealthFactorOverride;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4861,6 +4905,45 @@ library LibVaipakam {
     function cfgRateModelMaxDeviationBps() internal view returns (uint256) {
         uint16 v = storageSlot().rateModelMaxDeviationBps;
         return v == 0 ? RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT : uint256(v);
+    }
+
+    /// @dev #394 Lever A — the live loan-ADMISSION Health Factor floor (the
+    ///      value the non-tiered init gate, plus the restore/maintain/preview
+    ///      HF checks, compare against). `0` override ⇒ `MIN_HEALTH_FACTOR`
+    ///      (1.5e18 — today's behaviour), so nothing moves until governance
+    ///      sets it. The setter range-clamps to
+    ///      `[MIN_ADMISSION_HEALTH_FACTOR, MAX_ADMISSION_HEALTH_FACTOR]`, so
+    ///      this getter needs no re-clamp. Does NOT govern the liquidation
+    ///      trigger (`HF_LIQUIDATION_THRESHOLD`) or the tiered-regime init
+    ///      floor — both stay 1e18.
+    function minHealthFactor() internal view returns (uint256) {
+        uint64 v = storageSlot().minHealthFactorOverride;
+        return v == 0 ? MIN_HEALTH_FACTOR : uint256(v);
+    }
+
+    /// @dev #394 Lever A (Codex #647 P1) — the admission HF floor a SPECIFIC
+    ///      open loan was created under, read from its `minHealthFactorAtInit`
+    ///      snapshot. Every post-admission HF check for that loan uses this
+    ///      (NOT the live `minHealthFactor()`), so a governance retune never
+    ///      retroactively moves an open loan's collateral buffer. `0` (illiquid
+    ///      or pre-#394 loan) ⇒ `MIN_HEALTH_FACTOR` (1.5e18) — the conservative
+    ///      legacy floor.
+    function effectiveLoanMinHealthFactor(uint64 atInit) internal pure returns (uint256) {
+        return atInit == 0 ? MIN_HEALTH_FACTOR : uint256(atInit);
+    }
+
+    /// @dev #394 Lever A (Codex #647 round-3 P1) — the init-LTV cap a SPECIFIC
+    ///      open loan was admitted under, from its `initLtvCapBpsAtInit`
+    ///      snapshot. Post-admission withdrawal / max-withdrawable / cure
+    ///      enforce this (not the live per-asset cap), so a depth-tiered loan
+    ///      keeps the tighter `min(assetCap, tierCap)` buffer it was born with.
+    ///      `0` (illiquid or pre-#394 loan) ⇒ the live per-asset
+    ///      `loanInitMaxLtvBps` passed in as `liveCapBps`.
+    function effectiveLoanInitLtvCapBps(
+        uint16 atInit,
+        uint256 liveCapBps
+    ) internal pure returns (uint256) {
+        return atInit == 0 ? liveCapBps : uint256(atInit);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

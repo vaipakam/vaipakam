@@ -4,7 +4,7 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
-import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {FeedRegistryInterface} from "@vaipakam-vendor/chainlink/FeedRegistryInterface.sol";
 import {MockChainlinkAggregator} from "./mocks/MockChainlinkAggregator.sol";
@@ -117,7 +117,7 @@ contract OraclePadFallbackTest is SetupTest {
         // industrial-fork-not-active state: setPredominantDenominator
         // is called but PAD == numeraire (both USD) so the FX multiply
         // is short-circuited.
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -159,7 +159,7 @@ contract OraclePadFallbackTest is SetupTest {
         _setNumeraireChainlinkDenominator(eurDenominator);
 
         // Configure PAD with direct USD/EUR FX feed.
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -185,7 +185,7 @@ contract OraclePadFallbackTest is SetupTest {
 
         // Configure PAD WITHOUT padNumeraireRateFeed — forces
         // derivation: rate = ETH/EUR over ETH/USD = 3700 / 4000 = 0.925.
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -209,7 +209,7 @@ contract OraclePadFallbackTest is SetupTest {
         _setNumeraireChainlinkDenominator(eurDenominator);
 
         // PAD configured normally — but the override takes priority.
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -219,7 +219,7 @@ contract OraclePadFallbackTest is SetupTest {
 
         // Set per-asset override: a hypothetical 🟢-rated asset/EUR
         // direct feed.
-        ConfigFacet(address(diamond)).setAssetNumeraireDirectFeedOverride(
+        NumeraireConfigFacet(address(diamond)).setAssetNumeraireDirectFeedOverride(
             mockERC20,
             address(feedAssetEurDirect)
         );
@@ -233,7 +233,7 @@ contract OraclePadFallbackTest is SetupTest {
         assertEq(dec, 8);
 
         // Clear the override and verify behavior reverts to PAD pivot.
-        ConfigFacet(address(diamond)).setAssetNumeraireDirectFeedOverride(
+        NumeraireConfigFacet(address(diamond)).setAssetNumeraireDirectFeedOverride(
             mockERC20,
             address(0)
         );
@@ -249,7 +249,7 @@ contract OraclePadFallbackTest is SetupTest {
         _setNumeraireChainlinkDenominator(eurDenominator);
         OracleAdminFacet(address(diamond)).setEthUsdFeed(address(feedEthEur)); // ethNumeraireFeed = ETH/EUR
 
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -273,7 +273,7 @@ contract OraclePadFallbackTest is SetupTest {
         // Clear ethNumeraireFeed so neither direct nor derived rate works.
         OracleAdminFacet(address(diamond)).setEthUsdFeed(address(0));
 
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -299,7 +299,7 @@ contract OraclePadFallbackTest is SetupTest {
                 type(uint256).max
             )
         );
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             address(0),
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),
@@ -319,7 +319,7 @@ contract OraclePadFallbackTest is SetupTest {
                 type(uint256).max
             )
         );
-        ConfigFacet(address(diamond)).setPredominantDenominator(
+        NumeraireConfigFacet(address(diamond)).setPredominantDenominator(
             usdDenominator,
             // forge-lint: disable-next-line(unsafe-typecast)
             bytes32("usd"),

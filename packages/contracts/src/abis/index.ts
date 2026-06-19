@@ -72,6 +72,7 @@ import VpfiBuyAdapterABI from './VpfiBuyAdapter.json';
 import VpfiBuyReceiverABI from './VpfiBuyReceiver.json';
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
+import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
 // T-086 step 5 — executor↔diamond trust boundary for Seaport
 // prepay collateral sales (see contracts/src/seaport/CollateralListingExecutor.sol).
@@ -96,6 +97,11 @@ import NFTPrepayAutoListFacetABI from './NFTPrepayAutoListFacet.json';
 // receiver. Named export only; deliberately NOT spread into
 // DIAMOND_ABI below (it's not part of the diamond's selector set).
 import FlashLoanLiquidatorABI from './FlashLoanLiquidator.json';
+// #394 Lever B — standalone dual-factor risk-premium rate model (an
+// `IRateModel` registered via `AdminFacet.setRateModel`). Named export only;
+// deliberately NOT spread into DIAMOND_ABI below (not part of the diamond's
+// selector set) — admin tooling / keeper call it as a separate contract.
+import RiskPremiumRateModelABI from './RiskPremiumRateModel.json';
 
 export {
   OfferCreateFacetABI,
@@ -151,6 +157,7 @@ export {
   VpfiBuyReceiverABI,
   RewardReporterFacetABI,
   ConfigFacetABI,
+  NumeraireConfigFacetABI,
   LegalFacetABI,
   PrepayListingFacetABI,
   NFTPrepayListingFacetABI,
@@ -158,6 +165,7 @@ export {
   NFTPrepayListingAtomicFacetABI,
   NFTPrepayAutoListFacetABI,
   FlashLoanLiquidatorABI,
+  RiskPremiumRateModelABI,
 };
 
 import type { Abi } from 'viem';
@@ -224,6 +232,7 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,
   ...ConfigFacetABI,
+  ...NumeraireConfigFacetABI,
   ...LegalFacetABI,
   ...PrepayListingFacetABI,
   ...NFTPrepayListingFacetABI,

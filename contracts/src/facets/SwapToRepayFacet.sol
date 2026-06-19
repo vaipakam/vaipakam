@@ -748,7 +748,30 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             HealthFactorCalculationFailed.selector
         );
         uint256 hf = abi.decode(hfResult, (uint256));
-        if (hf < LibVaipakam.MIN_HEALTH_FACTOR) revert HealthFactorTooLow();
+        // #394 Lever A (Codex #647 P1) — this loan's snapshotted admission
+        // floor (immutable post-admission), not the live knob.
+        if (hf < LibVaipakam.effectiveLoanMinHealthFactor(loan.minHealthFactorAtInit))
+            revert HealthFactorTooLow();
+
+        // #394 Lever A (Codex #647 round-6) — also re-check post-swap LTV against
+        // THIS loan's snapshotted admission init-LTV cap. For a depth-tiered
+        // loan the HF snapshot is 1e18, so the HF check alone wouldn't stop a
+        // partial swap-to-repay (under a permissive slippage) from consuming
+        // collateral + repaying too little and ending ABOVE the tier-cap buffer
+        // the lender accepted — same guard the partial-withdrawal / fallback-cure
+        // paths enforce.
+        bytes memory ltvResult = LibFacet.crossFacetStaticCall(
+            abi.encodeWithSelector(RiskFacet.calculateLTV.selector, loanId),
+            LTVCalculationFailed.selector
+        );
+        uint256 ltv = abi.decode(ltvResult, (uint256));
+        if (
+            ltv >
+            LibVaipakam.effectiveLoanInitLtvCapBps(
+                loan.initLtvCapBpsAtInit,
+                LibVaipakam.storageSlot().assetRiskParams[loan.collateralAsset].loanInitMaxLtvBps
+            )
+        ) revert LTVExceeded();
 
         // Codex round-3 P2 #1 + round-4 P2 #1 — emit `msg.sender`
         // (current borrower-NFT owner, not stale `loan.borrower`)

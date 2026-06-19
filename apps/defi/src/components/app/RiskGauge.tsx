@@ -15,31 +15,41 @@ export const LTV_VOLATILITY_THRESHOLD = 110;
 
 interface HealthFactorProps {
   value: number | null;
+  /**
+   * #394 Lever A (Codex #647 round-4) — the admission HF floor this gauge
+   * should colour against. Defaults to {@link HF_INITIATION_MIN} (1.5) for
+   * back-compat, but callers rendering an OPEN loan should pass that loan's
+   * snapshotted floor (`minHealthFactorAtInit`), and callers previewing a NEW
+   * offer should pass the live floor (`getProtocolConstants().minHealthFactor`),
+   * so the safe/warning boundary tracks a governance retune instead of a stale
+   * hard-coded 1.5.
+   */
+  initMin?: number;
 }
 
-function hfZone(v: number): 'safe' | 'warning' | 'danger' {
-  if (v >= HF_INITIATION_MIN) return 'safe';
+function hfZone(v: number, initMin: number): 'safe' | 'warning' | 'danger' {
+  if (v >= initMin) return 'safe';
   if (v >= HF_LIQUIDATION_THRESHOLD) return 'warning';
   return 'danger';
 }
 
-export function HealthFactorGauge({ value }: HealthFactorProps) {
+export function HealthFactorGauge({ value, initMin = HF_INITIATION_MIN }: HealthFactorProps) {
   const { t } = useTranslation();
   if (value === null) {
     return <span className="risk-gauge-empty">—</span>;
   }
-  const zone = hfZone(value);
+  const zone = hfZone(value, initMin);
   const pct = Math.min(100, (value / 2.5) * 100);
   const label =
     zone === 'danger'
       ? t('riskGauge.hfDanger')
       : zone === 'warning'
         ? t('riskGauge.hfWarning', {
-            init: HF_INITIATION_MIN.toFixed(2),
+            init: initMin.toFixed(2),
             liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
           })
         : t('riskGauge.hfSafe', {
-            init: HF_INITIATION_MIN.toFixed(2),
+            init: initMin.toFixed(2),
             liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
           });
 
@@ -47,7 +57,7 @@ export function HealthFactorGauge({ value }: HealthFactorProps) {
     <div className={`risk-gauge hf-${zone}`} data-tooltip={label} aria-label={label}>
       <div className="risk-gauge-track">
         <span className="risk-gauge-mark" style={{ left: `${(HF_LIQUIDATION_THRESHOLD / 2.5) * 100}%` }} data-mark="1.0" />
-        <span className="risk-gauge-mark" style={{ left: `${(HF_INITIATION_MIN / 2.5) * 100}%` }} data-mark="1.5" />
+        <span className="risk-gauge-mark" style={{ left: `${(initMin / 2.5) * 100}%` }} data-mark={initMin.toFixed(1)} />
         <div className="risk-gauge-fill" style={{ width: `${pct}%` }} />
       </div>
       <div className="risk-gauge-value">{value.toFixed(2)}</div>
@@ -100,22 +110,22 @@ export function LTVBar({ percent }: LTVProps) {
  * classification + tooltip so the colour grammar is consistent across
  * compact and full views.
  */
-export function HealthFactorChip({ value }: HealthFactorProps) {
+export function HealthFactorChip({ value, initMin = HF_INITIATION_MIN }: HealthFactorProps) {
   const { t } = useTranslation();
   if (value === null) {
     return <span className="risk-gauge-empty">—</span>;
   }
-  const zone = hfZone(value);
+  const zone = hfZone(value, initMin);
   const label =
     zone === 'danger'
       ? t('riskGauge.hfDanger')
       : zone === 'warning'
         ? t('riskGauge.hfWarning', {
-            init: HF_INITIATION_MIN.toFixed(2),
+            init: initMin.toFixed(2),
             liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
           })
         : t('riskGauge.hfSafe', {
-            init: HF_INITIATION_MIN.toFixed(2),
+            init: initMin.toFixed(2),
             liq: HF_LIQUIDATION_THRESHOLD.toFixed(2),
           });
 

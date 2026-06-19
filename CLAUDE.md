@@ -655,6 +655,27 @@ Rules:
 - When ever running forge build, forge script or forge test, run them in high priority
 - [Run forge build / forge test in high priority](feedback_forge_high_priority.md) — prefix every forge build/test/script with `nice -n -10 ionice -c 2 -n 0`; viaIR runs are 5–15 min and 8 GB RSS, low priority causes 2–3× slowdowns under parallel desktop load
 
+### Per-PR verification is TARGETED — full regression is a pre-deploy gate only
+
+This is a standing workflow rule (do not run the full regression as a per-PR
+gate):
+
+- **Per change / per PR:** run only the **targeted** tests for the change —
+  the new/edited `*.t.sol` + the directly-touched facets' suites + the
+  deploy-sanity suite (`test/deploy/*`) when selectors/sizes change — via
+  `forge test --match-path ...`. For the inner loop use
+  `FOUNDRY_PROFILE=quick forge build`.
+- **For the ABI re-export build, use `forge build --skip test`** — NOT a bare
+  `forge build`. The bare build compiles the test-inclusive whole unit and
+  trips the viaIR stack ceiling (the `BUILD FAILED` / "Variable size … too
+  deep" #601/#603 issue); `--skip test` compiles `src/`+`script/` only, which
+  is all `forge inspect` / the ABI export needs.
+- **The full regression (`run-regression.sh`) runs ONLY before a testnet
+  deployment — and ONLY in batches** (chunked `--match-path` globs, e.g.
+  `test/[A-M]*.t.sol` then `test/[N-Z]*.t.sol` + the subdirs), never one
+  monolithic run. It is never a per-PR gate. (User directive 2026-06-19,
+  reaffirmed same day.)
+
 ### Three `foundry.toml` profiles (Issue #185 + #296)
 
 Three profiles live in `contracts/foundry.toml`:
