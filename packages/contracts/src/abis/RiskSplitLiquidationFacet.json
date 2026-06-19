@@ -337,6 +337,22 @@
   },
   {
     "type": "error",
+    "name": "InternalMatchOnlyBand",
+    "inputs": [
+      {
+        "name": "currentLtvBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "windowCeilingBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },

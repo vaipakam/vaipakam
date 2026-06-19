@@ -32,6 +32,7 @@ import {
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import {
+  AdminFacetABI,
   FlashLoanLiquidatorABI,
   LoanFacetABI,
   OracleFacetABI,
@@ -338,9 +339,36 @@ export async function maybeAutonomousLiquidate(
     const nowTs = BigInt(Math.floor(Date.now() / 1000));
     const inTerm = nowTs < endTime;
 
+    // #395 (Codex r5 P2) — read the LIVE on-chain over-liquidation ceiling so
+    // the keeper tracks a governance change. If governance lowers
+    // `partialLiqTargetHfCeilingBps` below the default, a stale hard-coded
+    // clamp would size a partial the contract rejects, and the fallback would
+    // then close the WHOLE loan even though a smaller in-band partial was
+    // allowed. Read it, subtract a small margin, and feed it to the sizer. On
+    // a read failure we keep the conservative 11_800 default (the on-chain
+    // guard + keeper fallback remain the backstop).
+    let ceilingHfBps = 11_800;
+    try {
+      const sizing = (await publicClient.readContract({
+        address: ctx.diamond,
+        abi: AdminFacetABI,
+        functionName: 'getPartialLiquidationSizing',
+      })) as readonly [bigint, bigint, bigint];
+      // [targetHfCeilingBps, deepUnderwaterHfBps, dustFloorNumeraire]
+      const liveCeiling = Number(sizing[0]);
+      if (liveCeiling > 10_000) ceilingHfBps = Math.max(10_500, liveCeiling - 200);
+    } catch {
+      /* keep the conservative default */
+    }
     const optimalPartialFractionBps = computeOptimalPartialFractionBps(
       hfRaw,
       liqThresholdBps,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ceilingHfBps,
     );
     // Partial path is feasible when: in-term, HF below 1 but not so
     // deeply distressed the per-asset math says we need > 75% (the
@@ -494,19 +522,33 @@ export async function maybeAutonomousLiquidate(
         { adapterIdx: split.a.call.adapterIdx, splitAmount: halfAmount, data: split.a.call.data },
         { adapterIdx: split.b.call.adapterIdx, splitAmount: otherHalf, data: split.b.call.data },
       ];
-      const hash = await ctx.wallet.writeContract({
-        address: ctx.diamond,
-        abi: TRIGGER_ABI,
-        functionName: 'triggerLiquidationSplit',
-        args: [loanIdBig, splits],
-        account,
-        chain: ctx.wallet.chain,
-      });
-      const improvementBps = (split.gainBps);
-      console.log(
-        `[keeper] loan=${loanId} chain=${chain.name} submitted-split tx=${hash} via=${split.a.kind}+${split.b.kind} expected=${split.totalExpected} improvement=${improvementBps}bps over single-route`,
-      );
-      return true;
+      // #395 (Codex r5 P2) — the split route now also defers to the
+      // internal-match priority window (`triggerLiquidationSplit` reverts
+      // `InternalMatchOnlyBand` in-window), so wrap it the same way the
+      // partial branch is wrapped: on ANY split revert, fall THROUGH to full
+      // `triggerLiquidation`, which runs `attemptInternalMatchAutoDispatch`
+      // first — so the in-window internal match the window was reserving
+      // actually gets dispatched instead of the loan being skipped this tick.
+      try {
+        const hash = await ctx.wallet.writeContract({
+          address: ctx.diamond,
+          abi: TRIGGER_ABI,
+          functionName: 'triggerLiquidationSplit',
+          args: [loanIdBig, splits],
+          account,
+          chain: ctx.wallet.chain,
+        });
+        const improvementBps = (split.gainBps);
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} submitted-split tx=${hash} via=${split.a.kind}+${split.b.kind} expected=${split.totalExpected} improvement=${improvementBps}bps over single-route`,
+        );
+        return true;
+      } catch (splitErr) {
+        console.log(
+          `[keeper] loan=${loanId} chain=${chain.name} split-reverted (${String(splitErr).slice(0, 140)}) — falling back to full liquidation`,
+        );
+        // do NOT return — fall through to the full `triggerLiquidation` below.
+      }
     }
 
     // Default path: failover via `triggerLiquidation` — unchanged.
