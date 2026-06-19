@@ -70,9 +70,19 @@ done
 FAIL=0
 
 # ── 1. Build ──────────────────────────────────────────────────────────
-echo "[predeploy 1/4] forge build"
-if forge build; then
-  echo "  ✓ contracts compile"
+# `--skip test` is load-bearing, not an optimisation (#636). A deploy
+# preflight only needs `src/` + the deploy/config `script/`s to compile —
+# the test compile is exercised by step [2] below. A bare `forge build`
+# compiles `src/` + ALL `test/` + ALL `script/` in one non-sparse solc
+# unit; this codebase sits right at the viaIR whole-unit stack ceiling, so
+# the standalone deploy scripts tip it over with `Variable size is N too
+# deep in the stack` — a compilation-unit-size limit, NOT a code bug (see
+# CLAUDE.md "Local full regression" + Issue #636). Skipping the test files
+# keeps the unit under the ceiling while still validating every contract a
+# deploy actually touches.
+echo "[predeploy 1/4] forge build (--skip test — see #636)"
+if forge build --skip test; then
+  echo "  ✓ contracts compile (src + scripts)"
 else
   echo "  ✗ forge build failed" >&2
   FAIL=1
@@ -84,7 +94,14 @@ if [ "$MODE_FULL" -eq 1 ]; then
   echo "[predeploy 2/4] full forge regression (mainnet preflight)"
   # Invariants are excluded — they are slow (100 runs) and run as their
   # own pass; this gate is "the regression is green before a deploy".
-  if forge test --no-match-path "test/invariants/*"; then
+  # `--match-path 'test/*.t.sol'` forces a SPARSE compile (only the matched
+  # tests + their dependency closure) rather than the non-sparse
+  # `--no-match-path`-only form, which pulls in the standalone deploy
+  # scripts and trips the same viaIR whole-unit ceiling as step [1] (#636 /
+  # #601). globset's `*` crosses `/`, so `test/*.t.sol` still matches every
+  # current + future `*.t.sol` anywhere under `test/` — same coverage, just
+  # compiled sparsely. Mirrors `run-regression.sh`.
+  if forge test --match-path "test/*.t.sol" --no-match-path "test/invariants/*"; then
     echo "  ✓ full regression passes"
   else
     echo "  ✗ regression failed — do not deploy red contracts" >&2
