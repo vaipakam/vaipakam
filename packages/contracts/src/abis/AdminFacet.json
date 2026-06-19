@@ -27,6 +27,13 @@
   },
   {
     "type": "function",
+    "name": "disableRateModel",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "getAutoExtendEnabled",
     "inputs": [],
     "outputs": [
@@ -107,6 +114,32 @@
       },
       {
         "name": "dustFloorNumeraire",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRateModel",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRateModelMaxDeviationBps",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -456,6 +489,32 @@
   },
   {
     "type": "function",
+    "name": "setRateModel",
+    "inputs": [
+      {
+        "name": "newModel",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setRateModelMaxDeviationBps",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "setSushiswapV2Factory",
     "inputs": [
       {
@@ -797,6 +856,38 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateModelMaxDeviationBpsSet",
+    "inputs": [
+      {
+        "name": "newBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RateModelSet",
+    "inputs": [
+      {
+        "name": "previousModel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "newModel",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -1187,6 +1278,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidRateModelDeviation",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "KYCRequired",
     "inputs": []
   },
@@ -1328,6 +1424,11 @@
   {
     "type": "error",
     "name": "NotOfferCreator",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotWatcherOrAdmin",
     "inputs": []
   },
   {
@@ -1474,6 +1575,11 @@
   },
   {
     "type": "error",
+    "name": "RateModelNotContract",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RecoveryAmountExceedsUnsolicited",
     "inputs": []
   },
@@ -1597,6 +1703,11 @@
   {
     "type": "error",
     "name": "UpdateNotAllowed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UseDisableRateModel",
     "inputs": []
   },
   {

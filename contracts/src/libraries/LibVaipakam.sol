@@ -457,6 +457,11 @@ library LibVaipakam {
     // legitimate distressed-borrower offers; higher would let pranks
     // / typo-grade offers spam the book.
     uint256 constant MAX_INTEREST_BPS = 10_000;
+    // #400 (hardening) — bounds for the rate-model deviation cap (the max ±
+    // BPS a model may move a quote from the caller's reference rate).
+    uint256 constant RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT = 500; // 5%
+    uint256 constant MIN_RATE_MODEL_MAX_DEVIATION_BPS = 50;      // 0.5% floor — a model that can't move at all is pointless
+    uint256 constant MAX_RATE_MODEL_MAX_DEVIATION_BPS = 2_500;   // 25% ceiling — caps how far automation can drift from market
 
     // ─── T-034 — Periodic Interest Payment defaults + bounds ─────────────
     // See docs/DesignsAndPlans/PeriodicInterestPaymentDesign.md.
@@ -4261,6 +4266,25 @@ library LibVaipakam {
         ///      AND PREVENTS a routine partial from leaving a fresh dust
         ///      position out of a non-dust loan (forces full liquidation).
         uint256 liquidationDustFloorNumeraire; // 0 ⇒ DISABLED
+        // ─── #400 — pluggable quote-time rate model (APPEND-ONLY tail) ──────
+        /// @dev The active {IRateModel}. `address(0)` ⇒ the IDENTITY model —
+        ///      the user-supplied offer rate stands unchanged (today's
+        ///      behaviour, zero-config). When set, `OfferCreateFacet` evaluates
+        ///      it ONCE at offer-create and writes the concrete rate into the
+        ///      offer; it is never consulted at match/accept or on a live loan
+        ///      (E2). Registering a model is risk-increasing → timelock +
+        ///      guardian-revocable after handover. Declared at the `Storage`
+        ///      tail so the upgrade never shifts existing slots.
+        address rateModel;
+        /// @dev #400 (hardening) — max ± deviation, in BPS, a registered model
+        ///      may move a quote from the caller's reference (market) rate. The
+        ///      resolver CLAMPS the model's output to `[ref - dev, ref + dev]`,
+        ///      so a model — even buggy/registered — can never push an
+        ///      automated offer far off the market reference (the anti-rate-
+        ///      setting / anti-reflexivity guarantee, baked into the substrate
+        ///      rather than trusted to each consumer). 0 ⇒
+        ///      RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT. Range-clamped at the setter.
+        uint16 rateModelMaxDeviationBps; // 0 ⇒ default (500 = 5%)
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4824,6 +4848,19 @@ library LibVaipakam {
     ///      waiver and the dust-prevention check while this is 0.
     function cfgLiquidationDustFloorNumeraire() internal view returns (uint256) {
         return storageSlot().liquidationDustFloorNumeraire;
+    }
+
+    /// @dev #400 — active quote-time rate model; `address(0)` ⇒ identity
+    ///      (user-supplied rate stands). Consumed only by `OfferCreateFacet`.
+    function cfgRateModel() internal view returns (address) {
+        return storageSlot().rateModel;
+    }
+
+    /// @dev #400 (hardening) — max ± BPS a model may move a quote from the
+    ///      reference; 0 ⇒ default. The resolver clamps to this band.
+    function cfgRateModelMaxDeviationBps() internal view returns (uint256) {
+        uint16 v = storageSlot().rateModelMaxDeviationBps;
+        return v == 0 ? RATE_MODEL_MAX_DEVIATION_BPS_DEFAULT : uint256(v);
     }
 
     /// @dev Phase 1 follow-up — auto-pause duration (seconds) used by

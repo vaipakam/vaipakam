@@ -509,6 +509,25 @@ An offer may be created two ways, both reaching the same on-chain offer state:
 - See `docs/DesignsAndPlans/OfferFillModesDesign.md` for the full
   matrix, alternatives table, and failure-mode coverage.
 
+### Interest-rate determination — human-set, model-optional
+
+- The interest rate on a manually-created offer is the rate the **creator
+  chooses**, and it is binding: the protocol does not transform or override it.
+  Vaipakam's market rate emerges from this human-driven order book (lenders and
+  borrowers posting at the rates they will accept), not from a protocol-imposed
+  algorithmic curve — that market price-discovery is intended behaviour.
+- An optional, governance-registered **rate model** may exist as a *pricing
+  aid*. It is used only (a) by the app as a non-binding **suggested** rate a
+  person may take or ignore, and (b) by **automated / delegated** offer
+  creation — auto-lend, auto-roll, and keeper-posted standing intents, where the
+  user opted into having their liquidity priced for them. Automated pricing must
+  anchor to the live market rate and stay within a market-relative band, so an
+  automated offer never posts far off the prevailing market (which would either
+  fill instantly at a loss or sit unmatched).
+- With **no model registered (the default), nothing changes** — every offer
+  carries exactly the rate its creator set. A model never re-prices a matched or
+  live loan: the rate is fixed at loan initiation for the life of the position.
+
 ### Offer modification — in-place edit without cancel-and-re-post
 
 - A creator may modify their own **unaccepted** offer's principal

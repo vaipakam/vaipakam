@@ -426,6 +426,87 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         dustFloorNumeraire = LibVaipakam.cfgLiquidationDustFloorNumeraire();
     }
 
+    /// @notice Emitted on every change to the #400 quote-time rate model.
+    /// @custom:event-category informational/config
+    event RateModelSet(address indexed previousModel, address indexed newModel);
+
+    /// @notice Emitted on every change to the #400 rate-model deviation cap.
+    /// @custom:event-category informational/config
+    event RateModelMaxDeviationBpsSet(uint16 newBps);
+
+    /// @notice REGISTER (or change) the active #400 quote-time {IRateModel}.
+    /// @dev    The ENABLE direction (risk-INCREASING — a model can shift the
+    ///         rate automated offers post at), so ADMIN_ROLE-only → governance
+    ///         **timelock** after handover. The fast risk-DECREASING direction
+    ///         is `disableRateModel()` (a WATCHER/guardian can flip it off
+    ///         instantly) — the #393 §4 enable-slow / disable-fast asymmetry.
+    ///         A non-zero model must have bytecode (catches an EOA paste).
+    ///         The model is consumed ONLY by `OfferCreateFacet`'s resolver,
+    ///         whose output is clamped to ±`rateModelMaxDeviationBps` of the
+    ///         caller's reference rate; it never re-prices a matched/live loan
+    ///         (E2) and never overwrites a manually-typed offer rate.
+    /// @param  newModel The rate-model contract (non-zero). Use
+    ///         `disableRateModel()` to turn it off.
+    function setRateModel(address newModel) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (newModel == address(0)) revert UseDisableRateModel();
+        if (newModel.code.length == 0) revert RateModelNotContract();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        emit RateModelSet(s.rateModel, newModel);
+        s.rateModel = newModel;
+    }
+
+    /// @notice FAST-disable the rate model → revert to the IDENTITY model (the
+    ///         user-supplied rate stands). The risk-DECREASING half of the
+    ///         enable-slow / disable-fast asymmetry: callable by WATCHER_ROLE
+    ///         (the constrained fast-incident key, like `autoPause`) as well as
+    ///         ADMIN_ROLE, so a misbehaving model can be killed without waiting
+    ///         on the enable-side timelock.
+    function disableRateModel() external {
+        if (
+            !LibAccessControl.hasRole(LibAccessControl.WATCHER_ROLE, msg.sender) &&
+            !LibAccessControl.hasRole(LibAccessControl.ADMIN_ROLE, msg.sender)
+        ) revert NotWatcherOrAdmin();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.rateModel != address(0)) {
+            emit RateModelSet(s.rateModel, address(0));
+            s.rateModel = address(0);
+        }
+    }
+
+    /// @notice The active #400 rate model, or `address(0)` for identity.
+    function getRateModel() external view returns (address) {
+        return LibVaipakam.cfgRateModel();
+    }
+
+    /// @notice Set the #400 model deviation cap — the max ± BPS a model may
+    ///         move a quote from the reference rate (the resolver clamps to it).
+    /// @dev    ADMIN_ROLE-only. `0` resets to the library default (500 = 5%);
+    ///         any non-zero value is range-checked to
+    ///         `[MIN, MAX]_RATE_MODEL_MAX_DEVIATION_BPS` (0.5%–25%).
+    function setRateModelMaxDeviationBps(uint16 newBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (
+            newBps != 0 &&
+            (newBps < LibVaipakam.MIN_RATE_MODEL_MAX_DEVIATION_BPS ||
+                newBps > LibVaipakam.MAX_RATE_MODEL_MAX_DEVIATION_BPS)
+        ) revert InvalidRateModelDeviation();
+        LibVaipakam.storageSlot().rateModelMaxDeviationBps = newBps;
+        emit RateModelMaxDeviationBpsSet(newBps);
+    }
+
+    /// @notice The effective #400 model deviation cap in BPS.
+    function getRateModelMaxDeviationBps() external view returns (uint256) {
+        return LibVaipakam.cfgRateModelMaxDeviationBps();
+    }
+
+    /// @notice A non-zero rate model address had no bytecode (likely an EOA).
+    error RateModelNotContract();
+    /// @notice `setRateModel(address(0))` — use `disableRateModel()` instead.
+    error UseDisableRateModel();
+    /// @notice Caller is neither WATCHER_ROLE nor ADMIN_ROLE.
+    error NotWatcherOrAdmin();
+    /// @notice Rate-model deviation cap outside [MIN, MAX]_RATE_MODEL_MAX_DEVIATION_BPS.
+    error InvalidRateModelDeviation();
+
     /// @notice Replace the adapter order with an explicit permutation.
     /// @dev ADMIN_ROLE-only. `newOrder` must contain exactly the same
     ///      set of addresses currently registered (same length, same

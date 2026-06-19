@@ -257,7 +257,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](7);
         selectors[0] = OfferCreateFacet.createOffer.selector;
         selectors[1] = OfferCreateFacet.getUserVault.selector;
         // Phase 8b.1 Permit2 addition.
@@ -270,6 +270,8 @@ contract HelperTest {
         // signed off-chain offer (vault-backed + wallet-backed Permit2).
         selectors[4] = OfferCreateFacet.createSignedOfferVault.selector;
         selectors[5] = OfferCreateFacet.createSignedOfferWallet.selector;
+        // #400 — quote-time rate-model resolver (read-only).
+        selectors[6] = OfferCreateFacet.quoteOfferRateBps.selector;
         return selectors;
     }
 
@@ -367,7 +369,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](42);
+        selectors = new bytes4[](47);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -417,6 +419,11 @@ contract HelperTest {
         selectors[39] = AdminFacet.keepersPaused.selector;
         selectors[40] = AdminFacet.setPartialLiquidationSizing.selector;
         selectors[41] = AdminFacet.getPartialLiquidationSizing.selector;
+        selectors[42] = AdminFacet.setRateModel.selector;
+        selectors[43] = AdminFacet.getRateModel.selector;
+        selectors[44] = AdminFacet.disableRateModel.selector;
+        selectors[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
+        selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
         return selectors;
     }
 
