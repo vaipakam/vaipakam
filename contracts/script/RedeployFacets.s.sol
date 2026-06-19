@@ -11,6 +11,11 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+// #394 (Codex #647 round-8 P1) — post-admission-guard facets changed by #394.
+import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
+import {PartialWithdrawalFacet} from "../src/facets/PartialWithdrawalFacet.sol";
+import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {SwapToRepayFacet} from "../src/facets/SwapToRepayFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -45,6 +50,16 @@ contract RedeployFacets is Script {
         PrecloseFacet precloseFacet = new PrecloseFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         ProfileFacet profileFacet = new ProfileFacet();
+        // #394 (Codex #647 round-8 P1) — #394 changed the POST-ADMISSION snapshot
+        // guards on these four facets too, not just LoanFacet/RiskFacet. Rolling
+        // out #394 must refresh their bytecode as well, or a live diamond ends up
+        // with new admission terms (LoanFacet/RiskFacet snapshotting) but stale
+        // guards that ignore the snapshot — exactly the inconsistency the snapshot
+        // was meant to prevent.
+        AddCollateralFacet addCollateralFacet = new AddCollateralFacet();
+        PartialWithdrawalFacet partialWithdrawalFacet = new PartialWithdrawalFacet();
+        RefinanceFacet refinanceFacet = new RefinanceFacet();
+        SwapToRepayFacet swapToRepayFacet = new SwapToRepayFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
@@ -52,6 +67,10 @@ contract RedeployFacets is Script {
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
+        console.log("AddCollateralFacet:   ", address(addCollateralFacet));
+        console.log("PartialWithdrawalFacet:", address(partialWithdrawalFacet));
+        console.log("RefinanceFacet:       ", address(refinanceFacet));
+        console.log("SwapToRepayFacet:     ", address(swapToRepayFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -66,14 +85,20 @@ contract RedeployFacets is Script {
         uint256 nExtra =
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](6 + nExtra);
+            new IDiamondCut.FacetCut[](10 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
         cuts[5] = _replace(address(profileFacet), _profileSelectors());
-        uint256 idx = 6;
+        // #394 round-8 P1 — the four post-admission-guard facets (Replace: their
+        // selectors already exist on any target diamond; only the bytecode changed).
+        cuts[6] = _replace(address(addCollateralFacet), _addCollateralSelectors());
+        cuts[7] = _replace(address(partialWithdrawalFacet), _partialWithdrawalSelectors());
+        cuts[8] = _replace(address(refinanceFacet), _refinanceSelectors());
+        cuts[9] = _replace(address(swapToRepayFacet), _swapToRepaySelectors());
+        uint256 idx = 10;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -85,7 +110,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced.");
+        console.log("DiamondCut applied: 10 facets replaced.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
     }
@@ -227,5 +252,32 @@ contract RedeployFacets is Script {
         s[12] = ProfileFacet.approveKeeper.selector;
         s[13] = ProfileFacet.revokeKeeper.selector;
         s[14] = ProfileFacet.getApprovedKeepers.selector;
+    }
+
+    // ── #394 (Codex #647 round-8 P1) post-admission-guard facet selectors ──
+    // Mirror `DeployDiamond.s.sol` (kept in lockstep). These selectors already
+    // exist on any target diamond, so they Replace — only the bytecode changed.
+
+    function _addCollateralSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = AddCollateralFacet.addCollateral.selector;
+    }
+
+    function _partialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = PartialWithdrawalFacet.partialWithdrawCollateral.selector;
+        s[1] = PartialWithdrawalFacet.calculateMaxWithdrawable.selector;
+    }
+
+    function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RefinanceFacet.refinanceLoan.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+    }
+
+    function _swapToRepaySelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = SwapToRepayFacet.swapToRepayFull.selector;
+        s[1] = SwapToRepayFacet.swapToRepayPartial.selector;
     }
 }

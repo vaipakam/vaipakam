@@ -36,10 +36,24 @@ It is consulted **only on the automated / delegated lending path** (auto-lend /
 keeper-AMM) — a human who types a rate still posts at exactly that rate. And
 because it only ever *adds* to the live market reference, #400's deviation clamp
 bounds its output to the market band: even a misconfigured premium can never
-push an automated offer off-market. The model holds no funds, is a pure view,
-and is swapped (never mutated) by deploying a new one and re-registering it —
-governance can also revert to the identity model instantly in an incident.
+push an automated offer off-market. The model holds no funds and is a pure
+view. It can also be wholesale-swapped by deploying a new model and
+re-registering, and governance can revert to the identity model instantly in an
+incident.
 
-**Governance:** both levers use the existing `RISK_ADMIN_ROLE` with hard
-range-bounded setters. The optimistic-delta / cooldown "risk-steward" machinery
-is intentionally left to the governance track (#404).
+**Governance — two distinct authorities (don't conflate them):**
+
+- *Lever A — the HF-floor knob* is a Diamond setter under `RISK_ADMIN_ROLE`
+  (`RiskFacet.setMinHealthFactor`), hard range-bounded.
+- *Lever B — the premium model* is a **standalone `Ownable2Step` contract**, not
+  a Diamond facet. Its premiums are retuned by the **model's own owner** (the
+  admin multisig → timelock) via its hard-bounded `setTierPremiumBps` /
+  `setTenorPremium` setters — so the model *is* mutable, by its owner. Wiring it
+  to (or off) the Diamond is a **separate** Diamond action under `AdminFacet`
+  (`setRateModel` registers — `ADMIN_ROLE` → timelock; `disableRateModel`
+  reverts to identity — a watcher/guardian fast-path). Operator runbooks must
+  point premium retunes at the **model owner**, and register/disable at
+  `AdminFacet` — not at `RISK_ADMIN_ROLE`.
+
+The optimistic-delta / cooldown "risk-steward" machinery is intentionally left
+to the governance track (#404).
