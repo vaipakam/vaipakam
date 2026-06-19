@@ -20,6 +20,23 @@ import {Deployments} from "./lib/Deployments.sol";
  *         2% treasury liquidation handling fee) and diamond-cuts every
  *         selector to the new implementation via Replace.
  *
+ * @dev    SCOPE — this is a CURATED INCREMENTAL refresh of a fixed facet set,
+ *         for iterating on those specific facets on an existing diamond. It is
+ *         NOT, and must not be used as, a complete rollout of a change that
+ *         spans many facets. In particular it is **not the #394 rollout**: #394
+ *         touched 13 facets, several only via INLINED libraries (LibRiskMath →
+ *         OfferCreateFacet / OfferMatchFacet; LibMetricsTypes →
+ *         MetricsDashboardFacet / MetricsFacet) whose bytecode changes don't
+ *         show up as direct facet edits. Cherry-picking a subset here would
+ *         leave a live diamond with mismatched bytecode across the inlined-lib
+ *         boundary.
+ *
+ *         Rollout policy (owner, 2026-06-19): **every facet is (re)deployed
+ *         FRESH via `DeployDiamond.s.sol`** — that is the canonical path for any
+ *         change that crosses a shared library, so the whole selector set is
+ *         consistent by construction. Use this script only for narrow,
+ *         single-facet dev/testnet iteration on the curated set above.
+ *
  * Env vars: DEPLOYER_PRIVATE_KEY, DIAMOND_ADDRESS
  *
  * Usage:

@@ -766,6 +766,10 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
+        // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
+        // so addresses.json (explorer verification / upgrade scripts / audits) can
+        // locate its selector group.
+        Deployments.writeFacet("numeraireConfigFacet",    address(numeraireConfigFacet));
         Deployments.writeFacet("legalFacet",              address(legalFacet));
         Deployments.writeFacet("autoLifecycleFacet",      address(autoLifecycleFacet));
         Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
