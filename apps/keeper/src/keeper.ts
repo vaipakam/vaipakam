@@ -501,10 +501,29 @@ export async function maybeAutonomousLiquidate(
         );
         return true;
       } catch (partialErr) {
+        // #395 (Codex r6 P2) — only the on-chain SIZING-GUARD reverts mean
+        // "escalate this loan to full liquidation": `PartialOverLiquidates`
+        // (slice over the ceiling), `InternalMatchOnlyBand` (in the priority
+        // window), `PartialLeavesDust` (would strand dust). For ANY other
+        // revert — e.g. `PartialMustRestoreHF` (the slice was undersized after
+        // quote slippage / stale sizing) or a swap-route failure — a resized
+        // partial may still preserve the borrower's position, so do NOT close
+        // the whole loan: skip and re-evaluate (re-quote + re-size) next tick.
+        const msg = String(partialErr);
+        const escalate =
+          msg.includes('PartialOverLiquidates') ||
+          msg.includes('InternalMatchOnlyBand') ||
+          msg.includes('PartialLeavesDust');
+        if (!escalate) {
+          console.log(
+            `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-nonescalation (${msg.slice(0, 140)}) — skipping; re-size next tick`,
+          );
+          return false;
+        }
         console.log(
-          `[keeper] loan=${loanId} chain=${chain.name} partial-reverted (${String(partialErr).slice(0, 140)}) — falling back to split/full liquidation`,
+          `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-escalation (${msg.slice(0, 140)}) — falling back to split/full liquidation`,
         );
-        // do NOT return — continue to the split / full branches below.
+        // escalation case — fall THROUGH to the split / full branches below.
       }
     }
 
