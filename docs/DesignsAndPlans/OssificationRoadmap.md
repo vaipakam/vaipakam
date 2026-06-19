@@ -15,7 +15,12 @@ yet. Instead we commit to:
 
 1. A **guardian fast-pause** on the core lending Diamond — *which already
    exists* (the asymmetric `PAUSER`/`UNPAUSER` split) and is wired to survive
-   handover. §1.
+   handover. §1. (The slow-unpause half of that split is a *process*
+   guarantee, not an absolute one: the root `DEFAULT_ADMIN_ROLE` lands on the
+   governance Safe at handover and can re-grant `UNPAUSER_ROLE` outside the
+   timelock — so the guarantee rests on that multisig honouring process. The
+   §1 caveat states this in full; timelocking `DEFAULT_ADMIN_ROLE` itself is
+   tracked freeze-stage hardening.)
 2. A **staged ossification** of the trusted surface over time, with the rules
    that move custody freezing first and curation staying bounded-upgradeable.
    §2.
@@ -95,15 +100,27 @@ surface in stages. Targets by surface:
 | --- | --- | --- |
 | Fund custody + core accounting (loan lifecycle, repayment, claim, vault transfers) | upgradeable | **Freeze first** — the highest-trust surface; freeze its cut path on the published schedule once the audit + bake confirm stability. |
 | Per-user vault implementation (`VaipakamVaultImplementation`, UUPS, `_authorizeUpgrade` is `onlyOwner` = the Diamond) | upgradeable | **Part of the custody-freeze commitment.** A vault-impl upgrade is custody-moving (it runs in the proxy that holds user assets), so it stays behind the Diamond owner = **timelock** and is a freeze candidate on the same schedule as the cut path — explicitly, not just the Diamond facets. |
-| Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind **a timelock + range-checked setters** — they evolve, but only within hard bounds and never via a free facet replace. During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
+| Other Diamond-owned UUPS custody surfaces — the ERC-4626 aggregator adapter proxies (`AggregatorAdapterFactoryFacet.upgradeAggregatorAdapter`, which hold aggregator principal) and the protocol backstop vault (`BackstopFacet.upgradeBackstopVault`, which holds backstop lending capital) | upgradeable | **Also part of the custody-freeze commitment.** These are *separate* UUPS upgrade hooks from the per-user vault: a malicious implementation cut in here moves aggregator or backstop custody without ever touching the per-user vault path, so they carry the **same timelock + freeze-candidate** treatment as the vault impl. (The aggregator and backstop products themselves are later-phase; until they ship the rows are forward-looking, but the freeze guarantee names them explicitly so they can't slip the net when they do.) |
+| Price/risk inputs that *indirectly* move custody (oracle adapters #392, risk params + admission floor #394, rate model #400) | upgradeable | **Bounded-upgradeable, never freely replaceable.** A freely-swappable oracle/risk facet can drain custody indirectly, so these stay behind a **timelock**, and — for the *numeric* knobs (risk params, admission floor, rate-model premiums) — **range-checked setters** that evolve only within hard bounds, never via a free facet replace. **Honest caveat:** the *oracle address* swaps (`setChainlinkRegistry`, `setEthUsdFeed`, `setTellorOracle`, `setApi3ServerV1`, `setDIAOracleV2`) are **not** range-bounded — they forward an arbitrary address into storage after only the owner check, so today their sole bound is the timelock delay (a queued, arbitrary feed replacement is still a custody-moving change). An on-chain feed **allowlist** that constrains *which* oracle addresses are settable is outstanding hardening, not in place today. During the timelock delay the guardian can halt user flows; cancelling a queued change is the timelock proposer's lever. |
 | Curation / parameters (fees, tiers, kill-switches) | upgradeable | Stays upgradeable (bounded) — curation must keep evolving. |
 | Diamond-cut governance itself | timelock | **Freeze the whole cut path** — Add **and** Replace/Remove (freezing only existing selectors would still let a new facet add custody-moving code) — on the published schedule (post-audit), behind separated guardian/upgrade multisigs + timelock until then. |
 
 Guiding rule (the load-bearing line): **anything that can move custody —
 directly or through a price/risk input — can only change behind the 48–72h
-timelock** (delay sized to detect-and-exit; the guardian can halt user flows in
-that window, cancellation is the timelock proposer's), and is a freeze
-*candidate*, never a free replace.
+timelock** (delay sized to detect-and-exit, and a freeze *candidate*, never a
+free replace).
+
+**What "detect-and-exit" does and does not mean (honest):** the delay buys
+users a window to *observe* a queued custody-moving change and exit (repay,
+withdraw, claim) **while the protocol is unpaused**. It is **not** a guarantee
+that exit stays open in every scenario — the user-exit paths (`RepayFacet.repayLoan`,
+`ClaimFacet.claimAsLender`, withdrawals) are themselves `whenNotPaused`, so if the
+guardian *pauses* during a queued hostile op those exits revert too. Pause and
+detect-and-exit are therefore alternative mitigations, not simultaneous ones:
+while **unpaused**, the delay is the user's exit window; once **paused**, the
+lever is the incident team's **cancellation / remediation** (the timelock
+proposer cancels the queued op), not user exit. The guardian's pause buys the
+team time to cancel — it does not preserve the exit window it freezes.
 
 ## 3. Authority + timelock shape
 
