@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
+import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -52,25 +53,41 @@ contract RedeployFacets is Script {
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](7);
+        // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
+        // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
+        // a zero old facet) but a Replace on a SAME-VERSION diamond (already
+        // routed → Add reverts as "exists"). A static choice can't serve both,
+        // so partition them by the live diamond's routing via the loupe: Add the
+        // unrouted, Replace the already-routed. This makes the script correct
+        // against any target diamond.
+        (bytes4[] memory hfToAdd, bytes4[] memory hfToReplace) =
+            _partitionByRouting(diamond, _riskAddSelectors());
+
+        uint256 nExtra =
+            (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0);
+        IDiamondCut.FacetCut[] memory cuts =
+            new IDiamondCut.FacetCut[](6 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
         cuts[5] = _replace(address(profileFacet), _profileSelectors());
-        // #394 (Codex #647 round-5) — the runtime HF-floor knob selectors are
-        // NEW (not on a pre-#394 diamond), so they must be ADDED, not Replaced.
-        // `LibDiamond.replaceFunctions` reverts when the old facet address is
-        // zero, so folding them into the Replace above would brick this upgrade
-        // before governance could expose the knob.
-        cuts[6] = _add(address(riskFacet), _riskAddSelectors());
+        uint256 idx = 6;
+        if (hfToReplace.length > 0) {
+            cuts[idx++] = _replace(address(riskFacet), hfToReplace);
+        }
+        if (hfToAdd.length > 0) {
+            cuts[idx++] = _add(address(riskFacet), hfToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced + 2 risk selectors added.");
+        console.log("DiamondCut applied: 6 facets replaced.");
+        console.log("  HF selectors added:   ", hfToAdd.length);
+        console.log("  HF selectors replaced:", hfToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -97,6 +114,36 @@ contract RedeployFacets is Script {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: selectors
         });
+    }
+
+    /// @dev #394 (Codex #647 round-7) — split `selectors` into those NOT yet
+    ///      routed on `diamond` (need Add) and those already routed (need
+    ///      Replace), using the loupe's `facetAddress` (returns `address(0)`
+    ///      for an unrouted selector). Lets one script serve both a pre-#394
+    ///      diamond (selectors new) and a same-version diamond (selectors
+    ///      present) without `Add`/`Replace` reverting on the wrong one.
+    function _partitionByRouting(address diamond, bytes4[] memory selectors)
+        internal
+        view
+        returns (bytes4[] memory toAdd, bytes4[] memory toReplace)
+    {
+        bool[] memory routed = new bool[](selectors.length);
+        uint256 addN;
+        uint256 replN;
+        for (uint256 i; i < selectors.length; i++) {
+            routed[i] =
+                IDiamondLoupe(diamond).facetAddress(selectors[i]) != address(0);
+            if (routed[i]) replN++;
+            else addN++;
+        }
+        toAdd = new bytes4[](addN);
+        toReplace = new bytes4[](replN);
+        uint256 a;
+        uint256 r;
+        for (uint256 i; i < selectors.length; i++) {
+            if (routed[i]) toReplace[r++] = selectors[i];
+            else toAdd[a++] = selectors[i];
+        }
     }
 
     // ── Selector arrays (mirror DeployDiamond.s.sol) ────────────────────
