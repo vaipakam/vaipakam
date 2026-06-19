@@ -308,6 +308,38 @@ kill-switch
 
 ---
 
+## 3.7 Targeted snap-off — feature kill switches (#633, added 2026-06-18)
+
+Four on-chain levers that pause one feature each without a full
+protocol pause. **PAUSE semantics: default `false` = active; set `true`
+to pause** (opposite polarity to the `cfgAuto*Enabled` / `discountPathEnabled`
+flags). Setters on `AdminFacet`; full catalogue in
+[`AdminConfigurableKnobsAndSwitches.md`](AdminConfigurableKnobsAndSwitches.md)
+§"#633 — Feature kill switches". Reach for the narrowest lever that
+contains the incident before considering the full `AdminFacet.pause()` (§3).
+
+| Incident scope | Lever | Effect |
+| --- | --- | --- |
+| A single DEX/aggregator swap venue compromised or illiquid | `AdminFacet.setSwapAdapterDisabled(adapter, true)` | Failover path **skips** the venue; split path **reverts `SwapVenuePaused`**. Other venues + the rest of the protocol keep running. Re-enable with `false` — no reshuffle. |
+| Keeper-key compromise / misbehaving bot fleet | `AdminFacet.setKeepersPaused(true)` | Freezes ALL delegated third-party keepers (liquidation follow-ups, auto-roll, backstop buyout, aggregator keeper path). Owners still act on their own positions; permissionless liquidation stays open. |
+| A Yearn-style external yield aggregator compromised / mispricing | `AdminFacet.setAggregatorAdaptersPaused(true)` | Blocks onboarding a new aggregator AND filling an existing aggregator's standing intent. Ordinary user intents + backstop unaffected. |
+| Peer-protocol on-chain LTV reads look manipulated | `AdminFacet.setPeerLtvReadsPaused(true)` | Depth-tiered limits fall back to the governance-set cap (never the library default). The setter also invalidates the tier-LTV cache, so an unpause can't re-trust a stale reading. |
+
+Each is reversible at zero cost beyond gas and touches no user funds or
+per-user consent. Post-handover these move behind the Timelock — confirm
+whether the incident needs an immediate-effect lever (pre-handover, or the
+asset-level `AdminFacet.pauseAsset`) before relying on one of these.
+
+### Confirm afterwards
+
+- The targeted feature is actually stopped (e.g. a `triggerLiquidationSplit`
+  through a paused venue reverts `SwapVenuePaused`; a paused keeper path
+  reverts `KeeperAccessRequired` / `KeepersGloballyPaused`).
+- Unrelated paths still run (ordinary liquidation, repayment, claims) —
+  these are surgical levers, not a global pause.
+
+---
+
 ## 4. Off-chain alert-rail key compromise
 
 The watcher holds two long-lived secrets — `TG_BOT_TOKEN` (Telegram

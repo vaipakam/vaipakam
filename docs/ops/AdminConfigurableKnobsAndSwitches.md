@@ -877,6 +877,96 @@ Each flip is reversible at zero cost beyond gas.
 
 ---
 
+## #633 — Feature kill switches (aggregators / keepers / swap venues / peer data)
+
+Four admin break-glass levers that pause an individual platform feature
+without disabling unrelated machinery. Setters + events live on
+`AdminFacet`; storage is on `ProtocolConfig` (the three booleans) plus a
+per-adapter mapping. Admin-settable now; moves to the governance timelock
+after handover — the same posture as the #399 backstop switches.
+
+> ⚠️ **PAUSE semantics — opposite polarity to the `*Enabled` flags above.**
+> These default `false` meaning **active / not paused** (the gated
+> features — aggregators, keepers, swap venues, peer reads — are *already
+> live*, so a default-off flag would have silently disabled working
+> behaviour and broken tests). Flipping one to **`true` PAUSES** the
+> feature. Do not pattern-match these onto the `cfgAuto*Enabled` /
+> `discountPathEnabled` flags, where `false` = off and `true` = on. Here
+> `true` = paused.
+
+### `keepersPaused` — global keeper pause
+
+- **Getter:** `AdminFacet.keepersPaused() -> bool`
+- **Setter:** `AdminFacet.setKeepersPaused(bool value)` → emits
+  `KeepersPausedSet`.
+- **What `true` blocks:** all delegated third-party keeper activity
+  protocol-wide — `ConfigFacet.setKeeperTier`, the `LibAuth.requireKeeperFor`
+  / `requireKeeperForPrincipal` gates (after the owner/principal
+  short-circuit), the backstop buyout (`ClaimFacet._claimViaBackstopImpl`),
+  and the aggregator adapter's keeper path
+  (`AggregatorAdapterImplementation`). Position owners can **always** still
+  act on their own positions directly, and ordinary **permissionless**
+  liquidation stays open — only delegated keepers are frozen.
+- **When to flip on:** a keeper-key compromise or a misbehaving bot fleet
+  (mass mis-priced auto-actions). It is the broad incident lever; the
+  per-user keeper revoke is the narrow one.
+
+### `aggregatorAdaptersPaused` — external yield-aggregator pause
+
+- **Getter:** `LibVaipakam.cfgAggregatorAdaptersPaused()` (read on-chain;
+  surfaced in the Protocol Console).
+- **Setter:** `AdminFacet.setAggregatorAdaptersPaused(bool value)` → emits
+  `AggregatorAdaptersPausedSet`.
+- **What `true` blocks:** onboarding a new aggregator
+  (`AggregatorAdapterFactoryFacet.createAggregatorAdapter`) **and** filling
+  an existing aggregator's standing lending intent
+  (`OfferMatchFacet.matchIntent` when the lender is a registered aggregator
+  adapter). Ordinary user lending intents and the backstop are unaffected.
+- **When to flip on:** a Yearn-style external aggregator integration is
+  found compromised or mispricing, and the protocol wants to stop routing
+  fills to it without unwinding ordinary intents.
+
+### `peerLtvReadsPaused` — peer-protocol data-read pause
+
+- **Getter:** `LibVaipakam.cfgPeerLtvReadsPaused()`.
+- **Setter:** `AdminFacet.setPeerLtvReadsPaused(bool value)` → emits
+  `PeerLtvReadsPausedSet`. The setter also **invalidates the tier-LTV
+  cache** (zeroes `tierLtvCache[t].lastRefreshedAt` for every tier) on
+  every toggle, so an unpause can't re-trust a stale (possibly compromised)
+  cached reading.
+- **What `true` blocks:** the optional reads of peer lending protocols used
+  to refine the depth-tiered collateral limits. While paused,
+  `effectiveTierMaxInitLtvBps` falls back to the **governance-set cap**
+  (`cfgTierMaxInitLtvBps`) — never the library default — so a compromised
+  external data source can't influence risk parameters, and unpausing can
+  never transiently widen a tier below the governance cap.
+- **When to flip on:** a peer protocol's on-chain LTV reads look
+  manipulated or unreliable.
+
+### `swapAdapterDisabled[adapter]` — per-venue swap pause
+
+- **Getter:** `AdminFacet.isSwapAdapterDisabled(address adapter) -> bool`
+- **Setter:** `AdminFacet.setSwapAdapterDisabled(address adapter, bool disabled)`
+  → emits `SwapAdapterDisabledSet`. The setter rejects an unregistered
+  adapter (`SwapAdapterNotRegistered`) — you can only pause a venue that
+  is actually in the `swapAdapters` registry.
+- **What `disabled = true` blocks:** liquidation routing through that one
+  venue, on **both** routes — the single-route failover path
+  (`LibSwap.swapWithFailover` and `ClaimFacet._attemptRetrySwap`) **skips**
+  it and fails over to the remaining venues, and the multi-route split path
+  (`LibSwap.swapWithSplit`, called by `RiskSplitLiquidationFacet.triggerLiquidationSplit`)
+  **reverts `SwapVenuePaused`** rather than routing a leg through it (split
+  legs carry no per-leg slippage floor, so the pause must be enforced
+  on-chain, not left to the off-chain keeper). The venue stays registered,
+  so re-activating is a single `disabled = false` flip with no reshuffle.
+- **When to flip on:** a DEX/aggregator venue is compromised or temporarily
+  illiquid and you want it sidelined instantly.
+
+Each flip is reversible at zero cost beyond gas. None of these levers
+touches user funds or per-user consent state.
+
+---
+
 ## Operational policy summary
 
 - **Default new chain bring-up**: every numeric knob defaults to a
