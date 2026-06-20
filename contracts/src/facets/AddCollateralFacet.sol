@@ -121,6 +121,27 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
+        // #594 Codex #657 round-3 — consolidate the borrower side FIRST (when
+        // the loan is Active and the position has transferred). This re-anchors
+        // `loan.borrower` to the current holder and moves the existing
+        // collateral into the holder's vault — the primitive's own from-side
+        // move handles a stale anchor that was sanctions-flagged after transfer
+        // (its scoped exemption), so the deposit below then targets the holder's
+        // clean vault. Idempotent with the end-of-fn hook (AlreadyConsolidated /
+        // NoOp for a non-transferred or just-resolved loan).
+        //
+        // While FallbackPending the primitive is excluded (lien released,
+        // snapshot in Diamond custody), so this is a no-op and the deposit below
+        // still targets the stored `loan.borrower`; if that anchor is flagged
+        // the deposit correctly REVERTS rather than crediting a sanctioned vault
+        // (a non-curing FallbackPending top-up would otherwise strand funds
+        // there — Codex #657 round-3). The end-of-fn hook then consolidates a
+        // just-cured loan. The narrow FallbackPending + flagged-stale-anchor
+        // top-up is a safe revert; the liveness gap is tracked in #658.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
         // #569 Codex #572 round-2 P2 — resolve the canonical collateral
         // vault as the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
         // borrower-position NFT may have transferred, so the current
@@ -130,21 +151,6 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // the close / claim paths expect the enlarged `collateralAmount`
         // there. The deposit, the lien increment, and the cure-path
         // restore must all target the same vault as the lien.
-        // #594 Codex #659 P1 — the top-up vault is the STORED `loan.borrower`'s
-        // (where the lien lives), which may have transferred + been sanctions-
-        // flagged AFTER transfer. Both the resolution below and the deposit go
-        // through the Tier-1 `getOrCreateUserVault` gate, so without an
-        // exemption a flagged stale anchor would brick the holder's top-up here
-        // — BEFORE the consolidation hook (at the end, after a possible cure)
-        // can re-anchor + move the collateral out. While FallbackPending the
-        // hook is excluded (lien released), so it can't pre-run anyway. Resolve
-        // this ONE transient deposit sanctions-exempt: the funds land in the
-        // stale vault only momentarily, then the hook moves them out to the
-        // current holder (or the just-cured loan's consolidation does). The
-        // exemption is pinned to the exact `loan.borrower` address (Codex
-        // round-3 D) and the function is `nonReentrant`, so nothing else
-        // resolves a flagged vault in the window.
-        s.consolidationMoveFromUser = loan.borrower;
         address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
 
         // Pull the top-up from the CALLER (`msg.sender`, the funding
@@ -163,7 +169,6 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             ),
             VaultDepositFailed.selector
         );
-        s.consolidationMoveFromUser = address(0);
 
         // Update loan collateral amount
         loan.collateralAmount += amount;

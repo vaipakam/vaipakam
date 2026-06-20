@@ -918,18 +918,22 @@ contract SwapToRepayIntentFacet is
         // ── 3. Return custodial collateral to `loan.borrower`'s
         //       vault (Codex round-2 P1 #3 + round-11 P1 #1) ────────
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // #594 Codex #659 P1 — the return targets the STORED `loan.borrower`'s
-        // vault (where the lien is reinstated), which may have transferred + been
-        // sanctions-flagged AFTER the commit. The collateral is in Diamond
-        // custody right now (NOT in the vault), so the consolidation hook below
-        // can't pre-run to re-anchor — and during the live commit it was the D-3
-        // exclusion anyway. Resolve this ONE transient return sanctions-exempt:
-        // the funds land in the stale vault only momentarily, then the hook (end
-        // of this fn, after the commit is cleared) moves them out to the current
-        // holder. Pinned to the exact `loan.borrower` (Codex round-3 D); the
-        // cancel/force-cancel callers are `nonReentrant`, so nothing else
-        // resolves a flagged vault in the window.
-        s.consolidationMoveFromUser = loan.borrower;
+        // #594 Codex #657 round-3 — the return targets the STORED
+        // `loan.borrower`'s vault (where the lien is reinstated). The collateral
+        // is in Diamond custody right now (NOT in the vault), so the
+        // consolidation hook below cannot pre-run to re-anchor. We deliberately
+        // do NOT sanctions-exempt this return: the hook below can itself be
+        // Skipped (a prepay / carried parallel-sale listing recorded before the
+        // commit keeps the borrower side excluded even after `delete
+        // s.intentCommits`), in which case an exempt return would credit a
+        // flagged stale vault PERMANENTLY (Codex #657 round-3 J). Leaving the
+        // gate in place means a flagged stale anchor REVERTS the teardown
+        // (funds-safe: the collateral stays in Diamond custody, nothing is
+        // credited to a sanctioned vault) rather than being mis-credited. For a
+        // NON-flagged transferred borrower the return + the hook below move the
+        // collateral to the current holder as before. The flagged-stale +
+        // excluded-state liveness gap (clear the listing exclusion in teardown
+        // so the hook can run) is tracked in #658.
         address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
         IERC20(loan.collateralAsset).safeTransfer(
             borrowerVault, commit.custodialCollateral
@@ -937,7 +941,6 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.recordVaultDeposit(
             loan.borrower, loan.collateralAsset, commit.custodialCollateral
         );
-        s.consolidationMoveFromUser = address(0);
         // #569 §4.4 (2026-06-13) — temporary-custody restore. The
         // collateral is back in the borrower's vault and the loan stays
         // Active, so re-instate the lien that `commitSwapToRepayIntent`
