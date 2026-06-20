@@ -663,10 +663,27 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (partialAmount > loan.principal)
                 revert InsufficientPartialAmount();
 
-            // Pay accrued + partial
+            // Pay accrued + partial to the CURRENT lender-position holder.
+            //
+            // Codex #659 P2 — the both-side consolidation hook above re-anchors
+            // `loan.lender` to `ownerOf(lenderTokenId)` in the common case, but
+            // it is deliberately SKIPPED when the lender side carries unreserved
+            // `heldForLender` VPFI (`_isExcludedLive`, #597 dependency). In that
+            // narrow case `loan.lender` can still be stale, and unlike the full
+            // repay path (vault deposit + claim + #592 encumbrance) this partial
+            // pays the lender DIRECTLY, so a stale anchor would hand the departed
+            // lender the principal+interest while the current NFT holder's owed
+            // principal is reduced. Resolve the recipient from NFT ownership —
+            // the canonical authority (see the self-repay guard's rationale in
+            // `repayLoan`) — so the payout is correct regardless of whether the
+            // consolidation ran or was skipped. The loan is Active here, so the
+            // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
+            address lenderRecipient = IERC721(address(this)).ownerOf(
+                loan.lenderTokenId
+            );
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
-                loan.lender,
+                lenderRecipient,
                 partialAmount + lenderShare
             );
             IERC20(loan.principalAsset).safeTransferFrom(

@@ -190,14 +190,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
-        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
-        // proceeds / illiquid-collateral transfers route to the stored borrower
-        // AND lender anchors. Consolidate each side whose NFT may have moved so a
-        // position that reaches default before any consolidating event still
-        // routes to the current holders. Tier-2 (skip-not-block, so a sanctioned
-        // holder can't block the close-out).
-        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
-        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
 
@@ -214,6 +206,23 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // signed Seaport order continue to be (futilely) submitted.
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
+
+        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
+        // proceeds / illiquid-collateral transfers route to the stored borrower
+        // AND lender anchors. Consolidate each side whose NFT may have moved so a
+        // position that reaches default before any consolidating event still
+        // routes to the current holders. Tier-2 (skip-not-block, so a sanctioned
+        // holder can't block the close-out).
+        //
+        // Codex #659 P2 — run this AFTER `clearActiveListing`, not before: a
+        // live prepay listing makes `_isExcludedLive` skip the borrower side,
+        // and the listing is only torn down by the call above. Consolidating
+        // here (listing already cleared) means a transferred borrower position
+        // with a live listing still routes its surplus/collateral to the
+        // current holder instead of the departed `loan.borrower`. The lender
+        // side is independent of the listing, so its ordering is unaffected.
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
 
         // Tiered KYC check on loan value for the lender. Both branches
         // (ERC20 loan / NFT rental) price the same way — we only differ in
