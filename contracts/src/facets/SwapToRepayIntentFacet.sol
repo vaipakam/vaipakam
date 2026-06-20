@@ -918,6 +918,18 @@ contract SwapToRepayIntentFacet is
         // ── 3. Return custodial collateral to `loan.borrower`'s
         //       vault (Codex round-2 P1 #3 + round-11 P1 #1) ────────
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 Codex #659 P1 — the return targets the STORED `loan.borrower`'s
+        // vault (where the lien is reinstated), which may have transferred + been
+        // sanctions-flagged AFTER the commit. The collateral is in Diamond
+        // custody right now (NOT in the vault), so the consolidation hook below
+        // can't pre-run to re-anchor — and during the live commit it was the D-3
+        // exclusion anyway. Resolve this ONE transient return sanctions-exempt:
+        // the funds land in the stale vault only momentarily, then the hook (end
+        // of this fn, after the commit is cleared) moves them out to the current
+        // holder. Pinned to the exact `loan.borrower` (Codex round-3 D); the
+        // cancel/force-cancel callers are `nonReentrant`, so nothing else
+        // resolves a flagged vault in the window.
+        s.consolidationMoveFromUser = loan.borrower;
         address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
         IERC20(loan.collateralAsset).safeTransfer(
             borrowerVault, commit.custodialCollateral
@@ -925,6 +937,7 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.recordVaultDeposit(
             loan.borrower, loan.collateralAsset, commit.custodialCollateral
         );
+        s.consolidationMoveFromUser = address(0);
         // #569 §4.4 (2026-06-13) — temporary-custody restore. The
         // collateral is back in the borrower's vault and the loan stays
         // Active, so re-instate the lien that `commitSwapToRepayIntent`

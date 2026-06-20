@@ -4344,10 +4344,15 @@ library LibVaipakam {
         uint256 consolidationExpectedTokenId;
         uint256 consolidationExpectedAmount;
         /// @dev #594 Codex #659 P1/P2 — the EXACT stored owner whose vault may
-        ///      be resolved sanctions-exempt, set by `LibConsolidation` ONLY
-        ///      around the single from-side vault move (step 6). While set,
-        ///      `getOrCreateUserVault` skips its Tier-1 sanctions gate for THIS
-        ///      address ONLY. The from-side party is the DEPARTED (stored) owner
+        ///      be resolved sanctions-exempt. Set around (a) `LibConsolidation`'s
+        ///      single from-side vault move (step 6), and (b) the close-out /
+        ///      mid-life hosts' transient deposit/return to the stale
+        ///      `loan.borrower` vault that is immediately consolidated OUT to the
+        ///      current holder (AddCollateralFacet top-up, SwapToRepayIntentFacet
+        ///      teardown return — where the collateral isn't in the vault yet, or
+        ///      the loan is in an excluded state, so the consolidation hook can't
+        ///      pre-run). While set, `getOrCreateUserVault` skips its Tier-1
+        ///      sanctions gate for THIS address ONLY. The from-side party is the DEPARTED (stored) owner
         ///      LOSING custody — their asset is pushed OUT to the already-
         ///      sanctions-checked current holder — so the gate (which exists to
         ///      stop a sanctioned wallet RECEIVING / holding protocol funds)
