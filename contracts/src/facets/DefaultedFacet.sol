@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -254,6 +255,21 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
+
+        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
+        // proceeds / illiquid-collateral transfers route to the stored borrower
+        // AND lender anchors. Consolidate each side whose NFT may have moved so
+        // a position that reaches default before any consolidating event routes
+        // to the current holders. Tier-2 (skip-not-block; a sanctioned holder
+        // can't block the close-out). Placed here — after the prepay-listing
+        // teardown (so the borrower side isn't `_isExcludedLive`-skipped; Codex
+        // #659 r2) and AFTER the lender-KYC gate above (Codex #659 r3: an
+        // un-KYC'd transferee must NOT brick a permissionless default — the KYC
+        // gate evaluates the original `loan.lender`, and receipt is gated later
+        // at claim), but BEFORE the internal-match dispatch + every settlement
+        // branch below, which all pay/return to the consolidated anchors.
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
 
         // EC-003 Phase 3 — internal-match auto-dispatch. Before falling
         // through to the external-aggregator swap path below, check

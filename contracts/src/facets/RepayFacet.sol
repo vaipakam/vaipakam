@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -201,6 +202,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — full repay is a BOTH-SIDE close-out: it deposits lender
+        // proceeds to `loan.lender`, reads yield-fee VPFI consent from it, and
+        // closes lender rewards on it, while the borrower's collateral returns
+        // to `loan.borrower`. Consolidate each side whose NFT may have moved so
+        // proceeds/collateral route to the current holders. Skip-not-block; a
+        // FallbackPending loan is excluded on both sides (cured below).
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         // FallbackPending is accepted: a full repay cures the failed
         // liquidation, clears the snapshot, and returns diamond-held collateral
         // to the borrower vault before the normal Repaid flow runs.
@@ -614,6 +623,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — repayPartial is BOTH-SIDE: the ERC-20 partial path pays
+        // `partialAmount + lenderShare` directly to `loan.lender`, so a
+        // transferred lender NFT mis-routes unless the lender side also
+        // consolidates. Run before `requireBorrower` (stored-anchor auth) so it
+        // sees the consolidated holder. Skip-not-block.
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         LibAuth.requireBorrower(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
@@ -647,10 +663,35 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             if (partialAmount > loan.principal)
                 revert InsufficientPartialAmount();
 
-            // Pay accrued + partial
+            // Pay accrued + partial to the CURRENT lender-position holder.
+            //
+            // Codex #659 P2 — the both-side consolidation hook above re-anchors
+            // `loan.lender` to `ownerOf(lenderTokenId)` in the common case, but
+            // it is deliberately SKIPPED when the lender side carries unreserved
+            // `heldForLender` VPFI (`_isExcludedLive`, #597 dependency). In that
+            // narrow case `loan.lender` can still be stale, and unlike the full
+            // repay path (vault deposit + claim + #592 encumbrance) this partial
+            // pays the lender DIRECTLY, so a stale anchor would hand the departed
+            // lender the principal+interest while the current NFT holder's owed
+            // principal is reduced. Resolve the recipient from NFT ownership —
+            // the canonical authority (see the self-repay guard's rationale in
+            // `repayLoan`) — so the payout is correct regardless of whether the
+            // consolidation ran or was skipped. The loan is Active here, so the
+            // lender NFT is live (never burned pre-terminal) and `ownerOf` holds.
+            address lenderRecipient = IERC721(address(this)).ownerOf(
+                loan.lenderTokenId
+            );
+            // Codex #659 P1 — this is a DIRECT payout (no vault+claim deferral
+            // like full repay, where `claimAsLender` blocks a sanctioned
+            // claimer). Gate the resolved recipient so a sanctioned current
+            // lender-holder cannot receive protocol funds. Reverts
+            // `SanctionedAddress`; the borrower's Tier-2 escape is a full
+            // `repayLoan` (stays open, defers the lender proceeds to a
+            // sanctions-gated claim). No-op while the oracle is unset.
+            LibVaipakam._assertNotSanctioned(lenderRecipient);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
-                loan.lender,
+                lenderRecipient,
                 partialAmount + lenderShare
             );
             IERC20(loan.principalAsset).safeTransferFrom(

@@ -265,6 +265,40 @@ contract CollateralConsolidationTest is SetupTest {
         ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
     }
 
+    /// #659 P1 — a STORED (departed) owner flagged AFTER transferring the
+    /// position must NOT brick consolidation. The asset is pushed OUT of their
+    /// vault to the already-sanctions-checked clean holder, so the from-side
+    /// Tier-1 gate in `getOrCreateUserVault(stored)` is bypassed for that one
+    /// move. Without the fix this reverts `SanctionedAddress(borrowerOrig)` and
+    /// strands the close-out (the downstream claim would hit the same gate).
+    function test_SanctionedStoredOwner_MoveStillSucceeds() public {
+        _seedBorrowerLoan();
+        _mockBorrowerHolder(holder);
+
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(borrowerOrig, true); // departed owner flagged post-transfer
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        // Holder (clean) consolidates; collateral physically moves despite the
+        // stored owner now being flagged.
+        vm.prank(holder);
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+
+        assertEq(_getLoan().borrower, holder, "borrower anchor re-pointed");
+        assertEq(_tracked(holder), COLL_AMT, "collateral moved to clean holder");
+        assertEq(_tracked(borrowerOrig), 0, "flagged departed vault drained");
+        // The bypass window must be closed again after the move: a normal
+        // resolution of the still-flagged party reverts under the Tier-1 gate.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector,
+                borrowerOrig
+            )
+        );
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrowerOrig);
+    }
+
     /// Test 16 — a live borrower-side prepay listing excludes BORROWER
     /// consolidation (side-scoped, D-3 principle 1) → ConsolidationNotAllowed.
     function test_PrepayListing_BorrowerExcluded() public {
