@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
@@ -189,6 +190,14 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         }
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
+        // proceeds / illiquid-collateral transfers route to the stored borrower
+        // AND lender anchors. Consolidate each side whose NFT may have moved so a
+        // position that reaches default before any consolidating event still
+        // routes to the current holders. Tier-2 (skip-not-block, so a sanctioned
+        // holder can't block the close-out).
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
 

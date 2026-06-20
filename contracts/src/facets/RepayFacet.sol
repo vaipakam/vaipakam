@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -201,6 +202,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — full repay is a BOTH-SIDE close-out: it deposits lender
+        // proceeds to `loan.lender`, reads yield-fee VPFI consent from it, and
+        // closes lender rewards on it, while the borrower's collateral returns
+        // to `loan.borrower`. Consolidate each side whose NFT may have moved so
+        // proceeds/collateral route to the current holders. Skip-not-block; a
+        // FallbackPending loan is excluded on both sides (cured below).
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         // FallbackPending is accepted: a full repay cures the failed
         // liquidation, clears the snapshot, and returns diamond-held collateral
         // to the borrower vault before the normal Repaid flow runs.
@@ -614,6 +623,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — repayPartial is BOTH-SIDE: the ERC-20 partial path pays
+        // `partialAmount + lenderShare` directly to `loan.lender`, so a
+        // transferred lender NFT mis-routes unless the lender side also
+        // consolidates. Run before `requireBorrower` (stored-anchor auth) so it
+        // sees the consolidated holder. Skip-not-block.
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
         LibAuth.requireBorrower(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
