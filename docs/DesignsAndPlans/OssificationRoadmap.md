@@ -243,15 +243,24 @@ team time to cancel — it does not preserve the exit window it freezes.
     `VAULT_ADMIN_ROLE` would miss it; its owner must be rotated to the timelock
     and frozen on the same schedule, **and** the Diamond's `ADMIN_ROLE`-gated
     `setCollateralListingExecutor` pointer frozen with it, else ADMIN can
-    repoint to a fresh executor). Plus the **cross-chain UUPS / Ownable family**
-    that also moves value and is rotated *separately* by `Handover.s.sol` — the
-    `CcipMessenger`, the VPFI `TokenPool`, `VpfiPoolRateGovernor`,
-    `VaipakamRewardMessenger`, the `VPFIMirrorToken`, and the
-    `VpfiBuyAdapter` / `VpfiBuyReceiver` — each owner-gated on its own
-    Ownable2Step, none reachable through the Diamond cut path. All are
-    custody-moving and ride the same post-audit freeze as the Diamond cut path —
-    not just the facets. (#651 enumerates the full set from code so none is
-    missed.)
+    repoint to a fresh executor). Plus the **cross-chain UUPS / Ownable /
+    registry-admin family** that also moves value and is rotated *separately* by
+    `Handover.s.sol` — the `CcipMessenger`, the VPFI `TokenPool`,
+    `VpfiPoolRateGovernor`, `VaipakamRewardMessenger`, the `VPFIMirrorToken`, the
+    `VpfiBuyAdapter` / `VpfiBuyReceiver`, the canonical-only
+    `BuybackRemittanceReceiver`, the canonical **`VPFIToken`** itself
+    (Ownable2Step + UUPS — its owner controls `_authorizeUpgrade`, `setMinter`,
+    and pause, and the token pool + `TreasuryFacet.mintVPFI` rely on it, so
+    freezing the pool but not the token owner/minter leaves a mint/upgrade lever
+    open), and the **CCIP `TokenAdminRegistry` CCT admin** for VPFI (rotated via
+    `transferAdminRole`; it drives `setPool(localToken, pool)`, so an unfrozen
+    registry admin can repoint the token's pool). Each is owner- or
+    registry-admin-gated on its own surface, none reachable through the Diamond
+    cut path. **This list names the known members; the authoritative scope is
+    *every* Ownable / UUPS / registry-admin surface `Handover.s.sol` rotates —
+    #651 enumerates it from code, so any cross-chain surface is in freeze scope
+    whether or not named here.** All are custody-moving and ride the same
+    post-audit freeze as the Diamond cut path — not just the facets.
   - **Independent canceller** for queued timelock ops (a guardian that can
     cancel but not propose), so a compromised proposer key can be stopped
     without itself holding the only cancel lever (see §0).
