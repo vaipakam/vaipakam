@@ -197,13 +197,24 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     function getOrCreateUserVault(
         address user
     ) public returns (address proxy) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Tier-1 sanctions gate (Findings 00010 follow-up). Don't
         // create an vault proxy for a sanctioned wallet — even an
         // empty vault shouldn't exist for them. See the policy
         // block on `LibVaipakam.isSanctionedAddress` for the full
         // Tier-1 / Tier-2 split. No-op when the oracle is unset.
-        LibVaipakam._assertNotSanctioned(user);
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        //
+        // #594 Codex #659 P1 — skipped ONLY while a consolidation MOVE is in
+        // flight (the `consolidationMoveInFlight` window resolves the DEPARTED
+        // stored owner's EXISTING vault to push their asset OUT to the already-
+        // sanctions-checked current holder). Without this, a stored anchor
+        // flagged AFTER the position transferred would brick the Tier-2 close-
+        // out here. The stored party is losing custody, not receiving, so the
+        // receive-side gate does not apply; their vault already exists so no
+        // proxy is created for a flagged wallet. See the field's natspec.
+        if (!s.consolidationMoveInFlight) {
+            LibVaipakam._assertNotSanctioned(user);
+        }
         proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) {
             bytes memory _data = abi.encodeCall(

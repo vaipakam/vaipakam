@@ -4343,6 +4343,18 @@ library LibVaipakam {
         address consolidationExpectedToken;
         uint256 consolidationExpectedTokenId;
         uint256 consolidationExpectedAmount;
+        /// @dev #594 Codex #659 P1 — set by `LibConsolidation` ONLY around the
+        ///      single from-side vault move (step 6), so `getOrCreateUserVault`
+        ///      skips its Tier-1 sanctions gate for that one resolution. The
+        ///      from-side party is the DEPARTED (stored) owner LOSING custody —
+        ///      their asset is pushed OUT to the already-sanctions-checked
+        ///      current holder — so the gate (which exists to stop a sanctioned
+        ///      wallet RECEIVING / holding protocol funds) must not turn a
+        ///      Tier-2 close-out into a hard revert when the stale anchor is
+        ///      flagged AFTER transfer. Scoped under the host's `nonReentrant`
+        ///      guard; no other vault resolution runs inside the window. Packs
+        ///      into the same slot as `consolidationInFlight`.
+        bool consolidationMoveInFlight;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

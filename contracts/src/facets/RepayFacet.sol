@@ -681,6 +681,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             address lenderRecipient = IERC721(address(this)).ownerOf(
                 loan.lenderTokenId
             );
+            // Codex #659 P1 — this is a DIRECT payout (no vault+claim deferral
+            // like full repay, where `claimAsLender` blocks a sanctioned
+            // claimer). Gate the resolved recipient so a sanctioned current
+            // lender-holder cannot receive protocol funds. Reverts
+            // `SanctionedAddress`; the borrower's Tier-2 escape is a full
+            // `repayLoan` (stays open, defers the lender proceeds to a
+            // sanctions-gated claim). No-op while the oracle is unset.
+            LibVaipakam._assertNotSanctioned(lenderRecipient);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
                 lenderRecipient,
