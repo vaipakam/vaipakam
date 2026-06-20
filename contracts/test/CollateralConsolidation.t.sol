@@ -337,6 +337,30 @@ contract CollateralConsolidationTest is SetupTest {
         ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
     }
 
+    /// #655 YPp — a PARTIALLY-reserved VPFI heldForLender (reserved < held)
+    /// still has an unreserved, drainable excess → lender side excluded.
+    function test_VpfiHeldForLender_PartiallyReserved_Excluded() public {
+        _seedBorrowerLoan();
+        address vpfi = TestMutatorFacet(address(diamond)).vpfiTokenRaw();
+        LibVaipakam.Loan memory l = _getLoan();
+        l.principalAsset = vpfi;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(LOAN, 100e18);
+        // Reserve only 40 of the 100 in VPFI → 60 unreserved excess.
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(
+            LOAN, vpfi, 40e18
+        );
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
+            abi.encode(holder)
+        );
+        vm.prank(holder);
+        vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
+        ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
+    }
+
     /// #655 Msl — re-anchoring to a holder ALREADY indexed for the loan must not
     /// duplicate the userLoanIds entry.
     function test_AppendIndex_NoDuplicate() public {

@@ -194,19 +194,25 @@ library LibConsolidation {
             return true;
         }
         if (isLenderSide) {
-            // #597 dependency (Codex #655 Msm): a VPFI `heldForLender` amount
-            // from preclose/offset has NO `lenderProceedsEncumbered` reservation
-            // yet, so moving it into the holder's vault would leave it a FREE,
-            // unstake-drainable balance (the holder could `withdrawVPFIFromVault`
-            // before claim). Skip lender consolidation for that case until #597
-            // lands the reservation re-key.
+            // #597 dependency (Codex #655 Msm + YPp): a VPFI `heldForLender`
+            // amount can be PARTIALLY reserved — preclose/offset add *unreserved*
+            // VPFI to the accumulator while a partial internal match adds
+            // *reserved* VPFI to the SAME accumulator. Any unreserved portion,
+            // once moved into the holder's vault, is a FREE, unstake-drainable
+            // balance (the holder could `withdrawVPFIFromVault` before claim). So
+            // skip unless the held VPFI is **fully reserved IN VPFI**
+            // (`reservedAsset == vpfi && reserved >= held`) — the
+            // fully-reserved case is handled safely because the lender-side lien
+            // re-key (§2 step 5) carries the reservation across with the balance.
+            // The partially- or un-reserved case waits for #597.
             uint256 held = s.heldForLender[loanId];
-            if (
-                held != 0 &&
-                loan.principalAsset == s.vpfiToken &&
-                s.lenderProceedsEncumbered[loanId] == 0
-            ) {
-                return true;
+            if (held != 0 && loan.principalAsset == s.vpfiToken) {
+                bool fullyVpfiReserved = s.lenderProceedsEncumberedAsset[
+                    loanId
+                ] ==
+                    s.vpfiToken &&
+                    s.lenderProceedsEncumbered[loanId] >= held;
+                if (!fullyVpfiReserved) return true;
             }
         } else {
             // Borrower-side-only locks.

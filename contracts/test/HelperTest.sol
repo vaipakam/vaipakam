@@ -79,7 +79,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](86);
+        selectors = new bytes4[](87);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -247,6 +247,7 @@ contract HelperTest {
         selectors[83] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
         selectors[84] = TestMutatorFacet.pushUserLoanIdRaw.selector;
         selectors[85] = TestMutatorFacet.vpfiTokenRaw.selector;
+        selectors[86] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
         return selectors;
     }
 
