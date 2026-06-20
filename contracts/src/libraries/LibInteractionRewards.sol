@@ -335,6 +335,63 @@ library LibInteractionRewards {
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
     }
 
+    /**
+     * @notice #594 — borrower-side mirror of {transferLenderEntry}. Close the
+     *         current borrower entry for `loanId` with forfeit=true (the
+     *         departed borrower forfeits their accrual, matching the lender
+     *         rule) and open a fresh entry for `newBorrower` covering the
+     *         remainder of the contracted window. Used when a transferred
+     *         borrower position is consolidated into the current NFT holder's
+     *         vault — without it the interaction rewards stay credited to the
+     *         departed borrower (there was no borrower transfer path before,
+     *         since loans were never sold borrower-side; consolidation is the
+     *         first borrower-side ownership move). Denominator unchanged.
+     *
+     * @param loanId      Loan id whose borrower position transfers.
+     * @param newBorrower Incoming borrower (current borrower-NFT holder).
+     */
+    function transferBorrowerEntry(uint256 loanId, address newBorrower) internal {
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        uint256 oldId = s.loanBorrowerEntryId[loanId];
+        if (oldId == 0) return;
+
+        LibVaipakam.RewardEntry storage oldEntry = s.rewardEntries[oldId];
+        uint256 originalEnd = oldEntry.endDay; // snapshot before close mutates it
+        uint256 perDay = oldEntry.perDayNumeraire18;
+
+        _closeEntry(
+            s,
+            oldId,
+            today,
+            /* forfeited */ true,
+            s.borrowerPerDayDeltaNumeraire18,
+            s.borrowerFrontierDay
+        );
+
+        uint256 newStart = today + 1;
+        if (newStart >= originalEnd) {
+            // No residual window for the new borrower — clear the pointer.
+            s.loanBorrowerEntryId[loanId] = 0;
+            return;
+        }
+
+        uint256 newId = _allocEntry(
+            s,
+            newBorrower,
+            loanId,
+            newStart,
+            originalEnd,
+            LibVaipakam.RewardSide.Borrower,
+            perDay
+        );
+        s.loanBorrowerEntryId[loanId] = newId;
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, newStart, SafeCast.toInt256(perDay));
+        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
+    }
+
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
 
     /**
