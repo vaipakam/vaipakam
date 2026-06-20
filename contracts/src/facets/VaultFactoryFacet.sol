@@ -204,15 +204,20 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // block on `LibVaipakam.isSanctionedAddress` for the full
         // Tier-1 / Tier-2 split. No-op when the oracle is unset.
         //
-        // #594 Codex #659 P1 — skipped ONLY while a consolidation MOVE is in
-        // flight (the `consolidationMoveInFlight` window resolves the DEPARTED
-        // stored owner's EXISTING vault to push their asset OUT to the already-
-        // sanctions-checked current holder). Without this, a stored anchor
-        // flagged AFTER the position transferred would brick the Tier-2 close-
-        // out here. The stored party is losing custody, not receiving, so the
-        // receive-side gate does not apply; their vault already exists so no
-        // proxy is created for a flagged wallet. See the field's natspec.
-        if (!s.consolidationMoveInFlight) {
+        // #594 Codex #659 P1/P2 — skipped ONLY for the EXACT departed (stored)
+        // owner whose vault a consolidation move is currently resolving to push
+        // their asset OUT to the already-sanctions-checked current holder.
+        // Without this, a stored anchor flagged AFTER the position transferred
+        // would brick the Tier-2 close-out here. The stored party is losing
+        // custody, not receiving, so the receive-side gate does not apply; their
+        // vault already exists so no proxy is created for a flagged wallet.
+        //
+        // Round-3: matched on the exact address (not a blanket flag) so a token
+        // transfer that reenters mid-move cannot resolve a DIFFERENT flagged
+        // wallet's vault through this exemption. `address(0)` exempts no one.
+        // See the `consolidationMoveFromUser` natspec.
+        address exemptUser = s.consolidationMoveFromUser;
+        if (!(exemptUser != address(0) && user == exemptUser)) {
             LibVaipakam._assertNotSanctioned(user);
         }
         proxy = s.userVaipakamVaults[user];

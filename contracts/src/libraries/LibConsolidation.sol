@@ -128,13 +128,15 @@ library LibConsolidation {
         //    vault through the Tier-1-gated `getOrCreateUserVault`. The stored
         //    party is losing custody (asset pushed OUT to the already-checked
         //    `current` holder), so the receive-side gate must not brick the
-        //    Tier-2 close-out. The host is `nonReentrant`, so no other vault
-        //    resolution runs in this window; clear it immediately after.
-        s.consolidationMoveInFlight = true;
+        //    Tier-2 close-out. Round-3: the exemption is pinned to the exact
+        //    `stored` address (not a blanket flag), so a token transfer that
+        //    reenters mid-move cannot resolve a DIFFERENT flagged wallet's vault
+        //    through it. Cleared immediately after.
+        s.consolidationMoveFromUser = stored;
         (address movedAsset, uint256 movedAmount) = isLenderSide
             ? _moveLenderHeld(s, loan, loanId, stored, current, toProxy)
             : _moveBorrowerCollateral(s, loan, stored, current, toProxy);
-        s.consolidationMoveInFlight = false;
+        s.consolidationMoveFromUser = address(0);
 
         // 7. Mutate the anchor + append-only index (dup-protected) + metrics.
         if (isLenderSide) {

@@ -207,23 +207,6 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         s; // suppress unused-storage warning; the library reads it.
         LibPrepayCleanup.clearActiveListing(loan, loanId);
 
-        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
-        // proceeds / illiquid-collateral transfers route to the stored borrower
-        // AND lender anchors. Consolidate each side whose NFT may have moved so a
-        // position that reaches default before any consolidating event still
-        // routes to the current holders. Tier-2 (skip-not-block, so a sanctioned
-        // holder can't block the close-out).
-        //
-        // Codex #659 P2 — run this AFTER `clearActiveListing`, not before: a
-        // live prepay listing makes `_isExcludedLive` skip the borrower side,
-        // and the listing is only torn down by the call above. Consolidating
-        // here (listing already cleared) means a transferred borrower position
-        // with a live listing still routes its surplus/collateral to the
-        // current holder instead of the departed `loan.borrower`. The lender
-        // side is independent of the listing, so its ordering is unaffected.
-        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
-        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
-
         // Tiered KYC check on loan value for the lender. Both branches
         // (ERC20 loan / NFT rental) price the same way — we only differ in
         // which asset + amount to value. Collapsed to one getAssetPrice +
@@ -272,6 +255,21 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (!OracleFacet(address(this)).sequencerHealthy()) {
             revert SequencerUnhealthy();
         }
+
+        // #594 — time-based default is a BOTH-SIDE close-out: liquidation
+        // proceeds / illiquid-collateral transfers route to the stored borrower
+        // AND lender anchors. Consolidate each side whose NFT may have moved so
+        // a position that reaches default before any consolidating event routes
+        // to the current holders. Tier-2 (skip-not-block; a sanctioned holder
+        // can't block the close-out). Placed here — after the prepay-listing
+        // teardown (so the borrower side isn't `_isExcludedLive`-skipped; Codex
+        // #659 r2) and AFTER the lender-KYC gate above (Codex #659 r3: an
+        // un-KYC'd transferee must NOT brick a permissionless default — the KYC
+        // gate evaluates the original `loan.lender`, and receipt is gated later
+        // at claim), but BEFORE the internal-match dispatch + every settlement
+        // branch below, which all pay/return to the consolidated anchors.
+        LibConsolidation.consolidateToHolder(loanId, false, LibConsolidation.Ctx.Tier2CloseOut);
+        LibConsolidation.consolidateToHolder(loanId, true, LibConsolidation.Ctx.Tier2CloseOut);
 
         // EC-003 Phase 3 — internal-match auto-dispatch. Before falling
         // through to the external-aggregator swap path below, check

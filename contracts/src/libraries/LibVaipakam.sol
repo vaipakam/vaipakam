@@ -4343,18 +4343,25 @@ library LibVaipakam {
         address consolidationExpectedToken;
         uint256 consolidationExpectedTokenId;
         uint256 consolidationExpectedAmount;
-        /// @dev #594 Codex #659 P1 — set by `LibConsolidation` ONLY around the
-        ///      single from-side vault move (step 6), so `getOrCreateUserVault`
-        ///      skips its Tier-1 sanctions gate for that one resolution. The
-        ///      from-side party is the DEPARTED (stored) owner LOSING custody —
-        ///      their asset is pushed OUT to the already-sanctions-checked
-        ///      current holder — so the gate (which exists to stop a sanctioned
-        ///      wallet RECEIVING / holding protocol funds) must not turn a
-        ///      Tier-2 close-out into a hard revert when the stale anchor is
-        ///      flagged AFTER transfer. Scoped under the host's `nonReentrant`
-        ///      guard; no other vault resolution runs inside the window. Packs
-        ///      into the same slot as `consolidationInFlight`.
-        bool consolidationMoveInFlight;
+        /// @dev #594 Codex #659 P1/P2 — the EXACT stored owner whose vault may
+        ///      be resolved sanctions-exempt, set by `LibConsolidation` ONLY
+        ///      around the single from-side vault move (step 6). While set,
+        ///      `getOrCreateUserVault` skips its Tier-1 sanctions gate for THIS
+        ///      address ONLY. The from-side party is the DEPARTED (stored) owner
+        ///      LOSING custody — their asset is pushed OUT to the already-
+        ///      sanctions-checked current holder — so the gate (which exists to
+        ///      stop a sanctioned wallet RECEIVING / holding protocol funds)
+        ///      must not turn a Tier-2 close-out into a hard revert when the
+        ///      stale anchor is flagged AFTER transfer.
+        ///
+        ///      Codex #659 round-3 — pinned to the address (not a global bool):
+        ///      an arbitrary ERC-20/721/1155 transfer inside the move could
+        ///      reenter and call `getOrCreateUserVault(otherFlaggedWallet)`; a
+        ///      blanket bypass would let it mint a forbidden vault for a
+        ///      DIFFERENT sanctioned wallet. Matching on the exact stored owner
+        ///      closes that. `address(0)` (the default) exempts no one. Packs
+        ///      into the same slot region as `consolidationInFlight`.
+        address consolidationMoveFromUser;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
