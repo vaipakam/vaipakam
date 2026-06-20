@@ -102,6 +102,11 @@ FACETS=(
   # #399 v2.5 — backstop facet (Diamond) + the standalone treasury BackstopVault.
   "BackstopFacet"
   "BackstopVaultImplementation"
+  # #594 — standalone holder-only consolidation entry points
+  # (consolidateCollateralToHolder / consolidatePrincipalToHolder) + the
+  # ConsolidationNotAllowed error. ReceiverFacet is internal plumbing (no
+  # frontend/keeper consumer), so it is intentionally NOT exported.
+  "ConsolidationFacet"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"

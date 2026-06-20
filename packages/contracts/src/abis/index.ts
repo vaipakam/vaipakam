@@ -9,6 +9,7 @@ import LenderIntentFacetABI from './LenderIntentFacet.json';
 import AggregatorAdapterFactoryFacetABI from './AggregatorAdapterFactoryFacet.json';
 import AggregatorAdapterImplementationABI from './AggregatorAdapterImplementation.json';
 import BackstopFacetABI from './BackstopFacet.json';
+import ConsolidationFacetABI from './ConsolidationFacet.json';
 import BackstopVaultImplementationABI from './BackstopVaultImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
@@ -111,6 +112,7 @@ export {
   AggregatorAdapterImplementationABI,
   BackstopFacetABI,
   BackstopVaultImplementationABI,
+  ConsolidationFacetABI,
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
@@ -188,6 +190,8 @@ export const DIAMOND_ABI = [
   // #399 — BackstopFacet IS a Diamond facet → spread. BackstopVaultImplementation
   // is the STANDALONE treasury vault (named export above only) — NOT spread here.
   ...BackstopFacetABI,
+  // #594 — ConsolidationFacet IS a Diamond facet -> spread.
+  ...ConsolidationFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,
