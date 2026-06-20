@@ -124,11 +124,18 @@ moved first):
    from `ownerOf` — it must **not** require the caller to be that holder, because
    eager callers are often *not* the holder (permissionless `repayLoan`,
    keeper-driven lifecycle actions). The `msg.sender == current` holder check
-   lives **only in the standalone wrapper** (D-5), never in the primitive. If
-   `current == stored` → return **`AlreadyConsolidated`** (no-op; common case).
+   lives **only in the standalone wrapper** (D-5), never in the primitive.
+   **The `Tier1Strict` sanctions gate (step 3) runs BEFORE this short-circuit**
+   (zP7): otherwise a `Tier1Strict` hook on an *already-consolidated* position
+   (`current == stored`) would return `AlreadyConsolidated` without ever checking
+   sanctions, letting a flagged actor through a Tier-1 entry point. So: for
+   `Tier1Strict`, evaluate step 3 first; then if `current == stored` → return
+   **`AlreadyConsolidated`** (no-op). (For `Tier2CloseOut` the order is moot —
+   sanctions there only downgrades to `Skipped`, never blocks.)
 3. **Guard — context-aware sanctions, driven by `ctx`.** When
    `ctx == Tier1Strict` (the standalone call, new-position paths), sanctions-check
-   `current` and **revert** if flagged (`_assertNotSanctioned`). When
+   `current` and **revert** if flagged (`_assertNotSanctioned`), **including on
+   the already-consolidated path** (per step 2). When
    `ctx == Tier2CloseOut` (the `repayLoan` / `markDefaulted` /
    liquidation / `settlePeriodicInterest` hooks), a sanctioned `current` must
    **return `Skipped`, not revert** — the retail sanctions policy keeps
@@ -390,10 +397,13 @@ the assets; the only in-protocol vault-move is the Diamond→vault settlement in
 6. **A facet home for the standalone call** —
    `consolidateCollateralToHolder(uint256 loanId)` (borrower side) and
    `consolidatePrincipalToHolder(uint256 loanId)` (lender side), `whenNotPaused`,
-   `nonReentrant`, Tier-1 sanctions-gated. **Status-gate the loan BEFORE the
-   `ownerOf`-based holder auth** (a `require…NftOwner` first would revert on the
-   burned-NFT terminal cases that must no-op): load → terminal/excluded check →
-   then resolve+auth inside the primitive. A small new `ConsolidationFacet`
+   `nonReentrant`, Tier-1 sanctions-gated. The **holder auth lives in the
+   *wrapper*, not the primitive** (k95): the wrapper does load →
+   terminal/excluded status-gate → **then** the `ownerOf`-based
+   `require…NftOwner` (status-gate first so a burned-NFT terminal loan no-ops
+   instead of reverting in `ownerOf`) → then delegates to the primitive (which
+   self-resolves the holder but enforces no caller check). A small new
+   `ConsolidationFacet`
    (keeps `VaultFactoryFacet` under EIP-170; cf. the #647 NumeraireConfigFacet
    split). For the standalone path, a `Skipped` result surfaces as
    `ConsolidationNotAllowed` (explicit caller gets feedback); the eager hooks
@@ -415,15 +425,21 @@ the exact borrower-pin special case this issue removes (a holder could top up,
 withdraw a collateral slice, or mutate debt while the divergence persists).
 The full set (with the side each hook consolidates — many touch *both* anchors,
 Codex round-7):
-- **Borrower side only:** `AddCollateralFacet.addCollateral`,
-  `PartialWithdrawalFacet`, the **partial** swap-to-repay path,
-  `SwapToRepayIntentFacet.commitSwapToRepayIntent` (the intent **commit**, before
-  it pulls the collateral) and its **cancel / force-cancel**
+- **Borrower side only:** `AddCollateralFacet.addCollateral` — but consolidate
+  **after** its cure, not before: `addCollateral` can clear `FallbackPending`
+  back to `Active` *later in the same call*, so the hook placed at the top would
+  `Skip` (still FallbackPending) and miss it; place it **after** the cure
+  transition so a just-cured loan consolidates (zP8, a state-clearing endpoint —
+  principle 2). `PartialWithdrawalFacet`; the **partial** swap-to-repay path;
+  `SwapToRepayIntentFacet.commitSwapToRepayIntent` (intent **commit**, before it
+  pulls the collateral) and its **cancel / force-cancel**
   (`cancelSwapToRepayIntent` / `forceCancelIntentIf…` → `_teardownCommit` returns
-  collateral to `loan.borrower` + reinstates the lien there, a state-clearing
-  endpoint — D-3 principle 2, Codex round-7), and the **prepay-listing creation**
-  surfaces (`postPrepayListing` + the Dutch / atomic / autolist fresh-post
-  paths) — these cache `s.userVaipakamVaults[loan.borrower]`, so consolidation
+  collateral to `loan.borrower` + reinstates the lien there — principle 2);
+  **`OfferParallelSaleFacet.releaseParallelSaleLock`** (clears
+  `s.offerPrepayListingOrderHash`, authorized by the current borrower-NFT holder
+  — another state-clearing endpoint that should consolidate the borrower side as
+  it releases — zP6); and the **prepay-listing creation** surfaces
+  (`postPrepayListing` + the Dutch / atomic / autolist fresh-post paths) — these cache `s.userVaipakamVaults[loan.borrower]`, so consolidation
   MUST run **before** the listing is opened (else a transferred holder posts a
   listing on the *old* vault and locks the *borrower* side out; the listing
   exclusion is borrower-side-only — D-3 principle 1).
@@ -443,7 +459,16 @@ Codex round-7):
   - **full `swapToRepayFull`** + the **swap-to-repay-intent settlement**
     (`postInteractionImpl`) — the settlement is the endpoint that *clears* the
     live intent, so it consolidates as it clears it (D-3 principle 2; the
-    "live intent = Skip" applies to *other* paths only — Codex r6/r7);
+    "live intent = Skip" applies to *other* paths only). **Ordering (zP_):** the
+    two sides consolidate at *different* points, because during the intent the
+    borrower collateral is in Diamond custody (not the borrower vault). The
+    **lender** side consolidates at settlement (lender proceeds route to the
+    current holder — independent of the borrower collateral's location). The
+    **borrower** side consolidates **only after** the settlement has restored any
+    residual collateral to the borrower vault (a full-fill that consumes all
+    collateral leaves nothing borrower-side to move; a partial residual returns to
+    the borrower vault, then consolidates). Never consolidate the borrower side
+    while the collateral is still mid-flight in Diamond custody;
   - **default / liquidation close-outs** — `DefaultedFacet.triggerDefault`;
     `RiskFacet.triggerLiquidation` / `triggerPartialLiquidation` /
     `triggerLiquidationDiscounted`; **`RiskSplitLiquidationFacet.triggerLiquidationSplit`**
@@ -480,13 +505,17 @@ paths see a `Skipped` — the commit pulled the collateral into Diamond custody 
 zeroed the lien — but the intent's own **settlement / cancel / force-cancel**
 endpoints consolidate as they clear the intent, per D-3 principle 2.)
 
-Each call site already authenticates the current holder (`requireKeeperFor` /
-`requireLenderNftOwner` / `requireBorrowerNftOwner`), so the primitive's
-resolve step is consistent with the gate that precedes it, and the no-op fast
-path (§2 step 2) makes the added calls free on non-transferred loans. (A
-defensive alternative — gate these paths to *require* prior consolidation
-rather than auto-running it — was considered; auto-run is preferred so a holder
-never has to pre-call, matching D-1.)
+**The eager hooks do NOT assume the host authenticated the holder** (zP9
+correction): many do not — full `repayLoan` is permissionless, `repayPartial`
+gates on the *stored* `loan.borrower`, and the liquidation/keeper paths are
+triggered by non-holders. The primitive **self-resolves** the holder from
+`ownerOf` and enforces **no** caller check (k95), so it composes with any host
+auth (or none): a non-holder caller can only ever *help* the rightful holder
+(move assets to them), never redirect funds. The no-op fast path (§2 step 2)
+makes the added calls free on non-transferred loans. (A defensive alternative —
+gate these paths to *require* prior consolidation rather than auto-running it —
+was considered; auto-run is preferred so a holder never has to pre-call,
+matching D-1.)
 
 ---
 
@@ -611,7 +640,13 @@ never has to pre-call, matching D-1.)
   `onReceived` callbacks). Any subsequent inbound NFT in the same move — matching
   or not — then reverts. Rationale: there is **no** Diamond-level NFT
   sweep/recovery path, so a stray or forced NFT would strand. The window is
-  single-move scoped (the primitive is `nonReentrant`).
+  single-move scoped (the primitive is `nonReentrant`). **`onERC1155BatchReceived`
+  is rejected outright (revert) during a consolidation move** (zP8/zP-): the
+  consolidation NFT move only ever transfers a *single* `(id, amount)`, so the
+  batch hook has no legitimate use here and accepting it would let a malicious
+  ERC-1155 smuggle the expected id *plus extra ids* in one batch callback. Only
+  the singular `onERC721Received` / `onERC1155Received` (matching the pin) is
+  accepted.
 
 #573/#574 deliberately keep transferred-position collateral in the original
 vault and pay the current holder at close. #594 does **not** revert that —
@@ -772,6 +807,18 @@ whether or not it is ever consolidated.
     `RefinanceFacet` refinance / `RepayFacet.repayPartial` routes the old-lender
     proceeds / `lenderShare` to the current lender holder, not the departed one —
     tvj + tvk.
+45. **Tier-1 sanctions on already-consolidated:** a `Tier1Strict` standalone call
+    on an already-consolidated loan whose holder is sanctioned still **reverts**
+    (sanctions evaluated before the `AlreadyConsolidated` short-circuit) — zP7.
+46. **addCollateral after cure:** `addCollateral` that cures
+    `FallbackPending`→`Active` on a transferred position consolidates **after**
+    the cure (the just-cured loan is consolidated, not left `Skipped`) — zP8.
+47. **ERC-1155 batch rejected:** a malicious ERC-1155 using
+    `onERC1155BatchReceived` to deliver the expected id plus extras during leg 1
+    **reverts** (only the singular receiver, matching the pin, is accepted) — zP-.
+48. **`releaseParallelSaleLock`:** releasing an offer-keyed parallel-sale lock on
+    a transferred borrower position consolidates the borrower side as it clears
+    the listing — zP6.
 
 ---
 
@@ -797,17 +844,19 @@ One design doc (this), then implementation in dependency order:
    exclusions. **Note the #597 dependency:** lender consolidation of a
    VPFI-`heldForLender` position needs the #597 unstake-reservation re-key
    (qOi) — wire whichever of #594/#597 lands second. Tests
-   1/3/4/5/6/8/9/10/11/12/13/14/15/16/17/18/20/21/22/23/24/26/27/28/31/32/40.
+   1/3/4/5/6/8/9/10/11/12/13/14/15/16/17/18/20/21/22/23/24/26/27/28/31/32/40/45/47.
    ABI re-export + deploy-sanity
    (`DiamondFacetNames` + `SelectorCoverageTest` for `ReceiverFacet` +
    `ConsolidationFacet`).
 2. **PR 2 — borrower-side-only eager integration.** Wire the borrower-pure paths:
-   `AddCollateralFacet` (skip-not-block on cure), `PartialWithdrawalFacet`, the
-   **partial** swap-to-repay path, `commitSwapToRepayIntent` (intent commit) +
-   `cancelSwapToRepayIntent` / force-cancel (state-clearing teardown — tvo), and
+   `AddCollateralFacet` (consolidate **after** the cure — zP8),
+   `PartialWithdrawalFacet`, the **partial** swap-to-repay path,
+   `commitSwapToRepayIntent` (intent commit) + `cancelSwapToRepayIntent` /
+   force-cancel (state-clearing teardown — tvo),
+   `OfferParallelSaleFacet.releaseParallelSaleLock` (state-clearing — zP6), and
    the prepay-listing creation surfaces (consolidate-before-listing, f4h, with the
    borrower-side-only exclusion — tvn). Consolidation inserted **before** each
-   host's stored-anchor auth (iWF). Tests 2/19/25/33/41/42 (+ a per-path
+   host's stored-anchor auth (iWF). Tests 2/19/25/33/41/42/46/48 (+ a per-path
    transferred-position regression).
 3. **PR 3 — lender-side + both-side eager integration.** Wire the paths that
    touch lender economics, each consolidating *both* sides whose NFT may have
