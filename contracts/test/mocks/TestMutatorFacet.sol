@@ -305,6 +305,18 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().heldForLender[loanId] = amount;
     }
 
+    /// #594 test — append a loanId to a user's loan index directly (to set up
+    /// the already-indexed dup-protection case).
+    function pushUserLoanIdRaw(address user, uint256 loanId) external {
+        LibVaipakam.storageSlot().userLoanIds[user].push(loanId);
+    }
+
+    /// #594 test — read the configured VPFI token so a test can point a loan's
+    /// principalAsset at it (exercising the VPFI-heldForLender exclusion).
+    function vpfiTokenRaw() external view returns (address) {
+        return LibVaipakam.storageSlot().vpfiToken;
+    }
+
     /// @notice Overwrite `s.lenderClaims[loanId].amount` directly.
     ///         Layout-resilient — used by `ClaimFacetTest` to exercise
     ///         the `NothingToClaim` revert without slot math.

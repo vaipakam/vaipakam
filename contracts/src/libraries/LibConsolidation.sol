@@ -126,18 +126,20 @@ library LibConsolidation {
             ? _moveLenderHeld(s, loan, loanId, stored, current, toProxy)
             : _moveBorrowerCollateral(s, loan, stored, current, toProxy);
 
-        // 7. Mutate the anchor + append-only index + metrics.
+        // 7. Mutate the anchor + append-only index (dup-protected) + metrics.
         if (isLenderSide) {
             loan.lender = current;
         } else {
             loan.borrower = current;
         }
-        s.userLoanIds[current].push(loanId); // append-only (never remove old)
+        _appendUserLoanIfAbsent(s, current, loanId); // append-only, no duplicates
         LibMetricsHooks.markUserSeen(s, current);
 
-        // 8. Reassign the off-anchor accounting.
+        // 8. Reassign the off-anchor accounting. The reward entry is RE-POINTED
+        //    to the holder (consolidation is not a sale — the entry transfers
+        //    intact and stays sweep-discoverable; Codex #655 Msn).
+        LibInteractionRewards.repointRewardEntry(loanId, current, isLenderSide);
         if (isLenderSide) {
-            LibInteractionRewards.transferLenderEntry(loanId, current);
             // Release the LenderIntentVault exposure off the departed lender —
             // a passive transfer + consolidation is economically a lender exit.
             if (s.intentOrigin[loanId].owner != address(0)) {
@@ -149,8 +151,6 @@ library LibConsolidation {
                     bytes4(0)
                 );
             }
-        } else {
-            LibInteractionRewards.transferBorrowerEntry(loanId, current);
         }
 
         // 9. Re-stamp the VPFI discount tier + staking checkpoint for both
@@ -184,7 +184,31 @@ library LibConsolidation {
         if (loan.status == LibVaipakam.LoanStatus.FallbackPending) {
             return true;
         }
-        if (!isLenderSide) {
+        // NFT rentals are OUT OF SCOPE for #594 (design §3.1/§3.2, Codex #655
+        // Msj): a rental's backing is the prepay pool (borrower) / prepayAsset
+        // proceeds (lender), NOT the generic collateral leg these moves handle.
+        // `loan.assetType != ERC20` identifies a rental (the LENT asset is the
+        // NFT). Exclude both sides until a rental-aware consolidation is built
+        // (tracked in #654).
+        if (loan.assetType != LibVaipakam.AssetType.ERC20) {
+            return true;
+        }
+        if (isLenderSide) {
+            // #597 dependency (Codex #655 Msm): a VPFI `heldForLender` amount
+            // from preclose/offset has NO `lenderProceedsEncumbered` reservation
+            // yet, so moving it into the holder's vault would leave it a FREE,
+            // unstake-drainable balance (the holder could `withdrawVPFIFromVault`
+            // before claim). Skip lender consolidation for that case until #597
+            // lands the reservation re-key.
+            uint256 held = s.heldForLender[loanId];
+            if (
+                held != 0 &&
+                loan.principalAsset == s.vpfiToken &&
+                s.lenderProceedsEncumbered[loanId] == 0
+            ) {
+                return true;
+            }
+        } else {
             // Borrower-side-only locks.
             if (s.prepayListingOrderHash[loanId] != bytes32(0)) return true;
             if (
@@ -194,6 +218,27 @@ library LibConsolidation {
             if (s.intentCommits[loanId].orderHash != bytes32(0)) return true;
         }
         return false;
+    }
+
+    /// @dev Append `loanId` to `user`'s loan index ONLY if not already present
+    ///      (Codex #655 Msl) — re-anchoring to a holder already indexed for the
+    ///      loan (e.g. a lender who acquired the borrower NFT, or a transfer
+    ///      back to a prior holder) must not double-count: the metrics /
+    ///      dashboard readers walk `userLoanIds` without de-duping.
+    function _appendUserLoanIfAbsent(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 loanId
+    ) private {
+        uint256[] storage ids = s.userLoanIds[user];
+        uint256 n = ids.length;
+        for (uint256 i; i < n; ) {
+            if (ids[i] == loanId) return; // already indexed
+            unchecked {
+                ++i;
+            }
+        }
+        ids.push(loanId);
     }
 
     // ─── Asset moves ────────────────────────────────────────────────────────

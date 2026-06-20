@@ -336,60 +336,67 @@ library LibInteractionRewards {
     }
 
     /**
-     * @notice #594 — borrower-side mirror of {transferLenderEntry}. Close the
-     *         current borrower entry for `loanId` with forfeit=true (the
-     *         departed borrower forfeits their accrual, matching the lender
-     *         rule) and open a fresh entry for `newBorrower` covering the
-     *         remainder of the contracted window. Used when a transferred
-     *         borrower position is consolidated into the current NFT holder's
-     *         vault — without it the interaction rewards stay credited to the
-     *         departed borrower (there was no borrower transfer path before,
-     *         since loans were never sold borrower-side; consolidation is the
-     *         first borrower-side ownership move). Denominator unchanged.
+     * @notice #594 — **re-point** a loan's active reward entry (lender or
+     *         borrower side) to the current position-NFT holder when a
+     *         transferred position is consolidated into their vault.
+     * @dev    Consolidation is NOT a sale: the holder already owns the position
+     *         (the NFT moved), so the reward entry transfers to them **intact**
+     *         — re-pointed, not forfeit+reopened like {transferLenderEntry}
+     *         (which is the *sale* path). Re-pointing is also the correct fix
+     *         for the sweep-discoverability gap a forfeit+reopen would open
+     *         (Codex #655 Msn): the per-loan pointer
+     *         (`loanActiveLenderEntryId` / `loanBorrowerEntryId`) keeps pointing
+     *         at the SAME entry id, so `sweepForfeitedByLoanId` still locates it.
      *
-     * @param loanId      Loan id whose borrower position transfers.
-     * @param newBorrower Incoming borrower (current borrower-NFT holder).
+     *         The entry's day-window and `perDayNumeraire18` are unchanged — only
+     *         `RewardEntry.user` and the per-user index membership move — so the
+     *         global per-day deltas need NO adjustment.
+     *
+     * @param loanId       Loan whose position transferred.
+     * @param newUser      Incoming current NFT holder.
+     * @param isLenderSide true = lender entry, false = borrower entry.
      */
-    function transferBorrowerEntry(uint256 loanId, address newBorrower) internal {
-        (uint256 today, bool active) = currentDayOrZero();
-        if (!active) return;
+    function repointRewardEntry(
+        uint256 loanId,
+        address newUser,
+        bool isLenderSide
+    ) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 id = isLenderSide
+            ? s.loanActiveLenderEntryId[loanId]
+            : s.loanBorrowerEntryId[loanId];
+        if (id == 0) return;
 
-        uint256 oldId = s.loanBorrowerEntryId[loanId];
-        if (oldId == 0) return;
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        address oldUser = e.user;
+        if (oldUser == newUser) return;
 
-        LibVaipakam.RewardEntry storage oldEntry = s.rewardEntries[oldId];
-        uint256 originalEnd = oldEntry.endDay; // snapshot before close mutates it
-        uint256 perDay = oldEntry.perDayNumeraire18;
+        _removeUserEntry(s, oldUser, id);
+        s.userRewardEntryIds[newUser].push(id);
+        e.user = newUser;
+        // Per-loan pointer already references `id`; sweep + per-user claim now
+        // resolve to `newUser`.
+    }
 
-        _closeEntry(
-            s,
-            oldId,
-            today,
-            /* forfeited */ true,
-            s.borrowerPerDayDeltaNumeraire18,
-            s.borrowerFrontierDay
-        );
-
-        uint256 newStart = today + 1;
-        if (newStart >= originalEnd) {
-            // No residual window for the new borrower — clear the pointer.
-            s.loanBorrowerEntryId[loanId] = 0;
-            return;
+    /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` (membership move
+    ///      for {repointRewardEntry}). No-op if absent.
+    function _removeUserEntry(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 id
+    ) private {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 n = ids.length;
+        for (uint256 i; i < n; ) {
+            if (ids[i] == id) {
+                ids[i] = ids[n - 1];
+                ids.pop();
+                return;
+            }
+            unchecked {
+                ++i;
+            }
         }
-
-        uint256 newId = _allocEntry(
-            s,
-            newBorrower,
-            loanId,
-            newStart,
-            originalEnd,
-            LibVaipakam.RewardSide.Borrower,
-            perDay
-        );
-        s.loanBorrowerEntryId[loanId] = newId;
-        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, newStart, SafeCast.toInt256(perDay));
-        _applyDelta(s.borrowerPerDayDeltaNumeraire18, s.borrowerFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
     }
 
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────

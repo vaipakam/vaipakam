@@ -79,7 +79,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](84);
+        selectors = new bytes4[](86);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -245,6 +245,8 @@ contract HelperTest {
         selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
         // #399 backstop v0 Role B — isolate the absorb insufficient-cash guard.
         selectors[83] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
+        selectors[84] = TestMutatorFacet.pushUserLoanIdRaw.selector;
+        selectors[85] = TestMutatorFacet.vpfiTokenRaw.selector;
         return selectors;
     }
 

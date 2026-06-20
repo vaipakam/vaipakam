@@ -300,6 +300,61 @@ contract CollateralConsolidationTest is SetupTest {
         assertEq(_tracked(borrowerOrig), COLL_AMT, "collateral untouched on lender consolidation");
     }
 
+    /// #655 Msj — an NFT-rental loan (assetType != ERC20) is excluded entirely
+    /// (out of #594 scope) → ConsolidationNotAllowed, no asset moved.
+    function test_NftRental_Excluded() public {
+        _seedBorrowerLoan();
+        // Flip the loan into a rental: the LENT asset is an NFT.
+        LibVaipakam.Loan memory l = _getLoan();
+        l.assetType = LibVaipakam.AssetType.ERC721;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        _mockBorrowerHolder(holder);
+
+        vm.prank(holder);
+        vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+        assertEq(_tracked(borrowerOrig), COLL_AMT, "collateral untouched on excluded rental");
+    }
+
+    /// #655 Msm — a VPFI heldForLender amount with no reservation excludes the
+    /// LENDER side (the #597-gated drain case) → ConsolidationNotAllowed.
+    function test_VpfiHeldForLender_LenderExcluded() public {
+        _seedBorrowerLoan();
+        // Point principalAsset at the configured VPFI token + park an unreserved
+        // heldForLender so the exclusion's VPFI check fires.
+        LibVaipakam.Loan memory l = _getLoan();
+        l.principalAsset = TestMutatorFacet(address(diamond)).vpfiTokenRaw();
+        TestMutatorFacet(address(diamond)).setLoan(LOAN, l);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(LOAN, 100e18);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
+            abi.encode(holder)
+        );
+        vm.prank(holder);
+        vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
+        ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
+    }
+
+    /// #655 Msl — re-anchoring to a holder ALREADY indexed for the loan must not
+    /// duplicate the userLoanIds entry.
+    function test_AppendIndex_NoDuplicate() public {
+        _seedBorrowerLoan();
+        _mockBorrowerHolder(holder);
+        // Pre-index the loan for the holder (simulate a prior indexing).
+        TestMutatorFacet(address(diamond)).pushUserLoanIdRaw(holder, LOAN);
+
+        vm.prank(holder);
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+
+        // Exactly one entry for the holder (dup-protected).
+        assertEq(
+            MetricsFacet(address(diamond)).getUserLoanCount(holder), 1,
+            "no duplicate loan index"
+        );
+    }
+
     /// Test 17 — terminal loan with the (mock-burned) NFT takes the no-op path
     /// (status-gated before ownerOf), does NOT revert.
     function test_Terminal_NoOp() public {
