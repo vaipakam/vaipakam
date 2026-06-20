@@ -22,6 +22,14 @@ consolidation and the termination proceeds under its own rules. No existing
 behaviour changes for ordinary (non-transferred) loans — confirmed by the full
 existing repay and default test suites passing untouched.
 
+Sanctions safety on these eager paths is preserved end-to-end. A position
+whose departed (now-stale) owner is sanctions-flagged *after* the transfer no
+longer bricks the close-out: moving the asset *out* of that owner's vault to
+the current (sanctions-checked) holder is the de-risking action the policy
+wants, so it is allowed, while a sanctioned *current* holder is still kept from
+receiving funds (the partial-repayment payout refuses a flagged recipient, and
+every consolidation still blocks/skips a flagged incoming holder per its tier).
+
 The remaining close-outs — HF-liquidation, internal-match and split liquidation,
 early-withdrawal sale, preclose, periodic settlement, in-place extension, full
 swap-to-repay, intent settlement, and refinance — are tracked in #658, together
