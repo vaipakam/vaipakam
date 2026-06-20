@@ -2,6 +2,12 @@
 
 **Status.** Draft. All decisions called out in §7 are open until you sign off.
 
+> **Related (#404):** the *trust-surface* side of governance — what stays
+> upgradeable, what freezes when, and the guardian fast-pause — is the
+> [ossification roadmap commitment](OssificationRoadmap.md). Key point: the
+> Diamond already has the guardian-pause guarantee via the asymmetric
+> `PAUSER` (fast, guardian-held) / `UNPAUSER` (slow, timelock-held) split.
+
 **Context.** The post-incident DVN-hardening work surfaced a question: which protocol
 constants should be governance-configurable, and which should stay immutable?
 This doc inventories current state, identifies the real gaps (small — most
