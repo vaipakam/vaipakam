@@ -885,16 +885,6 @@ contract SwapToRepayIntentFacet is
     ) private {
         bytes32 orderHash = _teardownCommit(s, loanId, commit);
         emit SwapToRepayIntentCancelled(loanId, orderHash, cancelledBy);
-        // #594 — `_teardownCommit` returned the custodial collateral to
-        // `loan.borrower`'s vault + reinstated the lien there (Codex round-2
-        // P1 #3), which re-strands it for a transferred position. The intent is
-        // now cleared, so the loan is no longer the live-intent D-3 exclusion;
-        // consolidate the borrower side AFTER teardown so the returned
-        // collateral moves to the current holder. Self-resolving + skip-not-block
-        // makes this safe for the permissionless / force-cancel callers too.
-        LibConsolidation.consolidateToHolder(
-            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
-        );
     }
 
     /// @dev Shared commit-teardown body used by {_executeCancel}
@@ -977,6 +967,20 @@ contract SwapToRepayIntentFacet is
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
+
+        // #594 — every teardown (borrower cancel, permissionless cancel,
+        // force-cancel via HF / past-default) returns the custodial collateral
+        // to `loan.borrower`'s vault + reinstates the lien there (Codex round-2
+        // P1 #3), which re-strands it for a transferred position. Hooking the
+        // consolidation HERE — not in `_executeCancel` — covers the force-cancel
+        // paths that call `_teardownCommit` directly (Codex #655 PR-2 Msj/7dw).
+        // The intent is cleared above (`delete s.intentCommits`), so the loan is
+        // no longer the live-intent D-3 exclusion; consolidate the borrower side
+        // so the returned collateral moves to the current holder. Self-resolving
+        // + skip-not-block makes it safe regardless of caller.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
     }
 
 
