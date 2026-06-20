@@ -152,10 +152,9 @@ moved first):
      the *proxy* the operator), so "deposit from the Diamond" would require the
      Diamond to first `approve` the dest proxy. Instead, leg 2 is a **direct
      push**: the Diamond `safeTransferFrom`s the NFT to the dest proxy (operator
-     `== Diamond`, which the dest vault's `onReceived` gate accepts), followed by
-     a **record-only** `recordVaultDepositERC721`/`…1155` to bump
-     `protocolTrackedVaultBalance[current]` *without* a second transfer. This
-     avoids both the approval dance and the operator-rejection.
+     `== Diamond`, which the dest vault's `onReceived` gate accepts). No
+     `protocolTrackedVaultBalance` bump (NFTs aren't in that ERC-20 counter, §5);
+     the NFT's tracking is its lien, already re-keyed in step 5.
    A *direct* vault→vault `safeTransferFrom` is never used (the source vault
    would be the operator → dest gate rejects). Never a withdraw-to-wallet (the
    guard would block it).
@@ -275,17 +274,24 @@ the assets; the only in-protocol vault-move is the Diamond→vault settlement in
 1. **`ReceiverFacet`** — adds `onERC721Received` / `onERC1155Received` /
    `onERC1155BatchReceived` to the **Diamond**. Required because the Diamond has
    no receiver hook today, so leg-1 of the NFT move (NFT → Diamond) would revert.
-   **Gated, not open:** the hooks return the magic value **only while a transient
-   `s.consolidationInFlight` flag is set** (set by `LibConsolidation` around the
-   move, cleared after); any other inbound NFT reverts. This keeps the Diamond
-   from becoming an open NFT sink — there is no Diamond-level NFT sweep/recovery
-   path, so an ungated receiver would let arbitrary (incl. protocol) NFTs strand
-   (D-6). Selectors cut in like any facet (deploy-sanity: `DiamondFacetNames` +
-   `SelectorCoverageTest`).
+   **Gated AND pinned, not open:** the hooks return the magic value only when the
+   transient flag is set **and** `msg.sender` + `tokenId`/`amount` match the
+   exact expected in-flight token (`s.consolidationExpectedToken` etc.) — see
+   D-6. A bare boolean flag is insufficient because the token is an untrusted
+   call target during leg 1; the pin stops a malicious token slipping an extra
+   NFT into the Diamond (which has no NFT sweep path). Selectors cut in like any
+   facet (deploy-sanity: `DiamondFacetNames` + `SelectorCoverageTest`).
 2. **`VaultFactoryFacet._moveBetweenVaults(from, to, asset, type, amount, id)`**
-   — internal, `onlyDiamondInternal`. Adjusts `protocolTrackedVaultBalance` for
-   both (decrement `from`, increment `to`) and physically moves the asset:
-   - **ERC-20:** direct `from`-proxy → `to`-proxy transfer.
+   — internal, `onlyDiamondInternal`. Physically moves the asset and adjusts
+   accounting **per type**:
+   - **ERC-20:** direct `from`-proxy → `to`-proxy transfer, **and** decrement
+     `protocolTrackedVaultBalance[from][asset]` / increment `[to][asset]` — that
+     counter is **ERC-20-only** (a fungible-amount ledger).
+   - **ERC-721 / ERC-1155: do NOT touch `protocolTrackedVaultBalance`** (Codex
+     round-4) — the NFT deposit paths (`vaultDepositERC721`/`…1155`) never seed
+     that ERC-20 counter, so an NFT move debiting/crediting it would corrupt an
+     unrelated fungible balance. An NFT's "tracking" is its **lien** (re-keyed in
+     §2 step 5); the physical move (below) is all step 6 does for NFTs.
    - **ERC-721 / ERC-1155:** the Diamond-mediated two-leg move of §2 step 6 —
      **leg 1** source-proxy `safeTransferFrom` → Diamond (accepted via the gated
      `ReceiverFacet`); **leg 2** the Diamond pushes directly to the dest proxy
@@ -330,9 +336,16 @@ the assets; the only in-protocol vault-move is the Diamond→vault settlement in
    ignore the result and proceed.
 
 Eager integration: call `LibConsolidation.consolidateToHolder(loanId, side)`
-as the **first step** (after auth, before terms math) of **every active
-mutation a current holder can drive on a transferred position** — not just the
-refinance/preclose/sale paths. If any active borrower path is left out, that
+as the **very first step — before the host's own stored-anchor auth, not after
+it** (Codex round-4) — of **every active mutation a current holder can drive on
+a transferred position**, not just the refinance/preclose/sale paths. The
+ordering matters: paths like `RepayFacet.repayPartial` call
+`LibAuth.requireBorrower(loan)` (which checks the *stored* `loan.borrower`)
+*before* their body, so a transferred holder would revert at that auth before
+consolidation could fix the anchor. Running consolidation first re-points
+`loan.borrower` to the current holder, so the host's `requireBorrower` then
+passes **for the rightful holder** (and still rejects a non-holder caller —
+consolidation sets the anchor from `ownerOf`, independent of `msg.sender`). If any active borrower path is left out, that
 path still touches the *stored* `loan.borrower` vault and lien and re-creates
 the exact borrower-pin special case this issue removes (a holder could top up,
 withdraw a collateral slice, or mutate debt while the divergence persists).
@@ -478,14 +491,21 @@ never has to pre-call, matching D-1.)
   cannot call it. (If a dedicated keeper-callable standalone consolidation is
   later wanted, widening the keeper mask is the clean route — tracked as a
   follow-up, not built here.)
-- **D-6 — Diamond NFT receiver is gated, not open (Codex round-3).** The
-  `ReceiverFacet` hooks accept an inbound ERC-721/1155 **only while the transient
-  `s.consolidationInFlight` flag is set** (set by `LibConsolidation` immediately
-  before leg 1 of an NFT move, cleared immediately after); every other inbound
-  NFT reverts. Rationale: an ungated receiver would turn the Diamond into an open
-  NFT sink, and there is **no** Diamond-level NFT sweep/recovery path, so a
-  stray/forced NFT would strand. The flag is single-move scoped (the primitive is
-  `nonReentrant`, so no nested move can race it).
+- **D-6 — Diamond NFT receiver is gated AND pinned, not open (Codex
+  round-3/4).** During leg 1 the ERC-721/1155 contract is an **untrusted external
+  call target**, so a boolean "in-flight" flag alone is insufficient — a
+  malicious/non-standard token could deliver an *extra* token or batch to the
+  Diamond while the flag is set and have it accepted (and stranded). The
+  `ReceiverFacet` hooks therefore accept an inbound NFT only when **all** hold:
+  (a) the transient `s.consolidationInFlight` flag is set; (b)
+  `msg.sender == s.consolidationExpectedToken` (the exact collateral contract
+  being moved); (c) the `tokenId` (and ERC-1155 `amount`) match the expected
+  move. `LibConsolidation` writes the expected (token, id, amount) alongside the
+  flag immediately before leg 1 and clears all of it immediately after; any
+  other inbound NFT — including a second delivery from the same token — reverts.
+  Rationale: there is **no** Diamond-level NFT sweep/recovery path, so a stray or
+  forced NFT would strand. The window is single-move scoped (the primitive is
+  `nonReentrant`).
 
 #573/#574 deliberately keep transferred-position collateral in the original
 vault and pay the current holder at close. #594 does **not** revert that —
@@ -580,8 +600,8 @@ whether or not it is ever consolidated.
     `s.offerPrepayListingOrderHash[offerId]` → `Skipped` / `ConsolidationNotAllowed`
     (f4k).
 27. **NFT leg-2 direct push:** the Diamond pushes the NFT to the dest proxy with
-    no prior `approve`, and `recordVaultDeposit` bumps the tracked balance without
-    a second transfer (f4n).
+    no prior `approve` (operator `== Diamond`, accepted) and **no**
+    `protocolTrackedVaultBalance` bump (f4n + iWB).
 28. **NFT-rental lender exclusion:** a lender-side consolidation of an active
     NFT-rental position → `Skipped` (the rented NFT stays put), `loan.lender`
     unchanged (f4q).
@@ -593,6 +613,16 @@ whether or not it is ever consolidated.
     borrower position still consolidates to the rightful holder (self-resolved
     `ownerOf`), and `repayPartial`'s `loan.borrower` gate then sees the
     consolidated holder (f4l).
+31. **NFT move leaves the ERC-20 counter untouched:** an ERC-721/1155
+    consolidation does not change `protocolTrackedVaultBalance` for either vault
+    (assert an unrelated ERC-20 balance in the same vaults is unmoved) — iWB.
+32. **Receiver pin:** a malicious collateral token that tries to deliver a
+    *second* NFT (or a different tokenId) to the Diamond during leg 1 reverts;
+    only the exact expected (token, id/amount) is accepted — iWE / D-6.
+33. **Auth ordering:** `repayPartial` on a transferred borrower position
+    succeeds because consolidation runs **before** `requireBorrower` (the
+    stored-anchor auth then sees the holder); a **non-holder** caller still
+    reverts (anchor set from `ownerOf`, not `msg.sender`) — iWF.
 
 ---
 
@@ -601,16 +631,17 @@ whether or not it is ever consolidated.
 One design doc (this), then implementation in dependency order:
 
 1. **PR 1 — primitive + standalone borrower path.** `ReceiverFacet` (Diamond NFT
-   hooks, **gated by `s.consolidationInFlight`**, D-6), `_moveBetweenVaults`
-   (incl. the leg-2 direct-push + record-only NFT move), `LibEncumbrance.rekeyLienToHolder`
+   hooks, **gated + pinned** to the expected in-flight token, D-6),
+   `_moveBetweenVaults` (leg-2 direct-push; ERC-20-only `protocolTrackedVaultBalance`,
+   no counter touch for NFTs — iWB), `LibEncumbrance.rekeyLienToHolder`
    (side-specific, lender-conditional), the borrower reward-entry reassignment +
    metrics mark, `LibConsolidation` (returns `ConsolidationResult`:
    `Consolidated`/`AlreadyConsolidated`/`NoOp`/`Skipped`), `ConsolidationFacet`
    (borrower side, holder-only standalone, status-gate before auth), with the D-3
    exclusions (FallbackPending + position-keyed **and** offer-keyed prepay
    listing + live swap-to-repay intent + terminal→NoOp-before-`ownerOf`). Tests
-   1/3/4/5/6/8/9/10/11/12/13/14/16/17/18/21/22/24/26/27. ABI re-export (new facets
-   + selectors + error/event) + deploy-sanity (`DiamondFacetNames` +
+   1/3/4/5/6/8/9/10/11/12/13/14/16/17/18/21/22/24/26/27/31/32. ABI re-export (new
+   facets + selectors + error/event) + deploy-sanity (`DiamondFacetNames` +
    `SelectorCoverageTest` for `ReceiverFacet` + `ConsolidationFacet`).
 2. **PR 2 — eager borrower integration (ALL active borrower mutations).** Wire
    `RefinanceFacet` (remove the #576 borrower-pin), `PrecloseFacet`,
@@ -618,7 +649,8 @@ One design doc (this), then implementation in dependency order:
    self-resolved holder — f4l), `PartialWithdrawalFacet`, swap-to-repay, the
    **prepay-listing creation** surfaces (consolidate-before-listing, f4h), and the
    **both-side** hooks `RepayPeriodicFacet.settlePeriodicInterest` +
-   `AutoLifecycleFacet.extendLoanInPlace`. Tests 2/19/25/29/30 (+ a per-path
+   `AutoLifecycleFacet.extendLoanInPlace`. Consolidation is inserted **before**
+   each host's stored-anchor auth (iWF). Tests 2/19/25/29/30/33 (+ a per-path
    transferred-position regression so no active path preserves the pin).
 3. **PR 3 — lender side.** `consolidatePrincipalToHolder` (conditional reservation
    re-key, NFT-rental exclusion) + lender reward-entry reassignment +
