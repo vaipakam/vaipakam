@@ -12,6 +12,7 @@ import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC4907Mock} from "./mocks/ERC4907Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -186,6 +187,117 @@ contract CollateralConsolidationTest is SetupTest {
 
         assertEq(_getLoan().borrower, holder, "still anchored to holder");
         assertEq(_enc(holder), COLL_AMT, "lien unchanged on second call");
+    }
+
+    /// Test 9 — ERC-721 collateral moves via the Diamond-mediated two-leg move
+    /// (arming the ReceiverFacet pin): the NFT ends up in the holder's vault,
+    /// the lien re-keys, the anchor re-points, and (iWB) no ERC-20
+    /// `protocolTrackedVaultBalance` is touched.
+    function test_ERC721Collateral_TwoLegMoveViaReceiver() public {
+        ERC4907Mock nft = new ERC4907Mock("NFT", "NFT");
+        uint256 tokenId = 42;
+
+        LibVaipakam.Loan memory l;
+        l.id = LOAN;
+        l.status = LibVaipakam.LoanStatus.Active;
+        l.lender = lenderA;
+        l.borrower = borrowerOrig;
+        l.borrowerTokenId = LOAN;
+        l.lenderTokenId = LOAN + 1;
+        l.principalAsset = address(principal);
+        l.principal = 500e18;
+        l.collateralAsset = address(nft);
+        l.collateralTokenId = tokenId;
+        l.collateralAssetType = LibVaipakam.AssetType.ERC721;
+        l.assetType = LibVaipakam.AssetType.ERC20;
+        l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        l.collateralLiquidity = LibVaipakam.LiquidityStatus.Illiquid;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
+
+        address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(
+            borrowerOrig
+        );
+        nft.mint(bVault, tokenId);
+        TestMutatorFacet(address(diamond)).setLoanCollateralLienRaw(
+            LOAN, borrowerOrig, address(nft), tokenId, 1, LibVaipakam.AssetType.ERC721
+        );
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(
+            borrowerOrig, address(nft), tokenId, 1
+        );
+
+        _mockBorrowerHolder(holder);
+        address hVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holder);
+
+        vm.prank(holder);
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+
+        // NFT physically ended up in the holder's vault (two-leg move worked).
+        assertEq(nft.ownerOf(tokenId), hVault, "NFT moved to holder vault");
+        assertEq(_getLoan().borrower, holder, "anchor re-pointed");
+        // Lien re-keyed (keyed by tokenId for NFTs).
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(borrowerOrig, address(nft), tokenId),
+            0, "old NFT lien zeroed"
+        );
+        assertEq(
+            MetricsFacet(address(diamond)).getEncumbered(holder, address(nft), tokenId),
+            1, "new NFT lien == 1"
+        );
+        // The pin was consumed — the Diamond is no longer armed to accept NFTs.
+        // (A follow-up call with the flag cleared would revert UnexpectedNFTReceipt.)
+    }
+
+    /// Test 8 — a sanctioned current holder reverts on the Tier-1 standalone
+    /// path (SanctionedAddress), before any move.
+    function test_SanctionedHolder_Reverts() public {
+        _seedBorrowerLoan();
+        _mockBorrowerHolder(holder);
+
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(holder, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        vm.prank(holder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, holder)
+        );
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+    }
+
+    /// Test 16 — a live borrower-side prepay listing excludes BORROWER
+    /// consolidation (side-scoped, D-3 principle 1) → ConsolidationNotAllowed.
+    function test_PrepayListing_BorrowerExcluded() public {
+        _seedBorrowerLoan();
+        TestMutatorFacet(address(diamond)).setPrepayListingOrderHash(
+            LOAN, keccak256("live-listing")
+        );
+        _mockBorrowerHolder(holder);
+
+        vm.prank(holder);
+        vm.expectRevert(IVaipakamErrors.ConsolidationNotAllowed.selector);
+        ConsolidationFacet(address(diamond)).consolidateCollateralToHolder(LOAN);
+    }
+
+    /// Test 23 — lender side, no `lenderProceedsEncumbered` reservation (the
+    /// common active-transfer case): consolidation succeeds as anchor-only (no
+    /// collateral move, no assert on the absent lien).
+    function test_LenderSide_AnchorOnly_NoReservation() public {
+        _seedBorrowerLoan();
+        // Transfer the LENDER position NFT (lenderTokenId == LOAN + 1).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN + 1),
+            abi.encode(holder)
+        );
+
+        vm.prank(holder);
+        ConsolidationFacet(address(diamond)).consolidatePrincipalToHolder(LOAN);
+
+        assertEq(_getLoan().lender, holder, "lender anchor re-pointed");
+        // Borrower side untouched; collateral stays in the original vault.
+        assertEq(_getLoan().borrower, borrowerOrig, "borrower anchor unchanged");
+        assertEq(_tracked(borrowerOrig), COLL_AMT, "collateral untouched on lender consolidation");
     }
 
     /// Test 17 — terminal loan with the (mock-burned) NFT takes the no-op path
