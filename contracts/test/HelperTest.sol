@@ -35,6 +35,8 @@ import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -808,6 +810,29 @@ contract HelperTest {
         selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
         selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
         selectors[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
+    }
+
+    /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).
+    function getReceiverFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](3);
+        selectors[0] = ReceiverFacet.onERC721Received.selector;
+        selectors[1] = ReceiverFacet.onERC1155Received.selector;
+        selectors[2] = ReceiverFacet.onERC1155BatchReceived.selector;
+    }
+
+    /// #594 — standalone holder-only consolidation entry points.
+    function getConsolidationFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](2);
+        selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
+        selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
     }
 
     function getDefaultedFacetSelectors()
