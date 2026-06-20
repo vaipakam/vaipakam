@@ -1007,6 +1007,18 @@ contract SwapToRepayIntentFacet is
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
         );
+
+        // #594 Codex #657 round-5 — the return above INCREASED the holder's VPFI
+        // tracked balance, but the hook is `AlreadyConsolidated` when the commit
+        // already consolidated (it restamped at the post-withdraw / zero balance)
+        // or the position never transferred, so it doesn't restamp the larger
+        // balance. Re-stamp explicitly at the post-return balance so a cancel
+        // restores the holder's VPFI tier/staking immediately. Idempotent with
+        // the hook's own restamp on the just-consolidated path. No-op for
+        // non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
     }
 
 

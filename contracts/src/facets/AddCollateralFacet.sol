@@ -251,6 +251,18 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
         );
+
+        // #594 Codex #657 round-5 — the top-of-fn consolidation checkpointed the
+        // holder's VPFI tier/staking at the PRE-top-up balance, then the deposit
+        // (and a FallbackPending cure's snapshot restore) INCREASED it; the hook
+        // just above is `AlreadyConsolidated` for an Active transferred loan and
+        // doesn't restamp. Re-stamp explicitly at the final balance so the
+        // holder's tier reflects the larger post-top-up VPFI immediately.
+        // Idempotent with the hook's own restamp on the just-cured path. No-op
+        // for non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
     }
 
     /// @dev Restores a FallbackPending loan to Active. The diamond-side
