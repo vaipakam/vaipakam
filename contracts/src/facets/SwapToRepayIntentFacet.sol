@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -409,6 +410,15 @@ contract SwapToRepayIntentFacet is
         if (!s.cfgIntentSwapToRepayEnabled) revert IntentSurfaceDisabled();
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // #594 — consolidate a transferred borrower position BEFORE the intent
+        // commit pulls the collateral into Diamond custody (design D-3 principle
+        // 2 — the commit is the state-entering endpoint), so the committed
+        // collateral comes from the current holder's vault. Borrower side,
+        // skip-not-block.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
 
         // ── §5.1 step 1: eligibility gates ──────────────────────────
         // Active + ERC20-on-ERC20 + both legs Liquid + tokens on
@@ -875,6 +885,16 @@ contract SwapToRepayIntentFacet is
     ) private {
         bytes32 orderHash = _teardownCommit(s, loanId, commit);
         emit SwapToRepayIntentCancelled(loanId, orderHash, cancelledBy);
+        // #594 — `_teardownCommit` returned the custodial collateral to
+        // `loan.borrower`'s vault + reinstated the lien there (Codex round-2
+        // P1 #3), which re-strands it for a transferred position. The intent is
+        // now cleared, so the loan is no longer the live-intent D-3 exclusion;
+        // consolidate the borrower side AFTER teardown so the returned
+        // collateral moves to the current holder. Self-resolving + skip-not-block
+        // makes this safe for the permissionless / force-cancel callers too.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
     }
 
     /// @dev Shared commit-teardown body used by {_executeCancel}

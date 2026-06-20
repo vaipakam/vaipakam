@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -218,6 +219,17 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             _cureFallback(loanId, loan, borrowerVault);
             emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHf);
         }
+
+        // #594 — consolidate a transferred borrower position into the current
+        // holder's vault AFTER the cure (zP8): while FallbackPending the
+        // collateral lien is released + the snapshot sits in Diamond custody, so
+        // consolidation is excluded (returns Skipped); only once the loan is
+        // back to Active (just-cured, or already Active above) is there a vaulted
+        // lien to move. Placing the hook here — not at the top — means a
+        // just-cured loan still consolidates. Skip-not-block.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
     }
 
     /// @dev Restores a FallbackPending loan to Active. The diamond-side
