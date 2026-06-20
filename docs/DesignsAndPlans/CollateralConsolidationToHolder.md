@@ -83,8 +83,17 @@ source and the destination lien written before/with the transfer.
 A single internal library entry point, two public-ish wrappers:
 
 ```
-LibConsolidation.consolidateToHolder(loanId, side)   // side = Borrower | Lender
+LibConsolidation.consolidateToHolder(loanId, side, ctx)
+//   side = Borrower | Lender
+//   ctx  = Tier1Strict | Tier2CloseOut   (sanctions context — see §2 step 3)
 ```
+
+The `ctx` parameter is **required** (Codex round-6): the primitive cannot infer
+from `(loanId, side)` alone whether it was reached via a Tier-1 entry point or a
+Tier-2 close-out, and the sanctions handling differs (step 3). Each call site
+passes its own context — the standalone wrapper and new-position hooks pass
+`Tier1Strict`; the close-out hooks (repay/default/liquidation/periodic-settle)
+pass `Tier2CloseOut`.
 
 Steps (ordering is load-bearing — see §4 atomicity). **The lien re-key
 precedes the asset move** (the §4 invariant; corrects an earlier draft that
@@ -117,16 +126,16 @@ moved first):
    keeper-driven lifecycle actions). The `msg.sender == current` holder check
    lives **only in the standalone wrapper** (D-5), never in the primitive. If
    `current == stored` → return **`AlreadyConsolidated`** (no-op; common case).
-3. **Guard — context-aware sanctions.** For **Tier-1 entry** (the standalone
-   call, new-position paths) sanctions-check `current` and revert if flagged
-   (`_assertNotSanctioned`). For **Tier-2 close-out** eager hooks (`repayLoan`,
-   `markDefaulted`/liquidation-adjacent settlements, `settlePeriodicInterest`) a
-   sanctioned `current` must **return `Skipped`, not revert** — the retail
-   sanctions policy keeps close-outs open so the unflagged counterparty can be
-   made whole, and consolidation must not turn a Tier-2 close-out into a Tier-1
-   block. On a `Skipped`-for-sanctions, the collateral simply stays in the
-   original vault (the #573/#574 claim path still protects it) and the host
-   close-out proceeds.
+3. **Guard — context-aware sanctions, driven by `ctx`.** When
+   `ctx == Tier1Strict` (the standalone call, new-position paths), sanctions-check
+   `current` and **revert** if flagged (`_assertNotSanctioned`). When
+   `ctx == Tier2CloseOut` (the `repayLoan` / `markDefaulted` /
+   liquidation / `settlePeriodicInterest` hooks), a sanctioned `current` must
+   **return `Skipped`, not revert** — the retail sanctions policy keeps
+   close-outs open so the unflagged counterparty can be made whole, and
+   consolidation must not turn a Tier-2 close-out into a Tier-1 block. On a
+   `Skipped`-for-sanctions the collateral stays in the original vault (the
+   #573/#574 claim path still protects it) and the host close-out proceeds.
 4. **Create destination.** `getOrCreateUserVault(current)`
    (`VaultFactoryFacet.sol:197`).
 5. **Re-key the side-specific lien FIRST**, *if one exists* (new
@@ -250,6 +259,18 @@ lender consolidation that re-points the anchor but leaves `heldForLender` in the
 departed lender's vault would strand those funds, so the move must carry them to
 `current`.
 
+**When the carried `heldForLender` is VPFI, it also needs a reservation
+re-key (coordinate with #597).** Some preclose/offset held amounts are VPFI with
+**no** `lenderProceedsEncumbered` row (`PrecloseFacet.sol:1045-1050`, Codex
+round-6); merely moving that VPFI to `current`'s vault leaves it
+**unstake-drainable** before claim. Reserving held-for-lender VPFI against the
+unstake path **and re-keying that reservation across lender-change paths** is
+exactly the scope of the open card **#597** — consolidation is one of those
+lender-change paths. So #594's lender consolidation must invoke the #597
+reservation-re-key (and the two land consistently: whichever ships second wires
+the call). Until #597 lands, lender consolidation of a VPFI-`heldForLender`
+position is gated on it.
+
 **NFT-rental lender positions are excluded (D-3, Codex round-3).** For a rental
 the lent ERC-721/1155 *stays* in `loan.lender`'s vault (with borrower
 user-rights) for the whole term, and close/default paths reset/withdraw it via
@@ -257,6 +278,17 @@ the live `loan.lender` key — so the "principal already left the vault" premise
 above does **not** hold. A naive anchor re-point would orphan the still-vaulted
 rented NFT, so rental lender consolidation returns `Skipped` until a
 rental-aware design (move the NFT *and* preserve user-rights) is built.
+
+**Caveat — skipping is not a complete fix for transferred rental lenders
+(Codex round-6, tracked as #654).** Returning `Skipped` leaves the rental's *own*
+fee + close-out routing pointed at the **stored** `loan.lender`: the daily-fee
+path deposits `lenderShare` to `loan.lender` (`RepayFacet.sol:440-444`) and the
+close/default reset-withdraw keys off `loan.lender`, so a transferred rental
+lender keeps receiving fees/proceeds at the **departed** vault. This is a
+*pre-existing* rental-transfer mis-routing independent of #594 (it mis-routes
+today with or without consolidation) and is **out of #594's ERC-20 scope** — the
+fix (route rental fee/close-out by the current `ownerOf`, or a rental-aware
+consolidation) is tracked separately in **#654**.
 
 ---
 
@@ -384,25 +416,40 @@ withdraw a collateral slice, or mutate debt while the divergence persists).
 The full set:
 - **Borrower side only:** `RefinanceFacet` (replaces the #576 borrower-pin),
   `AddCollateralFacet.addCollateral`, `RepayFacet.repayPartial`,
-  `PartialWithdrawalFacet`, the **swap-to-repay** path, and the **prepay-listing
-  creation** surfaces (`postPrepayListing` + the Dutch / atomic / autolist
-  fresh-post paths) — these cache `s.userVaipakamVaults[loan.borrower]`, and
+  `PartialWithdrawalFacet`, the **partial** swap-to-repay path,
+  `SwapToRepayIntentFacet.commitSwapToRepayIntent` (the intent **commit**, before
+  it pulls the collateral — Codex round-6), and the **prepay-listing creation**
+  surfaces (`postPrepayListing` + the Dutch / atomic / autolist fresh-post
+  paths) — these cache `s.userVaipakamVaults[loan.borrower]`, and
   because a *live* listing is then a D-3 exclusion that makes later consolidation
   `Skip`, the consolidation MUST run **before** the listing is opened (else a
   transferred holder posts a listing on the *old* vault and locks the position
   into a never-consolidatable state). Consolidate-first → the listing caches the
   new vault.
-- **Both sides (consolidate borrower AND lender):** any path that settles
-  *lender* economics through the stored `loan.lender` key, even if
-  borrower-driven —
+- **Both sides (consolidate borrower AND lender, `ctx = Tier2CloseOut` for the
+  terminal ones):** any path that settles *lender* economics through the stored
+  `loan.lender` key, even if borrower-driven —
   `PrecloseFacet` (`precloseDirect` / `offsetWithNewOffer` /
   `transferObligationViaOffer`) and **full `RepayFacet.repayLoan`** deposit
   lender proceeds to `loan.lender`, read yield-fee VPFI consent from it, and
-  close out lender rewards on it, so a transferred *lender* NFT would mis-route
-  unless the lender side also consolidates (Codex round-5);
-  `RepayPeriodicFacet.settlePeriodicInterest` — its shortfall path withdraws from
-  `loan.borrower`'s vault **and** its auto-liquidation branch pays
-  `lenderProceeds` to the stored `loan.lender` (`_autoLiquidatePeriodShortfall`);
+  close out lender rewards on it (Codex round-5); **full swap-to-repay**
+  (`swapToRepayFull`) deposits `plan.lenderDue`, writes `lenderClaims`, reserves
+  VPFI proceeds, and closes lender rewards on the stored anchor (so the *full*
+  variant is both-side even though the *partial* one is borrower-only — Codex
+  round-6); the **swap-to-repay-intent settlement** (`postInteraction` / fill),
+  which deposits lender proceeds on settlement — so although a *live* intent is a
+  D-3 `Skip` (nothing to do mid-flight), the **commit** (borrower, above) and the
+  **settlement** (both-side, here) endpoints consolidate (Codex round-6);
+  **default / liquidation close-outs** — `DefaultedFacet.triggerDefault`,
+  `RiskFacet.triggerLiquidation` / `triggerPartialLiquidation` /
+  `triggerLiquidationDiscounted` — which route liquidation proceeds / collateral
+  to the stored borrower **and** lender anchors, so a position that reaches
+  default before any consolidating event must consolidate both sides first
+  (`Tier2CloseOut`, so a sanctioned holder Skips rather than blocking the
+  close-out — Codex round-6);
+  `RepayPeriodicFacet.settlePeriodicInterest` — shortfall withdraws from
+  `loan.borrower` **and** auto-liquidation pays `lenderProceeds` to stored
+  `loan.lender` (`_autoLiquidatePeriodShortfall`);
   `AutoLifecycleFacet.extendLoanInPlace` — routes accrued interest between *both*
   current owners' vaults + re-registers rewards for both. These hooks consolidate
   **each side** whose NFT may have moved.
@@ -674,6 +721,21 @@ whether or not it is ever consolidated.
     stays in the original vault) and the close-out **completes** (Tier-2 stays
     open); a **standalone** consolidation by a sanctioned caller still reverts
     (Tier-1) — k98.
+37. **Default / liquidation close-out:** `triggerDefault` /
+    `triggerLiquidation` on a transferred position (never previously
+    consolidated) consolidates **both** sides first (`Tier2CloseOut`), so
+    proceeds/collateral route to the current holders; a sanctioned holder Skips
+    without blocking the liquidation — qOa.
+38. **Full vs partial swap-to-repay:** `swapToRepayFull` consolidates **both**
+    sides (lender proceeds + claims route to the current lender holder);
+    `repayPartial`-style partial swap consolidates borrower only — qOf.
+39. **Swap-to-repay-intent endpoints:** `commitSwapToRepayIntent` consolidates
+    the borrower side before pulling collateral; the live-intent window Skips;
+    the `postInteraction` settlement consolidates both sides so lender proceeds
+    route to the current holder — qOh.
+40. **`ctx` drives sanctions:** the same loan consolidated via a `Tier1Strict`
+    call reverts on a sanctioned holder but via a `Tier2CloseOut` hook returns
+    `Skipped` — qOe.
 
 ---
 
@@ -692,25 +754,35 @@ One design doc (this), then implementation in dependency order:
    exposure release + `heldForLender` carry + unique-user-metrics mark + the
    VPFI discount **and** `LibStakingRewards.updateUser` checkpoints; the primitive
    self-resolves the holder (no `msg.sender==holder` inside it — k95);
-   context-aware sanctions (Tier-1 revert / Tier-2 close-out `Skip` — k98);
-   `ConsolidationFacet` exposing **both** `consolidateCollateralToHolder` and
-   `consolidatePrincipalToHolder` (holder-only standalone, status-gate before
-   auth), with the full D-3 exclusions. Tests 1/3/4/5/6/8/9/10/11/12/13/14/15/16/
-   17/18/20/21/22/23/24/26/27/28/31/32. ABI re-export + deploy-sanity
+   context-aware sanctions driven by the **`ctx` param** (Tier-1 revert / Tier-2
+   close-out `Skip` — k98/qOe); `ConsolidationFacet` exposing **both**
+   `consolidateCollateralToHolder` and `consolidatePrincipalToHolder`
+   (holder-only standalone, status-gate before auth), with the full D-3
+   exclusions. **Note the #597 dependency:** lender consolidation of a
+   VPFI-`heldForLender` position needs the #597 unstake-reservation re-key
+   (qOi) — wire whichever of #594/#597 lands second. Tests
+   1/3/4/5/6/8/9/10/11/12/13/14/15/16/17/18/20/21/22/23/24/26/27/28/31/32/40.
+   ABI re-export + deploy-sanity
    (`DiamondFacetNames` + `SelectorCoverageTest` for `ReceiverFacet` +
    `ConsolidationFacet`).
 2. **PR 2 — borrower-side-only eager integration.** Wire the borrower-pure paths:
    `RefinanceFacet` (remove the #576 borrower-pin), `AddCollateralFacet`
    (skip-not-block on cure), `RepayFacet.repayPartial`, `PartialWithdrawalFacet`,
-   swap-to-repay, and the prepay-listing creation surfaces
+   the **partial** swap-to-repay path, `commitSwapToRepayIntent` (intent commit,
+   borrower), and the prepay-listing creation surfaces
    (consolidate-before-listing, f4h). Consolidation inserted **before** each
    host's stored-anchor auth (iWF). Tests 2/19/25/33 (+ a per-path
    transferred-position regression).
 3. **PR 3 — lender-side + both-side eager integration.** Wire the paths that
-   touch lender economics: `EarlyWithdrawalFacet`, full `RepayFacet.repayLoan`,
-   `PrecloseFacet`, `RepayPeriodicFacet.settlePeriodicInterest`, and
-   `AutoLifecycleFacet.extendLoanInPlace` — each consolidating *both* sides whose
-   NFT may have moved (k-B/k96). Tests 7/29/30.
+   touch lender economics, each consolidating *both* sides whose NFT may have
+   moved (k-B/k96), with `ctx = Tier2CloseOut` on the terminal ones:
+   `EarlyWithdrawalFacet`, full `RepayFacet.repayLoan`, `PrecloseFacet`,
+   `RepayPeriodicFacet.settlePeriodicInterest`, `AutoLifecycleFacet.extendLoanInPlace`,
+   **full `swapToRepayFull` + the swap-to-repay-intent `postInteraction`
+   settlement** (qOf/qOh), and the **default / liquidation close-outs**
+   (`DefaultedFacet.triggerDefault`, `RiskFacet.triggerLiquidation` /
+   `triggerPartialLiquidation` / `triggerLiquidationDiscounted` — qOa). Tests
+   7/29/30/37/38/39.
 
 Each PR ships with its release-note fragment + the matching FunctionalSpec
 update, per the per-PR docs discipline.
