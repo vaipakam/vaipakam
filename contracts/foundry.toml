@@ -7,6 +7,14 @@ viaIR = true
 optimizer = true
 optimizer_runs = 200
 threads = 8
+# #594 — the deploy-sanity SelectorCoverageTest reads every cut facet's
+# compiled artifact JSON into EVM memory and unions their selectors. EVM memory
+# expansion is priced QUADRATICALLY in gas, so as the facet count grew (61 with
+# ReceiverFacet + ConsolidationFacet) the cumulative read crossed the default
+# ~1.07e9 test `gas_limit` and tripped MemoryOOG. Raise the per-test gas limit
+# (a test-harness knob only — never reaches production) so the static guardrail
+# keeps headroom as the Diamond keeps growing.
+gas_limit = "18446744073709551615" # uint64 max — effectively unmetered for tests
 
 # T-068 — the vendored Chainlink `chainlink-ccip` / `chainlink-evm` trees
 # carry Chainlink's OWN Foundry test files (`*.t.sol`) and test helpers.
