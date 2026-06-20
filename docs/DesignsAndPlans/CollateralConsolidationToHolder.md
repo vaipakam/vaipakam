@@ -232,18 +232,18 @@ step is consistent with the gate that precedes it.
   is mid-flight and the anchor must not move under it (same exclusion the
   internal-match retry path uses). Terminal states (`Repaid`/`Settled`/
   `Defaulted`/`InternalMatched`) are no-ops (nothing live to consolidate).
-  **OPEN for review:** confirm `FallbackPending` *without* a top-up should be
-  allowed (proposed: yes — it's an ordinary lien).
-- **D-4 — VPFI re-stamp scope.** Call `rollupUserDiscount` for both vaults
-  unconditionally with post-move balances (cheap, and correct even when the
-  moved asset isn't VPFI because the rollup is a no-op when the balance is
-  unchanged). **OPEN:** alternatively gate the calls on `asset == vpfiToken`
-  to save two SLOADs — recommend unconditional for simplicity/correctness.
-- **D-5 — Authorization.** Current holder OR an authorised keeper
-  (`requireKeeperFor`), matching the lifecycle events' own gates. The stored
-  (departed) owner has no claim and cannot call it. **OPEN:** should the
-  *new* holder be the only direct caller, or also the keeper, for the
-  standalone path? (Recommend keeper-allowed, parity with lifecycle events.)
+  `FallbackPending` *without* an active top-up **is allowed** (RESOLVED
+  2026-06-20, owner) — it carries an ordinary lien and the anchor can move
+  safely.
+- **D-4 — VPFI re-stamp scope (RESOLVED 2026-06-20, owner).** Call
+  `rollupUserDiscount` for both vaults **unconditionally** with post-move
+  balances — cheap, and correct even when the moved asset isn't VPFI (the
+  rollup is a no-op when the balance is unchanged). Simplicity/correctness
+  over saving two SLOADs.
+- **D-5 — Authorization (RESOLVED 2026-06-20, owner).** Current holder **OR**
+  an authorised keeper (`requireKeeperFor`), matching the lifecycle events'
+  own gates — including the standalone path. The stored (departed) owner has
+  no claim and cannot call it.
 
 ---
 
