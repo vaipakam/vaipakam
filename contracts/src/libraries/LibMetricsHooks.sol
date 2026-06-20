@@ -207,6 +207,16 @@ library LibMetricsHooks {
         s.uniqueUserCount += 1;
     }
 
+    /// @notice #594 — internal wrapper over {_markUserSeen} so other libraries
+    ///         (e.g. {LibConsolidation}) can mark a freshly-anchored holder
+    ///         `userSeen` / bump `uniqueUserCount` when a transferred position is
+    ///         consolidated into their vault — otherwise a holder with no prior
+    ///         offers/loans becomes loan-attributable while still excluded from
+    ///         the unique-user count. Idempotent (no-op if already seen).
+    function markUserSeen(LibVaipakam.Storage storage s, address u) internal {
+        _markUserSeen(s, u);
+    }
+
     /// @dev Swap-and-pop removal from `activeLoanIdsList`. Position map is
     ///      1-based; a stored 0 means "not present."
     function _removeFromActiveLoanList(

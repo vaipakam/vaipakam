@@ -34,6 +34,8 @@ import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -176,6 +178,8 @@ contract DeployDiamond is Script {
             new AggregatorAdapterFactoryFacet();
         // #399 v2.5 — treasury-seeded backstop vault governance + Role-A drive.
         BackstopFacet backstopFacet = new BackstopFacet();
+        ReceiverFacet receiverFacet = new ReceiverFacet();
+        ConsolidationFacet consolidationFacet = new ConsolidationFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -245,7 +249,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](59);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -445,6 +449,17 @@ contract DeployDiamond is Script {
         cuts[58] = _buildCut(
             address(numeraireConfigFacet),
             _getNumeraireConfigSelectors()
+        );
+        // #594 — gated+pinned ERC-721/1155 receiver hooks on the Diamond, so it
+        // can transiently hold an NFT for the consolidation two-leg move (D-6).
+        cuts[59] = _buildCut(
+            address(receiverFacet),
+            _getReceiverFacetSelectors()
+        );
+        // #594 — standalone holder-only consolidation entry points.
+        cuts[60] = _buildCut(
+            address(consolidationFacet),
+            _getConsolidationFacetSelectors()
         );
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
@@ -1471,6 +1486,21 @@ contract DeployDiamond is Script {
         s[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
         s[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
         s[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
+    }
+
+    /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).
+    function _getReceiverFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](3);
+        s[0] = ReceiverFacet.onERC721Received.selector;
+        s[1] = ReceiverFacet.onERC1155Received.selector;
+        s[2] = ReceiverFacet.onERC1155BatchReceived.selector;
+    }
+
+    /// #594 — standalone holder-only consolidation entry points.
+    function _getConsolidationFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
+        s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
     }
 
     function _getDefaultedSelectors() internal pure returns (bytes4[] memory s) {

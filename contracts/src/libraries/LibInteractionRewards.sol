@@ -335,6 +335,70 @@ library LibInteractionRewards {
         _applyDelta(s.lenderPerDayDeltaNumeraire18, s.lenderFrontierDay, originalEnd, -SafeCast.toInt256(perDay));
     }
 
+    /**
+     * @notice #594 — **re-point** a loan's active reward entry (lender or
+     *         borrower side) to the current position-NFT holder when a
+     *         transferred position is consolidated into their vault.
+     * @dev    Consolidation is NOT a sale: the holder already owns the position
+     *         (the NFT moved), so the reward entry transfers to them **intact**
+     *         — re-pointed, not forfeit+reopened like {transferLenderEntry}
+     *         (which is the *sale* path). Re-pointing is also the correct fix
+     *         for the sweep-discoverability gap a forfeit+reopen would open
+     *         (Codex #655 Msn): the per-loan pointer
+     *         (`loanActiveLenderEntryId` / `loanBorrowerEntryId`) keeps pointing
+     *         at the SAME entry id, so `sweepForfeitedByLoanId` still locates it.
+     *
+     *         The entry's day-window and `perDayNumeraire18` are unchanged — only
+     *         `RewardEntry.user` and the per-user index membership move — so the
+     *         global per-day deltas need NO adjustment.
+     *
+     * @param loanId       Loan whose position transferred.
+     * @param newUser      Incoming current NFT holder.
+     * @param isLenderSide true = lender entry, false = borrower entry.
+     */
+    function repointRewardEntry(
+        uint256 loanId,
+        address newUser,
+        bool isLenderSide
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 id = isLenderSide
+            ? s.loanActiveLenderEntryId[loanId]
+            : s.loanBorrowerEntryId[loanId];
+        if (id == 0) return;
+
+        LibVaipakam.RewardEntry storage e = s.rewardEntries[id];
+        address oldUser = e.user;
+        if (oldUser == newUser) return;
+
+        _removeUserEntry(s, oldUser, id);
+        s.userRewardEntryIds[newUser].push(id);
+        e.user = newUser;
+        // Per-loan pointer already references `id`; sweep + per-user claim now
+        // resolve to `newUser`.
+    }
+
+    /// @dev Swap-pop `id` out of `userRewardEntryIds[user]` (membership move
+    ///      for {repointRewardEntry}). No-op if absent.
+    function _removeUserEntry(
+        LibVaipakam.Storage storage s,
+        address user,
+        uint256 id
+    ) private {
+        uint256[] storage ids = s.userRewardEntryIds[user];
+        uint256 n = ids.length;
+        for (uint256 i; i < n; ) {
+            if (ids[i] == id) {
+                ids[i] = ids[n - 1];
+                ids.pop();
+                return;
+            }
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
     // ─── Frontier advance (local totals + cum-per-USD) ──────────────────────
 
     /**

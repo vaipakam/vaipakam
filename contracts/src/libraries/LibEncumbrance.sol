@@ -618,4 +618,54 @@ library LibEncumbrance {
             s.encumbered[user][asset][tokenId] = cur - amount;
         }
     }
+
+    // ─── #594 — consolidation lien re-key (cross-user) ──────────────────
+
+    /// @notice #594 — re-key a loan's SIDE-SPECIFIC encumbrance from the stored
+    ///         owner to the current position-NFT holder (`newUser`), used when a
+    ///         transferred position is consolidated into the holder's vault.
+    /// @dev    The lien differs by side (design D-3 / §2 step 5):
+    ///         - BORROWER: the per-loan collateral lien `loanCollateralLien`
+    ///           (keyed under `loan.borrower`). Decrement the old user's
+    ///           `encumbered` bucket, increment the new user's by the same
+    ///           amount, rewrite `lien.user`.
+    ///         - LENDER: the held-for-lender proceeds reservation
+    ///           (`lenderProceedsEncumbered`, keyed under `loan.lender`), and
+    ///           ONLY when one exists. It is usually ABSENT on an active lender
+    ///           transfer (principal already disbursed, no terminal proceeds
+    ///           reserved yet), so this MUST NOT assert a lien exists on the
+    ///           lender side. It also MUST NOT touch `loanCollateralLien` for a
+    ///           lender consolidation — re-keying the borrower's collateral lien
+    ///           to the lender would underflow the lender's empty bucket.
+    ///         The `encumbered` aggregate is conserved. Called by
+    ///         {LibConsolidation} BEFORE the asset move so no ERC-721/1155
+    ///         `onReceived` callback can observe an unlien'd destination vault.
+    function rekeyLienToHolder(
+        uint256 loanId,
+        address newUser,
+        bool isLenderSide
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (isLenderSide) {
+            uint256 reserved = s.lenderProceedsEncumbered[loanId];
+            if (reserved == 0) return; // common case — no reservation, no-op
+            address oldLender = s.loans[loanId].lender;
+            if (newUser == oldLender) return;
+            address asset = s.lenderProceedsEncumberedAsset[loanId];
+            // Move the aggregate from old lender → new lender; the per-loan
+            // amount/asset record is loan-keyed and unchanged, so a later
+            // `releaseLenderProceeds(loanId, loan.lender)` (now the holder)
+            // decrements the right bucket.
+            _decrementAggregate(oldLender, asset, 0, reserved);
+            s.encumbered[newUser][asset][0] += reserved;
+            return;
+        }
+        LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[loanId];
+        if (lien.released || lien.user == address(0)) return; // nothing to move
+        address from = lien.user;
+        if (from == newUser) return;
+        _decrementAggregate(from, lien.asset, lien.tokenId, lien.amount);
+        s.encumbered[newUser][lien.asset][lien.tokenId] += lien.amount;
+        lien.user = newUser;
+    }
 }

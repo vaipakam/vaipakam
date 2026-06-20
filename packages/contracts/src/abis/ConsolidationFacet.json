@@ -1,46 +1,12 @@
 [
   {
     "type": "function",
-    "name": "calculateLTV",
+    "name": "consolidateCollateralToHolder",
     "inputs": [
       {
-        "name": "borrowedAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "borrowedAmount",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "collateralAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ltv",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "captureDailyPriceSnapshot",
-    "inputs": [
-      {
-        "name": "assets",
-        "type": "address[]",
-        "internalType": "address[]"
       }
     ],
     "outputs": [],
@@ -48,399 +14,56 @@
   },
   {
     "type": "function",
-    "name": "checkLiquidity",
+    "name": "consolidatePrincipalToHolder",
     "inputs": [
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "checkLiquidityOnActiveNetwork",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAssetPrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "price",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "decimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getAssetRiskProfile",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "isSupported",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "enum LibVaipakam.LiquidityStatus"
-      },
-      {
-        "name": "loanInitMaxLtvBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "liqBonusBps",
+        "name": "loanId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getEffectiveLiquidityTier",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getEffectiveTierMaxInitLtvBps",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getHistoricalAssetPrice",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "dayIndex",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "snapshot",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.AssetPriceSnapshot",
-        "components": [
-          {
-            "name": "price",
-            "type": "int256",
-            "internalType": "int256"
-          },
-          {
-            "name": "feedDecimals",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "capturedAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getIlliquidAssets",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address[]",
-        "internalType": "address[]"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getLiquidityTier",
-    "inputs": [
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getSequencerUptimeFeed",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getTierLtvCacheEntry",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ltvBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "lastRefreshedAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "isAssetSupported",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "refreshTierLtvCache",
-    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
-    "type": "function",
-    "name": "sequencerHealthy",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tryGetAssetPrice",
+    "type": "event",
+    "name": "CollateralConsolidated",
     "inputs": [
       {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "ok",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "price",
+        "name": "loanId",
         "type": "uint256",
+        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "decimals",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "DailyAssetPriceCaptured",
-    "inputs": [
+        "name": "isLenderSide",
+        "type": "bool",
+        "indexed": false,
+        "internalType": "bool"
+      },
       {
-        "name": "asset",
+        "name": "from",
         "type": "address",
         "indexed": true,
         "internalType": "address"
       },
       {
-        "name": "dayIndex",
+        "name": "to",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
         "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "price",
-        "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "feedDecimals",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TierLtvCacheRefreshRejected",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "candidateLtvBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "reason",
-        "type": "string",
-        "indexed": false,
-        "internalType": "string"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TierLtvCacheUpdated",
-    "inputs": [
-      {
-        "name": "tier",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
-      },
-      {
-        "name": "newLtvBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "oldLtvBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "assetsContributing",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
       }
     ],
     "anonymous": false
@@ -551,7 +174,38 @@
   },
   {
     "type": "error",
-    "name": "FeeTooHigh",
+    "name": "EncumbranceUnderflow",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requested",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "EnforcedPause",
     "inputs": []
   },
   {
@@ -589,11 +243,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientLiquidity",
-    "inputs": []
   },
   {
     "type": "error",
@@ -655,11 +304,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidReserves",
     "inputs": []
   },
   {
@@ -754,17 +398,7 @@
   },
   {
     "type": "error",
-    "name": "NoDexPool",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoInteractionRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoPriceFeed",
     "inputs": []
   },
   {
@@ -834,37 +468,6 @@
   },
   {
     "type": "error",
-    "name": "OracleCrossCheckDivergence",
-    "inputs": [
-      {
-        "name": "chainlinkPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "pythPrice",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "deviationBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "maxDeviationBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "OraclePriceDivergence",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "PadNumeraireRateFeedStale",
     "inputs": []
   },
@@ -909,11 +512,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "PeerLtvReadsPaused",
-    "inputs": []
   },
   {
     "type": "error",
@@ -1022,6 +620,11 @@
   },
   {
     "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceRequiresPeriodSettle",
     "inputs": [
       {
@@ -1058,28 +661,12 @@
   },
   {
     "type": "error",
-    "name": "SafeCastOverflowedUintDowncast",
+    "name": "SanctionedAddress",
     "inputs": [
       {
-        "name": "bits",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "SafeCastOverflowedUintToInt",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "who",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },
@@ -1095,27 +682,12 @@
   },
   {
     "type": "error",
-    "name": "SequencerDown",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SequencerGracePeriod",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "SourceChainIdNotExpected",
     "inputs": []
   },
   {
     "type": "error",
     "name": "StakingPoolExhausted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StalePriceData",
     "inputs": []
   },
   {

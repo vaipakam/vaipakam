@@ -88,6 +88,8 @@ import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -247,6 +249,9 @@ contract SetupTest is Test {
     AggregatorAdapterFactoryFacet aggregatorAdapterFactoryFacet;
     // #399 v2.5 — treasury-seeded backstop vault governance + Role-A drive.
     BackstopFacet backstopFacet;
+    // #594 — consolidation primitive: Diamond NFT receiver + standalone entries.
+    ReceiverFacet receiverFacet;
+    ConsolidationFacet consolidationFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -349,6 +354,8 @@ contract SetupTest is Test {
         lenderIntentFacet = new LenderIntentFacet();
         aggregatorAdapterFactoryFacet = new AggregatorAdapterFactoryFacet();
         backstopFacet = new BackstopFacet();
+        receiverFacet = new ReceiverFacet();
+        consolidationFacet = new ConsolidationFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -413,7 +420,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](60);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -769,6 +776,19 @@ contract SetupTest is Test {
             facetAddress: address(backstopFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getBackstopFacetSelectors()
+        });
+        // #594 — gated+pinned Diamond NFT receiver hooks for the consolidation
+        // two-leg move (D-6).
+        cuts[60] = IDiamondCut.FacetCut({
+            facetAddress: address(receiverFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getReceiverFacetSelectors()
+        });
+        // #594 — standalone holder-only consolidation entry points.
+        cuts[61] = IDiamondCut.FacetCut({
+            facetAddress: address(consolidationFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

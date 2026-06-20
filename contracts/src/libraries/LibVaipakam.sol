@@ -4329,6 +4329,20 @@ library LibVaipakam {
         ///      trigger (`HF_LIQUIDATION_THRESHOLD`, 1e18) and the tiered-regime
         ///      init floor (also 1e18) are deliberately NOT touched by it.
         uint64 minHealthFactorOverride;
+        // ──────────────────────────────────────────────────────────────
+        // #594 — collateral/principal consolidation to the position-NFT
+        // holder. Transient state for the gated+pinned Diamond NFT receiver
+        // (design doc D-6): the `ReceiverFacet` hooks accept an inbound
+        // ERC-721/1155 ONLY while `consolidationInFlight` is set AND the
+        // (token, id, amount) match the in-flight move. `LibConsolidation`
+        // sets these immediately before leg-1 of an NFT move and clears them
+        // (consuming the pin) on the first accepted callback, so the Diamond
+        // never becomes an open NFT sink. Appended to the Storage tail — no
+        // existing slot shifts.
+        bool consolidationInFlight;
+        address consolidationExpectedToken;
+        uint256 consolidationExpectedTokenId;
+        uint256 consolidationExpectedAmount;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

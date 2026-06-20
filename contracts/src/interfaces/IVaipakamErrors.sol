@@ -73,6 +73,11 @@ interface IVaipakamErrors {
     error NotBorrower();
     error NotLender();
     error NotNFTOwner();
+    /// @notice #594 — a standalone consolidation was attempted on a position in
+    ///         an excluded live state (e.g. FallbackPending, a live prepay
+    ///         listing, or a live swap-to-repay intent). Eager hooks skip these
+    ///         silently; the explicit caller gets this revert.
+    error ConsolidationNotAllowed();
     error NotOfferCreator();
     error InvalidAddress();
     error InvalidAmount();
