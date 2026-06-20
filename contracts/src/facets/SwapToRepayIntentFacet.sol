@@ -575,6 +575,16 @@ contract SwapToRepayIntentFacet is
             revert IntentCollateralFeeOnTransferUnsupported(received, loan.collateralAmount);
         uint256 custodialCollateral = received;
 
+        // #594 Codex #657 round-4 — the pre-commit consolidation checkpointed
+        // the holder's VPFI tier/staking at the FULL balance; the withdraw above
+        // just moved that collateral into Diamond custody (and if the intent
+        // fills it never returns). Re-stamp at the post-withdraw balance so the
+        // holder doesn't keep fee-tier/staking credit on VPFI no longer in their
+        // vault. No-op for non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
+
         // ── §5.1 step 9: compute canonical 1inch LOP v4 orderHash ───
         // Replicates `OrderLib.hash`: EIP-712 over the 8-field Order
         // struct using LOP's own DOMAIN_SEPARATOR (fetched on-chain

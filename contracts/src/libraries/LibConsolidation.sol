@@ -417,4 +417,27 @@ library LibConsolidation {
         LibStakingRewards.updateUser(stored, storedBal);
         LibStakingRewards.updateUser(current, currentBal);
     }
+
+    /// @notice Re-stamp a SINGLE user's VPFI discount tier + staking checkpoint
+    ///         at their CURRENT tracked VPFI balance.
+    /// @dev    Codex #657 round-4 — a host that eagerly consolidates a
+    ///         transferred VPFI-collateral position checkpoints the holder at
+    ///         the FULL pre-withdraw balance (via {consolidateToHolder} →
+    ///         {_restampVpfi}), then immediately WITHDRAWS some/all of that
+    ///         collateral (partial-withdrawal, partial swap-to-repay, intent
+    ///         commit to custody). Without a post-withdraw re-stamp the holder
+    ///         keeps fee-tier / staking credit on VPFI that already left their
+    ///         vault until the next VPFI action checkpoints them. Hosts call
+    ///         this AFTER the withdrawal, passing `loan.borrower` (== the holder
+    ///         post-consolidation), so the credit reflects the reduced balance
+    ///         immediately. No-op when VPFI isn't configured. Mirrors the
+    ///         "rollup at the mutation site with the post-mutation balance" rule.
+    function restampUserVpfi(address user) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        if (vpfi == address(0)) return;
+        uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
+        LibVPFIDiscount.rollupUserDiscount(user, bal);
+        LibStakingRewards.updateUser(user, bal);
+    }
 }

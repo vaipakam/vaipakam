@@ -23,10 +23,24 @@ Wired into the borrower-side mutations:
 
 For a position that has **not** transferred, every hook is a no-op (a single
 ownership check), so existing flows are unchanged — confirmed by the full
-existing test suites for the touched facets passing untouched. Consolidation
-never blocks the host action: if the holder is sanctioned or the position is in
-an excluded state, consolidation simply skips and the action proceeds under its
-own rules.
+existing test suites for the touched facets passing untouched.
+
+Sanctions safety is **conservative-safe**. Moving a transferred position's
+collateral *out* of its (possibly later-flagged) original vault to the current
+holder is allowed — that is the de-risking direction the policy wants. But the
+protocol never *credits or strands* funds in a flagged vault: in the narrow
+cases where the consolidation itself can't run in the same action — a
+FallbackPending top-up too small to cure, or an intent cancel while a prepay /
+parallel-sale listing is still recorded — and the original anchor has since been
+sanctioned, the host action **reverts** rather than depositing into that flagged
+vault (the funds stay put — in the borrower's vault or in Diamond custody —
+nothing is lost). Letting those actions proceed for a flagged-and-stale anchor
+is a tracked liveness follow-up (#658); all of it is dormant until the sanctions
+oracle is configured.
+
+When a transferred position is collateralised in VPFI, the holder's VPFI
+fee-tier and staking credit are re-stamped *after* the withdraw/swap/commit, so
+they never carry credit for VPFI that has left their vault.
 
 The full swap-to-repay and the prepay-listing creation paths are wired in the
 remaining PRs / follow-up (see #656); lender-side and both-side close-out

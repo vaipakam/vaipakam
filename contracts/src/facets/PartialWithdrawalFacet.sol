@@ -170,6 +170,15 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         // Update loan collateral
         loan.collateralAmount -= amount;
 
+        // #594 Codex #657 round-4 — the eager consolidation above checkpointed
+        // the holder's VPFI tier/staking at the FULL pre-withdraw balance; this
+        // withdrawal just reduced it. Re-stamp at the post-withdraw balance so
+        // the holder doesn't keep fee-tier/staking credit on VPFI that left
+        // their vault. No-op for non-VPFI collateral.
+        if (loan.collateralAsset == LibVaipakam.storageSlot().vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
+
         emit PartialCollateralWithdrawn(
             loanId,
             msg.sender,
