@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -73,6 +74,16 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
         LibVaipakam.assertNoLiveIntentCommit(loanId);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 — consolidate a transferred borrower position into the current
+        // holder's vault FIRST, so the collateral lives in their vault and the
+        // rest of this flow operates on an ordinary (non-pinned) loan rather
+        // than the keep-in-original-vault special case the comment below
+        // describes. Skip-not-block (Tier-2): a sanctioned/excluded holder
+        // leaves the collateral in the original vault and this op proceeds under
+        // its own gating, unchanged.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
         // #569 Codex #572 round-10 P1 — authorize the CURRENT borrower-
         // position NFT holder, not the stored `loan.borrower`. The
         // collateral physically lives in `loan.borrower`'s vault for the
@@ -158,6 +169,15 @@ contract PartialWithdrawalFacet is DiamondReentrancyGuard, DiamondPausable, IVai
 
         // Update loan collateral
         loan.collateralAmount -= amount;
+
+        // #594 Codex #657 round-4 — the eager consolidation above checkpointed
+        // the holder's VPFI tier/staking at the FULL pre-withdraw balance; this
+        // withdrawal just reduced it. Re-stamp at the post-withdraw balance so
+        // the holder doesn't keep fee-tier/staking credit on VPFI that left
+        // their vault. No-op for non-VPFI collateral.
+        if (loan.collateralAsset == LibVaipakam.storageSlot().vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
 
         emit PartialCollateralWithdrawn(
             loanId,

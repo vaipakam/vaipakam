@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -524,6 +525,13 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
+        // #594 — consolidate a transferred borrower position into the current
+        // holder's vault before the partial swap operates on it (borrower side,
+        // skip-not-block). The FULL swap-to-repay is both-side and wired in PR-3.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
         // ── Pre-flight gates ─────────────────────────────────────────
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert InvalidLoanStatus();
@@ -622,6 +630,16 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             // landed back in the borrower vault; the loan stays Active
             // and that collateral still backs it.
             _incrementLienAtSwapToRepayPartial(loanId, partialFillRefund);
+        }
+
+        // #594 Codex #657 round-4 — the eager consolidation above checkpointed
+        // the holder's VPFI tier/staking at the FULL pre-swap balance; the swap
+        // just consumed the net (swap-amount minus any partial-fill refund) out
+        // of their vault. Re-stamp at the post-swap balance so the holder
+        // doesn't keep fee-tier/staking credit on VPFI that was swapped away.
+        // No-op for non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
         }
 
         // ── Accrued-interest split + partial bound ───────────────────

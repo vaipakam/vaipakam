@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
@@ -120,6 +121,27 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (collateralLiquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert IlliquidAsset();
 
+        // #594 Codex #657 round-3 — consolidate the borrower side FIRST (when
+        // the loan is Active and the position has transferred). This re-anchors
+        // `loan.borrower` to the current holder and moves the existing
+        // collateral into the holder's vault — the primitive's own from-side
+        // move handles a stale anchor that was sanctions-flagged after transfer
+        // (its scoped exemption), so the deposit below then targets the holder's
+        // clean vault. Idempotent with the end-of-fn hook (AlreadyConsolidated /
+        // NoOp for a non-transferred or just-resolved loan).
+        //
+        // While FallbackPending the primitive is excluded (lien released,
+        // snapshot in Diamond custody), so this is a no-op and the deposit below
+        // still targets the stored `loan.borrower`; if that anchor is flagged
+        // the deposit correctly REVERTS rather than crediting a sanctioned vault
+        // (a non-curing FallbackPending top-up would otherwise strand funds
+        // there — Codex #657 round-3). The end-of-fn hook then consolidates a
+        // just-cured loan. The narrow FallbackPending + flagged-stale-anchor
+        // top-up is a safe revert; the liveness gap is tracked in #658.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
         // #569 Codex #572 round-2 P2 — resolve the canonical collateral
         // vault as the STORED `loan.borrower`'s, NOT `msg.sender`'s. The
         // borrower-position NFT may have transferred, so the current
@@ -217,6 +239,29 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         ) {
             _cureFallback(loanId, loan, borrowerVault);
             emit LoanCuredFromFallback(loanId, msg.sender, loan.collateralAmount, newHf);
+        }
+
+        // #594 — consolidate a transferred borrower position into the current
+        // holder's vault AFTER the cure (zP8): while FallbackPending the
+        // collateral lien is released + the snapshot sits in Diamond custody, so
+        // consolidation is excluded (returns Skipped); only once the loan is
+        // back to Active (just-cured, or already Active above) is there a vaulted
+        // lien to move. Placing the hook here — not at the top — means a
+        // just-cured loan still consolidates. Skip-not-block.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
+        // #594 Codex #657 round-5 — the top-of-fn consolidation checkpointed the
+        // holder's VPFI tier/staking at the PRE-top-up balance, then the deposit
+        // (and a FallbackPending cure's snapshot restore) INCREASED it; the hook
+        // just above is `AlreadyConsolidated` for an Active transferred loan and
+        // doesn't restamp. Re-stamp explicitly at the final balance so the
+        // holder's tier reflects the larger post-top-up VPFI immediately.
+        // Idempotent with the hook's own restamp on the just-cured path. No-op
+        // for non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
         }
     }
 

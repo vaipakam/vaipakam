@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
+import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
@@ -410,6 +411,15 @@ contract SwapToRepayIntentFacet is
 
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
+        // #594 — consolidate a transferred borrower position BEFORE the intent
+        // commit pulls the collateral into Diamond custody (design D-3 principle
+        // 2 — the commit is the state-entering endpoint), so the committed
+        // collateral comes from the current holder's vault. Borrower side,
+        // skip-not-block.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
         // ── §5.1 step 1: eligibility gates ──────────────────────────
         // Active + ERC20-on-ERC20 + both legs Liquid + tokens on
         // both per-token allowlists + caller is the current
@@ -564,6 +574,16 @@ contract SwapToRepayIntentFacet is
         if (received != loan.collateralAmount)
             revert IntentCollateralFeeOnTransferUnsupported(received, loan.collateralAmount);
         uint256 custodialCollateral = received;
+
+        // #594 Codex #657 round-4 — the pre-commit consolidation checkpointed
+        // the holder's VPFI tier/staking at the FULL balance; the withdraw above
+        // just moved that collateral into Diamond custody (and if the intent
+        // fills it never returns). Re-stamp at the post-withdraw balance so the
+        // holder doesn't keep fee-tier/staking credit on VPFI no longer in their
+        // vault. No-op for non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
 
         // ── §5.1 step 9: compute canonical 1inch LOP v4 orderHash ───
         // Replicates `OrderLib.hash`: EIP-712 over the 8-field Order
@@ -908,6 +928,22 @@ contract SwapToRepayIntentFacet is
         // ── 3. Return custodial collateral to `loan.borrower`'s
         //       vault (Codex round-2 P1 #3 + round-11 P1 #1) ────────
         LibVaipakam.Loan storage loan = s.loans[loanId];
+        // #594 Codex #657 round-3 — the return targets the STORED
+        // `loan.borrower`'s vault (where the lien is reinstated). The collateral
+        // is in Diamond custody right now (NOT in the vault), so the
+        // consolidation hook below cannot pre-run to re-anchor. We deliberately
+        // do NOT sanctions-exempt this return: the hook below can itself be
+        // Skipped (a prepay / carried parallel-sale listing recorded before the
+        // commit keeps the borrower side excluded even after `delete
+        // s.intentCommits`), in which case an exempt return would credit a
+        // flagged stale vault PERMANENTLY (Codex #657 round-3 J). Leaving the
+        // gate in place means a flagged stale anchor REVERTS the teardown
+        // (funds-safe: the collateral stays in Diamond custody, nothing is
+        // credited to a sanctioned vault) rather than being mis-credited. For a
+        // NON-flagged transferred borrower the return + the hook below move the
+        // collateral to the current holder as before. The flagged-stale +
+        // excluded-state liveness gap (clear the listing exclusion in teardown
+        // so the hook can run) is tracked in #658.
         address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
         IERC20(loan.collateralAsset).safeTransfer(
             borrowerVault, commit.custodialCollateral
@@ -957,6 +993,32 @@ contract SwapToRepayIntentFacet is
             delete s.intentExtensionBytes[extensionHash];
         }
         delete s.intentCommits[loanId];
+
+        // #594 — every teardown (borrower cancel, permissionless cancel,
+        // force-cancel via HF / past-default) returns the custodial collateral
+        // to `loan.borrower`'s vault + reinstates the lien there (Codex round-2
+        // P1 #3), which re-strands it for a transferred position. Hooking the
+        // consolidation HERE — not in `_executeCancel` — covers the force-cancel
+        // paths that call `_teardownCommit` directly (Codex #655 PR-2 Msj/7dw).
+        // The intent is cleared above (`delete s.intentCommits`), so the loan is
+        // no longer the live-intent D-3 exclusion; consolidate the borrower side
+        // so the returned collateral moves to the current holder. Self-resolving
+        // + skip-not-block makes it safe regardless of caller.
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
+        // #594 Codex #657 round-5 — the return above INCREASED the holder's VPFI
+        // tracked balance, but the hook is `AlreadyConsolidated` when the commit
+        // already consolidated (it restamped at the post-withdraw / zero balance)
+        // or the position never transferred, so it doesn't restamp the larger
+        // balance. Re-stamp explicitly at the post-return balance so a cancel
+        // restores the holder's VPFI tier/staking immediately. Idempotent with
+        // the hook's own restamp on the just-consolidated path. No-op for
+        // non-VPFI collateral.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
     }
 
 
