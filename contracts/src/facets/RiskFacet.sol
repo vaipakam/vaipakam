@@ -558,6 +558,24 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         );
     }
 
+    /// @dev #658 (Codex #680 P2) — single-copy bridge to the cross-facet
+    ///      post-withdraw VPFI re-stamp. The eager consolidation above stamped
+    ///      the holder at the full pre-liquidation balance; once a liquidation
+    ///      path withdraws VPFI collateral out of the holder's vault, the credit
+    ///      is stale-high until the next VPFI action. Each liquidation entry
+    ///      calls this AFTER its collateral withdrawal; no-op for non-VPFI
+    ///      collateral (gated inside the facet). Same EIP-170 rationale as
+    ///      {_eagerConsolidateBothSides}.
+    function _restampCollateralVpfi(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
     function triggerLiquidation(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
@@ -690,6 +708,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             ),
             VaultWithdrawFailed.selector
         );
+        // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
+        // the full pre-liquidation VPFI balance; the withdrawal just above
+        // removed the collateral. Re-stamp at the reduced balance (no-op for
+        // non-VPFI). Covers both the swap-success and swap-fail/fallback
+        // branches below; the auto-dispatch branch returned earlier and its
+        // internal-match collateral handling lands with PR-B.
+        _restampCollateralVpfi(loanId);
 
         // Compute expected proceeds from oracle prices and the slippage floor
         // (94% of expected = 6% slippage ceiling per README §7). The floor
@@ -1095,6 +1120,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             ),
             VaultWithdrawFailed.selector
         );
+        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
+        // the partial collateral slice leaves the vault. No-op for non-VPFI.
+        _restampCollateralVpfi(loanId);
 
         // Oracle-derived expected proceeds + slippage floor, scoped to
         // the slice. Same formula as {triggerLiquidation}.
@@ -1568,6 +1596,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 VaultWithdrawFailed.selector
             );
         }
+        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
+        // the seized collateral leaves the vault (the surplus stays encumbered
+        // in the vault and is reflected in the reduced balance). No-op for
+        // non-VPFI; harmless when nothing was seized.
+        _restampCollateralVpfi(loanId);
 
         // Record borrower claim metadata — the surplus is in COLLATERAL
         // units (not principal), sits ENCUMBERED in the borrower's vault,

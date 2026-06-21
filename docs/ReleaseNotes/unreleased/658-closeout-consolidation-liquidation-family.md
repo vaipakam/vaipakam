@@ -26,6 +26,16 @@ and `triggerLiquidationSplit` (RiskSplitLiquidationFacet) now consolidate
 both sides at the point they commit to liquidating — before the
 internal-match dispatch and swap settlement.
 
+A VPFI-collateral subtlety: when a transferred-position loan is backed by
+VPFI, the eager consolidation checkpoints the current holder's fee-tier /
+staking credit at the full pre-liquidation balance, but the liquidation
+then withdraws that VPFI out of the holder's vault. Each liquidation path
+now re-stamps the holder at the reduced balance after the withdrawal (via
+a second internal-only ConsolidationFacet entry), so the holder cannot
+retain tier/staking credit for VPFI that has already left — the same
+invariant the eager-withdraw hosts (AddCollateral / SwapToRepay /
+PartialWithdrawal) already preserve.
+
 Scope: this PR is PR-A of #658 — the cross-facet entry plus the
 size-constrained liquidation family (the architecturally-motivated core).
 The remaining close-out hosts (EarlyWithdrawal lender-side, Preclose,

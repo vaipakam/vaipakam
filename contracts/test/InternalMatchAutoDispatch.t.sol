@@ -13,6 +13,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title InternalMatchAutoDispatch.t.sol
@@ -62,7 +63,26 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
+        // #658 (Codex #680 P2) — give the synthetic loan distinct minted
+        // position-NFT IDs so the liquidation family's eager-consolidation hook
+        // can resolve `ownerOf`; mocking each to its stored owner (below) makes
+        // the consolidation a clean `AlreadyConsolidated` no-op, so the
+        // auto-dispatch behaviour under test is unaffected. (id is non-zero, so
+        // 2*id / 2*id+1 are distinct, non-zero, and collision-free across loans.)
+        l.borrowerTokenId = id * 2;
+        l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
+            abi.encode(borrower_)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
+            abi.encode(lender_)
+        );
 
         address bVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower_);

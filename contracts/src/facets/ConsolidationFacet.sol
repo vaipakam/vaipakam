@@ -81,6 +81,31 @@ contract ConsolidationFacet is
         );
     }
 
+    /// @notice #658 (Codex #680 P2) — internal-only post-withdraw VPFI
+    ///         re-stamp for the liquidation close-out family. The eager
+    ///         consolidation above checkpoints the current borrower holder at
+    ///         the FULL pre-liquidation VPFI balance (via
+    ///         {LibConsolidation.consolidateToHolder} → `_restampVpfi`); the
+    ///         host then withdraws some/all of that VPFI collateral out of the
+    ///         holder's vault for the swap. Without a post-withdraw re-stamp the
+    ///         holder keeps fee-tier / staking credit on VPFI that already left
+    ///         until their next VPFI action — the same gaming vector the
+    ///         eager-withdraw hosts (AddCollateral / SwapToRepay /
+    ///         PartialWithdrawal) close. Size-constrained liquidation hosts
+    ///         (RiskFacet ~298 bytes under EIP-170) can't inline
+    ///         `restampUserVpfi` (it pulls in the discount + staking rollups),
+    ///         so they cross-call this after the withdrawal. No-op for non-VPFI
+    ///         collateral. Internal-only; NOT `nonReentrant` (the host holds the
+    ///         lock).
+    function restampCollateralVpfiAfterWithdraw(uint256 loanId) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
+    }
+
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

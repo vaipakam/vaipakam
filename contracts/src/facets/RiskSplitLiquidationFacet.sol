@@ -189,6 +189,18 @@ contract RiskSplitLiquidationFacet is
             ),
             VaultWithdrawFailed.selector
         );
+        // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
+        // the full pre-liquidation VPFI balance; re-stamp after the withdrawal
+        // above so the holder can't retain tier/staking credit for VPFI that
+        // already left. Internal-only ConsolidationFacet entry; no-op for
+        // non-VPFI collateral.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
 
         // Oracle-derived total minOutputAmount — same formula as the failover
         // path. swapWithSplit enforces it on the *total* (not per-leg) so

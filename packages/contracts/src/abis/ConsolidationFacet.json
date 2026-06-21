@@ -57,6 +57,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "restampCollateralVpfiAfterWithdraw",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [
