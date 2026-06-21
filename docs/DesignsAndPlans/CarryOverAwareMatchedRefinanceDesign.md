@@ -1,6 +1,7 @@
 # Carry-Over-Aware Matched Refinance (#595)
 
-**Status:** Design proposal — awaiting adversarial review + ratification.
+**Status:** RATIFIED (owner, 2026-06-22) after a clean 4-round adversarial
+design review (PR #682). Ready to implement.
 **Builds on:** #576 (collateral carry-over), #549 / [`T092AtomicAcceptAndRefinance.md`](T092AtomicAcceptAndRefinance.md)
 (the atomic accept-and-refinance hook), [`SignedOfferMatcherV06Design.md`](SignedOfferMatcherV06Design.md)
 (`_executeMatch` shared path).
@@ -308,9 +309,12 @@ remain the last line of defense, unchanged.
    collateral refund + offer-lock release for carry-over; retag hook (L1117)
    unchanged. The `mo.collateralAmount = mr.reqCollateral` install (~L824) needs
    no special case (preview already pinned it).
-5. Amount mutators (`setOfferAmount` / `modifyOffer`) — §3.5 guard: **freeze the
-   amount to the target outstanding principal** while carry-over-tagged.
-6. New error(s): `RefinanceCarryOverCollateralShortfall` + `MatchError` variants
+5. `OfferCreateFacet` — §8.1 ratified: reject a `refinanceCarryOver` offer that
+   is not AON single-value (`fillMode == Aon && amountMax == amount`) at create
+   time (carry-over implies AON from birth).
+6. Amount mutators (`setOfferAmount` / `modifyOffer`) — §3.5 / §8.2 ratified:
+   **freeze** `amount` / `amountMax` (no change) while carry-over-tagged.
+7. New error(s): `RefinanceCarryOverCollateralShortfall` + `MatchError` variants
    (`RefinanceTagStale`, `RefinanceTagGated`). No new external functions → no
    diamond-cut / selector change; inlined errors → one ABI re-export.
 
@@ -357,17 +361,20 @@ remain the last line of defense, unchanged.
 
 ---
 
-## 8. Open questions for review
+## 8. Design decisions (RATIFIED — owner, 2026-06-22)
 
-1. **Create-time vs match-time AON enforcement** (reinforced by Finding #5):
-   forbid `fillMode != Aon` / `amountMax != amount` at **create** whenever
-   `refinanceCarryOver` would be set, vs. enforce only at match + in the mutators
-   (this design). Create-time is the earliest, clearest failure and removes the
-   mutation-window class entirely, at the cost of coupling the #576 carry-over
-   predicate to fill-mode. **Recommendation: enforce at create-time too** (make
-   carry-over imply AON single-value from birth) AND keep the match-time
-   assertion as defense-in-depth. Seeking ratification.
-2. On mutation of a carry-over offer, **strip** the carry-over flag (fall back to
-   the fresh-pledge legacy path) vs. **freeze** the amount (this design)?
-   Stripping is more permissive but re-introduces fresh-pledge accounting;
-   freezing is simpler + safer. Open.
+1. **AON-single-value enforcement: create-time + match-time + mutators**
+   (defense-in-depth). A carry-over offer implies `fillMode == Aon`,
+   `amountMax == amount`, and `amount == target outstanding` **from birth** —
+   `OfferCreateFacet` rejects a `refinanceCarryOver` offer that isn't AON
+   single-value; the §3.1 admission re-checks it live at preview/match; and the
+   §3.5 mutators keep it. This removes the post-create mutation-window class
+   entirely while the match-time check stays as belt-and-braces.
+2. **On mutation of a carry-over-tagged offer: FREEZE the amount** (do not strip
+   the tag). While carry-over-tagged, `setOfferAmount` / `modifyOffer` forbid any
+   change to `amount` / `amountMax` (must stay == target outstanding principal).
+   The offer remains a faithful refinance of exactly its target loan; no
+   fall-back to fresh-pledge accounting on a previously-carry-over offer.
+
+These were the two open forks from the adversarial design review; ratified by the
+owner on 2026-06-22. Implementation (the follow-up PR) builds against this spec.
