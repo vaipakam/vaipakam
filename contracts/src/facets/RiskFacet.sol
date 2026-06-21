@@ -651,6 +651,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // B.2 semantic ("don't dump into the external book mid-window")
         // for that defensive edge.
         if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
+            // #658 (Codex #680 round-2 P2) — the auto-dispatch branch returns
+            // here BEFORE the external-swap restamp below. If the eager
+            // consolidation above moved VPFI collateral to the holder (stamping
+            // them at the full pre-liquidation balance) and the internal match
+            // just consumed it, re-stamp the triggering loan's holder at the
+            // reduced balance now, so they can't keep tier/staking credit for
+            // VPFI the match already removed. No-op for non-VPFI. (The matched
+            // CANDIDATE leg's consolidation + restamp is PR-B —
+            // RiskMatchLiquidationFacet, where the candidateId is in scope.)
+            _restampCollateralVpfi(loanId);
             return;
         }
 
