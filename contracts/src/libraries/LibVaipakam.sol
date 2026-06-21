@@ -4362,6 +4362,17 @@ library LibVaipakam {
         ///      closes that. `address(0)` (the default) exempts no one. Packs
         ///      into the same slot region as `consolidationInFlight`.
         address consolidationMoveFromUser;
+        /// @dev #661 — borrower-side mirror of `lenderProceedsEncumbered` (#592).
+        ///      A liquid default / liquidation can return a VPFI surplus to the
+        ///      borrower's vault; like the lender proceeds it must be reserved
+        ///      against the VPFI unstake path until the current borrower-position
+        ///      holder claims it (else the stored borrower drains it after a
+        ///      position transfer). Per-loan reserved amount + the recorded asset
+        ///      (always the principal asset here — VPFI surplus is cash-settled),
+        ///      written at the surplus deposit and cleared on `claimAsBorrower`.
+        ///      Appended to the Storage tail — no existing slot shifts.
+        mapping(uint256 => uint256) borrowerProceedsEncumbered;
+        mapping(uint256 => address) borrowerProceedsEncumberedAsset;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

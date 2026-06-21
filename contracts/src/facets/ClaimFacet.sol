@@ -1038,6 +1038,13 @@ contract ClaimFacet is
             bytes4(0)
         );
 
+        // #661 — release the VPFI borrower-surplus reservation (mirror of the
+        // lender release above) immediately BEFORE the withdraw, so the unstake
+        // free-balance guard sees the surplus as free. Keyed off the per-loan
+        // record under the asset it was reserved with → a no-op for every loan
+        // that never reserved a surplus (non-VPFI, or no liquid-default surplus).
+        LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
+
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
@@ -1418,6 +1425,17 @@ contract ClaimFacet is
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerGets);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerGets);
+            // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
+            // borrower-VPFI-surplus terminal: reserve it against the unstake
+            // path, like the default / liquidation surplus sites. Released in
+            // `claimAsBorrower` (which runs `releaseBorrowerProceeds`). No-op for
+            // non-VPFI. (The lender retry-proceeds reserve is the separate
+            // pre-existing #592 gap noted on `lenderProceedsEncumbered`.)
+            if (loan.principalAsset == s.vpfiToken) {
+                LibEncumbrance.encumberBorrowerProceeds(
+                    loanId, loan.borrower, loan.principalAsset, borrowerGets
+                );
+            }
         }
 
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

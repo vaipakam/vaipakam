@@ -295,4 +295,79 @@ contract Vpfi592LenderProceedsTest is SetupTest {
             "non-VPFI principal carries no reservation"
         );
     }
+
+    /// @dev #661 — a LIQUID default swaps the collateral, pays the lender, and
+    ///      returns the VPFI surplus to the borrower's vault. Like the lender
+    ///      proceeds it must be reserved against the unstake path until the
+    ///      current borrower-position holder claims it (else the stored borrower
+    ///      drains it after a position transfer). Mirror of the #592 lender test.
+    function test_661_liquidDefault_reservesVpfiBorrowerSurplusThenReleasesOnClaim()
+        public
+    {
+        vm.prank(owner);
+        VPFITokenFacet(address(diamond)).setVPFIToken(mockERC20);
+
+        // VPFI principal; liquid non-VPFI collateral worth more than the debt →
+        // the liquidation swap surplus returns to the borrower in VPFI.
+        LibVaipakam.Loan memory l;
+        l.id = LOAN;
+        l.status = LibVaipakam.LoanStatus.Active;
+        l.lender = makeAddr("liqSurplusLender");
+        l.borrower = borrower;
+        l.principalAsset = mockERC20; // VPFI
+        l.principal = 500 ether;
+        l.collateralAsset = mockCollateralERC20;
+        l.collateralAmount = 1000 ether;
+        l.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        l.assetType = LibVaipakam.AssetType.ERC20;
+        l.interestRateBps = 0;
+        l.startTime = uint64(block.timestamp);
+        l.durationDays = 30;
+        l.lenderTokenId = LENDER_TOKEN_ID;
+        l.borrowerTokenId = 8888;
+        l.liquidationLtvBpsAtInit = 8_500;
+        l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
+        TestMutatorFacet(address(diamond)).scaffoldActiveLoan(LOAN, l);
+        _mockLenderNft(l.lender); // also mocks ownerOf(8888) == borrower
+
+        // Fund the borrower vault with the collateral so the swap can withdraw
+        // it; fund the diamond with both assets to back the mocked swap flow.
+        address bVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower);
+        ERC20Mock(mockCollateralERC20).mint(bVault, 1000 ether);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
+            borrower, mockCollateralERC20, 1000 ether
+        );
+        ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);
+        ERC20Mock(mockCollateralERC20).mint(address(diamond), 100000 ether);
+
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(
+            mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid
+        );
+        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+        mockOraclePrice(mockERC20, 1e8, 8);
+
+        vm.warp(block.timestamp + 31 days + 30 days);
+        DefaultedFacet(address(diamond)).triggerDefault(LOAN, defaultAdapterCalls());
+
+        uint256 reserved = _encumbered(borrower);
+        assertGt(reserved, 0, "VPFI borrower surplus reserved against unstake");
+
+        // The stored borrower cannot front-run-unstake the reserved surplus.
+        vm.prank(borrower);
+        vm.expectRevert();
+        VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(reserved);
+
+        // The current borrower-position holder (== `borrower` per the mock)
+        // claims → reservation released atomically with the surplus payout.
+        vm.prank(borrower);
+        ClaimFacet(address(diamond)).claimAsBorrower(LOAN);
+        assertEq(
+            _encumbered(borrower),
+            0,
+            "borrower-surplus reservation released on claimAsBorrower"
+        );
+    }
 }

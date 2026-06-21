@@ -291,6 +291,52 @@ library LibEncumbrance {
         s.lenderProceedsEncumberedAsset[loanId] = address(0);
     }
 
+    // ─── #661 — borrower default-surplus reservation (mirror of #592) ───────
+
+    /// @notice #661 — reserve a VPFI borrower-surplus against the unstake path,
+    ///         the borrower-side analog of {encumberLenderProceeds}. A liquid
+    ///         default / liquidation returns the surplus to the borrower's vault
+    ///         as a `borrowerClaims` row; without this reservation a borrower who
+    ///         transferred their position could `withdrawVPFIFromVault` it before
+    ///         the current holder claims. Records the asset once per loan
+    ///         (always the principal asset here) and adds to the per-loan amount
+    ///         + the shared `encumbered` aggregate. Call ONLY for VPFI surplus.
+    function encumberBorrowerProceeds(
+        uint256 loanId,
+        address borrower,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (s.borrowerProceedsEncumbered[loanId] == 0) {
+            s.borrowerProceedsEncumberedAsset[loanId] = asset;
+        } else {
+            assert(s.borrowerProceedsEncumberedAsset[loanId] == asset);
+        }
+        s.encumbered[borrower][asset][0] += amount;
+        s.borrowerProceedsEncumbered[loanId] += amount;
+    }
+
+    /// @notice #661 — release a loan's VPFI borrower-surplus reservation (see
+    ///         {encumberBorrowerProceeds}). Called from `ClaimFacet.claimAsBorrower`
+    ///         immediately BEFORE the surplus withdraw, so the withdraw guard
+    ///         sees it as free. Idempotent + keyed off the per-loan record → a
+    ///         no-op for every loan that never reserved. Releases under the asset
+    ///         RECORDED at reserve time, so the decrement always matches.
+    function releaseBorrowerProceeds(
+        uint256 loanId,
+        address borrower
+    ) internal {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.borrowerProceedsEncumbered[loanId];
+        if (reserved == 0) return;
+        address asset = s.borrowerProceedsEncumberedAsset[loanId];
+        _decrementAggregate(borrower, asset, 0, reserved);
+        s.borrowerProceedsEncumbered[loanId] = 0;
+        s.borrowerProceedsEncumberedAsset[loanId] = address(0);
+    }
+
     // ─── Intent working-capital lien — #393 v1-d ────────────────────────
 
     /// @notice Lien `amount` of `owner`'s just-deposited intent working
