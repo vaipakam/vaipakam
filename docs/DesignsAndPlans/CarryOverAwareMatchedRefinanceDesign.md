@@ -99,20 +99,39 @@ stale/ungated offer. So a tagged borrower offer is matchable **iff** ALL hold:
 3. **Live freshness** (re-evaluated at preview/match, NOT trusted from the
    create-time snapshot): the target loan is still active, the offer creator is
    still the current borrower-position-NFT holder, the old-loan lien is still
-   live, and `offer.amount == target loan outstanding principal`. (Finding 1+2 —
-   a repaid/defaulted target, a transferred borrower NFT, or a mutated amount
-   must all be rejected in preview, exactly as the atomic path would.) **and**
+   live, and `offer.amount == target loan outstanding principal`. (Round-2
+   Findings 1+2.) **and**
 4. **Current refinance gates** the atomic path enforces: the auto-refinance
    caps (rate/expiry) are satisfied and not stale, `cfgAutoRefinanceEnabled`
    permits the completion path, and the target loan needs no pending period
-   settlement. (Finding 4.)
+   settlement. (Round-2 Finding 4.) **and**
+5. **Strict same-key retag is possible** (Round-3 Finding 1):
+   `LibEncumbrance.rekeyCollateralLienOnRefinance` succeeds only when the old
+   lien's full key (`user / asset / tokenId / amount / assetType`) equals the
+   replacement loan's. A carry-over offer that survived a borrower-position
+   transfer + consolidation to an interim holder (then back to the creator) can
+   pass §3.1.3 freshness yet have a diverged lien key — preview/admission must
+   run the same strict-key test or it recreates the false-positive bot loop. **and**
+6. **No live swap-to-repay intent on the target** (Round-3 Finding 2):
+   `_refinanceLoanLogic` calls `LibVaipakam.assertNoLiveIntentCommit(oldLoanId)`
+   (reverts `IntentPending` while `intentCommits[loanId].orderHash != 0`).
+   Admission must include the same intent-pending fence.
+
+**Closure principle: admission must be the EXHAUSTIVE mirror of
+`RefinanceFacet._refinanceLoanLogic`'s preconditions, derived from the SAME
+code** — not a hand-maintained re-listing that drifts as gates are added. The
+shared predicate (below) is the single source of truth; preview, the on-chain
+guard, and the atomic path all consult it, so a precondition can never hold in
+one and not the others. The enumerated items 1-6 are the *current* contents of
+that predicate, not a parallel list to keep in sync.
 
 `previewMatch` replaces its blanket `RefinanceTagged` rejection with this full
 test; any miss returns a dedicated non-OK `MatchError` (e.g.
 `RefinanceTagStale` / `RefinanceTagGated`) so bots can distinguish "not yet"
 from "never," and the on-chain guard mirrors it. The lender offer is never
 refinance-tagged. Fail closed on every miss. (Implementation note: factor the
-freshness + cap predicate the atomic path already uses — `LibAutoRefinanceCheck`
+freshness + cap + strict-key + intent-fence predicate the atomic path uses —
+`LibAutoRefinanceCheck` + the `_refinanceLoanLogic` pre-checks
 — into a shared view so preview and accept cannot drift.)
 
 ### 3.2 Force the AON amount to the borrower's full `amount` (lender may stay open)
@@ -327,6 +346,13 @@ remain the last line of defense, unchanged.
 - **Lender-bound violations** with forced AON amount: `lenderRemaining <
   borrower.amount`, below lender min-slice, or lender-itself-AON with
   `lender.amount != borrower.amount` → no match (lender gates preserved).
+- **Diverged retag key (Round-3 #1):** carry-over offer survives a
+  borrower-position transfer + consolidation to an interim holder, then back to
+  the creator → §3.1.3 freshness passes but the strict same-key retag would
+  fail; preview/match reject (no false positive).
+- **Live swap-to-repay intent on target (Round-3 #2):** target has a live
+  `intentCommits[loanId].orderHash` → preview returns the intent-pending miss
+  and the on-chain match rejects (would have reverted `IntentPending`).
 - Regression: untagged matched offers + direct-accept refinance unchanged.
 
 ---
