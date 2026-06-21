@@ -20,6 +20,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
@@ -132,7 +133,7 @@ contract AddCollateralFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](17);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -159,6 +160,13 @@ contract AddCollateralFacetTest is Test {
             facetAddress: address(encumbranceMutateFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getEncumbranceMutateFacetSelectors()
+        });
+        // #658 — eager consolidation cross-facet entry; the liquidation family
+        // routes its #594 close-out consolidation through this facet.
+        cuts[17] = IDiamondCut.FacetCut({
+            facetAddress: address(new ConsolidationFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");

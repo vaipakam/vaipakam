@@ -33,6 +33,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 // its own facet to keep RiskFacet under the EIP-170 size limit; the
 // HF-liquidation entry points here still dispatch through it.
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  // Phase 7a — ordered adapter failover for liquidation swaps
 
 /**
@@ -536,6 +537,45 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      Emits HFLiquidationTriggered on success, LiquidationFallback on fallback.
      * @param loanId The loan ID to liquidate.
      */
+
+    /// @dev #658 — single-copy bridge to the cross-facet eager-consolidation
+    ///      entry. RiskFacet sits ~347 bytes under EIP-170, so it CANNOT inline
+    ///      `LibConsolidation.consolidateToHolder`; instead every liquidation
+    ///      entry calls this one private helper (one `crossFacetCall` body,
+    ///      compiled once) which routes both sides through
+    ///      {ConsolidationFacet.eagerConsolidateBothSides} (Tier2 skip-not-block,
+    ///      internal-only). Each entry-point call site is then a cheap internal
+    ///      jump, keeping the facet under the limit. `bytes4(0)` bubbles a
+    ///      genuine move revert raw (consistent with the direct hooks in
+    ///      RepayFacet / DefaultedFacet).
+    function _eagerConsolidateBothSides(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
+    /// @dev #658 (Codex #680 P2) — single-copy bridge to the cross-facet
+    ///      post-withdraw VPFI re-stamp. The eager consolidation above stamped
+    ///      the holder at the full pre-liquidation balance; once a liquidation
+    ///      path withdraws VPFI collateral out of the holder's vault, the credit
+    ///      is stale-high until the next VPFI action. Each liquidation entry
+    ///      calls this AFTER its collateral withdrawal; no-op for non-VPFI
+    ///      collateral (gated inside the facet). Same EIP-170 rationale as
+    ///      {_eagerConsolidateBothSides}.
+    function _restampCollateralVpfi(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
     function triggerLiquidation(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
@@ -588,6 +628,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // #658 — HF-liquidation is a BOTH-SIDE close-out: it pays the lender and
+        // returns any surplus to the borrower. Consolidate each transferred
+        // side to its current holder BEFORE the internal-match dispatch + swap
+        // settlement below, so proceeds/surplus route correctly.
+        _eagerConsolidateBothSides(loanId);
+
         // ── EC-003 Phase 3 — internal-match auto-dispatch ──────────────
         // Before falling through to the external-aggregator swap, check
         // whether an opposing-direction internal-match candidate exists.
@@ -605,6 +651,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // B.2 semantic ("don't dump into the external book mid-window")
         // for that defensive edge.
         if (RiskMatchLiquidationFacet(address(this)).attemptInternalMatchAutoDispatch(loanId, msg.sender)) {
+            // #658 (Codex #680 round-2 P2) — the auto-dispatch branch returns
+            // here BEFORE the external-swap restamp below. If the eager
+            // consolidation above moved VPFI collateral to the holder (stamping
+            // them at the full pre-liquidation balance) and the internal match
+            // just consumed it, re-stamp the triggering loan's holder at the
+            // reduced balance now, so they can't keep tier/staking credit for
+            // VPFI the match already removed. No-op for non-VPFI. (The matched
+            // CANDIDATE leg's consolidation + restamp is PR-B —
+            // RiskMatchLiquidationFacet, where the candidateId is in scope.)
+            _restampCollateralVpfi(loanId);
             return;
         }
 
@@ -662,6 +718,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             ),
             VaultWithdrawFailed.selector
         );
+        // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
+        // the full pre-liquidation VPFI balance; the withdrawal just above
+        // removed the collateral. Re-stamp at the reduced balance (no-op for
+        // non-VPFI). Covers both the swap-success and swap-fail/fallback
+        // branches below; the auto-dispatch branch returned earlier and its
+        // internal-match collateral handling lands with PR-B.
+        _restampCollateralVpfi(loanId);
 
         // Compute expected proceeds from oracle prices and the slippage floor
         // (94% of expected = 6% slippage ceiling per README §7). The floor
@@ -988,6 +1051,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hfBefore = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hfBefore >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // #658 — partial liquidation pays the lender a slice and may return a
+        // borrower surplus; consolidate both transferred sides to their current
+        // holders before the slice settlement. hfBefore is already captured
+        // above and the move doesn't change the HF inputs (loan.collateralAmount
+        // / principal), so the #395 sizing math is unaffected.
+        _eagerConsolidateBothSides(loanId);
+
         // In-term gate — partial is a "before maturity" tool. Once the
         // loan matures, late fees apply and the cleaner close-out is
         // full liquidation or time-based default. Excludes late-fee
@@ -1060,6 +1130,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             ),
             VaultWithdrawFailed.selector
         );
+        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
+        // the partial collateral slice leaves the vault. No-op for non-VPFI.
+        _restampCollateralVpfi(loanId);
 
         // Oracle-derived expected proceeds + slippage floor, scoped to
         // the slice. Same formula as {triggerLiquidation}.
@@ -1384,6 +1457,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // #658 — discounted liquidation is a both-side close-out (lender debt +
+        // borrower surplus); consolidate transferred sides to current holders
+        // before settlement.
+        _eagerConsolidateBothSides(loanId);
+
         // Resolve per-tier discount. `getEffectiveLiquidityTier`
         // returns 0 for unclassified assets — the discount math
         // requires a classified tier so we reject up-front. The
@@ -1528,6 +1606,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
                 VaultWithdrawFailed.selector
             );
         }
+        // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
+        // the seized collateral leaves the vault (the surplus stays encumbered
+        // in the vault and is reflected in the reduced balance). No-op for
+        // non-VPFI; harmless when nothing was seized.
+        _restampCollateralVpfi(loanId);
 
         // Record borrower claim metadata — the surplus is in COLLATERAL
         // units (not principal), sits ENCUMBERED in the borrower's vault,

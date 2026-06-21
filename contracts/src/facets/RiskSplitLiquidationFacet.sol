@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -144,6 +145,18 @@ contract RiskSplitLiquidationFacet is
         }
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
+        // #658 — split liquidation is a both-side close-out (lender debt +
+        // borrower surplus); consolidate transferred sides to current holders
+        // before the split-swap settlement, via the internal cross-facet eager
+        // entry (Tier2 skip-not-block). `bytes4(0)` bubbles a genuine move
+        // revert raw.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
         LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
             .checkLiquidityOnActiveNetwork(loan.collateralAsset);
         if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
@@ -175,6 +188,18 @@ contract RiskSplitLiquidationFacet is
                 loan.collateralAmount
             ),
             VaultWithdrawFailed.selector
+        );
+        // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
+        // the full pre-liquidation VPFI balance; re-stamp after the withdrawal
+        // above so the holder can't retain tier/staking credit for VPFI that
+        // already left. Internal-only ConsolidationFacet entry; no-op for
+        // non-VPFI collateral.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
         );
 
         // Oracle-derived total minOutputAmount — same formula as the failover

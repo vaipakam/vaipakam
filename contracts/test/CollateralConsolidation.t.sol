@@ -426,4 +426,18 @@ contract CollateralConsolidationTest is SetupTest {
         // Benign no-op: nothing moved, no revert.
         assertEq(_getLoan().borrower, borrowerOrig, "anchor unchanged on terminal");
     }
+
+    /// #658 — the eager cross-facet entry points are internal-only (callable
+    /// solely via the Diamond's own `address(this)` cross-facet call from a
+    /// close-out host). A direct external call must revert OnlyDiamondInternal,
+    /// so no external actor can drive a Tier-2 (skip-not-block) consolidation
+    /// that bypasses the holder/sanctions gate the standalone entries enforce.
+    function test_EagerEntries_InternalOnly() public {
+        _seedBorrowerLoan();
+        vm.expectRevert(ConsolidationFacet.OnlyDiamondInternal.selector);
+        ConsolidationFacet(address(diamond)).eagerConsolidateToHolder(LOAN, false);
+
+        vm.expectRevert(ConsolidationFacet.OnlyDiamondInternal.selector);
+        ConsolidationFacet(address(diamond)).eagerConsolidateBothSides(LOAN);
+    }
 }
