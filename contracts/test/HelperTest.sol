@@ -79,7 +79,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](87);
+        selectors = new bytes4[](88);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -248,6 +248,8 @@ contract HelperTest {
         selectors[84] = TestMutatorFacet.pushUserLoanIdRaw.selector;
         selectors[85] = TestMutatorFacet.vpfiTokenRaw.selector;
         selectors[86] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
+        // #673 — designate VPFI directly in harnesses that don't cut VPFITokenFacet.
+        selectors[87] = TestMutatorFacet.setVpfiTokenRaw.selector;
         return selectors;
     }
 

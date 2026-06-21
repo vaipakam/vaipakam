@@ -2334,4 +2334,53 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(loan.lender, newLender);
         vm.clearMockedCalls();
     }
+
+    // ─── #673 (#597) — held-for-lender VPFI reservation migrates on sale ───────
+
+    /// @notice #597/#673 — a pre-existing held-for-lender VPFI reservation on the
+    ///         active loan must re-key from the old lender to the new lender when
+    ///         the position is sold (the held VPFI itself migrates old→new in
+    ///         `sellLoanViaBuyOffer`). The reservation→unstake-block link is
+    ///         proven in Vpfi592LenderProceedsTest; here we assert the sale re-key.
+    function test_597_saleMigratesHeldForLenderVpfiReservation() public {
+        // Designate the loan's principal asset as the VPFI token (raw — this
+        // harness's diamond does not cut VPFITokenFacet) so the sale's held-for-
+        // lender re-reservation fires (`loan.principalAsset == s.vpfiToken`).
+        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
+
+        // Simulate a prior held-for-lender VPFI accrual (as
+        // transferObligationViaOffer / offsetWithNewOffer now leave it):
+        // physically in the OLD lender's vault, tracked, and reserved.
+        uint256 held = 500 ether;
+        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        ERC20Mock(mockERC20).mint(oldVault, held);
+        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
+        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
+        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
+
+        // Reserved on the OLD lender pre-sale (this aggregate is what the unstake
+        // free-balance guard subtracts).
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(lender, mockERC20, 0),
+            held,
+            "held reserved on the old lender pre-sale"
+        );
+
+        // Sell the loan to the new lender.
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+
+        // Reservation re-keyed old → new, where the held VPFI now physically lives.
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(lender, mockERC20, 0),
+            0,
+            "old lender reservation released on sale"
+        );
+        assertEq(
+            TestMutatorFacet(address(diamond)).getEncumberedRaw(newLender, mockERC20, 0),
+            held,
+            "held-for-lender reservation re-keyed to the new lender"
+        );
+    }
 }
