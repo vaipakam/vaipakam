@@ -227,14 +227,28 @@ library LibAutoRefinanceCheck {
         ) return false;
         // STRICT same-key retag must be possible — mirror
         // `rekeyCollateralLienOnRefinance`'s success key against the replacement
-        // loan (borrower = currentOwner, collateral = the offer's).
+        // loan (borrower = currentOwner, collateral = the offer's). The lien's
+        // `amount` is ENCODED by collateral type exactly as `LibEncumbrance`
+        // stores it: 1 for ERC721, `collateralQuantity` for ERC1155, else the
+        // ERC20 `collateralAmount` (which is structurally 0 for NFT collateral),
+        // so compare against the encoded value, not the raw `collateralAmount`.
+        uint256 expectedLienAmount;
+        if (offer.collateralAssetType == LibVaipakam.AssetType.ERC721) {
+            expectedLienAmount = 1;
+        } else if (
+            offer.collateralAssetType == LibVaipakam.AssetType.ERC1155
+        ) {
+            expectedLienAmount = offer.collateralQuantity;
+        } else {
+            expectedLienAmount = offer.collateralAmount;
+        }
         LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[oldLoanId];
         if (
             lien.released ||
             lien.user != currentOwner ||
             lien.asset != offer.collateralAsset ||
             lien.tokenId != offer.collateralTokenId ||
-            lien.amount != offer.collateralAmount ||
+            lien.amount != expectedLienAmount ||
             lien.assetType != offer.collateralAssetType
         ) return false;
         return true;

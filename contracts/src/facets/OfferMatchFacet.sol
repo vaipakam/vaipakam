@@ -106,6 +106,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         that only the direct accept-and-refinance path can honour
     ///         atomically, so they are excluded from the partial-fill matcher.
     error RefinanceTaggedOfferNotMatchable();
+    /// @notice #595 — an admitted carry-over match where the lender's pro-rated
+    ///         collateral requirement exceeds the carried (pinned) amount.
+    error RefinanceCarryOverCollateralShortfall();
     /// @notice #633 — the #398 aggregator-adapter feature is paused by governance,
     ///         so an aggregator's intent cannot be filled (user intents still can).
     error AggregatorAdaptersPaused();
@@ -813,6 +816,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     bAon.amount,
                     mr.matchAmount
                 );
+            }
+            // #595 — an admitted carry-over match where the lender's pro-rated
+            // collateral requirement exceeds the carried (pinned) amount.
+            // Surface a dedicated revert (not the generic InvalidOfferType) so
+            // callers can distinguish it from a malformed offer.
+            if (
+                mr.errorCode ==
+                LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall
+            ) {
+                revert RefinanceCarryOverCollateralShortfall();
             }
             revert InvalidOfferType();
         }

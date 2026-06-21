@@ -733,6 +733,11 @@
   },
   {
     "type": "error",
+    "name": "RefinanceCarryOverCollateralShortfall",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RefinanceTaggedOfferNotMatchable",
     "inputs": []
   },

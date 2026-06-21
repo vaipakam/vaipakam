@@ -297,6 +297,10 @@ const KNOWN_ERROR_SELECTORS: Record<string, string> = {
   // #193 — in-place offer modification surface
   '0x159351ed': 'ModifyBelowFilledFloor(uint256,uint256)',
   '0x9ce967aa': 'CollateralMutationUnsupportedForShape()',
+  // #595 — refinance-tagged offer amount is frozen to the target principal.
+  '0x7e1011f9': 'AmountMutationUnsupportedForShape()',
+  // #595 — carry-over match where the lender wants more collateral than carried.
+  '0x298a5fb3': 'RefinanceCarryOverCollateralShortfall()',
   '0x13be252b': 'InsufficientAllowance()',
   '0x0bb578c2': 'LiquidityMismatch()',
   '0x97fe4161': 'NonLiquidAssetAndNoIlliquidAsset()',
