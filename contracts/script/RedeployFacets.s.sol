@@ -11,6 +11,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -62,6 +63,15 @@ contract RedeployFacets is Script {
         PrecloseFacet precloseFacet = new PrecloseFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
         ProfileFacet profileFacet = new ProfileFacet();
+        // #658 — the refreshed RiskFacet liquidation paths cross-call
+        // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
+        // entries. Those selectors are NEW (added in #658), so a curated
+        // RiskFacet-only refresh would leave the upgraded RiskFacet calling
+        // unrouted selectors and bubble a revert mid-liquidation. Redeploy
+        // ConsolidationFacet alongside and cut its selectors (Replace the two
+        // pre-existing #594 standalone entries, Add the three new #658 ones —
+        // partitioned by live routing, same as the #394 HF-floor knob).
+        ConsolidationFacet consolidationFacet = new ConsolidationFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
@@ -69,6 +79,7 @@ contract RedeployFacets is Script {
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
+        console.log("ConsolidationFacet:   ", address(consolidationFacet));
 
         // #394 (Codex #647 rounds 5+7) — the runtime HF-floor knob selectors
         // need an Add on a PRE-#394 diamond (not yet routed → Replace reverts on
@@ -79,9 +90,16 @@ contract RedeployFacets is Script {
         // against any target diamond.
         (bytes4[] memory hfToAdd, bytes4[] memory hfToReplace) =
             _partitionByRouting(diamond, _riskAddSelectors());
+        // #658 — same Add/Replace-by-routing split for the ConsolidationFacet
+        // selector set: on a current-version diamond the two #594 standalone
+        // entries are already routed (Replace) and the three #658 entries are
+        // new (Add); on a pre-#594 diamond all five would be new (Add).
+        (bytes4[] memory consToAdd, bytes4[] memory consToReplace) =
+            _partitionByRouting(diamond, _consolidationSelectors());
 
         uint256 nExtra =
-            (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0);
+            (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
+            (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
             new IDiamondCut.FacetCut[](6 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
@@ -97,14 +115,22 @@ contract RedeployFacets is Script {
         if (hfToAdd.length > 0) {
             cuts[idx++] = _add(address(riskFacet), hfToAdd);
         }
+        if (consToReplace.length > 0) {
+            cuts[idx++] = _replace(address(consolidationFacet), consToReplace);
+        }
+        if (consToAdd.length > 0) {
+            cuts[idx++] = _add(address(consolidationFacet), consToAdd);
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced.");
+        console.log("DiamondCut applied: 6 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
+        console.log("  Cons selectors added: ", consToAdd.length);
+        console.log("  Cons selectors repl.: ", consToReplace.length);
     }
 
     function _replace(address facet, bytes4[] memory selectors)
@@ -244,5 +270,21 @@ contract RedeployFacets is Script {
         s[12] = ProfileFacet.approveKeeper.selector;
         s[13] = ProfileFacet.revokeKeeper.selector;
         s[14] = ProfileFacet.getApprovedKeepers.selector;
+    }
+
+    /// @dev #658 — full ConsolidationFacet selector set, mirrors
+    ///      `DeployDiamond._getConsolidationFacetSelectors` (kept in lockstep).
+    ///      Indices 0-1 are the #594 standalone holder entries (already routed
+    ///      on a current diamond → Replace); 2-4 are the #658 internal-only
+    ///      eager + post-withdraw-restamp entries the refreshed RiskFacet now
+    ///      cross-calls (new → Add). `_partitionByRouting` sorts them by live
+    ///      routing so this is correct against any target diamond version.
+    function _consolidationSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](5);
+        s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
+        s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
+        s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
+        s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
+        s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
     }
 }
