@@ -11,6 +11,8 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -197,6 +199,136 @@ contract BackstopVaultTest is SetupTest {
         assertEq(loan.lender, vault, "loan.lender == backstop vault");
         assertEq(loan.principal, PRINCIPAL, "principal");
         assertEq(loan.principalAsset, mockERC20, "principal asset");
+    }
+
+    // ─── #638 — backstop-only oracle-coverage gate (Role A) ─────────────────
+
+    /// @dev Knob default 0 ⇒ no coverage requirement ⇒ fill proceeds even with
+    ///      zero live secondaries (the general permissionless behaviour).
+    function test_backstopFill_coverageKnobOff_fillsRegardless() public {
+        assertEq(
+            BackstopFacet(address(diamond))
+                .getBackstopMinSecondaryOracleCoverage(),
+            0,
+            "knob defaults to 0"
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(0))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            vault,
+            "fill proceeds with knob off"
+        );
+    }
+
+    /// @dev Knob = 2 but only 1 live secondary ⇒ Role A refuses the collateral.
+    function test_backstopFill_coverageInsufficient_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleCoverageInsufficient.selector,
+                mockCollateralERC20,
+                uint8(1),
+                uint8(2)
+            )
+        );
+        BackstopFacet(address(diamond)).backstopFill(offerId);
+    }
+
+    /// @dev Knob = 2 and 2 live secondaries ⇒ coverage met ⇒ fill proceeds.
+    function test_backstopFill_coverageMet_fills() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(2))
+        );
+        (uint256 offerId, ) = _eligibleOffer();
+        vm.prank(makeAddr("poker"));
+        uint256 loanId = BackstopFacet(address(diamond)).backstopFill(offerId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            vault,
+            "fill proceeds when coverage met"
+        );
+    }
+
+    // ─── #638 — setter / getter / range bound ───────────────────────────────
+
+    function test_setBackstopMinSecondaryOracleCoverage_setsAndEmits() public {
+        vm.expectEmit(false, false, false, true);
+        emit BackstopFacet.BackstopMinSecondaryOracleCoverageSet(2);
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        assertEq(
+            BackstopFacet(address(diamond))
+                .getBackstopMinSecondaryOracleCoverage(),
+            2,
+            "getter reflects set value"
+        );
+    }
+
+    function test_setBackstopMinSecondaryOracleCoverage_outOfRange_reverts()
+        public
+    {
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                BackstopFacet.BackstopOracleCoverageOutOfRange.selector,
+                uint8(4)
+            )
+        );
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(4);
+    }
+
+    function test_setBackstopMinSecondaryOracleCoverage_notAdmin_reverts()
+        public
+    {
+        vm.prank(makeAddr("randoCaller"));
+        vm.expectRevert();
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(1);
+    }
+
+    /// @dev Backstop-scoping guard: the coverage knob must NOT leak into the
+    ///      general pricing path. With the knob maxed, `getAssetPrice` /
+    ///      `checkLiquidity` on a 0-secondary asset still succeed (the
+    ///      Soft-2-of-N single-feed soft fallback governs the general path).
+    function test_coverageKnob_doesNotAffectGeneralPricingPath() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(3);
+        // No revert from the general pricing / liquidity-classification reads.
+        OracleFacet(address(diamond)).getAssetPrice(mockCollateralERC20);
+        OracleFacet(address(diamond)).checkLiquidity(mockCollateralERC20);
     }
 
     function test_backstopClaim_recoversToTreasury() public {

@@ -837,6 +837,37 @@ contract OracleFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCo
         revert OraclePriceDivergence();
     }
 
+    /// @notice #638 — count the LIVE secondary price feeds (Tellor / API3 /
+    ///         DIA) for `asset`: configured, fresh, and reporting a non-zero
+    ///         value — i.e. NOT `Unavailable` — regardless of whether they
+    ///         currently agree with Chainlink. Returns 0-3.
+    /// @dev    Reuses the exact per-source probes the Soft-2-of-N quorum uses,
+    ///         so "live" here means precisely what the quorum treats as a
+    ///         contributing feed. This is a READ-ONLY helper consumed ONLY by
+    ///         the treasury backstop's opt-in oracle-coverage gate (#638); it
+    ///         does NOT change `getAssetPrice` / `checkLiquidity` or any general
+    ///         pricing / liquid-classification path — the general protocol stays
+    ///         permissionless on asset eligibility. Reverts only if the primary
+    ///         (Chainlink) read itself reverts (e.g. sequencer down), which the
+    ///         backstop callers are already gated against.
+    function countLiveSecondaryOracleFeeds(
+        address asset
+    ) external view returns (uint8 live) {
+        (uint256 primaryPrice, uint8 primaryDec) = _primaryPrice(asset);
+        if (
+            _checkTellor(asset, primaryPrice, primaryDec) !=
+            SecondaryStatus.Unavailable
+        ) live++;
+        if (
+            _checkApi3(asset, primaryPrice, primaryDec) !=
+            SecondaryStatus.Unavailable
+        ) live++;
+        if (
+            _checkDia(asset, primaryPrice, primaryDec) !=
+            SecondaryStatus.Unavailable
+        ) live++;
+    }
+
     /// @dev Tellor probe — returns the per-source status against
     ///      Chainlink. Standard SpotPrice queryId derivation:
     ///      `keccak256(abi.encode("SpotPrice", abi.encode(symbol, "usd")))`
