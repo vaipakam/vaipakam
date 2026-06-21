@@ -321,6 +321,15 @@ contract EarlyWithdrawalFacet is
             // released-but-not-moved held unencumbered + drainable. In the common
             // sell-your-own-loan case `msg.sender == loan.lender` so this is
             // unchanged. (`completeLoanSale` already uses `originalLender`.)
+            //
+            // #597 Codex #672 P2 — the stored `loan.lender` may have been
+            // sanctions-flagged after a plain lender-NFT transfer; they are
+            // LOSING custody (their held VPFI is pushed OUT to the new lender),
+            // so the Tier-1 vault gate must not brick this Tier-2 sale for the
+            // unflagged seller. Open the address-scoped exemption around ONLY
+            // this from-side withdrawal (same primitive as the #594 consolidation
+            // move). The host is `nonReentrant`; cleared immediately after.
+            s.consolidationMoveFromUser = loan.lender;
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -331,6 +340,7 @@ contract EarlyWithdrawalFacet is
                 ),
                 VaultWithdrawFailed.selector
             );
+            s.consolidationMoveFromUser = address(0);
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
             IERC20(payAsset).safeTransfer(newVault, priorHeld);
             // T-051 — Diamond-side transfer to new lender's vault
@@ -690,6 +700,12 @@ contract EarlyWithdrawalFacet is
                 address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
                     ? loan.principalAsset
                     : loan.prepayAsset;
+                // #597 Codex #672 P2 — same sanctions exemption as
+                // `sellLoanViaBuyOffer`: the departed `originalLender` is losing
+                // custody of their held VPFI, so the Tier-1 vault gate must not
+                // brick the sale for the unflagged seller. Address-scoped; the
+                // host is `nonReentrant`; cleared immediately after.
+                s.consolidationMoveFromUser = originalLender;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -700,6 +716,7 @@ contract EarlyWithdrawalFacet is
                     ),
                     VaultWithdrawFailed.selector
                 );
+                s.consolidationMoveFromUser = address(0);
                 address newVault = LibFacet.getOrCreateVault(newLender);
                 IERC20(payAsset).safeTransfer(newVault, priorHeldSale);
                 // T-051 — Diamond-side transfer to new lender's
