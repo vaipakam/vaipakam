@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
@@ -16,10 +17,13 @@ import {Deployments} from "./lib/Deployments.sol";
 
 /**
  * @title RedeployFacets
- * @notice Redeploys the six facets modified for README §3 compliance
- *         (role-scoped keeper model, dynamic liquidator incentive, and
- *         2% treasury liquidation handling fee) and diamond-cuts every
- *         selector to the new implementation via Replace.
+ * @notice Redeploys the curated facet set (originally the six README §3
+ *         facets — role-scoped keeper model, dynamic liquidator incentive,
+ *         2% treasury liquidation handling fee — plus RiskSplitLiquidationFacet
+ *         and ConsolidationFacet, added in #658 so the liquidation family's
+ *         eager-consolidation cross-facet dependency stays internally
+ *         consistent on a curated redeploy) and diamond-cuts every selector to
+ *         the new implementation, Replacing routed selectors and Adding new ones.
  *
  * @dev    SCOPE — this is a CURATED INCREMENTAL refresh of a fixed facet set,
  *         for iterating on those specific facets on an existing diamond. It is
@@ -58,6 +62,13 @@ contract RedeployFacets is Script {
         vm.startBroadcast(deployerKey);
 
         RiskFacet riskFacet = new RiskFacet();
+        // #658 — the split liquidation path (triggerLiquidationSplit) got the
+        // SAME eager-consolidation + post-withdraw VPFI-restamp wiring as the
+        // RiskFacet liquidation entries, so refresh it together with RiskFacet
+        // to avoid a half-applied liquidation family (new RiskFacet + stale
+        // split path) on a curated redeploy.
+        RiskSplitLiquidationFacet riskSplitLiquidationFacet =
+            new RiskSplitLiquidationFacet();
         DefaultedFacet defaultedFacet = new DefaultedFacet();
         LoanFacet loanFacet = new LoanFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
@@ -74,6 +85,7 @@ contract RedeployFacets is Script {
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
+        console.log("RiskSplitLiquidation: ", address(riskSplitLiquidationFacet));
         console.log("DefaultedFacet:       ", address(defaultedFacet));
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
@@ -101,14 +113,18 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](6 + nExtra);
+            new IDiamondCut.FacetCut[](7 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
         cuts[3] = _replace(address(precloseFacet), _precloseSelectors());
         cuts[4] = _replace(address(earlyWithdrawalFacet), _earlyWithdrawalSelectors());
         cuts[5] = _replace(address(profileFacet), _profileSelectors());
-        uint256 idx = 6;
+        // #658 — triggerLiquidationSplit is already routed on a current diamond
+        // (relocated to RiskSplitLiquidationFacet in #66/#633), so a plain
+        // Replace repoints it to the refreshed bytecode.
+        cuts[6] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
+        uint256 idx = 7;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -126,7 +142,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 6 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 7 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
@@ -223,6 +239,13 @@ contract RedeployFacets is Script {
         s = new bytes4[](2);
         s[0] = RiskFacet.setMinHealthFactor.selector;
         s[1] = RiskFacet.getMinHealthFactor.selector;
+    }
+
+    /// @dev #658 — RiskSplitLiquidationFacet's single selector, mirrors
+    ///      `DeployDiamond._getRiskSplitLiquidationSelectors`.
+    function _riskSplitSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](1);
+        s[0] = RiskSplitLiquidationFacet.triggerLiquidationSplit.selector;
     }
 
     function _defaultedSelectors() internal pure returns (bytes4[] memory s) {
