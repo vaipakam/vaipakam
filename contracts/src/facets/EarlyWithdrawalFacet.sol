@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -295,6 +296,15 @@ contract EarlyWithdrawalFacet is
             );
         }
 
+        // #597 — release the old lender's held-for-lender VPFI reservation
+        // BEFORE the physical migration withdraws it from their vault below:
+        // the #565 withdraw chokepoint would otherwise see the held as
+        // encumbered and brick the withdraw. `loan.lender` is still the old
+        // lender here (migrated below). No-op for a non-VPFI / never-reserved
+        // loan. The full held is re-reserved on the new lender after the
+        // position migrates (see end of this block).
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+
         // Migrate only the pre-existing heldForLender from old lender's vault to new lender's.
         // priorHeld was snapshotted before any shortfall deposits in this transaction.
         if (priorHeld > 0) {
@@ -321,6 +331,17 @@ contract EarlyWithdrawalFacet is
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
+
+        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
+        // where it now physically lives (pre-existing `priorHeld` migrated above
+        // + this tx's `shortfall` deposit). `loan.lender` is now the new lender.
+        // Released to the new lender at claim. Gated on VPFI (held is in the
+        // principal asset; NFT-rental prepay can't be VPFI — D-2).
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+            );
+        }
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window.
@@ -646,6 +667,13 @@ contract EarlyWithdrawalFacet is
         // Noah's (lender) vault and sends it to liam (borrower=offer.creator).
         // No second transfer needed here.
 
+        // #597 — release the old lender's held-for-lender VPFI reservation
+        // BEFORE the physical migration withdraws it below (else the #565
+        // chokepoint bricks the withdraw). `loan.lender` is still the old
+        // lender here. No-op for a non-VPFI / never-reserved loan. Re-reserved
+        // on the new lender after the position migrates (below).
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
             if (priorHeldSale > 0) {
@@ -672,6 +700,15 @@ contract EarlyWithdrawalFacet is
 
         // Migrate live-loan lender position in one shot.
         LibLoan.migrateLenderPosition(loanId, newLender);
+
+        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
+        // where it now physically lives. `loan.lender` is now the new lender.
+        // Released to the new lender at claim. Gated on VPFI.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+            );
+        }
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window.

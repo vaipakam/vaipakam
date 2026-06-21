@@ -570,15 +570,21 @@ contract PrecloseFacet is
                 VaultDepositFailed.selector
             );
             s.heldForLender[loanId] += lenderShare;
-            // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
-            // reserved here. Unlike the terminal paths, these land on an
-            // ACTIVE loan whose `loan.lender` can change before claim
-            // (obligation-transfer keeps the lender, but a subsequent lender
-            // sale, or the offset path, rewrites it), so the claim-time release
-            // — keyed on the then-current `loan.lender` — would target a
-            // different account than the reserved one. Reserving them safely
-            // needs a re-key across every lender-change path plus a decision on
-            // exiting-lender ownership; tracked as a follow-up (#597).
+            // #597 — reserve the held-for-lender VPFI against the unstake path
+            // (the lender could otherwise `withdrawVPFIFromVault` to drain it
+            // before the holder claims). `transferObligationViaOffer` KEEPS
+            // `loan.lender`, so the reservation and the claim-time release key
+            // on the SAME account — no migration needed here. A LATER lender
+            // sale of this position re-keys the reservation in the
+            // EarlyWithdrawalFacet sale paths (release-old + reserve-total-new).
+            // Gated on VPFI — the only asset with a user-facing tracked-withdraw
+            // (composes with any terminal #592 reserve: same loanId, same VPFI
+            // asset, `encumberLenderProceeds` adds).
+            if (payAsset == s.vpfiToken) {
+                LibEncumbrance.encumberLenderProceeds(
+                    loanId, loan.lender, payAsset, lenderShare
+                );
+            }
         }
 
         // ── 3. Release alice's collateral ───────────────────────────────────
@@ -1043,11 +1049,20 @@ contract PrecloseFacet is
             VaultDepositFailed.selector
         );
         s.heldForLender[loanId] += lenderTotal;
-        // NOTE (#592): held-for-lender VPFI accruals are deliberately NOT
-        // reserved here — see the matching note in `transferObligationViaOffer`.
-        // The offset path rewrites `loan.lender` (old → new) within this same
-        // transaction, so the reserved (old) account and the claim-time
-        // (new) account diverge immediately. Deferred to a follow-up (#597).
+        // #597 — reserve the held-for-lender VPFI against the unstake path.
+        // Contrary to the earlier #592 note, the offset does NOT rewrite
+        // `loan.lender` on THIS (original) loan: the old lender keeps the
+        // position and claims this payoff via `claimAsLender`
+        // (`_completeOffsetImpl` records the held but not `lenderClaims`, and
+        // the claim withdraws `heldForLender[loanId]` from the old lender's
+        // vault). The new lender takes a SEPARATE new loan. So the reservation
+        // and the claim-time release key on the same (old-lender) account here
+        // — no migration needed. Gated on VPFI.
+        if (payAssetOffset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, payAssetOffset, lenderTotal
+            );
+        }
     }
 
     /**
