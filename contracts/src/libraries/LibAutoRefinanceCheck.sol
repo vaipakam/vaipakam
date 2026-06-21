@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
+import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
 
 /**
  * @title  LibAutoRefinanceCheck
@@ -122,6 +123,120 @@ library LibAutoRefinanceCheck {
         LibVaipakam.Encumbrance storage lien =
             s.loanCollateralLien[refinanceTargetLoanId];
         if (lien.user == address(0) || lien.released) return false;
+        return true;
+    }
+
+    /// @notice #595 — NON-REVERTING match-time admission predicate for a
+    ///         carry-over refinance offer. Returns true iff a matched fill of
+    ///         `offer` against target `oldLoanId` would survive EVERY
+    ///         precondition `RefinanceFacet._refinanceLoanLogic` enforces, so
+    ///         `LibOfferMatch.previewMatch` and the on-chain `matchOffers` guard
+    ///         admit exactly the pairs the atomic retag would accept — no bot
+    ///         false positives, no uncollateralized state. This is the single
+    ///         shared source of truth for matched-refinance admission (design
+    ///         §3.1 "exhaustive mirror"); the atomic path keeps its own reverting
+    ///         checks as the final net.
+    /// @dev    `offer.accepted` is intentionally NOT checked — it is a
+    ///         match-EXECUTION invariant set during the fill (the dust-close
+    ///         flip), not an admission precondition (preview runs pre-accept).
+    ///         Mirrors, in order: target Active; no live swap-to-repay intent
+    ///         (`assertNoLiveIntentCommit`); auto-refinance kill-switch ON
+    ///         (matched fills complete via the keeper-driven retag, so the
+    ///         `cfgAutoRefinanceEnabled` gate always applies); period-settlement
+    ///         current; creator == current borrower-NFT owner; AON single-value
+    ///         with `amount == target outstanding principal`; asset continuity;
+    ///         caps fresh + rate/expiry within cap; live carry-over eligibility
+    ///         (re-derived, not the create-time snapshot); and the STRICT
+    ///         same-key retag possible (mirrors
+    ///         `LibEncumbrance.rekeyCollateralLienOnRefinance`'s success key).
+    function matchAdmissible(
+        LibVaipakam.Storage storage s,
+        uint256 oldLoanId,
+        LibVaipakam.Offer storage offer
+    ) internal view returns (bool) {
+        if (oldLoanId == 0) return false;
+        if (!offer.refinanceCarryOver) return false;
+        if (offer.refinanceTargetLoanId != oldLoanId) return false;
+        if (offer.offerType != LibVaipakam.OfferType.Borrower) return false;
+
+        LibVaipakam.Loan storage oldLoan = s.loans[oldLoanId];
+        if (oldLoan.status != LibVaipakam.LoanStatus.Active) return false;
+        // No live swap-to-repay intent commit on the target (mirror
+        // `LibVaipakam.assertNoLiveIntentCommit`).
+        if (s.intentCommits[oldLoanId].orderHash != bytes32(0)) return false;
+        // Matched fills finish through the keeper-driven retag (msg.sender is the
+        // Diamond, not the borrower-NFT owner), so the auto-refinance kill-switch
+        // always gates them.
+        if (!s.protocolCfg.cfgAutoRefinanceEnabled) return false;
+        // Period-settlement must be current (not overdue past grace).
+        if (
+            oldLoan.periodicInterestCadence !=
+            LibVaipakam.PeriodicInterestCadence.None
+        ) {
+            if (
+                block.timestamp >=
+                LibPeriodicInterest.settleAllowedFromAt(oldLoan)
+            ) return false;
+        }
+        // Creator must still be the current borrower-position-NFT holder.
+        address currentOwner = LibERC721.ownerOf(oldLoan.borrowerTokenId);
+        if (offer.creator != currentOwner) return false;
+        // AON single-value: amount == amountMax == target outstanding principal.
+        uint256 effMax = offer.amountMax == 0 ? offer.amount : offer.amountMax;
+        if (offer.amount != effMax) return false;
+        if (offer.amount != oldLoan.principal) return false;
+        // Asset continuity (inlined to avoid a circular LibOfferMatch import).
+        if (
+            offer.lendingAsset != oldLoan.principalAsset ||
+            offer.collateralAsset != oldLoan.collateralAsset ||
+            offer.collateralAssetType != oldLoan.collateralAssetType ||
+            offer.prepayAsset != oldLoan.prepayAsset ||
+            offer.assetType != LibVaipakam.AssetType.ERC20 ||
+            oldLoan.assetType != LibVaipakam.AssetType.ERC20
+        ) return false;
+        // Auto-refinance caps fresh (setter zero or current owner) +
+        // rate/expiry within cap.
+        LibVaipakam.AutoRefinanceCaps storage caps =
+            s.autoRefinanceCaps[oldLoanId];
+        if (
+            !caps.enabled ||
+            !(caps.setter == address(0) || caps.setter == currentOwner)
+        ) return false;
+        uint256 offerMaxRate = offer.interestRateBpsMax == 0
+            ? offer.interestRateBps
+            : offer.interestRateBpsMax;
+        if (offerMaxRate > caps.maxRateBps) return false;
+        if (
+            caps.maxNewExpiry != 0 &&
+            block.timestamp + uint256(offer.durationDays) * 1 days >
+                uint256(caps.maxNewExpiry)
+        ) return false;
+        // Live carry-over eligibility (non-transferred + single-value collateral
+        // + exact identity + live lien), re-derived rather than trusting the
+        // create-time `refinanceCarryOver` snapshot.
+        if (
+            !isCarryOver(
+                s,
+                oldLoanId,
+                offer.creator,
+                offer.collateralAmount,
+                offer.collateralAmountMax,
+                offer.collateralTokenId,
+                offer.collateralQuantity
+            )
+        ) return false;
+        // STRICT same-key retag must be possible — mirror
+        // `rekeyCollateralLienOnRefinance`'s success key against the replacement
+        // loan (borrower = currentOwner, collateral = the offer's).
+        LibVaipakam.Encumbrance storage lien = s.loanCollateralLien[oldLoanId];
+        if (
+            lien.released ||
+            lien.user != currentOwner ||
+            lien.asset != offer.collateralAsset ||
+            lien.tokenId != offer.collateralTokenId ||
+            lien.amount != offer.collateralAmount ||
+            lien.assetType != offer.collateralAssetType
+        ) return false;
         return true;
     }
 
