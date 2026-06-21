@@ -166,6 +166,15 @@ library LibFacet {
         address vault = getOrCreateVault(newLender);
         IERC20(asset).safeTransfer(vault, amount);
         LibVaipakam.storageSlot().heldForLender[loanId] += amount;
+        // #597 Codex #672 P2 — tick the protocol-tracked vault balance, like the
+        // sibling `depositFromPayerForLender` (via `vaultDepositERC20From`) does.
+        // Without this the held-for-lender claim (`ClaimFacet` withdraws the FULL
+        // `heldForLender` via `vaultWithdrawERC20` → `recordVaultWithdraw`, which
+        // decrements tracked) would underflow on this Diamond-resident deposit,
+        // AND the #597 VPFI reservation of the full held would subtract an
+        // untracked amount from the lender's free balance (over-locking unrelated
+        // stake). Single caller (`sellLoanViaBuyOffer`'s option-1 shortfall).
+        LibVaipakam.recordVaultDeposit(newLender, asset, amount);
     }
 
     /// @dev T-037 — `safeTransferFrom`-based variant of

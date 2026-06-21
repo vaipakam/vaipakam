@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
@@ -295,22 +296,51 @@ contract EarlyWithdrawalFacet is
             );
         }
 
+        // #597 — release the old lender's held-for-lender VPFI reservation
+        // BEFORE the physical migration withdraws it from their vault below:
+        // the #565 withdraw chokepoint would otherwise see the held as
+        // encumbered and brick the withdraw. `loan.lender` is still the old
+        // lender here (migrated below). No-op for a non-VPFI / never-reserved
+        // loan. The full held is re-reserved on the new lender after the
+        // position migrates (see end of this block).
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+
         // Migrate only the pre-existing heldForLender from old lender's vault to new lender's.
         // priorHeld was snapshotted before any shortfall deposits in this transaction.
         if (priorHeld > 0) {
             address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
                 ? loan.principalAsset
                 : loan.prepayAsset;
+            // #597 Codex #672 P1 — withdraw the held from the STORED `loan.lender`,
+            // NOT `msg.sender`. The held was deposited into `loan.lender`'s vault
+            // at accrual and the #597 reservation (released just above) is keyed
+            // there too. After a plain lender-NFT transfer (pre-consolidation),
+            // `msg.sender` (the current NFT owner accepted by
+            // `requireLenderNftOwner`) ≠ `loan.lender`; sourcing from `msg.sender`
+            // would migrate the caller's OWN VPFI and leave the stored lender's
+            // released-but-not-moved held unencumbered + drainable. In the common
+            // sell-your-own-loan case `msg.sender == loan.lender` so this is
+            // unchanged. (`completeLoanSale` already uses `originalLender`.)
+            //
+            // #597 Codex #672 P2 — the stored `loan.lender` may have been
+            // sanctions-flagged after a plain lender-NFT transfer; they are
+            // LOSING custody (their held VPFI is pushed OUT to the new lender),
+            // so the Tier-1 vault gate must not brick this Tier-2 sale for the
+            // unflagged seller. Open the address-scoped exemption around ONLY
+            // this from-side withdrawal (same primitive as the #594 consolidation
+            // move). The host is `nonReentrant`; cleared immediately after.
+            s.consolidationMoveFromUser = loan.lender;
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender, // old lender
+                    loan.lender, // stored (old) lender — where the held VPFI sits
                     payAsset,
                     address(this),
                     priorHeld
                 ),
                 VaultWithdrawFailed.selector
             );
+            s.consolidationMoveFromUser = address(0);
             address newVault = LibFacet.getOrCreateVault(buyOffer.creator);
             IERC20(payAsset).safeTransfer(newVault, priorHeld);
             // T-051 — Diamond-side transfer to new lender's vault
@@ -321,6 +351,17 @@ contract EarlyWithdrawalFacet is
         // Migrate lender position: burn old NFT + mint new LoanInitiated NFT
         // for Noah, update loan.lender and loan.lenderTokenId in one place.
         LibLoan.migrateLenderPosition(loanId, buyOffer.creator);
+
+        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
+        // where it now physically lives (pre-existing `priorHeld` migrated above
+        // + this tx's `shortfall` deposit). `loan.lender` is now the new lender.
+        // Released to the new lender at claim. Gated on VPFI (held is in the
+        // principal asset; NFT-rental prepay can't be VPFI — D-2).
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+            );
+        }
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window.
@@ -646,12 +687,25 @@ contract EarlyWithdrawalFacet is
         // Noah's (lender) vault and sends it to liam (borrower=offer.creator).
         // No second transfer needed here.
 
+        // #597 — release the old lender's held-for-lender VPFI reservation
+        // BEFORE the physical migration withdraws it below (else the #565
+        // chokepoint bricks the withdraw). `loan.lender` is still the old
+        // lender here. No-op for a non-VPFI / never-reserved loan. Re-reserved
+        // on the new lender after the position migrates (below).
+        LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
+
         // Migrate only pre-existing heldForLender from old lender's vault to new lender's
         {
             if (priorHeldSale > 0) {
                 address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
                     ? loan.principalAsset
                     : loan.prepayAsset;
+                // #597 Codex #672 P2 — same sanctions exemption as
+                // `sellLoanViaBuyOffer`: the departed `originalLender` is losing
+                // custody of their held VPFI, so the Tier-1 vault gate must not
+                // brick the sale for the unflagged seller. Address-scoped; the
+                // host is `nonReentrant`; cleared immediately after.
+                s.consolidationMoveFromUser = originalLender;
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
                         VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -662,6 +716,7 @@ contract EarlyWithdrawalFacet is
                     ),
                     VaultWithdrawFailed.selector
                 );
+                s.consolidationMoveFromUser = address(0);
                 address newVault = LibFacet.getOrCreateVault(newLender);
                 IERC20(payAsset).safeTransfer(newVault, priorHeldSale);
                 // T-051 — Diamond-side transfer to new lender's
@@ -672,6 +727,15 @@ contract EarlyWithdrawalFacet is
 
         // Migrate live-loan lender position in one shot.
         LibLoan.migrateLenderPosition(loanId, newLender);
+
+        // #597 — re-reserve the FULL held-for-lender VPFI on the NEW lender,
+        // where it now physically lives. `loan.lender` is now the new lender.
+        // Released to the new lender at claim. Gated on VPFI.
+        if (loan.principalAsset == s.vpfiToken) {
+            LibEncumbrance.encumberLenderProceeds(
+                loanId, loan.lender, loan.principalAsset, s.heldForLender[loanId]
+            );
+        }
 
         // Old lender forfeits interaction rewards to treasury; new lender
         // gets a fresh entry covering the residual loan window.

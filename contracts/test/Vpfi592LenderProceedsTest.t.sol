@@ -83,6 +83,19 @@ contract Vpfi592LenderProceedsTest is SetupTest {
             abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector),
             ""
         );
+        // #594 — the terminal close-out paths (repayLoan / triggerDefault) now
+        // run the both-side consolidation hook, which calls
+        // `ownerOf(borrowerTokenId)`. These scaffolds never mint the borrower
+        // position NFT (id 8888), so mock it to the stored `borrower` → the hook
+        // sees current == stored and is a no-op (AlreadyConsolidated). Without
+        // this the hook reverts `ERC721NonexistentToken(8888)`. Every test seeds
+        // `l.borrower = borrower` + `l.borrowerTokenId = 8888` and calls this
+        // helper, so it covers all of them.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(8888)),
+            abi.encode(borrower)
+        );
     }
 
     function _encumbered(address who) internal view returns (uint256) {
