@@ -41,4 +41,6 @@ softprops/action-gh-release@*    # widely-used release-attach Action
 imjohnbo/issue-bot@*              # used by .github/workflows/iteration-kickoff-sync.yml
 release-drafter/release-drafter@* # used by .github/workflows/release-drafter.yml
 
+anthropics/claude-code-action@*  # added 2026-06-21 — @claude mention bot in .github/workflows/claude.yml (SHA-pinned to v1 in the workflow)
+
 # DENY everything else.
