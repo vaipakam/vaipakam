@@ -97,6 +97,19 @@
   },
   {
     "type": "function",
+    "name": "getBackstopMinSecondaryOracleCoverage",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getBackstopVault",
     "inputs": [],
     "outputs": [
@@ -297,6 +310,19 @@
         "name": "minFillAmount",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setBackstopMinSecondaryOracleCoverage",
+    "inputs": [
+      {
+        "name": "minCoverage",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ],
     "outputs": [],
@@ -665,6 +691,19 @@
   },
   {
     "type": "event",
+    "name": "BackstopMinSecondaryOracleCoverageSet",
+    "inputs": [
+      {
+        "name": "minCoverage",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "BackstopNFTSwept",
     "inputs": [
       {
@@ -877,6 +916,38 @@
     "type": "error",
     "name": "BackstopNotProvisioned",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BackstopOracleCoverageInsufficient",
+    "inputs": [
+      {
+        "name": "collateral",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "available",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "required",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BackstopOracleCoverageOutOfRange",
+    "inputs": [
+      {
+        "name": "minCoverage",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",

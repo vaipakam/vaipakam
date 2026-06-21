@@ -1130,6 +1130,20 @@ library LibVaipakam {
         // Role A, and vice-versa. Still subordinate to the `backstopEnabled`
         // master pause. See BackstopVaultV0Design.md §6.
         bool backstopAbsorbEnabled;
+        // ── #638 backstop-only oracle-coverage gate — default 0 (OFF) ───────
+        // Minimum number of LIVE secondary price feeds (Tellor / API3 / DIA —
+        // configured + fresh + non-zero) the collateral asset must have for the
+        // treasury backstop to take it on. 0 = no requirement (general
+        // permissionless behaviour; the Soft-2-of-N quorum's single-feed soft
+        // fallback still applies). 1 (or 2) = the backstop refuses collateral
+        // priced by fewer than that many secondaries, so protocol funds are
+        // never left holding single-feed-priced collateral. BACKSTOP-SCOPED
+        // ONLY — read solely by Role A (`backstopFill`) and Role B
+        // (`claimAsLenderViaBackstop` absorb); it never touches the general
+        // `OracleFacet` liquid-classification or any general liquidation path
+        // (#638 owner direction: the general path stays ungated). Range-bounded
+        // to [0, 3] in the setter (there are exactly three secondaries).
+        uint8 backstopMinSecondaryOracleCoverage;
         // ── #633 admin/governance kill-switches over CURRENTLY-ON features ──
         // PAUSE semantics (not enable): default `false` = feature ACTIVE, so a
         // fresh deploy preserves current behaviour with no init and no test

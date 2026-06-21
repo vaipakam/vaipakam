@@ -9,6 +9,7 @@ import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessCont
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
+import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {BackstopVaultImplementation} from "../BackstopVaultImplementation.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -116,6 +117,8 @@ contract BackstopFacet is
         uint256 indexed offerId,
         uint64 eligibleAfter
     );
+    /// @notice #638 — the backstop min-secondary-oracle-coverage knob changed.
+    event BackstopMinSecondaryOracleCoverageSet(uint8 minCoverage);
 
     error BackstopTemplateNotSet();
     error BackstopAlreadyInitialized();
@@ -136,6 +139,9 @@ contract BackstopFacet is
     error VPFINotConfigured();
     error VpfiLendingUnsupported();
     error BackstopAbsorbCollateralInsufficient();
+    /// @dev #638 — `setBackstopMinSecondaryOracleCoverage` given a value above
+    ///      the three available secondaries.
+    error BackstopOracleCoverageOutOfRange(uint8 minCoverage);
 
     // ─── Provisioning + impl (VAULT_ADMIN / timelock) ───────────────────────
 
@@ -427,6 +433,12 @@ contract BackstopFacet is
             OracleFacet(address(this)).checkLiquidity(o.collateralAsset) !=
             LibVaipakam.LiquidityStatus.Liquid
         ) revert OfferNotBackstopFillable();
+        // #638 — Role A puts treasury funds at risk as counterparty on this
+        // collateral. Enforce the governance-set minimum live-secondary-oracle
+        // coverage so the treasury isn't left holding single-feed-priced
+        // collateral. No-op when the knob is 0 (default). Backstop-scoped — the
+        // general permissionless liquidation path is unaffected.
+        LibBackstopOracleGate.assertCoverage(o.collateralAsset);
         loanId = BackstopVaultImplementation(vault).executeFill(
             o.lendingAsset,
             o.collateralAsset,
@@ -577,6 +589,40 @@ contract BackstopFacet is
         onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
     {
         LibVaipakam.storageSlot().protocolCfg.minBackstopDelay = delaySeconds;
+    }
+
+    /// @notice #638 — set the minimum number of LIVE secondary oracle feeds
+    ///         (Tellor / API3 / DIA) a collateral asset must have for the
+    ///         treasury backstop to take it on (both Role A fills and Role B
+    ///         absorbs). 0 = no requirement (default — the general
+    ///         permissionless behaviour). Range-bounded to [0, 3] (there are
+    ///         exactly three secondaries). BACKSTOP-SCOPED — does not affect the
+    ///         general liquid-classification or any general liquidation path.
+    function setBackstopMinSecondaryOracleCoverage(uint8 minCoverage)
+        external
+        onlyRole(LibAccessControl.VAULT_ADMIN_ROLE)
+    {
+        if (minCoverage > 3) {
+            revert BackstopOracleCoverageOutOfRange(minCoverage);
+        }
+        LibVaipakam
+            .storageSlot()
+            .protocolCfg
+            .backstopMinSecondaryOracleCoverage = minCoverage;
+        emit BackstopMinSecondaryOracleCoverageSet(minCoverage);
+    }
+
+    /// @notice #638 — the current backstop min-secondary-oracle-coverage knob.
+    function getBackstopMinSecondaryOracleCoverage()
+        external
+        view
+        returns (uint8)
+    {
+        return
+            LibVaipakam
+                .storageSlot()
+                .protocolCfg
+                .backstopMinSecondaryOracleCoverage;
     }
 
     // ─── Role B — absorb governance (VAULT_ADMIN / timelock) ────────────────

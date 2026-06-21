@@ -615,4 +615,63 @@ contract SecondaryQuorumTest is Test {
         (uint256 price2, ) = _readPrice();
         assertEq(price2, CHAINLINK_PRICE_8DEC);
     }
+
+    // ─── #638 — countLiveSecondaryOracleFeeds ─────────────────────────
+    // The read-only live-feed counter the backstop oracle-coverage gate
+    // consumes. "Live" = configured + fresh + non-zero (NOT Unavailable),
+    // independent of whether the feed agrees with Chainlink.
+
+    function _countLive() internal view returns (uint8) {
+        return
+            OracleFacet(address(diamond)).countLiveSecondaryOracleFeeds(
+                mockAsset
+            );
+    }
+
+    function testCountLive_noneConfigured_returnsZero() public view {
+        // setUp wires none of the three secondaries.
+        assertEq(_countLive(), 0, "no secondaries -> 0 live");
+    }
+
+    function testCountLive_oneAgreeingFeed_returnsOne() public {
+        _enableTellor();
+        _mockTellorAgree();
+        assertEq(_countLive(), 1, "tellor agree -> 1 live");
+    }
+
+    function testCountLive_disagreeingFeedStillCountsLive() public {
+        // A configured, fresh, non-zero feed that DISAGREES is still LIVE for
+        // coverage purposes — the backstop cares that the asset is multiply
+        // priced, not that the feeds currently concur.
+        _enableApi3();
+        _mockApi3Disagree();
+        assertEq(_countLive(), 1, "disagreeing feed still counts as live");
+    }
+
+    function testCountLive_noDataFeedNotCounted() public {
+        // Configured but reporting zero/no data -> Unavailable -> not counted.
+        _enableDia();
+        _mockDiaNoData();
+        assertEq(_countLive(), 0, "no-data feed not live");
+    }
+
+    function testCountLive_allThreeLive_returnsThree() public {
+        _enableTellor();
+        _mockTellorAgree();
+        _enableApi3();
+        _mockApi3Agree();
+        _enableDia();
+        _mockDiaAgree();
+        assertEq(_countLive(), 3, "all three live -> 3");
+    }
+
+    function testCountLive_mixedLiveAndUnavailable_countsOnlyLive() public {
+        _enableTellor();
+        _mockTellorAgree(); // live
+        _enableApi3();
+        _mockApi3NoData(); // Unavailable
+        _enableDia();
+        _mockDiaDisagree(); // live (disagrees but reports)
+        assertEq(_countLive(), 2, "2 live, 1 unavailable -> 2");
+    }
 }

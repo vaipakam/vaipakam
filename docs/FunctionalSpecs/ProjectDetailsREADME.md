@@ -424,7 +424,13 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   collateral assets the backstop will accept, and the minimum wait before a fill can
   fire — so a borrower can never be funded against an arbitrary or illiquid token.
   The backstop becomes the lender of record and later recovers the repaid principal
-  and interest back to the treasury.
+  and interest back to the treasury. Governance may additionally require, as an
+  opt-in backstop-only control, that the collateral be priced by at least a
+  configured number of live secondary oracle feeds before the backstop will take it
+  on — so protocol funds are never committed against single-feed-priced collateral.
+  This requirement is scoped to the backstop alone; it never affects which assets
+  the general, permissionless protocol will accept (that path stays ungated, relying
+  on the multi-oracle quorum's soft fallback), and it is off by default.
 
 - **Treasury-seeded backstop, liquidator-of-last-resort (Role B).** The backstop's
   second role makes a lender whole when a liquidation's market swap fails and the
@@ -443,7 +449,11 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   pays at the protocol oracle (dust-tolerant; an underwater or unpriceable position
   is refused, and the lender uses the normal in-kind claim instead), governance caps
   the cash that may be tied up in unsold collateral per asset pair, and loans that
-  received a borrower top-up are excluded and routed to the normal claim. The lender
+  received a borrower top-up are excluded and routed to the normal claim. The same
+  opt-in backstop-only minimum-secondary-oracle-coverage requirement that gates Role A
+  also gates this absorb, so the treasury never warehouses single-feed-priced
+  collateral; like Role A it is off by default and never touches the general
+  permissionless close-out path. The lender
   always retains their ordinary self-service claim — the cash exit is strictly an
   additional option. When the warehoused collateral is later sold back to cash or
   written off, a governance action records the realized return and frees the

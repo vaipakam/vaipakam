@@ -23,6 +23,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
+import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {ISwapAdapter} from "../interfaces/ISwapAdapter.sol";
@@ -432,6 +433,13 @@ contract ClaimFacet is
         address p = loan.principalAsset;
         address c = loan.collateralAsset;
         uint256 due = snap.lenderPrincipalDue;
+
+        // #638 — Role B warehouses this collateral with TREASURY cash. Enforce
+        // the governance-set minimum live-secondary-oracle coverage before the
+        // treasury takes single-feed-priced collateral onto its books. No-op
+        // when the knob is 0 (default). Backstop-scoped — the general
+        // permissionless close-out path (`claimAsLender` proper) never calls it.
+        LibBackstopOracleGate.assertCoverage(c);
 
         // Par-guard — compare the lender slice's oracle VALUE directly (not the
         // rounded-down required-collateral, which could accept a low-decimal slice

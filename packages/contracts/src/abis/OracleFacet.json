@@ -86,6 +86,25 @@
   },
   {
     "type": "function",
+    "name": "countLiveSecondaryOracleFeeds",
+    "inputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "live",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getAssetPrice",
     "inputs": [
       {

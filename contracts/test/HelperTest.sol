@@ -475,7 +475,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](17);
+        selectors = new bytes4[](18);
         selectors[0] = OracleFacet.checkLiquidity.selector;
         selectors[1] = OracleFacet.getAssetPrice.selector;
         selectors[2] = OracleFacet.calculateLTV.selector;
@@ -503,6 +503,8 @@ contract HelperTest {
         selectors[14] = OracleFacet.refreshTierLtvCache.selector;
         selectors[15] = OracleFacet.getTierLtvCacheEntry.selector;
         selectors[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
+        // #638 — live-secondary-feed counter for the backstop oracle gate.
+        selectors[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
         return selectors;
     }
 
@@ -790,7 +792,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](23);
+        selectors = new bytes4[](25);
         selectors[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         selectors[1] = BackstopFacet.provisionBackstopVault.selector;
         selectors[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -815,6 +817,9 @@ contract HelperTest {
         selectors[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
         selectors[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
         selectors[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
+        // #638 — backstop-only min-secondary-oracle-coverage knob.
+        selectors[23] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
+        selectors[24] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
     }
 
     /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).

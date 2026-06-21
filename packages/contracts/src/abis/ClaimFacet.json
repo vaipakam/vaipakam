@@ -633,6 +633,27 @@
   },
   {
     "type": "error",
+    "name": "BackstopOracleCoverageInsufficient",
+    "inputs": [
+      {
+        "name": "collateral",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "available",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "required",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "BackstopRetryRequired",
     "inputs": []
   },

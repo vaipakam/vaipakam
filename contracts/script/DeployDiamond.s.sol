@@ -1015,7 +1015,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](17);
+        s = new bytes4[](18);
         s[0] = OracleFacet.checkLiquidity.selector;
         s[1] = OracleFacet.getAssetPrice.selector;
         s[2] = OracleFacet.calculateLTV.selector;
@@ -1045,6 +1045,9 @@ contract DeployDiamond is Script {
         s[14] = OracleFacet.refreshTierLtvCache.selector;
         s[15] = OracleFacet.getTierLtvCacheEntry.selector;
         s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
+        // #638 — read-only live-secondary-feed counter, consumed only by the
+        // backstop oracle-coverage gate (LibBackstopOracleGate).
+        s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
     }
 
     function _getOracleAdminSelectors() internal pure returns (bytes4[] memory s) {
@@ -1461,7 +1464,7 @@ contract DeployDiamond is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](23);
+        s = new bytes4[](25);
         s[0] = BackstopFacet.initializeBackstopVaultImplementation.selector;
         s[1] = BackstopFacet.provisionBackstopVault.selector;
         s[2] = BackstopFacet.upgradeBackstopVault.selector;
@@ -1486,6 +1489,9 @@ contract DeployDiamond is Script {
         s[20] = BackstopFacet.releaseBackstopAbsorbExposure.selector;
         s[21] = BackstopFacet.getBackstopAbsorbInfo.selector;
         s[22] = BackstopFacet.withdrawBackstopAbsorbToTreasury.selector;
+        // #638 — backstop-only min-secondary-oracle-coverage knob.
+        s[23] = BackstopFacet.setBackstopMinSecondaryOracleCoverage.selector;
+        s[24] = BackstopFacet.getBackstopMinSecondaryOracleCoverage.selector;
     }
 
     /// #594 — Diamond NFT receiver hooks (gated+pinned, D-6).

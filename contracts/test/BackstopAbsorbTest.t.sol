@@ -7,6 +7,8 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
+import {LibBackstopOracleGate} from "../src/libraries/LibBackstopOracleGate.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -197,6 +199,50 @@ contract BackstopAbsorbTest is SetupTest {
         vm.prank(makeAddr("stranger"));
         vm.expectRevert(); // NotNFTOwner (LibAuth)
         ClaimFacet(address(diamond)).setLenderBackstopOptIn(LOAN, true);
+    }
+
+    // ─── #638 — backstop-only oracle-coverage gate (Role B) ─────────────────
+
+    /// @dev Knob = 2 but only 1 live secondary ⇒ Role B refuses to warehouse
+    ///      the collateral with treasury cash.
+    function test_absorb_coverageInsufficient_reverts() public {
+        vm.prank(owner);
+        BackstopFacet(address(diamond))
+            .setBackstopMinSecondaryOracleCoverage(2);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.countLiveSecondaryOracleFeeds.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(uint8(1))
+        );
+        _fallbackOptedIn(makeAddr("lender7"), makeAddr("borrower7"));
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibBackstopOracleGate.BackstopOracleCoverageInsufficient.selector,
+                mockCollateralERC20,
+                uint8(1),
+                uint8(2)
+            )
+        );
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+    }
+
+    /// @dev Knob default 0 ⇒ absorb proceeds regardless of coverage (covered by
+    ///      the happy path below, asserted explicitly here for the gate).
+    function test_absorb_coverageKnobOff_absorbs() public {
+        assertEq(
+            BackstopFacet(address(diamond))
+                .getBackstopMinSecondaryOracleCoverage(),
+            0,
+            "knob off by default"
+        );
+        _fallbackOptedIn(makeAddr("lender7b"), makeAddr("borrower7b"));
+        vm.prank(owner);
+        ClaimFacet(address(diamond)).claimAsLenderViaBackstop(LOAN, _emptyRetry());
+        // Reaching here without the coverage revert proves the no-op path.
     }
 
     // ─── absorb happy path ──────────────────────────────────────────────────
