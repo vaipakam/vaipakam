@@ -74,51 +74,109 @@ makes "every fill" mean "the one full fill."
 
 ## 3. Proposed design
 
-### 3.1 Admit only AON carry-over offers (relax the guard)
+**Adversarial review (PR #682) established the load-bearing correction:**
+carry-over awareness must be threaded into **`LibOfferMatch.previewMatch`** —
+the single source of truth for `matchAmount`, `reqCollateral`, and the synthetic
+HF/LTV gate — not bolted onto `_executeMatch` after the preview. `previewMatch`
+today returns `MatchError.RefinanceTagged` for *any* tagged offer **before**
+computing the match, so an `_executeMatch`-only change would leave the feature
+unmatchable (and bot previews would still skip it). The design below is
+preview-centric.
 
-Replace the blanket `refinanceTargetLoanId != 0` rejection with: a tagged
-borrower offer is matchable **iff**
+### 3.1 Admission — `previewMatch` + the facet guard (mirror each other)
 
-1. `offer.refinanceCarryOver == true` — it passed the full #576 carry-over
-   predicate at create-time (tagged + non-transferred + single-value collateral
-   + exact collateral identity + live old-loan lien), **and**
-2. `offer.fillMode == FillMode.Aon` — single full fill.
+A tagged borrower offer is matchable **iff**
 
-Any tagged offer that is **not** carry-over (transferred / ranged /
-collateral-mismatched / no-lien) or **not** AON stays rejected with
-`RefinanceTaggedOfferNotMatchable`. The lender offer is never refinance-tagged,
-so the guard only inspects the borrower side. (A tagged carry-over offer that is
-not AON is a borrower/frontend misconfiguration — fail closed.)
+1. `offer.refinanceCarryOver == true` (passed the full #576 create-time
+   predicate: tagged + non-transferred + single-value collateral + exact
+   collateral identity + live old-loan lien), **and**
+2. `offer.fillMode == FillMode.Aon`, **and**
+3. `offer.amountMax == offer.amount` re-checked **at match time** (see §3.5 —
+   defends against post-create mutation).
 
-### 3.2 Pin the matched collateral to the carried amount
+`previewMatch` replaces its blanket `RefinanceTagged` rejection with this same
+admission test (so previews and the on-chain guard agree); any tagged offer that
+fails it still maps to `RefinanceTagged` / `RefinanceTaggedOfferNotMatchable`.
+The lender offer is never refinance-tagged. Fail closed on every miss.
 
-For a carry-over match, the loan's collateral is **fixed** at the old loan's
-amount (== `offer.collateralAmount`, guaranteed equal by the #576 carry-over
-predicate). In `_executeMatch`, when the borrower offer is carry-over:
+### 3.2 Force the AON amount to the borrower's full `amount` (lender may stay open)
 
-- **Pin** `matchOverride.collateralAmount = offer.collateralAmount` (the carried
-  amount) instead of the lender-derived `mr.reqCollateral`. This makes
-  `RefinanceFacet`'s identity check pass (P2 fixed).
-- **Reject** if the lender's full-fill collateral requirement exceeds the carried
-  amount (`mr.reqCollateral > offer.collateralAmount`): the carried collateral
-  cannot satisfy the lender's terms and carry-over pledges no fresh collateral to
-  top it up. Revert with a dedicated error
-  (e.g. `RefinanceCarryOverCollateralShortfall`). When `reqCollateral <=` carried,
-  the lender is at-least-fully-secured and the borrower keeps their full
-  collateral — safe.
+`previewMatch` currently sets `matchAmount = midpoint(...)` and *then* applies the
+AON gate `matchAmount == amount`. For an open lender range with
+`lenderRemaining > borrower.amount` the midpoint exceeds `borrower.amount`, so an
+AON borrower match would revert `AonRequiresFullFill` — the lender could never be
+left partially open. The fix: when the **borrower** side is an admitted AON
+carry-over offer, **select `matchAmount = borrower.amount` directly** (its full
+single-fill size), bypassing the midpoint, and fill that amount from the lender
+(the lender offer is partially filled and stays open for its remainder). The
+borrower-side AON invariant (`matchAmount == amount && amountFilled == 0`) holds
+by construction.
 
-Because the offer is AON full-size, `mr.reqCollateral` is the lender's
-requirement at the full `amount`, so this is a single clean comparison.
+### 3.3 Pin collateral to the carried amount + risk-check the pinned value
 
-### 3.3 Atomic retag — reuse the existing hook
+For a carry-over match the collateral is **fixed** at the old loan's amount
+(== `offer.collateralAmount`, guaranteed by the #576 predicate). Inside
+`previewMatch`, for an admitted carry-over offer:
 
-No change. The dust-close hook at `OfferMatchFacet` L1117 already calls
+- set `reqCollateral = offer.collateralAmount` (the carried amount), NOT the
+  lender-derived pro-rata — so the value that flows into `matchOverride`, the
+  `RefinanceFacet` identity gate, and the lien math is the carried amount (P2
+  fixed); and
+- evaluate the **synthetic HF/LTV init gate on the pinned carried collateral**,
+  not on the lender-derived `reqCollateral`. Otherwise a lender asking for *less*
+  collateral than the old loan carries could trip `MatchHFTooLow` / `LtvAboveTier`
+  in preview even though the carried amount comfortably satisfies the init gate
+  (Finding #4).
+- **Reject** (`RefinanceCarryOverCollateralShortfall`) when the lender's
+  full-`amount` collateral requirement exceeds the carried amount: carry-over
+  pledges no fresh collateral to top up, so the lender's terms cannot be met.
+  When the requirement is `<=` carried, the lender is at-least-fully-secured and
+  the borrower keeps their full carried collateral — safe.
+
+`_executeMatch` then consumes the already-carry-over-aware `mr` unchanged
+(`mo.collateralAmount = mr.reqCollateral`, which now equals the carried amount).
+
+### 3.4 Dust-close: skip the collateral refund for carry-over
+
+The borrower dust-close path increments `collateralAmountFilled` by
+`mr.reqCollateral` and withdraws `collateralAmountMax − collateralAmountFilled`
+as excess. A carry-over offer pledged **no fresh collateral** (the deposit was
+skipped at create), and the old lien encumbers the full carried amount until the
+retag — so this refund would either revert at the vault-withdraw guard (no free
+balance) or withdraw *unrelated* free collateral (Finding #3). For a carry-over
+offer the dust-close branch MUST **skip the collateral refund entirely** (there
+is nothing to refund; the carried lien is untouched and about to be retagged).
+The offer-collateral-lock release is likewise a no-op for carry-over (no offer
+lock was taken). Only the `accepted = true` flip, the metrics hook, and the
+retag hook run.
+
+### 3.5 Preserve the AON single-value invariant across offer mutation
+
+The §2 proof relies on `amountMax == amount` at match time, but
+`setOfferAmount` / `modifyOffer` only enforce `amountMax >= amount`. A borrower
+could create an AON carry-over offer, then widen `amountMax` (keeping the old
+principal inside the range so accept-time refinance validation still passes); an
+AON match of `amount` would then leave `borrowerRemaining = amountMax − amount`
+nonzero, the dust-close branch would NOT run, and the P1 uncollateralized-loan
+window returns (Finding #5). Defense, both layers:
+
+- **Mutation guard:** when an offer is carry-over-tagged
+  (`refinanceTargetLoanId != 0`), the amount mutators must either forbid
+  `amountMax != amount` or strip the carry-over/tag on widening (re-validating
+  the predicate). Preferred: forbid breaking `amountMax == amount` while tagged.
+- **Match-time assertion (belt-and-braces):** the §3.1 admission re-checks
+  `amountMax == amount`, so even a mutated offer that slipped through is rejected
+  at match.
+
+### 3.6 Atomic retag — reuse the existing hook (unchanged)
+
+The dust-close hook at `OfferMatchFacet` L1117 already calls
 `RefinanceFacet.refinanceLoanFromAccept(bm.refinanceTargetLoanId,
-borrowerOfferId)` when `bm.refinanceTargetLoanId != 0`, and §2 establishes that
-an AON full fill always reaches dust-close in the same tx. The retag's own
-strict checks (#576 round-7: same-key lien retag, live-lien requirement, full
-collateral-identity re-assertion) remain the last line of defense and are
-unchanged.
+borrowerOfferId)` when `bm.refinanceTargetLoanId != 0`. §2 + §3.2 + §3.5
+guarantee an admitted AON carry-over fill always reaches dust-close in the same
+tx with `borrowerRemaining == 0`. The retag's own strict checks (#576 round-7:
+same-key retag, live-lien requirement, full collateral-identity re-assertion)
+remain the last line of defense, unchanged.
 
 ---
 
@@ -139,13 +197,21 @@ unchanged.
 
 ## 5. Invariants to preserve
 
-- **No uncollateralized loan ever persists across a tx boundary** (§2).
+- **No uncollateralized loan ever persists across a tx boundary** (§2 + §3.5).
 - **`newLoan.collateralAmount == oldLoan.collateralAmount`** at the retag
-  (guaranteed by 3.2 pin + the #576 create-time predicate).
+  (guaranteed by the §3.3 preview pin + the #576 create-time predicate).
+- **Risk gates evaluate on the carried (pinned) collateral**, never the
+  lender-derived pro-rata, for a carry-over match (§3.3).
+- **No fresh collateral is pulled or refunded** for a carry-over match — the
+  carried lien is the only collateral and is retagged, not re-pledged; the
+  dust-close refund + offer-lock release are skipped (§3.4).
 - The old lien is **retagged, never release+create** for carry-over (the #576
-  round-7 strict-key rule; carry-over pledged no fresh collateral).
-- A tagged offer that fails any admission condition reverts (no silent
-  fall-through to the fresh-pledge path).
+  round-7 strict-key rule).
+- **`matchAmount == borrower.amount` exactly** for an admitted carry-over match
+  (§3.2) and `amountMax == amount` holds at match time (§3.5) — so the single
+  full fill always reaches dust-close in the same tx.
+- A tagged offer that fails any admission condition reverts in BOTH `previewMatch`
+  and the on-chain guard (no silent fall-through to the fresh-pledge path).
 - The lender offer may still be **partially** filled by this AON borrower match
   (only the borrower/refinance side is constrained to AON).
 - Sanctions / exclusion gates on the match path are unchanged.
@@ -154,26 +220,45 @@ unchanged.
 
 ## 6. Implementation sketch (edit sites)
 
-1. `OfferMatchFacet` (~L719) — replace the blanket tagged-offer reject with the
-   §3.1 admit-AON-carry-over / reject-rest logic.
-2. `OfferMatchFacet._executeMatch` (~L824) — when the borrower offer is
-   carry-over, pin `mo.collateralAmount` to `offer.collateralAmount` and add the
-   §3.2 shortfall reject (new error).
-3. No change to the dust-close retag hook (L1117) or `RefinanceFacet`.
-4. Selector set unchanged (no new external functions) → no diamond-cut /
-   ABI-export change; the new error inlines into `OfferMatchFacet`'s ABI (one
-   re-export).
+1. **`LibOfferMatch.previewMatch`** (the heart of the change):
+   - replace the blanket `RefinanceTagged` rejection with the §3.1 admission
+     (AON + carry-over + `amountMax == amount`); non-qualifying tagged → error;
+   - §3.2 — for an admitted carry-over borrower side, select
+     `matchAmount = borrower.amount` (bypass the midpoint) so the lender side can
+     be partially filled;
+   - §3.3 — set `reqCollateral = offer.collateralAmount` (carried), run the
+     synthetic HF/LTV gate on that pinned value, and return a shortfall error
+     code when the lender's full-`amount` requirement exceeds it.
+2. `OfferMatchFacet` guard (~L719) — mirror the §3.1 admission so the on-chain
+   path agrees with the preview.
+3. `OfferMatchFacet._executeMatch` dust-close (~L1056-1126) — §3.4: skip the
+   collateral refund + offer-lock release for carry-over; retag hook (L1117)
+   unchanged. The `mo.collateralAmount = mr.reqCollateral` install (~L824) needs
+   no special case (preview already pinned it).
+4. Amount mutators (`setOfferAmount` / `modifyOffer`) — §3.5 guard: forbid
+   breaking `amountMax == amount` while carry-over-tagged.
+5. New error(s): `RefinanceCarryOverCollateralShortfall` (+ a `MatchError`
+   variant for the preview side). No new external functions → no diamond-cut /
+   selector change; inlined errors → one ABI re-export.
 
 ## 7. Test matrix
 
 - AON carry-over offer matched → single full fill, replacement loan created,
-  old lien retagged to it, old loan terminal, **no uncollateralized window**
-  (assert lien present on the new loan immediately after the match).
-- Carry-over offer with `fillMode != Aon` → `RefinanceTaggedOfferNotMatchable`.
+  old lien **retagged** onto it (assert the new loan's lien is present + keyed to
+  the borrower immediately after the match — no uncollateralized window), old
+  loan terminal.
+- **previewMatch** returns a matchable result for an admitted AON carry-over
+  offer (bot-preview parity), with `matchAmount == borrower.amount` and
+  `reqCollateral == carried`.
+- Carry-over offer with `fillMode != Aon` → rejected (preview + on-chain).
+- Carry-over offer mutated to `amountMax > amount` → mutation reverts (§3.5
+  guard); and if forced into storage, the match-time admission rejects it.
 - Non-carry-over tagged offer (transferred / ranged) → still rejected.
-- Lender requires more collateral than carried → `RefinanceCarryOverCollateralShortfall`.
-- Lender requires less/equal → match succeeds, `newLoan.collateralAmount ==`
-  carried (identity gate passes), lender over-secured.
+- Lender requires MORE collateral than carried → `RefinanceCarryOverCollateralShortfall`.
+- Lender requires LESS than carried → match succeeds; HF/LTV evaluated on the
+  carried amount (not the smaller lender value); `newLoan.collateralAmount ==`
+  carried (identity gate passes); lender over-secured; **no spurious collateral
+  refund / withdraw at dust-close** (assert borrower free balance untouched).
 - Lender offer partially filled by the AON borrower match → lender offer stays
   open with reduced remaining; borrower offer terminal.
 - Regression: untagged matched offers + direct-accept refinance unchanged.
@@ -182,12 +267,15 @@ unchanged.
 
 ## 8. Open questions for review
 
-1. Should a tagged carry-over offer that is **not** AON revert at **match** time
-   (this design) or be rejected earlier at **create** time (force
-   `fillMode == Aon` whenever `refinanceCarryOver` is set)? Create-time rejection
-   gives an earlier, clearer failure but couples the carry-over predicate to
-   fill-mode. Leaning match-time (keeps #576's predicate orthogonal), but open.
-2. Confirm there is no path where an AON borrower offer can be left
-   `amountFilled > 0` without reaching dust-close (the AON pre-gate
-   `amountFilled == 0 && matchAmount == amount` should preclude it — to be
-   re-verified adversarially).
+1. **Create-time vs match-time AON enforcement** (reinforced by Finding #5):
+   forbid `fillMode != Aon` / `amountMax != amount` at **create** whenever
+   `refinanceCarryOver` would be set, vs. enforce only at match + in the mutators
+   (this design). Create-time is the earliest, clearest failure and removes the
+   mutation-window class entirely, at the cost of coupling the #576 carry-over
+   predicate to fill-mode. **Recommendation: enforce at create-time too** (make
+   carry-over imply AON single-value from birth) AND keep the match-time
+   assertion as defense-in-depth. Seeking ratification.
+2. On mutation of a carry-over offer, **strip** the carry-over flag (fall back to
+   the fresh-pledge legacy path) vs. **freeze** the amount (this design)?
+   Stripping is more permissive but re-introduces fresh-pledge accounting;
+   freezing is simpler + safer. Open.
