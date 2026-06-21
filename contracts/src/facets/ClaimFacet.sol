@@ -1038,6 +1038,13 @@ contract ClaimFacet is
             bytes4(0)
         );
 
+        // #661 — release the VPFI borrower-surplus reservation (mirror of the
+        // lender release above) immediately BEFORE the withdraw, so the unstake
+        // free-balance guard sees the surplus as free. Keyed off the per-loan
+        // record under the asset it was reserved with → a no-op for every loan
+        // that never reserved a surplus (non-VPFI, or no liquid-default surplus).
+        LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
+
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(

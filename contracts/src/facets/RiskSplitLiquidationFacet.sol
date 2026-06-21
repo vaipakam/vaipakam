@@ -293,6 +293,13 @@ contract RiskSplitLiquidationFacet is
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+            // #661 — reserve a VPFI surplus against the unstake path until the
+            // current borrower-position holder claims it. No-op for non-VPFI.
+            if (loan.principalAsset == s.vpfiToken) {
+                LibEncumbrance.encumberBorrowerProceeds(
+                    loanId, loan.borrower, loan.principalAsset, borrowerSurplus
+                );
+            }
         }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
