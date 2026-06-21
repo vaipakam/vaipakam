@@ -83,21 +83,53 @@ computing the match, so an `_executeMatch`-only change would leave the feature
 unmatchable (and bot previews would still skip it). The design below is
 preview-centric.
 
-### 3.1 Admission — `previewMatch` + the facet guard (mirror each other)
+### 3.1 Admission — `previewMatch` must MIRROR the full atomic preconditions
 
-A tagged borrower offer is matchable **iff**
+**Principle (PR #682 round 2): `previewMatch` admission must be a faithful
+predictor of the atomic accept/refinance path**, not just a carry-over-shape
+check. The atomic path (`acceptOfferInternal` → `refinanceLoanFromAccept`)
+re-runs `LibAutoRefinanceCheck.validate` + the auto-refinance caps / kill-switch
+/ period-settlement gates *before* creating the loan; if preview admits a pair
+those gates would reject, bots get repeated **false-positive** matches against a
+stale/ungated offer. So a tagged borrower offer is matchable **iff** ALL hold:
 
-1. `offer.refinanceCarryOver == true` (passed the full #576 create-time
-   predicate: tagged + non-transferred + single-value collateral + exact
-   collateral identity + live old-loan lien), **and**
-2. `offer.fillMode == FillMode.Aon`, **and**
-3. `offer.amountMax == offer.amount` re-checked **at match time** (see §3.5 —
-   defends against post-create mutation).
+1. `offer.refinanceCarryOver == true` (the #576 create-time predicate), **and**
+2. `offer.fillMode == FillMode.Aon` and `offer.amountMax == offer.amount`
+   (re-checked at match time — §3.5), **and**
+3. **Live freshness** (re-evaluated at preview/match, NOT trusted from the
+   create-time snapshot): the target loan is still active, the offer creator is
+   still the current borrower-position-NFT holder, the old-loan lien is still
+   live, and `offer.amount == target loan outstanding principal`. (Finding 1+2 —
+   a repaid/defaulted target, a transferred borrower NFT, or a mutated amount
+   must all be rejected in preview, exactly as the atomic path would.) **and**
+4. **Current refinance gates** the atomic path enforces: the auto-refinance
+   caps (rate/expiry) are satisfied and not stale, `cfgAutoRefinanceEnabled`
+   permits the completion path, and the target loan needs no pending period
+   settlement. (Finding 4.)
 
-`previewMatch` replaces its blanket `RefinanceTagged` rejection with this same
-admission test (so previews and the on-chain guard agree); any tagged offer that
-fails it still maps to `RefinanceTagged` / `RefinanceTaggedOfferNotMatchable`.
-The lender offer is never refinance-tagged. Fail closed on every miss.
+`previewMatch` replaces its blanket `RefinanceTagged` rejection with this full
+test; any miss returns a dedicated non-OK `MatchError` (e.g.
+`RefinanceTagStale` / `RefinanceTagGated`) so bots can distinguish "not yet"
+from "never," and the on-chain guard mirrors it. The lender offer is never
+refinance-tagged. Fail closed on every miss. (Implementation note: factor the
+freshness + cap predicate the atomic path already uses — `LibAutoRefinanceCheck`
+— into a shared view so preview and accept cannot drift.)
+
+### 3.2 Force the AON amount to the borrower's full `amount` (lender may stay open)
+
+`previewMatch` currently sets `matchAmount = midpoint(...)` and *then* applies the
+AON gate `matchAmount == amount`. For an open lender range with
+`lenderRemaining > borrower.amount` the midpoint exceeds `borrower.amount`, so an
+AON borrower match would revert `AonRequiresFullFill` — the lender could never be
+left partially open. The fix: bypass only the midpoint **selection** — set
+`matchAmount = borrower.amount` — while **keeping every lender-side fill gate**
+(Finding 3). After fixing `matchAmount = borrower.amount`, preview must still
+require: the amount lies within the lender's `[lo, hi]` overlap window, the
+lender has enough remaining (`lenderRemaining >= borrower.amount`), it clears the
+lender's minimum-slice, and — if the **lender** side is itself AON — it equals
+the lender's full amount (a lender AON cannot be left partially filled). If any
+lender-side gate fails, no match. So "force AON amount" changes only which
+amount is *chosen*, never which amounts are *legal*.
 
 ### 3.2 Force the AON amount to the borrower's full `amount` (lender may stay open)
 
@@ -160,13 +192,19 @@ AON match of `amount` would then leave `borrowerRemaining = amountMax − amount
 nonzero, the dust-close branch would NOT run, and the P1 uncollateralized-loan
 window returns (Finding #5). Defense, both layers:
 
-- **Mutation guard:** when an offer is carry-over-tagged
-  (`refinanceTargetLoanId != 0`), the amount mutators must either forbid
-  `amountMax != amount` or strip the carry-over/tag on widening (re-validating
-  the predicate). Preferred: forbid breaking `amountMax == amount` while tagged.
-- **Match-time assertion (belt-and-braces):** the §3.1 admission re-checks
-  `amountMax == amount`, so even a mutated offer that slipped through is rejected
-  at match.
+- **Mutation guard — freeze the amount to the target principal, not just
+  `amountMax == amount`** (Finding round-2 #2): forbidding only widening still
+  lets a borrower move a carry-over offer from `amount == amountMax ==
+  oldPrincipal` to some *other* single value; that passes `amountMax == amount`
+  and previews as matchable, but the atomic path rejects (the old loan principal
+  is no longer the offer amount) — a false-positive stale offer. So while an
+  offer is carry-over-tagged, the amount mutators must **freeze `amount` (and
+  `amountMax`) to the target loan's outstanding principal** — i.e. forbid any
+  amount change while tagged (or re-validate `amount == target outstanding` on
+  every mutation). Preferred: freeze while tagged.
+- **Match-time assertion (belt-and-braces):** §3.1.3 re-checks `amount == target
+  outstanding && amountMax == amount` live, so even a mutated offer that slipped
+  through is rejected at preview/match.
 
 ### 3.6 Atomic retag — reuse the existing hook (unchanged)
 
@@ -197,6 +235,16 @@ remain the last line of defense, unchanged.
 
 ## 5. Invariants to preserve
 
+- **`previewMatch` admission is a faithful mirror of the atomic accept/refinance
+  preconditions** — carry-over shape + live freshness (target active, current
+  borrower-NFT owner, live lien, `amount == target outstanding`) + the current
+  auto-refinance caps / kill-switch / period-settlement gates — so a preview-OK
+  pair never reverts inside the atomic path (no bot false positives) (§3.1).
+- **Forcing the AON amount changes only the chosen amount, never the legal
+  bounds** — the lender `[lo,hi]` overlap, remaining, min-slice, and lender-AON
+  gates all still apply (§3.2).
+- **A carry-over offer's `amount` is frozen to the target loan's outstanding
+  principal while tagged** (§3.5).
 - **No uncollateralized loan ever persists across a tx boundary** (§2 + §3.5).
 - **`newLoan.collateralAmount == oldLoan.collateralAmount`** at the retag
   (guaranteed by the §3.3 preview pin + the #576 create-time predicate).
@@ -220,26 +268,32 @@ remain the last line of defense, unchanged.
 
 ## 6. Implementation sketch (edit sites)
 
-1. **`LibOfferMatch.previewMatch`** (the heart of the change):
+1. **`LibAutoRefinanceCheck` (shared predicate)** — factor the freshness + cap /
+   kill-switch / period-settlement checks the atomic accept path already runs
+   into a view callable from BOTH `previewMatch` and `acceptOfferInternal`, so
+   the two can't drift (§3.1.3-4).
+2. **`LibOfferMatch.previewMatch`** (the heart of the change):
    - replace the blanket `RefinanceTagged` rejection with the §3.1 admission
-     (AON + carry-over + `amountMax == amount`); non-qualifying tagged → error;
-   - §3.2 — for an admitted carry-over borrower side, select
-     `matchAmount = borrower.amount` (bypass the midpoint) so the lender side can
-     be partially filled;
+     (carry-over shape + AON + `amountMax == amount` + the shared
+     freshness/cap predicate from step 1); non-qualifying tagged → a dedicated
+     `MatchError` (`RefinanceTagStale` / `RefinanceTagGated`);
+   - §3.2 — for an admitted carry-over borrower side, fix
+     `matchAmount = borrower.amount` (bypass only the midpoint) but KEEP every
+     lender-side gate (lo/hi overlap, remaining, min-slice, lender-AON);
    - §3.3 — set `reqCollateral = offer.collateralAmount` (carried), run the
      synthetic HF/LTV gate on that pinned value, and return a shortfall error
-     code when the lender's full-`amount` requirement exceeds it.
-2. `OfferMatchFacet` guard (~L719) — mirror the §3.1 admission so the on-chain
+     when the lender's full-`amount` requirement exceeds it.
+3. `OfferMatchFacet` guard (~L719) — mirror the §3.1 admission so the on-chain
    path agrees with the preview.
-3. `OfferMatchFacet._executeMatch` dust-close (~L1056-1126) — §3.4: skip the
+4. `OfferMatchFacet._executeMatch` dust-close (~L1056-1126) — §3.4: skip the
    collateral refund + offer-lock release for carry-over; retag hook (L1117)
    unchanged. The `mo.collateralAmount = mr.reqCollateral` install (~L824) needs
    no special case (preview already pinned it).
-4. Amount mutators (`setOfferAmount` / `modifyOffer`) — §3.5 guard: forbid
-   breaking `amountMax == amount` while carry-over-tagged.
-5. New error(s): `RefinanceCarryOverCollateralShortfall` (+ a `MatchError`
-   variant for the preview side). No new external functions → no diamond-cut /
-   selector change; inlined errors → one ABI re-export.
+5. Amount mutators (`setOfferAmount` / `modifyOffer`) — §3.5 guard: **freeze the
+   amount to the target outstanding principal** while carry-over-tagged.
+6. New error(s): `RefinanceCarryOverCollateralShortfall` + `MatchError` variants
+   (`RefinanceTagStale`, `RefinanceTagGated`). No new external functions → no
+   diamond-cut / selector change; inlined errors → one ABI re-export.
 
 ## 7. Test matrix
 
@@ -261,6 +315,18 @@ remain the last line of defense, unchanged.
   refund / withdraw at dust-close** (assert borrower free balance untouched).
 - Lender offer partially filled by the AON borrower match → lender offer stays
   open with reduced remaining; borrower offer terminal.
+- **Stale target (preview/match parity):** target loan repaid / defaulted, or
+  borrower NFT transferred after offer create → preview returns
+  `RefinanceTagStale` and the on-chain match rejects (no false positive).
+- **Cap / kill-switch gated:** auto-refinance cap tightened/disabled or
+  `cfgAutoRefinanceEnabled` off, or target needs period settlement → preview
+  returns `RefinanceTagGated`; the atomic path would have reverted.
+- **Amount mutated to another single value** (`amount != target outstanding`,
+  still `amountMax == amount`) → mutation frozen (reverts); if forced, preview +
+  match reject.
+- **Lender-bound violations** with forced AON amount: `lenderRemaining <
+  borrower.amount`, below lender min-slice, or lender-itself-AON with
+  `lender.amount != borrower.amount` → no match (lender gates preserved).
 - Regression: untagged matched offers + direct-accept refinance unchanged.
 
 ---
