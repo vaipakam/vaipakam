@@ -1425,6 +1425,17 @@ contract ClaimFacet is
             address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerGets);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerGets);
+            // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
+            // borrower-VPFI-surplus terminal: reserve it against the unstake
+            // path, like the default / liquidation surplus sites. Released in
+            // `claimAsBorrower` (which runs `releaseBorrowerProceeds`). No-op for
+            // non-VPFI. (The lender retry-proceeds reserve is the separate
+            // pre-existing #592 gap noted on `lenderProceedsEncumbered`.)
+            if (loan.principalAsset == s.vpfiToken) {
+                LibEncumbrance.encumberBorrowerProceeds(
+                    loanId, loan.borrower, loan.principalAsset, borrowerGets
+                );
+            }
         }
 
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
