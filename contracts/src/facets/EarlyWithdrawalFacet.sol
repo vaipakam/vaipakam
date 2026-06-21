@@ -311,10 +311,20 @@ contract EarlyWithdrawalFacet is
             address payAsset = loan.assetType == LibVaipakam.AssetType.ERC20
                 ? loan.principalAsset
                 : loan.prepayAsset;
+            // #597 Codex #672 P1 — withdraw the held from the STORED `loan.lender`,
+            // NOT `msg.sender`. The held was deposited into `loan.lender`'s vault
+            // at accrual and the #597 reservation (released just above) is keyed
+            // there too. After a plain lender-NFT transfer (pre-consolidation),
+            // `msg.sender` (the current NFT owner accepted by
+            // `requireLenderNftOwner`) ≠ `loan.lender`; sourcing from `msg.sender`
+            // would migrate the caller's OWN VPFI and leave the stored lender's
+            // released-but-not-moved held unencumbered + drainable. In the common
+            // sell-your-own-loan case `msg.sender == loan.lender` so this is
+            // unchanged. (`completeLoanSale` already uses `originalLender`.)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    msg.sender, // old lender
+                    loan.lender, // stored (old) lender — where the held VPFI sits
                     payAsset,
                     address(this),
                     priorHeld
