@@ -31,6 +31,56 @@ contract ConsolidationFacet is
     DiamondPausable,
     IVaipakamErrors
 {
+    /// @dev Raised when the internal-only eager entry is called by anything
+    ///      other than the Diamond itself (a cross-facet call).
+    error OnlyDiamondInternal();
+
+    /// @notice #658 — internal-only EAGER consolidation entry for close-out
+    ///         hosts. `LibConsolidation.consolidateToHolder` is an `internal`
+    ///         library fn that INLINES its whole orchestrator into each caller;
+    ///         size-constrained facets (RiskFacet sits ~347 bytes under EIP-170;
+    ///         PrecloseFacet ~1,194) can't absorb that. They instead call this
+    ///         via a few-byte `LibFacet.crossFacetCall`, so the orchestrator is
+    ///         inlined ONCE here (ConsolidationFacet has ample headroom) and
+    ///         every host stays under the limit.
+    /// @dev    `Tier2CloseOut` (skip-not-block) — a sanctioned/excluded holder
+    ///         must never block a close-out. Gated to internal callers
+    ///         (`msg.sender == address(this)`); NOT `nonReentrant` (the host
+    ///         already holds the Diamond's reentrancy lock when it cross-calls).
+    ///         Ignores the {LibConsolidation.Result} — Skipped/NoOp/Already are
+    ///         all benign for an eager hook.
+    function eagerConsolidateToHolder(
+        uint256 loanId,
+        bool isLenderSide
+    ) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibConsolidation.consolidateToHolder(
+            loanId,
+            isLenderSide,
+            LibConsolidation.Ctx.Tier2CloseOut
+        );
+    }
+
+    /// @notice #658 — internal-only EAGER consolidation of BOTH sides in one
+    ///         cross-facet call. Lets a both-side close-out host (the liquidation
+    ///         family) trigger borrower + lender consolidation with a single
+    ///         `crossFacetCall`, halving the call-site bytecode in the
+    ///         size-constrained caller (vs. two `eagerConsolidateToHolder`
+    ///         calls). Same internal-only gate + `Tier2CloseOut` semantics.
+    function eagerConsolidateBothSides(uint256 loanId) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibConsolidation.consolidateToHolder(
+            loanId,
+            /* isLenderSide */ false,
+            LibConsolidation.Ctx.Tier2CloseOut
+        );
+        LibConsolidation.consolidateToHolder(
+            loanId,
+            /* isLenderSide */ true,
+            LibConsolidation.Ctx.Tier2CloseOut
+        );
+    }
+
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

@@ -33,6 +33,7 @@ import {LibSwap} from "../libraries/LibSwap.sol";
 // its own facet to keep RiskFacet under the EIP-170 size limit; the
 // HF-liquidation entry points here still dispatch through it.
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
  // Phase 7a — ordered adapter failover for liquidation swaps
 
 /**
@@ -536,6 +537,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
      *      Emits HFLiquidationTriggered on success, LiquidationFallback on fallback.
      * @param loanId The loan ID to liquidate.
      */
+
+    /// @dev #658 — single-copy bridge to the cross-facet eager-consolidation
+    ///      entry. RiskFacet sits ~347 bytes under EIP-170, so it CANNOT inline
+    ///      `LibConsolidation.consolidateToHolder`; instead every liquidation
+    ///      entry calls this one private helper (one `crossFacetCall` body,
+    ///      compiled once) which routes both sides through
+    ///      {ConsolidationFacet.eagerConsolidateBothSides} (Tier2 skip-not-block,
+    ///      internal-only). Each entry-point call site is then a cheap internal
+    ///      jump, keeping the facet under the limit. `bytes4(0)` bubbles a
+    ///      genuine move revert raw (consistent with the direct hooks in
+    ///      RepayFacet / DefaultedFacet).
+    function _eagerConsolidateBothSides(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
     function triggerLiquidation(
         uint256 loanId,
         LibSwap.AdapterCall[] calldata adapterCalls
@@ -587,6 +609,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // permissionlessly liquidatable once the grace period passes.
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
+
+        // #658 — HF-liquidation is a BOTH-SIDE close-out: it pays the lender and
+        // returns any surplus to the borrower. Consolidate each transferred
+        // side to its current holder BEFORE the internal-match dispatch + swap
+        // settlement below, so proceeds/surplus route correctly.
+        _eagerConsolidateBothSides(loanId);
 
         // ── EC-003 Phase 3 — internal-match auto-dispatch ──────────────
         // Before falling through to the external-aggregator swap, check
@@ -988,6 +1016,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         uint256 hfBefore = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hfBefore >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
 
+        // #658 — partial liquidation pays the lender a slice and may return a
+        // borrower surplus; consolidate both transferred sides to their current
+        // holders before the slice settlement. hfBefore is already captured
+        // above and the move doesn't change the HF inputs (loan.collateralAmount
+        // / principal), so the #395 sizing math is unaffected.
+        _eagerConsolidateBothSides(loanId);
+
         // In-term gate — partial is a "before maturity" tool. Once the
         // loan matures, late fees apply and the cleaner close-out is
         // full liquidation or time-based default. Excludes late-fee
@@ -1383,6 +1418,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // WHEN liquidation becomes available.
         uint256 hf = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hf >= LibVaipakam.HF_SCALE) revert HealthFactorNotLow();
+
+        // #658 — discounted liquidation is a both-side close-out (lender debt +
+        // borrower surplus); consolidate transferred sides to current holders
+        // before settlement.
+        _eagerConsolidateBothSides(loanId);
 
         // Resolve per-tier discount. `getEffectiveLiquidityTier`
         // returns 0 for unclassified assets — the discount math

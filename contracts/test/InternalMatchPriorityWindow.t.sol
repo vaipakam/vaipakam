@@ -8,6 +8,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 /**
  * @title InternalMatchPriorityWindow.t.sol
@@ -51,7 +52,26 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
+        // #658 — the liquidation family now eager-consolidates both sides to
+        // their current position-NFT holders before dispatch. Give the seed
+        // distinct minted token IDs so the consolidation hook's `ownerOf`
+        // resolves; mocking each to its stored owner (below) makes the move a
+        // clean `AlreadyConsolidated` no-op, leaving the priority-window gate
+        // as the behaviour under test.
+        l.borrowerTokenId = 1;
+        l.lenderTokenId = 2;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(1)),
+            abi.encode(borrower)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, uint256(2)),
+            abi.encode(lender)
+        );
 
         // Mock the gauntlet so `triggerLiquidation` reaches the
         // priority-window gate cleanly:
@@ -237,6 +257,10 @@ contract InternalMatchPriorityWindowTest is SetupTest {
         l.liquidationLtvBpsAtInit = 8_500;
         l.startTime = uint64(block.timestamp);
         l.durationDays = 30; // in-term so the partial maturity gate passes
+        // #658 — distinct token IDs so the eager-consolidation hook's `ownerOf`
+        // resolves (mocked to the stored owners in setUp ⇒ no-op move).
+        l.borrowerTokenId = 1;
+        l.lenderTokenId = 2;
         TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, l);
 
         vm.prank(owner);

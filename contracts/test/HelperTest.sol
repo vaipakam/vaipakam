@@ -833,9 +833,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](4);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
+        selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
+        selectors[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
     }
 
     function getDefaultedFacetSelectors()
