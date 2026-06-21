@@ -39,7 +39,6 @@ library LibBackstopOracleGate {
     function assertCoverage(address collateral) internal view {
         uint8 required = LibVaipakam
             .storageSlot()
-            .protocolCfg
             .backstopMinSecondaryOracleCoverage;
         if (required == 0) return;
         uint8 live = OracleFacet(address(this)).countLiveSecondaryOracleFeeds(

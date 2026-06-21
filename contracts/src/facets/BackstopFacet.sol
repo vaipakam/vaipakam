@@ -607,7 +607,6 @@ contract BackstopFacet is
         }
         LibVaipakam
             .storageSlot()
-            .protocolCfg
             .backstopMinSecondaryOracleCoverage = minCoverage;
         emit BackstopMinSecondaryOracleCoverageSet(minCoverage);
     }
@@ -619,10 +618,7 @@ contract BackstopFacet is
         returns (uint8)
     {
         return
-            LibVaipakam
-                .storageSlot()
-                .protocolCfg
-                .backstopMinSecondaryOracleCoverage;
+            LibVaipakam.storageSlot().backstopMinSecondaryOracleCoverage;
     }
 
     // ─── Role B — absorb governance (VAULT_ADMIN / timelock) ────────────────
