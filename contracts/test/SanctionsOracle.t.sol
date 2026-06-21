@@ -388,14 +388,21 @@ contract SanctionsOracleTest is RiskFacetTest {
         // Flag someone ELSE so the oracle is non-trivial.
         m.setFlagged(sanctionedWallet, true);
 
-        // Drop collateral price → HF below 1 for the partial happy path.
+        // Drop collateral price so the position is DEEP-underwater (HF well
+        // below the #395 deep-underwater threshold of 9500 bps / 0.95), which
+        // waives the over-liquidation ceiling and lets this aggressive 5000-bps
+        // slice through. At the prior 0.65 price HF was ≈0.9945 — only barely
+        // underwater — so the #395 guard correctly rejected the 5000 slice as
+        // over-liquidating (this test predates that guard). 0.60 → HF≈0.92 with
+        // collateral value still above the debt, so the partial is mechanically
+        // sound and the sanctions-gate behaviour under test is unchanged.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(
                 OracleFacet.getAssetPrice.selector,
                 mockCollateralERC20
             ),
-            abi.encode(0.65e8, 8)
+            abi.encode(0.60e8, 8)
         );
         vm.mockCall(
             address(diamond),
