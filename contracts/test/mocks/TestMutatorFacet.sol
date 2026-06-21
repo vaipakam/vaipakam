@@ -317,6 +317,12 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().vpfiToken;
     }
 
+    /// #597/#673 test — designate the VPFI token directly, for harnesses whose
+    /// diamond does not cut `VPFITokenFacet` (e.g. EarlyWithdrawalFacetTest).
+    function setVpfiTokenRaw(address token) external {
+        LibVaipakam.storageSlot().vpfiToken = token;
+    }
+
     /// #594 test — set a loan's per-loan lender-proceeds reservation (amount +
     /// asset) directly, to exercise the partially-reserved VPFI-held exclusion.
     function setLenderProceedsEncumberedRaw(
