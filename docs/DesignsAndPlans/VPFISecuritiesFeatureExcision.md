@@ -38,22 +38,39 @@ earn (interaction rewards) + no-consideration airdrop + organic secondary market
 ## 2. The load-bearing entanglement verdict (B)
 
 **The fee-discount tier is independent of staking.** Verified
-(`LibVPFIDiscount.sol`): `tierOf(vaultBal)` derives the tier purely from
-`vaultVpfiBalance(user)` = `IERC20(vpfiToken).balanceOf(vault)` — it never reads
-`userStakedVpfi`, `totalStakedVpfi`, or any staking accumulator. The
-flash-stake-gaming guard (3-day gate + min-tier-over-history clamp) lives in the
-**discount accumulator** (`VPFIDiscountAccumulatorFacet` ring buffer), **not** in
-staking, so it is KEPT.
+(`LibVPFIDiscount.sol`): the tier derives from the user's vault VPFI **balance**,
+not from staking. The *raw* getter `tierOf(vaultBal)` reads
+`vaultVpfiBalance = IERC20(vpfiToken).balanceOf(vault)`; the **effective** fee
+eligibility actually used at fee time is `effectiveTierAndBps`, which goes through
+the **discount accumulator/cache** and is stamped from **protocol-tracked /
+clamped** balances (`trackedVpfiBalance`, so direct-transfer dust is excluded).
+Neither path reads `userStakedVpfi`, `totalStakedVpfi`, or any staking
+accumulator. The flash-stake-gaming guard (3-day gate + min-tier-over-history
+clamp) lives in the **discount accumulator** (`VPFIDiscountAccumulatorFacet` ring
+buffer), **not** in staking. **Kept surface = the deposit/withdraw + the FULL
+discount path: `tierOf`, `effectiveTierAndBps`, the accumulator/cache readers, and
+the tracked-balance stamping** — an implementation that preserves only the raw
+getter while dropping the accumulator/cache path would break real discounts.
 
-The **only** code coupling is two one-way notify-calls,
-`LibStakingRewards.updateUser(borrower|lender, newStakedBal)` at
-`LibVPFIDiscount.sol:576` and `:784` (inside `tryApplyBorrowerLif` /
-`tryApplyYieldFee`), plus the `import {LibStakingRewards}`. These maintain
-staking state on a VPFI-balance change; they do **not** feed the discount tier.
-Removing them (with the `import`) alongside B is safe — the VPFI movement they
-accompany still happens; only the staking notification disappears.
+There are **two distinct couplings B must handle** (the scout's "only 2 calls in
+`LibVPFIDiscount`" was incomplete — see §3.B for the full caller list):
 
-**⇒ B is a clean removal with the discount machinery fully retained.**
+1. **Staking notify-calls (removed with B, no tier impact).**
+   `LibStakingRewards.updateUser(...)` is called from **6 sites across the tree**
+   (not 2) — they maintain staking state on a VPFI-balance change and do **not**
+   feed the discount tier; all are deleted alongside `LibStakingRewards`.
+2. **⚠️ P1 — the VPFI *price anchor* is SHARED with the kept discount quoting.**
+   `LibVPFIDiscount._feeAssetWeiToVpfi` reads `s.vpfiFixedRateWeiPerVpfi` to
+   convert a fee (in the principal asset) into a VPFI amount for the
+   borrower/lender discount. That field is part of the **sale (A)** cluster — so
+   **A must NOT delete `vpfiFixedRateWeiPerVpfi` / `setVPFIBuyRate` outright.** It
+   must **split** the price anchor out of the buy surface: keep an admin-set VPFI
+   price config (rename e.g. `vpfiDiscountWeiPerVpfi` + a `setVPFIDiscountRate`
+   setter) and remove only the buy counters/caps/enable. Deleting it with the
+   sale would make discounts un-quotable (`canQuote=false`).
+
+**⇒ B's tier logic is a clean removal (discount machinery fully retained), but A
+must split the shared price anchor — it is not a pure sale-only deletion.**
 
 ---
 
@@ -69,65 +86,121 @@ accompany still happens; only the staking notification disappears.
   `setVPFIBuyEnabled`, `setBridgedBuyReceiver`, `getBridgedBuyReceiver`,
   `getVPFIBuyConfig`) + their internal `_computeBuyAndDebitCaps`. **Keep**
   deposit/withdraw + all discount-tier code.
-- **Storage (`LibVaipakam.sol`):** remove the `vpfiFixedRate*` cluster
-  (`…WeiPerVpfi`, `…GlobalCap`, `…PerWalletCap`, `…TotalSold`, `…BuyEnabled`,
-  the `…SoldToByChainId` mapping + the legacy mapping) + `bridgedBuyReceiver`.
-  Confirm no other facet reads them (scout: none — purely transactional).
-- **Deploy/sanity:** `DeployDiamond.s.sol` `_getVpfiDiscountSelectors()`
-  (drop the buy selectors + fix the array size), `DeployCrosschain.s.sol`
-  (drop the buy-adapter/receiver deploy+wiring), `test/deploy/DiamondFacetNames.sol`
-  (facet-count: drop the 2 crosschain buy contracts if listed),
-  `test/deploy/SelectorCoverageTest.t.sol` + `HelperTest.sol` (selector set).
-- **ABI export:** `script/exportFrontendAbis.sh` — drop `VpfiBuyAdapter` +
-  `VpfiBuyReceiver`; `VPFIDiscountFacet` stays (re-export, fewer selectors).
+- **Storage (`LibVaipakam.sol`):** remove the buy *counters/caps/enable*
+  (`…GlobalCap`, `…PerWalletCap`, `…TotalSold`, `…BuyEnabled`, the
+  `…SoldToByChainId` mapping + the legacy mapping) + `bridgedBuyReceiver`.
+  **⚠️ DO NOT delete `vpfiFixedRateWeiPerVpfi`** — the kept discount quoting
+  (`_feeAssetWeiToVpfi`) reads it (§2 finding). **Split it out**: rename to a
+  discount-price config (e.g. `vpfiDiscountWeiPerVpfi`) with a retained
+  `setVPFIDiscountRate` admin setter, and repoint `_feeAssetWeiToVpfi` at it.
+  (This is the one piece of A that is a *rename/retain*, not a delete.)
+- **Deploy/sanity + scripts (wider than first scoped):**
+  `DeployDiamond.s.sol` `_getVpfiDiscountSelectors()` (drop the buy selectors,
+  keep `setVPFIDiscountRate`, fix the array size), `DeployCrosschain.s.sol`
+  (drop the buy-adapter/receiver deploy+wiring), **`DiamondConfigSpell.s.sol`**
+  (imports + instantiates `ConfigureVPFIBuy` — remove), **`ConfigureCcip.s.sol`**
+  (the `VPFI_BUY_CHANNEL` wiring via `.vpfiBuyAdapter`/`.vpfiBuyReceiver` — remove),
+  **`AnvilNewPositiveFlows.s.sol`** (calls `getVPFIBuyConfig`/`setVPFIBuyRate` —
+  remove/retarget), `test/deploy/DiamondFacetNames.sol` (drop the 2 crosschain
+  buy contracts), `SelectorCoverageTest.t.sol` + `HelperTest.sol` (selector set).
+- **ABI export + TS consumers (wider than `/buy-vpfi`):**
+  `script/exportFrontendAbis.sh` — drop `VpfiBuyAdapter` + `VpfiBuyReceiver`
+  (`VPFIDiscountFacet` stays, re-export). Then the bundle's consumers must be
+  removed/feature-gated in the SAME PR or the TS build breaks:
+  **`apps/agent/src/buyWatchdog.ts`** (imports both buy ABIs) and the **admin
+  dashboard hooks** importing `VpfiBuyReceiverABI`.
 - **Frontend:** `/buy-vpfi` (marketing) + `/app/buy-vpfi` (connected) pages.
 - **Docs/allocation:** TokenomicsTechSpec §8/§8a + the §3 "Early Fixed-Rate
   Purchase Program" 1% (2.3M) row (see §6 reallocation).
 
 ### B. 5% APR staking yield — REMOVE (discount tiers KEPT)
 - **Whole-file removals:** `facets/StakingRewardsFacet.sol`,
-  `libraries/LibStakingRewards.sol`, `test/StakingAndInteractionRewardsTest.t.sol`,
-  `test/StakingRewardsCoverageTest.t.sol`,
+  `libraries/LibStakingRewards.sol`, `test/StakingRewardsCoverageTest.t.sol`,
   `test/invariants/StakingBalances.invariant.t.sol` (+ any
-  staking-monotonicity invariant).
-- **`LibVPFIDiscount.sol`:** remove the two `LibStakingRewards.updateUser(...)`
-  calls (L576/L784) + the `import` (the §2 verdict — no tier impact).
+  staking-monotonicity invariant). **`test/StakingAndInteractionRewardsTest.t.sol`
+  is MIXED — do NOT delete wholesale:** it also covers the **kept**
+  `InteractionRewardsFacet` (launch, schedule bands, half-pool formula, snapshot).
+  Split: drop the staking cases, **preserve the interaction-reward cases** (move
+  to an `InteractionRewards*Test` if cleaner).
+- **All 6 `LibStakingRewards.updateUser(...)` caller sites (full list — the scout
+  found only 2):** `LibVPFIDiscount.sol` (the LIF/yield-fee notify calls),
+  `facets/VPFIDiscountFacet.sol` (`depositVPFIToVault`/`withdrawVPFIFromVault`),
+  `facets/LenderIntentFacet.sol` (`withdrawIntentCapital`),
+  `libraries/LibConsolidation.sol` (`_restampVpfi`/`restampUserVpfi`),
+  `facets/ConfigFacet.sol`, `libraries/LibVaipakam.sol`. Delete each call + each
+  `import {LibStakingRewards}` while **retaining the surrounding VPFI movement +
+  discount rollups** — these are one-way staking notifications, not tier inputs.
 - **Storage/constants (`LibVaipakam.sol`):** remove `VPFI_STAKING_APR_BPS`,
   `VPFI_STAKING_POOL_CAP`, `STAKING_APR_BPS_MAX`, the `vpfiStakingAprBps` config
   field, and the staking storage (`totalStakedVpfi`, `stakingLastUpdateTime`,
   `stakingRewardPerTokenStored`, `userStakedVpfi`,
   `userStakingRewardPerTokenPaid`, `userStakingPendingReward`,
-  `stakingPoolPaidOut`).
-- **`ConfigFacet.sol`:** remove `setStakingApr` + its bound + any
-  `getStakingAprBps`/`getConfig` staking field.
+  `stakingPoolPaidOut`). **Also `stakingPoolBuybackBudget`** (the staker-yield
+  router sink — see below; it dies with B, not C).
+- **`stakingPoolBuybackBudget` full surface (dies with B):** the storage slot +
+  `TreasuryFacet.getStakingPoolBuybackBudget` getter (+ its selector in
+  `DeployDiamond`/`HelperTest`/`SelectorCoverageTest`) + the `LibTreasuryBuyback`
+  `_routePriority` step-3 that increments it + every buyback test asserting it.
+  Removing the slot **without** these trips compile/selector failures; leaving
+  them strands a dead staker-yield budget.
+- **`ConfigFacet.sol` — incl. the ABI tuple surfaces:** remove `setStakingApr` +
+  its bound; and **`getProtocolConfigBundle` still returns `vpfiStakingAprBps`**
+  and **`getProtocolConstants` still returns `VPFI_STAKING_POOL_CAP`** — drop
+  those tuple fields AND update every consumer that reads those tuple positions
+  (tests + frontend hooks), or the build breaks / a removed pool stays surfaced.
 - **Deploy/sanity:** `DeployDiamond.s.sol` `_getStakingRewardsSelectors()`
   (delete the function + its cut entry), `DiamondFacetNames.sol`
   (drop `StakingRewardsFacet`), `SelectorCoverageTest.t.sol`, `HelperTest.sol`,
   `SetupTest.t.sol` (drop the staking facet import + cut + setup).
-- **ABI export:** drop `StakingRewardsFacet`.
-- **Frontend:** `/staking` pages + staking/yield/APR widgets + claim UI.
+- **ABI export:** drop `StakingRewardsFacet`; re-export `ConfigFacet`/`TreasuryFacet`
+  (tuple shapes changed) + their TS consumers.
+- **Frontend:** `/staking` pages + staking/yield/APR widgets + claim UI + any
+  `getProtocolConfigBundle`/`getProtocolConstants` reader of the dropped fields.
 - **Docs/allocation:** TokenomicsTechSpec §7/§12.1 + whitepaper §12.1 + overview
   "5% annual yield" copy + the §3 Staking-Rewards 24% (55.2M) row (see §6).
 
 ### C. Treasury buyback — CONFIRM DORMANT (do NOT delete)
-- **Dormancy (verified):** `remitBuyback` reverts `BuybackTokenNotAllowed`
-  (no allowed token) / `InsufficientBuybackBudget` (budget 0) until the operator
-  sets an allowed token **and** funds the budget. **No script calls
-  `setBuybackAllowedToken` or `creditBuybackBudget`.** Nuance:
-  `ConfigureCcip.s.sol` (`_wireDiamondBuybackConfig`) *does* wire the messenger +
-  `setBuybackRemittanceReceiver` (canonical) — wiring the pipe, not opening the
-  valve. With no allowed-token + no funded budget, nothing flows.
-- **Phase-1 action (minimum):** keep it dormant — assert no
-  allowed-token/budget/intent activation in any deploy/config path; the
-  staker-yield target (`stakingPoolBuybackBudget`) is severed *with B* (it's the
-  3rd priority-router step). Decide whether to also drop the `ConfigureCcip`
-  receiver-wiring for Phase-1 cleanliness (optional — harmless while the valve
-  is shut).
-- **Kept budgets:** `rewardEmissionsBudget` + `keeperRewardBudget` are the
-  priority-router steps 1–2 and survive; they're fundable by direct operator
-  `creditBuybackBudget`/top-up targets independent of the buyback engine running
-  (the cascade comment in `LibVaipakam.sol` drops from 3-step → 2-step once B
-  removes `stakingPoolBuybackBudget`).
+- **Dormancy — assert on BOTH chain roles (the mirror-only proof was incomplete):**
+  - *Mirror chains:* `remitBuyback` reverts `BuybackTokenNotAllowed` (no allowed
+    token) / `InsufficientBuybackBudget` (budget 0) until the operator sets an
+    allowed token **and** funds the budget.
+  - *Canonical chain (Base) — separate path:* `creditBuybackBudget` **skips the
+    allowed-token gate** and credits `baseBuybackBudget`, then
+    `commitBuybackIntent` spends that budget **directly, without `remitBuyback`**.
+    So a Base-only buyback can activate via budget+intent+Fusion even with no
+    allowed token. **The Phase-1 dormancy assertion must check Base
+    budget/intent/Fusion activation too**, not just `remitBuyback`'s gates.
+  - *Verified:* **no script calls `setBuybackAllowedToken`, `creditBuybackBudget`,
+    or `commitBuybackIntent`.** Nuance: `ConfigureCcip.s.sol`
+    (`_wireDiamondBuybackConfig`) *does* wire the messenger +
+    `setBuybackRemittanceReceiver` (canonical) — wiring the pipe, not opening the
+    valve. With no funded budget + no committed intent, nothing flows on either
+    chain role.
+- **Phase-1 action (minimum):** keep it dormant — a deploy-sanity/test assertion
+  that no allowed-token / budget-credit / intent-commit / Fusion activation
+  exists in any deploy/config path (both chain roles). The staker-yield target
+  (`stakingPoolBuybackBudget`) is severed *with B* (§3.B). Optionally drop the
+  `ConfigureCcip` receiver-wiring for cleanliness (harmless while the valve is
+  shut).
+- **Kept budgets — Option 2 (OWNER-DECIDED 2026-06-23): do nothing; they degrade
+  gracefully to 0.** Correction to an earlier draft: `rewardEmissionsBudget` +
+  `keeperRewardBudget` are **only ever incremented by `LibTreasuryBuyback._routePriority`**
+  (consumed in `LibKeeperReward`) — there is **no** direct operator top-up, so
+  with buyback dormant they sit at **0**. That is **safe and intentional**:
+  - `LibKeeperReward` handles a 0 budget gracefully (`if (budget == 0) { emit
+    KeeperRewardSkipped(…,"budget-empty"); return 0; }` — *"housekeeping continues
+    regardless"*): the keeper's liquidation/HF-check **still executes**; only the
+    optional VPFI bonus is skipped (keepers are incentivized by liquidation
+    bonuses + matcher LIF independently).
+  - `rewardEmissionsBudget` is only a buyback-burn **offset** to interaction-reward
+    inflation — it does **not** gate interaction-reward minting (those mint from
+    their own 30%/69M pool). At 0 there's simply no offset (a Phase-2
+    buyback-burn concern).
+  - **⇒ No Phase-1 funding path is added** (no new admin economic knob — best for
+    the minimal-legal/decentralization story). The keeper VPFI bonus + the
+    emissions offset return naturally with the Phase-2 buyback-burn. The cascade
+    comment in `LibVaipakam.sol` drops from 3-step → 2-step once B removes
+    `stakingPoolBuybackBudget`.
 - **Shared surface — do NOT remove:** `IntentDispatchFacet` is shared by
   swap-to-repay **and** buyback (`ORDER_KIND_BUYBACK` branch); leave the facet.
   Full buyback code removal (`LibTreasuryBuyback`, `LibBuybackOrderValidation`,
@@ -250,7 +323,10 @@ block on it (they remove the mint paths regardless).
 ## 10. References
 
 - #687 (code work-list, anchors), #694 (research/roadmap + locked decisions),
-  #695 / [`VPFITokenomicsRedesignResearch.md`](VPFITokenomicsRedesignResearch.md).
+  the research/roadmap in **#694** + its design doc `VPFITokenomicsRedesignResearch.md`
+  (lands on `main` via **PR #695**; until that merges the file is on the
+  `docs/vpfi-tokenomics-redesign-research` branch, so this doc intentionally
+  links the issue/PR rather than a not-yet-existing path).
 - Code: `facets/VPFIDiscountFacet.sol`, `libraries/LibVPFIDiscount.sol`
   (tier=balance, §2 verdict), `facets/StakingRewardsFacet.sol` +
   `libraries/LibStakingRewards.sol`, `crosschain/VpfiBuy{Adapter,Receiver}.sol`,
