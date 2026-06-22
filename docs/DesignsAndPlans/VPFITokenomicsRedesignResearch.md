@@ -47,7 +47,7 @@ Key carve-outs and boundaries it establishes:
 | # | Concept | Verdict | Confidence |
 |---|---------|---------|------------|
 | 1 | No-consideration retroactive airdrop | **ADOPT** | High |
-| 2 | Usage-based interaction rewards | **KEEP + tighten** | High |
+| 2 | Usage-based interaction rewards | **KEEP + tighten** (lower-confidence, counsel-gated mechanics — §9.2/§6; NOT the zero-consideration airdrop posture) | High (mechanic) / lower (legal) |
 | 3 | Passive / guaranteed staking yield | **AVOID** (confirms #687) | High |
 | 4 | Issuer-priced primary sale | **AVOID** (confirms #687) | High |
 | 5 | Real-yield value accrual (fee switch / revenue share) | **ADAPT — lean buyback-and-burn** | High (comparable) / lower (legal line) |
@@ -177,6 +177,7 @@ Candidate child cards (owner to confirm split):
 - **Card A — Buyback-and-burn value accrual.** Treasury uses real protocol revenue to buy + burn VPFI. **Phase 2 — do this AFTER decentralization, not first.** (An earlier draft said "do this first"; that contradicts the decided §9.1/§9.5 sequence, which defers **all** value-accrual until control actually decentralizes — implementing a value-accrual engine while the admin still holds the keys *increases* exposure. Among Phase-2 value-accrual options it is the lowest-ambiguity one, but it is still Phase 2.) Write design doc under `docs/DesignsAndPlans/` when that phase opens.
 - **Card B — Retroactive airdrop + progressive-decentralization roadmap.** Snapshot design (no foreseeable criteria), governance-utility wiring (vote on collateral/risk/fee switch), parameter-immutability schedule.
 - **Card C — Interaction-reward hardening.** Enforce completed-transaction tie, variable rate, de-"APR" all copy. May fold into [#687](https://github.com/vaipakam/vaipakam/issues/687).
+- **Card D — DAO-governed liquidity gauge [Phase 2 only].** Community-voted VPFI/ETH liquidity incentives, gated on decentralization. **Phase 1 explicitly AVOIDS operator-run LP / market-making / pool seeding** (operator fostering a market for its own token + LP-reward-as-yield reintroduce the removed risks); §9.2 forbids team-seeded liquidity. Liquidity must form organically in Phase 1; this card is NOT a Phase-1 item.
 
 Also pending from #687: reallocate the freed **1%** (sale) + **24%** (staking) supply pools, or reduce the 230M cap accordingly.
 
@@ -203,12 +204,12 @@ Admin control is the **"efforts of others"** prong of Howey at its strongest. Th
 | Treasury / runway | **Bootstrapped** from protocol fee revenue (ETH/stables) only. **No capital raise** — explicitly NOT a private placement (avoids the expensive-counsel lane). |
 | Operator compensation | Vested/timelocked founder/team allocation. **Affiliate secondary-market sales are NOT a decided low-overhead lever** — while the operator still controls parameters and VPFI has no live governance/value-accrual, founder/team sales can read as issuer/affiliate distribution or capital formation rather than neutral user transfers. Gate any realization on **lockups + counsel review + Phase 2**, not on Phase-1 ad-hoc selling. Still **no team-seeded liquidity or market-making** (a team-made market is itself an enforcement hook). |
 | Marketing | No profit / yield / returns / appreciation / investment / price language anywhere. VPFI = fee-discount tool. (Reinforces the existing retail-copy policy.) |
-| Compliance scaffolding | Keep existing **free** measures: on-chain ToS (LegalFacet), sanctions screening, retail KYC-off. Nothing added. |
+| Compliance scaffolding | Keep existing **free** measures: on-chain ToS (LegalFacet), sanctions screening, retail KYC-off. "Nothing added" applies to the **token-distribution** surface only — it is **not** a protocol-wide conclusion: if the independent MSB/VASP/BSA analysis (§9.3) finds covered lending activity, AML-program / KYC obligations there are a separate matter. |
 
 ### 9.3 How each regime stays minimal
 *(These reduce the *token-level* surface; each still needs the bounded counsel review in §9.4 — none is a self-certified clearance.)*
 - **Securities:** no sale + no yield + consumptive-only + no team-made market **reduces the token-level profit-expectation surface**. It does not eliminate it: a transferable ERC20 launched under admin control with a published Phase-2 governance/value-accrual roadmap can still support a fact-specific profit-expectation argument, and VPFI's own classification remains an inference pending counsel (§4.7).
-- **Money transmission / VASP:** the VPFI distribution adds **no token-sale custody trigger** (the operator never sells or custodies VPFI). This does **NOT** clear the protocol's broader money-transmission/VASP posture — the Phase-1 lending product still accepts, routes, and pays ETH/stables/collateral through admin-controlled contracts, which needs its own MSB/VASP analysis independent of the token.
+- **Money transmission / VASP:** the VPFI distribution adds **no token-*sale* custody trigger** (the operator never *sells* VPFI). Custody nuance: the kept fee-discount path's `depositVPFIToVault` does move users' VPFI into Diamond-controlled per-user vault proxies, so the no-custody framing is scoped to "no token-sale custody," not a blanket "never custodies." This does **NOT** clear the protocol's broader money-transmission/VASP posture — the Phase-1 lending product still accepts, routes, and pays ETH/stables/collateral through admin-controlled contracts, which needs its own MSB/VASP analysis independent of the token.
 - **MiCA / financial-promotion (EU/UK):** Phase 1 still **distributes VPFI to public EU/UK users** (via completed-txn rewards + the optional airdrop), so "no public offer" is **not** a categorical given — especially where rewards are tied to fee-generating transactions. This still requires a MiCA / financial-promotion **exemption analysis** (white-paper / approved-promotion triggers), not reliance on disciplined marketing alone.
 - **AML:** sanctions-screening + retail KYC-off is at the floor **for token distribution only**. It is **not** a conclusion for the protocol as a whole — if the independent MSB/VASP/BSA analysis (above) finds covered activity, AML-program / customer-identification obligations could exceed sanctions screening.
 
