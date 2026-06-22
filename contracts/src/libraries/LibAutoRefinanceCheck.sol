@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibERC721} from "./LibERC721.sol";
 import {LibPeriodicInterest} from "./LibPeriodicInterest.sol";
+import {OracleFacet} from "../facets/OracleFacet.sol";
 
 /**
  * @title  LibAutoRefinanceCheck
@@ -224,6 +225,15 @@ library LibAutoRefinanceCheck {
                 offer.collateralTokenId,
                 offer.collateralQuantity
             )
+        ) return false;
+        // #595 round-2 — the atomic refinance runs the new loan's post-refinance
+        // calculateLTV / calculateHealthFactor, which revert for illiquid
+        // collateral. Reject a non-liquid carry-over target up front so preview
+        // never admits a match the atomic path would revert (a manually enrolled
+        // loan can carry illiquid ERC20 / NFT collateral).
+        if (
+            OracleFacet(address(this)).checkLiquidity(offer.collateralAsset) !=
+            LibVaipakam.LiquidityStatus.Liquid
         ) return false;
         // STRICT same-key retag must be possible — mirror
         // `rekeyCollateralLienOnRefinance`'s success key against the replacement

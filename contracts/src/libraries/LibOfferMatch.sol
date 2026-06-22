@@ -263,6 +263,22 @@ library LibOfferMatch {
                 r.errorCode = MatchError.RefinanceTagged;
                 return r;
             }
+            // #595 round-2 — for NFT carry-over collateral, the asset-continuity
+            // check below only compares the collection address + asset type, but
+            // `LoanFacet` copies the BORROWER offer's carried token into the new
+            // loan. Require the lender offer to demand the SAME token identity
+            // (tokenId + quantity), else a lender wanting token A could be
+            // matched to a refinance carrying token B from the same collection,
+            // delivering different collateral than the lender's offer specified.
+            if (B.collateralAssetType != LibVaipakam.AssetType.ERC20) {
+                if (
+                    L.collateralTokenId != B.collateralTokenId ||
+                    L.collateralQuantity != B.collateralQuantity
+                ) {
+                    r.errorCode = MatchError.AssetMismatch;
+                    return r;
+                }
+            }
             borrowerCarryOver = true;
         }
 
