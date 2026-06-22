@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -461,6 +462,21 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
             SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
         }
+        // #658 PR-B — the periodic auto-liquidate is a both-side fund-distribution
+        // event (it SELLS the borrower's collateral and PAYS the lender the
+        // shortfall coverage) on a loan that stays Active. Consolidate each
+        // transferred side to its current NFT holder BEFORE the collateral sale +
+        // lender payout, so the collateral lien / reward entry / VPFI checkpoint
+        // follow the holder and the proceeds route to the current lender holder
+        // (mirrors triggerPartialLiquidation). Cross-facet (Tier2 skip-not-block);
+        // the just-stamp path has no payout, so it is intentionally NOT wired.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell
@@ -502,6 +518,15 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 toSell
             ),
             VaultWithdrawFailed.selector
+        );
+        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
+        // collateral slice leaves the vault (no-op for non-VPFI collateral).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
         );
 
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
