@@ -185,6 +185,11 @@
   },
   {
     "type": "error",
+    "name": "AmountMutationUnsupportedForShape",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "AssetPaused",
     "inputs": [
       {

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
+import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
@@ -52,7 +53,8 @@ library LibOfferMatch {
         SelfTrade,                // #194 — both offers carry the same `creator`. The actual revert lives in `_acceptOffer` (`SelfTradeForbidden(party)`); this variant lets bots short-circuit at preview time.
         OfferExpired,             // #195 — either offer's GTT deadline (`expiresAt != 0 && block.timestamp >= expiresAt`) has lapsed. The actual revert lives in `_acceptOffer` (`OfferExpired(offerId, expiresAt)`); this variant lets matching bots short-circuit at preview time. Either side can carry the lapse — both lender and borrower offers are GTT-eligible.
         AonRequiresFullFill,      // #125 — either offer carries `fillMode = Aon` but the would-be matchAmount isn't its full single-shot fill (`offer.amount`), or the offer already has a non-zero `amountFilled`. AON offers admit exactly one fill, sized to the AON-side's `amount`; any divergence aborts. Create-time invariant `amount == amountMax` keeps the "AON-required fill size" unambiguous.
-        RefinanceTagged           // #576 — either offer carries `refinanceTargetLoanId != 0`. Refinance-tagged offers are direct-accept-only (collateral carry-over can't be honoured atomically by the partial-fill matcher); `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. This variant lets bots skip the pair at preview time.
+        RefinanceTagged,          // #576/#595 — a refinance-tagged offer that is NOT an admissible AON carry-over match: a lender-tagged offer, or a borrower carry-over offer whose target fails the exhaustive admission mirror (`LibAutoRefinanceCheck.matchAdmissible` — stale target, transferred NFT, gated caps/kill-switch, live intent, diverged retag key, etc.). `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`. Lets bots skip the pair at preview time.
+        RefinanceCarryOverCollateralShortfall // #595 — an admitted carry-over match where the lender's pro-rated collateral requirement exceeds the carried (pinned) amount; carry-over pledges no fresh collateral to top it up.
     }
 
     /// @notice Structured return from `previewMatch`. Bots check
@@ -237,19 +239,47 @@ library LibOfferMatch {
             return r;
         }
 
-        // #576 — refinance-tagged offers are DIRECT-ACCEPT-ONLY (their
-        // collateral carry-over contract can only be honoured atomically by
-        // the accept-and-refinance path; the partial-fill matcher would create
-        // an uncollateralized loan and/or diverge the carried collateral). The
-        // state-changing `matchOffers` reverts `RefinanceTaggedOfferNotMatchable`
-        // for these; surface the same verdict here so the first-party matcher
-        // skips the pair at preview time instead of having one tagged borrower
-        // offer repeatedly block a lender from reaching later valid borrowers.
-        if (
-            L.refinanceTargetLoanId != 0 || B.refinanceTargetLoanId != 0
-        ) {
+        // #595 — carry-over-aware matched refinance. A refinance-tagged BORROWER
+        // offer is admissible ONLY as an AON carry-over match whose target
+        // passes the exhaustive admission mirror of
+        // `RefinanceFacet._refinanceLoanLogic` (see
+        // `LibAutoRefinanceCheck.matchAdmissible`). This is the source of truth
+        // shared with the on-chain `matchOffers` guard, so preview can't admit a
+        // pair the atomic retag would reject (no bot false positives) and an AON
+        // single full fill always reaches the dust-close retag hook in the same
+        // tx (no uncollateralized window — design §2/§3). A LENDER offer is never
+        // refinance-tagged; any non-admissible tagged offer → `RefinanceTagged`.
+        bool borrowerCarryOver;
+        if (L.refinanceTargetLoanId != 0) {
             r.errorCode = MatchError.RefinanceTagged;
             return r;
+        }
+        if (B.refinanceTargetLoanId != 0) {
+            if (
+                !LibAutoRefinanceCheck.matchAdmissible(
+                    s, B.refinanceTargetLoanId, B
+                )
+            ) {
+                r.errorCode = MatchError.RefinanceTagged;
+                return r;
+            }
+            // #595 round-2 — for NFT carry-over collateral, the asset-continuity
+            // check below only compares the collection address + asset type, but
+            // `LoanFacet` copies the BORROWER offer's carried token into the new
+            // loan. Require the lender offer to demand the SAME token identity
+            // (tokenId + quantity), else a lender wanting token A could be
+            // matched to a refinance carrying token B from the same collection,
+            // delivering different collateral than the lender's offer specified.
+            if (B.collateralAssetType != LibVaipakam.AssetType.ERC20) {
+                if (
+                    L.collateralTokenId != B.collateralTokenId ||
+                    L.collateralQuantity != B.collateralQuantity
+                ) {
+                    r.errorCode = MatchError.AssetMismatch;
+                    return r;
+                }
+            }
+            borrowerCarryOver = true;
         }
 
         // #195 — GTT lazy-enforcement on the match path. Either side's
@@ -327,7 +357,26 @@ library LibOfferMatch {
             r.errorCode = MatchError.AmountNoOverlap;
             return r;
         }
-        r.matchAmount = midpoint(lo, hi);
+        if (borrowerCarryOver) {
+            // §3.2 — a carry-over refinance is AON single-full-fill: force the
+            // matched amount to the borrower's full `amount` (the midpoint could
+            // exceed it against an open lender range and trip AonRequiresFullFill,
+            // blocking a lender from staying partially open). KEEP every
+            // lender-side bound: `lo = max(L.amount, B.amount)` and
+            // `hi = min(lenderRemaining, borrowerRemaining)`, so requiring
+            // `lo <= B.amount <= hi` rejects exactly the cases where B.amount is
+            // below the lender's min fill (`L.amount > B.amount`) or above the
+            // lender's remaining capacity — only the midpoint *selection* is
+            // bypassed, never the legal window. The lender AON gate below then
+            // correctly checks `B.amount == L.amount` for a lender-AON offer.
+            if (B.amount < lo || B.amount > hi) {
+                r.errorCode = MatchError.AmountNoOverlap;
+                return r;
+            }
+            r.matchAmount = B.amount;
+        } else {
+            r.matchAmount = midpoint(lo, hi);
+        }
 
         // #125 — AON enforcement. An AON offer admits exactly one fill,
         // sized to its full `amount`. The create-time invariant
@@ -406,6 +455,21 @@ library LibOfferMatch {
         //       `lo = max(L.amount, B.amount)`. Match fails only when
         //       the clamped value exceeds the borrower's remaining
         //       ceiling.
+        if (borrowerCarryOver) {
+            // §3.3 — collateral is PINNED to the carried amount (== the old
+            // loan's, by the carry-over predicate). The lender's pro-rated
+            // requirement must not exceed it: carry-over pledges no fresh
+            // collateral to top up, so a higher requirement is unfillable. When
+            // it fits, lock the full carried amount (the borrower keeps it; the
+            // lender is at-least-fully-secured). The synthetic HF/LTV gate below
+            // then runs on this pinned value — so a lender asking for LESS
+            // collateral than carried can't spuriously trip it (design §3.3).
+            if (reqFromLender > B.collateralAmount) {
+                r.errorCode = MatchError.RefinanceCarryOverCollateralShortfall;
+                return r;
+            }
+            r.reqCollateral = B.collateralAmount;
+        } else {
         uint256 borrowerCollMax = B.collateralAmountMax == 0
             ? B.collateralAmount
             : B.collateralAmountMax;
@@ -448,6 +512,7 @@ library LibOfferMatch {
             picked = req;
         }
         r.reqCollateral = picked;
+        }
 
         // Synthetic init-gate check at the matched (amount, reqCollateral)
         // — must mirror `LoanFacet._checkInitialLtvAndHf` so a bot's

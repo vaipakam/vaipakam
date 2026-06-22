@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
 import {LibRiskMath} from "../libraries/LibRiskMath.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -105,6 +106,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     ///         that only the direct accept-and-refinance path can honour
     ///         atomically, so they are excluded from the partial-fill matcher.
     error RefinanceTaggedOfferNotMatchable();
+    /// @notice #595 — an admitted carry-over match where the lender's pro-rated
+    ///         collateral requirement exceeds the carried (pinned) amount.
+    error RefinanceCarryOverCollateralShortfall();
     /// @notice #633 — the #398 aggregator-adapter feature is paused by governance,
     ///         so an aggregator's intent cannot be filled (user intents still can).
     error AggregatorAdaptersPaused();
@@ -700,27 +704,31 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // #576 — refinance-tagged offers are DIRECT-ACCEPT-ONLY. A tagged
-        // offer's collateral is "carried over" from the loan it refinances
-        // (no fresh pledge — see OfferCreateFacet's carry-over skip), and only
-        // the direct accept-and-refinance path (OfferAcceptFacet._acceptOffer
-        // -> RefinanceFacet.refinanceLoanFromAccept) honours that contract
-        // atomically. Routing a tagged offer through the partial-fill matcher
-        // is unsafe on two counts: (1) a match that fills before the
-        // dust-close branch creates the replacement loan with the carry-over
-        // deposit AND lien both skipped but the retag not yet fired — an
-        // uncollateralized loan; (2) the matcher's midpoint
-        // `matchOverride.collateralAmount` can diverge from the fixed carried
-        // amount, tripping RefinanceFacet's identity check. A carry-over-aware
-        // matched-refinance path is a separate design item (#595); until then,
-        // reject tagged offers here. (The atomic-refinance hook later in this facet's
-        // dust-close block is consequently unreachable for tagged offers — it
-        // is retained as the wiring a future carry-over-aware path would use.)
-        if (
-            s.offers[borrowerOfferId].refinanceTargetLoanId != 0 ||
-            s.offers[lenderOfferId].refinanceTargetLoanId != 0
-        ) {
+        // #595 — carry-over-aware matched refinance. A refinance-tagged BORROWER
+        // offer is matchable ONLY as an AON carry-over match that passes the
+        // exhaustive admission mirror of `RefinanceFacet._refinanceLoanLogic`
+        // (`LibAutoRefinanceCheck.matchAdmissible` — the SAME predicate
+        // `previewMatch` uses, so on-chain and preview agree). An AON single
+        // full fill consumes the borrower offer in one slice, so the dust-close
+        // retag hook below fires in the SAME tx (no uncollateralized window —
+        // design §2/§3), the matched collateral is pinned to the carried amount
+        // (no identity-gate divergence), and the old lien is retagged atomically.
+        // A LENDER offer is never refinance-tagged. Anything tagged that fails
+        // admission reverts here, exactly as the atomic path would.
+        if (s.offers[lenderOfferId].refinanceTargetLoanId != 0) {
             revert RefinanceTaggedOfferNotMatchable();
+        }
+        {
+            uint256 bRefiTarget =
+                s.offers[borrowerOfferId].refinanceTargetLoanId;
+            if (
+                bRefiTarget != 0 &&
+                !LibAutoRefinanceCheck.matchAdmissible(
+                    s, bRefiTarget, s.offers[borrowerOfferId]
+                )
+            ) {
+                revert RefinanceTaggedOfferNotMatchable();
+            }
         }
 
         // Pre-flight via the shared core; map structured errors into
@@ -808,6 +816,16 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
                     bAon.amount,
                     mr.matchAmount
                 );
+            }
+            // #595 — an admitted carry-over match where the lender's pro-rated
+            // collateral requirement exceeds the carried (pinned) amount.
+            // Surface a dedicated revert (not the generic InvalidOfferType) so
+            // callers can distinguish it from a malformed offer.
+            if (
+                mr.errorCode ==
+                LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall
+            ) {
+                revert RefinanceCarryOverCollateralShortfall();
             }
             revert InvalidOfferType();
         }
@@ -1055,7 +1073,17 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             uint256 borrowerRemaining = effBorrowerAmountMax - bm.amountFilled;
             if (borrowerRemaining < bm.amount) {
                 // Dust-close: refund residual collateral and flip accepted.
-                if (bm.collateralAssetType == LibVaipakam.AssetType.ERC20) {
+                // #595 §3.4 — SKIP the offer-lock release + collateral refund for
+                // a carry-over refinance offer: it pledged NO fresh collateral
+                // (OfferCreateFacet's carry-over deposit/escrow-lock skips) and
+                // its backing is the old loan's lien, untouched until the retag
+                // hook below. Running the refund here would either revert at the
+                // vault-withdraw guard (no free balance) or drain unrelated free
+                // collateral. Only the accepted-flip, metrics hook, and retag run.
+                if (
+                    bm.collateralAssetType == LibVaipakam.AssetType.ERC20 &&
+                    !bm.refinanceCarryOver
+                ) {
                     // #573 — borrower offer is now terminal; release the
                     // remaining offer-collateral lock BEFORE the residual
                     // refund. After the per-fill decrements the lock equals

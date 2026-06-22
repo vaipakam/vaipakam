@@ -116,6 +116,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     /// between the offer's claimed collateralAmount and whatever the
     /// matching path would actually require, so we reject loud.
     error CollateralMutationUnsupportedForShape();
+    /// @notice #595 §3.5 — the offer is refinance-tagged; its amount is FROZEN
+    ///         to the target loan's outstanding principal while tagged (a
+    ///         carry-over offer must remain a faithful refinance of exactly its
+    ///         target). Cancel + re-create to retarget.
+    error AmountMutationUnsupportedForShape();
 
     /// `setOfferAmount` would set `amountMax` below `amountFilled`, or
     /// `setOfferCollateral` would set `collateralAmountMax` below
@@ -152,6 +157,10 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         _assertMutableBy(offer);
+        // #595 §3.5 (ratified) — freeze the amount of a refinance-tagged offer.
+        if (offer.refinanceTargetLoanId != 0) {
+            revert AmountMutationUnsupportedForShape();
+        }
 
         // Snapshot BOTH old values before the storage write — the
         // borrower NFT-rental delta path needs `oldAmount` (the prepay
@@ -305,6 +314,11 @@ contract OfferMutateFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             || params.collateralAmountMax != oldCollateralAmountMax;
 
         if (amountChanged) {
+            // #595 §3.5 (ratified) — freeze the amount of a refinance-tagged
+            // offer (mirror of the setOfferAmount guard).
+            if (offer.refinanceTargetLoanId != 0) {
+                revert AmountMutationUnsupportedForShape();
+            }
             _assertAmountInvariants(
                 params.amount,
                 params.amountMax,

@@ -18,6 +18,7 @@ import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibAutoRefinanceCheck} from "../src/libraries/LibAutoRefinanceCheck.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
@@ -760,13 +761,13 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
     }
 
-    function test_576_refinanceTaggedOffer_notMatchable() public {
-        // #576 Codex P1/P2 — a refinance-tagged offer is direct-accept-only.
-        // The partial-fill matcher can't honour the carry-over contract
-        // atomically (a pre-dust-close match would create an uncollateralized
-        // loan, and the matcher's midpoint collateral can diverge from the
-        // fixed carried amount), so matchOffers must reject tagged offers
-        // BEFORE previewMatch — the lenderOfferId need not even exist.
+    function test_595_nonAdmissibleTaggedOffer_notMatchable() public {
+        // #595 — a refinance-tagged offer that FAILS the admission mirror is
+        // still rejected by matchOffers (RefinanceTaggedOfferNotMatchable),
+        // before previewMatch. Here the auto-refinance kill-switch is OFF, so
+        // the keeper-driven matched-refinance completion path is gated →
+        // `LibAutoRefinanceCheck.matchAdmissible` returns false. (Pre-#595 ALL
+        // tagged offers were rejected; now only non-admissible ones are.)
         ConfigFacet(address(diamond)).setPartialFillEnabled(true);
         uint256 oldLoanId = _buildActiveLoan();
         vm.prank(borrower);
@@ -777,10 +778,168 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         uint256 taggedOfferId = OfferCreateFacet(address(diamond))
             .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
 
+        // Kill-switch OFF ⇒ the matched-refinance completion path is gated.
+        _admin().setAutoRefinanceEnabled(false);
+
         vm.expectRevert(
             OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
         );
         OfferMatchFacet(address(diamond)).matchOffers(999, taggedOfferId);
+    }
+
+    /// @dev A fresh Partial lender offer that funds a refinance, matching the
+    ///      carry-over offer's terms. `collateralReq` lets a test make the
+    ///      lender demand MORE collateral than the carried amount.
+    function _refiLenderOfferId(uint256 rateBps, uint256 collateralReq)
+        internal
+        returns (uint256)
+    {
+        deal(mockERC20, lender, LOAN_PRINCIPAL * 4);
+        address lenderVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        vm.prank(lender);
+        ERC20(mockERC20).approve(lenderVault, type(uint256).max);
+        vm.prank(lender);
+        return OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: LOAN_PRINCIPAL,
+                interestRateBps: rateBps,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: collateralReq,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: LOAN_PRINCIPAL,
+                interestRateBpsMax: rateBps,
+                collateralAmountMax: collateralReq,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
+    function _carryOverMatchFixture()
+        internal
+        returns (uint256 oldLoanId, uint256 taggedOfferId)
+    {
+        ConfigFacet(address(diamond)).setPartialFillEnabled(true);
+        oldLoanId = _buildActiveLoan();
+        vm.prank(borrower);
+        _f().setAutoRefinanceCaps(
+            oldLoanId, true, 600, uint64(block.timestamp + 365 days)
+        );
+        vm.prank(borrower);
+        taggedOfferId = OfferCreateFacet(address(diamond))
+            .createOffer(_refinanceTaggedOfferParams(oldLoanId, 400));
+    }
+
+    function test_595_matchedCarryOver_admitsRetagsAndRepaysOld() public {
+        (uint256 oldLoanId, uint256 taggedOfferId) = _carryOverMatchFixture();
+        uint256 lenderOfferId = _refiLenderOfferId(400, LOAN_COLLATERAL);
+
+        // §3.1-3.3 — previewMatch admits with the forced/pinned values.
+        LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
+            .previewMatch(lenderOfferId, taggedOfferId);
+        assertEq(uint8(mr.errorCode), uint8(LibOfferMatch.MatchError.Ok), "admitted");
+        assertEq(mr.matchAmount, LOAN_PRINCIPAL, "matchAmount = borrower full amount");
+        assertEq(mr.reqCollateral, LOAN_COLLATERAL, "reqCollateral pinned to carried");
+
+        // §2/§3.6 — the atomic carry-over refinance executes in the match tx.
+        // A successful matchOffers IMPLIES the strict same-key retag succeeded
+        // (a failed retag reverts the whole tx), so there is no uncollateralized
+        // window.
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
+
+        assertTrue(
+            LoanFacet(address(diamond)).getLoanDetails(oldLoanId).status
+                != LibVaipakam.LoanStatus.Active,
+            "old loan refinanced away (terminal)"
+        );
+    }
+
+    function test_595_matchedCarryOver_lenderWantsMoreCollateral_shortfall()
+        public
+    {
+        (uint256 oldLoanId, uint256 taggedOfferId) = _carryOverMatchFixture();
+        oldLoanId; // silence unused
+        // Lender demands MORE collateral than the carried amount — carry-over
+        // can't top up with fresh collateral ⇒ shortfall.
+        uint256 lenderOfferId =
+            _refiLenderOfferId(400, LOAN_COLLATERAL + 100 ether);
+
+        LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
+            .previewMatch(lenderOfferId, taggedOfferId);
+        assertEq(
+            uint8(mr.errorCode),
+            uint8(LibOfferMatch.MatchError.RefinanceCarryOverCollateralShortfall),
+            "shortfall surfaced in preview"
+        );
+        vm.expectRevert();
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
+    }
+
+    function test_595_carryOverOffer_amountMutationFrozen() public {
+        (, uint256 taggedOfferId) = _carryOverMatchFixture();
+
+        // setOfferAmount on a refinance-tagged offer reverts (§3.5 freeze).
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.AmountMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).setOfferAmount(
+            taggedOfferId, LOAN_PRINCIPAL + 1 ether, LOAN_PRINCIPAL + 1 ether
+        );
+
+        // modifyOffer's amount cluster on a tagged offer reverts too.
+        vm.prank(borrower);
+        vm.expectRevert(
+            OfferMutateFacet.AmountMutationUnsupportedForShape.selector
+        );
+        OfferMutateFacet(address(diamond)).modifyOffer(
+            taggedOfferId,
+            LibVaipakam.OfferModifyParams({
+                amount: LOAN_PRINCIPAL + 1 ether,
+                amountMax: LOAN_PRINCIPAL + 1 ether,
+                interestRateBps: 400,
+                interestRateBpsMax: 400,
+                collateralAmount: LOAN_COLLATERAL,
+                collateralAmountMax: LOAN_COLLATERAL
+            })
+        );
+    }
+
+    function test_595_matchedCarryOver_killSwitchOff_rejected() public {
+        (uint256 oldLoanId, uint256 taggedOfferId) = _carryOverMatchFixture();
+        oldLoanId;
+        uint256 lenderOfferId = _refiLenderOfferId(400, LOAN_COLLATERAL);
+        // Disable the auto-refinance kill-switch ⇒ admission fails.
+        _admin().setAutoRefinanceEnabled(false);
+
+        LibOfferMatch.MatchResult memory mr = OfferMatchFacet(address(diamond))
+            .previewMatch(lenderOfferId, taggedOfferId);
+        assertEq(
+            uint8(mr.errorCode),
+            uint8(LibOfferMatch.MatchError.RefinanceTagged),
+            "gated kill-switch -> not admissible"
+        );
+        vm.expectRevert(
+            OfferMatchFacet.RefinanceTaggedOfferNotMatchable.selector
+        );
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, taggedOfferId);
     }
 
     function test_576_refinanceTaggedOffer_cannotOptIntoParallelSale() public {
