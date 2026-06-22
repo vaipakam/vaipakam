@@ -1,6 +1,6 @@
 # VPFI Tokenomics Redesign — Research Findings & Roadmap
 
-> **Status:** Research complete; no design docs or code started.
+> **Status:** Research complete. **Phase-1 (admin-controlled) design DECIDED — see §9.** Code not started.
 > **Tracking cards:** [#694](https://github.com/vaipakam/vaipakam/issues/694) (this research + roadmap) · prerequisite [#687](https://github.com/vaipakam/vaipakam/issues/687) (securities-risk removals).
 > **Date:** 2026-06-22.
 > **Source:** multi-agent deep-research sweep — 22 sources, 25 claims adversarially verified (19 confirmed, 6 refuted).
@@ -27,7 +27,7 @@ This document answers the follow-on question: **how do mature DeFi lending proto
 
 ## 2. Controlling legal framework
 
-The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, Paul Weiss, Hunton — see [§9 Sources](#9-sources)).
+The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, Paul Weiss, Hunton — see [§10 Sources](#10-sources)).
 
 Key carve-outs and boundaries it establishes:
 
@@ -180,7 +180,46 @@ Also pending from #687: reallocate the freed **1%** (sale) + **24%** (staking) s
 
 ---
 
-## 9. Sources
+## 9. Phase 1 (Admin-Controlled) — Minimal-Footprint Design (DECIDED)
+
+The platform launches under **admin control** (parameters, treasury, and operations all held by the operator; governance and decentralization come later). This section is the **decided** tokenomics for that phase, optimized to **minimize mandatory legal/compliance overhead** — i.e. structured so that nothing in it *triggers* an obligation that would require a registration, license, or ongoing counsel engagement to satisfy.
+
+### 9.1 Governing principle
+Admin control is the **"efforts of others"** prong of Howey at its strongest. Therefore, during this phase the token must carry **no profit expectation at all** — its only defensible legal identity is a **pure consumptive "digital tool."** Every value-accrual mechanism (buyback-and-burn, fee-switch/real-yield, vote-escrow, governance) is **deferred to Phase 2**, gated on actual decentralization. Adding any of them while the admin holds the keys *increases* exposure; doing less with the token is the cheaper and safer path.
+
+### 9.2 Decided levers
+
+| Lever | Phase-1 decision |
+|---|---|
+| Token role | VPFI = consumptive **fee-discount tool only**; no other on-chain economic right. |
+| Launch | **VPFI launches now** as the utility tool (uses existing token; not deferred to a points program). |
+| Primary sale | **None.** No issuer sale in any form. |
+| Yield / staking | **None.** No fixed/passive yield. |
+| Value accrual (buyback / fee-share / ve) | **Deferred to Phase 2** (post-decentralization). |
+| Governance | **None live** in Phase 1; admin-controlled. Not marketed as a future value driver. |
+| Distribution | **Earn-only, zero cash in:** (a) usage-based interaction rewards tied strictly to *completed* lend/borrow transactions, variable rate, never labelled "APR/yield"; (b) optional no-consideration retroactive airdrop with no pre-announced criteria. |
+| Treasury / runway | **Bootstrapped** from protocol fee revenue (ETH/stables) only. **No capital raise** — explicitly NOT a private placement (avoids the expensive-counsel lane). |
+| Operator compensation | Vested/timelocked founder/team allocation, realized over time on an **organic** secondary market — **no team-seeded liquidity or market-making** (a team-made market is itself an enforcement hook). |
+| Marketing | No profit / yield / returns / appreciation / investment / price language anywhere. VPFI = fee-discount tool. (Reinforces the existing retail-copy policy.) |
+| Compliance scaffolding | Keep existing **free** measures: on-chain ToS (LegalFacet), sanctions screening, retail KYC-off. Nothing added. |
+
+### 9.3 How each regime stays minimal
+- **Securities:** no sale + no yield + consumptive-only + no team-made market → no profit expectation to attach to the operator's efforts.
+- **Money transmission / VASP:** the operator never sells or custodies the token → no MSB/VASP trigger.
+- **MiCA / financial-promotion (EU/UK):** no *public offer* of the token + disciplined marketing → no white-paper / approved-promotion obligation.
+- **AML:** sanctions-screening only, retail KYC-off → already at the floor.
+
+### 9.4 Honest cost note
+Minimal-spend ≠ zero-legal. The highest-ROI legal spend for a lean launch is a **single bounded review** (a few hours) sanity-checking *this exact* no-sale/no-yield/consumptive-utility design against the **operator's home jurisdiction** and the US — far cheaper than any registration/structuring, and not an ongoing engagement. The private-placement/SAFT route is deliberately avoided precisely because it *requires* costly counsel.
+
+**Optional discretionary measure:** a frontend US-geoblock + ToS representation (contracts remain permissionless) removes the single most expensive enforcement exposure for near-zero cost. Not *required* after #687; in mild tension with the permissionless ethos; left as an operator risk-tolerance call.
+
+### 9.5 Transition to Phase 2
+Phase-2 items (governance, then buyback-and-burn, then any fee-share) unlock **only as control actually decentralizes** — economic params move admin → timelock → DAO, distribution broadens, multisig handoff completes. Sequence is load-bearing: **decentralize first, add token value-accrual second.**
+
+---
+
+## 10. Sources
 
 Verified during the research sweep:
 
