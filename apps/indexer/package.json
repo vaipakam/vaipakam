@@ -14,11 +14,11 @@
   "dependencies": {
     "@vaipakam/contracts": "workspace:*",
     "@vaipakam/lib": "workspace:*",
-    "viem": "^2.48.4"
+    "viem": "^2.53.1"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.0.0",
+    "@cloudflare/workers-types": "^4.20260621.1",
     "typescript": "^6.0.0",
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.103.0"
   }
 }
