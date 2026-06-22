@@ -1121,14 +1121,22 @@ contract ClaimFacet is
         // is where it actually leaves, so the restamp belongs here. `loan.borrower`
         // is the consolidated current holder on a transferred position, or the
         // stored borrower otherwise — either way it is the vault the VPFI left.
-        // No-op for non-VPFI collateral.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
-                loanId
-            ),
-            bytes4(0)
-        );
+        // Gated on VPFI collateral (the `restampCollateralVpfiAfterWithdraw`
+        // entry also no-ops for non-VPFI, but gating the cross-call here means
+        // the overwhelmingly-common non-VPFI claim never reaches into
+        // ConsolidationFacet at all — keeping that facet off the routing
+        // dependency for every non-VPFI claim path).
+        if (claim.asset == s.vpfiToken) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet
+                        .restampCollateralVpfiAfterWithdraw
+                        .selector,
+                    loanId
+                ),
+                bytes4(0)
+            );
+        }
 
         // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
         // The Diamond custody-holds the rebate slice between settlement
