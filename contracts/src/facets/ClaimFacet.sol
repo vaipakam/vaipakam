@@ -854,6 +854,34 @@ contract ClaimFacet is
             );
         }
 
+        // #658 PR-B (Codex #690 round-8 P2) — lender-side mirror of the
+        // claimAsBorrower restamp. The eager preclose/refinance lender
+        // consolidation checkpoints the current lender holder at the FULL vault
+        // balance; if the proceeds (`claim.amount`) or the `heldForLender`
+        // top-up that just left `loan.lender`'s vault here are VPFI, re-stamp so
+        // the holder doesn't keep fee-tier / staking credit on VPFI that is no
+        // longer vaulted. Gated on the actually-withdrawn assets (and a
+        // configured VPFI token) so the common non-VPFI lender claim never
+        // reaches ConsolidationFacet.
+        if (
+            s.vpfiToken != address(0) &&
+            ((claim.assetType == LibVaipakam.AssetType.ERC20 &&
+                claim.amount > 0 &&
+                claim.asset == s.vpfiToken) ||
+                (held > 0 &&
+                    (loan.assetType == LibVaipakam.AssetType.ERC20
+                        ? loan.principalAsset
+                        : loan.prepayAsset) == s.vpfiToken))
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.lender
+                ),
+                bytes4(0)
+            );
+        }
+
         // For NFT rentals: return the vaulted rental NFT to the lender
         if (loan.assetType == LibVaipakam.AssetType.ERC721) {
             LibFacet.crossFacetCall(
