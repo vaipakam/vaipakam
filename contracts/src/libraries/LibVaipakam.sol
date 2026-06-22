@@ -2435,7 +2435,7 @@ library LibVaipakam {
         // VPFIDiscountFacet.setVPFIBuyRate (ADMIN_ROLE). Zero means the
         // admin has not configured the rate yet and the buy/discount path
         // is disabled.
-        uint256 vpfiFixedRateWeiPerVpfi;
+        uint256 vpfiDiscountWeiPerVpfi;
         // Global cap on VPFI sold through the fixed-rate buy, in VPFI
         // wei. Enforced against `vpfiFixedRateTotalSold`. Zero resolves to
         // the spec default {VPFI_FIXED_GLOBAL_CAP} (2.3M VPFI, see

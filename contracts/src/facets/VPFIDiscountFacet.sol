@@ -406,7 +406,7 @@ contract VPFIDiscountFacet is
         // defence-in-depth reject of a malformed origin.
         if (originChainId == 0) revert VPFIInvalidOriginChainId();
 
-        uint256 weiPerVpfi = s.vpfiFixedRateWeiPerVpfi;
+        uint256 weiPerVpfi = s.vpfiDiscountWeiPerVpfi;
         if (weiPerVpfi == 0) revert VPFIBuyRateNotSet();
         if (ethAmount == 0) revert InvalidAmount();
 
@@ -1076,7 +1076,7 @@ contract VPFIDiscountFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         return (
-            s.vpfiFixedRateWeiPerVpfi,
+            s.vpfiDiscountWeiPerVpfi,
             LibVaipakam.cfgVpfiFixedGlobalCap(),
             LibVaipakam.cfgVpfiFixedWalletCap(),
             s.vpfiFixedRateTotalSold,
@@ -1133,7 +1133,7 @@ contract VPFIDiscountFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.vpfiFixedRateWeiPerVpfi = weiPerVpfi;
+        s.vpfiDiscountWeiPerVpfi = weiPerVpfi;
         emit VPFIBuyConfigUpdated(
             weiPerVpfi,
             s.vpfiFixedRateGlobalCap,
@@ -1166,7 +1166,7 @@ contract VPFIDiscountFacet is
         s.vpfiFixedRateGlobalCap = globalCap;
         s.vpfiFixedRatePerWalletCap = perWalletCap;
         emit VPFIBuyConfigUpdated(
-            s.vpfiFixedRateWeiPerVpfi,
+            s.vpfiDiscountWeiPerVpfi,
             globalCap,
             perWalletCap,
             s.vpfiFixedRateBuyEnabled,
@@ -1188,7 +1188,7 @@ contract VPFIDiscountFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.vpfiFixedRateBuyEnabled = enabled;
         emit VPFIBuyConfigUpdated(
-            s.vpfiFixedRateWeiPerVpfi,
+            s.vpfiDiscountWeiPerVpfi,
             s.vpfiFixedRateGlobalCap,
             s.vpfiFixedRatePerWalletCap,
             enabled,
@@ -1233,7 +1233,7 @@ contract VPFIDiscountFacet is
     ) external view returns (uint256 vpfiOut) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.vpfiFixedRateBuyEnabled) return 0;
-        uint256 weiPerVpfi = s.vpfiFixedRateWeiPerVpfi;
+        uint256 weiPerVpfi = s.vpfiDiscountWeiPerVpfi;
         if (weiPerVpfi == 0 || weiAmount == 0) return 0;
         vpfiOut = (weiAmount * 1e18) / weiPerVpfi;
     }
@@ -1252,7 +1252,7 @@ contract VPFIDiscountFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.vpfiDiscountEthPriceAsset = asset;
         emit VPFIBuyConfigUpdated(
-            s.vpfiFixedRateWeiPerVpfi,
+            s.vpfiDiscountWeiPerVpfi,
             s.vpfiFixedRateGlobalCap,
             s.vpfiFixedRatePerWalletCap,
             s.vpfiFixedRateBuyEnabled,

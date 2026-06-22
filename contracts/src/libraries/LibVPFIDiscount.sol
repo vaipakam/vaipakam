@@ -811,7 +811,7 @@ library LibVPFIDiscount {
         if (feeAsset == address(0) || feeAmountInAssetWei == 0) return (false, 0);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        uint256 weiPerVpfi = s.vpfiFixedRateWeiPerVpfi;
+        uint256 weiPerVpfi = s.vpfiDiscountWeiPerVpfi;
         address ethRefAsset = s.vpfiDiscountEthPriceAsset;
         if (weiPerVpfi == 0 || ethRefAsset == address(0)) return (false, 0);
         if (s.vpfiToken == address(0)) return (false, 0);
