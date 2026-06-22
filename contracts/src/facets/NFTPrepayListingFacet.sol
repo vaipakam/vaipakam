@@ -3,6 +3,8 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {DiamondAccessControl} from "../libraries/LibAccessControl.sol";
@@ -501,6 +503,19 @@ contract NFTPrepayListingFacet is
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
+
+        // #656b (#594) — consolidate the borrower side to the current holder
+        // before the order is built + the vault cached, so the listing binds the
+        // holder's vault and the position isn't locked out of consolidation
+        // under the listing hash (no live hash here — lock-check above).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                loanId,
+                /* isLenderSide */ false
+            ),
+            bytes4(0)
+        );
 
         // Live-floor + buffer + fee-legs validation.
         IListingExecutorRecorder executor = _requireExecutor(s);
