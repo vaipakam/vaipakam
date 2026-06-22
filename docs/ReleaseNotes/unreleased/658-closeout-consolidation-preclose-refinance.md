@@ -17,13 +17,17 @@ This PR extends that hook to two more hosts:
   collateral stays in place as a `borrowerClaims` row, withdrawn later by
   `claimAsBorrower` — so no post-withdrawal VPFI re-stamp is needed here.
 
-- **`RefinanceFacet.refinanceLoan`** — the **lender side only** of the
-  exiting old loan. At refinance the old lender exits (it is paid out via
-  `lenderClaims` and the old loan closes), so its accrued reward entry and
-  VPFI checkpoint are repointed to the current lender-NFT holder before the
-  close. The borrower side is deliberately **left untouched**: the
-  borrower's collateral carries over into the new loan (#576), and a
-  borrower-side consolidation here would fight the carry-over re-tag.
+- **`RefinanceFacet.refinanceLoan`** — the **lender side always** (the old
+  lender exits in every refinance: it is paid out via `lenderClaims` and the
+  old loan closes, so its reward entry + VPFI checkpoint repoint to the
+  current lender-NFT holder). The **borrower side is consolidated only on
+  the non-carry-over path** (transferred / untagged / ranged offer), where
+  the old collateral is returned and the old loan closes for the borrower
+  too — so its lien / reward / VPFI follow the current holder and the
+  borrower-LIF rebate prices from that holder. On the carry-over path the
+  borrower stays and its collateral re-tags into the new loan (#576), so a
+  borrower-side consolidation there is skipped (it would be a no-op at best
+  and fight the re-tag at worst).
 
 Both hooks use the few-byte cross-facet consolidation entry (both facets
 are size-tight) with Tier-2 "skip-not-block" semantics — a

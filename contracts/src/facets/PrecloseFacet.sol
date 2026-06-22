@@ -179,6 +179,18 @@ contract PrecloseFacet is
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 
+        // #658 PR-B (Codex #690 round-2 P2) — clear any active prepay /
+        // parallel-sale listing BEFORE the consolidation hook below. The
+        // consolidation primitive EXCLUDES the borrower side while a listing
+        // hash is live (`_isExcludedLive` → Skipped), so consolidating first and
+        // clearing later would leave a transferred borrower position going
+        // terminal with its lien/reward/VPFI still on the old `loan.borrower` —
+        // even though this close-out cancels the listing anyway. Clearing here
+        // (still well before the Active→Repaid flip) lets the borrower side
+        // consolidate. Idempotent + covers both the ERC20 and NFT-rental
+        // branches (replaces the two later per-branch calls).
+        LibPrepayCleanup.clearActiveListing(loan, loanId);
+
         // #658 PR-B (#594 arc) — eagerly consolidate BOTH sides of a
         // transferred position to their current NFT holders while the loan is
         // still Active (the primitive no-ops once terminal), so the collateral
@@ -282,10 +294,10 @@ contract PrecloseFacet is
             });
 
             _setLoanClaimable(loan, loanId);
-            // T-086 follow-up to step 14 — clear any active prepay
-            // listing atomically with the Active→Repaid flip. See
-            // {RepayFacet.repayLoan} for the full rationale. Idempotent.
-            LibPrepayCleanup.clearActiveListing(loan, loanId);
+            // T-086 — the active prepay listing was already cleared at the top
+            // of `precloseDirect` (before the #658 consolidation hook); see
+            // {RepayFacet.repayLoan} for the full rationale. Idempotent, so no
+            // second clear is needed here.
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Active,
@@ -416,13 +428,11 @@ contract PrecloseFacet is
             _resetNftRenter(loan);
 
             _setLoanClaimable(loan, loanId);
-            // T-086 — defensive sweep on the NFT-rental preclose
-            // branch. NFTPrepayListingFacet now rejects non-ERC20
-            // principals at post time (Codex round-1 P2 fix on PR
-            // #317), but any rental loan that had a listing recorded
-            // BEFORE that gate landed would otherwise leave orphan
-            // bookkeeping when precloseped via this branch. Idempotent.
-            LibPrepayCleanup.clearActiveListing(loan, loanId);
+            // T-086 — the defensive prepay-listing sweep (any rental loan that
+            // had a listing recorded before NFTPrepayListingFacet started
+            // rejecting non-ERC20 principals, PR #317) now runs at the top of
+            // `precloseDirect`, before the #658 consolidation hook. Idempotent,
+            // so no second clear is needed on this branch.
             LibLifecycle.transition(
                 loan,
                 LibVaipakam.LoanStatus.Active,

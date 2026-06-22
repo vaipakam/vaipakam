@@ -204,14 +204,18 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // #658 PR-B (#594 arc) — eagerly consolidate the LENDER side of the
         // exiting old loan to its current lender-NFT holder while the old loan
         // is still Active (the primitive no-ops once terminal). The old lender
-        // EXITS at refinance (`s.lenderClaims[oldLoanId]` is set and the old
-        // loan closes below), so its accrued reward entry + VPFI checkpoint
-        // must follow the current holder before the close. Funds are already
-        // current-holder-safe (the exit payout routes via `lenderClaims` →
-        // `ClaimFacet`, `ownerOf`-gated). ONLY the lender side: the borrower
-        // side carries its collateral OVER into the new loan (#576), and a
-        // borrower-side consolidation here would fight the carry-over re-tag.
-        // Size-tight facet → few-byte cross-facet entry (Tier2 skip-not-block).
+        // EXITS at refinance regardless of branch (`s.lenderClaims[oldLoanId]`
+        // is set and the old loan closes below), so its accrued reward entry +
+        // VPFI checkpoint must follow the current holder before the close.
+        // Funds are already current-holder-safe (the exit payout routes via
+        // `lenderClaims` → `ClaimFacet`, `ownerOf`-gated). The BORROWER side is
+        // consolidated separately, gated to the NON-carry-over branch below
+        // (Codex #690 round-2 P2): on carry-over the borrower stays and its
+        // collateral is re-tagged into the new loan (no close-out), but on the
+        // legacy path the old collateral is returned and the old loan closes
+        // for the borrower too — so the borrower's position effects must follow
+        // the current holder there. Size-tight facet → few-byte cross-facet
+        // entry (Tier2 skip-not-block).
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 ConsolidationFacet.eagerConsolidateToHolder.selector,
@@ -534,10 +538,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 revert InvalidRefinanceOffer();
             }
         } else {
+            // #658 PR-B (#594 arc, Codex #690 round-2 P2) — NON-carry-over is a
+            // real borrower close-out: the old collateral is returned and the
+            // old loan goes Repaid. Consolidate the BORROWER side to its current
+            // holder FIRST (while still Active), so the collateral lien, reward
+            // entry, and VPFI checkpoint follow the holder and
+            // `settleBorrowerLifProper(oldLoan)` later prices the LIF rebate from
+            // the current holder, not the departed stored borrower. After the
+            // re-anchor `oldLoan.borrower` IS the current holder, so the
+            // release+withdraw below sources from the right vault. (Done only on
+            // this branch — carry-over keeps the borrower + re-tags the
+            // collateral, so a borrower consolidation there would be a no-op at
+            // best and fight the re-tag at worst.)
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.eagerConsolidateToHolder.selector,
+                    oldLoanId,
+                    /* isLenderSide */ false
+                ),
+                bytes4(0)
+            );
             // Legacy: release the old lien BEFORE the withdraw (the chokepoint
             // guard would otherwise block the legitimate refinance return).
             // The old collateral lives in `oldLoan.borrower`'s vault (the
-            // custody key, unaffected by a position transfer); deliver it to
+            // custody key — now the consolidated current holder); deliver it to
             // `currentBorrowerNftOwner` (the rightful current holder).
             _releaseOldLienAtRefinance(oldLoanId);
             if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
