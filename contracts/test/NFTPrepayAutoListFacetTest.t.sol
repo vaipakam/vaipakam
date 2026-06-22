@@ -11,6 +11,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -267,6 +268,57 @@ contract NFTPrepayAutoListFacetTest is SetupTest {
             NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID),
             rc.orderHash,
             "diamond pinned the new orderHash"
+        );
+    }
+
+    /// #656c — Case-A fresh post against a TRANSFERRED borrower position.
+    /// The loan is still anchored to the original opener (`borrowerHolder`,
+    /// whose vault holds the collateral per `setUp`), but the borrower-
+    /// position NFT now lives with a different `transferee`. The auto-list
+    /// creation path must consolidate the borrower side to the current
+    /// holder BEFORE it caches the vault, so the fresh listing binds the
+    /// transferee's vault — not the departed opener's — and the position is
+    /// not left locked out of consolidation under the new listing hash.
+    function test_autoList_caseA_transferredPosition_consolidatesToHolder() public {
+        // Anchor the loan to the original opener (`borrowerHolder`, whose
+        // vault already holds the collateral per `setUp`), but mint the
+        // borrower-position NFT to a DIFFERENT current holder — i.e. the
+        // position was transferred on the secondary market and `loan.borrower`
+        // still points at the opener (the #656c pre-consolidation divergence).
+        address transferee = makeAddr("transfereeHolder");
+        address transfereeVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(transferee);
+
+        LibVaipakam.Loan memory loan = _baseLoan(); // loan.borrower == borrowerHolder
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(transferee, BORROWER_TOKEN_ID);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(makeAddr("loanLender"), LENDER_TOKEN_ID);
+
+        _warpIntoGrace();
+
+        // Keeper (not the holder) triggers the auto-list.
+        vm.prank(keeperCaller);
+        NFTPrepayAutoListFacet(address(diamond)).autoListAtFloorOnGrace(LOAN_ID);
+
+        // The #656c hook fired before the vault was cached: the borrower side
+        // re-anchored to the current holder, the collateral physically moved
+        // into the holder's vault, and a listing was pinned (bound to that
+        // holder's vault, since the order's offerer is resolved from
+        // `userVaipakamVaults[loan.borrower]` after the re-anchor).
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).borrower,
+            transferee,
+            "borrower side re-anchored to the current holder"
+        );
+        assertEq(
+            collateralNFT.ownerOf(COLLATERAL_TOKEN_ID),
+            transfereeVault,
+            "collateral moved into the current holder's vault"
+        );
+        assertTrue(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID)
+                != bytes32(0),
+            "listing created against the holder's vault"
         );
     }
 

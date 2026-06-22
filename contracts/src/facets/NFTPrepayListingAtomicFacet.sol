@@ -38,6 +38,8 @@ import {
 } from "../seaport/PrepayTypes.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {NFTPrepayListingFacet} from "./NFTPrepayListingFacet.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 
 /**
  * @title NFTPrepayListingAtomicFacet
@@ -297,6 +299,13 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         // ── §17.11 STEP 0: auto-clear pre-existing v1 listing ────────
         _autoClearPreExistingListing(s, loan, loanId);
 
+        // #656c (#594) — consolidate the borrower side to the current holder
+        // after STEP 0 cleared any pre-existing listing (so the borrower side
+        // is no longer `_isExcludedLive`-skipped) and before the counter-order
+        // is built + the vault cached, so the listing binds the holder's vault.
+        // Tier-2 skip-not-block; no-op when not transferred or terminal.
+        _consolidateBorrowerToHolder(loanId);
+
         // ── §17.11 STEP 1-5: lock + build counter-order + record +
         //    wire vault ─────────────────────────────────────────────
         address executor = s.collateralListingExecutor;
@@ -316,6 +325,32 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             s, loan, loanId, pctx, effectiveAsk, salt, conduitKey, conduit, executor
         );
 
+        // ── Emit canonical event (CEI: effect before the interaction) ─
+        // #656c — emit BEFORE `_settle`'s external `matchAdvancedOrders`
+        // call, not after. Every field is fully established by
+        // `_buildAndRecord` above (the counter-order is recorded + the
+        // vault wired); `_settle` is purely the Seaport interaction. Doing
+        // the emit here is CEI-compliant AND keeps the event payload
+        // (`derivedHash` / `offerValue` / `bidderFeeTotal` / `conduit` /
+        // `loanId`) off the stack across the heavy `_settle` marshalling —
+        // the per-function viaIR stack relief that lets the consolidate
+        // hook above fit. If `_settle` reverts the whole tx reverts, so an
+        // observer only ever sees this event on success; the topic-hash-
+        // keyed indexer is insensitive to intra-tx log ordering.
+        emit PrepayListingMatched(
+            loanId,
+            msg.sender,
+            vaipakamOrderHash,
+            derivedHash,
+            bidder.components.offerer,
+            offerValue,
+            bidderFeeTotal,
+            bidder.components.offer[0].token,
+            conduit,
+            conduitKey,
+            executor
+        );
+
         // ── §17.11 STEP 6: settle via matchAdvancedOrders ────────────
         // Build the two AdvancedOrders + the Fulfillment[] + invoke
         // Seaport with recipient = executor (§17.9.bis defense-in-
@@ -330,21 +365,6 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             salt,
             conduitKey,
             resolvers
-        );
-
-        // ── Emit canonical event ─────────────────────────────────────
-        emit PrepayListingMatched(
-            loanId,
-            msg.sender,
-            vaipakamOrderHash,
-            derivedHash,
-            bidder.components.offerer,
-            offerValue,
-            bidderFeeTotal,
-            bidder.components.offer[0].token,
-            conduit,
-            conduitKey,
-            executor
         );
     }
 
@@ -595,6 +615,22 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
             msg.sender,
             existingHash,
             NFTPrepayListingFacet.CancelReason.ReplacedByMatch
+        );
+    }
+
+    /// @dev #656c (#594) — consolidate the borrower side to the current
+    ///      position holder before this listing-creation path caches the
+    ///      borrower's vault. Cross-facet to the internal-only
+    ///      `ConsolidationFacet` (Tier-2 skip-not-block); no-op when the
+    ///      position hasn't been transferred or the loan is terminal.
+    function _consolidateBorrowerToHolder(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                loanId,
+                /* isLenderSide */ false
+            ),
+            bytes4(0)
         );
     }
 

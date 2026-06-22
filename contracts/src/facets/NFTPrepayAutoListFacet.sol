@@ -13,6 +13,8 @@ import {IListingExecutorRecorder} from "../seaport/IListingExecutorRecorder.sol"
 import {IVaipakamPrepayContext} from "../seaport/IVaipakamPrepayContext.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {FeeLeg, PREPAY_MODE_FIXED_PRICE} from "../seaport/PrepayTypes.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 
 /**
  * @title  NFTPrepayAutoListFacet
@@ -175,6 +177,23 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             revert BorrowerSanctioned(loanId, currentHolder);
         }
 
+        // #656c (#594) — on the Case-A creation path only (no existing
+        // listing), consolidate the borrower side to the current holder
+        // BEFORE the holder's vault is cached below, so the fresh listing
+        // binds the holder's vault (re-anchors `loan.borrower` to the
+        // holder). Case B (rotation of a live listing) needs no
+        // consolidation: a live listing locks the borrower NFT, so the
+        // position can't have been transferred since the listing was created
+        // — whichever creation path posted it already consolidated. The
+        // gate condition is an immediately-consumed re-read of the slot
+        // (one extra warm SLOAD) so the long-lived `existingOrderHash` local
+        // below keeps its original short live-range and the Case-B
+        // rotation's stack budget is unchanged. Cross-facet to the
+        // internal-only `ConsolidationFacet` (Tier-2 skip-not-block).
+        if (s.prepayListingOrderHash[loanId] == bytes32(0)) {
+            _consolidateBorrowerToHolder(loanId);
+        }
+
         // ── Vault deployed ─────────────────────────────────────────────
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert VaultNotDeployed(loan.borrower);
@@ -198,6 +217,22 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
                 gracePeriodEnd
             );
         }
+    }
+
+    /// @dev #656c (#594) — consolidate the borrower side to the current
+    ///      position holder before the Case-A creation path caches the
+    ///      borrower's vault. Cross-facet to the internal-only
+    ///      `ConsolidationFacet` (Tier-2 skip-not-block); no-op when the
+    ///      position hasn't been transferred or the loan is terminal.
+    function _consolidateBorrowerToHolder(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                loanId,
+                /* isLenderSide */ false
+            ),
+            bytes4(0)
+        );
     }
 
     // ─── Case A — fresh post when no listing exists ─────────────────────
@@ -316,35 +351,27 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             revert AutoListExecutorMigrationStale(loanId, pinnedExecutor, currentExecutor);
         }
 
-        // ── Snapshot the executor's `_orderFeeLegs` + `_orderProtocolLegs`
-        //    BEFORE `clearOrder` wipes them (round-3.6 + round-3.8).
+        // ── Snapshot the executor's `_orderFeeLegs` BEFORE `clearOrder`
+        //    wipes it (round-3.6 + round-3.8). `recordedFeeLegs` is needed by
+        //    BOTH the B-cond gate AND `_performRotation`, so it's snapshotted
+        //    here. The `_orderProtocolLegs` + `OrderContext` reads (only the
+        //    B-cond gate consumes them) are deferred into `_pickBCondReason`
+        //    (#656c) so they don't sit live in this frame across the
+        //    snapshot→gate→rotation span — that frame relief is what lets the
+        //    Case-A consolidate hook in the entry fit the viaIR stack budget.
+        //    All three reads still run before `_performRotation`'s
+        //    `clearOrder`, so the snapshot ordering is preserved.
         IListingExecutorRecorder exec = IListingExecutorRecorder(pinnedExecutor);
         FeeLeg[] memory recordedFeeLegs = exec.orderFeeLegs(existingOrderHash);
-        (uint128 recordedLender, uint128 recordedTreasury) =
-            exec.orderProtocolLegs(existingOrderHash);
-
-        // ── Read OrderContext for the B-cond gates ─────────────────────
-        (
-            uint8 ctxMode,
-            uint192 ctxAskPrice,
-            uint128 ctxEndAskPrice,
-            uint64 ctxStartTime,
-            uint64 ctxAuctionEndTime
-        ) = exec.orderContextRead(existingOrderHash);
 
         // ── Evaluate B-cond gates ──────────────────────────────────────
         uint256 askAtFloor_ = LibAutoList.askAtFloor(pctx, s.cfgPrepayListingBufferBps);
         bool shouldRotate = _pickBCondReason(
-            ctxMode,
-            uint256(ctxAskPrice),
-            uint256(ctxEndAskPrice),
-            uint256(ctxStartTime),
-            uint256(ctxAuctionEndTime),
-            askAtFloor_,
+            exec,
+            existingOrderHash,
             pctx,
-            recordedLender,
-            recordedTreasury,
             recordedFeeLegs,
+            askAtFloor_,
             gracePeriodEnd,
             loanEnd,
             s.cfgPrepayListingDutchGraceMarginSec
@@ -367,30 +394,43 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
 
     // ─── Helpers ────────────────────────────────────────────────────────
 
-    /// @dev Returns the first B-cond tag that fires, or 0 if none
-    ///      fires (caller should revert `AlreadyAtOrBelowFloor`).
-    ///      Evaluated in the order documented in §18.5; gates
-    ///      check independently and short-circuit on first hit.
+    /// @dev Returns true if any B-cond rotation trigger fires (caller
+    ///      reverts `AlreadyAtOrBelowFloor` otherwise). Evaluated in the
+    ///      order documented in §18.5; gates check independently and
+    ///      short-circuit on first hit.
+    ///
+    ///      #656c — the `_orderProtocolLegs` (recorded lender/treasury) +
+    ///      `OrderContext` reads live HERE rather than in `_caseBRotate`:
+    ///      only the gate consumes them, so confining them to this frame
+    ///      keeps `_caseBRotate`'s per-function viaIR stack peak below the
+    ///      ceiling. Both reads still happen before the caller's
+    ///      `_performRotation` → `clearOrder`, so the pre-clear snapshot
+    ///      semantics are unchanged.
     function _pickBCondReason(
-        uint8 ctxMode,
-        uint256 ctxAskPrice,
-        uint256 ctxEndAskPrice,
-        uint256 ctxStartTime,
-        uint256 ctxAuctionEndTime,
-        uint256 askAtFloor_,
+        IListingExecutorRecorder exec,
+        bytes32 existingOrderHash,
         IVaipakamPrepayContext.PrepayContext memory pctx,
-        uint128 recordedLender,
-        uint128 recordedTreasury,
         FeeLeg[] memory recordedFeeLegs,
+        uint256 askAtFloor_,
         uint256 gracePeriodEnd,
         uint256 loanEnd,
         uint256 dutchGraceMarginSec
     ) private view returns (bool) {
+        (uint128 recordedLender, uint128 recordedTreasury) =
+            exec.orderProtocolLegs(existingOrderHash);
+        (
+            uint8 ctxMode,
+            uint192 ctxAskPrice,
+            uint128 ctxEndAskPrice,
+            uint64 ctxStartTime,
+            uint64 ctxAuctionEndTime
+        ) = exec.orderContextRead(existingOrderHash);
+
         if (LibAutoList.b_cond_5_dutchExpired(ctxMode, ctxAuctionEndTime)) {
             return true;
         }
         if (LibAutoList.b_cond_1_fixedPriceAboveFloor(
-            ctxMode, ctxAskPrice, askAtFloor_, recordedFeeLegs
+            ctxMode, uint256(ctxAskPrice), askAtFloor_, recordedFeeLegs
         )) {
             return true;
         }
@@ -398,16 +438,16 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
             return true;
         }
         if (LibAutoList.b_cond_3a_dutchNeverReachesFee(
-            ctxMode, ctxEndAskPrice, askAtFloor_, recordedFeeLegs
+            ctxMode, uint256(ctxEndAskPrice), askAtFloor_, recordedFeeLegs
         )) {
             return true;
         }
         if (LibAutoList.b_cond_3b_dutchReachesFloorTooLate(
             ctxMode,
-            ctxAskPrice,
-            ctxEndAskPrice,
-            ctxStartTime,
-            ctxAuctionEndTime,
+            uint256(ctxAskPrice),
+            uint256(ctxEndAskPrice),
+            uint256(ctxStartTime),
+            uint256(ctxAuctionEndTime),
             askAtFloor_,
             recordedFeeLegs,
             gracePeriodEnd,

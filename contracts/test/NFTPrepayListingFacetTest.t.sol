@@ -17,6 +17,7 @@ import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaipakamVaultImplementation} from "../src/VaipakamVaultImplementation.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.sol";
@@ -1277,6 +1278,74 @@ contract NFTPrepayListingFacetTest is SetupTest {
             uint8(LibERC721.LockReason.PrepayCollateralListing),
             "borrower NFT locked"
         );
+    }
+
+    // ─── #656c — consolidate-before-listing on a TRANSFERRED position ───
+
+    /// @dev Anchor the loan to the original opener (`borrowerHolder`, whose
+    ///      vault already holds the collateral per `setUp`) but mint the
+    ///      borrower-position NFT to `holder` — i.e. the position was
+    ///      transferred on the secondary market and `loan.borrower` still
+    ///      points at the opener (the #656c pre-consolidation divergence).
+    ///      Returns the transferee's freshly-provisioned vault.
+    function _scaffoldTransferredActiveLoan(address holder)
+        internal
+        returns (address holderVault)
+    {
+        holderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(holder);
+        LibVaipakam.Loan memory loan = _baseLoan(); // loan.borrower == borrowerHolder
+        loan.allowsPrepayListing = true;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(holder, BORROWER_TOKEN_ID);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(makeAddr("loanLender"), LENDER_TOKEN_ID);
+    }
+
+    /// @dev Asserts the #656c hook fired before the vault was cached: the
+    ///      borrower side re-anchored to `holder`, the collateral physically
+    ///      moved into the holder's vault, and a listing was pinned (bound to
+    ///      that holder's vault, since the order's offerer is resolved from
+    ///      `userVaipakamVaults[loan.borrower]` after the re-anchor).
+    function _assertConsolidatedToHolder(address holder, address holderVault) internal view {
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).borrower,
+            holder,
+            "borrower side re-anchored to the current holder"
+        );
+        assertEq(
+            collateralNFT.ownerOf(COLLATERAL_TOKEN_ID),
+            holderVault,
+            "collateral moved into the current holder's vault"
+        );
+        assertTrue(
+            NFTPrepayListingFacet(address(diamond)).getPrepayListingOrderHash(LOAN_ID)
+                != bytes32(0),
+            "listing created against the holder's vault"
+        );
+    }
+
+    function test_postPrepayListing_transferredPosition_consolidatesToHolder() public {
+        address holder = makeAddr("fixedPriceTransferee");
+        address holderVault = _scaffoldTransferredActiveLoan(holder);
+
+        // The current holder (not the departed opener) posts the listing.
+        vm.prank(holder);
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, 110 ether, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+
+        _assertConsolidatedToHolder(holder, holderVault);
+    }
+
+    function test_postPrepayDutchListing_transferredPosition_consolidatesToHolder() public {
+        address holder = makeAddr("dutchTransferee");
+        address holderVault = _scaffoldTransferredActiveLoan(holder);
+
+        vm.prank(holder);
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, 110 ether, 104 ether, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+
+        _assertConsolidatedToHolder(holder, holderVault);
     }
 
     function test_postPrepayDutchListing_revertsAuctionWindowTooShort() public {
