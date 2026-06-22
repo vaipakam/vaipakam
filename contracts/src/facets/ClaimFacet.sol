@@ -22,6 +22,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
@@ -853,6 +854,34 @@ contract ClaimFacet is
             );
         }
 
+        // #658 PR-B (Codex #690 round-8 P2) — lender-side mirror of the
+        // claimAsBorrower restamp. The eager preclose/refinance lender
+        // consolidation checkpoints the current lender holder at the FULL vault
+        // balance; if the proceeds (`claim.amount`) or the `heldForLender`
+        // top-up that just left `loan.lender`'s vault here are VPFI, re-stamp so
+        // the holder doesn't keep fee-tier / staking credit on VPFI that is no
+        // longer vaulted. Gated on the actually-withdrawn assets (and a
+        // configured VPFI token) so the common non-VPFI lender claim never
+        // reaches ConsolidationFacet.
+        if (
+            s.vpfiToken != address(0) &&
+            ((claim.assetType == LibVaipakam.AssetType.ERC20 &&
+                claim.amount > 0 &&
+                claim.asset == s.vpfiToken) ||
+                (held > 0 &&
+                    (loan.assetType == LibVaipakam.AssetType.ERC20
+                        ? loan.principalAsset
+                        : loan.prepayAsset) == s.vpfiToken))
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.lender
+                ),
+                bytes4(0)
+            );
+        }
+
         // For NFT rentals: return the vaulted rental NFT to the lender
         if (loan.assetType == LibVaipakam.AssetType.ERC721) {
             LibFacet.crossFacetCall(
@@ -1107,6 +1136,40 @@ contract ClaimFacet is
                     extraLienedAmt
                 ),
                 VaultWithdrawFailed.selector
+            );
+        }
+
+        // #658 PR-B (Codex #690 round-4 + round-6) — when VPFI has just left
+        // `loan.borrower`'s vault via the withdraw(s) above, re-stamp so the
+        // vault owner doesn't keep fee-tier / staking credit on VPFI that is no
+        // longer vaulted (the claim-time half of the direct-preclose close-out;
+        // also the same post-withdraw restamp the liquidation + refinance hosts
+        // run). `loan.borrower` is the consolidated current holder on a
+        // transferred position, or the stored borrower otherwise — either way it
+        // is the vault the VPFI left.
+        //
+        // VPFI can leave via THREE forms here, so the collateral-keyed
+        // `restampCollateralVpfiAfterWithdraw` is insufficient (it only fires
+        // when the loan COLLATERAL is VPFI): (1) VPFI collateral, (2) a VPFI
+        // principal-SURPLUS claim row whose collateral is some other token, and
+        // (3) a still-liened VPFI top-up paid via `extraLienedAmt` while the
+        // rewritten claim row is non-VPFI. Gate on the actually-withdrawn assets
+        // and use the USER-keyed restamp so all three are covered; the common
+        // non-VPFI claim never reaches ConsolidationFacet.
+        // Guard on a configured VPFI token first: when `s.vpfiToken` is unset
+        // (address(0)) a bare `extraLienedAsset == s.vpfiToken` would be
+        // `0 == 0` for the common no-extra-lien case and fire a spurious
+        // cross-call. There is no VPFI to restamp without a token anyway.
+        if (
+            s.vpfiToken != address(0) &&
+            (claim.asset == s.vpfiToken || extraLienedAsset == s.vpfiToken)
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.borrower
+                ),
+                bytes4(0)
             );
         }
 

@@ -11,6 +11,8 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -73,6 +75,16 @@ contract RedeployFacets is Script {
         LoanFacet loanFacet = new LoanFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        // #658 PR-B2 — refinance gained the lender-side eager-consolidation hook
+        // (cross-calls ConsolidationFacet, like precloseDirect). Refresh it
+        // alongside Preclose so a curated redeploy doesn't leave refinance on
+        // stale bytecode that skips the consolidation while preclose applies it.
+        RefinanceFacet refinanceFacet = new RefinanceFacet();
+        // #658 PR-B2 — claimAsBorrower gained the post-withdraw VPFI restamp
+        // (the claim-time half of the direct-preclose close-out). Refresh
+        // ClaimFacet so a curated redeploy doesn't leave the claim path on stale
+        // bytecode that skips the restamp after a preclosed borrower claims VPFI.
+        ClaimFacet claimFacet = new ClaimFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         // #658 — the refreshed RiskFacet liquidation paths cross-call
         // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
@@ -80,8 +92,8 @@ contract RedeployFacets is Script {
         // RiskFacet-only refresh would leave the upgraded RiskFacet calling
         // unrouted selectors and bubble a revert mid-liquidation. Redeploy
         // ConsolidationFacet alongside and cut its selectors (Replace the two
-        // pre-existing #594 standalone entries, Add the three new #658 ones —
-        // partitioned by live routing, same as the #394 HF-floor knob).
+        // pre-existing #594 standalone entries, Add the four #658 internal-only
+        // ones — partitioned by live routing, same as the #394 HF-floor knob).
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
@@ -90,6 +102,8 @@ contract RedeployFacets is Script {
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
+        console.log("RefinanceFacet:       ", address(refinanceFacet));
+        console.log("ClaimFacet:           ", address(claimFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
 
@@ -113,7 +127,7 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](7 + nExtra);
+            new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -124,7 +138,15 @@ contract RedeployFacets is Script {
         // (relocated to RiskSplitLiquidationFacet in #66/#633), so a plain
         // Replace repoints it to the refreshed bytecode.
         cuts[6] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
-        uint256 idx = 7;
+        // #658 PR-B2 — refinance selectors are already routed on a current
+        // diamond, so a plain Replace repoints them to the consolidation-aware
+        // bytecode.
+        cuts[7] = _replace(address(refinanceFacet), _refinanceSelectors());
+        // #658 PR-B2 — ClaimFacet selectors are already routed on a current
+        // diamond, so a plain Replace repoints them to the restamp-aware
+        // bytecode.
+        cuts[8] = _replace(address(claimFacet), _claimSelectors());
+        uint256 idx = 9;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -142,7 +164,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 7 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 9 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
@@ -276,6 +298,29 @@ contract RedeployFacets is Script {
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
     }
 
+    /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
+    ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
+    function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RefinanceFacet.refinanceLoan.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+    }
+
+    /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors
+    ///      `DeployDiamond._getClaimSelectors` (kept in lockstep).
+    function _claimSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](9);
+        s[0] = ClaimFacet.claimAsLender.selector;
+        s[1] = ClaimFacet.claimAsBorrower.selector;
+        s[2] = ClaimFacet.getClaimableAmount.selector;
+        s[3] = ClaimFacet.getClaimable.selector;
+        s[4] = ClaimFacet.getBorrowerLifRebate.selector;
+        s[5] = ClaimFacet.claimAsLenderWithRetry.selector;
+        s[6] = ClaimFacet.getFallbackSnapshot.selector;
+        s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
+        s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
+    }
+
     function _profileSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](15);
         s[0] = ProfileFacet.updateKYCStatus.selector;
@@ -298,16 +343,18 @@ contract RedeployFacets is Script {
     /// @dev #658 — full ConsolidationFacet selector set, mirrors
     ///      `DeployDiamond._getConsolidationFacetSelectors` (kept in lockstep).
     ///      Indices 0-1 are the #594 standalone holder entries (already routed
-    ///      on a current diamond → Replace); 2-4 are the #658 internal-only
-    ///      eager + post-withdraw-restamp entries the refreshed RiskFacet now
-    ///      cross-calls (new → Add). `_partitionByRouting` sorts them by live
-    ///      routing so this is correct against any target diamond version.
+    ///      on a current diamond → Replace); 2-5 are the #658 internal-only
+    ///      eager + post-withdraw-restamp entries the refreshed liquidation /
+    ///      close-out hosts cross-call (new → Add). `_partitionByRouting` sorts
+    ///      them by live routing so this is correct against any target diamond
+    ///      version.
     function _consolidationSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
         s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
+        s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
     }
 }

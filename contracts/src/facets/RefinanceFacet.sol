@@ -24,6 +24,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 
 /**
@@ -199,6 +200,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
+
+        // #658 PR-B (#594 arc) — eagerly consolidate the LENDER side of the
+        // exiting old loan to its current lender-NFT holder while the old loan
+        // is still Active (the primitive no-ops once terminal). The old lender
+        // EXITS at refinance regardless of branch (`s.lenderClaims[oldLoanId]`
+        // is set and the old loan closes below), so its accrued reward entry +
+        // VPFI checkpoint must follow the current holder before the close.
+        // Funds are already current-holder-safe (the exit payout routes via
+        // `lenderClaims` → `ClaimFacet`, `ownerOf`-gated). The BORROWER side is
+        // consolidated separately, gated to the NON-carry-over branch below
+        // (Codex #690 round-2 P2): on carry-over the borrower stays and its
+        // collateral is re-tagged into the new loan (no close-out), but on the
+        // legacy path the old collateral is returned and the old loan closes
+        // for the borrower too — so the borrower's position effects must follow
+        // the current holder there. Size-tight facet → few-byte cross-facet
+        // entry (Tier2 skip-not-block).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                oldLoanId,
+                /* isLenderSide */ true
+            ),
+            bytes4(0)
+        );
 
         // T-034 §4.6 — settle-first guard. If the old loan has a
         // Periodic Interest Payment cadence AND the current period is
@@ -513,10 +538,30 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 revert InvalidRefinanceOffer();
             }
         } else {
+            // #658 PR-B (#594 arc, Codex #690 round-2 P2) — NON-carry-over is a
+            // real borrower close-out: the old collateral is returned and the
+            // old loan goes Repaid. Consolidate the BORROWER side to its current
+            // holder FIRST (while still Active), so the collateral lien, reward
+            // entry, and VPFI checkpoint follow the holder and
+            // `settleBorrowerLifProper(oldLoan)` later prices the LIF rebate from
+            // the current holder, not the departed stored borrower. After the
+            // re-anchor `oldLoan.borrower` IS the current holder, so the
+            // release+withdraw below sources from the right vault. (Done only on
+            // this branch — carry-over keeps the borrower + re-tags the
+            // collateral, so a borrower consolidation there would be a no-op at
+            // best and fight the re-tag at worst.)
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.eagerConsolidateToHolder.selector,
+                    oldLoanId,
+                    /* isLenderSide */ false
+                ),
+                bytes4(0)
+            );
             // Legacy: release the old lien BEFORE the withdraw (the chokepoint
             // guard would otherwise block the legitimate refinance return).
             // The old collateral lives in `oldLoan.borrower`'s vault (the
-            // custody key, unaffected by a position transfer); deliver it to
+            // custody key — now the consolidated current holder); deliver it to
             // `currentBorrowerNftOwner` (the rightful current holder).
             _releaseOldLienAtRefinance(oldLoanId);
             if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
@@ -532,6 +577,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         ),
                         VaultWithdrawFailed.selector
                     );
+                    // #658 PR-B — the borrower-side consolidation above
+                    // checkpointed the current holder's VPFI at the FULL
+                    // pre-return balance; this withdraw just removed the VPFI
+                    // collateral from their vault, so a post-withdraw re-stamp is
+                    // owed. It is DEFERRED to after `settleBorrowerLifProper`
+                    // below (Codex #690 round-6 P2): re-stamping here would roll
+                    // the discount accumulator down to the post-return balance
+                    // before the LIF rebate is priced, underpaying a borrower who
+                    // held the VPFI for the whole old-loan term.
                 }
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
@@ -659,6 +713,27 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (and, if the new loan also takes the VPFI fee path, that will
         // register its own vpfiHeld against the new loan id).
         LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
+
+        // #658 PR-B (Codex #690 round-6 P2) — NOW re-stamp the borrower's VPFI,
+        // AFTER the LIF rebate is priced above. On the non-carry-over path with
+        // VPFI collateral, the borrower-side consolidation checkpointed the
+        // holder at the full balance and the legacy return (above) withdrew that
+        // VPFI out of the vault; re-stamping here keeps the holder from retaining
+        // fee-tier / staking credit on VPFI that has left, without skewing the
+        // just-settled rebate. Gated to the non-carry-over VPFI-collateral case
+        // (carry-over keeps the collateral in place, so nothing left the vault).
+        if (
+            !bOffer.refinanceCarryOver &&
+            oldLoan.collateralAsset == s.vpfiToken
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    oldLoan.borrower
+                ),
+                bytes4(0)
+            );
+        }
 
         // T-092 Phase 2a (Codex round-1 P2) — emit the current
         // borrower-NFT owner as the borrower (not msg.sender) so

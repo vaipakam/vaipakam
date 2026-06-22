@@ -840,7 +840,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
+        selectors = new bytes4[](6);
         selectors[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         selectors[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         selectors[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
@@ -848,6 +848,7 @@ contract HelperTest {
         selectors[4] = ConsolidationFacet
             .restampCollateralVpfiAfterWithdraw
             .selector;
+        selectors[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
     }
 
     function getDefaultedFacetSelectors()
