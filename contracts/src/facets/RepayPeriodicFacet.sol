@@ -169,12 +169,26 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         // (D-2 forbids VPFI as a rental prepay asset, so the prepay pool
         // has no side-door drain to protect against). No decrement here.
 
+        // #654 — route the daily rental fee to the CURRENT lender-position
+        // holder, not the stale `loan.lender`. This is a DIRECT payout (no
+        // `lenderClaims` indirection, unlike `repayLoan` / `markDefaulted`
+        // which deposit to the lender vault + write a claim the holder pulls),
+        // so a lender-NFT transfer would otherwise keep paying the departed
+        // lender every day. Resolve `ownerOf(lenderTokenId)` + apply the
+        // direct-recipient sanctions gate, mirroring
+        // `_autoLiquidatePeriodShortfall` + `RepayFacet.repayPartial`. The loan
+        // is Active here, so the lender NFT is live and `ownerOf` holds.
+        address lenderRecipient = IERC721(address(this)).ownerOf(
+            loan.lenderTokenId
+        );
+        LibVaipakam._assertNotSanctioned(lenderRecipient);
+
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 VaultFactoryFacet.vaultWithdrawERC20.selector,
                 loan.borrower,
                 loan.prepayAsset,
-                loan.lender,
+                lenderRecipient,
                 lenderShare
             ),
             VaultWithdrawFailed.selector
