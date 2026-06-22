@@ -245,6 +245,23 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
+        // #658 PR-B — swap-to-repay-full is a both-side close-out: it pays the
+        // lender and returns the borrower surplus. Consolidate each transferred
+        // side to its current NFT holder while the loan is still Active (the
+        // primitive no-ops on a terminal loan), so the collateral lien, reward
+        // entry, and VPFI fee-tier checkpoint follow the holder before the swap
+        // withdrawal + payouts route below — mirroring the liquidation family
+        // (RiskFacet) and RepayFacet. Tier2 skip-not-block: a sanctioned/excluded
+        // holder must never brick a close-out. (The borrower surplus is already
+        // routed to `ownerOf(borrowerTokenId)` and lender proceeds reserved via
+        // #592; this adds the POSITION consolidation those don't cover.)
+        LibConsolidation.consolidateToHolder(
+            loanId, false, LibConsolidation.Ctx.Tier2CloseOut
+        );
+        LibConsolidation.consolidateToHolder(
+            loanId, true, LibConsolidation.Ctx.Tier2CloseOut
+        );
+
         // ── Build the settlement plan + required-principal target ────
         uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);
         LibSettlement.ERC20Settlement memory plan = LibSettlement.computeRepayment(
@@ -423,6 +440,14 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
                 partialFillRefund
             );
         }
+        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the net
+        // collateral movement above (the consumed slice left the holder's vault;
+        // the unconsumed residual was re-liened back). No-op for non-VPFI
+        // collateral. Mirrors the swapToRepayPartial restamp + the liquidation
+        // family.
+        if (loan.collateralAsset == s.vpfiToken) {
+            LibConsolidation.restampUserVpfi(loan.borrower);
+        }
         s.borrowerClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.collateralAsset,
             amount: unconsumedCollateral,
@@ -527,7 +552,11 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
 
         // #594 — consolidate a transferred borrower position into the current
         // holder's vault before the partial swap operates on it (borrower side,
-        // skip-not-block). The FULL swap-to-repay is both-side and wired in PR-3.
+        // skip-not-block). A partial repay keeps the loan Active and pays NO
+        // proceeds to the lender (it reduces principal in place), so only the
+        // borrower side consolidates here. The FULL swap-to-repay is the
+        // both-side close-out (lender paid + borrower surplus), wired in #658
+        // PR-B above.
         LibConsolidation.consolidateToHolder(
             loanId, false, LibConsolidation.Ctx.Tier2CloseOut
         );

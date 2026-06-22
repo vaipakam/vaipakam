@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
@@ -12,6 +13,7 @@ import {LibPeriodicInterest} from "../libraries/LibPeriodicInterest.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -461,6 +463,21 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
             SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
         }
+        // #658 PR-B — the periodic auto-liquidate is a both-side fund-distribution
+        // event (it SELLS the borrower's collateral and PAYS the lender the
+        // shortfall coverage) on a loan that stays Active. Consolidate each
+        // transferred side to its current NFT holder BEFORE the collateral sale +
+        // lender payout, so the collateral lien / reward entry / VPFI checkpoint
+        // follow the holder and the proceeds route to the current lender holder
+        // (mirrors triggerPartialLiquidation). Cross-facet (Tier2 skip-not-block);
+        // the just-stamp path has no payout, so it is intentionally NOT wired.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
         // Sell-amount sizing: aim for `shortfall × (1 + slippageCap)` of
         // collateral so the swap clears even in the worst-case slippage
         // scenario. If the loan's remaining collateral is smaller, sell
@@ -502,6 +519,15 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
                 toSell
             ),
             VaultWithdrawFailed.selector
+        );
+        // #658 PR-B — re-stamp the holder's VPFI tier/staking after the
+        // collateral slice leaves the vault (no-op for non-VPFI collateral).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
         );
 
         uint256 expectedProceeds = LibFallback.expectedSwapOutput(
@@ -565,7 +591,18 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
             LibFacet.recordTreasuryAccrual(loan.principalAsset, handlingFee);
         }
         if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(loan.lender, lenderProceeds);
+            // #658 PR-B (Codex #685 P1) — route to the CURRENT lender-position
+            // holder, not the stale `loan.lender`: the eager consolidation above
+            // is Tier2 skip-not-block, so it can leave `loan.lender` stale (e.g.
+            // a `_isExcludedLive` lender exclusion), and this is a DIRECT payout.
+            // Resolve `ownerOf(lenderTokenId)` + apply the direct-recipient
+            // sanctions gate, mirroring `RepayFacet.repayPartial`. The loan is
+            // Active here so the lender NFT is live and `ownerOf` holds.
+            address lenderRecipient = IERC721(address(this)).ownerOf(
+                loan.lenderTokenId
+            );
+            LibVaipakam._assertNotSanctioned(lenderRecipient);
+            IERC20(loan.principalAsset).safeTransfer(lenderRecipient, lenderProceeds);
             // #408 / #410 / #413 (2026-06-12) — credit
             // `interestSettled` by the interest just forwarded to the
             // lender so a later full repay / preclose nets the

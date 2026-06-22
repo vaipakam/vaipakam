@@ -15,6 +15,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {VaipakamNFTFacet} from "../facets/VaipakamNFTFacet.sol";
+import {ConsolidationFacet} from "../facets/ConsolidationFacet.sol";
 
 /**
  * @title LibSwapToRepayIntentSettlement — T-087 Sub 3.B extraction
@@ -204,6 +205,22 @@ library LibSwapToRepayIntentSettlement {
             IERC20(loan.principalAsset).safeTransfer(treasury, plan.treasuryShare);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, plan.treasuryShare);
         }
+
+        // #658 PR-B — the intent fill is the LENDER-side close-out of this loan
+        // (the borrower side was consolidated at COMMIT and its collateral is in
+        // Diamond custody, so it must NOT be re-consolidated here). Consolidate
+        // the lender side while the loan is still Active (the flip to Repaid is
+        // below), so the lender reward entry + VPFI checkpoint follow the current
+        // lender-NFT holder and the proceeds/#592 reserve below key to them
+        // directly. Cross-facet (Tier2 skip-not-block); no-op if not transferred.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                loanId,
+                true
+            ),
+            bytes4(0)
+        );
 
         address lenderVault = LibFacet.getOrCreateVault(loan.lender);
         IERC20(loan.principalAsset).safeTransfer(lenderVault, plan.lenderDue);
