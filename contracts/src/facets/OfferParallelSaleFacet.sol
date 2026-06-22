@@ -6,6 +6,8 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -288,6 +290,28 @@ contract OfferParallelSaleFacet is
         if (!callerAuthorized) revert NotOfferCreator();
 
         LibPrepayCleanup.clearOfferListing(offerId);
+
+        // #656b (#594) — AFTER clearing the offer-keyed listing lock (so the
+        // borrower side is no longer `_isExcludedLive`-excluded by the
+        // `offerPrepayListingOrderHash`), consolidate that side to the current
+        // holder if the offer has become a loan. Re-anchors the position +
+        // moves the collateral to the holder's vault so the lien/reward/VPFI
+        // follow it instead of locking out under the (now-cleared) listing.
+        // No-op when no loan yet (pre-acceptance) or the loan is terminal
+        // (`consolidateToHolder` status-gate). Cross-facet eager entry (Tier2
+        // skip-not-block).
+        uint256 saleLoanId = s.offerIdToLoanId[uint256(offerId)];
+        if (saleLoanId != 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.eagerConsolidateToHolder.selector,
+                    saleLoanId,
+                    /* isLenderSide */ false
+                ),
+                bytes4(0)
+            );
+        }
+
         emit ParallelSaleLockReleased(offerId, msg.sender);
     }
 
