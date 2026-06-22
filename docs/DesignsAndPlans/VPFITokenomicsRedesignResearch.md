@@ -11,10 +11,12 @@
 
 ## 1. Purpose
 
-Card [#687](https://github.com/vaipakam/vaipakam/issues/687) removed the two highest securities-law-risk features from VPFI tokenomics:
+Card [#687](https://github.com/vaipakam/vaipakam/issues/687) — the **prerequisite to this work, NOT yet implemented** — targets removal of the two highest securities-law-risk features from VPFI tokenomics:
 
 1. the **issuer-priced fixed-rate primary token sale** (users paid ETH → received VPFI from a protocol reserve at an admin-set price), and
 2. the **5% APR passive staking yield** paid on vault-held VPFI.
+
+> ⚠️ **These surfaces still exist in the tree** (`VPFIDiscountFacet` buy config, `StakingRewardsFacet`, and "5% APR" copy) until #687 lands. Phase 1 is **blocked on the actual removal work** — do not treat the high-risk paths as already gone.
 
 This document answers the follow-on question: **how do mature DeFi lending protocols, DEXs, and NFT-finance platforms give a token genuine value and distribute it WITHOUT recreating those two fact patterns?** Each concept below carries an explicit **ADOPT / ADAPT / AVOID** recommendation for Vaipakam.
 
@@ -27,12 +29,12 @@ This document answers the follow-on question: **how do mature DeFi lending proto
 
 ## 2. Controlling legal framework
 
-The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, Paul Weiss, Hunton — see [§10 Sources](#10-sources)).
+The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, Hunton — see [§10 Sources](#10-sources)).
 
 Key carve-outs and boundaries it establishes:
 
-- **No-consideration airdrops** — distributions where recipients give the issuer no money, goods, services, or other consideration **fail Howey's "investment of money" prong** and are not securities. The carve-out does **not** extend to arrangements requiring recipients to perform tasks, make purchases, or otherwise provide value. Participation must be **unforeseeable**: *"If recipients can foresee the basis for an airdrop and take action expecting to receive it, that would constitute bargained-for consideration."*
-- **Protocol staking** — generally **not** a securities offering when treated as administrative/ministerial compensation-for-services, but **only if** the provider has no discretion over staking decisions **and** offers no fixed or guaranteed returns. "Guaranteed rewards" or "broader discretion" fall outside the safe harbor.
+- **No-consideration airdrops** — distributions where recipients give the issuer no money, goods, services, or other consideration **fail Howey's "investment of money" prong**. **Scope limit:** the carve-out addresses only that one prong, and applies to airdrops of an asset that is *itself* a non-security crypto asset — it is **not** a blanket "an airdrop is never a security" rule. For VPFI specifically, whose "digital tools" mapping is only an inference (§4.7), an airdrop is defensible on the investment-of-money prong but is **not automatically** non-security ahead of counsel/classification work. The carve-out does **not** extend to arrangements requiring recipients to perform tasks, make purchases, or otherwise provide value. Participation must be **unforeseeable**: *"If recipients can foresee the basis for an airdrop and take action expecting to receive it, that would constitute bargained-for consideration."*
+- **Protocol staking** — this discussion is about **PoS network protocol staking of a non-security digital commodity**, where rewards come from the *network protocol* and the service provider has no discretion over staking decisions and offers no fixed/guaranteed returns. It is generally **not** a securities offering only within that frame; "guaranteed rewards" or "broader discretion" fall outside it. **Do NOT generalize this to token-holder reward products:** a VPFI vault-staking yield is outside this protocol-staking frame entirely (VPFI is not a PoS network and the rewards would come from the operator, not a network protocol), so it cannot be rescued merely by making it "ministerial."
 - **Issuer sales** with managerial-effort promises remain securities. The 2026 release **raised the bar**: representations must be "explicit and unambiguous."
 - **Five-part taxonomy:** digital commodities, digital collectibles, **digital tools**, stablecoins, digital securities.
 
@@ -59,7 +61,7 @@ Key carve-outs and boundaries it establishes:
 ### 4.1 No-consideration retroactive airdrops — **ADOPT**
 **Claim (verified 3-0):** the most legally defensible retail distribution mechanism and the safe archetype for distributing VPFI; bargained-for or foreseeable participation reintroduces securities risk.
 
-**Evidence.** Per the 2026 Interpretation, no-consideration distributions fail Howey's "investment of money" element. The enforcement counter-example is *In re Tomahawk Exploration* (2018): a "bounty program" distributing tokens for promotional services / to create a trading market **was** a securities sale because *"the lack of monetary consideration for free shares does not mean there was not a sale"* when *"the donor receives some real benefit."* Direction of travel is favorable: Commissioner Peirce's May 2025 proposed airdrop-exemption framework and EO 14178 (Jan 2025) encouraging an airdrop safe harbor.
+**Evidence.** Per the 2026 Interpretation, no-consideration distributions fail Howey's "investment of money" element. The enforcement counter-example is *In re Tomahawk Exploration* (2018): a "bounty program" distributing tokens for promotional services / to create a trading market **was** a securities sale because *"the lack of monetary consideration for free shares does not mean there was not a sale"* when *"the donor receives some real benefit."* Direction of travel is favorable: Commissioner Peirce's May 2025 proposed airdrop-exemption framework. *(An earlier draft also cited EO 14178 here; that order is a broad digital-asset policy/working-group directive, **not** an airdrop safe-harbor proposal, so it is dropped to avoid overstating the legal support for this ADOPT verdict.)*
 
 **Recommendation.** ADOPT a **retroactive, snapshot-based, no-cost** VPFI airdrop with **NO pre-announced eligibility criteria** — this is the archetype. **AVOID** any bounty/referral/promotional-service distribution where Vaipakam receives marketing value, or that is announced in advance (recreates the Tomahawk fact pattern and the foreseeability problem).
 
@@ -99,7 +101,7 @@ Key carve-outs and boundaries it establishes:
 
 **Recommendation.** AVOID reintroducing any issuer-priced primary sale. For **treasury capital**, the legally-defensible alternative used by mature protocols is **private rounds to accredited / non-US investors or SAFTs** (regulated, exempt private placements) — not a retail issuer sale.
 
-**Caveats.** Nuance (Paul Weiss): a fixed-price sale *alone*, absent explicit managerial-effort/profit promises, does not *automatically* become a security — but for a core team building a platform, the managerial-effort element is hard to disclaim, so avoidance is the prudent call. SAFT/private-placement defensibility was **not** independently verified in this research; confirm with counsel.
+**Caveats.** **Uncited counsel question (not a verified source):** it is *arguable* that a fixed-price sale *alone*, absent explicit managerial-effort/profit promises, does not *automatically* become a security — but this nuance is **not** backed by a source in §10 (an earlier draft attributed it to Paul Weiss without a link) and should be treated as a question for counsel, not a relied-upon position. Regardless, for a core team building a platform the managerial-effort element is hard to disclaim, so avoidance is the prudent call. SAFT/private-placement defensibility was **not** independently verified in this research; confirm with counsel.
 
 ---
 
@@ -172,7 +174,7 @@ The following requested dimensions were **not** covered by verified primary-sour
 
 Candidate child cards (owner to confirm split):
 
-- **Card A — Buyback-and-burn value accrual.** Treasury uses real protocol revenue to buy + burn VPFI. **Do this first** — highest value, lowest legal ambiguity. Write design doc under `docs/DesignsAndPlans/`.
+- **Card A — Buyback-and-burn value accrual.** Treasury uses real protocol revenue to buy + burn VPFI. **Phase 2 — do this AFTER decentralization, not first.** (An earlier draft said "do this first"; that contradicts the decided §9.1/§9.5 sequence, which defers **all** value-accrual until control actually decentralizes — implementing a value-accrual engine while the admin still holds the keys *increases* exposure. Among Phase-2 value-accrual options it is the lowest-ambiguity one, but it is still Phase 2.) Write design doc under `docs/DesignsAndPlans/` when that phase opens.
 - **Card B — Retroactive airdrop + progressive-decentralization roadmap.** Snapshot design (no foreseeable criteria), governance-utility wiring (vote on collateral/risk/fee switch), parameter-immutability schedule.
 - **Card C — Interaction-reward hardening.** Enforce completed-transaction tie, variable rate, de-"APR" all copy. May fold into [#687](https://github.com/vaipakam/vaipakam/issues/687).
 
@@ -197,16 +199,17 @@ Admin control is the **"efforts of others"** prong of Howey at its strongest. Th
 | Yield / staking | **None.** No fixed/passive yield. |
 | Value accrual (buyback / fee-share / ve) | **Deferred to Phase 2** (post-decentralization). |
 | Governance | **None live** in Phase 1; admin-controlled. Not marketed as a future value driver. |
-| Distribution | **Earn-only, zero cash in:** (a) usage-based interaction rewards tied strictly to *completed* lend/borrow transactions, variable rate, never labelled "APR/yield"; (b) optional no-consideration retroactive airdrop with no pre-announced criteria. |
+| Distribution | **No issuer sale:** (a) usage-based interaction rewards — a **variable usage rebate** tied strictly to *completed* lend/borrow transactions, never labelled "APR/yield" (note: this is **not** the zero-consideration posture of an airdrop — users supply principal/collateral and pay/earn fees, and can foresee the reward once live; it is defensible as a service/usage reward, NOT as "no investment of money"); (b) optional **no-consideration** retroactive airdrop with no pre-announced criteria (this is the genuinely zero-cash-in path). |
 | Treasury / runway | **Bootstrapped** from protocol fee revenue (ETH/stables) only. **No capital raise** — explicitly NOT a private placement (avoids the expensive-counsel lane). |
-| Operator compensation | Vested/timelocked founder/team allocation, realized over time on an **organic** secondary market — **no team-seeded liquidity or market-making** (a team-made market is itself an enforcement hook). |
+| Operator compensation | Vested/timelocked founder/team allocation. **Affiliate secondary-market sales are NOT a decided low-overhead lever** — while the operator still controls parameters and VPFI has no live governance/value-accrual, founder/team sales can read as issuer/affiliate distribution or capital formation rather than neutral user transfers. Gate any realization on **lockups + counsel review + Phase 2**, not on Phase-1 ad-hoc selling. Still **no team-seeded liquidity or market-making** (a team-made market is itself an enforcement hook). |
 | Marketing | No profit / yield / returns / appreciation / investment / price language anywhere. VPFI = fee-discount tool. (Reinforces the existing retail-copy policy.) |
 | Compliance scaffolding | Keep existing **free** measures: on-chain ToS (LegalFacet), sanctions screening, retail KYC-off. Nothing added. |
 
 ### 9.3 How each regime stays minimal
-- **Securities:** no sale + no yield + consumptive-only + no team-made market → no profit expectation to attach to the operator's efforts.
-- **Money transmission / VASP:** the operator never sells or custodies the token → no MSB/VASP trigger.
-- **MiCA / financial-promotion (EU/UK):** no *public offer* of the token + disciplined marketing → no white-paper / approved-promotion obligation.
+*(These reduce the *token-level* surface; each still needs the bounded counsel review in §9.4 — none is a self-certified clearance.)*
+- **Securities:** no sale + no yield + consumptive-only + no team-made market → no profit expectation to attach to the operator's efforts (token-level; VPFI's own classification remains an inference pending counsel — §4.7).
+- **Money transmission / VASP:** the VPFI distribution adds **no token-sale custody trigger** (the operator never sells or custodies VPFI). This does **NOT** clear the protocol's broader money-transmission/VASP posture — the Phase-1 lending product still accepts, routes, and pays ETH/stables/collateral through admin-controlled contracts, which needs its own MSB/VASP analysis independent of the token.
+- **MiCA / financial-promotion (EU/UK):** Phase 1 still **distributes VPFI to public EU/UK users** (via completed-txn rewards + the optional airdrop), so "no public offer" is **not** a categorical given — especially where rewards are tied to fee-generating transactions. This still requires a MiCA / financial-promotion **exemption analysis** (white-paper / approved-promotion triggers), not reliance on disciplined marketing alone.
 - **AML:** sanctions-screening only, retail KYC-off → already at the floor.
 
 ### 9.4 Honest cost note
