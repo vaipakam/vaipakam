@@ -76,6 +76,36 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
 
 ## 3. Per-feature blast radius
 
+> **The per-feature lists below are ILLUSTRATIVE, not an exhaustive symbol
+> inventory.** The removal is **grep-driven and tool-verified**: for every removed
+> symbol / storage field / mapping / selector / route / ABI / copy string, the
+> implementer runs `rg` across `contracts/`, `apps/`, `packages/`, `docs/` to find
+> **all** references and removes/retargets each. The backstops that make
+> "no consumer missed" guaranteed-by-construction (not by list-completeness):
+> `forge build` (compile), the **deploy-sanity suite** (`SelectorCoverageTest` +
+> `DiamondFacetNames`), and the frontend/agent **`tsc` typecheck** (after ABI
+> re-export). A green run across all three ⇒ no dangling consumer.
+>
+> **Non-obvious consumers surfaced in review (fold into the sweep — still not a
+> closed set):** `ConfigFacet.getStakingAprBps` (+ `ReplaceStaleFacets.s.sol`,
+> `ConfigBounds.invariant`, `protocolConsoleKnobs.ts`); the `cfgVpfiFixedGlobalCap()`/
+> `cfgVpfiFixedWalletCap()` helper readers + their constants; the separate
+> `setVPFIDiscountETHPriceAsset` selector + `vpfiDiscountEthPriceAsset` (the
+> renamed discount-config flow MUST still set it, else `canQuote=false`);
+> `setVPFIBuyRate` used by KEPT discount tests (`CrossChainTierPropagationIntegrationTest`,
+> `VPFIDiscountTimeWeightedTest`) → repoint to `setVPFIDiscountRate`; the buy keys
+> in `@vaipakam/contracts` `deployments.json`/`chain-config.ts` +
+> `apps/defi/src/contracts/config.ts` (`vpfiBuyAdapter`/`vpfiBuyPaymentToken`) +
+> `script/lib/Deployments.sol`; `apps/agent/src/index.ts` scheduling
+> `runBuyWatchdog` every cron tick (+ wrangler comments); the buyback dormancy
+> assertion must include **`commitBuybackIntentValidated`** (a second commit
+> selector) alongside `commitBuybackIntent`; `test/mocks/TestMutatorFacet.sol`
+> (shared mock) reads/writes the staking slots; the `/buy-vpfi` + `#staking-rewards`
+> **deep-links** across nav/CTA/consent/create-offer/reward anchors/PWA manifests;
+> and the **localized i18n + Basic/Advanced user-guide copy** (`apps/www/src/content`,
+> `apps/defi/src/i18n`) still carrying "5% APR" / staking-claim / fixed-rate-buy
+> language.
+
 ### A. Fixed-rate sale — REMOVE
 - **Whole-file removals:** `crosschain/VpfiBuyAdapter.sol`,
   `crosschain/VpfiBuyReceiver.sol`, `crosschain/IVpfiBuyCcipMessages.sol`,
@@ -204,7 +234,10 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
     chain role.
 - **Phase-1 action (minimum):** keep it dormant — a deploy-sanity/test assertion
   that no allowed-token / budget-credit / intent-commit / Fusion activation
-  exists in any deploy/config path (both chain roles). The staker-yield target
+  exists in any deploy/config path (both chain roles). **The intent-commit check
+  must cover BOTH external selectors — `commitBuybackIntent` AND
+  `commitBuybackIntentValidated`** (the validated path can create the same
+  Fusion-backed intent on Base without the legacy commit). The staker-yield target
   (`stakingPoolBuybackBudget`) is severed *with B* (§3.B). Optionally drop the
   `ConfigureCcip` receiver-wiring for cleanliness (harmless while the valve is
   shut).
