@@ -12,6 +12,7 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -79,6 +80,11 @@ contract RedeployFacets is Script {
         // alongside Preclose so a curated redeploy doesn't leave refinance on
         // stale bytecode that skips the consolidation while preclose applies it.
         RefinanceFacet refinanceFacet = new RefinanceFacet();
+        // #658 PR-B2 — claimAsBorrower gained the post-withdraw VPFI restamp
+        // (the claim-time half of the direct-preclose close-out). Refresh
+        // ClaimFacet so a curated redeploy doesn't leave the claim path on stale
+        // bytecode that skips the restamp after a preclosed borrower claims VPFI.
+        ClaimFacet claimFacet = new ClaimFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         // #658 — the refreshed RiskFacet liquidation paths cross-call
         // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
@@ -97,6 +103,7 @@ contract RedeployFacets is Script {
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
+        console.log("ClaimFacet:           ", address(claimFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
 
@@ -120,7 +127,7 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](8 + nExtra);
+            new IDiamondCut.FacetCut[](9 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -135,7 +142,11 @@ contract RedeployFacets is Script {
         // diamond, so a plain Replace repoints them to the consolidation-aware
         // bytecode.
         cuts[7] = _replace(address(refinanceFacet), _refinanceSelectors());
-        uint256 idx = 8;
+        // #658 PR-B2 — ClaimFacet selectors are already routed on a current
+        // diamond, so a plain Replace repoints them to the restamp-aware
+        // bytecode.
+        cuts[8] = _replace(address(claimFacet), _claimSelectors());
+        uint256 idx = 9;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -153,7 +164,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 8 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 9 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
@@ -293,6 +304,21 @@ contract RedeployFacets is Script {
         s = new bytes4[](2);
         s[0] = RefinanceFacet.refinanceLoan.selector;
         s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
+    }
+
+    /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors
+    ///      `DeployDiamond._getClaimSelectors` (kept in lockstep).
+    function _claimSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](9);
+        s[0] = ClaimFacet.claimAsLender.selector;
+        s[1] = ClaimFacet.claimAsBorrower.selector;
+        s[2] = ClaimFacet.getClaimableAmount.selector;
+        s[3] = ClaimFacet.getClaimable.selector;
+        s[4] = ClaimFacet.getBorrowerLifRebate.selector;
+        s[5] = ClaimFacet.claimAsLenderWithRetry.selector;
+        s[6] = ClaimFacet.getFallbackSnapshot.selector;
+        s[7] = ClaimFacet.setLenderBackstopOptIn.selector;
+        s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
     }
 
     function _profileSelectors() internal pure returns (bytes4[] memory s) {
