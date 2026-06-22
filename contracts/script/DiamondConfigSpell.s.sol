@@ -26,9 +26,9 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *        - ConfigureRewardReporter   — sets the cross-chain reward
  *                                       reporter's localEid + baseEid
  *                                       so reward reports flow.
- *        - ConfigureVPFIBuy          — sets the canonical-chain
- *                                       wei-per-VPFI rate + receiver
- *                                       config (no-op on mirror).
+ *        - ConfigureVPFIBuy          — sets the canonical-chain VPFI
+ *                                       fee-discount price config
+ *                                       (no-op on mirror).
  *        - ConfigureNFTImageURIs     — sets the position-NFT artwork
  *                                       URIs (rotates without code).
  *
@@ -75,10 +75,10 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *           before the reward OApp peers are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
- *        3. ConfigureVPFIBuy — sets the buy rate AFTER oracle is
- *           wired (the rate config doesn't read oracle, but having
- *           oracle live lets `--phase verify` sanity-check the rate
- *           against current prices).
+ *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
+ *           AFTER oracle is wired (the config doesn't read oracle, but
+ *           having oracle live lets `--phase verify` sanity-check the
+ *           discount price against current prices).
  *        4. ConfigureNFTImageURIs LAST — pure metadata; no on-chain
  *           dependencies on the others.
  *

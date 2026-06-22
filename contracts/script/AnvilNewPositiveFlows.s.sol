@@ -1299,8 +1299,8 @@ contract AnvilNewPositiveFlows is Script {
 
         // Snapshot — see _restoreVpfiConfig() called after N14.
         _n10SavedVpfiToken = VPFITokenFacet(diamond).getVPFIToken();
-        (_n10SavedVpfiRate, , , , , _n10SavedVpfiEthRefAsset) =
-            VPFIDiscountFacet(diamond).getVPFIBuyConfig();
+        (_n10SavedVpfiRate, _n10SavedVpfiEthRefAsset) =
+            VPFIDiscountFacet(diamond).getVPFIDiscountConfig();
         _n10SavedBorrowerConsent =
             VPFIDiscountFacet(diamond).getVPFIDiscountConsent(borrower);
         _n10SnapshotTaken = true;
@@ -1316,7 +1316,7 @@ contract AnvilNewPositiveFlows is Script {
         VPFITokenFacet(diamond).setVPFIToken(address(vpfi));
         // 0.001 ETH per VPFI (fixed-rate buy reference + discount
         // quote anchor). With WETH @ $2000, 1 VPFI ≈ $2.
-        VPFIDiscountFacet(diamond).setVPFIBuyRate(1e15);
+        VPFIDiscountFacet(diamond).setVPFIDiscountRate(1e15);
         // ETH-priced reference asset for the LIF→VPFI conversion.
         // WETH on this chain has the Chainlink feed wired in setup.
         VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(address(weth));
@@ -1388,7 +1388,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      throwaway anvil chain we simply leave the mock VPFI
     ///      wired (no canonical exists to point at anyway), which
     ///      is fine since anvil state doesn't survive the run.
-    ///      `setVPFIBuyRate(0)` and `setVPFIDiscountETHPriceAsset(0)`
+    ///      `setVPFIDiscountRate(0)` and `setVPFIDiscountETHPriceAsset(0)`
     ///      accept zero (intentional "disable" semantics), so they
     ///      can be restored unconditionally.
     function _restoreVpfiConfig() internal {
@@ -1397,7 +1397,7 @@ contract AnvilNewPositiveFlows is Script {
         if (_n10SavedVpfiToken != address(0)) {
             VPFITokenFacet(diamond).setVPFIToken(_n10SavedVpfiToken);
         }
-        VPFIDiscountFacet(diamond).setVPFIBuyRate(_n10SavedVpfiRate);
+        VPFIDiscountFacet(diamond).setVPFIDiscountRate(_n10SavedVpfiRate);
         VPFIDiscountFacet(diamond).setVPFIDiscountETHPriceAsset(
             _n10SavedVpfiEthRefAsset
         );

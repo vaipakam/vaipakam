@@ -1826,53 +1826,36 @@ contract DeployDiamond is Script {
     }
 
     function _getVpfiDiscountSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
-        s[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
-        s[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
-        s[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
-        s[3] = VPFIDiscountFacet.getVPFIBuyConfig.selector;
-        s[4] = VPFIDiscountFacet.getVPFISoldTo.selector;
-        s[5] = VPFIDiscountFacet.setVPFIBuyRate.selector;
-        s[6] = VPFIDiscountFacet.setVPFIBuyCaps.selector;
-        s[7] = VPFIDiscountFacet.setVPFIBuyEnabled.selector;
-        s[8] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
-        s[9] = VPFIDiscountFacet.emitDiscountApplied.selector;
-        s[10] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
-        s[11] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
-        s[12] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
-        s[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
-        s[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        s[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
-        s[16] = VPFIDiscountFacet.setBridgedBuyReceiver.selector;
-        s[17] = VPFIDiscountFacet.getBridgedBuyReceiver.selector;
-        s[18] = VPFIDiscountFacet.processBridgedBuy.selector;
-        s[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
-        s[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        // #687-A: the fixed-rate SALE surface was removed (buyVPFIWithETH,
+        // processBridgedBuy, quoteFixedRateBuy, getVPFISoldTo[ByChainId],
+        // setVPFIBuyCaps/Enabled, set/getBridgedBuyReceiver, getVPFIBuyConfig,
+        // setVPFIBuyRate). The kept consumptive fee-discount surface remains,
+        // plus the renamed discount-price config (getVPFIDiscountConfig /
+        // setVPFIDiscountRate) that the discount quote depends on.
+        s = new bytes4[](18);
+        s[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
+        s[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
+        s[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
+        s[3] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
+        s[4] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
+        s[5] = VPFIDiscountFacet.emitDiscountApplied.selector;
+        s[6] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
+        s[7] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
+        s[8] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
+        s[9] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
+        s[10] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
+        s[11] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
+        s[12] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
         // Phase 8b.1 Permit2 addition.
-        s[21] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
-        // #00010 fix — per-(buyer, originChainId) wallet-cap reader. The
-        // canonical Diamond debits the cap bucket keyed by origin
-        // chain; the frontend reads via this getter so direct buys
-        // and bridged buys see consistent remaining-allowance values.
-        s[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
-        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS
-        // getter consumed by the dapp's lender-discount preview
-        // hook + the tier-display surface. See
-        // {VPFIDiscountFacet.getEffectiveDiscount} natspec for
-        // the rationale (Codex Sub 1.B round-3 P2 #1 + #2).
-        s[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
-        // T-087 Sub 4 — balance-mutation-free tier rollup. Lets the
-        // dapp's "your tier is ready" CTA surface time-only
-        // EFFECTIVE_TIER activations to mirror chains without
-        // requiring a tiny deposit/withdraw round-trip.
-        s[24] = VPFIDiscountFacet.pokeMyTier.selector;
-        // T-087 Sub 4 round-2 P2 — public tracked-balance getter so
-        // the dapp can distinguish direct-transfer vault dust from
-        // staking-path balance.
-        s[25] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
-        // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter for the
-        // min-history-pending check.
-        s[26] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        s[13] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
+        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS getter.
+        s[14] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        // T-087 Sub 4 — balance-mutation-free tier rollup.
+        s[15] = VPFIDiscountFacet.pokeMyTier.selector;
+        // T-087 Sub 4 round-2 P2 — public tracked-balance getter.
+        s[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
+        s[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
     }
 
     function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {

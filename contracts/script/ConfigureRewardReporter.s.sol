@@ -122,7 +122,7 @@ contract ConfigureRewardReporter is Script {
         // interface + peer-binding verify to EVERY resolved address,
         // regardless of which source (env / artifact / both) supplied
         // it. Codex flagged two paths in the prior shape:
-        //   (a) `VpfiBuyReceiver` also exposes a `diamond()` getter
+        //   (a) `BuybackRemittanceReceiver` also exposes a `diamond()` getter
         //       bound to the canonical Base Diamond. The env-only
         //       branch's narrow `.diamond()`-only check would have
         //       accepted that contract, then `setRewardMessenger(...)`
@@ -228,7 +228,7 @@ contract ConfigureRewardReporter is Script {
     ///            checking that BOTH messenger-specific view selectors
     ///            (`quoteSendChainReport` + `quoteBroadcastGlobal`)
     ///            are present — distinguishes a real messenger from
-    ///            `VpfiBuyReceiver` or any other contract that
+    ///            `BuybackRemittanceReceiver` or any other contract that
     ///            happens to expose a `diamond()` getter; AND
     ///        (3) reports its `diamond` as the local Diamond — catches
     ///            wrong-chain / wrong-Diamond stale-env mistakes.
@@ -269,7 +269,7 @@ contract ConfigureRewardReporter is Script {
         require(
             ok1 || ret1.length > 0,
             "ConfigureRewardReporter: rewardMessenger candidate does not implement "
-            "IRewardMessenger.quoteSendChainReport (likely VpfiBuyReceiver or another "
+            "IRewardMessenger.quoteSendChainReport (likely BuybackRemittanceReceiver or another "
             "non-messenger contract bound to the same Diamond)"
         );
 
@@ -285,7 +285,7 @@ contract ConfigureRewardReporter is Script {
         require(
             ok2 || ret2.length > 0,
             "ConfigureRewardReporter: rewardMessenger candidate does not implement "
-            "IRewardMessenger.quoteBroadcastGlobal (likely VpfiBuyReceiver or another "
+            "IRewardMessenger.quoteBroadcastGlobal (likely BuybackRemittanceReceiver or another "
             "non-messenger contract bound to the same Diamond)"
         );
 

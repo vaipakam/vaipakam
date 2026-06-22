@@ -29,8 +29,6 @@ import {Vm} from "forge-std/Vm.sol";
  *           "timelock": "0x…",
  *           "vpfiToken": "0x…",
  *           "vpfiOftAdapter": "0x…",
- *           "vpfiBuyAdapter": "0x…",
- *           "vpfiBuyReceiver": "0x…",
  *           "rewardOApp": "0x…",
  *           "mockChainlinkAggregator": "0x…",
  *           "mockUniswapV3Factory": "0x…",
@@ -129,8 +127,6 @@ library Deployments {
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
-    function readVpfiBuyAdapter()  internal view returns (address) { return _readAddr(".vpfiBuyAdapter",  "VPFI_BUY_ADAPTER_ADDRESS"); }
-    function readVpfiBuyReceiver() internal view returns (address) { return _readAddr(".vpfiBuyReceiver", "VPFI_BUY_RECEIVER_ADDRESS"); }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
     // artifacts (pre-PR #272 contract-side rename) recorded the same
@@ -276,10 +272,6 @@ library Deployments {
     function writeVpfiTokenImpl(address a)   internal { _writeAddr(".vpfiTokenImpl",   a); }
     function writeVpfiMirror(address a)      internal { _writeAddr(".vpfiMirror",      a); }
     function writeVpfiMirrorImpl(address a)  internal { _writeAddr(".vpfiMirrorImpl",  a); }
-    function writeVpfiBuyAdapter(address a)  internal { _writeAddr(".vpfiBuyAdapter",  a); }
-    function writeVpfiBuyAdapterImpl(address a) internal { _writeAddr(".vpfiBuyAdapterImpl", a); }
-    function writeVpfiBuyReceiver(address a) internal { _writeAddr(".vpfiBuyReceiver", a); }
-    function writeVpfiBuyReceiverImpl(address a) internal { _writeAddr(".vpfiBuyReceiverImpl", a); }
     // ── T-068 CCIP cross-chain stack (Phase 6) ─────────────────────────────
     function writeCcipMessenger(address a)        internal { _writeAddr(".ccipMessenger",        a); }
     function writeVpfiTokenPool(address a)        internal { _writeAddr(".vpfiTokenPool",        a); }
@@ -293,7 +285,6 @@ library Deployments {
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }
     function writeAdmin(address a)           internal { _writeAddr(".admin",           a); }
     function writeVpfiDiscountEthPriceAsset(address a) internal { _writeAddr(".vpfiDiscountEthPriceAsset", a); }
-    function writeVpfiBuyPaymentToken(address a)       internal { _writeAddr(".vpfiBuyPaymentToken", a); }
 
     function writeMockChainlinkAggregator(address a) internal { _writeAddr(".mockChainlinkAggregator", a); }
     function writeMockUniswapV3Factory(address a)    internal { _writeAddr(".mockUniswapV3Factory",    a); }
@@ -382,7 +373,6 @@ library Deployments {
     // reward chain's EVM chain id (was the LayerZero `rewardBaseEid`).
     function writeRewardBaseChainId(uint32 chainId) internal { _writeUint(".rewardBaseChainId", uint256(chainId)); }
     function writeRewardGraceSeconds(uint64 secs) internal { _writeUint(".rewardGraceSeconds", uint256(secs)); }
-    function writeVpfiBuyReceiverEid(uint32 eid) internal { _writeUint(".vpfiBuyReceiverEid", uint256(eid)); }
     function writeInteractionLaunchTimestamp(uint256 ts) internal { _writeUint(".interactionLaunchTimestamp", ts); }
 
     /// Generic typed write — keys not in the curated list above.

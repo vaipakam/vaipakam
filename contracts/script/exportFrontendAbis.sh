@@ -142,8 +142,6 @@ FACETS=(
   "IntentConfigFacet"
   "TreasuryFacet"
   "VaipakamNFTFacet"
-  "VpfiBuyAdapter"
-  "VpfiBuyReceiver"
   "VPFIDiscountFacet"
   "VPFIDiscountAccumulatorFacet"
   "VPFITokenFacet"

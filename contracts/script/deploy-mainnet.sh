@@ -281,21 +281,18 @@ if [ -z "$PHASE" ]; then
 fi
 
 # ── Mainnet chain registry ────────────────────────────────────────────
-# WETH-pull mode is required on bnb / polygon (both have non-ETH-priced
-# native gas). The VpfiBuyAdapter initializer enforces this via
-# `_assertPaymentTokenSane` + the chain check, so the script only needs
-# to surface the env-var name the operator must populate before the
-# contracts phase.
+# (#687-A removed the cross-chain VPFI buy adapter; the per-chain
+# WETH-pull payment-token column it required is gone.)
 
 case "$CHAIN_SLUG" in
   ethereum)
-    CHAIN_ID=1;       RPC_VAR="ETHEREUM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="ETHEREUM";      WETH_PULL_VAR="" ;;
+    CHAIN_ID=1;       RPC_VAR="ETHEREUM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="ETHEREUM" ;;
   base)
-    CHAIN_ID=8453;    RPC_VAR="BASE_RPC_URL";          IS_CANONICAL=1; CCIP_SLUG="BASE";          WETH_PULL_VAR="" ;;
+    CHAIN_ID=8453;    RPC_VAR="BASE_RPC_URL";          IS_CANONICAL=1; CCIP_SLUG="BASE" ;;
   arbitrum)
-    CHAIN_ID=42161;   RPC_VAR="ARBITRUM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="ARBITRUM";      WETH_PULL_VAR="" ;;
+    CHAIN_ID=42161;   RPC_VAR="ARBITRUM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="ARBITRUM" ;;
   optimism)
-    CHAIN_ID=10;      RPC_VAR="OPTIMISM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="OPTIMISM";      WETH_PULL_VAR="" ;;
+    CHAIN_ID=10;      RPC_VAR="OPTIMISM_RPC_URL";      IS_CANONICAL=0; CCIP_SLUG="OPTIMISM" ;;
   polygon-zkevm)
     cat >&2 <<EOF
 Refusing to run 'polygon-zkevm' from deploy-mainnet.sh.
@@ -308,9 +305,9 @@ EOF
     exit 1
     ;;
   bnb)
-    CHAIN_ID=56;      RPC_VAR="BNB_RPC_URL";           IS_CANONICAL=0; CCIP_SLUG="BNB";           WETH_PULL_VAR="BNB_VPFI_BUY_PAYMENT_TOKEN" ;;
+    CHAIN_ID=56;      RPC_VAR="BNB_RPC_URL";           IS_CANONICAL=0; CCIP_SLUG="BNB" ;;
   polygon)
-    CHAIN_ID=137;     RPC_VAR="POLYGON_RPC_URL";       IS_CANONICAL=0; CCIP_SLUG="POLYGON";       WETH_PULL_VAR="POLYGON_VPFI_BUY_PAYMENT_TOKEN" ;;
+    CHAIN_ID=137;     RPC_VAR="POLYGON_RPC_URL";       IS_CANONICAL=0; CCIP_SLUG="POLYGON" ;;
   anvil|sepolia|base-sepolia|arb-sepolia|op-sepolia|bnb-testnet|polygon-amoy)
     cat >&2 <<EOF
 Refusing to run testnet chain '$CHAIN_SLUG' from deploy-mainnet.sh.
@@ -470,13 +467,8 @@ phase_preflight() {
            TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
   done
-  if [ -n "$WETH_PULL_VAR" ]; then
-    if [ -z "${!WETH_PULL_VAR:-}" ]; then
-      MISSING+=("$WETH_PULL_VAR  (REQUIRED on $CHAIN_SLUG — bridged WETH9 address)")
-    fi
-  fi
   # Mirror chains need BASE_CHAIN_ID — canonical Base's EVM chain id —
-  # for DeployCrosschain to wire the reward + buy flows back to Base.
+  # for DeployCrosschain to wire the reward flow back to Base.
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
     MISSING+=("BASE_CHAIN_ID  (REQUIRED on mirror chains — canonical Base chain id, 8453)")
   fi
@@ -491,16 +483,6 @@ phase_preflight() {
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
-
-  # 4. WETH-pull check (if applicable)
-  if [ -n "$WETH_PULL_VAR" ]; then
-    WETH_ADDR="${!WETH_PULL_VAR}"
-    DECIMALS=$(cast call "$WETH_ADDR" "decimals()(uint8)" --rpc-url "$RPC" 2>/dev/null || echo "?")
-    SYMBOL=$(cast call "$WETH_ADDR" "symbol()(string)" --rpc-url "$RPC" 2>/dev/null || echo "?")
-    echo "  ✓ $WETH_PULL_VAR = $WETH_ADDR  symbol=$SYMBOL decimals=$DECIMALS"
-    echo "    ⚠ Eyeball-confirm against the chain's official bridged-WETH9 registry"
-    echo "      before --phase contracts. CLAUDE.md lists the canonical addresses."
-  fi
 
   echo
   echo "preflight OK. Next: --phase contracts --confirm-i-have-multisig-ready"

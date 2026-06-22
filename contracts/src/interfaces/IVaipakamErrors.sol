@@ -160,22 +160,11 @@ interface IVaipakamErrors {
     error InvalidKeeperActions();
 
     // ─── VPFI Discount (docs/TokenomicsTechSpec.md) ─────────────────────────
-    /// @notice Fixed-rate VPFI buy attempted on a chain that is not the
-    ///         canonical VPFI chain (Base mainnet / Base Sepolia).
+    /// @notice Canonical-chain-only operation attempted on a non-canonical
+    ///         VPFI chain (the canonical chain is Base mainnet / Base Sepolia).
+    /// @dev #687-A removed the issuer fixed-rate sale; this error now guards
+    ///      the remaining canonical-only TreasuryFacet path.
     error NotCanonicalVPFIChain();
-    /// @notice Fixed-rate VPFI buy attempted while the admin kill-switch is off.
-    error VPFIBuyDisabled();
-    /// @notice VPFI buy rate has not been configured yet (weiPerVpfi == 0).
-    error VPFIBuyRateNotSet();
-    /// @notice Fixed-rate buy would exceed the global 200K VPFI cap.
-    error VPFIGlobalCapExceeded();
-    /// @notice Fixed-rate buy would exceed the per-wallet 2K VPFI cap.
-    error VPFIPerWalletCapExceeded();
-    /// @notice Msg.value did not produce a non-zero integer number of VPFI.
-    error VPFIBuyAmountTooSmall();
-    /// @notice Protocol VPFI reserve on the diamond is below the requested
-    ///         buy amount. Ops must top up before buys can resume.
-    error VPFIReserveInsufficient();
     /// @notice VPFI token has not been registered on this diamond yet
     ///         (VPFITokenFacet.setVPFIToken).
     error VPFITokenNotSet();
@@ -239,13 +228,6 @@ interface IVaipakamErrors {
     ///         denominator that was already set for the same day with a
     ///         different value.
     error KnownGlobalAlreadySet();
-
-    // ─── Bridged Fixed-Rate VPFI Buy ────────────────────────────────────────
-    /// @notice `processBridgedBuy` invoked by an address other than the
-    ///         Diamond's registered `bridgedBuyReceiver`.
-    error NotBridgedBuyReceiver();
-    /// @notice Bridged-buy receiver has not been configured on this Diamond.
-    error BridgedBuyReceiverNotSet();
 
     // ─── Per-Asset Pause ────────────────────────────────────────────────────
     /// @notice Creation path touched an asset that has been paused by

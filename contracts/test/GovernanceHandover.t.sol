@@ -67,7 +67,7 @@ contract GovernanceHandoverTest is Test {
         AdminFacet(address(diamond)).unpause();
 
         // Stand-ins for the cross-chain contracts (CcipMessenger,
-        // VpfiBuyAdapter, VaipakamRewardMessenger) — they inherit
+        // VaipakamRewardMessenger) — they inherit
         // {GuardianPausable}; the harness isolates that guardian + owner
         // surface — plus an Ownable2Step VPFIToken stand-in.
         oappA = _deployOappHarness(deployer);
@@ -372,8 +372,7 @@ contract GovernanceHandoverTest is Test {
 /**
  * @dev Minimal UUPS contract that mixes in {GuardianPausable} — the same
  *      guardian + Ownable2Step surface every Vaipakam cross-chain contract
- *      (CcipMessenger, VpfiBuyAdapter, VpfiBuyReceiver,
- *      VaipakamRewardMessenger) carries. Used as their stand-in for the
+ *      (CcipMessenger, VaipakamRewardMessenger) carries. Used as their stand-in for the
  *      handover invariant checks.
  */
 contract CrossChainGuardianHarness is

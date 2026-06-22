@@ -21,26 +21,21 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  * @author Vaipakam Developer Team
  * @notice Phase 1 borrower VPFI discount mechanism — spec in
  *         docs/TokenomicsTechSpec.md.
- * @dev Five user-facing surfaces:
- *        1. `buyVPFIWithETH()` — fixed-rate purchase that credits VPFI to
- *           the buyer's WALLET. This function is the canonical-chain leg
- *           only; users on mirror chains reach it transparently via the
- *           `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip (the
- *           adapter is a separate contract, not part of the Diamond). Per
- *           spec, vault funding is a separate explicit user step on every
- *           chain regardless of how the buy was routed.
- *        2. `depositVPFIToVault(amount)` — explicit wallet → vault move.
- *           Required on every chain: on canonical (Base) immediately after
- *           buying, or on non-canonical chains once the OFT return leg
- *           (or a manual bridge via the CCIP CCT bridge UI) lands VPFI
- *           in the user's wallet.
- *        3. `withdrawVPFIFromVault(amount)` — counterpart of (2). Unstakes
- *           vault VPFI back to the caller's wallet and checkpoints staking
- *           accrual before the balance change.
- *        4. `quoteVPFIDiscount(offerId)` / `quoteVPFIDiscountFor(id, user)`
+ * @dev #687-A removed the issuer fixed-rate ETH → VPFI sale (`buyVPFIWithETH`,
+ *      the bridged-buy ingress, and the global/per-wallet caps) to reduce the
+ *      platform's securities-law surface. What remains is the consumptive
+ *      fee-discount utility, with four user-facing surfaces:
+ *        1. `depositVPFIToVault(amount)` — explicit wallet → vault move that
+ *           stakes VPFI so it can back fee discounts. Users acquire VPFI
+ *           through external markets / the CCIP CCT bridge, not the protocol.
+ *        2. `withdrawVPFIFromVault(amount)` — counterpart of (1). Unstakes
+ *           vault VPFI back to the caller's wallet, respecting the
+ *           collateral-encumbrance lien, and checkpoints staking accrual
+ *           before the balance change.
+ *        3. `quoteVPFIDiscount(offerId)` / `quoteVPFIDiscountFor(id, user)`
  *           — views used by the frontend to show the VPFI that will be
  *           deducted at accept time.
- *        5. `setVPFIDiscountConsent(bool)` / `getVPFIDiscountConsent(user)`
+ *        4. `setVPFIDiscountConsent(bool)` / `getVPFIDiscountConsent(user)`
  *           — the single platform-level user setting that governs whether
  *           vaulted VPFI may be spent on protocol-fee discounts. This same
  *           flag governs BOTH the borrower Loan Initiation Fee discount
@@ -48,33 +43,16 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  *           Fee discount. No per-offer or per-call opt-in exists.
  *
  *      Admin surface (ADMIN_ROLE, matches VPFITokenFacet's pattern):
- *        - `setVPFIBuyRate(weiPerVpfi)` — rate at which ETH is accepted.
- *        - `setVPFIBuyCaps(globalCap, perWalletCap)` — global + wallet caps.
- *        - `setVPFIBuyEnabled(bool)` — kill-switch for the buy path.
+ *        - `setVPFIDiscountRate(weiPerVpfi)` — VPFI price anchor used to
+ *          value the discount (wei of ETH per 1 VPFI).
  *        - `setVPFIDiscountETHPriceAsset(asset)` — WETH address (Chainlink
  *          oracle) used for the USD→ETH leg of the quote.
+ *        - `getVPFIDiscountConfig()` — reads back both of the above.
  *
- *      Chain scope:
- *        - Fixed-rate BUY is implemented on the canonical chain (Base) —
- *          that is where the reserve lives and where this function is
- *          callable. User-facing, however, the spec exposes a
- *          preferred-chain buy page: mirror-chain users reach this
- *          function transparently through the
- *          `VPFIBuyAdapter` → `VPFIBuyReceiver` CCIP round-trip and
- *          receive VPFI back in their wallet on the chain they started
- *          from. No manual chain-switch or bridge step is required of
- *          the user before calling `depositVPFIToVault`.
- *        - The DISCOUNT itself (vault VPFI → treasury at acceptance) works
- *          on every chain, gated purely on borrower vault VPFI balance.
+ *      Chain scope: the DISCOUNT (vault VPFI → treasury at acceptance) works
+ *      on every chain, gated purely on borrower vault VPFI balance.
  *
- *      Reserve model: the diamond SELLS VPFI from its own balance (no
- *      mint-on-demand). Ops must fund the diamond during canonical deploy
- *      (e.g. owner mints to diamond via TreasuryFacet.mintVPFI). The caps
- *      enforce the invariant — the total ever sold at fixed rate never
- *      exceeds the effective global cap ({LibVaipakam.cfgVpfiFixedGlobalCap};
- *      default 2.3M VPFI per docs/TokenomicsTechSpec.md §8).
- *
- *      Security: `buyVPFIWithETH` and `depositVPFIToVault` are
+ *      Security: `depositVPFIToVault` / `withdrawVPFIFromVault` are
  *      reentrancy-guarded and pausable. The discount path in OfferFacet
  *      inherits that facet's guards.
  */

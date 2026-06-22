@@ -181,8 +181,7 @@ contract SanctionsOracleTest is RiskFacetTest {
     // added per the post-audit hardening pass:
     //   - VaultFactoryFacet.getOrCreateUserVault
     //   - ClaimFacet.claimAsLender / claimAsBorrower
-    //   - VPFIDiscountFacet.buyVPFIWithETH / depositVPFIToVault /
-    //     withdrawVPFIFromVault
+    //   - VPFIDiscountFacet.depositVPFIToVault / withdrawVPFIFromVault
     //   - RiskFacet.triggerLiquidation (msg.sender = liquidator)
     // Plus a positive end-to-end test that exercises the Tier-2 ALLOW
     // carve-out: a sanctioned BORROWER can still call repay so the
@@ -242,7 +241,7 @@ contract SanctionsOracleTest is RiskFacetTest {
     // here because `SetupTest` doesn't cut the VPFIDiscountFacet
     // selectors into the test diamond — calls to those routes return
     // `FunctionDoesNotExist`, not the sanctions revert. The contract
-    // gates on `buyVPFIWithETH` / `depositVPFIToVault*` /
+    // gates on `depositVPFIToVault*` /
     // `withdrawVPFIFromVault` are still in place (see
     // `VPFIDiscountFacet.sol` for the `_assertNotSanctioned` calls);
     // their regression coverage belongs in `VPFIDiscountFacetTest.t.sol`

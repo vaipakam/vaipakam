@@ -97,8 +97,8 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
     error BuybackTokenNotAllowed(uint256 chainId, address token);
     /// @notice `remitBuyback` was called for a token marked in
     ///         `buybackNoConvert` — the token is intentionally
-    ///         exempted from cross-chain remittance (e.g., ETH from
-    ///         `buyVPFIWithETH` stays in operational reserve + LP).
+    ///         exempted from cross-chain remittance (e.g., ETH the
+    ///         protocol holds stays in operational reserve + LP).
     error BuybackTokenNoConvert(address token);
     /// @notice The configured `buybackBudget` for the token can't
     ///         cover the requested remit amount.
@@ -320,8 +320,8 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         if (tokenIn == address(0)) revert InvalidAddress();
         // Codex Sub 3.A round-1 P2 — the no-convert flag must also
         // block the treasury-convert path; otherwise an admin or
-        // keeper could rotate a protected asset (e.g., ETH from
-        // `buyVPFIWithETH`) out of its native form via convert even
+        // keeper could rotate a protected asset (e.g., ETH the
+        // protocol holds) out of its native form via convert even
         // though `remitBuyback` blocks it. The flag covers BOTH
         // outbound paths uniformly.
         if (s.buybackNoConvert[tokenIn]) revert BuybackTokenNoConvert(tokenIn);
@@ -447,7 +447,7 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
      *
      *      Reverts:
      *        - `BuybackTokenNoConvert` if `token` is on the no-convert
-     *          list (e.g., ETH from `buyVPFIWithETH` stays in
+     *          list (e.g., ETH the protocol holds stays in
      *          operational reserve + LP — never crosses chains).
      *        - `BuybackTokenNotAllowed(chainId, token)` if the token
      *          is not on this chain's allow-list.

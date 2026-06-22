@@ -595,10 +595,6 @@ library LibVaipakam {
     uint256 constant VPFI_TIER3_DISCOUNT_BPS = 2000; // 20%
     uint256 constant VPFI_TIER4_DISCOUNT_BPS = 2400; // 24%
 
-    uint256 constant VPFI_FIXED_RATE_DEFAULT_WEI_PER_VPFI = 1e15; // 1 VPFI = 0.001 ETH
-    uint256 constant VPFI_FIXED_GLOBAL_CAP = 2_300_000 * 1e18; // 2.3M VPFI pool (spec §8)
-    uint256 constant VPFI_FIXED_WALLET_CAP = 30_000 * 1e18; // 30k VPFI per wallet (spec §8)
-
     // ─── VPFI Reward Pools (docs/TokenomicsTechSpec.md §3, §4, §7) ───────
     // Hard caps on each Phase-1 emission category. The diamond pays
     // claims from its own VPFI balance; a cumulative paid-out counter
@@ -2429,33 +2425,13 @@ library LibVaipakam {
         // during the canonical deploy.
         bool isCanonicalVpfiChain;
         // ── Borrower VPFI Discount (Phase 1) ────────────────────────────
-        // Fixed ETH rate at which borrowers may buy VPFI directly from the
-        // protocol on the canonical chain. Stored as wei-per-VPFI so the
-        // 0.001 ETH default is `1e15`. Set via
-        // VPFIDiscountFacet.setVPFIBuyRate (ADMIN_ROLE). Zero means the
-        // admin has not configured the rate yet and the buy/discount path
-        // is disabled.
+        // VPFI price anchor for the consumptive fee-discount utility, stored
+        // as wei-per-VPFI so the 0.001 ETH reference is `1e15`. Set via
+        // VPFIDiscountFacet.setVPFIDiscountRate (ADMIN_ROLE). Zero means the
+        // admin has not configured the rate yet and the discount path is
+        // disabled (quoting returns canQuote=false). #687-A removed the issuer
+        // fixed-rate ETH → VPFI sale that previously shared this anchor.
         uint256 vpfiDiscountWeiPerVpfi;
-        // Global cap on VPFI sold through the fixed-rate buy, in VPFI
-        // wei. Enforced against `vpfiFixedRateTotalSold`. Zero resolves to
-        // the spec default {VPFI_FIXED_GLOBAL_CAP} (2.3M VPFI, see
-        // docs/TokenomicsTechSpec.md §8) via {cfgVpfiFixedGlobalCap}. There
-        // is no "uncapped" mode — the spec forbids surfacing the buy as
-        // unlimited on any chain.
-        uint256 vpfiFixedRateGlobalCap;
-        // Per-(wallet, origin-chain) cap on VPFI sold through the
-        // fixed-rate buy. Enforced against
-        // `vpfiFixedRateSoldToByChainId[user][originChainId]` (declared
-        // at the end of this struct). Zero resolves to the spec default
-        // {VPFI_FIXED_WALLET_CAP} (30k VPFI, see
-        // docs/TokenomicsTechSpec.md §8a) via {cfgVpfiFixedWalletCap}.
-        // As with the global cap, no "uncapped" mode is exposed. The
-        // Phase 1 cap is per-chain, not one shared global wallet cap
-        // across every chain.
-        uint256 vpfiFixedRatePerWalletCap;
-        // Monotone append-only counter of total VPFI sold at the fixed
-        // rate. Feeds the global cap check and the transparency view.
-        uint256 vpfiFixedRateTotalSold;
         // Chain-local ERC-20 address whose Chainlink USD feed is used to
         // convert the discounted fee from USD into ETH during the
         // discount-eligibility calculation. In practice this is the
@@ -2463,19 +2439,6 @@ library LibVaipakam {
         // is not configured and the discount path falls back silently to
         // the normal lender-paid fee.
         address vpfiDiscountEthPriceAsset;
-        // Admin kill-switch for the fixed-rate buy. The discount path at
-        // loan acceptance remains functional even when this flag is false
-        // — it only gates `buyVPFIWithETH`. Set via setVPFIBuyEnabled.
-        bool vpfiFixedRateBuyEnabled;
-        // DEPRECATED — single-key per-wallet running total. Replaced by
-        // the per-(buyer, originChainId) mapping
-        // {vpfiFixedRateSoldToByChainId} declared at the end of this
-        // struct. The slot is preserved
-        // only because the Diamond storage layout is append-only; the
-        // facet code no longer reads or writes this mapping. Per spec
-        // (docs/TokenomicsTechSpec.md §8a) the per-wallet cap is now
-        // enforced per origin chain.
-        mapping(address => uint256) vpfiFixedRateSoldToLegacyDoNotUse;
         // Platform-level opt-in to use vaulted VPFI for protocol fee
         // discounts. One common consent governs both the borrower Loan
         // Initiation Fee discount and the lender Yield Fee discount. Per
@@ -2678,19 +2641,6 @@ library LibVaipakam {
         // Purchase Program, cross-chain extension) ─────────────────────────
         // Base is the SOLE seller of the fixed-rate VPFI. Non-Base chains
         // get a "bridged buy" UX via VPFIBuyAdapter: user pays native ETH
-        // on Arb/Op/Eth, the adapter forwards a CCIP message to
-        // VPFIBuyReceiver on Base, this Diamond on Base validates caps +
-        // reserves exactly as in {buyVPFIWithETH}, transfers VPFI to the
-        // receiver, and the receiver bridges it back via the Chainlink
-        // CCIP CCT pool wired to the canonical `VPFIToken`.
-        //
-        // `bridgedBuyReceiver` is the sole address allowed to call
-        // {processBridgedBuy} — identical trust pattern to `rewardMessenger`.
-        /// @dev Authorized VPFIBuyReceiver contract on Base. Only this
-        ///      address may invoke {VPFIDiscountFacet.processBridgedBuy}.
-        ///      Set via {setBridgedBuyReceiver}; zero disables the
-        ///      bridged-buy ingress.
-        address bridgedBuyReceiver;
         // ─── l2 Sequencer Uptime Circuit Breaker ────────────────────────
         // On L2s (Base/Arb/OP/etc.) we must not consume Chainlink prices
         // while the sequencer has been down — users can't submit txs, so
@@ -3109,25 +3059,6 @@ library LibVaipakam {
         ///      to `[PYTH_CONFIDENCE_MAX_BPS_MIN,
         ///      PYTH_CONFIDENCE_MAX_BPS_MAX]` by the setter.
         uint16 pythConfidenceMaxBps;
-        // ─── Per-Origin-Chain VPFI Fixed-Rate Wallet Caps ───────────────
-        /// @dev Per-(buyer, originChainId) running total of VPFI bought
-        ///      at the fixed rate. Replaces the legacy
-        ///      `vpfiFixedRateSoldTo[buyer]` global key — that flat
-        ///      mapping is no longer written nor read by the buy /
-        ///      bridged-buy paths (its slot is preserved only because
-        ///      the Diamond storage layout is append-only).
-        ///
-        ///      Per docs/TokenomicsTechSpec.md §8a and README §
-        ///      "Treasury and Revenue Sharing": the Phase 1
-        ///      30K VPFI per-wallet cap is **per origin chain**, not
-        ///      one shared global wallet cap. A user buying up to the
-        ///      cap on one origin chain does not consume their cap on
-        ///      another. For direct buys via {buyVPFIWithETH} the
-        ///      `originChainId` is the canonical chain's own
-        ///      `block.chainid`; for bridged buys via {processBridgedBuy}
-        ///      it is the source EVM chain id carried from the CCIP
-        ///      message.
-        mapping(address => mapping(uint32 => uint256)) vpfiFixedRateSoldToByChainId;
         // ── Range Orders Phase 1 — match-override slot ─────────────────
         // Set by `OfferFacet.matchOffers` immediately before
         // cross-facet-calling `LoanFacet.initiateLoan`, read by
@@ -3894,7 +3825,7 @@ library LibVaipakam {
         // T-087 Sub 3.A — admin-managed allow-list of tokens that
         // are EXEMPT from the buyback / convert paths. Used to mark
         // assets the protocol wants to keep in their native form
-        // (e.g., ETH from `buyVPFIWithETH` goes to operational
+        // (e.g., ETH the protocol holds goes to operational
         // reserve + VPFI/ETH LP — never gets remitted cross-chain or
         // converted to other tokens). `remitBuyback` reverts if the
         // token is on this list. Per design discussion 2026-06-09.
@@ -5411,25 +5342,6 @@ library LibVaipakam {
                     ? VPFI_TIER1_DISCOUNT_BPS
                     : uint256(c.vpfiTier1DiscountBps);
         return 0;
-    }
-
-    /// @dev Effective global cap on the fixed-rate VPFI buy. A stored zero
-    ///      resolves to the spec default {VPFI_FIXED_GLOBAL_CAP} (2.3M VPFI,
-    ///      docs/TokenomicsTechSpec.md §8). There is no "uncapped" state —
-    ///      the spec forbids surfacing the buy as unlimited.
-    function cfgVpfiFixedGlobalCap() internal view returns (uint256) {
-        uint256 v = storageSlot().vpfiFixedRateGlobalCap;
-        return v == 0 ? VPFI_FIXED_GLOBAL_CAP : v;
-    }
-
-    /// @dev Effective per-wallet cap on the fixed-rate VPFI buy. A stored
-    ///      zero resolves to the spec default {VPFI_FIXED_WALLET_CAP} (30k
-    ///      VPFI, docs/TokenomicsTechSpec.md §8a). There is no "uncapped"
-    ///      state; the Buy VPFI page renders this same effective value
-    ///      directly (no frontend fallback).
-    function cfgVpfiFixedWalletCap() internal view returns (uint256) {
-        uint256 v = storageSlot().vpfiFixedRatePerWalletCap;
-        return v == 0 ? VPFI_FIXED_WALLET_CAP : v;
     }
 
     /// @dev Duration-tiered grace period used by DefaultedFacet, RepayFacet,
