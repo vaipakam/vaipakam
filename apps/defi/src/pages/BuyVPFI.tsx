@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import { L as Link } from "../components/L";
 import {
@@ -9,11 +9,8 @@ import {
   type Hex,
 } from "viem";
 import { useWalletClient } from "wagmi";
-import { parseEther, formatEther } from "viem";
-import {
-  DIAMOND_ABI_VIEM as DIAMOND_ABI,
-  VpfiBuyAdapterABI,
-} from "@vaipakam/contracts/abis";
+import { parseEther } from "viem";
+import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
 import { SimulationPreview } from "../components/app/SimulationPreview";
 import {
   Coins,
@@ -35,24 +32,20 @@ import {
 } from "../contracts/useDiamond";
 import { useUserVPFI } from "../hooks/useUserVPFI";
 import {
-  useVPFIDiscount,
   useVPFIDiscountTier,
   useVPFIDiscountConsent,
   useVaultVPFIBalance,
   useVpfiTierTable,
-  ethWeiToVpfi,
   formatVpfiUnits,
 } from "../hooks/useVPFIDiscount";
-import { useVPFIBuyBridge } from "../hooks/useVPFIBuyBridge";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
-import { getCanonicalVPFIChain, type ChainConfig } from "../contracts/config";
+import { getCanonicalVPFIChain } from "../contracts/config";
 import { decodeContractError } from "@vaipakam/lib/decodeContractError";
 import { formatNumber } from "../lib/format";
 import { beginStep } from "../lib/journeyLog";
 import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
-import { getBuyAssetInfo } from "../lib/buyAssetInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
 import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
@@ -61,18 +54,16 @@ import { useMode } from "../context/ModeContext";
 import "./Dashboard.css";
 
 /**
- * Linear state machine for the Buy → Deposit flow.
+ * Linear state machine for the deposit / unstake vault flow.
  *
  * - `idle`              - Input stage; the user has not submitted anything yet.
- * - `buying`            - A canonical-chain `buyVPFIWithETH` tx is pending.
  * - `approving-deposit` - ERC20 `approve` tx to the diamond is pending.
  * - `depositing`        - `depositVPFIToVault` tx is pending.
  * - `unstaking`         - A `withdrawVPFIFromVault` tx is pending.
  * - `success`           - The last tx confirmed; banner is shown.
  */
-type Step =
+type VaultStep =
   | "idle"
-  | "buying"
   | "approving-deposit"
   | "depositing"
   | "unstaking"
@@ -80,7 +71,7 @@ type Step =
 
 interface FlowBannerProps {
   /** Current flow state; the banner only renders when `step === 'success'`. */
-  step: Step;
+  step: VaultStep;
   /** Hash of the last confirmed transaction to deep-link in the explorer. */
   txHash: string | null;
   /** Chain-specific explorer base URL (`/tx/<hash>` is appended). */
@@ -89,146 +80,7 @@ interface FlowBannerProps {
   onReset: () => void;
 }
 
-interface BridgeLandedInfo {
-  /** Delivered VPFI amount in wei-units (null if we don't know the exact
-   *  amount — e.g. balance-based detection where we only know it increased). */
-  vpfiOut: bigint | null;
-  /** Origin-chain tx that kicked off the bridged buy, if known. */
-  txHash: string | null;
-  /** CCIP message id for the outbound message, if known. */
-  messageId: string | null;
-  /** Source of the signal — `'adapter'` means the adapter's `pendingBuys`
-   *  poll returned `RESOLVED_SUCCESS`; `'balance'` means we inferred the
-   *  arrival by watching the user's VPFI balance (fallback path for when
-   *  the adapter status lags behind the CCIP delivery). */
-  source: "adapter" | "balance";
-}
-
-interface BridgeLandedBannerProps {
-  /** Resolved landed info; when null, the banner renders nothing. */
-  landed: BridgeLandedInfo | null;
-  originChain: ChainConfig;
-  onDismiss: () => void;
-  onAddToWallet: () => void | Promise<void>;
-  /** True when the VPFI token address is known and the button should render. */
-  canAddToWallet: boolean;
-}
-
-/**
- * Prominent confirmation banner that fires once the bridged buy completes
- * and VPFI has landed in the user's wallet. Two independent signals drive
- * it: the adapter's poll resolving to `RESOLVED_SUCCESS`, or — as a
- * fallback — the user's VPFI wallet balance increasing by the expected
- * amount. The latter covers cases where CCIP delivers the tokens
- * before the adapter's status propagates (or the adapter polling misses
- * the transition for an RPC reason).
- */
-function BridgeLandedBanner({
-  landed,
-  originChain,
-  onDismiss,
-  onAddToWallet,
-  canAddToWallet,
-}: BridgeLandedBannerProps) {
-  if (landed == null) return null;
-  return (
-    <div
-      className="card"
-      style={{
-        marginBottom: 20,
-        borderColor: "var(--accent-green)",
-        background: "rgba(16, 185, 129, 0.08)",
-      }}
-    >
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-        <CheckCircle
-          size={22}
-          style={{ color: "var(--accent-green)", flexShrink: 0, marginTop: 2 }}
-        />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {landed.vpfiOut != null
-              ? `${formatAmount(formatVpfiUnits(landed.vpfiOut))} VPFI delivered to your wallet on ${originChain.name}`
-              : `VPFI delivered to your wallet on ${originChain.name}`}
-          </div>
-          <p className="stat-label" style={{ margin: 0 }}>
-            Deposit it to your Vaipakam Vault below to unlock the borrower fee discount.
-            You can also import the token into MetaMask so your wallet UI tracks
-            the balance.
-          </p>
-          {(landed.txHash || landed.messageId) && (
-            <p
-              className="stat-label"
-              style={{
-                margin: "8px 0 0",
-                display: "flex",
-                flexWrap: "wrap",
-                gap: 12,
-              }}
-            >
-              {landed.txHash && (
-                <a
-                  href={`${originChain.blockExplorer}/tx/${landed.txHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    color: "var(--brand)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  Origin tx <ExternalLink size={12} />
-                </a>
-              )}
-              {landed.messageId && (
-                <a
-                  href={`https://ccip.chain.link/msg/${landed.messageId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    color: "var(--brand)",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                  }}
-                >
-                  CCIP trace <ExternalLink size={12} />
-                </a>
-              )}
-            </p>
-          )}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-            alignItems: "flex-end",
-            flexShrink: 0,
-          }}
-        >
-          {canAddToWallet && (
-            <button
-              type="button"
-              className="btn btn-secondary btn-sm"
-              onClick={onAddToWallet}
-              style={{ gap: 8 }}
-            >
-              <Wallet size={14} />
-              Add VPFI to MetaMask
-            </button>
-          )}
-          <button className="btn btn-ghost btn-sm" onClick={onDismiss}>
-            Dismiss
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Success confirmation banner shown after a buy or deposit tx confirms. */
+/** Success confirmation banner shown after a deposit / unstake tx confirms. */
 function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
   if (step !== "success") return null;
   return (
@@ -273,36 +125,24 @@ function FlowBanner({ step, txHash, blockExplorer, onReset }: FlowBannerProps) {
 }
 
 /**
- * Two-step user flow for acquiring VPFI and funding the vault that unlocks
- * the borrower fee discount:
+ * VPFI vault + fee-discount surface. Lets a holder:
  *
- *   1. **Buy** VPFI at the protocol's fixed ETH rate from the user's
- *      preferred supported chain — never a manual chain-switch flow (spec
- *      §8a). On the canonical chain the page calls `buyVPFIWithETH` on the
- *      Diamond directly; on every other supported chain the buy routes
- *      through `VpfiBuyAdapter` over CCIP and VPFI lands back in the
- *      user's wallet on the same chain they're connected to.
- *   2. **Deposit** VPFI into the user's personal vault on the *lending*
- *      chain. Always an explicit user action — the protocol never auto-funds
- *      vault after a buy.
+ *   - **Deposit** VPFI into their personal vault on the lending chain to
+ *     unlock the borrower/lender fee discount tier. Always an explicit
+ *     user action.
+ *   - **Unstake** VPFI back out of the vault to their wallet.
  *
- * Per-step pending states are surfaced via the {@link Step} state machine so
- * the button labels and disable logic stay consistent across the flow.
+ * It also surfaces the connected wallet's current discount tier, staking
+ * rewards, and a VPFI transparency panel. Per-step pending states are
+ * surfaced via the {@link VaultStep} state machine so the button labels and
+ * disable logic stay consistent across the flow.
  */
-// Buffer kept aside from the wallet's ETH balance when computing the
-// "Use max" amount — covers the gas for the buy tx itself (and, on the
-// bridged path, the approve leg when the adapter is in WETH mode). Picked
-// conservatively for Sepolia / Base Sepolia / mainnet-at-low-gas. The
-// user can override by typing a larger number; the on-chain revert is the
-// final backstop.
-const ETH_GAS_RESERVE_WEI = 5_000_000_000_000_000n; // 0.005 ETH
-
 const VPFI_APPROVE_ABI = parseAbi([
   "function allowance(address owner, address spender) view returns (uint256)",
   "function approve(address spender, uint256 amount) returns (bool)",
 ]) as unknown as Abi;
 
-export default function BuyVPFI() {
+export default function VPFIVaultAndDiscounts() {
   const { t } = useTranslation();
   const {
     address,
@@ -322,16 +162,6 @@ export default function BuyVPFI() {
   // has silently fallen back to a read-only provider.
   const canWrite = useCanWrite();
   const canonical = getCanonicalVPFIChain();
-  // Fixed-rate config (weiPerVpfi, caps, enabled) is stored only on the
-  // canonical chain's Diamond, so a user connected to a mirror chain must
-  // read from canonical — otherwise `weiPerVpfi` comes back 0 and the
-  // bridged-buy card falsely renders "not yet configured on {canonical}".
-  const isOnCanonical = readChain.isCanonicalVPFI;
-  const {
-    config: buyConfig,
-    loading: configLoading,
-    reload: reloadConfig,
-  } = useVPFIDiscount(isOnCanonical ? null : canonical);
   const { snapshot: userVpfi, reload: reloadUserVpfi } = useUserVPFI(address);
   const { snapshot: vpfiSnapshot } = useVPFIToken();
   // Live staking APR — single read of `getStakingAPRBps`. Interpolated
@@ -348,38 +178,12 @@ export default function BuyVPFI() {
   // is co-located with the buying decision.
   const { data: discountTier } = useVPFIDiscountTier(address);
   const { enabled: consentEnabled } = useVPFIDiscountConsent();
-  const bridge = useVPFIBuyBridge(
-    activeChain && isCorrectChain ? activeChain : null,
-  );
 
-  const [ethInput, setEthInput] = useState<string>("");
   const [depositInput, setDepositInput] = useState<string>("");
   const [unstakeInput, setUnstakeInput] = useState<string>("");
-  const [step, setStep] = useState<Step>("idle");
+  const [step, setStep] = useState<VaultStep>("idle");
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
-  // Native ETH balance of the connected wallet on the active chain. Drives
-  // the "Use max" affordance and the "exceeds balance" warning on both buy
-  // cards. Re-read after any confirmed buy/deposit tx (handlers below call
-  // `reloadEthBalance`).
-  const [ethBalance, setEthBalance] = useState<bigint | null>(null);
-  const reloadEthBalance = useCallback(async () => {
-    if (!publicClient || !address) {
-      setEthBalance(null);
-      return;
-    }
-    try {
-      const bal = await publicClient.getBalance({
-        address: address as Address,
-      });
-      setEthBalance(bal);
-    } catch {
-      setEthBalance(null);
-    }
-  }, [publicClient, address]);
-  useEffect(() => {
-    void reloadEthBalance();
-  }, [reloadEthBalance]);
   // Re-entry guard for the deposit flow. `step` alone can't prevent a
   // double-click: between the click and the first `setStep` call the handler
   // is already awaiting an `allowance()` RPC read (can take seconds), and
@@ -387,199 +191,12 @@ export default function BuyVPFI() {
   // the next render. A ref flips synchronously so a second click during
   // that window no-ops instead of firing a second approve tx.
   const depositInFlight = useRef(false);
-  // Same guard for the canonical & bridged buy paths. `setStep("buying")`
-  // is async so a rapid double-click can fire two `buyVPFIWithETH` txs, and
-  // the bridged variant has an async `quote()` before its first setState.
-  const buyInFlight = useRef(false);
-
-  // When the bridged buy lands VPFI on the user's wallet, reload downstream
-  // balances so the deposit card reflects the newly received amount.
-  useEffect(() => {
-    if (bridge.state.status === "landed") {
-      reloadUserVpfi();
-      reloadVault();
-      void reloadEthBalance();
-    }
-  }, [bridge.state.status, reloadUserVpfi, reloadVault, reloadEthBalance]);
   // `walletVpfi === null` means the snapshot hasn't loaded yet — distinct
   // from a resolved balance of 0. Downstream UI uses the null to show "—"
   // instead of a phantom zero while the fetch is in flight.
   const walletVpfi = userVpfi ? userVpfi.balance : null;
   const tokenAddr = userVpfi?.token ?? null;
   const tokenRegistered = !!userVpfi?.registered;
-
-  // --- Bridged-buy arrival detection ---
-  //
-  // We can't rely solely on `bridge.state.status === 'landed'` to show the
-  // confirmation banner: that transition requires the adapter's
-  // `pendingBuys(requestId)` to flip to `RESOLVED_SUCCESS`, which can lag
-  // the actual CCIP token delivery (or be missed entirely by the poll loop under
-  // RPC flake). As a backup signal, we snapshot the user's VPFI balance at
-  // submit time plus the expected delivery amount, poll userVpfi while
-  // pending, and fire a "balance-detected" landing when the wallet crosses
-  // the threshold. Both signals surface through the same banner.
-  interface BridgedExpectation {
-    expectedVpfi: bigint; // wei-scaled VPFI we told the bridge to deliver
-    baselineBalanceUnits: number; // wallet VPFI (display units) pre-submit
-  }
-  const [bridgedExpectation, setBridgedExpectation] =
-    useState<BridgedExpectation | null>(null);
-  const [balanceDetectedLanding, setBalanceDetectedLanding] =
-    useState<BridgeLandedInfo | null>(null);
-
-  // Poll userVpfi while the bridge is pending so balance-based detection
-  // has fresh data to compare against. Otherwise balance only refreshes
-  // on tab revisit / manual reload, and we'd miss the arrival.
-  useEffect(() => {
-    if (bridge.state.status !== "pending") return;
-    const id = setInterval(() => void reloadUserVpfi(), 20_000);
-    return () => clearInterval(id);
-  }, [bridge.state.status, reloadUserVpfi]);
-
-  // Balance-arrival detection. Fires once per bridged buy; clears with
-  // the expectation when the user dismisses or starts a new buy.
-  useEffect(() => {
-    if (!bridgedExpectation || balanceDetectedLanding || walletVpfi == null) {
-      return;
-    }
-    const expectedUnits = Number(bridgedExpectation.expectedVpfi) / 1e18;
-    // Require at least 95% of expected to arrive (guards against bridge
-    // fees / rounding that nibble a bit off the delivered amount).
-    const threshold =
-      bridgedExpectation.baselineBalanceUnits + expectedUnits * 0.95;
-    if (walletVpfi >= threshold) {
-      setBalanceDetectedLanding({
-        vpfiOut: bridgedExpectation.expectedVpfi,
-        txHash: bridge.state.txHash,
-        messageId: bridge.state.messageId,
-        source: "balance",
-      });
-      void reloadVault();
-      void reloadEthBalance();
-      // Stop the pending / countdown status strip now that we've
-      // confirmed arrival via balance — otherwise the "VPFI is on its
-      // way back to your wallet" banner keeps showing alongside the
-      // delivered-confirmation banner until the adapter poll catches up
-      // (which may never happen if the poll has drifted). We already
-      // captured `txHash` / `messageId` above, so resetting the bridge
-      // state here doesn't drop any info the landed banner needs.
-      if (bridge.state.status === "pending") {
-        bridge.reset();
-      }
-    }
-  }, [
-    walletVpfi,
-    bridgedExpectation,
-    balanceDetectedLanding,
-    bridge,
-    reloadVault,
-    reloadEthBalance,
-  ]);
-
-  // Unified landed info driving the confirmation banner. Prefer the
-  // adapter-resolved signal (exact `vpfiOut` decoded from event) when
-  // present, fall back to the balance-detected path otherwise.
-  const landedInfo: BridgeLandedInfo | null =
-    bridge.state.status === "landed"
-      ? {
-          vpfiOut: bridge.state.vpfiOut,
-          txHash: bridge.state.txHash,
-          messageId: bridge.state.messageId,
-          source: "adapter",
-        }
-      : balanceDetectedLanding;
-
-  const dismissLandedBanner = useCallback(() => {
-    setBalanceDetectedLanding(null);
-    setBridgedExpectation(null);
-    if (bridge.state.status === "landed") bridge.reset();
-  }, [bridge]);
-
-  // Quote — how much VPFI the user gets for the entered ETH at the fixed rate.
-  const quote = useMemo(() => {
-    if (!buyConfig || buyConfig.weiPerVpfi === 0n) return null;
-    const raw = (ethInput ?? "").trim();
-    if (!raw) return null;
-    let ethWei: bigint;
-    try {
-      ethWei = parseEther(raw);
-    } catch {
-      return null;
-    }
-    if (ethWei === 0n) return null;
-    const vpfi = ethWeiToVpfi(ethWei, buyConfig.weiPerVpfi);
-    return { ethWei, vpfi };
-  }, [ethInput, buyConfig]);
-
-  const capExceeded = (() => {
-    if (!buyConfig || !quote) return false;
-    if (quote.vpfi > buyConfig.globalHeadroom) return true;
-    if (quote.vpfi > buyConfig.walletHeadroom) return true;
-    return false;
-  })();
-
-  const handleBuy = async () => {
-    if (buyInFlight.current) return;
-    if (!canWrite || !quote) return;
-    buyInFlight.current = true;
-    setError(null);
-    setTxHash(null);
-    setStep("buying");
-    const s = beginStep({
-      area: "vpfi-buy",
-      flow: "buyVPFIWithETH",
-      step: "submit",
-    });
-    try {
-      const tx = await (
-        diamond as unknown as {
-          buyVPFIWithETH: (opts: {
-            value: bigint;
-          }) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
-        }
-      ).buyVPFIWithETH({ value: quote.ethWei });
-      setTxHash(tx.hash);
-      await tx.wait();
-      setStep("success");
-      s.success({ note: `bought ${quote.vpfi} VPFI for ${quote.ethWei} wei` });
-      setEthInput("");
-      await Promise.all([
-        reloadConfig(),
-        reloadUserVpfi(),
-        reloadVault(),
-        reloadEthBalance(),
-      ]);
-    } catch (err) {
-      setError(decodeContractError(err, "Buy failed"));
-      setStep("idle");
-      s.failure(err);
-    } finally {
-      buyInFlight.current = false;
-    }
-  };
-
-  // Wraps bridge.buy to add the same re-entry guard we apply on the
-  // canonical-chain path. The bridge hook's internal state transitions
-  // happen across async awaits, so leaving the button enabled during that
-  // window can fire two CCIP sends.
-  const handleBridgedBuy = async () => {
-    if (buyInFlight.current) return;
-    if (!quote) return;
-    buyInFlight.current = true;
-    // Capture the baseline balance + expected delivery so we can detect
-    // arrival by a wallet-balance increase even if the adapter poll
-    // misses the transition.
-    setBalanceDetectedLanding(null);
-    setBridgedExpectation({
-      expectedVpfi: quote.vpfi,
-      baselineBalanceUnits: walletVpfi ?? 0,
-    });
-    try {
-      await bridge.buy(quote.ethWei, quote.vpfi);
-    } finally {
-      buyInFlight.current = false;
-    }
-  };
 
   const handleDeposit = async () => {
     if (depositInFlight.current) return;
@@ -660,11 +277,7 @@ export default function BuyVPFI() {
           setStep("success");
           s.success({ note: `deposited ${depositWei} via Permit2` });
           setDepositInput("");
-          await Promise.all([
-            reloadUserVpfi(),
-            reloadVault(),
-            reloadEthBalance(),
-          ]);
+          await Promise.all([reloadUserVpfi(), reloadVault()]);
           return;
         } catch (permitErr) {
           console.debug(
@@ -712,7 +325,7 @@ export default function BuyVPFI() {
       setStep("success");
       s.success({ note: `deposited ${depositWei}` });
       setDepositInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault(), reloadEthBalance()]);
+      await Promise.all([reloadUserVpfi(), reloadVault()]);
     } catch (err) {
       setError(decodeContractError(err, "Deposit failed"));
       setStep("idle");
@@ -774,55 +387,13 @@ export default function BuyVPFI() {
       setStep("success");
       s.success({ note: `unstaked ${unstakeWei}` });
       setUnstakeInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault(), reloadEthBalance()]);
+      await Promise.all([reloadUserVpfi(), reloadVault()]);
     } catch (err) {
       setError(decodeContractError(err, "Unstake failed"));
       setStep("idle");
       s.failure(err);
     } finally {
       unstakeInFlight.current = false;
-    }
-  };
-
-  // Ask the connected wallet (MetaMask et al) to track the VPFI ERC-20 so
-  // the user can see their balance in the wallet UI without manually
-  // importing the token. wallet_watchAsset is an EIP-747 standard request —
-  // MetaMask, Rabby, and most other injected wallets support it; others
-  // simply reject the request, which we swallow as a user-cancelled action.
-  const handleAddVPFIToWallet = async () => {
-    if (!tokenAddr) return;
-    const eth = (
-      window as unknown as {
-        ethereum?: {
-          request: (args: {
-            method: string;
-            params: Record<string, unknown>;
-          }) => Promise<unknown>;
-        };
-      }
-    ).ethereum;
-    if (!eth?.request) return;
-    const step = beginStep({
-      area: "vpfi-buy",
-      flow: "watchAsset",
-      step: "submit",
-    });
-    try {
-      await eth.request({
-        method: "wallet_watchAsset",
-        params: {
-          type: "ERC20",
-          options: {
-            address: tokenAddr,
-            symbol: "VPFI",
-            decimals: 18,
-          },
-        },
-      });
-      step.success({ note: `tracked ${tokenAddr}` });
-    } catch (err) {
-      // User dismissed the prompt or the wallet rejected — no surface action.
-      step.failure(err);
     }
   };
 
@@ -956,18 +527,6 @@ export default function BuyVPFI() {
         }}
       />
 
-      {/* Prominent "landed" banner for the bridged buy path. The canonical
-          buy's FlowBanner fires on the tx `step === 'success'`; the bridged
-          path has no such step (the wait is on the CCIP round-trip, not a
-          local tx), so it needs its own banner driven by bridge state. */}
-      <BridgeLandedBanner
-        landed={landedInfo}
-        originChain={activeChain ?? readChain}
-        onDismiss={dismissLandedBanner}
-        onAddToWallet={handleAddVPFIToWallet}
-        canAddToWallet={!!tokenRegistered && !!tokenAddr}
-      />
-
       {/* Discount status card moved to the Dashboard so users see
           their tier / vault VPFI / consent status on landing without
           navigating to the public Buy VPFI page. The component itself
@@ -1028,98 +587,12 @@ export default function BuyVPFI() {
         />
       )}
 
-      {/* Step 1 — buy VPFI from the user's preferred chain. Canonical chain
-           calls the Diamond directly; every other chain routes through the
-           VPFIBuyAdapter + CCIP round-trip, with VPFI delivered back
-           to the user's wallet on the same chain they're connected to. The
-           page never asks the user to switch chains (spec §8a).
-           `id="step-1"` is the deep-link target from the landing-page VPFI
-           dropdown (Buy item). Step 2 / Step 3 cards carry the matching
-           anchors. */}
-      <div id="step-1" className="card" style={{ marginBottom: 20 }}>
-        <StepHeader
-          index={1}
-          title={t('buyVpfi.step1Title')}
-          cardHelpId="buy-vpfi.buy"
-          subtitle={
-            isOnCanonical
-              ? t('buyVpfi.step1SubtitleCanonical', { chain: canonical.name })
-              : bridge.available
-                ? t('buyVpfi.step1SubtitleBridged', { chain: activeChain?.name ?? '' })
-                : t('buyVpfi.step1SubtitlePending', { chain: activeChain?.name ?? '' })
-          }
-        />
-
-        {isOnCanonical ? (
-          <BuyCard
-            buyConfig={buyConfig}
-            configLoading={configLoading}
-            ethInput={ethInput}
-            setEthInput={setEthInput}
-            quote={quote}
-            capExceeded={capExceeded}
-            ethBalance={ethBalance}
-            isBuying={step === "buying"}
-            onBuy={handleBuy}
-            canonical={canonical}
-          />
-        ) : bridge.available ? (
-          <BridgedBuyCard
-            buyConfig={buyConfig}
-            configLoading={configLoading}
-            ethInput={ethInput}
-            setEthInput={setEthInput}
-            quote={quote}
-            capExceeded={capExceeded}
-            ethBalance={ethBalance}
-            bridge={bridge}
-            onBuy={handleBridgedBuy}
-            originChain={activeChain ?? readChain}
-            canonical={canonical}
-          />
-        ) : (
-          <div style={{ padding: "12px 0" }}>
-            <div
-              style={{
-                display: "flex",
-                gap: 10,
-                alignItems: "flex-start",
-                background: "rgba(59, 130, 246, 0.06)",
-                border: "1px solid rgba(59, 130, 246, 0.25)",
-                borderRadius: 8,
-                padding: 12,
-              }}
-            >
-              <Info
-                size={18}
-                style={{
-                  color: "var(--brand)",
-                  flexShrink: 0,
-                  marginTop: 2,
-                }}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, marginBottom: 4 }}>
-                  Buy adapter rollout pending on{" "}
-                  {activeChain?.name ?? "this chain"}
-                </div>
-                <p className="stat-label" style={{ margin: 0 }}>
-                  The fixed-rate buy is being wired up on{" "}
-                  {activeChain?.name ?? "this chain"} and will be live shortly.
-                  Per spec, the purchase will run directly from this chain — no
-                  wallet-level chain switch required. Please check back soon.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Step 2 — deposit to vault on the lending chain (always explicit).
-           `id="step-2"` matches the VPFI dropdown's Stake item. */}
+      {/* Step 1 — deposit to vault on the lending chain (always explicit).
+           `id="step-2"` is kept as the deep-link anchor for the VPFI
+           dropdown's Stake item. */}
       <div id="step-2" className="card" style={{ marginBottom: 20 }}>
         <StepHeader
-          index={2}
+          index={1}
           title={t('buyVpfi.step2Title')}
           cardHelpId="buy-vpfi.deposit"
           cardHelpParams={{ apr: aprPct }}
@@ -1233,10 +706,11 @@ export default function BuyVPFI() {
           may drop the borrower's discount tier — surface that in the
           explainer instead of blocking the action. */}
       {tokenRegistered && (
-        // `id="step-3"` matches the VPFI dropdown's Unstake item.
+        // `id="step-3"` is kept as the deep-link anchor for the VPFI
+        // dropdown's Unstake item.
         <div id="step-3" className="card" style={{ marginBottom: 20 }}>
           <StepHeader
-            index={3}
+            index={2}
             title={t('buyVpfi.step3Title')}
             cardHelpId="buy-vpfi.unstake"
           />
@@ -1551,897 +1025,6 @@ export function DiscountStatusCard({
   );
 }
 
-interface BuyCardProps {
-  /** On-chain buy config (rate, caps, enabled flag); null while loading. */
-  buyConfig: ReturnType<typeof useVPFIDiscount>["config"];
-  /** True while the initial config fetch is in flight. */
-  configLoading: boolean;
-  /** ETH amount the user has typed (raw input string). */
-  ethInput: string;
-  /** Setter for `ethInput` — keeps the raw string to preserve leading zeros. */
-  setEthInput: (v: string) => void;
-  /** Live quote derived from `ethInput`; null when input is empty or invalid. */
-  quote: { ethWei: bigint; vpfi: bigint } | null;
-  /** True when the quote would exceed the global or per-wallet cap. */
-  capExceeded: boolean;
-  /** Wallet's native ETH balance (18-dec); null while loading. Drives the
-   *  "Use max" button and the "exceeds balance" warning. */
-  ethBalance: bigint | null;
-  /** True while the `buyVPFIWithETH` tx is pending. */
-  isBuying: boolean;
-  /** Submit handler for the Buy button. */
-  onBuy: () => void;
-  /** Canonical chain metadata (used only for user-facing copy). */
-  canonical: ChainConfig;
-}
-
-/**
- * Buy card rendered when the wallet is connected to the canonical chain.
- * Renders placeholder/idle states (loading, missing config, paused, unset
- * rate) so the caller doesn't need to branch on those conditions.
- */
-function BuyCard({
-  buyConfig,
-  configLoading,
-  ethInput,
-  setEthInput,
-  quote,
-  capExceeded,
-  ethBalance,
-  isBuying,
-  onBuy,
-  canonical,
-}: BuyCardProps) {
-  const { t } = useTranslation();
-  if (configLoading && !buyConfig) {
-    return <p className="stat-label">Loading buy configuration…</p>;
-  }
-  if (!buyConfig) {
-    return (
-      <p className="stat-label">
-        Unable to load buy config on {canonical.name}. Try reconnecting your
-        wallet.
-      </p>
-    );
-  }
-  if (buyConfig.weiPerVpfi === 0n) {
-    return (
-      <p className="stat-label">
-        The fixed-rate buy is not yet configured on {canonical.name}. Check back
-        after the admin calls <span className="mono">setVPFIBuyRate</span>.
-      </p>
-    );
-  }
-  if (!buyConfig.enabled) {
-    return (
-      <p className="stat-label">
-        The fixed-rate buy is currently paused by the admin. Already-owned VPFI
-        can still be deposited to vault and used for the loan discount.
-      </p>
-    );
-  }
-
-  const rateEth = formatEther(buyConfig.weiPerVpfi);
-  const maxSpendWei =
-    ethBalance != null && ethBalance > ETH_GAS_RESERVE_WEI
-      ? ethBalance - ETH_GAS_RESERVE_WEI
-      : 0n;
-  const maxSpendEth = ethBalance != null ? formatEthTrimmed(maxSpendWei) : null;
-  const exceedsBalance =
-    ethBalance != null && quote != null && quote.ethWei > maxSpendWei;
-  const inputEmpty = ethInput.trim() === "";
-  const disableReason = inputEmpty
-    ? "Enter amount of ETH to pay to buy VPFI"
-    : !quote
-      ? "Enter a valid ETH amount"
-      : capExceeded
-        ? "This amount exceeds the remaining cap"
-        : exceedsBalance
-          ? `Amount exceeds your wallet ETH balance (${formatEthTrimmed(ethBalance!)} ETH)`
-          : null;
-
-  return (
-    <div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        {/* T-038 — render the rate using the live asset symbol of
-            this chain (always "ETH" on the canonical Base chain, but
-            this keeps the path uniform with the bridged path below
-            and lets the symbol deep-link to its CoinGecko page so
-            users can confirm exactly which asset they need.) */}
-        <Stat
-          label={t('buyVpfiCards.fixedRateLabel')}
-          value={(() => {
-            const asset = getBuyAssetInfo(canonical);
-            const symbolNode = asset.coinGeckoUrl ? (
-              <a
-                href={asset.coinGeckoUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={t('buyVpfiCards.assetCoinGeckoAria', { symbol: asset.symbol })}
-                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
-              >
-                {asset.symbol}
-              </a>
-            ) : (
-              asset.symbol
-            );
-            return <>{rateEth} {symbolNode} / VPFI</>;
-          })()}
-        />
-        <Stat
-          label={t('buyVpfiCards.remainingGlobal')}
-          value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
-        />
-        <Stat
-          label={t('buyVpfiCards.remainingAllowance')}
-          value={formatAmount(formatVpfiUnits(buyConfig.walletHeadroom))}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 6,
-        }}
-      >
-        <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          {t('buyVpfiCards.payEth')}
-        </label>
-        {maxSpendEth && maxSpendWei > 0n && (
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setEthInput(maxSpendEth)}
-            disabled={isBuying}
-            data-tooltip={t('buyVpfiCards.gasReserveTooltip', { reserve: formatEthTrimmed(ETH_GAS_RESERVE_WEI) })}
-            data-tooltip-placement="below-end"
-          >
-            {t('buyVpfiCards.useMaxEth', { amount: maxSpendEth })}
-          </button>
-        )}
-      </div>
-      <input
-        type="text"
-        inputMode="decimal"
-        placeholder="0.0"
-        value={ethInput}
-        onChange={(e) => setEthInput(e.target.value)}
-        className="form-input"
-        style={{ marginBottom: 8 }}
-        disabled={isBuying}
-      />
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "8px 12px",
-          background: "rgba(79, 70, 229, 0.06)",
-          borderRadius: 8,
-          marginBottom: 12,
-        }}
-      >
-        <span className="stat-label" style={{ margin: 0 }}>
-          {t('buyVpfiCards.youReceive')}
-        </span>
-        <span className="mono" style={{ fontWeight: 600 }}>
-          {quote ? `${formatAmount(formatVpfiUnits(quote.vpfi))} VPFI` : "—"}
-        </span>
-      </div>
-
-      {capExceeded && (
-        <p
-          className="stat-label"
-          style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
-        >
-          {t('buyVpfiCards.capExceeded')}
-        </p>
-      )}
-
-      {exceedsBalance && !capExceeded && (
-        <p
-          className="stat-label"
-          style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
-        >
-          {t('buyVpfiCards.exceedsBalance', { balance: formatEthTrimmed(ethBalance!) })}
-        </p>
-      )}
-
-      {/* Phase 8b.2 transaction-preview surface — required by docs/
-          TokenomicsTechSpec.md and docs/WebsiteReadme.md for the Buy
-          VPFI flow. Encodes the same `buyVPFIWithETH()` calldata the
-          submit handler will sign so the Blockaid scan reflects the
-          on-chain action 1:1. */}
-      <SimulationPreview
-        tx={
-          quote && !capExceeded && !exceedsBalance && !inputEmpty
-            ? {
-                to: canonical.diamondAddress as Address,
-                data: encodeFunctionData({
-                  abi: DIAMOND_ABI,
-                  functionName: "buyVPFIWithETH",
-                }) as Hex,
-                value: quote.ethWei,
-              }
-            : null
-        }
-      />
-
-      <button
-        className="btn btn-primary"
-        onClick={onBuy}
-        disabled={
-          !quote || capExceeded || exceedsBalance || isBuying || inputEmpty
-        }
-        data-tooltip={disableReason ?? undefined}
-      >
-        {isBuying ? t('buyVpfi.buying') : t('buyVpfi.buy')}
-      </button>
-    </div>
-  );
-}
-
-interface BridgedBuyCardProps {
-  /** Canonical-chain buy config, read via the active-chain Diamond. Used only
-   *  to quote the VPFI amount + display caps for a smoother UX. */
-  buyConfig: ReturnType<typeof useVPFIDiscount>["config"];
-  configLoading: boolean;
-  ethInput: string;
-  setEthInput: (v: string) => void;
-  quote: { ethWei: bigint; vpfi: bigint } | null;
-  capExceeded: boolean;
-  /** Wallet's native ETH balance on the origin chain; null while loading. */
-  ethBalance: bigint | null;
-  bridge: ReturnType<typeof useVPFIBuyBridge>;
-  /** Caller-owned submit handler — wraps bridge.buy() with a re-entry guard
-   *  so a double-click during the quote/approve/submit window doesn't fire
-   *  a second CCIP send. */
-  onBuy: () => void | Promise<void>;
-  originChain: ChainConfig;
-  canonical: ChainConfig;
-}
-
-/**
- * Cross-chain buy card — shown on any non-canonical chain whose VPFIBuyAdapter
- * is deployed. Shares the ETH input + VPFI quote UI with {@link BuyCard} but
- * routes the tx through {@link useVPFIBuyBridge} and renders the extra pending
- * / landed / refunded states unique to the CCIP round-trip.
- */
-function BridgedBuyCard({
-  buyConfig,
-  configLoading,
-  ethInput,
-  setEthInput,
-  quote,
-  capExceeded,
-  ethBalance,
-  bridge,
-  onBuy,
-  originChain,
-  canonical,
-}: BridgedBuyCardProps) {
-  const { t } = useTranslation();
-  const [ccipFee, setCcipFee] = useState<bigint | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"native" | "token" | null>(null);
-
-  // Re-quote the CCIP fee whenever the amount changes. The on-chain
-  // quoter doesn't depend on the caller, so debouncing is unnecessary — only
-  // the keystroke frequency of the input rate-limits this.
-  //
-  // Failures are pushed through `journeyLog.beginStep` so the Diagnostics
-  // drawer captures them — without this hook, a `quoteBuy` revert (e.g. the
-  // `LZ_ULN_InvalidWorkerOptions` selector that fires when `buyOptions` is
-  // unset on the adapter) would only render inline as `quoteError` and
-  // never make it into the support-export buffer.
-  useEffect(() => {
-    let cancelled = false;
-    if (!quote) {
-      setCcipFee(null);
-      setQuoteError(null);
-      return;
-    }
-    const step = beginStep({
-      area: "vpfi-buy",
-      flow: "bridgedBuy",
-      step: "quoteFee",
-    });
-    bridge
-      .quote(quote.ethWei, quote.vpfi)
-      .then((q) => {
-        if (cancelled || !q) return;
-        setCcipFee(q.ccipFee);
-        setMode(q.mode);
-        setQuoteError(null);
-        step.success({
-          note: `ccipFee=${q.ccipFee.toString()} mode=${q.mode}`,
-        });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setQuoteError(decodeContractError(err, "Quote failed"));
-        step.failure(err);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [quote, bridge]);
-
-  if (configLoading && !buyConfig) {
-    return <p className="stat-label">Loading buy configuration…</p>;
-  }
-  if (!buyConfig) {
-    return (
-      <p className="stat-label">
-        Unable to load buy config. Reconnect your wallet and try again.
-      </p>
-    );
-  }
-  if (buyConfig.weiPerVpfi === 0n) {
-    return (
-      <p className="stat-label">
-        The fixed-rate buy is not yet configured on {canonical.name}. Check back
-        after the admin calls <span className="mono">setVPFIBuyRate</span>.
-      </p>
-    );
-  }
-  if (!buyConfig.enabled) {
-    return (
-      <p className="stat-label">
-        The fixed-rate buy is currently paused. Already-owned VPFI can still be
-        deposited to vault and used for the loan discount.
-      </p>
-    );
-  }
-
-  const rateEth = formatEther(buyConfig.weiPerVpfi);
-  const s = bridge.state;
-  const submitting =
-    s.status === "quoting" ||
-    s.status === "approving" ||
-    s.status === "submitting";
-  const pending = s.status === "pending";
-  const inputDisabled = submitting || pending;
-  // For the native-ETH payment mode we can compute a safe "Use max":
-  // reserve gas + the current CCIP fee (paid as native). In token
-  // mode the user is paying an ERC20 (e.g. WETH) so the ETH balance isn't
-  // the limiting resource for the buy amount — skip the max button to
-  // avoid misleading the user.
-  const reserveWei = ETH_GAS_RESERVE_WEI + (ccipFee ?? 0n);
-  const maxSpendWei =
-    mode === "native" && ethBalance != null && ethBalance > reserveWei
-      ? ethBalance - reserveWei
-      : 0n;
-  const maxSpendEth =
-    mode === "native" && ethBalance != null
-      ? formatEthTrimmed(maxSpendWei)
-      : null;
-  // Native mode: the user pays ethWei + ccipFee as msg.value.
-  // Token  mode: msg.value is only the ccipFee (ethWei comes from the ERC20).
-  const totalNativeWei =
-    quote == null
-      ? 0n
-      : mode === "token"
-        ? (ccipFee ?? 0n)
-        : quote.ethWei + (ccipFee ?? 0n);
-  const exceedsBalance =
-    ethBalance != null && quote != null && totalNativeWei > ethBalance;
-  const inputEmpty = ethInput.trim() === "";
-  const disableReason = inputEmpty
-    ? "Enter amount of ETH to pay to buy VPFI"
-    : !quote
-      ? "Enter a valid ETH amount"
-      : capExceeded
-        ? "This amount exceeds the remaining cap"
-        : quoteError
-          // Surface the decoded quote-revert reason in the disabled-button
-          // tooltip too — without this branch the tooltip stayed at
-          // "Estimating CCIP fee…" indefinitely on a quoteBuy revert,
-          // because `ccipFee` never resolves. The inline error paragraph
-          // below also renders, but the tooltip is what the user sees on
-          // hover and is the path the troubleshooting flow points at.
-          ? `CCIP fee estimate failed: ${quoteError}`
-          : ccipFee == null
-            ? "Estimating CCIP fee…"
-            : exceedsBalance
-              ? `Amount plus CCIP fee exceeds your wallet balance (${formatEthTrimmed(ethBalance!)} ETH)`
-              : null;
-
-  return (
-    <div>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-          gap: 12,
-          marginBottom: 16,
-        }}
-      >
-        {/* T-038 — render the rate using the live asset symbol of
-            the origin chain. Mode comes from the bridge's
-            `paymentToken()` quote read; falls back to chain-config
-            inference (`vpfiBuyPaymentToken` from deployments JSON)
-            until the quote lands. CoinGecko deep-link confirms
-            exactly which asset (WETH on BNB ≠ WETH on Polygon —
-            different bridged contracts). */}
-        <Stat
-          label="Fixed rate"
-          value={(() => {
-            const asset = getBuyAssetInfo(originChain, mode);
-            const symbolNode = asset.coinGeckoUrl ? (
-              <a
-                href={asset.coinGeckoUrl}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Open CoinGecko page for ${asset.symbol}`}
-                style={{ textDecoration: 'underline dotted', textUnderlineOffset: 2 }}
-              >
-                {asset.symbol}
-              </a>
-            ) : (
-              asset.symbol
-            );
-            return <>{rateEth} {symbolNode} / VPFI</>;
-          })()}
-        />
-        <Stat
-          label="Remaining global supply"
-          value={formatAmount(formatVpfiUnits(buyConfig.globalHeadroom))}
-        />
-        <Stat
-          label="Your remaining allowance"
-          value={formatAmount(formatVpfiUnits(buyConfig.walletHeadroom))}
-        />
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 6,
-        }}
-      >
-        <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          Pay ({getBuyAssetInfo(originChain, mode).symbol})
-        </label>
-        {maxSpendEth && maxSpendWei > 0n && (
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setEthInput(maxSpendEth)}
-            disabled={inputDisabled}
-            data-tooltip={`Reserves ${formatEthTrimmed(ETH_GAS_RESERVE_WEI)} ETH for gas${
-              ccipFee != null && ccipFee > 0n
-                ? ` and ${formatEthTrimmed(ccipFee)} ETH for the CCIP fee`
-                : ""
-            }.`}
-            data-tooltip-placement="below-end"
-          >
-            Use max {maxSpendEth} ETH
-          </button>
-        )}
-      </div>
-      <input
-        type="text"
-        inputMode="decimal"
-        placeholder="0.0"
-        value={ethInput}
-        onChange={(e) => setEthInput(e.target.value)}
-        className="form-input"
-        style={{ marginBottom: 8 }}
-        disabled={inputDisabled}
-      />
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "8px 12px",
-          background: "rgba(79, 70, 229, 0.06)",
-          borderRadius: 8,
-          marginBottom: 8,
-        }}
-      >
-        <span className="stat-label" style={{ margin: 0 }}>
-          You receive on {originChain.name}
-        </span>
-        <span className="mono" style={{ fontWeight: 600 }}>
-          {quote ? `${formatAmount(formatVpfiUnits(quote.vpfi))} VPFI` : "—"}
-        </span>
-      </div>
-
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "6px 12px",
-          marginBottom: 12,
-        }}
-        data-tooltip="CCIP fee is to bridge Tokens to and from different Chain"
-        data-tooltip-placement="below"
-      >
-        <span className="stat-label" style={{ margin: 0, cursor: "help" }}>
-          CCIP fee
-        </span>
-        <span className="mono" style={{ fontWeight: 500, cursor: "help" }}>
-          {ccipFee == null
-            ? quote
-              ? "estimating…"
-              : "—"
-            : `${formatEther(ccipFee)} ETH`}
-        </span>
-      </div>
-
-      {capExceeded && (
-        <p
-          className="stat-label"
-          style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
-        >
-          This amount exceeds the remaining cap. Reduce the ETH input and try
-          again.
-        </p>
-      )}
-      {exceedsBalance && !capExceeded && mode === "native" && (
-        <p
-          className="stat-label"
-          style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
-        >
-          Amount plus CCIP fee exceeds your wallet ETH balance of{" "}
-          {formatEthTrimmed(ethBalance!)} ETH.
-        </p>
-      )}
-      {quoteError && (
-        <p
-          className="stat-label"
-          style={{ margin: "0 0 8px", color: "var(--accent-red, #ef4444)" }}
-        >
-          {quoteError}
-        </p>
-      )}
-
-      <BridgedStatus
-        bridge={bridge}
-        originChain={originChain}
-        canonical={canonical}
-      />
-
-      {/* Phase 8b.2 transaction-preview surface for the bridged-buy
-          path. Encodes `VPFIBuyAdapter.buy(ethWei, minVpfiOut)` against
-          the origin chain's adapter — the same calldata the submit
-          handler signs (with `value = ethWei + ccipFee`). */}
-      <SimulationPreview
-        tx={
-          quote &&
-          ccipFee != null &&
-          !capExceeded &&
-          !exceedsBalance &&
-          !inputEmpty &&
-          originChain.vpfiBuyAdapter
-            ? {
-                to: originChain.vpfiBuyAdapter as Address,
-                data: encodeFunctionData({
-                  abi: VpfiBuyAdapterABI as Abi,
-                  functionName: "buy",
-                  args: [quote.ethWei, quote.vpfi],
-                }) as Hex,
-                value: quote.ethWei + ccipFee,
-              }
-            : null
-        }
-      />
-
-      <button
-        className="btn btn-primary"
-        onClick={onBuy}
-        disabled={
-          !quote ||
-          capExceeded ||
-          submitting ||
-          pending ||
-          ccipFee == null ||
-          exceedsBalance ||
-          inputEmpty
-        }
-        data-tooltip={disableReason ?? undefined}
-        style={{ marginTop: 12 }}
-      >
-        {s.status === "quoting"
-          ? "Estimating fee…"
-          : s.status === "approving"
-            ? t('buyVpfi.approving')
-            : s.status === "submitting"
-              ? "Submitting…"
-              : pending
-                ? "Bridging…"
-                : t('buyVpfi.buy')}
-      </button>
-    </div>
-  );
-}
-
-interface BridgedStatusProps {
-  bridge: ReturnType<typeof useVPFIBuyBridge>;
-  originChain: ChainConfig;
-  canonical: ChainConfig;
-}
-
-/** Expected happy-path window for a CCIP round-trip (3 min). Drives
- *  the countdown shown during the "pending" state; after this expires the
- *  copy shifts to "taking longer than usual". */
-const BRIDGE_EXPECTED_MS = 3 * 60 * 1000;
-/** Elapsed-time threshold after which the manual `reclaimTimedOutBuy`
- *  button is surfaced. Well past the 3 min happy path so the user doesn't
- *  see a reclaim option they can't actually use — on-chain the adapter
- *  only accepts reclaim after its refund window has elapsed. */
-const BRIDGE_RECLAIM_AFTER_MS = 15 * 60 * 1000;
-
-/** Format a millisecond duration as `m:ss`. */
-function formatMmSs(ms: number): string {
-  const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const m = Math.floor(totalSec / 60);
-  const ss = (totalSec % 60).toString().padStart(2, "0");
-  return `${m}:${ss}`;
-}
-
-/**
- * Status strip for a bridged buy — renders only when a request is in flight
- * or recently resolved. Covers the five async outcomes (pending, landed,
- * refunded, timed-out, error) and exposes `reset` so the user can start a
- * follow-up purchase without a page reload.
- */
-function BridgedStatus({ bridge, originChain, canonical }: BridgedStatusProps) {
-  const s = bridge.state;
-  // Track when the request entered the `pending` state to drive the
-  // live countdown. Written during render (allowed for refs) to avoid
-  // the setState-in-effect cascading-render anti-pattern.
-  const pendingStartedAtRef = useRef<number | null>(null);
-  if (s.status === "pending" && pendingStartedAtRef.current === null) {
-    pendingStartedAtRef.current = Date.now();
-  } else if (s.status !== "pending" && pendingStartedAtRef.current !== null) {
-    pendingStartedAtRef.current = null;
-  }
-
-  const [nowMs, setNowMs] = useState<number>(() => Date.now());
-  const [reclaiming, setReclaiming] = useState(false);
-
-  useEffect(() => {
-    if (s.status !== "pending") return;
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [s.status]);
-
-  if (s.status === "idle" || s.status === "quoting") return null;
-
-  const elapsedMs =
-    pendingStartedAtRef.current !== null
-      ? Math.max(0, nowMs - pendingStartedAtRef.current)
-      : 0;
-  const remainingMs = Math.max(0, BRIDGE_EXPECTED_MS - elapsedMs);
-  const overdue = s.status === "pending" && elapsedMs > BRIDGE_EXPECTED_MS;
-  const canReclaim =
-    s.status === "pending" &&
-    s.requestId != null &&
-    elapsedMs > BRIDGE_RECLAIM_AFTER_MS;
-
-  const handleReclaim = async () => {
-    if (!s.requestId) return;
-    setReclaiming(true);
-    try {
-      // `bridge.reclaim` swallows errors internally and transitions state
-      // to `error` / `timed-out`, so we don't need a try/catch here.
-      await bridge.reclaim(s.requestId);
-    } finally {
-      setReclaiming(false);
-    }
-  };
-
-  if (
-    s.status === "pending" ||
-    s.status === "approving" ||
-    s.status === "submitting"
-  ) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "flex-start",
-          background: "rgba(59, 130, 246, 0.08)",
-          border: "1px solid rgba(59, 130, 246, 0.3)",
-          borderRadius: 8,
-          padding: 12,
-          marginTop: 12,
-        }}
-      >
-        <Info
-          size={18}
-          style={{
-            color: "var(--brand)",
-            flexShrink: 0,
-            marginTop: 2,
-          }}
-        />
-        <div style={{ flex: 1 }}>
-          <div
-            style={{
-              fontWeight: 600,
-              marginBottom: 4,
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <span>
-              {s.status === "pending"
-                ? "VPFI is on its way back to your wallet"
-                : "Submitting to CCIP…"}
-            </span>
-            {s.status === "pending" && (
-              <span
-                className="mono"
-                style={{
-                  fontSize: "0.8rem",
-                  fontWeight: 700,
-                  padding: "2px 10px",
-                  borderRadius: 999,
-                  background: overdue
-                    ? "rgba(245, 158, 11, 0.15)"
-                    : "rgba(59, 130, 246, 0.15)",
-                  color: overdue ? "var(--accent-orange)" : "var(--brand)",
-                }}
-                data-tooltip={
-                  overdue
-                    ? `CCIP delivery has exceeded the typical 3 min window. Elapsed: ${formatMmSs(elapsedMs)}.`
-                    : `Estimated time until VPFI lands in your wallet.`
-                }
-              >
-                {overdue
-                  ? `overdue · ${formatMmSs(elapsedMs)}`
-                  : formatMmSs(remainingMs)}
-              </span>
-            )}
-          </div>
-          <p className="stat-label" style={{ margin: 0 }}>
-            {s.status === "pending"
-              ? overdue
-                ? `Buy accepted on ${originChain.name}. CCIP delivery is taking longer than the typical 3 min — this can happen under heavy cross-chain traffic. We're still watching for the ${canonical.name}-side delivery, and the page will update automatically when VPFI arrives.`
-                : `Buy accepted on ${originChain.name}. Waiting for ${canonical.name} to process and bridge VPFI back — typically 1–3 minutes.`
-              : "Confirm the transaction in your wallet."}
-          </p>
-          {s.txHash && (
-            <p className="stat-label" style={{ margin: "6px 0 0" }}>
-              <a
-                href={`${originChain.blockExplorer}/tx/${s.txHash}`}
-                target="_blank"
-                rel="noreferrer"
-                style={{
-                  color: "var(--brand)",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                Origin tx <ExternalLink size={12} />
-              </a>
-              {s.messageId && (
-                <>
-                  {"  ·  "}
-                  <a
-                    href={`https://ccip.chain.link/msg/${s.messageId}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{
-                      color: "var(--brand)",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 4,
-                    }}
-                  >
-                    CCIP trace <ExternalLink size={12} />
-                  </a>
-                </>
-              )}
-            </p>
-          )}
-          {canReclaim && (
-            <div style={{ marginTop: 10 }}>
-              <p
-                className="stat-label"
-                style={{
-                  margin: "0 0 8px",
-                  color: "var(--accent-orange)",
-                  fontWeight: 500,
-                }}
-              >
-                The bridge has been pending for over{" "}
-                {Math.floor(BRIDGE_RECLAIM_AFTER_MS / 60_000)} minutes. If
-                CCIP is stuck, you can reclaim your funds on{" "}
-                {originChain.name}.
-              </p>
-              <button
-                type="button"
-                className="btn btn-secondary btn-sm"
-                onClick={handleReclaim}
-                disabled={reclaiming}
-                data-tooltip="Calls reclaimTimedOutBuy on the adapter. The tx will revert if the refund window hasn't elapsed yet — safe to retry later if so."
-                data-tooltip-placement="below-start"
-              >
-                {reclaiming ? "Reclaiming…" : "Reclaim funds"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  // The "landed" success case is rendered by the top-of-page
-  // <BridgeLandedBanner /> instead of here, so the confirmation is
-  // prominent, includes the Add-to-MetaMask affordance, and matches the
-  // canonical buy path's banner position. No inline banner in this card.
-
-  if (
-    s.status === "refunded" ||
-    s.status === "timed-out" ||
-    s.status === "error"
-  ) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "flex-start",
-          background: "rgba(239, 68, 68, 0.08)",
-          border: "1px solid rgba(239, 68, 68, 0.3)",
-          borderRadius: 8,
-          padding: 12,
-          marginTop: 12,
-        }}
-      >
-        <AlertTriangle
-          size={18}
-          style={{
-            color: "var(--accent-red, #ef4444)",
-            flexShrink: 0,
-            marginTop: 2,
-          }}
-        />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>
-            {s.status === "refunded"
-              ? `Refunded by ${canonical.name}`
-              : s.status === "timed-out"
-                ? "Buy timed out — funds returned"
-                : "Buy failed"}
-          </div>
-          <p className="stat-label" style={{ margin: 0 }}>
-            {s.refundReason ?? s.error ?? "Please try again."}
-          </p>
-        </div>
-        <button className="btn btn-ghost btn-sm" onClick={bridge.reset}>
-          Dismiss
-        </button>
-      </div>
-    );
-  }
-
-  return null;
-}
-
 interface DepositCardProps {
   /** Raw deposit amount input. */
   value: string;
@@ -2452,7 +1035,7 @@ interface DepositCardProps {
   /** True while either the approve or deposit tx is pending. */
   pending: boolean;
   /** Current outer-flow step — drives the button label. */
-  step: Step;
+  step: VaultStep;
   /** Submit handler wired to approve-then-deposit. */
   onDeposit: () => void;
   /** Phase 8b.2 — pending tx for the inline Blockaid preview, or
@@ -2612,7 +1195,7 @@ interface UnstakeCardProps {
   /** True while the `withdrawVPFIFromVault` tx is pending. */
   pending: boolean;
   /** Current outer-flow step — drives the button label. */
-  step: Step;
+  step: VaultStep;
   /** Submit handler wired to the withdraw tx. */
   onUnstake: () => void;
 }
@@ -2743,7 +1326,7 @@ function UnstakeCard({
  * idle / success states and lights each step as the flow advances so the
  * user understands which MetaMask prompt they're being asked to sign.
  */
-function DepositStepTrail({ step }: { step: Step }) {
+function DepositStepTrail({ step }: { step: VaultStep }) {
   if (step !== "approving-deposit" && step !== "depositing") return null;
   const approveDone = step === "depositing";
   const approveActive = step === "approving-deposit";
@@ -2866,19 +1449,4 @@ function formatAmount(n: number): string {
   if (n >= 1_000) return `${(n / 1_000).toFixed(2)}K`;
   if (n >= 1) return n.toFixed(4).replace(/\.?0+$/, "");
   return n.toFixed(6).replace(/\.?0+$/, "");
-}
-
-/**
- * ETH-amount formatter that produces a string safe to pass back into
- * `parseEther()`. Uses `formatEther` to get the full 18-dec representation,
- * then trims to at most 6 decimals and strips trailing zeros so "Use max"
- * buttons render "0.01234" instead of "0.012340000000000000". Integer
- * values render without a decimal point.
- */
-function formatEthTrimmed(wei: bigint): string {
-  const full = formatEther(wei);
-  const [int, frac = ""] = full.split(".");
-  if (!frac) return int;
-  const trimmed = frac.slice(0, 6).replace(/0+$/, "");
-  return trimmed ? `${int}.${trimmed}` : int;
 }

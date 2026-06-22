@@ -474,35 +474,6 @@ export const ADMIN_KNOBS: KnobMeta[] = [
     hasNumericRange: true,
   },
 
-  // ─── Cross-chain VPFI buy (T-031 Layer 4a) ───────────────────────
-
-  {
-    id: 'reconciliationWatchdogEnabled',
-    label: 'Reconciliation watchdog',
-    short:
-      'Master switch for the off-chain cross-chain buy-flow reconciliation watchdog. Off = no alerts.',
-    category: 'crossChain',
-    unit: 'bool',
-    hardMin: '0',
-    hardMax: '1',
-    safeMin: '1',
-    safeMax: '1',
-    midMin: '0',
-    midMax: '1',
-    getter: {
-      facet: 'VpfiBuyReceiver',
-      fn: 'reconciliationWatchdogEnabled',
-      returns: 'bool',
-    },
-    setter: {
-      facet: 'VpfiBuyReceiver',
-      fn: 'setReconciliationWatchdogEnabled',
-      args: [{ name: 'enabled', type: 'bool' }],
-    },
-    infoAnchor: 'reconciliation-watchdog-enabled-flag-reconciliationwatchdogenabled',
-    hasNumericRange: false,
-  },
-
   // ─── Range Orders Phase 1 ────────────────────────────────────────
 
   {

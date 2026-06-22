@@ -19,7 +19,7 @@ import Allowances from './pages/Allowances';
 import VaultAssets from './pages/VaultAssets';
 import VaultRecover from './pages/VaultRecover';
 import DataRights from './pages/DataRights';
-import BuyVPFI from './pages/BuyVPFI';
+import VPFIVaultAndDiscounts from './pages/BuyVPFI';
 import Activity from './pages/Activity';
 import AdminDashboard from './pages/AdminDashboard';
 import { marketingUrl } from './lib/marketingUrl';
@@ -163,7 +163,12 @@ function pageRoutes(): ReactElement {
             URL doesn't get indexed by search engines. */}
         <Route path="recover" element={<VaultRecover />} />
         <Route path="data-rights" element={<DataRights />} />
-        <Route path="buy-vpfi" element={<BuyVPFI />} />
+        <Route path="vpfi-vault" element={<VPFIVaultAndDiscounts />} />
+        {/* Back-compat redirect: the page was renamed from the
+            fixed-rate "Buy VPFI" surface to the VPFI vault + discount
+            surface (#687-A removed the on-chain fixed-rate sale).
+            Deep links to /buy-vpfi still land on the new page. */}
+        <Route path="buy-vpfi" element={<Navigate to="/vpfi-vault" replace />} />
       </Route>
     </>
   );

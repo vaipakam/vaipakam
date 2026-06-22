@@ -1,13 +1,6 @@
 [
   {
     "type": "function",
-    "name": "buyVPFIWithETH",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
     "name": "depositVPFIToVault",
     "inputs": [
       {
@@ -129,19 +122,6 @@
   },
   {
     "type": "function",
-    "name": "getBridgedBuyReceiver",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getEffectiveDiscount",
     "inputs": [
       {
@@ -243,33 +223,13 @@
   },
   {
     "type": "function",
-    "name": "getVPFIBuyConfig",
+    "name": "getVPFIDiscountConfig",
     "inputs": [],
     "outputs": [
       {
         "name": "weiPerVpfi",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "globalCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "perWalletCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "totalSold",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
       },
       {
         "name": "ethPriceAsset",
@@ -329,106 +289,10 @@
   },
   {
     "type": "function",
-    "name": "getVPFISoldTo",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "soldTo",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getVPFISoldToByChainId",
-    "inputs": [
-      {
-        "name": "user",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "originChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "soldTo",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "pokeMyTier",
     "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "processBridgedBuy",
-    "inputs": [
-      {
-        "name": "buyer",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "originChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "ethAmountPaid",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "minVpfiOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "vpfiOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "quoteFixedRateBuy",
-    "inputs": [
-      {
-        "name": "weiAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "vpfiOut",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -505,63 +369,6 @@
   },
   {
     "type": "function",
-    "name": "setBridgedBuyReceiver",
-    "inputs": [
-      {
-        "name": "receiver",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVPFIBuyCaps",
-    "inputs": [
-      {
-        "name": "globalCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "perWalletCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVPFIBuyEnabled",
-    "inputs": [
-      {
-        "name": "enabled",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setVPFIBuyRate",
-    "inputs": [
-      {
-        "name": "weiPerVpfi",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "setVPFIDiscountConsent",
     "inputs": [
       {
@@ -588,6 +395,19 @@
   },
   {
     "type": "function",
+    "name": "setVPFIDiscountRate",
+    "inputs": [
+      {
+        "name": "weiPerVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "withdrawVPFIFromVault",
     "inputs": [
       {
@@ -598,25 +418,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "BridgedBuyReceiverUpdated",
-    "inputs": [
-      {
-        "name": "oldReceiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "newReceiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -633,74 +434,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VPFIBridgedBuyProcessed",
-    "inputs": [
-      {
-        "name": "buyer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "originChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "vpfiAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "ethAmountPaid",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VPFIBuyConfigUpdated",
-    "inputs": [
-      {
-        "name": "weiPerVpfi",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "globalCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "perWalletCap",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "enabled",
-        "type": "bool",
-        "indexed": false,
-        "internalType": "bool"
-      },
-      {
-        "name": "ethPriceAsset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false
@@ -763,6 +496,25 @@
   },
   {
     "type": "event",
+    "name": "VPFIDiscountConfigUpdated",
+    "inputs": [
+      {
+        "name": "weiPerVpfi",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "ethPriceAsset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "VPFIDiscountConsentChanged",
     "inputs": [
       {
@@ -776,37 +528,6 @@
         "type": "bool",
         "indexed": false,
         "internalType": "bool"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VPFIPurchasedWithETH",
-    "inputs": [
-      {
-        "name": "buyer",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "vpfiAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "ethAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "newVaultBalance",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -901,11 +622,6 @@
   },
   {
     "type": "error",
-    "name": "BridgedBuyReceiverNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "CadenceNotAllowed",
     "inputs": [
       {
@@ -994,11 +710,6 @@
   },
   {
     "type": "error",
-    "name": "FailedCall",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "HealthFactorCalculationFailed",
     "inputs": []
   },
@@ -1028,22 +739,6 @@
       },
       {
         "name": "tierCapBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InsufficientBalance",
-    "inputs": [
-      {
-        "name": "balance",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "needed",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1224,11 +919,6 @@
   {
     "type": "error",
     "name": "NotBorrower",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotBridgedBuyReceiver",
     "inputs": []
   },
   {
@@ -1466,17 +1156,6 @@
   },
   {
     "type": "error",
-    "name": "SafeERC20FailedOperation",
-    "inputs": [
-      {
-        "name": "token",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SanctionedAddress",
     "inputs": [
       {
@@ -1523,21 +1202,6 @@
   },
   {
     "type": "error",
-    "name": "VPFIBuyAmountTooSmall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIBuyDisabled",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIBuyRateNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIEncumberedByActiveLoan",
     "inputs": [
       {
@@ -1554,22 +1218,7 @@
   },
   {
     "type": "error",
-    "name": "VPFIGlobalCapExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIInvalidOriginChainId",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIPerWalletCapExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIReserveInsufficient",
     "inputs": []
   },
   {
