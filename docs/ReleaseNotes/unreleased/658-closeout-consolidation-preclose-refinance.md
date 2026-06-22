@@ -37,6 +37,15 @@ Both hooks use the few-byte cross-facet consolidation entry (both facets
 are size-tight) with Tier-2 "skip-not-block" semantics — a
 sanctioned/excluded holder never bricks a close-out.
 
+Direct preclose leaves the borrower's collateral in `borrowerClaims` and the
+holder claims it later via `ClaimFacet.claimAsBorrower`; that claim path now
+runs the same post-withdraw VPFI re-stamp after the collateral leaves the
+vault, so a holder can't keep fee-tier / staking credit on VPFI that has been
+claimed out. **NFT-rental loans are out of scope** for this consolidation —
+the underlying primitive only handles ERC20 loans, so a transferred rental
+position keeps its position effects on the stored anchor (consistent across
+the whole #594/#658 arc).
+
 **Funds were never at risk** on these paths: every payout already routes
 to the current holder through the `lenderClaims` / `encumberLenderProceeds`
 → `ClaimFacet` reservation and `claimAsBorrower`, all `ownerOf`- and

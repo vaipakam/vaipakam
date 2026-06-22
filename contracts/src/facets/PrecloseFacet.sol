@@ -202,8 +202,17 @@ contract PrecloseFacet is
         // is size-tight, so it consolidates via the few-byte cross-facet entry
         // (Tier2 skip-not-block — a sanctioned/excluded holder never bricks a
         // close-out). No post-withdraw VPFI restamp is needed here: preclose
-        // moves no collateral out of a vault (it stays as `borrowerClaims`,
-        // withdrawn later by `claimAsBorrower`).
+        // moves no collateral out of a vault (it stays as `borrowerClaims`);
+        // the VPFI restamp lives in `ClaimFacet.claimAsBorrower`, where that
+        // collateral actually leaves the vault (Codex #690 round-4 P2).
+        //
+        // SCOPE: the eager consolidation covers ERC20 loans. NFT-RENTAL
+        // precloses are intentionally NOT consolidated — `LibConsolidation`
+        // returns `Skipped` for `assetType != ERC20`, so a transferred rental
+        // position keeps its position effects on the stored anchor here. This
+        // is consistent with the consolidation primitive's design (rentals are
+        // excluded across the whole #594/#658 arc, not just this host); rental
+        // position-effect consolidation is out of scope for #658.
         LibFacet.crossFacetCall(
             abi.encodeWithSelector(
                 ConsolidationFacet.eagerConsolidateBothSides.selector,

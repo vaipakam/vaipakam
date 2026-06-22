@@ -22,6 +22,7 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {LibBackstopOracleGate} from "../libraries/LibBackstopOracleGate.sol";
 import {RiskMatchLiquidationFacet} from "./RiskMatchLiquidationFacet.sol";
@@ -1109,6 +1110,25 @@ contract ClaimFacet is
                 VaultWithdrawFailed.selector
             );
         }
+
+        // #658 PR-B (Codex #690 round-4 P2) — when the collateral is VPFI it has
+        // just left `loan.borrower`'s vault via the withdraw(s) above. Re-stamp
+        // so the holder doesn't keep fee-tier / staking credit on VPFI that is
+        // no longer vaulted (the same post-withdraw restamp the liquidation +
+        // refinance hosts run). This is the claim-time half of the direct-
+        // preclose close-out: preclose consolidates + checkpoints the holder at
+        // the full balance, leaving the VPFI in `borrowerClaims`; this withdraw
+        // is where it actually leaves, so the restamp belongs here. `loan.borrower`
+        // is the consolidated current holder on a transferred position, or the
+        // stored borrower otherwise — either way it is the vault the VPFI left.
+        // No-op for non-VPFI collateral.
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
 
         // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
         // The Diamond custody-holds the rebate slice between settlement
