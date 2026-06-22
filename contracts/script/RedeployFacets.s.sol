@@ -11,6 +11,7 @@ import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
+import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -73,6 +74,11 @@ contract RedeployFacets is Script {
         LoanFacet loanFacet = new LoanFacet();
         PrecloseFacet precloseFacet = new PrecloseFacet();
         EarlyWithdrawalFacet earlyWithdrawalFacet = new EarlyWithdrawalFacet();
+        // #658 PR-B2 — refinance gained the lender-side eager-consolidation hook
+        // (cross-calls ConsolidationFacet, like precloseDirect). Refresh it
+        // alongside Preclose so a curated redeploy doesn't leave refinance on
+        // stale bytecode that skips the consolidation while preclose applies it.
+        RefinanceFacet refinanceFacet = new RefinanceFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         // #658 — the refreshed RiskFacet liquidation paths cross-call
         // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
@@ -90,6 +96,7 @@ contract RedeployFacets is Script {
         console.log("LoanFacet:            ", address(loanFacet));
         console.log("PrecloseFacet:        ", address(precloseFacet));
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
+        console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
 
@@ -113,7 +120,7 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](7 + nExtra);
+            new IDiamondCut.FacetCut[](8 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -124,7 +131,11 @@ contract RedeployFacets is Script {
         // (relocated to RiskSplitLiquidationFacet in #66/#633), so a plain
         // Replace repoints it to the refreshed bytecode.
         cuts[6] = _replace(address(riskSplitLiquidationFacet), _riskSplitSelectors());
-        uint256 idx = 7;
+        // #658 PR-B2 — refinance selectors are already routed on a current
+        // diamond, so a plain Replace repoints them to the consolidation-aware
+        // bytecode.
+        cuts[7] = _replace(address(refinanceFacet), _refinanceSelectors());
+        uint256 idx = 8;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -142,7 +153,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 7 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 8 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
@@ -274,6 +285,14 @@ contract RedeployFacets is Script {
         s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+    }
+
+    /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
+    ///      `DeployDiamond._getRefinanceSelectors` (kept in lockstep).
+    function _refinanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RefinanceFacet.refinanceLoan.selector;
+        s[1] = RefinanceFacet.refinanceLoanFromAccept.selector;
     }
 
     function _profileSelectors() internal pure returns (bytes4[] memory s) {
