@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {RepayPeriodicFacet} from "../src/facets/RepayPeriodicFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
@@ -465,6 +466,45 @@ contract RepayFacetTest is Test {
         );
         assertEq(loan.prepayAmount, 290); // -10
         assertEq(loan.durationDays, 29);
+    }
+
+    /// @dev #654 — the permissionless daily rental deduction must pay the
+    ///      CURRENT lender-position holder, not the stored `loan.lender`, after
+    ///      a lender-NFT transfer. (Unlike repayLoan/markDefaulted, this path is
+    ///      a DIRECT payout with no `lenderClaims` indirection, so it would
+    ///      otherwise keep paying the departed lender every day.)
+    function test_654_autoDeductDaily_paysCurrentHolderAfterLenderTransfer() public {
+        helperOfferLoan(); // loanId 2 = NFT rental, daily fee 10, prepayAsset = mockERC20
+        uint256 lenderTokenId = LoanFacet(address(diamond))
+            .getLoanDetails(2)
+            .lenderTokenId;
+
+        // Simulate a secondary-market transfer of the lender position NFT.
+        address newHolder = makeAddr("rentalLenderHolder654");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, lenderTokenId),
+            abi.encode(newHolder)
+        );
+
+        uint256 newHolderBefore = ERC20Mock(mockERC20).balanceOf(newHolder);
+        uint256 storedLenderBefore = ERC20Mock(mockERC20).balanceOf(lender);
+
+        vm.warp(block.timestamp + 1 days);
+        RepayPeriodicFacet(address(diamond)).autoDeductDaily(2);
+
+        // The daily rental fee follows the CURRENT holder; the departed lender
+        // receives nothing.
+        assertGt(
+            ERC20Mock(mockERC20).balanceOf(newHolder),
+            newHolderBefore,
+            "current holder receives the daily rental fee"
+        );
+        assertEq(
+            ERC20Mock(mockERC20).balanceOf(lender),
+            storedLenderBefore,
+            "departed lender is not paid"
+        );
     }
 
     function testFuzzPartialAmount(uint256 partial1) public {
