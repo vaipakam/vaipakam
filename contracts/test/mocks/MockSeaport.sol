@@ -6,6 +6,11 @@ import {
     ISeaportOrderHash,
     OrderComponents
 } from "../../src/seaport/ISeaportOrderHash.sol";
+import {
+    AdvancedOrder,
+    CriteriaResolver,
+    Fulfillment
+} from "../../src/seaport/ISeaportMatch.sol";
 
 /**
  * @title MockSeaport
@@ -94,5 +99,41 @@ contract MockSeaport is ISeaportOrderHash {
         // on-chain via Seaport.validate" flag. For off-chain-signed
         // offers it's false; the atomic facet doesn't read this.
         return (false, _cancelled[orderHash], _filled[orderHash], _size[orderHash]);
+    }
+
+    // ─── #656c — matchAdvancedOrders settlement stub ────────────────
+
+    /// @dev Number of times the atomic facet reached settlement.
+    uint256 public matchAdvancedOrdersCallCount;
+
+    /// @dev Offerer of the Vaipakam counter-order (`orders[1]`) the
+    ///      atomic facet submitted on the most recent settlement. The
+    ///      atomic facet builds that order's offerer from
+    ///      `pctx.borrowerVault` (= the borrower's vault), so this is
+    ///      the precise observable for the #656c transferred-position
+    ///      fix: after consolidation re-anchors `loan.borrower` to the
+    ///      current holder, the submitted offerer must equal the
+    ///      holder's vault (matching the offerer `_buildAndRecord`
+    ///      recorded). Without the `pctx.borrowerVault` refresh it would
+    ///      be the departed borrower's stale vault.
+    address public lastVaipakamOfferer;
+
+    /// @notice Minimal `ISeaportMatch.matchAdvancedOrders` stand-in.
+    ///         Real Seaport performs the token/NFT settlement; for unit
+    ///         tests we only need it to (a) not revert so the atomic
+    ///         flow completes, and (b) record the submitted
+    ///         counter-order offerer so tests can assert vault binding.
+    ///         `orders[0]` is the bidder order; `orders[1]` is the
+    ///         Vaipakam counter-order (§17.11 step 6).
+    function matchAdvancedOrders(
+        AdvancedOrder[] calldata orders,
+        CriteriaResolver[] calldata /* criteriaResolvers */,
+        Fulfillment[] calldata /* fulfillments */,
+        address /* recipient */
+    ) external payable {
+        matchAdvancedOrdersCallCount += 1;
+        if (orders.length > 1) {
+            lastVaipakamOfferer = orders[1].parameters.offerer;
+        }
     }
 }

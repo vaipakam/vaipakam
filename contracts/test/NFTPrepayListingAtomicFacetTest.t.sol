@@ -8,6 +8,7 @@ import {NFTPrepayListingAtomicFacet} from "../src/facets/NFTPrepayListingAtomicF
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
+import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockListingExecutorRecorder} from "./mocks/MockListingExecutorRecorder.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -353,6 +354,69 @@ contract NFTPrepayListingAtomicFacetTest is SetupTest {
             )
         );
         _callMatch(bo, realHash);
+    }
+
+    // ─── 5. #656c — consolidate-before-listing on a TRANSFERRED position ──
+
+    /// @dev The borrower position was transferred on the secondary market:
+    ///      the loan is still anchored to the original opener
+    ///      (`borrowerHolder`, whose vault holds the collateral per
+    ///      `setUp`) but the borrower-position NFT now lives with a fresh
+    ///      `transferee`. A successful `matchOpenSeaOffer` must consolidate
+    ///      the borrower side to the current holder before building the
+    ///      counter-order, so the order it RECORDS (`_buildAndRecord`, from
+    ///      the fresh `s.userVaipakamVaults[loan.borrower]`) and the order it
+    ///      SUBMITS to Seaport (`_settle`, from `pctx.borrowerVault`) agree
+    ///      on the offerer. Regresses the Codex P2 fix that refreshes
+    ///      `pctx.borrowerVault` after the consolidation hook — without it
+    ///      the submitted offerer is the departed borrower's stale vault and
+    ///      real Seaport would revert on the offerer/hash mismatch.
+    function test_matchOpenSeaOffer_transferredPosition_consolidatesAndBindsHolderVault()
+        public
+    {
+        address transferee = makeAddr("atomicTransferee");
+        address transfereeVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(transferee);
+
+        // Anchor the loan to the opener; mint the position NFT to the holder.
+        LibVaipakam.Loan memory loan = _baseLoan();
+        loan.allowsPrepayListing = true;
+        TestMutatorFacet(address(diamond)).setLoan(LOAN_ID, loan);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(transferee, BORROWER_TOKEN_ID);
+        TestMutatorFacet(address(diamond)).mintNFTRaw(makeAddr("loanLender"), LENDER_TOKEN_ID);
+
+        // Bidder offer must clear the floor (principal 100e18 + buffer);
+        // 150e18 leaves ample headroom and carries no bidder fee legs.
+        BidderOrder memory bo = _validBidderOrder();
+        bo.components.offer[0].startAmount = 150 ether;
+        bo.components.offer[0].endAmount = 150 ether;
+        bytes32 realHash = mockSeaport.getOrderHash(bo.components);
+
+        // The current holder settles the match.
+        vm.prank(transferee);
+        NFTPrepayListingAtomicFacet(address(diamond)).matchOpenSeaOffer(
+            LOAN_ID, bo, realHash, new CriteriaResolver[](0), TEST_SALT, conduitKey
+        );
+
+        // Settlement was reached and the SUBMITTED counter-order's offerer is
+        // the current holder's vault — the #656c `pctx.borrowerVault` refresh.
+        assertEq(mockSeaport.matchAdvancedOrdersCallCount(), 1, "settlement reached");
+        assertEq(
+            mockSeaport.lastVaipakamOfferer(),
+            transfereeVault,
+            "submitted counter-order offerer == current holder's vault"
+        );
+        // Consolidation fired: borrower re-anchored + collateral moved.
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(LOAN_ID).borrower,
+            transferee,
+            "borrower side re-anchored to the current holder"
+        );
+        assertEq(
+            collateralNFT.ownerOf(COLLATERAL_TOKEN_ID),
+            transfereeVault,
+            "collateral moved into the current holder's vault"
+        );
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────
