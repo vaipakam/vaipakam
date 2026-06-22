@@ -50,6 +50,31 @@ import {FeeLeg, OfferContext} from "../seaport/PrepayTypes.sol";
  *         vault-ERC-1271-orderHash-shape-flaw.
  */
 library LibPrepayOrder {
+    /// @dev #656a — the nine scalar order-spec values that thread through the
+    ///      canonical `OrderComponents` builder, bundled into a MEMORY struct so
+    ///      they're read on-demand (one `mload` each at use) instead of living
+    ///      as nine simultaneous stack slots inside `_componentsAtMemory`. The
+    ///      whole `buildAndHash*` → `_componentsAtMemory` chain inlines into each
+    ///      listing facet, so this struct is what keeps the flattened frame
+    ///      under the viaIR whole-unit stack ceiling and leaves slack for the
+    ///      #656b consolidate-before-listing hook. The PUBLIC builders keep their
+    ///      scalar signatures (callers + orderHash inputs unchanged); each just
+    ///      packs its scalars into an `OrderSpec` before the private build. Field
+    ///      order is documentation-only — every field maps 1:1 to the former
+    ///      positional argument, so the derived Seaport orderHash is byte-
+    ///      identical (asserted by the #656a parity tests).
+    struct OrderSpec {
+        uint256 startAskPrice;
+        uint256 endAskPrice;
+        uint256 lenderLeg;
+        uint256 treasuryLeg;
+        uint256 salt;
+        bytes32 conduitKey;
+        uint256 startTime;
+        uint256 seaportEndTime;
+        uint256 counter;
+    }
+
     /// @dev Resolve the `OrderComponents` for a fixed-price prepay
     ///      listing and derive its Seaport orderHash. Single source
     ///      of truth consumed by `NFTPrepayListingFacet.postPrepayListing`
@@ -120,15 +145,17 @@ library LibPrepayOrder {
             pctx,
             vault,
             executor,
-            askPrice,
-            askPrice,           // fixed-price: end == start
-            lenderLeg,
-            treasuryLeg,
-            salt,
-            conduitKey,
-            block.timestamp,
-            pctx.graceEnd,      // fixed-price: Seaport endTime = grace
-            ISeaportOrderHash(seaport).getCounter(vault),
+            OrderSpec({
+                startAskPrice: askPrice,
+                endAskPrice: askPrice,      // fixed-price: end == start
+                lenderLeg: lenderLeg,
+                treasuryLeg: treasuryLeg,
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: block.timestamp,
+                seaportEndTime: pctx.graceEnd, // fixed-price: endTime = grace
+                counter: ISeaportOrderHash(seaport).getCounter(vault)
+            }),
             feeLegs
         );
         orderHash = ISeaportOrderHash(seaport).getOrderHash(components);
@@ -246,15 +273,17 @@ library LibPrepayOrder {
             pctx,
             pctx.borrowerVault,
             executor,
-            askPrice,
-            askPrice,             // fixed-price: end == start
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
-            salt,
-            conduitKey,
-            startTime,
-            pctx.graceEnd,        // fixed-price: Seaport endTime = grace
-            counter,
+            OrderSpec({
+                startAskPrice: askPrice,
+                endAskPrice: askPrice,        // fixed-price: end == start
+                lenderLeg: pctx.lenderLeg,
+                treasuryLeg: pctx.treasuryLeg,
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: startTime,
+                seaportEndTime: pctx.graceEnd, // fixed-price: endTime = grace
+                counter: counter
+            }),
             feeLegs
         );
     }
@@ -319,15 +348,17 @@ library LibPrepayOrder {
             pctx,
             pctx.borrowerVault,
             executor,
-            startAskPrice,
-            endAskPrice,
-            projectedLenderLeg,
-            projectedTreasuryLeg,
-            salt,
-            conduitKey,
-            startTime,
-            auctionEndTime,
-            counter,
+            OrderSpec({
+                startAskPrice: startAskPrice,
+                endAskPrice: endAskPrice,
+                lenderLeg: projectedLenderLeg,
+                treasuryLeg: projectedTreasuryLeg,
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: startTime,
+                seaportEndTime: auctionEndTime,
+                counter: counter
+            }),
             feeLegs
         );
     }
@@ -350,15 +381,17 @@ library LibPrepayOrder {
             pctx,
             vault,
             executor,
-            askPrice,
-            askPrice,            // fixed-price: end == start
-            lenderLeg,
-            treasuryLeg,
-            salt,
-            conduitKey,
-            block.timestamp,
-            pctx.graceEnd,       // fixed-price: Seaport endTime = grace
-            counter,
+            OrderSpec({
+                startAskPrice: askPrice,
+                endAskPrice: askPrice,      // fixed-price: end == start
+                lenderLeg: lenderLeg,
+                treasuryLeg: treasuryLeg,
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: block.timestamp,
+                seaportEndTime: pctx.graceEnd, // fixed-price: endTime = grace
+                counter: counter
+            }),
             feeLegs
         );
     }
@@ -387,15 +420,17 @@ library LibPrepayOrder {
             pctx,
             vault,
             executor,
-            startAskPrice,
-            endAskPrice,
-            projectedLenderLeg,
-            projectedTreasuryLeg,
-            salt,
-            conduitKey,
-            startTime,
-            auctionEndTime,
-            counter,
+            OrderSpec({
+                startAskPrice: startAskPrice,
+                endAskPrice: endAskPrice,
+                lenderLeg: projectedLenderLeg,
+                treasuryLeg: projectedTreasuryLeg,
+                salt: salt,
+                conduitKey: conduitKey,
+                startTime: startTime,
+                seaportEndTime: auctionEndTime,
+                counter: counter
+            }),
             feeLegs
         );
     }
@@ -406,15 +441,7 @@ library LibPrepayOrder {
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
         address executor,
-        uint256 startAskPrice,
-        uint256 endAskPrice,
-        uint256 lenderLeg,
-        uint256 treasuryLeg,
-        uint256 salt,
-        bytes32 conduitKey,
-        uint256 startTime,
-        uint256 seaportEndTime,
-        uint256 counter,
+        OrderSpec memory spec,
         FeeLeg[] calldata feeLegs
     ) private pure returns (OrderComponents memory components) {
         // Copy fee legs into memory so {_componentsAtMemory} can iterate
@@ -426,21 +453,7 @@ library LibPrepayOrder {
             feeLegsMem[i] = feeLegs[i];
             unchecked { ++i; }
         }
-        return _componentsAtMemory(
-            pctx,
-            vault,
-            executor,
-            startAskPrice,
-            endAskPrice,
-            lenderLeg,
-            treasuryLeg,
-            salt,
-            conduitKey,
-            startTime,
-            seaportEndTime,
-            counter,
-            feeLegsMem
-        );
+        return _componentsAtMemory(pctx, vault, executor, spec, feeLegsMem);
     }
 
     /// @dev Pure body for the memory-feeLegs flavour (the cancel-time
@@ -466,15 +479,7 @@ library LibPrepayOrder {
         IVaipakamPrepayContext.PrepayContext memory pctx,
         address vault,
         address executor,
-        uint256 startAskPrice,
-        uint256 endAskPrice,
-        uint256 lenderLeg,
-        uint256 treasuryLeg,
-        uint256 salt,
-        bytes32 conduitKey,
-        uint256 startTime,
-        uint256 seaportEndTime,
-        uint256 counter,
+        OrderSpec memory spec,
         FeeLeg[] memory feeLegs
     ) private pure returns (OrderComponents memory components) {
         // ─── Offer (one item: the collateral NFT) ──────────────
@@ -504,16 +509,16 @@ library LibPrepayOrder {
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: lenderLeg,
-            endAmount: lenderLeg,
+            startAmount: spec.lenderLeg,
+            endAmount: spec.lenderLeg,
             recipient: payable(pctx.lenderNftOwner)
         });
         consideration[1] = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: treasuryLeg,
-            endAmount: treasuryLeg,
+            startAmount: spec.treasuryLeg,
+            endAmount: spec.treasuryLeg,
             recipient: payable(pctx.treasury)
         });
         // Borrower remainder. Round 5 (#313 + #309) deducts the sum
@@ -547,8 +552,8 @@ library LibPrepayOrder {
             itemType: ItemType.ERC20,
             token: pctx.principalAsset,
             identifierOrCriteria: 0,
-            startAmount: startAskPrice - lenderLeg - treasuryLeg - feeSumStart,
-            endAmount: endAskPrice - lenderLeg - treasuryLeg - feeSumEnd,
+            startAmount: spec.startAskPrice - spec.lenderLeg - spec.treasuryLeg - feeSumStart,
+            endAmount: spec.endAskPrice - spec.lenderLeg - spec.treasuryLeg - feeSumEnd,
             recipient: payable(pctx.borrowerNftOwner)
         });
         // Append fee legs (Round 5 #313).
@@ -574,18 +579,18 @@ library LibPrepayOrder {
             // depends on this for the full-balance ERC1155
             // invariant + Seaport's restricted-order routing.
             orderType: OrderType.FULL_RESTRICTED,
-            startTime: startTime,
+            startTime: spec.startTime,
             // Round-5 Block B (#309) — caller-supplied Seaport
             // `endTime`. Fixed-price callers pass `pctx.graceEnd`
             // (unchanged from the Round-4 shape); Dutch callers
             // pass `auctionEndTime` so Seaport's amount
             // interpolation stops at the auction close + the order
             // becomes unfillable past that tick.
-            endTime: seaportEndTime,
+            endTime: spec.seaportEndTime,
             zoneHash: bytes32(0),
-            salt: salt,
-            conduitKey: conduitKey,
-            counter: counter
+            salt: spec.salt,
+            conduitKey: spec.conduitKey,
+            counter: spec.counter
         });
     }
 
