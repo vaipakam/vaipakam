@@ -29,7 +29,7 @@ This document answers the follow-on question: **how do mature DeFi lending proto
 
 ## 2. Controlling legal framework
 
-The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, Hunton — see [§10 Sources](#10-sources)).
+The **SEC/CFTC Interpretation of March 17, 2026** is the governing framework, corroborated across multiple Am Law firm client alerts (WilmerHale, Sidley, and Fintech & Digital Assets — see [§10 Sources](#10-sources)). *(The §10 Hunton link is the 2018 airdrop-enforcement note, not a 2026-Interpretation analysis, so it is not counted here.)*
 
 Key carve-outs and boundaries it establishes:
 
@@ -99,7 +99,7 @@ Key carve-outs and boundaries it establishes:
 
 **Evidence.** A non-security token becomes an investment contract *"when an issuer offers it by inducing an investment of money in a common enterprise with [explicit] representations or promises to undertake essential managerial efforts from which a purchaser would reasonably expect to derive profits."* The "efforts of others" prong lives in the **issuer's representations**. Vaipakam's removed feature (users pay ETH, receive VPFI from a reserve at an admin-set price, with the team building the platform whose success drives token value) is precisely this pattern.
 
-**Recommendation.** AVOID reintroducing any issuer-priced primary sale. For **treasury capital**, the legally-defensible alternative used by mature protocols is **private rounds to accredited / non-US investors or SAFTs** (regulated, exempt private placements) — not a retail issuer sale.
+**Recommendation.** AVOID reintroducing any issuer-priced primary sale. For **treasury capital**, the **common market pattern** (a counsel-review option, **not** a verified-defensible path here) is **private rounds to accredited / non-US investors or SAFTs** (exempt private placements) — not a retail issuer sale. Its defensibility was not independently verified in this research (see caveat); treat it as the direction mature protocols take, to be confirmed with counsel.
 
 **Caveats.** **Uncited counsel question (not a verified source):** it is *arguable* that a fixed-price sale *alone*, absent explicit managerial-effort/profit promises, does not *automatically* become a security — but this nuance is **not** backed by a source in §10 (an earlier draft attributed it to Paul Weiss without a link) and should be treated as a question for counsel, not a relied-upon position. Regardless, for a core team building a platform the managerial-effort element is hard to disclaim, so avoidance is the prudent call. SAFT/private-placement defensibility was **not** independently verified in this research; confirm with counsel.
 
@@ -120,7 +120,7 @@ Key carve-outs and boundaries it establishes:
 ---
 
 ### 4.6 Progressive decentralization + governance utility — **ADAPT (strategic frame)**
-**Claim (verified 3-0):** the primary mechanism mature protocols use to move a token from security to non-security by reducing holder reliance on the team's "efforts of others."
+**Claim (verified 3-0):** the primary mechanism mature protocols use to **reduce holder reliance on the team's "efforts of others"** — a risk-reduction *process*, **not** a verified mechanism that flips a token's legal status (see caveat: sufficient decentralization is not statutory and the flip is not guaranteed).
 
 **Evidence.** The canonical framework is a three-stage sequence: (1) achieve product/market fit under centralized team control; (2) introduce community participation with incentive alignment; (3) reach sufficient decentralization via widespread token distribution and community ownership ("exit to the community by airdropping tokens"). Post-launch, *"provided the network is sufficiently decentralized, the nature of the token can change from security to non-security"* because holders "no longer rely on the efforts of others."
 
@@ -138,7 +138,7 @@ Key carve-outs and boundaries it establishes:
 
 **Evidence.** The 2026 Interpretation's five-part taxonomy defines "digital tools" as deriving value from *"utility rather than financial rights,"* and "digital commodities" as deriving value from *"the programmatic operation of a functional crypto system… rather than from an expectation of profits based on the essential managerial efforts of others."*
 
-**Recommendation.** KEEP the fee-discount tiers and explicitly design/communicate VPFI toward the "digital tools" archetype — value derived from **consumptive utility** (cheaper fees only when you transact), not from holding for appreciation. This is the single strongest argument for VPFI's non-security character and should anchor the tokenomics narrative.
+**Recommendation.** KEEP the fee-discount tiers and explicitly design/communicate VPFI toward the "digital tools" archetype — value derived from **consumptive utility** (cheaper fees only when you transact), not from holding for appreciation. Treat this as a **design target and supporting argument** for VPFI's non-security character (it should anchor the narrative) — **not** a dispositive one: VPFI is a transferable ERC20 with a published Phase-2 value-accrual roadmap, and utility alone does not defeat investment-contract status (§4.7 caveat).
 
 **Caveats.** Mapping VPFI specifically onto "digital tools" is an inference, not an SEC classification. The verifier **refuted** a related broader claim that utility tokens categorically carry lower securities risk — utility alone does not defeat investment-contract status (LBRY). Treat the taxonomy as a design target, not a safe harbor.
 
@@ -199,7 +199,7 @@ Admin control is the **"efforts of others"** prong of Howey at its strongest. Th
 | Yield / staking | **None.** No fixed/passive yield. |
 | Value accrual (buyback / fee-share / ve) | **Deferred to Phase 2** (post-decentralization). |
 | Governance | **None live** in Phase 1; admin-controlled. Not marketed as a future value driver. |
-| Distribution | **No issuer sale:** (a) usage-based interaction rewards — a **variable usage rebate** tied strictly to *completed* lend/borrow transactions, never labelled "APR/yield" (note: this is **not** the zero-consideration posture of an airdrop — users supply principal/collateral and pay/earn fees, and can foresee the reward once live; it is defensible as a service/usage reward, NOT as "no investment of money"); (b) optional **no-consideration** retroactive airdrop with no pre-announced criteria (this is the genuinely zero-cash-in path). |
+| Distribution | **No issuer sale:** (a) usage-based interaction rewards — a **variable usage rebate** tied strictly to *completed* lend/borrow transactions, never labelled "APR/yield". **Lower-confidence design, not settled:** users supply principal/collateral and pay/earn fees and can foresee the reward once live, so it is **outside** the zero-consideration airdrop posture; its defensibility rests on counsel-reviewed mechanics (§6) — *argued* as a service/usage reward, **not** "no investment of money"; (b) optional **no-consideration** retroactive airdrop with no pre-announced criteria (the genuinely zero-cash-in path — itself gated per §2/§4.1). |
 | Treasury / runway | **Bootstrapped** from protocol fee revenue (ETH/stables) only. **No capital raise** — explicitly NOT a private placement (avoids the expensive-counsel lane). |
 | Operator compensation | Vested/timelocked founder/team allocation. **Affiliate secondary-market sales are NOT a decided low-overhead lever** — while the operator still controls parameters and VPFI has no live governance/value-accrual, founder/team sales can read as issuer/affiliate distribution or capital formation rather than neutral user transfers. Gate any realization on **lockups + counsel review + Phase 2**, not on Phase-1 ad-hoc selling. Still **no team-seeded liquidity or market-making** (a team-made market is itself an enforcement hook). |
 | Marketing | No profit / yield / returns / appreciation / investment / price language anywhere. VPFI = fee-discount tool. (Reinforces the existing retail-copy policy.) |
@@ -207,15 +207,15 @@ Admin control is the **"efforts of others"** prong of Howey at its strongest. Th
 
 ### 9.3 How each regime stays minimal
 *(These reduce the *token-level* surface; each still needs the bounded counsel review in §9.4 — none is a self-certified clearance.)*
-- **Securities:** no sale + no yield + consumptive-only + no team-made market → no profit expectation to attach to the operator's efforts (token-level; VPFI's own classification remains an inference pending counsel — §4.7).
+- **Securities:** no sale + no yield + consumptive-only + no team-made market **reduces the token-level profit-expectation surface**. It does not eliminate it: a transferable ERC20 launched under admin control with a published Phase-2 governance/value-accrual roadmap can still support a fact-specific profit-expectation argument, and VPFI's own classification remains an inference pending counsel (§4.7).
 - **Money transmission / VASP:** the VPFI distribution adds **no token-sale custody trigger** (the operator never sells or custodies VPFI). This does **NOT** clear the protocol's broader money-transmission/VASP posture — the Phase-1 lending product still accepts, routes, and pays ETH/stables/collateral through admin-controlled contracts, which needs its own MSB/VASP analysis independent of the token.
 - **MiCA / financial-promotion (EU/UK):** Phase 1 still **distributes VPFI to public EU/UK users** (via completed-txn rewards + the optional airdrop), so "no public offer" is **not** a categorical given — especially where rewards are tied to fee-generating transactions. This still requires a MiCA / financial-promotion **exemption analysis** (white-paper / approved-promotion triggers), not reliance on disciplined marketing alone.
-- **AML:** sanctions-screening only, retail KYC-off → already at the floor.
+- **AML:** sanctions-screening + retail KYC-off is at the floor **for token distribution only**. It is **not** a conclusion for the protocol as a whole — if the independent MSB/VASP/BSA analysis (above) finds covered activity, AML-program / customer-identification obligations could exceed sanctions screening.
 
 ### 9.4 Honest cost note
-Minimal-spend ≠ zero-legal. The highest-ROI legal spend for a lean launch is a **single bounded review** (a few hours) sanity-checking *this exact* no-sale/no-yield/consumptive-utility design against the **operator's home jurisdiction** and the US — far cheaper than any registration/structuring, and not an ongoing engagement. The private-placement/SAFT route is deliberately avoided precisely because it *requires* costly counsel.
+Minimal-spend ≠ zero-legal. The highest-ROI legal spend for a lean launch is a **single bounded review** (a few hours) sanity-checking *this exact* no-sale/no-yield/consumptive-utility design against the **operator's home jurisdiction, the US, and the EU/UK** (the last unless those users are geofenced out — §9.3 flags the MiCA/financial-promotion analysis as mandatory while EU/UK distribution is open) — far cheaper than any registration/structuring, and not an ongoing engagement. The private-placement/SAFT route is deliberately avoided precisely because it *requires* costly counsel.
 
-**Optional discretionary measure:** a frontend US-geoblock + ToS representation (contracts remain permissionless) removes the single most expensive enforcement exposure for near-zero cost. Not *required* after #687; in mild tension with the permissionless ethos; left as an operator risk-tolerance call.
+**Optional discretionary measure:** a frontend US-geoblock + ToS representation **reduces** frontend-access and marketing exposure for near-zero cost — it does **not** *remove* US enforcement or private-litigation risk: the contracts stay permissionless, so US users can still reach them via other frontends / direct calls, and regulators can still assess issuer conduct + marketing. Not *required* after #687; in mild tension with the permissionless ethos; left as an operator risk-tolerance call.
 
 ### 9.5 Transition to Phase 2
 Phase-2 items (governance, then buyback-and-burn, then any fee-share) unlock **only as control actually decentralizes** — economic params move admin → timelock → DAO, distribution broadens, multisig handoff completes. Sequence is load-bearing: **decentralize first, add token value-accrual second.**
