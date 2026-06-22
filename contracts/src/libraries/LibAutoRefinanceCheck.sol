@@ -226,13 +226,17 @@ library LibAutoRefinanceCheck {
                 offer.collateralQuantity
             )
         ) return false;
-        // #595 round-2 — the atomic refinance runs the new loan's post-refinance
-        // calculateLTV / calculateHealthFactor, which revert for illiquid
-        // collateral. Reject a non-liquid carry-over target up front so preview
-        // never admits a match the atomic path would revert (a manually enrolled
-        // loan can carry illiquid ERC20 / NFT collateral).
+        // #595 round-2/3 — the atomic refinance runs the new loan's
+        // post-refinance calculateLTV / calculateHealthFactor, which reject any
+        // loan whose principal OR collateral liquidity isn't Liquid. Reject a
+        // carry-over target with a non-liquid principal or collateral up front so
+        // preview never admits a match the atomic path would revert (a manually
+        // enrolled loan can carry illiquid ERC20 / NFT collateral, and either
+        // asset can lose its liquidity/depth after origination).
         if (
             OracleFacet(address(this)).checkLiquidity(offer.collateralAsset) !=
+            LibVaipakam.LiquidityStatus.Liquid ||
+            OracleFacet(address(this)).checkLiquidity(offer.lendingAsset) !=
             LibVaipakam.LiquidityStatus.Liquid
         ) return false;
         // STRICT same-key retag must be possible — mirror
