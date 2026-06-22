@@ -27,7 +27,11 @@ This PR extends that hook to two more hosts:
   borrower-LIF rebate prices from that holder. On the carry-over path the
   borrower stays and its collateral re-tags into the new loan (#576), so a
   borrower-side consolidation there is skipped (it would be a no-op at best
-  and fight the re-tag at worst).
+  and fight the re-tag at worst). On the non-carry-over path the old
+  collateral is then returned to the holder, so when it is VPFI the path runs
+  a post-withdraw VPFI re-stamp (the same one the liquidation hosts use) so
+  the holder doesn't keep fee-tier / staking credit on VPFI that has left the
+  vault.
 
 Both hooks use the few-byte cross-facet consolidation entry (both facets
 are size-tight) with Tier-2 "skip-not-block" semantics — a

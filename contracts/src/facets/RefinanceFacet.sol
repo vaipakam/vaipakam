@@ -577,6 +577,22 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         ),
                         VaultWithdrawFailed.selector
                     );
+                    // #658 PR-B (Codex #690 round-3 P2) — the borrower-side
+                    // consolidation above checkpointed the current holder's VPFI
+                    // at the FULL pre-return balance; this withdraw just removed
+                    // the VPFI collateral from their vault. Re-stamp so the
+                    // holder doesn't keep fee-tier / staking credit on VPFI that
+                    // already left (same post-withdraw restamp the liquidation
+                    // hosts run). No-op for non-VPFI collateral.
+                    LibFacet.crossFacetCall(
+                        abi.encodeWithSelector(
+                            ConsolidationFacet
+                                .restampCollateralVpfiAfterWithdraw
+                                .selector,
+                            oldLoanId
+                        ),
+                        bytes4(0)
+                    );
                 }
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
