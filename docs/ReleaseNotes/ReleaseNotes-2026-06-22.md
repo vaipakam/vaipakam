@@ -4,16 +4,20 @@ This is a catch-up assembly folding every behaviour-changing fragment that had
 accumulated since the last dated release-notes file. The headline themes:
 
 - **Position-transfer correctness — the eager-consolidation arc (#594 / #658 /
-  #656 / #654 / #691).** Whenever a borrower or lender position NFT changes
-  hands on the secondary market, the protocol now re-anchors that side's
-  accounting — collateral lien, reward-accrual entry, and VPFI fee/stake
-  checkpoint — to the *current* holder before the loan goes terminal, and
-  before any collateral-sale listing binds to a vault. Every close-out family
-  (repayment, HF / time / split liquidation, the multi-loan internal match,
-  preclose, refinance) and every listing-creation path (fixed-price, Dutch,
-  atomic OpenSea-match, auto-list-at-floor) is covered. NFT-rental income now
-  follows the current lender-position holder too. A holder that is sanctioned
-  or otherwise ineligible can never block a counterparty's close-out.
+  #656 / #654 / #691).** When a borrower or lender position NFT on a generic
+  (ERC20-principal) loan changes hands on the secondary market, the protocol now
+  re-anchors that side's accounting — collateral lien, reward-accrual entry, and
+  VPFI fee/stake checkpoint — to the *current* holder before the loan goes
+  terminal, and before any collateral-sale listing binds to a vault. Every
+  close-out family (repayment, HF / time / split liquidation, the multi-loan
+  internal match, preclose, refinance) and every listing-creation path
+  (fixed-price, Dutch, atomic OpenSea-match, auto-list-at-floor) is covered.
+  **NFT-rental loans are excluded from consolidation** (their backing is the
+  prepay pool / prepayAsset proceeds, not a generic collateral leg) — but their
+  lender income still follows the current holder: the permissionless daily
+  rental fee and the full-repay / default proceeds reach the current
+  `ownerOf(lenderTokenId)` (#654). A holder that is sanctioned or otherwise
+  ineligible can never block a counterparty's close-out.
 - **VPFI reservation hardening (#597 / #661)** against the unstake path, and a
   **backstop oracle-coverage gate (#638)**.
 - **Risk-pricing & liquidation flexibility (#394 / #395 / #400 / #404)** —
@@ -21,7 +25,7 @@ accumulated since the last dated release-notes file. The headline themes:
   model, and the ossification roadmap.
 - **Refinance carry-over correctness (#595).**
 
-
+### #394 — Dual-factor risk premiums + a runtime risk-appetite knob
 
 Risk pricing on Vaipakam now has **two independent, governance-tunable levers**,
 where before it had hard-coded constants. Neither touches a human's typed
@@ -579,14 +583,17 @@ end-to-end mechanism (borrower side re-anchors to the current holder, the
 collateral physically moves into the holder's vault, and the listing is bound
 to that vault) for the fixed-price (`postPrepayListing`, #698), Dutch
 (`postPrepayDutchListing`), and auto-list Case-A (`autoListAtFloorOnGrace`)
-paths. The atomic `matchOpenSeaOffer` success path is fork-only (the unit
-`MockSeaport` does not implement `matchAdvancedOrders`; the happy path lives in
-`SeaportAtomicMatchForkTest`), so its transferred-position assertion is a
-follow-up in that fork suite; the hook itself is placed identically to the
-other paths (before the counter-order's vault read) and the shared
-consolidation primitive is exhaustively covered by `CollateralConsolidation`.
-The full prepay/Dutch/atomic/auto-list/parallel-sale suites stay green,
-confirming the per-path leans leave the Seaport orderHash byte-identical.
+paths. The atomic `matchOpenSeaOffer` path also gained a transferred-position
+regression (#703, in this release): the unit `MockSeaport` now carries a minimal
+`matchAdvancedOrders` stub that records the submitted counter-order offerer, and
+the test settles a match on a transferred position and asserts that offerer
+equals the current holder's vault — it fails without the `pctx.borrowerVault`
+refresh (the atomic Codex P2 fix that re-reads the vault after the consolidation
+hook) and passes with it. (A full real-Seaport settlement walkthrough
+remains the separately-tracked T-086 fork-suite item.) The shared consolidation
+primitive is additionally covered by `CollateralConsolidation`. The full
+prepay/Dutch/atomic/auto-list/parallel-sale suites stay green, confirming the
+per-path leans leave the Seaport orderHash byte-identical.
 
 No diamond cut, no selector/error/event signature change, so no ABI re-export.
 
