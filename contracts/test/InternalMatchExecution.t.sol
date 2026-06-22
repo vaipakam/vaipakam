@@ -78,9 +78,28 @@ contract InternalMatchExecutionTest is SetupTest {
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
+        // #691 — give each scaffolded loan DISTINCT position-NFT ids + mock
+        // both `ownerOf`s to the stored owner, so the #658 eager-consolidation
+        // hook in the match executors can resolve `ownerOf` (it runs on Active
+        // loans at match time). Holder == stored owner ⇒ `consolidateToHolder`
+        // no-ops (no asset move), leaving the match math unchanged; tests that
+        // exercise a transferred position re-point `ownerOf` for the per-claim
+        // step afterwards. Mirrors the InternalMatchAutoDispatch seed.
+        l.borrowerTokenId = id * 2;
+        l.lenderTokenId = id * 2 + 1;
         // scaffoldActiveLoan adds to the active list so the
         // LibLifecycle.transition's list-remove succeeds on terminal.
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
+            abi.encode(borrower_)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
+            abi.encode(lender_)
+        );
 
         address bVault = VaultFactoryFacet(address(diamond))
             .getOrCreateUserVault(borrower_);
@@ -165,6 +184,56 @@ contract InternalMatchExecutionTest is SetupTest {
         assertEq(bAfter.principal, 0);
         assertEq(bAfter.collateralAmount, 0);
         assertEq(uint8(bAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+    }
+
+    /// @notice #691 — the multi-loan internal match EAGERLY CONSOLIDATES a
+    ///         transferred participating position to its current NFT holder
+    ///         BEFORE settling, so the position's effects (anchor, lien, reward,
+    ///         VPFI checkpoint) follow the live holder. Here LOAN_A's borrower
+    ///         position is transferred pre-match; after the match
+    ///         `loan.borrower` is the new holder and the collateral was consumed
+    ///         out of the holder's (consolidated) vault, not the stored
+    ///         borrower's. This is the positive proof the executor hook fires;
+    ///         the no-op (holder == stored) path is covered by every other test
+    ///         here, and the move/sanctions/idempotency mechanics by
+    ///         CollateralConsolidation.t.sol.
+    function test_691_internalMatch_consolidatesTransferredBorrower() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        // Transfer LOAN_A's borrower position: override the seed's
+        // stored-owner `ownerOf` mock for `borrowerTokenId == LOAN_A * 2`.
+        address bHolder = makeAddr("aBorrowerHolder691");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, LOAN_A * 2),
+            abi.encode(bHolder)
+        );
+        // The eager consolidation moves A's collateral into the holder's vault;
+        // mirror the protocol-tracked counter so the subsequent settle withdraw
+        // from the holder's vault doesn't underflow (the seed only ticked it for
+        // the stored borrower).
+        address bHolderVault = VaultFactoryFacet(address(diamond))
+            .getOrCreateUserVault(bHolder);
+
+        vm.prank(matcher);
+        RiskMatchLiquidationFacet(address(diamond)).triggerInternalMatchLiquidation(LOAN_A, LOAN_B, 0);
+
+        // Eager consolidation re-anchored the borrower side to the current
+        // holder, and the match consumed A's collateral fully.
+        LibVaipakam.Loan memory aAfter = _getLoan(LOAN_A);
+        assertEq(aAfter.borrower, bHolder, "borrower re-anchored to current holder");
+        assertEq(aAfter.collateralAmount, 0, "A collateral fully consumed");
+        assertEq(uint8(aAfter.status), uint8(LibVaipakam.LoanStatus.InternalMatched));
+        // The collateral physically passed through the holder's vault on the way
+        // out (consolidation in, settle out) — net zero, never stranded on it.
+        assertEq(
+            IERC20(mockCollateralERC20).balanceOf(bHolderVault),
+            0,
+            "holder vault net-zero after consolidate-in then settle-out"
+        );
     }
 
     /// @notice #577 — an OVER-collateralized full internal match leaves a
