@@ -101,50 +101,8 @@ contract VPFIDiscountFacet is
 
     // ─── Events ──────────────────────────────────────────────────────────────
 
-    /// @notice Emitted when a user buys VPFI with ETH at the fixed rate.
-    /// @param buyer             The purchaser (VPFI is delivered to their wallet).
-    /// @param vpfiAmount        The VPFI amount credited to the buyer's wallet.
-    /// @param ethAmount         The ETH amount accepted (equals `msg.value`).
-    /// @param newVaultBalance  Buyer's vault VPFI balance immediately after
-    ///        the buy. Note: same-chain buys deliver VPFI to the buyer's
-    ///        WALLET (not their vault), so this value reflects the existing
-    ///        vault balance unchanged. Cross-chain bridged buys
-    ///        ({VPFIBridgedBuyProcessed}) are emitted from
-    ///        {VPFIBuyReceiver} on Base separately.
-    ///        EventSourcingAudit §3.18 — frontend updates the
-    ///        "your VPFI balance is now X" UI directly from the event.
-    /// @custom:event-category state-change/vault-mutation
-    event VPFIPurchasedWithETH(
-        address indexed buyer,
-        uint256 vpfiAmount,
-        uint256 ethAmount,
-        uint256 newVaultBalance
-    );
 
-    /// @notice Emitted when a bridged buy lands on Base — mirrors the
-    ///         {VPFIPurchasedWithETH} event but for the cross-chain
-    ///         path. VPFI is transferred to the registered bridged-buy
-    ///         receiver (not the buyer), which then bridges it back to
-    ///         `buyer` on their origin chain over CCIP.
-    /// @param buyer        Buyer on the origin chain.
-    /// @param originChainId EVM chain id of the buyer's origin chain.
-    /// @param vpfiAmount   VPFI credited to the buyer (via the CCIP bridge back).
-    /// @param ethAmountPaid Native ETH the buyer paid on the origin chain.
-    /// @custom:event-category state-change/vault-mutation
-    event VPFIBridgedBuyProcessed(
-        address indexed buyer,
-        uint32 indexed originChainId,
-        uint256 vpfiAmount,
-        uint256 ethAmountPaid
-    );
 
-    /// @notice Emitted when admin rotates the authorized bridged-buy
-    ///         receiver on Base.
-    /// @custom:event-category informational/config
-    event BridgedBuyReceiverUpdated(
-        address indexed oldReceiver,
-        address indexed newReceiver
-    );
 
     /// @notice Emitted when a holder moves VPFI from their wallet into their
     ///         vault — typically after bridging from Base.
@@ -191,13 +149,14 @@ contract VPFIDiscountFacet is
         uint256 vpfiDeducted
     );
 
-    /// @notice Emitted when any VPFI buy-side config is changed by admin.
+    /// @notice Emitted when the VPFI fee-discount price config is changed by
+    ///         admin (#687-A: the sale config was removed; only the discount
+    ///         price anchor + ETH reference asset remain).
+    /// @param weiPerVpfi    VPFI price anchor — ETH wei per 1 VPFI (18 dec).
+    /// @param ethPriceAsset ERC-20 used as the ETH/USD reference asset.
     /// @custom:event-category informational/config
-    event VPFIBuyConfigUpdated(
+    event VPFIDiscountConfigUpdated(
         uint256 weiPerVpfi,
-        uint256 globalCap,
-        uint256 perWalletCap,
-        bool enabled,
         address ethPriceAsset
     );
 
@@ -230,210 +189,6 @@ contract VPFIDiscountFacet is
 
     // ─── User entry points ───────────────────────────────────────────────────
 
-    /**
-     * @notice Buy VPFI with ETH at the fixed admin-configured rate.
-     *         Purchased VPFI is delivered to the buyer's WALLET — funding
-     *         vault is a separate, explicit user action (see
-     *         {depositVPFIToVault}).
-     * @dev Canonical-chain only — reverts `NotCanonicalVPFIChain` on mirrors.
-     *      Per spec (docs/TokenomicsTechSpec.md §8a): "VPFI
-     *      purchase on Base delivers tokens to the user's wallet, not
-     *      directly to vault; bridging is only needed when the borrower
-     *      wants to use VPFI on a non-canonical lending chain; on every
-     *      chain — including the canonical one — moving VPFI into vault
-     *      is an explicit user-initiated action."
-     *
-     *      Reverts `VPFIBuyDisabled` when the admin kill-switch is off,
-     *      `VPFIBuyRateNotSet` when no rate has been configured,
-     *      `VPFIBuyAmountTooSmall` when `msg.value` rounds to zero VPFI,
-     *      `VPFIGlobalCapExceeded` / `VPFIPerWalletCapExceeded` on cap
-     *      breach, and `VPFIReserveInsufficient` when the diamond's on-hand
-     *      VPFI balance can't cover the buy.
-     *
-     *      ETH is forwarded to the configured treasury in the same tx so
-     *      the diamond does not accumulate native balance.
-     *
-     *      Emits {VPFIPurchasedWithETH}.
-     */
-    // forge-lint: disable-next-line(mixed-case-function)
-    function buyVPFIWithETH() external payable nonReentrant whenNotPaused {
-        // Tier-1 sanctions gate. Sanctioned wallet cannot acquire
-        // new VPFI via the fixed-rate buy. See policy block on
-        // `LibVaipakam.isSanctionedAddress`.
-        LibVaipakam._assertNotSanctioned(msg.sender);
-        // Direct buy on the canonical Base Diamond — origin = local
-        // chain. The per-wallet cap is keyed on the buyer's origin
-        // chain (`block.chainid` here), so Base-direct buys do not
-        // consume the buyer's cap on any mirror chain. `block.chainid`
-        // must fit the uint32 cap-bucket key — the canonical chain's id
-        // always does; this guard is defence-in-depth against a silent
-        // truncation writing usage into the wrong bucket.
-        if (block.chainid > type(uint32).max) {
-            revert VPFIInvalidOriginChainId();
-        }
-        uint256 vpfiOut = _computeBuyAndDebitCaps(
-            msg.sender,
-            uint32(block.chainid),
-            msg.value
-        );
-
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address vpfi = s.vpfiToken;
-
-        // Deliver VPFI to the buyer's WALLET. Moving it into vault is a
-        // separate explicit step (depositVPFIToVault) — same flow applies
-        // whether or not the buyer later bridges to a non-canonical chain.
-        IERC20(vpfi).safeTransfer(msg.sender, vpfiOut);
-
-        // Forward the ETH to treasury atomically.
-        payable(LibFacet.getTreasury()).sendValue(msg.value);
-
-        emit VPFIPurchasedWithETH(
-            msg.sender,
-            vpfiOut,
-            msg.value,
-            LibVPFIDiscount.vaultVpfiBalance(msg.sender)
-        );
-    }
-
-    /**
-     * @notice Cross-chain entry point: process a fixed-rate buy that
-     *         was paid for on a non-Base chain and arrived via the
-     *         {VpfiBuyReceiver} CCIP contract.
-     * @dev Gated to `s.bridgedBuyReceiver`. Runs the IDENTICAL
-     *      caps/rate/reserve pipeline as {buyVPFIWithETH} so the 2.3M
-     *      global cap holds across the whole mesh (Base is the only
-     *      gate). The per-wallet cap (default 30K VPFI) is enforced
-     *      **per origin chain** — this call's `originChainId` is the
-     *      bucket key, so a buyer who has spent their cap on Polygon
-     *      can still buy up to the cap on Optimism (per
-     *      docs/TokenomicsTechSpec.md §8a).
-     *
-     *      VPFI is transferred to `msg.sender` (the receiver contract),
-     *      which then fires a CCIP send to deliver it to `buyer` on
-     *      their origin chain. `ethAmountPaid` is informational only —
-     *      the ETH itself was settled in the buyer's local treasury on
-     *      the origin chain; Base never sees it, which is why no ETH
-     *      forwards-to-treasury call happens here.
-     *
-     *      Reverts:
-     *        - `NotCanonicalVPFIChain` on non-Base Diamonds.
-     *        - `NotBridgedBuyReceiver` if caller is not the registered
-     *          receiver.
-     *        - Same cap/rate/reserve errors as {buyVPFIWithETH}.
-     *
-     *      Emits {VPFIBridgedBuyProcessed}.
-     * @param buyer         Buyer on the origin chain.
-     * @param originChainId EVM chain id of the buyer's origin chain.
-     *                      Used as the second key on
-     *                      `vpfiFixedRateSoldToByChainId[buyer][originChainId]`
-     *                      so the per-wallet cap is bucketed per origin
-     *                      chain (NOT shared globally across all chains).
-     * @param ethAmountPaid Native ETH the buyer paid on the origin
-     *                      chain — used to size the VPFI out at the
-     *                      current `weiPerVpfi`.
-     * @param minVpfiOut    Slippage guard from the buyer — reverts if
-     *                      the computed VPFI is less than this. Use 0
-     *                      to disable.
-     * @return vpfiOut      VPFI delivered to `msg.sender` (the receiver).
-     */
-    function processBridgedBuy(
-        address buyer,
-        uint32 originChainId,
-        uint256 ethAmountPaid,
-        uint256 minVpfiOut
-    )
-        external
-        nonReentrant
-        whenNotPaused
-        returns (uint256 vpfiOut)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (s.bridgedBuyReceiver == address(0)) {
-            revert BridgedBuyReceiverNotSet();
-        }
-        if (msg.sender != s.bridgedBuyReceiver) {
-            revert NotBridgedBuyReceiver();
-        }
-
-        // Bridged buy — origin = the buyer's chain, asserted by the
-        // CCIP message (validated upstream by the bridged-buy receiver
-        // against the registered channel peer). The per-wallet cap is
-        // keyed on that origin so the same buyer can buy up to the
-        // Phase 1 30K cap on each origin chain independently, as
-        // required by docs/TokenomicsTechSpec.md §8a.
-        vpfiOut = _computeBuyAndDebitCaps(buyer, originChainId, ethAmountPaid);
-        if (vpfiOut < minVpfiOut) revert VPFIBuyAmountTooSmall();
-
-        // Hand VPFI to the receiver; it will CCIP-bridge to `buyer` on
-        // `originChainId`. Receiver must approve + send in the same tx.
-        IERC20(s.vpfiToken).safeTransfer(msg.sender, vpfiOut);
-
-        emit VPFIBridgedBuyProcessed(buyer, originChainId, vpfiOut, ethAmountPaid);
-    }
-
-    /// @dev Shared caps/rate/reserve pipeline. Reverts with the same
-    ///      errors as {buyVPFIWithETH}. Only runs on canonical Base —
-    ///      caller must ensure the context is Base (both public entry
-    ///      points do).
-    /// @param buyer         Per-wallet-cap key.
-    /// @param originChainId EVM chain id of the buyer's origin chain.
-    ///                      The per-wallet cap bucket is keyed on
-    ///                      `(buyer, originChainId)` so the same
-    ///                      buyer's cap on each origin chain is
-    ///                      independent (per docs/TokenomicsTechSpec.md
-    ///                      §8a). For direct buys this is the canonical
-    ///                      chain's own `block.chainid`; for bridged
-    ///                      buys it is the source chain id asserted by
-    ///                      the CCIP message.
-    /// @param ethAmount     Native ETH amount paid.
-    /// @return vpfiOut      VPFI amount to deliver at the current rate.
-    function _computeBuyAndDebitCaps(
-        address buyer,
-        uint32 originChainId,
-        uint256 ethAmount
-    ) internal returns (uint256 vpfiOut) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.isCanonicalVpfiChain) revert NotCanonicalVPFIChain();
-        if (!s.vpfiFixedRateBuyEnabled) revert VPFIBuyDisabled();
-        // Per-wallet cap is bucketed per origin chain
-        // (`vpfiFixedRateSoldToByChainId[buyer][originChainId]`).
-        // A zero `originChainId` would silently land every buy in
-        // bucket 0, desyncing the frontend's per-chain allowance view
-        // from the on-chain ledger. It cannot happen on a well-formed
-        // call — direct buys pass `block.chainid`, bridged buys pass a
-        // CcipMessenger-resolved source chain id — so this is a
-        // defence-in-depth reject of a malformed origin.
-        if (originChainId == 0) revert VPFIInvalidOriginChainId();
-
-        uint256 weiPerVpfi = s.vpfiDiscountWeiPerVpfi;
-        if (weiPerVpfi == 0) revert VPFIBuyRateNotSet();
-        if (ethAmount == 0) revert InvalidAmount();
-
-        address vpfi = s.vpfiToken;
-        if (vpfi == address(0)) revert VPFITokenNotSet();
-
-        // vpfiOut (18 decimals) = ethAmount * 1e18 / weiPerVpfi
-        vpfiOut = (ethAmount * 1e18) / weiPerVpfi;
-        if (vpfiOut == 0) revert VPFIBuyAmountTooSmall();
-
-        uint256 newTotal = s.vpfiFixedRateTotalSold + vpfiOut;
-        // Caps use zero-fallback semantics (docs/TokenomicsTechSpec.md §8,
-        // §8a): a stored zero means "use the spec default", never
-        // "uncapped". Enforcement always runs — there is no bypass.
-        if (newTotal > LibVaipakam.cfgVpfiFixedGlobalCap())
-            revert VPFIGlobalCapExceeded();
-
-        uint256 newWallet = s.vpfiFixedRateSoldToByChainId[buyer][originChainId] + vpfiOut;
-        if (newWallet > LibVaipakam.cfgVpfiFixedWalletCap())
-            revert VPFIPerWalletCapExceeded();
-
-        uint256 onHand = IERC20(vpfi).balanceOf(address(this));
-        if (onHand < vpfiOut) revert VPFIReserveInsufficient();
-
-        s.vpfiFixedRateTotalSold = newTotal;
-        s.vpfiFixedRateSoldToByChainId[buyer][originChainId] = newWallet;
-    }
 
     /**
      * @notice Move VPFI from the caller's wallet into the caller's vault.
@@ -1046,204 +801,53 @@ contract VPFIDiscountFacet is
         discountBps = LibVPFIDiscount.discountBpsForTier(tier);
     }
 
-    /**
-     * @notice Current VPFI buy-side config + running totals.
-     * @dev    `globalCap` and `perWalletCap` are returned as EFFECTIVE
-     *         values — when the admin leaves the stored slot at zero, the
-     *         return value is the spec default
-     *         ({LibVaipakam.VPFI_FIXED_GLOBAL_CAP} /
-     *         {LibVaipakam.VPFI_FIXED_WALLET_CAP}). There is no
-     *         "uncapped" mode (docs/TokenomicsTechSpec.md §8, §8a).
-     * @return weiPerVpfi   Fixed rate — ETH wei accepted per 1 VPFI (18 dec).
-     * @return globalCap    Effective global cap on VPFI sold at fixed rate.
-     * @return perWalletCap Effective per-wallet cap.
-     * @return totalSold    Cumulative VPFI sold at fixed rate.
-     * @return enabled      True iff the buy path is currently open.
-     * @return ethPriceAsset ERC-20 used as the ETH/USD reference asset.
-     */
+
+    // ─── Discount price config (admin) ───────────────────────────────────────
+    //
+    // #687-A: the issuer fixed-rate SALE was removed. What remains is the
+    // consumptive fee-discount utility — it needs a VPFI price anchor + an
+    // ETH/USD reference asset to value the discount (see
+    // `LibVPFIDiscount._feeAssetWeiToVpfi`). The two setters + reader below are
+    // the renamed, sale-free survivors of the old buy-config surface.
+
+    /// @notice Current VPFI fee-discount price config.
+    /// @return weiPerVpfi    ETH wei per 1 VPFI (18 dec) used to value the VPFI
+    ///                       fee discount. Zero ⇒ discount falls back to the
+    ///                       normal fee.
+    /// @return ethPriceAsset ERC-20 used as the ETH/USD reference asset.
     // forge-lint: disable-next-line(mixed-case-function)
-    function getVPFIBuyConfig()
+    function getVPFIDiscountConfig()
         external
         view
-        returns (
-            uint256 weiPerVpfi,
-            uint256 globalCap,
-            uint256 perWalletCap,
-            uint256 totalSold,
-            bool enabled,
-            address ethPriceAsset
-        )
+        returns (uint256 weiPerVpfi, address ethPriceAsset)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (
-            s.vpfiDiscountWeiPerVpfi,
-            LibVaipakam.cfgVpfiFixedGlobalCap(),
-            LibVaipakam.cfgVpfiFixedWalletCap(),
-            s.vpfiFixedRateTotalSold,
-            s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountEthPriceAsset
-        );
+        return (s.vpfiDiscountWeiPerVpfi, s.vpfiDiscountEthPriceAsset);
     }
 
-    /// @notice VPFI already purchased by `user` at the fixed rate
-    ///         from THIS chain's local origin (i.e. the local Diamond's
-    ///         `block.chainid`). Per-wallet caps are bucketed per origin
-    ///         chain; this getter returns the local-origin bucket so
-    ///         callers reading the running total for the
-    ///         currently-connected chain see the value they expect.
-    ///         Use {getVPFISoldToByChainId} to query a specific origin
-    ///         chain's bucket.
-    /// @param  user   Address whose cumulative fixed-rate buy total to read.
-    /// @return soldTo Cumulative VPFI (18 dec) `user` has purchased
-    ///                against the per-wallet cap on this chain's local
-    ///                origin bucket.
+    /// @notice Set the VPFI price anchor used by the fee-discount quote —
+    ///         ETH wei per 1 VPFI (18 dec). Default 1e15 ⇒ 1 VPFI = 0.001 ETH.
+    /// @dev Zero disables the discount quote (falls back to the normal fee).
+    ///      ADMIN_ROLE-only. Emits {VPFIDiscountConfigUpdated}. (Renamed from
+    ///      the removed `setVPFIBuyRate` — #687-A: the field is a discount price
+    ///      anchor, not a sale rate.)
+    /// @param weiPerVpfi ETH wei per 1 VPFI (18 dec).
     // forge-lint: disable-next-line(mixed-case-function)
-    function getVPFISoldTo(address user) external view returns (uint256 soldTo) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return s.vpfiFixedRateSoldToByChainId[user][uint32(block.chainid)];
-    }
-
-    /// @notice VPFI already purchased by `user` at the fixed rate
-    ///         against the per-wallet cap bucket for `originChainId`.
-    ///         The Phase 1 30K wallet cap applies independently per
-    ///         origin chain (per docs/TokenomicsTechSpec.md §8a).
-    /// @param  user      Address whose cumulative buy total to read.
-    /// @param  originChainId EVM chain id of the origin chain.
-    /// @return soldTo    Cumulative VPFI (18 dec) `user` has purchased
-    ///                   from `originChainId`.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function getVPFISoldToByChainId(address user, uint32 originChainId)
-        external
-        view
-        returns (uint256 soldTo)
-    {
-        return LibVaipakam.storageSlot().vpfiFixedRateSoldToByChainId[user][originChainId];
-    }
-
-    // ─── Admin ───────────────────────────────────────────────────────────────
-
-    /// @notice Set the fixed rate — ETH wei per 1 VPFI (18 dec). Default
-    ///         1e15 means 1 VPFI = 0.001 ETH.
-    /// @dev Setting to zero disables both the buy path and the discount
-    ///      quote. ADMIN_ROLE-only. Emits {VPFIBuyConfigUpdated}.
-    /// @param weiPerVpfi ETH wei accepted per 1 VPFI (18 dec).
-    // forge-lint: disable-next-line(mixed-case-function)
-    function setVPFIBuyRate(uint256 weiPerVpfi)
+    function setVPFIDiscountRate(uint256 weiPerVpfi)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.vpfiDiscountWeiPerVpfi = weiPerVpfi;
-        emit VPFIBuyConfigUpdated(
-            weiPerVpfi,
-            s.vpfiFixedRateGlobalCap,
-            s.vpfiFixedRatePerWalletCap,
-            s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountEthPriceAsset
-        );
-    }
-
-    /// @notice Set the global and per-wallet caps on fixed-rate VPFI sales.
-    /// @dev Zero on either field resolves to the spec default
-    ///      ({LibVaipakam.VPFI_FIXED_GLOBAL_CAP} /
-    ///      {LibVaipakam.VPFI_FIXED_WALLET_CAP}) via
-    ///      {LibVaipakam.cfgVpfiFixedGlobalCap} /
-    ///      {LibVaipakam.cfgVpfiFixedWalletCap}. There is no "uncapped"
-    ///      mode (docs/TokenomicsTechSpec.md §8, §8a). The existing
-    ///      `vpfiFixedRateTotalSold` counter is NOT reset.
-    ///      ADMIN_ROLE-only. Emits {VPFIBuyConfigUpdated} with the raw
-    ///      stored inputs so admin can confirm a reset-to-default.
-    /// @param globalCap    Max total VPFI sellable across all buyers
-    ///                     (0 = fall back to the 2.3M VPFI spec default).
-    /// @param perWalletCap Max VPFI sellable per buyer address
-    ///                     (0 = fall back to the 30k VPFI spec default).
-    // forge-lint: disable-next-line(mixed-case-function)
-    function setVPFIBuyCaps(uint256 globalCap, uint256 perWalletCap)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.vpfiFixedRateGlobalCap = globalCap;
-        s.vpfiFixedRatePerWalletCap = perWalletCap;
-        emit VPFIBuyConfigUpdated(
-            s.vpfiDiscountWeiPerVpfi,
-            globalCap,
-            perWalletCap,
-            s.vpfiFixedRateBuyEnabled,
-            s.vpfiDiscountEthPriceAsset
-        );
-    }
-
-    /// @notice Turn the fixed-rate buy path on or off.
-    /// @dev Does NOT affect the discount path at loan acceptance — the
-    ///      borrower can still use already-owned VPFI to discount a loan
-    ///      even while the buy gate is closed. ADMIN_ROLE-only.
-    ///      Emits {VPFIBuyConfigUpdated}.
-    /// @param enabled True to open the buy path, false to close it.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function setVPFIBuyEnabled(bool enabled)
-        external
-        onlyRole(LibAccessControl.ADMIN_ROLE)
-    {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        s.vpfiFixedRateBuyEnabled = enabled;
-        emit VPFIBuyConfigUpdated(
-            s.vpfiDiscountWeiPerVpfi,
-            s.vpfiFixedRateGlobalCap,
-            s.vpfiFixedRatePerWalletCap,
-            enabled,
-            s.vpfiDiscountEthPriceAsset
-        );
-    }
-
-    /// @notice Register (or rotate) the authorized VPFIBuyReceiver
-    ///         on Base. Only this address may invoke
-    ///         {processBridgedBuy}.
-    /// @dev ADMIN_ROLE-gated. Zero disables the bridged-buy ingress
-    ///      until a new receiver is wired. Only meaningful on the
-    ///      canonical VPFI chain; on mirrors the flag is inert
-    ///      (processBridgedBuy reverts {NotCanonicalVPFIChain} first).
-    /// @param receiver VPFIBuyReceiver proxy address on Base.
-    function setBridgedBuyReceiver(
-        address receiver
-    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        address old = s.bridgedBuyReceiver;
-        s.bridgedBuyReceiver = receiver;
-        emit BridgedBuyReceiverUpdated(old, receiver);
-    }
-
-    /// @notice Returns the currently authorized VPFIBuyReceiver address,
-    ///         or zero if bridged-buy ingress is disabled.
-    function getBridgedBuyReceiver() external view returns (address) {
-        return LibVaipakam.storageSlot().bridgedBuyReceiver;
-    }
-
-    /// @notice Quote the VPFI out for a given wei amount at the current
-    ///         fixed rate — used by mirror-chain adapters to render a
-    ///         preview before sending the CCIP message.
-    /// @dev Returns 0 if the buy path is disabled, the rate is unset,
-    ///      or the amount rounds to zero VPFI. Does not consult caps —
-    ///      caps are enforced atomically on Base inside
-    ///      {processBridgedBuy}.
-    /// @param weiAmount Native ETH amount (wei).
-    /// @return vpfiOut  VPFI (18 dec) that would be delivered.
-    function quoteFixedRateBuy(
-        uint256 weiAmount
-    ) external view returns (uint256 vpfiOut) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (!s.vpfiFixedRateBuyEnabled) return 0;
-        uint256 weiPerVpfi = s.vpfiDiscountWeiPerVpfi;
-        if (weiPerVpfi == 0 || weiAmount == 0) return 0;
-        vpfiOut = (weiAmount * 1e18) / weiPerVpfi;
+        emit VPFIDiscountConfigUpdated(weiPerVpfi, s.vpfiDiscountEthPriceAsset);
     }
 
     /// @notice Set the ERC-20 used as the ETH/USD price reference for the
     ///         discount quote. On mainnet this is the canonical WETH.
-    /// @dev Zero disables the discount calculation (falls back to normal
-    ///      fee). ADMIN_ROLE-only. Emits {VPFIBuyConfigUpdated}.
-    /// @param asset ERC-20 address used as the ETH reference
-    ///              (Chainlink-backed); address(0) disables the quote.
+    /// @dev Zero disables the discount calculation (falls back to normal fee).
+    ///      ADMIN_ROLE-only. Emits {VPFIDiscountConfigUpdated}.
+    /// @param asset ERC-20 address used as the ETH reference (Chainlink-backed);
+    ///              address(0) disables the quote.
     // forge-lint: disable-next-line(mixed-case-function)
     function setVPFIDiscountETHPriceAsset(address asset)
         external
@@ -1251,13 +855,7 @@ contract VPFIDiscountFacet is
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.vpfiDiscountEthPriceAsset = asset;
-        emit VPFIBuyConfigUpdated(
-            s.vpfiDiscountWeiPerVpfi,
-            s.vpfiFixedRateGlobalCap,
-            s.vpfiFixedRatePerWalletCap,
-            s.vpfiFixedRateBuyEnabled,
-            asset
-        );
+        emit VPFIDiscountConfigUpdated(s.vpfiDiscountWeiPerVpfi, asset);
     }
 
     // ─── Internal passthrough for OfferFacet ─────────────────────────────────
