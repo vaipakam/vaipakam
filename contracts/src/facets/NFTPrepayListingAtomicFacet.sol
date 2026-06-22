@@ -306,6 +306,20 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         // Tier-2 skip-not-block; no-op when not transferred or terminal.
         _consolidateBorrowerToHolder(loanId);
 
+        // #656c — refresh the one `loan.borrower`-derived field of the
+        // `pctx` read above (before the hook): the consolidation may have
+        // re-anchored `loan.borrower` to the current holder, and
+        // `pctx.borrowerVault` is the offerer `_settle` hashes into the
+        // Seaport AdvancedOrder. `_buildAndRecord` records the counter-order
+        // against the FRESH `s.userVaipakamVaults[loan.borrower]`, so without
+        // this refresh the recorded hash and the submitted order would
+        // disagree on the offerer and the match would revert for exactly the
+        // transferred-position case the hook supports. Every other `pctx`
+        // field is identity-independent: the protocol legs derive from
+        // principal/interest, `borrowerNftOwner` is already the holder
+        // (`ownerOf`), so the floor/buffer validation above is unaffected.
+        pctx.borrowerVault = s.userVaipakamVaults[loan.borrower];
+
         // ── §17.11 STEP 1-5: lock + build counter-order + record +
         //    wire vault ─────────────────────────────────────────────
         address executor = s.collateralListingExecutor;
