@@ -24,6 +24,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 
 /**
@@ -199,6 +200,26 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // NFT rental refinance not supported in Phase 1 (requires NFT custody transfer)
         if (oldLoan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidRefinanceOffer();
+
+        // #658 PR-B (#594 arc) — eagerly consolidate the LENDER side of the
+        // exiting old loan to its current lender-NFT holder while the old loan
+        // is still Active (the primitive no-ops once terminal). The old lender
+        // EXITS at refinance (`s.lenderClaims[oldLoanId]` is set and the old
+        // loan closes below), so its accrued reward entry + VPFI checkpoint
+        // must follow the current holder before the close. Funds are already
+        // current-holder-safe (the exit payout routes via `lenderClaims` →
+        // `ClaimFacet`, `ownerOf`-gated). ONLY the lender side: the borrower
+        // side carries its collateral OVER into the new loan (#576), and a
+        // borrower-side consolidation here would fight the carry-over re-tag.
+        // Size-tight facet → few-byte cross-facet entry (Tier2 skip-not-block).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                oldLoanId,
+                /* isLenderSide */ true
+            ),
+            bytes4(0)
+        );
 
         // T-034 §4.6 — settle-first guard. If the old loan has a
         // Periodic Interest Payment cadence AND the current period is

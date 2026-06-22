@@ -27,6 +27,7 @@ import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 
 /**
  * @title PrecloseFacet
@@ -177,6 +178,27 @@ contract PrecloseFacet is
         );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+
+        // #658 PR-B (#594 arc) — eagerly consolidate BOTH sides of a
+        // transferred position to their current NFT holders while the loan is
+        // still Active (the primitive no-ops once terminal), so the collateral
+        // lien, reward entry, and VPFI checkpoint follow the live holder before
+        // the Active→Repaid flip below. Funds are already current-holder-safe
+        // (lender via `lenderClaims` + `encumberLenderProceeds` → ClaimFacet;
+        // borrower via `borrowerClaims` → `claimAsBorrower`, both `ownerOf`-
+        // gated); this closes the position-effect-accounting gap. PrecloseFacet
+        // is size-tight, so it consolidates via the few-byte cross-facet entry
+        // (Tier2 skip-not-block — a sanctioned/excluded holder never bricks a
+        // close-out). No post-withdraw VPFI restamp is needed here: preclose
+        // moves no collateral out of a vault (it stays as `borrowerClaims`,
+        // withdrawn later by `claimAsBorrower`).
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
 
         if (loan.assetType == LibVaipakam.AssetType.ERC20) {
             // ── ERC20 loan preclose ─────────────────────────────────────────
