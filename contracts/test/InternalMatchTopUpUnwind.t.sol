@@ -91,7 +91,23 @@ contract InternalMatchTopUpUnwindTest is SetupTest {
         l.principalLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.collateralLiquidity = LibVaipakam.LiquidityStatus.Liquid;
         l.liquidationLtvBpsAtInit = 8_500;
+        // #691 — distinct position-NFT ids + `ownerOf`→stored-owner mocks so the
+        // #658 eager-consolidation hook resolves `ownerOf` on an Active match
+        // leg (holder == stored ⇒ no-op). FallbackPending legs are skipped by
+        // the primitive before any `ownerOf`, so they need nothing here.
+        l.borrowerTokenId = id * 2;
+        l.lenderTokenId = id * 2 + 1;
         TestMutatorFacet(address(diamond)).scaffoldActiveLoan(id, l);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2),
+            abi.encode(borrower_)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, id * 2 + 1),
+            abi.encode(lender_)
+        );
 
         address bVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(borrower_);
         ERC20Mock(collateral).mint(bVault, collateralAmt);

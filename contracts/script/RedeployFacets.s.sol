@@ -13,6 +13,7 @@ import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
@@ -85,6 +86,13 @@ contract RedeployFacets is Script {
         // ClaimFacet so a curated redeploy doesn't leave the claim path on stale
         // bytecode that skips the restamp after a preclosed borrower claims VPFI.
         ClaimFacet claimFacet = new ClaimFacet();
+        // #691 — the internal-match executors (triggerInternalMatchLiquidation +
+        // attemptInternalMatchAutoDispatch) gained the eager-consolidation +
+        // VPFI-restamp hooks. Refresh RiskMatchLiquidationFacet so a curated
+        // redeploy doesn't leave transferred-position internal matches bypassing
+        // the new consolidation while the rest of the close-out family is
+        // upgraded.
+        RiskMatchLiquidationFacet riskMatchFacet = new RiskMatchLiquidationFacet();
         ProfileFacet profileFacet = new ProfileFacet();
         // #658 — the refreshed RiskFacet liquidation paths cross-call
         // ConsolidationFacet's eager-consolidation + post-withdraw VPFI-restamp
@@ -104,6 +112,7 @@ contract RedeployFacets is Script {
         console.log("EarlyWithdrawalFacet: ", address(earlyWithdrawalFacet));
         console.log("RefinanceFacet:       ", address(refinanceFacet));
         console.log("ClaimFacet:           ", address(claimFacet));
+        console.log("RiskMatchLiquidation: ", address(riskMatchFacet));
         console.log("ProfileFacet:         ", address(profileFacet));
         console.log("ConsolidationFacet:   ", address(consolidationFacet));
 
@@ -127,7 +136,7 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0);
         IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](9 + nExtra);
+            new IDiamondCut.FacetCut[](10 + nExtra);
         cuts[0] = _replace(address(riskFacet), _riskSelectors());
         cuts[1] = _replace(address(defaultedFacet), _defaultedSelectors());
         cuts[2] = _replace(address(loanFacet), _loanSelectors());
@@ -146,7 +155,12 @@ contract RedeployFacets is Script {
         // diamond, so a plain Replace repoints them to the restamp-aware
         // bytecode.
         cuts[8] = _replace(address(claimFacet), _claimSelectors());
-        uint256 idx = 9;
+        // #691 — RiskMatch selectors are already routed on a current diamond
+        // (triggerInternalMatchLiquidation + the cross-facet-only
+        // attemptInternalMatchAutoDispatch), so a plain Replace repoints them to
+        // the consolidation-aware bytecode.
+        cuts[9] = _replace(address(riskMatchFacet), _riskMatchSelectors());
+        uint256 idx = 10;
         if (hfToReplace.length > 0) {
             cuts[idx++] = _replace(address(riskFacet), hfToReplace);
         }
@@ -164,7 +178,7 @@ contract RedeployFacets is Script {
 
         vm.stopBroadcast();
 
-        console.log("DiamondCut applied: 9 facets replaced + ConsolidationFacet.");
+        console.log("DiamondCut applied: 10 facets replaced + ConsolidationFacet.");
         console.log("  HF selectors added:   ", hfToAdd.length);
         console.log("  HF selectors replaced:", hfToReplace.length);
         console.log("  Cons selectors added: ", consToAdd.length);
@@ -308,6 +322,17 @@ contract RedeployFacets is Script {
 
     /// @dev #658 PR-B2 — ClaimFacet selectors, mirrors
     ///      `DeployDiamond._getClaimSelectors` (kept in lockstep).
+    /// @dev #691 — RiskMatchLiquidationFacet selectors, mirrors
+    ///      `DeployDiamond._getRiskMatchLiquidationSelectors` (kept in lockstep).
+    ///      `attemptInternalMatchAutoDispatch` is cross-facet-only
+    ///      (`onlyDiamondInternal`) but is routed through the Diamond, so it is
+    ///      cut + refreshed like any other selector.
+    function _riskMatchSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](2);
+        s[0] = RiskMatchLiquidationFacet.triggerInternalMatchLiquidation.selector;
+        s[1] = RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch.selector;
+    }
+
     function _claimSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](9);
         s[0] = ClaimFacet.claimAsLender.selector;

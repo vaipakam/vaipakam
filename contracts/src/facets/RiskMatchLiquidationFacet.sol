@@ -3,6 +3,8 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
@@ -256,32 +258,21 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // residuals stay `Active`. PR5.5 extends the 2-way body to
         // 3-loan cycles A→B→C→A — three independent min-match legs.
         if (loanIdC == 0) {
-            (
-                uint256 movedX,
-                uint256 movedY,
-                uint256 incentiveX,
-                uint256 incentiveY
-            ) = _executeTwoWayMatch(loanIdA, loanIdB, msg.sender);
+            MatchResult memory r = _executeTwoWayMatch(loanIdA, loanIdB, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, 0,
                 msg.sender,
-                movedX, movedY, 0,
-                incentiveX, incentiveY, 0
+                r.movedX, r.movedY, 0,
+                r.incentiveX, r.incentiveY, 0
             );
         } else {
-            (
-                uint256 movedX,
-                uint256 movedY,
-                uint256 movedZ,
-                uint256 incentiveX,
-                uint256 incentiveY,
-                uint256 incentiveZ
-            ) = _executeThreeWayMatch(loanIdA, loanIdB, loanIdC, msg.sender);
+            MatchResult memory r =
+                _executeThreeWayMatch(loanIdA, loanIdB, loanIdC, msg.sender);
             emit InternalMatchExecuted(
                 loanIdA, loanIdB, loanIdC,
                 msg.sender,
-                movedX, movedY, movedZ,
-                incentiveX, incentiveY, incentiveZ
+                r.movedX, r.movedY, r.movedZ,
+                r.incentiveX, r.incentiveY, r.incentiveZ
             );
         }
     }
@@ -302,6 +293,71 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         return LibVaipakam.internalMatchableCollateral(loan.id);
     }
 
+    /// @dev #691 — lean MEMORY return for the per-leg moved/incentive amounts.
+    ///      The 2-way and 3-way executors are single-/few-call private functions
+    ///      that viaIR inlines into their orchestrators; returning the six values
+    ///      as a stack tuple put `_executeThreeWayMatch` at the EXACT whole-unit
+    ///      per-function stack ceiling (any further local — e.g. the #658
+    ///      consolidation hook — overflowed it). Holding them in a memory struct
+    ///      keeps them off the stack at the inline boundary AND lets the executor
+    ///      write each field as computed (never all six live on the stack at
+    ///      once), which freed the headroom the consolidation + restamp hooks
+    ///      need. 2-way leaves `movedZ`/`incentiveZ` zero.
+    struct MatchResult {
+        uint256 movedX;
+        uint256 movedY;
+        uint256 movedZ;
+        uint256 incentiveX;
+        uint256 incentiveY;
+        uint256 incentiveZ;
+    }
+
+    /// @dev #691 / #658 — single-copy cross-facet bridges to the eager
+    ///      consolidation entries. RiskMatchLiquidationFacet is size-tight, so
+    ///      the multi-loan internal match re-anchors each participating loan to
+    ///      its current NFT holder via a few-byte cross-facet call (one body
+    ///      each, compiled once). Both-side eager consolidation BEFORE settlement
+    ///      re-anchors every leg's borrower/lender to the live holder so the
+    ///      collateral lien + reward entry + VPFI checkpoint follow it; the
+    ///      post-withdraw restamp keeps VPFI tier/staking honest after a leg's
+    ///      collateral leaves the vault. Tier2 skip-not-block; FallbackPending
+    ///      legs are a benign no-op (collateral already in Diamond custody, and
+    ///      `consolidateToHolder` excludes them). Proceeds were already
+    ///      current-holder-safe via #585 `lenderClaims` + `claimAsBorrower`;
+    ///      this closes the position-effect-accounting gap (#680 F3).
+    ///
+    ///      NOTE (Codex #693): unlike preclose/refinance, the internal-match
+    ///      executors do NOT clear active prepay / parallel-sale listings before
+    ///      consolidating — by construction they can't have one. Every listing
+    ///      writer requires ERC721/ERC1155 collateral (the four `NFTPrepay*`
+    ///      facets revert `UnsupportedCollateralForV1`; `OfferParallelSaleFacet`
+    ///      reverts `UnsupportedCollateralForParallelSale`), but an internal-
+    ///      match leg requires ORACLE-PRICEABLE collateral — Active legs through
+    ///      `_requireLtvAboveFloor`→`calculateLTV` (reverts on illiquid/NFT) and
+    ///      FallbackPending legs through `_assertOraclePriceable(collateralAsset)`.
+    ///      So an internal-match leg's `prepayListingOrderHash` /
+    ///      `offerPrepayListingOrderHash` is always 0 and `_isExcludedLive`'s
+    ///      listing branch can never fire here.
+    function _eagerBothSidesIM(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
+    function _restampCollIM(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector,
+                loanId
+            ),
+            bytes4(0)
+        );
+    }
+
     /// @dev Execute the 3-loan chain A→B→C→A version of partial-match α.
     ///      Independent min-match on each leg:
     ///        movedX = min(A.principal, B.collateralAmount)  [B.X → A.lender + matcher]
@@ -312,15 +368,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      block's matching attempt or external fallback.
     function _executeThreeWayMatch(uint256 loanIdA, uint256 loanIdB, uint256 loanIdC, address matcher)
         private
-        returns (
-            uint256 movedX,
-            uint256 movedY,
-            uint256 movedZ,
-            uint256 incentiveX,
-            uint256 incentiveY,
-            uint256 incentiveZ
-        )
+        returns (MatchResult memory r)
     {
+        // #691 / #658 (#680 F3) — consolidate ALL THREE participating loans to
+        // their current NFT holders while still Active (before settlement), so
+        // each leg's borrower/lender position effects (lien, reward, VPFI
+        // checkpoint) follow the live holder. Done here (not the orchestrator)
+        // because the single-caller 3-way executor is inlined; the lean
+        // MatchResult memory return above buys the stack headroom for it.
+        _eagerBothSidesIM(loanIdA);
+        _eagerBothSidesIM(loanIdB);
+        _eagerBothSidesIM(loanIdC);
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage la = s.loans[loanIdA];
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
@@ -336,54 +395,58 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // collateral (`_diamondMatchable`), not the raw `collateralAmount`.
         // For a topped-up FallbackPending paying leg that is the Diamond
         // portion only, so the draw never over-runs Diamond custody.
-        uint256 matchableB = _diamondMatchable(lb);
-        uint256 matchableC = _diamondMatchable(lc);
-        uint256 matchableA = _diamondMatchable(la);
-        movedX = la.principal < matchableB ? la.principal : matchableB;
-        movedY = lb.principal < matchableC ? lb.principal : matchableC;
-        movedZ = lc.principal < matchableA ? lc.principal : matchableA;
+        {
+            uint256 matchableB = _diamondMatchable(lb);
+            uint256 matchableC = _diamondMatchable(lc);
+            uint256 matchableA = _diamondMatchable(la);
+            r.movedX = la.principal < matchableB ? la.principal : matchableB;
+            r.movedY = lb.principal < matchableC ? lb.principal : matchableC;
+            r.movedZ = lc.principal < matchableA ? lc.principal : matchableA;
+        }
 
         // #591 (Codex #605 P1) — fail closed if any leg moves zero (see the
         // 2-way executor for the rationale): a zero leg in the A→B→C→A chain
         // means an exhausted/empty leg slipped the eligibility gate and would
         // settle a one-sided transfer draining a counterparty.
-        if (movedX == 0) revert InternalMatchNoMatchableCollateral(lb.id);
-        if (movedY == 0) revert InternalMatchNoMatchableCollateral(lc.id);
-        if (movedZ == 0) revert InternalMatchNoMatchableCollateral(la.id);
+        if (r.movedX == 0) revert InternalMatchNoMatchableCollateral(lb.id);
+        if (r.movedY == 0) revert InternalMatchNoMatchableCollateral(lc.id);
+        if (r.movedZ == 0) revert InternalMatchNoMatchableCollateral(la.id);
 
-        uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
-        incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        incentiveZ = (movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        {
+            uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+            r.incentiveX = (r.movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
+            r.incentiveY = (r.movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
+            r.incentiveZ = (r.movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        }
 
         // #569 §4.4 (2026-06-13) — decrement each ACTIVE leg's lien by
         // the consumed collateral BEFORE its `_settleLeg` vault withdraw
         // (same ordering fix as `_executeTwoWayMatch`). Leg X consumes
         // B's collateral, Leg Y consumes C's, Leg Z consumes A's.
         if (!bFromDiamond) {
-            LibEncumbrance.decrementCollateralLien(loanIdB, movedX);
+            LibEncumbrance.decrementCollateralLien(loanIdB, r.movedX);
         }
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
         if (!cFromDiamond) {
-            LibEncumbrance.decrementCollateralLien(loanIdC, movedY);
+            LibEncumbrance.decrementCollateralLien(loanIdC, r.movedY);
         }
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, cFromDiamond);
+        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, cFromDiamond);
         if (!aFromDiamond) {
-            LibEncumbrance.decrementCollateralLien(loanIdA, movedZ);
+            LibEncumbrance.decrementCollateralLien(loanIdA, r.movedZ);
         }
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(la.borrower, lc.principalAsset, lc.lender, movedZ, incentiveZ, matcher, aFromDiamond);
+        _settleLeg(la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher, aFromDiamond);
 
         // State updates — each loan's principal cleared by its leg,
         // each borrower's collateral debited by the NEXT loan's leg.
-        la.principal -= movedX;
-        lb.collateralAmount -= movedX;
-        lb.principal -= movedY;
-        lc.collateralAmount -= movedY;
-        lc.principal -= movedZ;
-        la.collateralAmount -= movedZ;
+        la.principal -= r.movedX;
+        lb.collateralAmount -= r.movedX;
+        lb.principal -= r.movedY;
+        lc.collateralAmount -= r.movedY;
+        lc.principal -= r.movedZ;
+        la.collateralAmount -= r.movedZ;
 
         // EC-003 Phase 1 — collateral consumed per leg:
         //   la consumed movedZ (paid out to C's lender)
@@ -393,9 +456,19 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // is consumed by the NEXT leg, but its OWN lender is paid by its own
         // leg). A.lender ← Leg X (movedX − incentiveX); B.lender ← Leg Y;
         // C.lender ← Leg Z.
-        _settleFallbackOrTransitionPostMatch(la, movedZ, movedX - incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, movedX, movedY - incentiveY);
-        _settleFallbackOrTransitionPostMatch(lc, movedY, movedZ - incentiveZ);
+        _settleFallbackOrTransitionPostMatch(la, r.movedZ, r.movedX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY - r.incentiveY);
+        _settleFallbackOrTransitionPostMatch(lc, r.movedY, r.movedZ - r.incentiveZ);
+
+        // #691 / #658 — each leg's collateral was withdrawn for the swap;
+        // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
+        // off the live `la/lb/lc` storage pointers (`.id`) rather than the
+        // `loanId*` params so those params' live range ends at the lien
+        // decrements above — keeping the deep tail of this viaIR
+        // stack-ceiling executor under the limit.
+        _restampCollIM(la.id);
+        _restampCollIM(lb.id);
+        _restampCollIM(lc.id);
     }
 
     /// @dev Settle one leg of an internal match — the receiving
@@ -476,8 +549,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///      `InternalMatched`; partial residuals stay `Active`.
     function _executeTwoWayMatch(uint256 loanIdA, uint256 loanIdB, address matcher)
         private
-        returns (uint256 movedX, uint256 movedY, uint256 incentiveX, uint256 incentiveY)
+        returns (MatchResult memory r)
     {
+        // #691 / #658 (#680 F3) — consolidate BOTH participating loans to their
+        // current NFT holders while still Active (before settlement), so each
+        // leg's borrower/lender position effects follow the live holder. Covers
+        // both the explicit 2-way trigger and the auto-dispatch path (the
+        // triggering loan is idempotently re-consolidated; the matched CANDIDATE
+        // is consolidated here). The lean MatchResult memory return buys the
+        // stack headroom.
+        _eagerBothSidesIM(loanIdA);
+        _eagerBothSidesIM(loanIdB);
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage la = s.loans[loanIdA];
         LibVaipakam.Loan storage lb = s.loans[loanIdB];
@@ -498,10 +581,12 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // that's the Diamond portion only, so the draw can never over-run
         // Diamond custody. Unchanged (= full `collateralAmount`) for all
         // other legs.
-        uint256 matchableB = _diamondMatchable(lb);
-        uint256 matchableA = _diamondMatchable(la);
-        movedX = la.principal < matchableB ? la.principal : matchableB;
-        movedY = lb.principal < matchableA ? lb.principal : matchableA;
+        {
+            uint256 matchableB = _diamondMatchable(lb);
+            uint256 matchableA = _diamondMatchable(la);
+            r.movedX = la.principal < matchableB ? la.principal : matchableB;
+            r.movedY = lb.principal < matchableA ? lb.principal : matchableA;
+        }
 
         // #591 (Codex #605 P1) — fail closed if either leg moves zero. A
         // legitimate mutual match always moves >0 on both legs (both have
@@ -509,12 +594,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // exhausted/empty leg slipped past the eligibility gate, which would
         // settle a one-sided transfer (counterparty collateral → this lender
         // with no reciprocal debt reduction). Roll back rather than drain.
-        if (movedX == 0) revert InternalMatchNoMatchableCollateral(la.id);
-        if (movedY == 0) revert InternalMatchNoMatchableCollateral(lb.id);
+        if (r.movedX == 0) revert InternalMatchNoMatchableCollateral(la.id);
+        if (r.movedY == 0) revert InternalMatchNoMatchableCollateral(lb.id);
 
-        uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
-        incentiveX = (movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
-        incentiveY = (movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        {
+            uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+            r.incentiveX = (r.movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
+            r.incentiveY = (r.movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
+        }
 
         // #569 §4.4 (2026-06-13) — decrement each ACTIVE leg's lien by
         // the consumed collateral BEFORE its `_settleLeg` vault withdraw,
@@ -525,23 +612,23 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // Leg X consumes B's collateral (`movedX`); Leg Y consumes A's
         // (`movedY`).
         if (!bFromDiamond) {
-            LibEncumbrance.decrementCollateralLien(loanIdB, movedX);
+            LibEncumbrance.decrementCollateralLien(loanIdB, r.movedX);
         }
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, movedX, incentiveX, matcher, bFromDiamond);
+        _settleLeg(lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
         if (!aFromDiamond) {
-            LibEncumbrance.decrementCollateralLien(loanIdA, movedY);
+            LibEncumbrance.decrementCollateralLien(loanIdA, r.movedY);
         }
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(la.borrower, lb.principalAsset, lb.lender, movedY, incentiveY, matcher, aFromDiamond);
+        _settleLeg(la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, aFromDiamond);
 
         // State updates — debt cleared by the gross moved amount
         // (borrower forfeits the full amount; the incentive % they
         // "would have paid the lender" is reallocated to the matcher).
-        la.principal -= movedX;
-        lb.collateralAmount -= movedX;
-        lb.principal -= movedY;
-        la.collateralAmount -= movedY;
+        la.principal -= r.movedX;
+        lb.collateralAmount -= r.movedX;
+        lb.principal -= r.movedY;
+        la.collateralAmount -= r.movedY;
 
         // Status transitions + snapshot scaling. Full match → loan
         // transitions to `InternalMatched`; partial match keeps the
@@ -552,8 +639,15 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // #585 — lender proceeds per leg (asymmetric, as in the 3-way case):
         // la's collateral is consumed by Leg Y (movedY), but A.lender is paid
         // by Leg X (movedX − incentiveX); symmetrically for lb.
-        _settleFallbackOrTransitionPostMatch(la, movedY, movedX - incentiveX);
-        _settleFallbackOrTransitionPostMatch(lb, movedX, movedY - incentiveY);
+        _settleFallbackOrTransitionPostMatch(la, r.movedY, r.movedX - r.incentiveX);
+        _settleFallbackOrTransitionPostMatch(lb, r.movedX, r.movedY - r.incentiveY);
+
+        // #691 / #658 — both legs' collateral was withdrawn for the swap;
+        // restamp each holder's VPFI tier/staking (no-op for non-VPFI). Keyed
+        // off `la/lb` (`.id`) so the `loanId*` params' live range ends at the
+        // lien decrements above (viaIR stack headroom).
+        _restampCollIM(la.id);
+        _restampCollIM(lb.id);
     }
 
     /// @dev Internal helper for `triggerInternalMatchLiquidation` —
@@ -1041,18 +1135,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // status for claim-time retry). `_executeTwoWayMatch` runs
         // the partial-match α math + per-leg settlement + post-match
         // snapshot scaling + lifecycle transition.
-        (
-            uint256 movedX,
-            uint256 movedY,
-            uint256 incentiveX,
-            uint256 incentiveY
-        ) = _executeTwoWayMatch(loanId, candidateId, matcher);
+        MatchResult memory r = _executeTwoWayMatch(loanId, candidateId, matcher);
 
         emit InternalMatchExecuted(
             loanId, candidateId, 0,
             matcher,
-            movedX, movedY, 0,
-            incentiveX, incentiveY, 0
+            r.movedX, r.movedY, 0,
+            r.incentiveX, r.incentiveY, 0
         );
         return true;
     }
