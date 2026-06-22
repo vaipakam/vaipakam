@@ -82,10 +82,17 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
   `script/ConfigureVPFIBuy.s.sol`, `test/VpfiBuyFlowTest.t.sol`.
 - **Partial-facet edit — `VPFIDiscountFacet.sol`:** remove the buy surface
   (`buyVPFIWithETH`, `processBridgedBuy`, `quoteFixedRateBuy`,
-  `getVPFISoldToByChainId`, `setVPFIBuyRate`, `setVPFIBuyCaps`,
-  `setVPFIBuyEnabled`, `setBridgedBuyReceiver`, `getBridgedBuyReceiver`,
-  `getVPFIBuyConfig`) + their internal `_computeBuyAndDebitCaps`. **Keep**
-  deposit/withdraw + all discount-tier code.
+  `getVPFISoldToByChainId`, **`getVPFISoldTo(address)`** (also reads the
+  `vpfiFixedRateSoldToByChainId` mapping — drop with it), `setVPFIBuyRate`,
+  `setVPFIBuyCaps`, `setVPFIBuyEnabled`, `setBridgedBuyReceiver`,
+  `getBridgedBuyReceiver`, `getVPFIBuyConfig`) + their internal
+  `_computeBuyAndDebitCaps`. **Keep** deposit/withdraw + all discount-tier code.
+  **Add a discount-config READER** to replace `getVPFIBuyConfig`'s role: today it
+  is the only public reader of the VPFI price anchor + `vpfiDiscountEthPriceAsset`,
+  which operators/frontends need to verify (unset ⇒ `_feeAssetWeiToVpfi`
+  `canQuote=false` ⇒ discounts silently fall back to full fees). So the split
+  keeps a `getVPFIDiscountConfig` getter (carried through selectors/ABI/consumers)
+  alongside the `setVPFIDiscountRate` setter.
 - **Storage (`LibVaipakam.sol`):** remove the buy *counters/caps/enable*
   (`…GlobalCap`, `…PerWalletCap`, `…TotalSold`, `…BuyEnabled`, the
   `…SoldToByChainId` mapping + the legacy mapping) + `bridgedBuyReceiver`.
@@ -103,13 +110,26 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
   **`AnvilNewPositiveFlows.s.sol`** (calls `getVPFIBuyConfig`/`setVPFIBuyRate` —
   remove/retarget), `test/deploy/DiamondFacetNames.sol` (drop the 2 crosschain
   buy contracts), `SelectorCoverageTest.t.sol` + `HelperTest.sol` (selector set).
+  **Replace `ConfigureVPFIBuy.s.sol` (don't just delete) with a renamed
+  discount-config script** — it is today the only deploy/config path that writes
+  the VPFI price anchor + `vpfiDiscountEthPriceAsset`; without a replacement, a
+  fresh deploy leaves those at 0 and discounts never apply. Wire the renamed step
+  into `DiamondConfigSpell` + the deploy runbooks.
+- **Test cleanup (wider):** remove/rewrite `test/VpfiBuyFlowTest.t.sol` **and
+  `test/CcipDeploymentRehearsalTest.t.sol`** (the latter imports + deploys
+  `VpfiBuyAdapter`/`VpfiBuyReceiver`, so it fails at compile if they're deleted
+  without it).
 - **ABI export + TS consumers (wider than `/buy-vpfi`):**
   `script/exportFrontendAbis.sh` — drop `VpfiBuyAdapter` + `VpfiBuyReceiver`
   (`VPFIDiscountFacet` stays, re-export). Then the bundle's consumers must be
   removed/feature-gated in the SAME PR or the TS build breaks:
   **`apps/agent/src/buyWatchdog.ts`** (imports both buy ABIs) and the **admin
   dashboard hooks** importing `VpfiBuyReceiverABI`.
-- **Frontend:** `/buy-vpfi` (marketing) + `/app/buy-vpfi` (connected) pages.
+- **Frontend:** remove `/buy-vpfi` (marketing). **The connected `/app/buy-vpfi`
+  page currently OWNS the KEPT `depositVPFIToVault` / `withdrawVPFIFromVault` +
+  discount-status flow** — do **not** just delete it; **migrate** the deposit /
+  withdraw / consent / discount-status cards to a renamed discount/vault page
+  first, or users lose the only app path to the kept fee-discount utility.
 - **Docs/allocation:** TokenomicsTechSpec §8/§8a + the §3 "Early Fixed-Rate
   Purchase Program" 1% (2.3M) row (see §6 reallocation).
 
@@ -152,8 +172,14 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
   (delete the function + its cut entry), `DiamondFacetNames.sol`
   (drop `StakingRewardsFacet`), `SelectorCoverageTest.t.sol`, `HelperTest.sol`,
   `SetupTest.t.sol` (drop the staking facet import + cut + setup).
-- **ABI export:** drop `StakingRewardsFacet`; re-export `ConfigFacet`/`TreasuryFacet`
-  (tuple shapes changed) + their TS consumers.
+- **Other live consumers (compile-breakers if missed):**
+  **`MetricsDashboardFacet`** imports `StakingRewardsFacet` and calls
+  `previewStakingRewards` for `DashboardScalars.stakingRewardsPending` — drop the
+  call + that tuple field (+ update the dashboard ABI/consumers).
+  **`AnvilNewPositiveFlows.s.sol`** imports/calls the facet in its N13 flow —
+  remove that step.
+- **ABI export:** drop `StakingRewardsFacet`; re-export `ConfigFacet`/`TreasuryFacet`/
+  `MetricsDashboardFacet` (tuple shapes changed) + their TS consumers.
 - **Frontend:** `/staking` pages + staking/yield/APR widgets + claim UI + any
   `getProtocolConfigBundle`/`getProtocolConstants` reader of the dropped fields.
 - **Docs/allocation:** TokenomicsTechSpec §7/§12.1 + whitepaper §12.1 + overview
@@ -193,8 +219,12 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
     optional VPFI bonus is skipped (keepers are incentivized by liquidation
     bonuses + matcher LIF independently).
   - `rewardEmissionsBudget` is only a buyback-burn **offset** to interaction-reward
-    inflation — it does **not** gate interaction-reward minting (those mint from
-    their own 30%/69M pool). At 0 there's simply no offset (a Phase-2
+    inflation — it does **not** gate interaction-reward payouts. (Note:
+    interaction rewards are **not** an independent self-funding mint — `claimInteractionRewards`
+    caps against `VPFI_INTERACTION_POOL_CAP` but **pays by `safeTransfer` from the
+    diamond's VPFI balance**, so the diamond must actually hold VPFI; the required
+    treasury funding path is called out in §6, separate from buyback budgets.) At
+    0 there's simply no offset (a Phase-2
     buyback-burn concern).
   - **⇒ No Phase-1 funding path is added** (no new admin economic knob — best for
     the minimal-legal/decentralization story). The keeper VPFI bonus + the
@@ -210,6 +240,27 @@ must split the shared price anchor — it is not a pure sale-only deletion.**
 ---
 
 ## 4. Removal order (ordered sub-PRs) + shared-surface coordination
+
+### ⚠️ 4.0 Storage-layout safety (load-bearing — P1)
+
+Deleting fields from the shared `LibVaipakam.Storage` struct **shifts every later
+slot** in the ERC-7201 diamond storage namespace. Applied as an **in-place
+diamond cut against a live deployment, that corrupts unrelated state.** Two safe
+paths:
+
+- **This deploy (PRE-LIVE): fresh redeploy is the canonical path.** There is no
+  live state to corrupt, and the project's deploy policy already says any
+  cross-cutting change rolls out via a fresh `DeployDiamond.s.sol` (not an
+  in-place `RedeployFacets` cut). So PR-A/PR-B may delete the sale/staking fields
+  outright **provided the rollout is a fresh deploy** — which it is. The PRs must
+  state this assumption explicitly.
+- **If these ever ship as an in-place upgrade over a live diamond** (not the case
+  here): do **not** delete slots — replace each removed field with a
+  `deprecated_*` placeholder of the same size to preserve the layout, and treat
+  any real reclamation as a separate migration. Documented so a future
+  in-place-upgrade author can't silently corrupt state.
+
+### 4.1 Sub-PR order
 
 A, B, C touch a few shared files — the single `LibVaipakam.Storage` struct, the
 deploy-sanity pair (`DiamondFacetNames.sol` + `SelectorCoverageTest.t.sol`), and
@@ -255,8 +306,14 @@ conventions).
 ## 6. Supply reallocation — **OWNER ACK NEEDED**
 
 Removing A frees the **1%** (2.3M) sale pool; removing B frees the **24%**
-(55.2M) staking pool; the **12%** market-making allocation is doc-only (no code).
-Three options for the freed 37% (and the doc-only 12%):
+(55.2M) staking pool. **Plus the doc-only market-making allocation — reconcile the
+source inconsistency FIRST:** `TokenomicsTechSpec` says **12%** while the public
+whitepaper table shows **14%** (with 50% of it liquidity). Pick **one
+authoritative figure** (recommend the TokenomicsTechSpec **12%**, and correct the
+whitepaper to match) before computing any cap delta — otherwise the code cap, the
+allocation table, and the whitepaper end up mutually inconsistent. The three
+freed buckets are therefore **1% + 24% + (12% MM)**; do **not** double-count the
+MM bucket. Three options:
 
 1. **Reduce the 230M cap** by the freed amounts (cleanest "no idle reserve"
    story; changes the cap constant + the supply-cap invariant + every allocation
@@ -271,6 +328,15 @@ minimal-legal "no issuer-controlled idle treasury for price support" narrative
 (#694 §6 decentralization). This is a tokenomics decision the owner must make
 before the docs/allocation rows are finalized; the *code* removals (A/B) don't
 block on it (they remove the mint paths regardless).
+
+**Interaction-reward funding (kept stream — call out separately):** the retained
+`claimInteractionRewards` pays via `safeTransfer` from the **diamond's VPFI
+balance** (capped against `VPFI_INTERACTION_POOL_CAP`), so it is **not**
+self-funding — a claim can pass the pool-cap accounting yet **revert on an
+unfunded diamond**. Whatever the cap/reallocation decision, the diamond must be
+**funded with the interaction-reward VPFI** (treasury mint/transfer into the
+diamond), independent of the (dormant) buyback budgets. Spell this out in the
+allocation plan so the kept earn path actually pays out.
 
 ---
 
