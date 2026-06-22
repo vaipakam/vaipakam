@@ -1111,28 +1111,35 @@ contract ClaimFacet is
             );
         }
 
-        // #658 PR-B (Codex #690 round-4 P2) — when the collateral is VPFI it has
-        // just left `loan.borrower`'s vault via the withdraw(s) above. Re-stamp
-        // so the holder doesn't keep fee-tier / staking credit on VPFI that is
-        // no longer vaulted (the same post-withdraw restamp the liquidation +
-        // refinance hosts run). This is the claim-time half of the direct-
-        // preclose close-out: preclose consolidates + checkpoints the holder at
-        // the full balance, leaving the VPFI in `borrowerClaims`; this withdraw
-        // is where it actually leaves, so the restamp belongs here. `loan.borrower`
-        // is the consolidated current holder on a transferred position, or the
-        // stored borrower otherwise — either way it is the vault the VPFI left.
-        // Gated on VPFI collateral (the `restampCollateralVpfiAfterWithdraw`
-        // entry also no-ops for non-VPFI, but gating the cross-call here means
-        // the overwhelmingly-common non-VPFI claim never reaches into
-        // ConsolidationFacet at all — keeping that facet off the routing
-        // dependency for every non-VPFI claim path).
-        if (claim.asset == s.vpfiToken) {
+        // #658 PR-B (Codex #690 round-4 + round-6) — when VPFI has just left
+        // `loan.borrower`'s vault via the withdraw(s) above, re-stamp so the
+        // vault owner doesn't keep fee-tier / staking credit on VPFI that is no
+        // longer vaulted (the claim-time half of the direct-preclose close-out;
+        // also the same post-withdraw restamp the liquidation + refinance hosts
+        // run). `loan.borrower` is the consolidated current holder on a
+        // transferred position, or the stored borrower otherwise — either way it
+        // is the vault the VPFI left.
+        //
+        // VPFI can leave via THREE forms here, so the collateral-keyed
+        // `restampCollateralVpfiAfterWithdraw` is insufficient (it only fires
+        // when the loan COLLATERAL is VPFI): (1) VPFI collateral, (2) a VPFI
+        // principal-SURPLUS claim row whose collateral is some other token, and
+        // (3) a still-liened VPFI top-up paid via `extraLienedAmt` while the
+        // rewritten claim row is non-VPFI. Gate on the actually-withdrawn assets
+        // and use the USER-keyed restamp so all three are covered; the common
+        // non-VPFI claim never reaches ConsolidationFacet.
+        // Guard on a configured VPFI token first: when `s.vpfiToken` is unset
+        // (address(0)) a bare `extraLienedAsset == s.vpfiToken` would be
+        // `0 == 0` for the common no-extra-lien case and fire a spurious
+        // cross-call. There is no VPFI to restamp without a token anyway.
+        if (
+            s.vpfiToken != address(0) &&
+            (claim.asset == s.vpfiToken || extraLienedAsset == s.vpfiToken)
+        ) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
-                    ConsolidationFacet
-                        .restampCollateralVpfiAfterWithdraw
-                        .selector,
-                    loanId
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    loan.borrower
                 ),
                 bytes4(0)
             );

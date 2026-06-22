@@ -92,8 +92,8 @@ contract RedeployFacets is Script {
         // RiskFacet-only refresh would leave the upgraded RiskFacet calling
         // unrouted selectors and bubble a revert mid-liquidation. Redeploy
         // ConsolidationFacet alongside and cut its selectors (Replace the two
-        // pre-existing #594 standalone entries, Add the three new #658 ones —
-        // partitioned by live routing, same as the #394 HF-floor knob).
+        // pre-existing #594 standalone entries, Add the four #658 internal-only
+        // ones — partitioned by live routing, same as the #394 HF-floor knob).
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
 
         console.log("RiskFacet:            ", address(riskFacet));
@@ -343,16 +343,18 @@ contract RedeployFacets is Script {
     /// @dev #658 — full ConsolidationFacet selector set, mirrors
     ///      `DeployDiamond._getConsolidationFacetSelectors` (kept in lockstep).
     ///      Indices 0-1 are the #594 standalone holder entries (already routed
-    ///      on a current diamond → Replace); 2-4 are the #658 internal-only
-    ///      eager + post-withdraw-restamp entries the refreshed RiskFacet now
-    ///      cross-calls (new → Add). `_partitionByRouting` sorts them by live
-    ///      routing so this is correct against any target diamond version.
+    ///      on a current diamond → Replace); 2-5 are the #658 internal-only
+    ///      eager + post-withdraw-restamp entries the refreshed liquidation /
+    ///      close-out hosts cross-call (new → Add). `_partitionByRouting` sorts
+    ///      them by live routing so this is correct against any target diamond
+    ///      version.
     function _consolidationSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](5);
+        s = new bytes4[](6);
         s[0] = ConsolidationFacet.consolidateCollateralToHolder.selector;
         s[1] = ConsolidationFacet.consolidatePrincipalToHolder.selector;
         s[2] = ConsolidationFacet.eagerConsolidateToHolder.selector;
         s[3] = ConsolidationFacet.eagerConsolidateBothSides.selector;
         s[4] = ConsolidationFacet.restampCollateralVpfiAfterWithdraw.selector;
+        s[5] = ConsolidationFacet.restampUserVpfiInternal.selector;
     }
 }

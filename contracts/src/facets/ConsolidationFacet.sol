@@ -106,6 +106,24 @@ contract ConsolidationFacet is
         }
     }
 
+    /// @notice #658 PR-B (Codex #690 round-6) — internal-only USER-keyed VPFI
+    ///         re-stamp. The collateral-keyed
+    ///         {restampCollateralVpfiAfterWithdraw} above only fires when the
+    ///         loan's COLLATERAL is VPFI, but `ClaimFacet.claimAsBorrower` can
+    ///         pay VPFI out of `loan.borrower`'s vault in forms the collateral
+    ///         key misses — a VPFI principal-SURPLUS claim row (collateral is
+    ///         some other token) or a still-liened VPFI top-up paid via the
+    ///         `extraLienedAmt` path while the rewritten claim row is non-VPFI.
+    ///         The caller decides VPFI actually left the vault (gating on the
+    ///         withdrawn asset) and passes the affected vault owner; this
+    ///         re-stamps unconditionally so no fee-tier / staking credit lingers
+    ///         on VPFI that is no longer vaulted. Internal-only; NOT
+    ///         `nonReentrant` (the host holds the lock).
+    function restampUserVpfiInternal(address user) external {
+        if (msg.sender != address(this)) revert OnlyDiamondInternal();
+        LibConsolidation.restampUserVpfi(user);
+    }
+
     /// @notice Consolidate the **borrower** (collateral) side of `loanId` into
     ///         the current borrower-NFT holder's vault.
     function consolidateCollateralToHolder(

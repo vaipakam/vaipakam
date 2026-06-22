@@ -70,6 +70,19 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "restampUserVpfiInternal",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "CollateralConsolidated",
     "inputs": [

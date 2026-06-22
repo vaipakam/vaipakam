@@ -577,22 +577,15 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         ),
                         VaultWithdrawFailed.selector
                     );
-                    // #658 PR-B (Codex #690 round-3 P2) — the borrower-side
-                    // consolidation above checkpointed the current holder's VPFI
-                    // at the FULL pre-return balance; this withdraw just removed
-                    // the VPFI collateral from their vault. Re-stamp so the
-                    // holder doesn't keep fee-tier / staking credit on VPFI that
-                    // already left (same post-withdraw restamp the liquidation
-                    // hosts run). No-op for non-VPFI collateral.
-                    LibFacet.crossFacetCall(
-                        abi.encodeWithSelector(
-                            ConsolidationFacet
-                                .restampCollateralVpfiAfterWithdraw
-                                .selector,
-                            oldLoanId
-                        ),
-                        bytes4(0)
-                    );
+                    // #658 PR-B — the borrower-side consolidation above
+                    // checkpointed the current holder's VPFI at the FULL
+                    // pre-return balance; this withdraw just removed the VPFI
+                    // collateral from their vault, so a post-withdraw re-stamp is
+                    // owed. It is DEFERRED to after `settleBorrowerLifProper`
+                    // below (Codex #690 round-6 P2): re-stamping here would roll
+                    // the discount accumulator down to the post-return balance
+                    // before the LIF rebate is priced, underpaying a borrower who
+                    // held the VPFI for the whole old-loan term.
                 }
             } else if (oldLoan.collateralAssetType == LibVaipakam.AssetType.ERC721) {
                 LibFacet.crossFacetCall(
@@ -720,6 +713,27 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (and, if the new loan also takes the VPFI fee path, that will
         // register its own vpfiHeld against the new loan id).
         LibVPFIDiscount.settleBorrowerLifProper(oldLoan);
+
+        // #658 PR-B (Codex #690 round-6 P2) — NOW re-stamp the borrower's VPFI,
+        // AFTER the LIF rebate is priced above. On the non-carry-over path with
+        // VPFI collateral, the borrower-side consolidation checkpointed the
+        // holder at the full balance and the legacy return (above) withdrew that
+        // VPFI out of the vault; re-stamping here keeps the holder from retaining
+        // fee-tier / staking credit on VPFI that has left, without skewing the
+        // just-settled rebate. Gated to the non-carry-over VPFI-collateral case
+        // (carry-over keeps the collateral in place, so nothing left the vault).
+        if (
+            !bOffer.refinanceCarryOver &&
+            oldLoan.collateralAsset == s.vpfiToken
+        ) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    ConsolidationFacet.restampUserVpfiInternal.selector,
+                    oldLoan.borrower
+                ),
+                bytes4(0)
+            );
+        }
 
         // T-092 Phase 2a (Codex round-1 P2) — emit the current
         // borrower-NFT owner as the borrower (not msg.sender) so
