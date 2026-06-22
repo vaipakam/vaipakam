@@ -21,6 +21,8 @@ import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {CollateralListingExecutor} from "../seaport/CollateralListingExecutor.sol";
 import {NFTPrepayListingFacet} from "./NFTPrepayListingFacet.sol";
+import {LibFacet} from "../libraries/LibFacet.sol";
+import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 
 /**
  * @title NFTPrepayDutchListingFacet
@@ -135,6 +137,20 @@ contract NFTPrepayDutchListingFacet is
         uint256 loanId, uint256 endAskPrice, uint256 required
     );
 
+    // ─── Internal memory-struct (viaIR stack relief) ────────────────────
+
+    /// @dev #656c — the borrower-supplied Dutch order scalars, bundled so
+    ///      they ride in memory (read on-demand via mload) instead of as
+    ///      simultaneously-live stack locals across the build + record +
+    ///      emit span. Purely a compilation-stack lever; never persisted.
+    struct DutchParams {
+        uint256 startAskPrice;
+        uint256 endAskPrice;
+        uint256 auctionEndTime;
+        uint256 salt;
+        bytes32 conduitKey;
+    }
+
     // ─── Borrower entry: postPrepayDutchListing ─────────────────────────
 
     /// @notice Open a Dutch-decay Seaport prepay-listing for a live
@@ -178,25 +194,44 @@ contract NFTPrepayDutchListingFacet is
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
 
+        // #656c (#594) — consolidate the borrower side to the current holder
+        // before the order is built + the vault cached, so the listing binds the
+        // holder's vault and the position isn't locked out of consolidation
+        // under the listing hash (no live hash here — the existence + lock
+        // checks above guarantee it).
+        _consolidateBorrowerToHolder(loanId);
+
         IListingExecutorRecorder executor = _requireExecutor(s);
         _validateFeeLegsDutch(feeLegs);
 
-        orderHash = _buildAndRecordDutch(
-            s, loan, loanId, startAskPrice, endAskPrice, auctionEndTime,
-            salt, conduitKey, executor, feeLegs
-        );
+        // #656c — bundle the borrower-supplied Dutch scalars into one memory
+        // struct so the five values that are otherwise live from entry through
+        // the post-build `emit` (read by both `_buildAndRecordDutch` and the
+        // event) stay off the stack (read on-demand via mload). This is the
+        // per-function viaIR stack relief that lets the consolidate hook fit;
+        // the orderHash output is byte-identical (same scalar values reach
+        // `LibPrepayOrder.buildAndHashDutch`).
+        DutchParams memory p = DutchParams({
+            startAskPrice: startAskPrice,
+            endAskPrice: endAskPrice,
+            auctionEndTime: auctionEndTime,
+            salt: salt,
+            conduitKey: conduitKey
+        });
+
+        orderHash = _buildAndRecordDutch(s, loan, loanId, p, executor, feeLegs, /* lockNft */ true);
 
         emit PrepayListingPosted(
             loanId,
             msg.sender,
             orderHash,
-            startAskPrice,
-            _resolveConduit(executor, conduitKey),
-            conduitKey,
-            salt,
+            p.startAskPrice,
+            _resolveConduit(executor, p.conduitKey),
+            p.conduitKey,
+            p.salt,
             address(executor),
-            endAskPrice,
-            auctionEndTime,
+            p.endAskPrice,
+            p.auctionEndTime,
             PREPAY_MODE_DUTCH,
             feeLegs
         );
@@ -251,23 +286,29 @@ contract NFTPrepayDutchListingFacet is
         if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
         LibPrepayListingWiring.unwire(s, loan, oldOrderHash);
 
-        newOrderHash = _buildAndRecordDutchUpdate(
-            s, loan, loanId, newStartAskPrice, newEndAskPrice, newAuctionEndTime,
-            newSalt, newConduitKey, currentExecutor, feeLegs
-        );
+        // #656c — share the post-path builder (lockNft == false keeps the
+        // lock continuous across the rotation). See `_buildAndRecordDutch`.
+        DutchParams memory p = DutchParams({
+            startAskPrice: newStartAskPrice,
+            endAskPrice: newEndAskPrice,
+            auctionEndTime: newAuctionEndTime,
+            salt: newSalt,
+            conduitKey: newConduitKey
+        });
+        newOrderHash = _buildAndRecordDutch(s, loan, loanId, p, currentExecutor, feeLegs, /* lockNft */ false);
 
         emit PrepayListingUpdated(
             loanId,
             msg.sender,
             oldOrderHash,
             newOrderHash,
-            newStartAskPrice,
-            _resolveConduit(currentExecutor, newConduitKey),
-            newConduitKey,
-            newSalt,
+            p.startAskPrice,
+            _resolveConduit(currentExecutor, p.conduitKey),
+            p.conduitKey,
+            p.salt,
             address(currentExecutor),
-            newEndAskPrice,
-            newAuctionEndTime,
+            p.endAskPrice,
+            p.auctionEndTime,
             PREPAY_MODE_DUTCH,
             feeLegs
         );
@@ -358,26 +399,50 @@ contract NFTPrepayDutchListingFacet is
         }
     }
 
+    /// @dev #656c — consolidate the borrower side to the current position
+    ///      holder before a listing-creation path caches the borrower's vault.
+    ///      Cross-facet to the internal-only `ConsolidationFacet`
+    ///      (Tier-2 skip-not-block); no-op when the position hasn't been
+    ///      transferred or the loan is terminal.
+    function _consolidateBorrowerToHolder(uint256 loanId) private {
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateToHolder.selector,
+                loanId,
+                /* isLenderSide */ false
+            ),
+            bytes4(0)
+        );
+    }
+
+    /// @dev #656c — unified post/update Dutch builder. Called from BOTH
+    ///      `postPrepayDutchListing` (`lockNft == true`) and
+    ///      `updatePrepayDutchListing` (`lockNft == false`, the lock stays
+    ///      continuous across the rotation). The two-call-site shape keeps
+    ///      the optimizer from inlining the heavy `recordOrder` marshalling
+    ///      back into the entry frames — that isolation is the per-function
+    ///      viaIR stack relief that lets the consolidate hook fit in the
+    ///      post entry. `p` carries the order scalars in memory so they
+    ///      ride off-stack at the call boundary; the orderHash output is
+    ///      byte-identical to the pre-merge builders (same scalar values
+    ///      reach `LibPrepayOrder.buildAndHashDutch`).
     function _buildAndRecordDutch(
         LibVaipakam.Storage storage s,
         LibVaipakam.Loan storage loan,
         uint256 loanId,
-        uint256 startAskPrice,
-        uint256 endAskPrice,
-        uint256 auctionEndTime,
-        uint256 salt,
-        bytes32 conduitKey,
+        DutchParams memory p,
         IListingExecutorRecorder executor,
-        FeeLeg[] calldata feeLegs
+        FeeLeg[] calldata feeLegs,
+        bool lockNft
     ) private returns (bytes32 orderHash) {
-        if (startAskPrice < endAskPrice) revert AskNotMonotonic(startAskPrice, endAskPrice);
+        if (p.startAskPrice < p.endAskPrice) revert AskNotMonotonic(p.startAskPrice, p.endAskPrice);
 
-        address conduit = _resolveConduit(executor, conduitKey);
+        address conduit = _resolveConduit(executor, p.conduitKey);
         if (!executor.approvedConduits(conduit)) revert ConduitNotApproved(conduit);
 
         IVaipakamPrepayContext.PrepayContext memory pctx =
-            IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, auctionEndTime);
-        _assertDutchSolvency(loanId, startAskPrice, endAskPrice, pctx, feeLegs);
+            IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, p.auctionEndTime);
+        _assertDutchSolvency(loanId, p.startAskPrice, p.endAskPrice, pctx, feeLegs);
 
         address vaultAddr = s.userVaipakamVaults[loan.borrower];
         if (vaultAddr == address(0)) revert LibPrepayListingWiring.VaultNotDeployed(loan.borrower);
@@ -387,17 +452,21 @@ contract NFTPrepayDutchListingFacet is
             vaultAddr,
             address(executor),
             CollateralListingExecutor(address(executor)).seaport(),
-            startAskPrice,
-            endAskPrice,
+            p.startAskPrice,
+            p.endAskPrice,
             pctx.lenderLeg,
             pctx.treasuryLeg,
-            auctionEndTime,
-            salt,
-            conduitKey,
+            p.auctionEndTime,
+            p.salt,
+            p.conduitKey,
             feeLegs
         );
 
-        LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+        // Post path locks the borrower NFT; the update path keeps the
+        // existing lock continuous across the rotation (no re-lock race).
+        if (lockNft) {
+            LibERC721._lock(loan.borrowerTokenId, LibERC721.LockReason.PrepayCollateralListing);
+        }
         s.prepayListingOrderHash[loanId] = orderHash;
         s.prepayListingExecutor[loanId] = address(executor);
 
@@ -405,12 +474,12 @@ contract NFTPrepayDutchListingFacet is
             orderHash,
             loanId,
             conduit,
-            conduitKey,
-            salt,
+            p.conduitKey,
+            p.salt,
             block.timestamp,
-            startAskPrice,
-            endAskPrice,
-            auctionEndTime,
+            p.startAskPrice,
+            p.endAskPrice,
+            p.auctionEndTime,
             PREPAY_MODE_DUTCH,
             feeLegs,
             // T-086 Round-7 (Issue #355) — signed-leg snapshot. Dutch
@@ -429,71 +498,6 @@ contract NFTPrepayDutchListingFacet is
         // with the library's own `VaultNotDeployed` revert; keeping
         // the upfront check so the buildAndHashDutch call below sees
         // a non-zero offerer.
-        LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
-    }
-
-    function _buildAndRecordDutchUpdate(
-        LibVaipakam.Storage storage s,
-        LibVaipakam.Loan storage loan,
-        uint256 loanId,
-        uint256 startAskPrice,
-        uint256 endAskPrice,
-        uint256 auctionEndTime,
-        uint256 salt,
-        bytes32 conduitKey,
-        IListingExecutorRecorder executor,
-        FeeLeg[] calldata feeLegs
-    ) private returns (bytes32 orderHash) {
-        if (startAskPrice < endAskPrice) revert AskNotMonotonic(startAskPrice, endAskPrice);
-
-        address conduit = _resolveConduit(executor, conduitKey);
-        if (!executor.approvedConduits(conduit)) revert ConduitNotApproved(conduit);
-
-        IVaipakamPrepayContext.PrepayContext memory pctx =
-            IVaipakamPrepayContext(address(this)).getPrepayContext(loanId, auctionEndTime);
-        _assertDutchSolvency(loanId, startAskPrice, endAskPrice, pctx, feeLegs);
-
-        address vaultAddr = s.userVaipakamVaults[loan.borrower];
-        orderHash = LibPrepayOrder.buildAndHashDutch(
-            pctx,
-            vaultAddr,
-            address(executor),
-            CollateralListingExecutor(address(executor)).seaport(),
-            startAskPrice,
-            endAskPrice,
-            pctx.lenderLeg,
-            pctx.treasuryLeg,
-            auctionEndTime,
-            salt,
-            conduitKey,
-            feeLegs
-        );
-
-        s.prepayListingOrderHash[loanId] = orderHash;
-        s.prepayListingExecutor[loanId] = address(executor);
-
-        executor.recordOrder(
-            orderHash,
-            loanId,
-            conduit,
-            conduitKey,
-            salt,
-            block.timestamp,
-            startAskPrice,
-            endAskPrice,
-            auctionEndTime,
-            PREPAY_MODE_DUTCH,
-            feeLegs,
-            // T-086 Round-7 (Issue #355) — signed-leg snapshot. See
-            // _buildAndRecordDutch above for the parallel comment.
-            pctx.lenderLeg,
-            pctx.treasuryLeg
-        );
-
-        // Round-6 Block D #346: canonical wire helper. The vault
-        // existence was already asserted by the caller of this
-        // private — `updatePrepayDutchListing` upstream reverts
-        // `VaultNotDeployed` before reaching here.
         LibPrepayListingWiring.wire(s, loan, orderHash, conduit, address(executor));
     }
 
