@@ -20,7 +20,6 @@ import {
   CheckCircle,
   Info,
   Gift,
-  TrendingUp,
   ShieldCheck,
 } from "lucide-react";
 import { useWallet } from "../context/WalletContext";
@@ -419,17 +418,6 @@ export default function VPFIVaultAndDiscounts() {
             <li>{t('buyVpfi.preconnect.discountBullet1')}</li>
             <li>{t('buyVpfi.preconnect.discountBullet2')}</li>
           </ul>
-        </div>
-
-        <div className="card" style={{ marginTop: 16 }}>
-          <div
-            className="card-title"
-            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-          >
-            <TrendingUp size={16} />
-            {t('buyVpfi.preconnect.stakingTitle')}
-          </div>
-          <p>{t('buyVpfi.preconnect.stakingBody')}</p>
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
