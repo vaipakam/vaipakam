@@ -563,7 +563,7 @@ export default function VPFIVaultAndDiscounts() {
       {address && (
         <DiscountStatusCard
           tier={discountTier?.tier ?? 0}
-          vaultVpfi={vaultBal}
+          vaultVpfi={discountTier?.trackedBal ?? null}
           discountBps={discountTier?.discountBps ?? 0}
           consentEnabled={consentEnabled}
           isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? readChain.isCanonicalVPFI}
@@ -798,7 +798,12 @@ function Stat({ label, value }: StatProps) {
 interface DiscountStatusCardProps {
   /** Current on-chain tier 0..4 for the connected wallet. */
   tier: number;
-  /** Vault VPFI balance (18-dec) on the active chain; null = not loaded yet. */
+  /**
+   * Protocol-tracked vault VPFI balance (18-dec) on the active chain; null =
+   * not loaded yet. This is the deposit-flow balance the discount math counts
+   * (direct-transfer dust is excluded), so both the displayed figure and the
+   * next-tier gap are derived from it — not the raw ERC-20 vault balance.
+   */
   vaultVpfi: bigint | null;
   /** Discount bps associated with the current tier (e.g. 1000 = 10%). */
   discountBps: number;

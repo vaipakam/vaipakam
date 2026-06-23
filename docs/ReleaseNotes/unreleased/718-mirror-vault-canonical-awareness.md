@@ -7,14 +7,15 @@ mirror chain:
 
 - The tier shown is your real effective tier (it was already correct — it reads
   the propagated value), but the card no longer implies the balance shown on the
-  current chain is what sets it. The balance is labelled "Vault VPFI (this
-  chain)", and its sub-label distinguishes the displayed raw balance from the
-  protocol-tracked VPFI that actually applies the discount, and points to the
-  canonical chain as where the tier is set.
-- The "deposit X more to reach the next tier" hint — which is computed from the
-  local balance — is hidden on mirror chains (depositing locally can't raise a
+  current chain is what sets it. The figure shown is now the **protocol-tracked**
+  vault balance (the deposit-flow balance the discount math counts — direct
+  transfers to the vault are excluded), labelled "Vault VPFI (tracked, this
+  chain)", and points to the canonical chain as where the tier is set.
+- The "deposit X more to reach the next tier" hint — now computed from the
+  tracked balance — is hidden on mirror chains (depositing locally can't raise a
   tier that's driven by the canonical-chain balance). On the canonical chain it
-  behaves exactly as before.
+  behaves as before, just based on tracked rather than raw balance so dust can't
+  spuriously show "qualifies".
 - A short banner on mirror chains explains the model: your tier is set on the
   canonical chain and mirrored here via cross-chain propagation; it applies on
   this chain's loans only once you enable the discount consent on this chain;
