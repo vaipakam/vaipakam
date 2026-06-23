@@ -2,11 +2,9 @@ import { useMemo } from 'react';
 import { useLogIndex } from './useLogIndex';
 
 interface RewardsClaimedHistory {
-  /** Sum of every `StakingRewardsClaimed` event's `amount` for the
-   *  connected wallet, in VPFI base units (18 decimals). */
-  stakingLifetimeClaimed: bigint;
   /** Sum of every `InteractionRewardsClaimed` event's `amount` for the
-   *  connected wallet, in VPFI base units (18 decimals). */
+   *  connected wallet, in VPFI base units (18 decimals). (#687-B removed
+   *  the staking-yield claim event, so there is no staking lifetime total.) */
   interactionLifetimeClaimed: bigint;
 }
 
@@ -36,18 +34,15 @@ export function useRewardsClaimedHistory(
   const { events } = useLogIndex();
   return useMemo(() => {
     if (!address) {
-      return { stakingLifetimeClaimed: 0n, interactionLifetimeClaimed: 0n };
+      return { interactionLifetimeClaimed: 0n };
     }
     const me = address.toLowerCase();
-    let staking = 0n;
     let interaction = 0n;
     for (const ev of events) {
       if (typeof ev.args.user !== 'string' || ev.args.user !== me) continue;
       if (typeof ev.args.amount !== 'string') continue;
       try {
-        if (ev.kind === 'StakingRewardsClaimed') {
-          staking += BigInt(ev.args.amount);
-        } else if (ev.kind === 'InteractionRewardsClaimed') {
+        if (ev.kind === 'InteractionRewardsClaimed') {
           interaction += BigInt(ev.args.amount);
         }
       } catch {
@@ -55,7 +50,6 @@ export function useRewardsClaimedHistory(
       }
     }
     return {
-      stakingLifetimeClaimed: staking,
       interactionLifetimeClaimed: interaction,
     };
   }, [events, address]);

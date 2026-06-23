@@ -2967,12 +2967,6 @@ function pluckActivityRefs(
         loanId: null,
         offerId: null,
       };
-    case 'VPFIPurchasedWithETH':
-      return {
-        actor: (args.buyer as string)?.toLowerCase() ?? null,
-        loanId: null,
-        offerId: null,
-      };
     case 'Transfer':
       // Position-NFT lifecycle. The "actor" for activity-feed filter
       // purposes is the recipient (`to`) — that's the wallet that

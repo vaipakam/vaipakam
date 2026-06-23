@@ -76,9 +76,6 @@
     "security": "安全",
     "vpfi": "VPFI",
     "vpfiLearn": "了解 VPFI",
-    "vpfiStakeUnstake": "质押 / 取消质押",
-    "vpfiStake": "质押",
-    "vpfiUnstake": "取消质押",
     "launchApp": "启动 Vaipakam",
     "toggleMenu": "切换菜单",
     "switchNetwork": "切换网络",
@@ -379,15 +376,10 @@
     },
     "connectTitle": "连接您的钱包",
     "unsupportedNetwork": "不支持的网络",
-    "step2Title": "将 VPFI 存入 / 质押到您的 Vault",
-    "step3Title": "从您的 Vault 取出 / 取消质押 VPFI",
     "approvingVpfi": "正在授权 VPFI…",
     "depositToVault": "存入 Vault",
     "depositing": "存款中…",
-    "unstakeToWallet": "提取到钱包",
-    "unstaking": "提取中…",
-    "depositFailed": "存款失败",
-    "unstakeFailed": "提取失败"
+    "depositFailed": "存款失败"
   },
   "claimCenter": {
     "connectTitle": "连接您的钱包",
@@ -440,11 +432,7 @@
     "partialRepaid": "部分偿还",
     "claimRetryExecuted": "领取时 swap 重试",
     "lifRebateClaimed": "VPFI 费用折扣返还已领取",
-    "stakingRewardsClaimed": "VPFI 质押奖励已领取",
     "interactionRewardsClaimed": "平台交互奖励已领取",
-    "vpfiPurchased": "已用 ETH 购买 VPFI",
-    "vpfiDeposited": "VPFI 已质押",
-    "vpfiWithdrawn": "VPFI 已取消质押",
     "lblPrincipal": "本金",
     "lblCollateral": "抵押品",
     "lblLender": "Lender",
@@ -497,7 +485,6 @@
   "rewardsSummary": {
     "title": "您的 VPFI 奖励",
     "totalEarnedLabel": "总收益",
-    "stakingTitle": "质押收益",
     "stakingSubtitle": "在您Vault中的 VPFI 上赚取协议 APR。",
     "interactionTitle": "平台交互奖励",
     "interactionSubtitle": "为您参与的每笔贷款赚取每日 VPFI 份额。",
@@ -1038,30 +1025,6 @@
         "row3Vault": "≥ 5,000、≤ 20,000",
         "row4Vault": "> 20,000"
       },
-      "vpfi-rewards": {
-        "q": "如何获得 VPFI 奖励？",
-        "a1": "两类奖励来源都与保管余额挂钩——无需另行管理质押合约：",
-        "li1": "<s>质押奖励 — 5% APR</s>：作用于保管中的 VPFI（占总供应的 24% = 该池 5520 万 VPFI）。只要资产留在保管中，余额就会持续累积。",
-        "li2": "<s>交互奖励：</s>按支付或收取的贷款利息向用户发放 VPFI，每位用户上限为<s2>每 0.001 ETH 利息 0.5 VPFI</s2>，从 30% 的交互奖励池（6900 万 VPFI）支取。该上限可防止刷单式贷款挖矿。"
-      },
-      "tokenomics": {
-        "q": "VPFI 的代币经济是什么？",
-        "a1": "硬顶 <s>2.3 亿 VPFI</s>。创世铸造为 Base 上的 <s2>2300 万（10%）</s2>；其余供应根据使用情况和池子提取逐步释放。固定价格购买锚定为 <s3>1 VPFI = 0.001 ETH</s3>。",
-        "a2": "早期购买上限为 230 万 VPFI（占总供应 1%），在启动窗口期内每钱包每链上限为 30,000 VPFI。分配如下：",
-        "tableBucket": "类别",
-        "tableShare": "占比",
-        "row1Bucket": "交互奖励",
-        "row2Bucket": "质押奖励",
-        "row3Bucket": "交易所 / 做市商",
-        "row4Bucket": "团队",
-        "row5Bucket": "创始人",
-        "row6Bucket": "早期贡献者",
-        "row7Bucket": "平台管理员",
-        "row8Bucket": "安全审计方",
-        "row9Bucket": "漏洞赏金",
-        "row10Bucket": "合规储备",
-        "row11Bucket": "早期购买"
-      },
       "nft-positions": {
         "q": "Vaipakam 的仓位 NFT 是什么？",
         "a1": "每一份报价和每一笔贷款都会铸造一枚带有<s>链上元数据</s>（资产类型、金额、利率、状态）的唯一 ERC-721。NFT <em>就是</em>仓位本身——用以证明所有权，并在还款、违约或清算后申领资金时所必需。由于元数据在链上，任何标准的 NFT 市场都能渲染当前状态。"
@@ -1210,10 +1173,8 @@
     "durationMins": "{{mins}}分",
     "durationSecs": "{{seconds}}秒",
     "consentMissingTitle": "折扣等级未启用",
-    "consentMissingBody": "您尚未同意在此贷款中使用已质押 / 已存入的 VPFI 支付费用折扣。折扣等级需要主动选择 — 在 Dashboard 启用之前，结算时的收益费将按完整 {{treasuryFee}}% 收取，不会产生 VPFI 返还。",
     "consentMissingCta": "在 Dashboard 启用",
-    "consentEnabledNoVpfiTitle": "已同意，但没有符合条件的 VPFI",
-    "consentEnabledNoVpfiBody": "您已给出同意，但当前在此链的 Vault 中没有符合条件的已质押 / 已存入 VPFI。补充 VPFI 后即可开始获得按时间加权的收益费折扣。"
+    "consentEnabledNoVpfiTitle": "已同意，但没有符合条件的 VPFI"
   },
   "vpfiTokenCard": {
     "title": "VPFI代币（此链）",
@@ -1227,7 +1188,6 @@
     "notRegistered": "VPFI尚未在{{chain}}上的Diamond中注册。一旦管理员调用setVPFIToken，余额和活动将显示在此处。",
     "walletBalance": "钱包VPFI余额",
     "vaultBalance": "Vault VPFI余额",
-    "vaultTooltip": "当前在此链按用户vault中质押的VPFI。计入借款人费用折扣Tier。",
     "shareCirculating": "流通占比",
     "circulatingThisChain": "流通量（此链）",
     "remainingMintable": "剩余可铸造",
@@ -1274,9 +1234,7 @@
     "depositAmount": "存入的VPFI数量",
     "useMaxVpfi": "使用最大（{{amount}} VPFI）",
     "depositButton": "存入Vault",
-    "unstakeTitle": "从vault解除质押VPFI",
     "unstakeSubtitle": "将VPFI从{{chain}}的vault移回钱包。如果vault余额低于Tier阈值，折扣Tier也会下降。",
-    "unstakeAmount": "解除质押的VPFI数量",
     "unstakeButton": "提取到钱包"
   },
   "alertsPage": {
@@ -1518,8 +1476,7 @@
     "loanDetailsCollateralRiskBorrower": "借款方已锁定的抵押品 + 实时 Health Factor 与 LTV。请保持 HF 高于 1 — 若跌破，则抵押品可能被清算。流动性抵押品通过预言机自动定价；非流动性抵押品无链上估值，违约时全额转移给出借方。",
     "loanDetailsParties": "出借方与借款方地址、保管其资产的逐用户保管代理，以及双方在贷款开启时收到的仓位 NFT。每个 NFT 是该方债权的不记名凭证 — 丢失即丧失债权。",
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
-    "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
-    "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此 unstake 自此刻起对手续费折扣计算即生效。"
+    "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。"
   },
   "acceptReview": {
     "partialRepayLabel": "部分还款",

@@ -341,7 +341,7 @@ export default function VPFIVaultAndDiscounts() {
     setTxHash(null);
     const raw = (unstakeInput ?? "").trim();
     if (!raw) {
-      setError("Enter a VPFI amount to unstake.");
+      setError("Enter a VPFI amount to withdraw.");
       return;
     }
     let unstakeWei: bigint;
@@ -352,11 +352,11 @@ export default function VPFIVaultAndDiscounts() {
       return;
     }
     if (unstakeWei === 0n) {
-      setError("Unstake amount must be greater than zero.");
+      setError("Withdrawal amount must be greater than zero.");
       return;
     }
     if (vaultBal != null && unstakeWei > vaultBal) {
-      setError("Unstake amount exceeds your vault balance.");
+      setError("Withdrawal amount exceeds your vault balance.");
       return;
     }
 
@@ -378,11 +378,11 @@ export default function VPFIVaultAndDiscounts() {
       setTxHash(tx.hash);
       await tx.wait();
       setStep("success");
-      s.success({ note: `unstaked ${unstakeWei}` });
+      s.success({ note: `withdrew ${unstakeWei}` });
       setUnstakeInput("");
       await Promise.all([reloadUserVpfi(), reloadVault()]);
     } catch (err) {
-      setError(decodeContractError(err, "Unstake failed"));
+      setError(decodeContractError(err, "Withdrawal failed"));
       setStep("idle");
       s.failure(err);
     } finally {
@@ -1190,7 +1190,7 @@ function UnstakeCard({
   const disableReason = balanceZero
     ? "Your vault VPFI balance is 0 — deposit VPFI first."
     : inputEmpty
-      ? "Enter amount of VPFI to unstake from Vault"
+      ? "Enter amount of VPFI to withdraw from Vault"
       : inputInvalid
         ? "Enter a valid VPFI amount"
         : exceedsBalance
