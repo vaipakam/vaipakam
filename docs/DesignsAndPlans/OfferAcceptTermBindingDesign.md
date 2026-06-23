@@ -77,24 +77,29 @@ one acknowledgement.
 
 ## 4. Design
 
-### 4a. `ExpectedTerms` integrity guard (primary — covers liquid + illiquid)
+### 4a. `AcceptTerms` integrity guard (primary — covers liquid + illiquid)
 
-A new calldata struct the acceptor binds to; `_acceptOffer`
-([`:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517), the single
-chokepoint both public entry points funnel through) reverts
-`OfferTermsMismatch` if any field diverges from the stored `Offer`:
+The acceptor's EIP-712-signed `AcceptTerms` (§4c) is bound against the stored
+`Offer` at `_acceptOffer`
+([`:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517) — the single
+chokepoint both `acceptOffer` and `acceptOfferInternal` funnel through), which
+reverts `OfferTermsMismatch` if any field diverges from the stored `Offer`. The
+signed struct (4c) is what the wallet renders; the guard here is what makes the
+rendered prompt binding on execution.
 
-**`ExpectedTerms` binds EVERY loan-affecting offer field** (Codex round-1 P1 —
+**`AcceptTerms` binds EVERY loan-affecting offer field** (Codex round-1 P1 —
 omitting any field that is snapshotted into the loan or changes the acceptor's
 obligations reopens the vector with a partial swap):
 
 ```solidity
-struct ExpectedTerms {
+struct AcceptTerms {            // EIP-712-typed (see §4c) — every loan-affecting field
+    uint256 offerId;
+    LibVaipakam.OfferType offerType;   // borrower-vs-lender side selects which endpoints apply (Codex r2 P1)
     address lendingAsset;
     address collateralAsset;
     uint256 amount;             // EQUALITY vs the offer endpoint used on direct accept
     uint256 collateralAmount;   // EQUALITY
-    uint256 interestRateBps;    // EQUALITY (exact) — protects BOTH sides; see below
+    uint256 interestRateBps;    // EQUALITY (exact) — protects BOTH sides
     uint256 durationDays;
     // Asset discriminators — NFT/1155 identity AND units:
     uint256 tokenId;
@@ -104,17 +109,23 @@ struct ExpectedTerms {
     LibVaipakam.AssetType assetType;
     LibVaipakam.AssetType collateralAssetType;
     address prepayAsset;        // NFT-rental fee asset
-    // Obligation-shaping flags snapshotted into the loan:
+    // Obligation-shaping flags snapshotted into the loan / gating accept side effects:
     bool useFullTermInterest;
     bool allowsPartialRepay;
+    bool allowsPrepayListing;   // gates postPrepayListing on the loan (Codex r2 P2)
+    bool allowsParallelSale;    // keeps a live Seaport listing across accept (Codex r2 P2)
+    uint256 refinanceTargetLoanId; // != 0 chains into RefinanceFacet.refinanceLoanFromAccept (Codex r2 P2)
     LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
+    // EIP-712 anti-replay:
+    uint256 nonce;
+    uint256 deadline;
 }
 ```
 
 - This is **not a consent** — it's an assertion the on-chain offer equals what
   the acceptor was shown. Closes Scenarios A & B for **all** offer types,
   because the victim's wallet now signs calldata that *contains the real terms*
-  and the contract enforces the match in `acceptOfferInternal` before any value
+  and the contract enforces the match in `_acceptOffer` before any value
   moves.
 - **Direct accept binds by EQUALITY against the offer endpoints, not a slice**
   (Codex round-1 P1 — corrected). Confirmed in code: direct accept consumes the
@@ -122,7 +133,7 @@ struct ExpectedTerms {
   **keeper matcher** consumes an in-band slice, and it does so via the per-tx
   `matchOverride` slot ([`LoanFacet.sol:759-762`](../../contracts/src/facets/LoanFacet.sol#L759)),
   not through `acceptOffer`. So for the acceptor-facing paths there is no slice —
-  every `ExpectedTerms` field is an exact equality check against the stored
+  every `AcceptTerms` field is an exact equality check against the stored
   offer's effective (post-collapse) value.
 - **`interestRateBps` is bound by EQUALITY, not a one-sided ceiling** (Codex
   round-1 P1). A `maxInterestRateBps` ceiling only protects a borrower-acceptor
@@ -145,7 +156,7 @@ rather than *blindly-trusted*:
 - The acceptor still passes the single `riskAndTermsConsent` bool (the §233/§250
   one acknowledgement, recorded on the loan as
   `Loan.riskAndTermsConsentFromBoth`, [`LibVaipakam.sol:1574`](../../contracts/src/libraries/LibVaipakam.sol#L1574)).
-  `acceptOfferInternal` still requires it `true`.
+  `_acceptOffer` still requires it `true`.
 - **The illiquid LTV/HF bypass additionally requires a named illiquid asset.**
   The acceptor supplies `acknowledgedIlliquidLendingAsset` /
   `acknowledgedIlliquidCollateralAsset` (zero where the leg is liquid).
@@ -159,23 +170,39 @@ rather than *blindly-trusted*:
   knows which legs are illiquid; it passes those identities alongside the single
   acknowledgement the user ticks. No second checkbox.
 
-### 4c. EIP-712 / wallet rendering (honest scope)
+### 4c. EIP-712 typed acceptance is load-bearing (not deferrable) — Codex r2 P1
 
-- **Direct accept** (acceptor = `msg.sender`): there is no off-chain signature,
-  so EIP-712 *typed-data* does not apply. The anti-phishing protection is the
-  `ExpectedTerms` struct **in the transaction calldata**, which the wallet
-  decodes field-by-field — the victim sees the real terms. Defining an
-  `AcceptTerms` typehash with no verifying entry point would **not** make a
-  direct accept "EIP-712 typed" (Codex round-1 P1) — so we do not claim that.
-- **Signed-offer fill path** ([`SignedOfferFacet.acceptSignedOffer*`](../../contracts/src/facets/SignedOfferFacet.sol#L79)):
-  this path already involves EIP-712 (the creator's signed offer). The
-  `ExpectedTerms` binding is threaded through it the same way (see §5) so the
-  fill is bound to terms; the existing signed-offer digest is where typed
-  rendering already happens.
-- **Relayed/gasless signed *accept*** does not exist today (no `acceptOfferBySig`).
-  Recommendation: **defer** it (no product demand) and drop the "EIP-712 typed
-  acceptance" acceptance-criterion in favour of "the acceptor's expected terms
-  are bound on-chain and wallet-visible." **Open question O1.**
+Round-1 proposed relying on the wallet decoding the raw `acceptOffer` calldata.
+Codex round-2 (L169) correctly showed that is **insufficient**: the contract can
+only prove `AcceptTerms == storedOffer`, but a phishing site controls *both* the
+malicious offer *and* the struct it fills, so the equality is tautological for
+the attacker's own offer. The guard prevents a term-swap *between what the
+victim sees and what executes* — but it does nothing if the victim can't read
+*what they're signing*. Raw calldata rendering is wallet-dependent and
+unreliable.
+
+**Therefore acceptance is EIP-712 typed** (the standard way to guarantee a
+trusted, structured, domain-bound terms prompt every major wallet renders
+uniformly):
+
+- The acceptor signs an EIP-712 `AcceptTerms` typed message (reusing
+  `LibSignedOffer`'s domain/typehash/digest machinery,
+  [`LibSignedOffer.sol`](../../contracts/src/libraries/LibSignedOffer.sol)) — the
+  wallet shows "Vaipakam — Accept: lend X of A against Y of B, rate r, …", so a
+  victim sees the *real* terms (incl. the illiquid collateral) and can refuse.
+- The accept entry point verifies the signature (ECDSA + ERC-1271 for smart
+  accounts) over the `AcceptTerms` digest, checks `signer == the acceptor`, and
+  the same digest's fields are bound against the stored offer (§4a) — so the
+  prompt the user approved *is* what executes.
+- `nonce` + `deadline` give replay protection + a signing-window bound (mirrors
+  the Permit2 / stuck-recovery EIP-712 patterns already in the spec, §623/§1968).
+- **Submission:** the acceptor can self-submit (sign + send) or a relayer can
+  submit the signed `AcceptTerms` (gasless). Either way the *signing* step is
+  the trusted prompt. (Self-submit is the default; relay is a future option, not
+  required.)
+
+This makes the calldata-decode fallback unnecessary and satisfies the
+acceptance-criterion "EIP-712 typed so wallets render terms" for real.
 
 ### 4d. Creator-side symmetry (lower priority)
 
@@ -187,29 +214,40 @@ creator consent to the created terms too, but this is **not** required to close
 ## 5. Surface delta (reuse posture)
 
 - **Reused as-is:** `OracleFacet.checkLiquidity` for per-leg liquidity;
-  `Loan.riskAndTermsConsentFromBoth` storage; the single-consent UX.
-- **The true chokepoint is `acceptOfferInternal`**
-  ([`OfferAcceptFacet.sol:284`](../../contracts/src/facets/OfferAcceptFacet.sol#L284)),
-  through which **all** accept paths route — `acceptOffer`,
-  `acceptOfferWithPermit`, `SignedOfferFacet.acceptSignedOffer` /
-  `acceptSignedOfferWithPermit` (Codex round-1 P1 — the signed path was missed
-  in the first draft), and the keeper `OfferMatchFacet`. The `ExpectedTerms`
-  guard + acknowledged-asset binding live in `acceptOfferInternal`; each public
-  entry threads the new params in.
+  `Loan.riskAndTermsConsentFromBoth` storage; the single-consent UX;
+  `LibSignedOffer` EIP-712 domain/typehash/digest machinery.
+- **The true binding chokepoint is `_acceptOffer`**
+  ([`OfferAcceptFacet.sol:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517))
+  — confirmed both the direct `acceptOffer` ([`:242`](../../contracts/src/facets/OfferAcceptFacet.sol#L242))
+  and the cross-facet `acceptOfferInternal` ([`:284`](../../contracts/src/facets/OfferAcceptFacet.sol#L284),
+  called by `SignedOfferFacet.acceptSignedOffer*` and `OfferMatchFacet`) funnel
+  into `_acceptOffer` (Codex r2 P1 — round-1 mis-stated the chokepoint as
+  `acceptOfferInternal`). The term-binding + acknowledged-asset check live in
+  `_acceptOffer`; the **signature verification** lives at each public entry
+  (where `msg.sender`/the signed acceptor is known), threading the verified
+  `AcceptTerms` down.
 - **Modified (additive):** `acceptOffer` / `acceptOfferWithPermit` /
-  `acceptSignedOffer*` signatures (+`ExpectedTerms`, +acknowledged-asset params;
-  the single `riskAndTermsConsent` bool is **kept**); `acceptOfferInternal`
-  (guard + bind); `_maybeRunInitialRiskGates` (asset-match in addition to the
-  bool).
-- **New:** `struct ExpectedTerms`; errors `OfferTermsMismatch`,
-  `IlliquidAssetNotAcknowledged`.
-- **Match path — bound by construction, not exempt:** the keeper matcher routes
-  through the same `acceptOfferInternal`. Because the matcher is not a phished
-  victim and the creators' offers are self-authored, the matcher passes an
-  `ExpectedTerms` derived from the offers it is matching (or a sentinel that the
-  guard treats as "matcher-internal"); **Open question O4** — confirm whether
-  the matcher supplies real expected terms or is explicitly exempted at the
-  `acceptOfferInternal` boundary (keeper-only modifier already gates it).
+  `SignedOfferFacet.acceptSignedOffer*` signatures (+ signed `AcceptTerms` +
+  signature + acknowledged-asset params; the single `riskAndTermsConsent` bool
+  is **kept**); `_acceptOffer` (guard + bind); `_maybeRunInitialRiskGates`
+  (asset-match in addition to the bool).
+- **New:** `struct AcceptTerms` (EIP-712 typed) + its typehash; errors
+  `OfferTermsMismatch`, `IlliquidAssetNotAcknowledged`, `AcceptSignatureInvalid`,
+  `AcceptDeadlineExpired`; a per-acceptor nonce mapping.
+- **Match path — safe via self-authored offers, NOT a keeper gate** (Codex r2 P2
+  — corrected): `matchOffers` / `matchSignedOffer` are **permissionless**
+  (gated only on the `partialFillEnabled` master flag, not keeper-only), so the
+  exemption cannot rest on "keeper-only." It rests instead on: the matcher pairs
+  **two already-authored offers**, each carrying its creator's own consent and
+  range bounds; there is no acceptor-victim, and the per-tx `matchOverride`
+  slice is already bounded by *both* offers' `[min,max]`. So the matcher path
+  does not require an `AcceptTerms` signature; `_acceptOffer` recognises the
+  match context (the `matchOverride` slot is set) and skips the
+  signature/ack requirement while still honouring both offers' creator consent.
+- **ABI / deploy-sanity (Codex r2 P2):** selector changes for `acceptOffer`,
+  `acceptOfferWithPermit`, **and** `acceptSignedOffer` / `acceptSignedOfferWithPermit`
+  → all four updated in `exportFrontendAbis.sh`, `DeployDiamond` selector lists,
+  `SelectorCoverageTest`, `HelperTest`.
 
 ## 6. ABI / consumer / spec impact
 
@@ -218,7 +256,7 @@ creator consent to the created terms too, but this is **not** required to close
   `SelectorCoverageTest`, `HelperTest`.
 - **Frontend:** `OfferBook` accept call + `AcceptReviewModal`
   ([`apps/defi/src/pages/OfferBook.tsx`](../../apps/defi/src/pages/OfferBook.tsx))
-  pass `ExpectedTerms` (the modal already shows these exact terms) + the
+  pass `AcceptTerms` (the modal already shows these exact terms) + the
   illiquid-asset identities; the single consent checkbox is unchanged.
 - **FunctionalSpec update (same PR as code, per convention):**
   `ProjectDetailsREADME.md` §234 gains an on-chain **expected-terms match**
@@ -232,9 +270,9 @@ creator consent to the created terms too, but this is **not** required to close
   acknowledged asset → `IlliquidAssetNotAcknowledged`; mismatched terms →
   `OfferTermsMismatch`.
 - Scenario B (dummy illiquid principal) symmetric revert.
-- Happy path: correct `ExpectedTerms` + correct acknowledged asset → loan
+- Happy path: correct `AcceptTerms` + correct acknowledged asset → loan
   initiates; `riskAndTermsConsentFromBoth == true`.
-- Per-field mismatch (every `ExpectedTerms` field, incl. `quantity` /
+- Per-field mismatch (every `AcceptTerms` field, incl. `quantity` /
   `collateralQuantity` / `prepayAsset` / asset types / `useFullTermInterest` /
   `allowsPartialRepay` / `periodicInterestCadence`) reverts `OfferTermsMismatch`
   — one case per field so a partial swap can't slip through.
@@ -254,18 +292,21 @@ exact `interestRateBps` equality (was O on rates); NFT/1155 discriminators →
 full `quantity`/`collateralQuantity`/asset-type binding (was O3); direct-accept
 slice → endpoint equality; signed-offer path now threaded; consent signal kept.
 
+**Resolved in round-2** (no longer open): O1 — EIP-712 typed acceptance is now
+**adopted as load-bearing** (§4c), not deferred (Codex r2 L169 showed the
+calldata-only guard is tautological against an attacker's own offer). O4 — the
+match path needs **no** `AcceptTerms`: `_acceptOffer` recognises the
+`matchOverride` context and skips the signature/ack requirement; safety rests on
+both sides being self-authored offers (not on a keeper gate, which `matchOffers`
+does not have).
+
 Still open:
-- **O1 — EIP-712 typed *acceptance*:** recommend **dropping** the "EIP-712 typed
-  acceptance" criterion for the direct path (the calldata `ExpectedTerms` struct
-  is the wallet-visible binding) and **deferring** any relayed/gasless
-  `acceptOfferBySig` until there's product demand. Confirm?
 - **O2 — creator-side term binding:** fold `createOffer` creator-consent→terms
-  binding into this PR, or follow-up? (Acceptor-side is the live vector.)
-- **O4 — match path at the `acceptOfferInternal` boundary:** matcher supplies
-  real `ExpectedTerms` derived from the matched offers, **or** an explicit
-  keeper-only exemption (the matcher is gated keeper-only and not a phished
-  victim)? Recommend the explicit exemption — simpler, and the matcher's inputs
-  are the creators' self-authored offers.
+  binding into this PR, or follow-up? (Acceptor-side is the live vector;
+  recommend follow-up to keep this PR focused.)
+- **O5 (new) — relayer support:** ship self-submit-only (acceptor signs + sends)
+  now and add gasless relay later, or wire a relayer entry point in this PR?
+  (Recommend self-submit-only first.)
 
 ## 9. Relationship to #671
 
