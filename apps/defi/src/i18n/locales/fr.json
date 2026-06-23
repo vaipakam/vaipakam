@@ -1234,8 +1234,7 @@
     "tokenLabel": "Token",
     "authorizedMinter": "Émetteur autorisé",
     "treasuryMintDestination": "Trésorerie (destination d'émission)",
-    "yourActivity": "Votre activité VPFI",
-    "noActivity": "Aucun transfert VPFI ne touche encore ce portefeuille sur {{chain}}. Les distributions destinées aux utilisateurs (récompenses, staking) arriveront dans une phase ultérieure."
+    "yourActivity": "Votre activité VPFI"
   },
   "vpfiVaultCards": {
     "discountStatusTitle": "Votre statut de remise VPFI",
@@ -1523,7 +1522,6 @@
     "loanDetailsActionsLender": "Actions disponibles pour le prêteur sur ce prêt. Réclamer une fois le prêt réglé (restitue principal + intérêts, moins les {{treasuryFee}}% prélevés par la trésorerie). Initier une Sortie Anticipée pour vendre le NFT prêteur à un acheteur en cours de prêt. N'importe qui (y compris le prêteur) peut déclencher Liquider quand HF < 1 ou que la période de grâce a expiré. Les actions désactivées affichent une raison au survol.",
     "loanDetailsActionsBorrower": "Actions disponibles pour l'emprunteur sur ce prêt. Rembourser intégralement ou partiellement ; Preclose direct (payer le restant maintenant) ou compensation (vendre du collatéral via DEX) ; Refinancer en un nouveau prêt avec de nouveaux termes. Réclamer restitue le collatéral en cas de remboursement intégral, ou toute remise VPFI inutilisée. Les actions désactivées affichent une raison au survol.",
     "buyVpfiUnstake": "Déplacer du VPFI du vault vers le portefeuille sur cette chaîne. Réduit le palier de remise en temps réel — l'accumulateur pondéré dans le temps recalcule immédiatement chaque prêt ouvert au nouveau solde (plus bas), de sorte qu'un retrait est effectif pour la mécanique de remise dès cet instant.",
-    "rewardsClaim": "Émet tout VPFI en attente issu des deux flux de récompenses (staking + interaction) vers le portefeuille, sur la chaîne courante, en une seule transaction. Le pool d'interaction se finalise quotidiennement — les récompenses d'interaction en attente deviennent retirables peu après la fermeture de chaque fenêtre de règlement.",
     "activityFeed": "Événements on-chain impliquant le portefeuille connecté sur la chaîne active — offres créées ou acceptées, prêts, remboursements, retraits, liquidations, émissions/destructions de NFT, achats/dépôts/retraits de VPFI. Issus en direct des journaux d'événements du Diamond (sans backend), groupés par transaction et triés du plus récent au plus ancien."
   },
   "acceptReview": {

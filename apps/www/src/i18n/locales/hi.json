@@ -69,7 +69,6 @@
     "security": "सुरक्षा",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI के बारे में जानें",
-    "vpfiBuy": "VPFI",
     "vpfiStakeUnstake": "Stake / Unstake करें",
     "vpfiStake": "Stake",
     "vpfiUnstake": "Unstake",
@@ -91,7 +90,6 @@
     "dashboard": "डैशबोर्ड",
     "offerBook": "ऑफर बुक",
     "createOffer": "ऑफर बनाएं",
-    "buyVpfi": "VPFI",
     "claimCenter": "Claim Center",
     "activity": "गतिविधि",
     "alerts": "अलर्ट",
@@ -351,36 +349,18 @@
     "trustWarning": "कोई भी किसी भी symbol के साथ token deploy कर सकता है — symbol पर भरोसा करने के बजाय contract address की जाँच करके इस token पर अपना भरोसा पुष्टि करें।"
   },
   "buyVpfi": {
-    "title": "VPFI",
     "preconnect": {
-      "tagline": "हर loan पर कम fees चुकाने के लिए अपने vault में VPFI stake करें।",
       "whatTitle": "VPFI क्या है?",
-      "whatBody1": "VPFI Vaipakam का protocol token है — इसे open market पर हासिल करें या bridge करके लाएँ, अपने Vaipakam Vault में रखें और platform पर उपयोग करें। कोई lock-up period नहीं; यह freely transferable है।",
-      "whatBody2": "VPFI को अपने vault में रखने से आप protocol की सफलता से दो व्यावहारिक तरीकों से जुड़ते हैं: Vaipakam द्वारा ली जाने वाली fees पर discount मिलता है (lending पर अधिक बचता है और borrowing पर कम खर्च होता है), और जिस भी loan में आप भाग लेते हैं उसके लिए daily interaction-reward pool का हिस्सा कमाते हैं।",
-      "whatBody3": "नीचे की दो benefit cards साफ दिखाती हैं कि VPFI hold करने से आपको क्या मिलता है।",
       "discountTitle": "Tiered fee discount",
       "discountBody": "Personal vault में रखा VPFI Vaipakam protocol fees पर time-weighted discount देता है — हर loan settlement पर अलग claim step के बिना automatically apply होता है:",
       "discountBullet1": "Lenders: earned interest पर treasury share में discount। Loan अवधि में जितनी देर VPFI held रहा, treasury cut उतना कम होता है।",
       "discountBullet2": "Borrowers: Loan Initiation Fee पर VPFI rebate, proper close (repay / preclose / refinance) पर paid। Default होने पर यह rebate forfeited हो जाता है।",
       "howTitle": "यह कैसे काम करता है",
-      "howBody": "VPFI को open market पर हासिल करें या bridge करके लाएँ, फिर fee discount कमाना शुरू करने के लिए उसे अपने vault में deposit करें। Cross-chain routing आपके लिए संभाली जाती है — VPFI उसी chain पर आता है जहाँ आपने bridge किया।",
       "analyticsHint": "Protocol-wide stats और circulating supply खोज रहे हैं? देखें",
-      "analyticsLink": "Analytics page",
-      "launchAppCta": "Stake / Unstake के लिए Vaipakam खोलें",
-      "launchAppHint": "App नए tab में खुलता है। Wallet connect करने के बाद deposit और withdraw controls वहीं मिलेंगे।"
+      "analyticsLink": "Analytics page"
     },
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
-    "connectBody": "VPFI deposit या withdraw करने के लिए अपना वॉलेट कनेक्ट करें। यही पेज दोनों संभालता है — आपका वॉलेट तय करता है कि आप कौन-सी क्रिया कर सकते हैं।",
     "unsupportedNetwork": "असमर्थित नेटवर्क",
-    "unsupportedNetworkBody": "VPFI किसी भी समर्थित Vaipakam चेन पर उपलब्ध है। आपका वॉलेट वर्तमान में एक ऐसे नेटवर्क पर है जो Vaipakam Diamond होस्ट नहीं करता। जारी रखने के लिए समर्थित चेन पर स्विच करें।",
-    "pageSubtitle": "liquid loans पर tiered fee discount unlock करने के लिए अपने vault में VPFI deposit करें।",
-    "step1Title": "अपने vault में VPFI deposit करें",
-    "step1SubtitleCanonical": "{{chain}} पर सीधे। VPFI इस चेन पर आपके वॉलेट में आता है।",
-    "step1SubtitleBridged": "{{chain}} से सीधे — कोई भी क्रॉस-चेन रूटिंग आपके लिए संभाली जाती है। VPFI इस चेन पर आपके वॉलेट में आता है।",
-    "step1SubtitlePending": "VPFI vault deposit {{chain}} पर सक्षम किया जा रहा है। आप यहां जारी रख सकते हैं — चेन स्विच की आवश्यकता नहीं।",
-    "step2Title": "अपने Vault में VPFI deposit / stake करें",
-    "step2Info": "अपने vault में VPFI deposit करने से fee-discount tier unlock होता है। पहली बार? पहले deposit पर आपका Vaipakam Vault अपने-आप बन जाता है — कोई setup नहीं चाहिए।",
-    "step3Title": "अपने Vault से VPFI withdraw / unstake करें",
     "buy": "VPFI खरीदें",
     "buying": "खरीद रहे हैं…",
     "approving": "अप्रूव हो रहा है…",
@@ -446,8 +426,6 @@
     "claimRetryExecuted": "Claim समय पर swap पुनः प्रयास",
     "lifRebateClaimed": "VPFI शुल्क छूट claim की गई",
     "interactionRewardsClaimed": "Platform-interaction rewards claim किए गए",
-    "vpfiDeposited": "VPFI vault में deposit किया गया",
-    "vpfiWithdrawn": "VPFI vault से withdraw किया गया",
     "lblPrincipal": "मूलधन",
     "lblCollateral": "Collateral",
     "lblLender": "Lender",
@@ -499,7 +477,6 @@
   "rewardsSummary": {
     "title": "आपके VPFI पुरस्कार",
     "totalEarnedLabel": "कुल अर्जित",
-    "freshUserHint": "आपने अभी तक कोई VPFI पुरस्कार नहीं कमाया है। platform-interaction रिबेट जमा करना शुरू करने के लिए एक ऋण लें।",
     "interactionTitle": "प्लेटफ़ॉर्म-इंटरैक्शन पुरस्कार",
     "interactionSubtitle": "हर ऋण के लिए जिसमें आप भाग लेते हैं, दैनिक VPFI हिस्सा कमाएं।",
     "pendingLabel": "लंबित",
@@ -794,7 +771,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "आपको टोकन उधार देने और उधार लेने, NFTs किराए पर देने और अपनी शर्तें निर्धारित करने देता है। हर पोजीशन एक अनूठे NFT द्वारा ट्रैक की जाती है — पारदर्शी, ट्रेस करने योग्य और ऑफ़र से सेटलमेंट तक भरोसेमंद।",
     "launchApp": "Vaipakam खोलें",
-    "buyVpfi": "VPFI लाभ",
     "howItWorks": "यह कैसे काम करता है",
     "statP2pValue": "P2P",
     "statP2pLabel": "प्रत्यक्ष ऋण",
@@ -944,8 +920,7 @@
       },
       "basics-vpfi-intro": {
         "q": "VPFI क्या है, और क्या ऐप के उपयोग के लिए इसकी ज़रूरत है?",
-        "a1": "VPFI Vaipakam का मूल प्लेटफ़ॉर्म टोकन है। ऋण देने या लेने के लिए VPFI रखना <s>आवश्यक नहीं</s> है — ऐप इसके बिना भी पूरी तरह काम करता है, और हर मुख्य सुविधा सबके लिए खुली है।",
-        "a2": "VPFI नियमित उपयोगकर्ताओं के लिए उपयोगी होता है। इसे Vaipakam Vault में रखने पर प्लेटफ़ॉर्म फीस पर छूट मिलती है और साथ ही पैसिव रिवॉर्ड कमाने का अवसर भी। इसे एक वैकल्पिक लॉयल्टी परत समझिए, द्वार नहीं।"
+        "a1": "VPFI Vaipakam का मूल प्लेटफ़ॉर्म टोकन है। ऋण देने या लेने के लिए VPFI रखना <s>आवश्यक नहीं</s> है — ऐप इसके बिना भी पूरी तरह काम करता है, और हर मुख्य सुविधा सबके लिए खुली है।"
       },
       "assets": {
         "q": "मैं कौन-सी परिसंपत्तियाँ उधार दे या ले सकता हूँ?",
@@ -990,7 +965,6 @@
       },
       "chains": {
         "q": "कौन-सी ब्लॉकचेन समर्थित हैं?",
-        "a1": "चरण 1 का लक्ष्य <s>Base</s>, <s>Polygon</s>, <s>Arbitrum</s>, <s>Optimism</s> और <s>Ethereum मेननेट</s> हैं। Base VPFI की प्रामाणिक चेन है (जहाँ टोकन का मिंट होता है और निश्चित-मूल्य खरीद रहती है), लेकिन ऐप का Buy VPFI पेज हर समर्थित चेन से काम करता है — यह स्वतः ही Base पर सीधी खरीद, या किसी मिरर चेन से Chainlink CCIP द्वारा ब्रिज़्ड खरीद का चयन कर लेता है, इसलिए केवल टॉप-अप के लिए नेटवर्क बदलने की ज़रूरत नहीं पड़ती।",
         "a2": "आज लाइव डिप्लॉयमेंट <s>Sepolia</s> है, जबकि अन्य चेनें क्रमशः जोड़ी जा रही हैं। एक ही ऋण के सभी पहलू एक ही नेटवर्क पर निष्पादित होने चाहिए।"
       },
       "sequencer": {
@@ -1038,13 +1012,10 @@
       },
       "vpfi-rewards": {
         "q": "मैं VPFI रिवॉर्ड कैसे कमा सकता हूँ?",
-        "a1": "रिवॉर्ड एक उपयोग-आधारित स्रोत से आते हैं, जो आपकी भागीदारी से जुड़ा है:",
         "li2": "<s>इंटरैक्शन रिवॉर्ड:</s> चुकाए या प्राप्त किए गए ऋण ब्याज पर VPFI देता है, प्रति उपयोगकर्ता <s2>प्रति 0.001 ETH ब्याज पर 0.5 VPFI</s2> की अधिकतम सीमा के साथ, 30% इंटरैक्शन-रिवॉर्ड पूल (6.9 करोड़ VPFI) से। यह सीमा वॉश-लोन फार्मिंग को रोकती है।"
       },
       "tokenomics": {
         "q": "VPFI टोकेनॉमिक्स क्या है?",
-        "a1": "अधिकतम आपूर्ति <s>23 करोड़ VPFI</s>। जेनेसिस मिंट Base पर <s2>2.3 करोड़ (10%)</s2>; शेष आपूर्ति उपयोग और पूल ड्रॉडाउन के विरुद्ध अनलॉक होती है।",
-        "a2": "आवंटन:",
         "tableBucket": "श्रेणी",
         "tableShare": "हिस्सेदारी",
         "row1Bucket": "इंटरैक्शन रिवॉर्ड",
@@ -1054,8 +1025,7 @@
         "row6Bucket": "प्रारंभिक योगदानकर्ता",
         "row7Bucket": "प्लेटफ़ॉर्म एडमिन",
         "row8Bucket": "सुरक्षा ऑडिटर",
-        "row9Bucket": "बग बाउंटी",
-        "row10Bucket": "Reserve (pending reallocation)"
+        "row9Bucket": "बग बाउंटी"
       },
       "nft-positions": {
         "q": "Vaipakam पोज़िशन NFT क्या हैं?",
@@ -1226,22 +1196,18 @@
     "vaultBalance": "Vault VPFI शेष",
     "vaultTooltip": "इस चेन पर प्रति-उपयोगकर्ता Vault में वर्तमान में स्टेक किया गया VPFI। ऋणकर्ता शुल्क छूट Tier में गिना जाता है।",
     "shareCirculating": "परिसंचारी हिस्सा",
-    "shareTooltip": "इस chain के VPFI supply पर प्रभावी स्वामित्व — wallet balance प्लस vault में लॉक balance, circulating से विभाजित। Vault VPFI अभी भी user का है; यह केवल fee-discount tier के लिए लॉक है।",
     "circulatingThisChain": "परिसंचारी (यह चेन)",
     "remainingMintable": "शेष मिंट योग्य",
     "tokenLabel": "टोकन",
     "authorizedMinter": "अधिकृत मिंटर",
     "treasuryMintDestination": "ट्रेज़री (मिंट गंतव्य)",
-    "yourActivity": "आपकी VPFI गतिविधि",
-    "noActivity": "{{chain}} पर अभी तक इस वॉलेट को छूने वाले कोई VPFI ट्रांसफर नहीं हैं। उपयोगकर्ता-केंद्रित वितरण (पुरस्कार, स्टेकिंग) बाद के रोलआउट चरण में आते हैं।",
-    "vaultCountsAsStaked": "Vault VPFI आपके fee-discount tier की ओर गिना जाता है"
+    "yourActivity": "आपकी VPFI गतिविधि"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "आपकी VPFI छूट स्थिति",
     "currentTier": "वर्तमान Tier",
     "noDiscountYet": "अभी कोई छूट नहीं",
     "vaultVpfi": "Vault VPFI",
-    "vaultCountsAsStaked": "Vault VPFI आपके fee-discount tier की ओर गिना जाता है",
     "statusLabel": "स्थिति",
     "inactiveOff": "निष्क्रिय · छूट सहमति बंद",
     "inactiveBelowTier1": "निष्क्रिय · Tier 1 से नीचे (Vault में {{tier1Min}} VPFI)",
@@ -1271,7 +1237,6 @@
     "exceedsVaultBalance": "राशि Vault VPFI शेष {{balance}} VPFI से अधिक है।",
     "depositTitle": "VPFI को Vault में जमा करें",
     "depositSubtitle": "हर चेन पर आवश्यक — विहित चेन सहित।",
-    "depositSpecNote": "विशेष विवरण के अनुसार, VPFI को Vault में स्थानांतरित करना हमेशा एक स्पष्ट उपयोगकर्ता क्रिया होती है। प्रोटोकॉल कभी भी Vault को स्वतः फंड नहीं करता।",
     "walletVpfiBalance": "वॉलेट VPFI शेष",
     "vaultVpfiBalance": "Vault VPFI शेष ({{chain}})",
     "depositAmount": "जमा करने के लिए VPFI राशि",
@@ -1280,7 +1245,6 @@
     "unstakeTitle": "Vault से VPFI अनस्टेक करें",
     "unstakeSubtitle": "{{chain}} पर Vault से VPFI को वापस वॉलेट में ले जाएँ। यदि Vault शेष Tier सीमा से नीचे गिरता है, तो छूट Tier भी गिर जाता है।",
     "unstakeAmount": "अनस्टेक करने के लिए VPFI राशि",
-    "unstakeWarning": "Vault VPFI borrower fee discount tier की ओर गिना जाता है। Unstaking tokens को wallet में वापस ले जाता है — यदि शेष vault balance tier threshold से नीचे गिरता है, तो अगले loan पर discount भी कम हो जाता है।",
     "unstakeButton": "वॉलेट में निकालें"
   },
   "alertsPage": {
@@ -1498,7 +1462,6 @@
     "dashboardYourLoans": "इस चेन पर हर वह लोन जिसमें कनेक्ट किया गया वॉलेट शामिल है — ऋणदाता, ऋणकर्ता या दोनों के रूप में। प्रत्येक रो HF, LTV, गिरवी, रीपे और क्लेम कंट्रोल सहित पूर्ण पोजीशन पेज से लिंक करती है।",
     "dashboardVpfiPanel": "VPFI प्रोटोकॉल टोकन है। यह कार्ड इस चेन पर वॉलेट + Vault बैलेंस, सर्कुलेटिंग सप्लाई का हिस्सा और शेष माइंट करने योग्य कैप दिखाता है। कैनोनिकल चेन लॉक/रिलीज़ करती है; मिरर चेन Chainlink CCIP CCT के माध्यम से माइंट/बर्न करती हैं।",
     "dashboardFeeDiscountConsent": "प्रोटोकॉल को Vault से VPFI में रियायती शुल्क का भुगतान करने के लिए ऑप्ट-इन। डिस्काउंट Vault VPFI बैलेंस के साथ बढ़ता है: Tier 1 (≥{{tier1Min}} VPFI) पर {{tier1Discount}}%, Tier 2 (≥{{tier2Min}}) पर {{tier2Discount}}%, Tier 3 (≥{{tier3Min}}) पर {{tier3Discount}}%, Tier 4 (>{{tier4Min}}) पर {{tier4Discount}}%।",
-    "dashboardRewardsSummary": "आपके platform-interaction पुरस्कारों का दृश्य: हर उस ऋण के लिए दैनिक VPFI हिस्सा जिसमें आप शामिल हैं। संबंधित पृष्ठ पर पूर्ण दावा कार्ड पर जाने के लिए एक पंक्ति पर क्लिक करें।",
     "offerBookFilters": "नीचे दी गई मार्केट सूचियों को एसेट, साइड, स्टेटस और अन्य मानदंडों के अनुसार सीमित करें। फ़िल्टर ऋणदाता / ऋणकर्ता ऑफ़र पर लागू होते हैं — कनेक्ट किए गए वॉलेट के अपने सक्रिय ऑफ़र (ऊपर दिखाए गए) हमेशा फ़िल्टर की परवाह किए बिना दिखते हैं।",
     "offerBookYourActiveOffers": "इस चेन पर कनेक्ट किए गए वॉलेट द्वारा बनाए गए ऑफ़र जो अभी तक स्वीकार नहीं हुए हैं। किसी के स्वीकार करने से पहले कभी भी रद्द किए जा सकते हैं; स्वीकार होने पर लोन लाइफसाइकल Dashboard के \"Your Loans\" में चली जाती है।",
     "offerBookLenderOffers": "उधार देने के लिए तैयार ऋणदाता्स द्वारा पोस्ट किए गए ऑफ़र। एक ऋणकर्ता इनमें से किसी एक को स्वीकार करता है तो लोन शुरू होता है: ऋणकर्ता का गिरवी लॉक हो जाता है, प्रिंसिपल एसेट ऋणकर्ता के वॉलेट में पहुंचता है, और रीपेमेंट तक ब्याज जमा होता रहता है। शुरू होते समय HF ≥ 1.5 होना चाहिए।",
@@ -1544,14 +1507,7 @@
     "loanDetailsParties": "ऋणदाता और ऋणकर्ता के एड्रेस, उनके एसेट रखने वाले प्रति-उपयोगकर्ता Vault प्रॉक्सी, और हर साइड को लोन शुरू होने पर मिले पोजीशन NFT। हर NFT उस साइड के दावे का बेयरर इंस्ट्रूमेंट है — इसे खोना दावे को खोना है।",
     "loanDetailsActionsLender": "इस लोन पर ऋणदाता के लिए उपलब्ध क्रियाएँ। लोन सेटल होने पर क्लेम (प्रिंसिपल + ब्याज लौटाता है, {{treasuryFee}}% ट्रेज़री कटौती के बाद)। लोन के बीच में ऋणदाता NFT को खरीदार को बेचने के लिए अर्ली विदड्रॉल शुरू करें। कोई भी (ऋणदाता सहित) Liquidate ट्रिगर कर सकता है जब HF < 1 हो या ग्रेस अवधि समाप्त हो जाए। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
     "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "buyVpfiOverview": "VPFI को open market पर हासिल करें या bridge करके लाएँ। VPFI एक Chainlink CCIP cross-chain token है, इसलिए वह official bridge का उपयोग करके supported chains के बीच move करता है और जिस chain से connected हैं उसी पर wallet में land करता है — कोई chain switch आवश्यक नहीं।",
-    "buyVpfiDiscountStatus": "इस chain पर सक्रिय VPFI fee-discount tier। Tier vault VPFI balance से सेट होता है: Tier 1 ≥{{tier1Min}}, Tier 2 ≥{{tier2Min}}, Tier 3 ≥{{tier3Min}}, Tier 4 >{{tier4Min}}। Discount केवल liquid loans पर लागू होता है और केवल जब Dashboard पर platform-level consent toggle चालू हो।",
-    "buyVpfiDeposit": "VPFI को wallet से इस chain पर vault में ले जाएँ। हमेशा एक explicit user action: protocol कभी भी vault को auto-fund नहीं करता। Fee discounts के लिए qualify होने हेतु आवश्यक। उपलब्ध होने पर Permit2 का उपयोग होता है ताकि एक signature approve + transfer pair को बदल दे।",
-    "buyVpfiUnstake": "इस चेन पर VPFI को Vault से वॉलेट में वापस ले जाएँ। डिस्काउंट टियर रियल-टाइम में घटाता है — टाइम-वेटेड एक्युमुलेटर हर खुले लोन को नए (कम) बैलेंस पर तुरंत री-स्टांप करता है, इसलिए एक unstake उस क्षण से शुल्क-डिस्काउंट गणित के लिए प्रभावी होता है।",
-    "rewardsOverview": "इस chain पर interaction-reward stream संचित होती है: एक loan पर सेटल किया गया प्रत्येक USD interest, interaction pool का दैनिक हिस्सा कमाता है। Claim करने पर rewards सीधे current chain पर mint होते हैं — कोई bridging नहीं।",
-    "rewardsClaim": "किसी भी लंबित interaction-reward VPFI को मौजूदा चेन पर एक ट्रांज़ैक्शन में वॉलेट में माइंट करता है। इंटरैक्शन पूल दैनिक रूप से अंतिम रूप लेता है — लंबित इंटरैक्शन रिवॉर्ड हर सेटलमेंट विंडो बंद होने के तुरंत बाद क्लेम करने योग्य हो जाते हैं।",
-    "rewardsWithdrawStaked": "VPFI को vault से wallet में वापस ले जाएँ। निकाला गया VPFI fee-discount tier की ओर अब नहीं गिना जाता — time-weighted accumulator तुरंत हर open loan पर नए (कम) balance के साथ re-stamp करता है।",
-    "activityFeed": "सक्रिय चेन पर कनेक्ट किए गए वॉलेट से जुड़े ऑन-चेन इवेंट — बनाए या स्वीकार किए गए ऑफ़र, लोन, रीपेमेंट, क्लेम, लिक्विडेशन, NFT माइंट/बर्न, VPFI vault deposits/withdrawals। Diamond इवेंट लॉग से लाइव प्राप्त (कोई बैकएंड नहीं), ट्रांज़ैक्शन के अनुसार समूहीकृत और सबसे नए-पहले क्रम में।"
+    "buyVpfiUnstake": "इस चेन पर VPFI को Vault से वॉलेट में वापस ले जाएँ। डिस्काउंट टियर रियल-टाइम में घटाता है — टाइम-वेटेड एक्युमुलेटर हर खुले लोन को नए (कम) बैलेंस पर तुरंत री-स्टांप करता है, इसलिए एक unstake उस क्षण से शुल्क-डिस्काउंट गणित के लिए प्रभावी होता है।"
   },
   "acceptReview": {
     "partialRepayLabel": "आंशिक पुनर्भुगतान",

@@ -1233,8 +1233,7 @@
     "tokenLabel": "Token",
     "authorizedMinter": "Acuñador autorizado",
     "treasuryMintDestination": "Tesorería (destino de acuñación)",
-    "yourActivity": "Tu actividad VPFI",
-    "noActivity": "Aún no hay transferencias VPFI que afecten a esta cartera en {{chain}}. Las distribuciones orientadas al usuario (recompensas, staking) llegarán en una fase posterior."
+    "yourActivity": "Tu actividad VPFI"
   },
   "vpfiVaultCards": {
     "discountStatusTitle": "Tu estado de descuento VPFI",
@@ -1522,7 +1521,6 @@
     "loanDetailsActionsLender": "Acciones disponibles para el prestamista en este préstamo. Reclamar una vez liquidado el préstamo (devuelve principal + intereses, menos el {{treasuryFee}}% de comisión de tesorería). Iniciar Retirada Anticipada para vender el NFT del prestamista a un comprador a mitad del préstamo. Cualquiera (incluido el prestamista) puede activar Liquidar cuando HF < 1 o el período de gracia haya expirado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
     "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
     "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento.",
-    "rewardsClaim": "Acuña cualquier VPFI pendiente de ambos flujos de recompensas (staking + interacción) a la wallet, en la cadena actual, en una sola transacción. El pool de interacción se finaliza diariamente — las recompensas pendientes de interacción quedan reclamables poco después del cierre de cada ventana de liquidación.",
     "activityFeed": "Eventos on-chain que involucran a la wallet conectada en la cadena activa — ofertas creadas o aceptadas, préstamos, reembolsos, reclamaciones, liquidaciones, mints/burns de NFTs, compras/stakes/unstakes de VPFI. Obtenidos en vivo desde los logs de eventos del Diamond (sin backend), agrupados por transacción y ordenados de más reciente a más antiguo."
   },
   "acceptReview": {

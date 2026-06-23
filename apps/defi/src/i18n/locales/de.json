@@ -1234,8 +1234,7 @@
     "tokenLabel": "Token",
     "authorizedMinter": "Autorisierter Minter",
     "treasuryMintDestination": "Treasury (Mint-Ziel)",
-    "yourActivity": "VPFI-Aktivität",
-    "noActivity": "Es gibt noch keine VPFI-Transfers, die dieses Wallet auf {{chain}} betreffen. Nutzergerichtete Verteilungen (Belohnungen, Staking) erfolgen in einer späteren Phase."
+    "yourActivity": "VPFI-Aktivität"
   },
   "vpfiVaultCards": {
     "discountStatusTitle": "VPFI-Rabattstatus",
@@ -1523,7 +1522,6 @@
     "loanDetailsActionsLender": "Für den Kreditgeber auf diesem Kredit verfügbare Aktionen. Beanspruchen, sobald der Kredit abgewickelt ist (gibt Hauptbetrag + Zinsen zurück, abzüglich des {{treasuryFee}}% Treasury-Anteils). Vorzeitiger Ausstieg initiieren, um das Kreditgeber-NFT mitten im Kredit an einen Käufer zu verkaufen. Jeder (einschließlich des Kreditgebers) kann Liquidieren auslösen, wenn HF < 1 oder die Gnadenfrist abgelaufen ist. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass ein Unstake ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist.",
-    "rewardsClaim": "Prägt jegliche ausstehenden VPFI aus beiden Belohnungsströmen (Staking + Interaction) in das Wallet auf der aktuellen Chain in einer Transaktion. Der Interaction-Pool wird täglich finalisiert — ausstehende Interaction-Belohnungen werden kurz nach Schließung jedes Settlement-Fensters beanspruchbar.",
     "activityFeed": "On-Chain-Ereignisse, an denen das verbundene Wallet auf der aktiven Chain beteiligt ist — erstellte oder akzeptierte Angebote, Kredite, Rückzahlungen, Beanspruchungen, Liquidationen, NFT-Mints/Burns, VPFI-Käufe/Stakes/Unstakes. Live aus den Diamond-Event-Logs bezogen (kein Backend), nach Transaktion gruppiert und neueste zuerst sortiert."
   },
   "acceptReview": {

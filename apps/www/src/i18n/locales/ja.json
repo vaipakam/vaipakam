@@ -69,7 +69,6 @@
     "security": "セキュリティ",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFIについて学ぶ",
-    "vpfiBuy": "VPFI",
     "vpfiStakeUnstake": "ステーク / アンステーク",
     "vpfiStake": "ステーク",
     "vpfiUnstake": "アンステーク",
@@ -91,7 +90,6 @@
     "dashboard": "ダッシュボード",
     "offerBook": "オファーブック",
     "createOffer": "オファー作成",
-    "buyVpfi": "VPFI",
     "claimCenter": "クレームセンター",
     "activity": "アクティビティ",
     "alerts": "アラート",
@@ -351,36 +349,18 @@
     "trustWarning": "誰でも任意のシンボルでトークンをデプロイできます — 表示されているシンボルではなく、コントラクトアドレスそのものを確認してこのトークンを信頼できることを確認してください。"
   },
   "buyVpfi": {
-    "title": "VPFI",
     "preconnect": {
-      "tagline": "VaultにVPFIをステークして、すべてのローンの手数料を抑えましょう。",
       "whatTitle": "VPFIとは？",
-      "whatBody1": "VPFIはVaipakamのプロトコルトークンです。オープンマーケットで入手するかブリッジで持ち込み、個人Vaultに保有して、プラットフォーム全体で利用できます。ロック期間はなく、自由に移転できます。",
-      "whatBody2": "VPFIをVaultに保有すると、Vaipakamの手数料割引により貸付では手元に残る利息が増え、借入では支払額を抑えられます。さらに、参加するすべてのローンに対して日次インタラクション報酬プールのシェアを得られます。",
-      "whatBody3": "下の2つのカードで、VPFI保有による具体的なメリットを確認できます。",
       "discountTitle": "階層型の手数料割引",
       "discountBody": "個人Vaultに保有するVPFIは、Vaipakamのプロトコル手数料に時間加重の割引を付与します。各ローン決済時に自動適用され、別途claimする必要はありません:",
       "discountBullet1": "貸し手: 獲得利息に対するTreasury取り分が割引されます。ローン期間中にVPFIを長く保有するほど控除が小さくなります。",
       "discountBullet2": "借り手: Loan Initiation Feeに対するVPFIリベートが、正常なクローズ (repay / preclose / refinance) 時に支払われます。Default時はこのリベートを失います。",
       "howTitle": "仕組み",
-      "howBody": "VPFIをオープンマーケットで入手するかブリッジで持ち込み、Vaultにdepositして手数料割引の獲得を開始します。クロスチェーンルーティングは自動処理され、VPFIはブリッジ先のチェーンに届きます。",
       "analyticsHint": "プロトコル全体の統計や流通供給量を確認したい場合は、",
-      "analyticsLink": "Analyticsページ",
-      "launchAppCta": "stake / unstake するためにVaipakamを開く",
-      "launchAppHint": "Appは新しいタブで開きます。ウォレット接続後、預け入れと引き出しのコントロールを利用できます。"
+      "analyticsLink": "Analyticsページ"
     },
     "connectTitle": "ウォレットを接続",
-    "connectBody": "VPFIを預け入れまたは引き出すためにウォレットを接続してください。同じページで両方を処理します — どの操作が可能かはウォレットによって決まります。",
     "unsupportedNetwork": "サポートされていないネットワーク",
-    "unsupportedNetworkBody": "VPFIはサポートされているすべてのVaipakamチェーンで利用可能です。現在のウォレットはVaipakam Diamondをホストしていないネットワーク上にあります。サポートされているチェーンに切り替えて続行してください。",
-    "pageSubtitle": "VaultにVPFIを預け入れて、流動性ローンの階層別手数料割引を有効にします。",
-    "step1Title": "VaultにVPFIを預ける",
-    "step1SubtitleCanonical": "{{chain}}で直接。VPFIはウォレットからこのチェーンのVaultへ移動します。",
-    "step1SubtitleBridged": "{{chain}}で直接。VPFIはウォレットからこのチェーンのVaultへ移動します。",
-    "step1SubtitlePending": "VPFIのVault預け入れは{{chain}}で有効化作業中です。ここで続行できます — チェーン切り替えは不要です。",
-    "step2Title": "VaultにVPFIを預ける",
-    "step2Info": "VPFIをVaultに預け入れると手数料割引Tierが有効になります。初めてですか？初回預け入れ時にVaultが自動で作成されます — 事前のセットアップは不要です。",
-    "step3Title": "VaultからVPFIを引き出す",
     "buy": "VPFIを購入",
     "buying": "購入中…",
     "approving": "承認中…",
@@ -446,8 +426,6 @@
     "claimRetryExecuted": "請求時のスワップ再試行",
     "lifRebateClaimed": "VPFI手数料割引リベート請求",
     "interactionRewardsClaimed": "プラットフォーム交流報酬請求",
-    "vpfiDeposited": "VPFIをVaultに入金",
-    "vpfiWithdrawn": "VPFIをVaultから出金",
     "lblPrincipal": "元本",
     "lblCollateral": "担保",
     "lblLender": "貸し手",
@@ -499,7 +477,6 @@
   "rewardsSummary": {
     "title": "あなたの VPFI 報酬",
     "totalEarnedLabel": "合計獲得額",
-    "freshUserHint": "まだ VPFI 報酬を獲得していません。ローンを組んでプラットフォーム・インタラクション・リベートの蓄積を始めましょう。",
     "interactionTitle": "プラットフォーム・インタラクション報酬",
     "interactionSubtitle": "参加した各ローンに対して毎日 VPFI シェアを獲得します。",
     "pendingLabel": "保留中",
@@ -794,7 +771,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "はトークンの貸し借り、NFT のレンタル、独自の条件設定を可能にします。すべてのポジションはユニークな NFT によって追跡されます — 提供から決済まで、透明で追跡可能、信頼不要です。",
     "launchApp": "Vaipakamを開く",
-    "buyVpfi": "VPFIのメリット",
     "howItWorks": "仕組み",
     "statP2pValue": "P2P",
     "statP2pLabel": "直接レンディング",
@@ -944,8 +920,7 @@
       },
       "basics-vpfi-intro": {
         "q": "VPFI とは何ですか。アプリの利用に必要ですか？",
-        "a1": "VPFI は Vaipakam のネイティブプラットフォームトークンです。貸付や借入に VPFI は<s>必要ありません</s>。アプリは VPFI なしでも完全に機能し、すべてのコア機能は誰にでも開かれています。",
-        "a2": "VPFI が役立つのは常用ユーザーになる場合です。Vaipakam のVaultに保有しておくと、プラットフォーム手数料の割引が得られ、さらにアクティブな参加者は日次インタラクション報酬プールのシェアも獲得できます。必須ではなく、オプションのロイヤルティ層と捉えてください。"
+        "a1": "VPFI は Vaipakam のネイティブプラットフォームトークンです。貸付や借入に VPFI は<s>必要ありません</s>。アプリは VPFI なしでも完全に機能し、すべてのコア機能は誰にでも開かれています。"
       },
       "assets": {
         "q": "貸付・借入できる資産は何ですか？",
@@ -990,7 +965,6 @@
       },
       "chains": {
         "q": "対応しているブロックチェーンはどれですか？",
-        "a1": "フェーズ 1 では <s>Base</s>、<s>Polygon</s>、<s>Arbitrum</s>、<s>Optimism</s>、<s>Ethereum メインネット</s>を対象としています。Base は VPFI の正準チェーン（トークンが発行される場所）であり、VPFI は official な Chainlink CCIP bridge を通じて対応するすべてのチェーンへ移動できるため、好きなチェーンで VPFI を保有するためにネットワークを切り替える必要はありません。",
         "a2": "現在のライブデプロイは <s>Sepolia</s> で、追加のチェーンも順次展開中です。1 つのローンに関するすべての操作は同じネットワーク上で行われる必要があります。"
       },
       "sequencer": {
@@ -1038,13 +1012,10 @@
       },
       "vpfi-rewards": {
         "q": "VPFI のリワードを得る方法は？",
-        "a1": "リワードは利用量ベースの 1 つの面から得られ、あなたの参加に紐づいています。",
         "li2": "<s>インタラクションリワード</s>: 支払い・受領した利息に対して VPFI を支払います。ユーザーごとに<s2>0.001 ETH の利息あたり 0.5 VPFI</s2>が上限で、30% のインタラクションリワードプール（69M VPFI）から配分されます。この上限により、循環ローンによるファーミングが防止されます。"
       },
       "tokenomics": {
         "q": "VPFI のトークノミクスは？",
-        "a1": "ハードキャップは <s>230M VPFI</s>。ジェネシスミントは Base 上で <s2>23M（10%）</s2>。残りの供給は利用とプールのドローダウンに応じて解放されます。",
-        "a2": "配分は以下の通りです。",
         "tableBucket": "区分",
         "tableShare": "比率",
         "row1Bucket": "インタラクションリワード",
@@ -1054,8 +1025,7 @@
         "row6Bucket": "アーリーコントリビューター",
         "row7Bucket": "プラットフォーム管理者",
         "row8Bucket": "セキュリティ監査人",
-        "row9Bucket": "バグバウンティ",
-        "row10Bucket": "Reserve (pending reallocation)"
+        "row9Bucket": "バグバウンティ"
       },
       "nft-positions": {
         "q": "Vaipakam のポジション NFT とは？",
@@ -1226,22 +1196,18 @@
     "vaultBalance": "VaultVPFI残高",
     "vaultTooltip": "このチェーン上のユーザー単位Vaultに現在ステーキングされているVPFI。借り手手数料割引Tierに算入されます。",
     "shareCirculating": "流通量シェア",
-    "shareTooltip": "このチェーンのVPFI供給に対する実効的な所有権 — ウォレット残高 + Vaultロック残高 を循環供給で割った値。Vault VPFIは引き続きユーザー所有で、手数料割引ティアのためにロックされているだけです。",
     "circulatingThisChain": "流通量（このチェーン）",
     "remainingMintable": "ミント可能残高",
     "tokenLabel": "トークン",
     "authorizedMinter": "認可されたミンター",
     "treasuryMintDestination": "トレジャリー（ミント先）",
-    "yourActivity": "VPFIアクティビティ",
-    "noActivity": "{{chain}}でこのウォレットに関わるVPFI転送はまだありません。ユーザー向けの報酬配布は後続フェーズで提供されます。",
-    "vaultCountsAsStaked": "Vault VPFIは手数料割引ティアにカウントされます"
+    "yourActivity": "VPFIアクティビティ"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "VPFI割引ステータス",
     "currentTier": "現在のTier",
     "noDiscountYet": "まだ割引はありません",
     "vaultVpfi": "VaultVPFI",
-    "vaultCountsAsStaked": "VaultVPFIは手数料割引ティアにカウントされます",
     "statusLabel": "ステータス",
     "inactiveOff": "非アクティブ · 割引同意 OFF",
     "inactiveBelowTier1": "非アクティブ · Tier 1未満（Vault{{tier1Min}} VPFI）",
@@ -1271,7 +1237,6 @@
     "exceedsVaultBalance": "金額がVaultVPFI残高{{balance}} VPFIを超えています。",
     "depositTitle": "VPFIをVaultに入金",
     "depositSubtitle": "すべてのチェーンで必要 — 正規チェーンを含みます。",
-    "depositSpecNote": "仕様により、VPFIをVaultに移すのは常にユーザーの明示的な操作です。プロトコルが自動でVaultに資金を入れることは決してありません。",
     "walletVpfiBalance": "ウォレットVPFI残高",
     "vaultVpfiBalance": "VaultVPFI残高（{{chain}}）",
     "depositAmount": "入金するVPFI量",
@@ -1280,7 +1245,6 @@
     "unstakeTitle": "VaultからVPFIをアンステーク",
     "unstakeSubtitle": "{{chain}}のVaultからウォレットへVPFIを戻します。Vault 残高がTierしきい値を下回ると、割引Tierも下がります。",
     "unstakeAmount": "アンステークするVPFI量",
-    "unstakeWarning": "Vault VPFIは借り手手数料割引ティアにカウントされます。アンステーキングはトークンをウォレットに戻します — Vault残高がティア閾値を下回ると、次のローンで割引も下がります。",
     "unstakeButton": "ウォレットへ引き出し"
   },
   "alertsPage": {
@@ -1498,7 +1462,6 @@
     "dashboardYourLoans": "このチェーン上で接続中のウォレットが関与するすべてのローン（貸し手、借り手、または両方として）を表示します。各行は HF、LTV、担保、返済、クレーム操作を含むポジションページにリンクします。",
     "dashboardVpfiPanel": "VPFI はプロトコルのトークンです。このカードは、このチェーン上のウォレット + Vault 残高、流通供給量に占める割合、残りのミント可能上限を表示します。カノニカルチェーンが lock/release を行い、ミラーチェーンは Chainlink CCIP CCT 経由で mint/burn します。",
     "dashboardFeeDiscountConsent": "プロトコルがVaultから VPFI で割引手数料を支払うことへのオプトインです。割引はVault VPFI 残高に応じてスケールします: Tier 1 (≥{{tier1Min}} VPFI) で {{tier1Discount}}%、Tier 2 (≥{{tier2Min}}) で {{tier2Discount}}%、Tier 3 (≥{{tier3Min}}) で {{tier3Discount}}%、Tier 4 (>{{tier4Min}}) で {{tier4Discount}}%。",
-    "dashboardRewardsSummary": "プラットフォーム・インタラクション報酬のビュー: 参加している各ローンに対する毎日の VPFI シェア。行をクリックして、対応するページの完全な請求カードに移動します。",
     "offerBookFilters": "下のマーケットリストを資産、サイド、ステータス、その他の条件で絞り込みます。フィルターは貸し手 / 借り手のオファーに適用されます。接続中のウォレット自身のアクティブオファー（上部に表示）はフィルターに関係なく常に表示されます。",
     "offerBookYourActiveOffers": "このチェーン上で接続中のウォレットが作成し、まだマッチしていないオファーです。誰かが受諾する前であればいつでもキャンセル可能です。受諾されると、ローンライフサイクルはダッシュボードの「あなたのローン」へ移行します。",
     "offerBookLenderOffers": "貸し出し準備ができている貸し手が掲載したオファーです。借り手が受諾するとローンが開始されます: 借り手の担保がロックされ、元本資産が借り手のウォレットに到着し、返済まで利息が発生します。開始時点で HF は ≥ 1.5 である必要があります。",
@@ -1544,14 +1507,7 @@
     "loanDetailsParties": "貸し手と借り手のアドレス、それぞれの資産を保有するユーザー別Vault プロキシ、およびローン開始時に各サイドが受け取ったポジション NFT です。各 NFT はそのサイドのクレームの所持人型インストルメントであり、紛失するとクレームを失います。",
     "loanDetailsActionsLender": "このローンで貸し手が利用可能なアクションです。ローン決済後にクレーム（元本 + 利息を返却し、{{treasuryFee}}% の Treasury 控除が差し引かれます）。ローン途中で貸し手 NFT を買い手に売却するために Early Withdrawal を開始。HF < 1 もしくはグレース期間が満了すると、誰でも（貸し手を含む）Liquidate をトリガーできます。無効化されているアクションはホバーで理由を表示します。",
     "loanDetailsActionsBorrower": "このローンで借り手が利用可能なアクションです。全額または部分返済、Preclose ダイレクト（残債を今すぐ支払う）またはオフセット（DEX 経由で担保を売却）、新しい条件のローンへリファイナンス。クレームは全額返済時に担保を返却するか、未使用の VPFI リベートを返します。無効化されているアクションはホバーで理由を表示します。",
-    "buyVpfiOverview": "VPFI をオープンマーケットで入手するか、ブリッジで持ち込みます。VPFI は Chainlink CCIP クロスチェーントークンなので、official bridge を使ってサポート対象チェーン間を移動し、接続中チェーン上のウォレットへ届きます — チェーンの切り替えは不要です。",
-    "buyVpfiDiscountStatus": "このチェーン上のアクティブなVPFI手数料割引ティア。ティアはVault VPFI残高で決まります：Tier 1 ≥{{tier1Min}}、Tier 2 ≥{{tier2Min}}、Tier 3 ≥{{tier3Min}}、Tier 4 >{{tier4Min}}。割引は流動性ローンにのみ、かつDashboardのプラットフォームレベル同意トグルがオンの間のみ適用されます。",
-    "buyVpfiDeposit": "VPFIをウォレットからこのチェーンのVaultへ移動します。常に明示的なユーザーアクションです：プロトコルがVaultを自動補充することはありません。手数料割引の対象となるために必要です。利用可能な場合はPermit2が使用され、1つの署名でapprove + transferのペアを置き換えます。",
-    "buyVpfiUnstake": "このチェーン上で VPFI をVaultからウォレットへ戻します。割引 Tier をリアルタイムで下げます — 時間加重アキュムレータが新しい（より低い）残高で開いている全ローンを直ちに再スタンプするため、unstake はその時点から手数料割引計算に対して有効です。",
-    "rewardsOverview": "このチェーン上でインタラクション報酬ストリームが累積します。ローンで決済された利息1USDごとに、インタラクションプールの日次シェアを得ます。報酬は請求時に現在のチェーン上で直接ミントされます — ブリッジング不要です。",
-    "rewardsClaim": "保留中のインタラクション報酬 VPFI を、現在のチェーン上のウォレットへ 1 トランザクションでミントします。インタラクションプールは日次でファイナライズされます — 保留中のインタラクション報酬は各決済ウィンドウ終了直後にクレーム可能になります。",
-    "rewardsWithdrawStaked": "VPFIをVaultからウォレットに戻します。引き出されたVPFIは手数料割引ティアにカウントされなくなります — 時間加重アキュムレータは直ちにすべての未決済ローンを新しい（低い）残高で再スタンプします。",
-    "activityFeed": "アクティブなチェーン上で接続中のウォレットが関与するオンチェーンイベント — オファー作成 / 受諾、ローン、返済、クレーム、清算、NFT のミント / バーン、VPFI の Vault 入金 / 出金。Diamond のイベントログからライブで取得され（バックエンドなし）、トランザクション単位でグループ化され、最新順に並びます。"
+    "buyVpfiUnstake": "このチェーン上で VPFI をVaultからウォレットへ戻します。割引 Tier をリアルタイムで下げます — 時間加重アキュムレータが新しい（より低い）残高で開いている全ローンを直ちに再スタンプするため、unstake はその時点から手数料割引計算に対して有効です。"
   },
   "acceptReview": {
     "partialRepayLabel": "部分返済",

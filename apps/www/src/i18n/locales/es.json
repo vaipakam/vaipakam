@@ -69,7 +69,6 @@
     "security": "Seguridad",
     "vpfi": "VPFI",
     "vpfiLearn": "Aprender sobre VPFI",
-    "vpfiBuy": "VPFI",
     "vpfiStakeUnstake": "Stake / Unstake",
     "vpfiStake": "Stake",
     "vpfiUnstake": "Unstake",
@@ -91,7 +90,6 @@
     "dashboard": "Panel",
     "offerBook": "Libro de ofertas",
     "createOffer": "Crear oferta",
-    "buyVpfi": "VPFI",
     "claimCenter": "Centro de reclamos",
     "activity": "Actividad",
     "alerts": "Alertas",
@@ -351,36 +349,18 @@
     "trustWarning": "Cualquiera puede desplegar un token con cualquier símbolo — confirma que confías en este token verificando la dirección del contrato en sí, no el símbolo mostrado."
   },
   "buyVpfi": {
-    "title": "VPFI",
     "preconnect": {
-      "tagline": "Deposita VPFI en tu vault para pagar menos comisiones en cada préstamo.",
       "whatTitle": "¿Qué es VPFI?",
-      "whatBody1": "VPFI es el token de protocolo de Vaipakam — adquiérelo en el mercado abierto o muévelo por puente, mantenlo en tu Vaipakam Vault y úsalo en toda la plataforma. Sin período de bloqueo, libremente transferible.",
-      "whatBody2": "Mantener VPFI en tu vault te conecta con el éxito del protocolo de dos formas prácticas: te da descuentos en las comisiones que cobra Vaipakam (para que conserves más de lo que prestas y pagues menos al pedir prestado) y ganas una porción del pool diario de recompensas de interacción por cada préstamo en el que participes.",
-      "whatBody3": "Las dos tarjetas de beneficios abajo muestran exactamente qué obtienes al mantener VPFI.",
       "discountTitle": "Descuento de comisiones por niveles",
       "discountBody": "El VPFI que mantienes en tu Vaipakam Vault personal te da un descuento ponderado por tiempo en las comisiones del protocolo Vaipakam — aplicado automáticamente cuando se liquida cada préstamo, sin paso de claim separado:",
       "discountBullet1": "Prestamistas: un descuento sobre la parte de tesorería tomada del interés ganado. Cuanto más VPFI hayas mantenido durante la vida del préstamo, menor será la deducción.",
       "discountBullet2": "Prestatarios: un reembolso en VPFI sobre la comisión de inicio del préstamo, pagado al cierre correcto (repago / preclose / refinanciación). El default hace perder el reembolso.",
       "howTitle": "Cómo funciona",
-      "howBody": "Adquiere VPFI en el mercado abierto o muévelo por puente, luego deposítalo en tu vault para empezar a ganar el descuento de comisiones. El enrutamiento cross-chain se gestiona por ti — VPFI llega a la cadena hacia la que hiciste el puente.",
       "analyticsHint": "¿Buscas estadísticas de todo el protocolo y suministro circulante? Consulta la",
-      "analyticsLink": "página de Analíticas",
-      "launchAppCta": "Abrir Vaipakam para depositar / retirar",
-      "launchAppHint": "Abre la app en una nueva pestaña. Los controles de compra, stake y unstake viven allí cuando tu billetera está conectada."
+      "analyticsLink": "página de Analíticas"
     },
     "connectTitle": "Conecta tu billetera",
-    "connectBody": "Conecta tu billetera para depositar o retirar VPFI. La misma página gestiona ambas acciones — tu billetera decide cuál puedes realizar.",
     "unsupportedNetwork": "Red no compatible",
-    "unsupportedNetworkBody": "VPFI está disponible en cualquier cadena Vaipakam compatible. Tu billetera está actualmente en una red que no aloja un Vaipakam Diamond. Cambia a una cadena compatible para continuar.",
-    "pageSubtitle": "Deposita VPFI en tu vault para desbloquear el descuento de comisiones por niveles en préstamos líquidos.",
-    "step1Title": "Deposita VPFI en tu vault",
-    "step1SubtitleCanonical": "Directo en {{chain}}. VPFI llega a tu billetera en esta cadena.",
-    "step1SubtitleBridged": "Directo en {{chain}}. VPFI se mueve de tu billetera a tu vault en esta cadena.",
-    "step1SubtitlePending": "El depósito de VPFI en vault se está habilitando en {{chain}}. Puedes continuar aquí — no se requiere cambio de cadena.",
-    "step2Title": "Deposita VPFI en tu vault",
-    "step2Info": "Depositar VPFI en tu vault desbloquea el nivel de descuento de comisiones. ¿Primera vez? Tu Vaipakam Vault se crea automáticamente en tu primer depósito — sin configuración necesaria.",
-    "step3Title": "Retira VPFI de tu vault",
     "buy": "VPFI",
     "buying": "Comprando…",
     "approving": "Aprobando…",
@@ -446,8 +426,6 @@
     "claimRetryExecuted": "Reintento de swap en reclamo",
     "lifRebateClaimed": "Reembolso de tarifa VPFI reclamado",
     "interactionRewardsClaimed": "Recompensas por interacción reclamadas",
-    "vpfiDeposited": "VPFI depositado en vault",
-    "vpfiWithdrawn": "VPFI retirado de vault",
     "lblPrincipal": "Principal",
     "lblCollateral": "Colateral",
     "lblLender": "Prestamista",
@@ -499,7 +477,6 @@
   "rewardsSummary": {
     "title": "Tus recompensas VPFI",
     "totalEarnedLabel": "Total ganado",
-    "freshUserHint": "Aún no has ganado recompensas VPFI. Toma un préstamo para empezar a acumular el rebate de interacción con la plataforma.",
     "interactionTitle": "Recompensas de interacción con la plataforma",
     "interactionSubtitle": "Gana una porción diaria de VPFI por cada préstamo en el que participes.",
     "pendingLabel": "Pendiente",
@@ -794,7 +771,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "te permite prestar y pedir prestado tokens, alquilar NFTs y establecer tus propios términos. Cada posición se rastrea mediante un NFT único — transparente, rastreable y sin confianza desde la oferta hasta la liquidación.",
     "launchApp": "Abrir Vaipakam",
-    "buyVpfi": "Beneficios de VPFI",
     "howItWorks": "Cómo funciona",
     "statP2pValue": "P2P",
     "statP2pLabel": "Préstamo directo",
@@ -944,8 +920,7 @@
       },
       "basics-vpfi-intro": {
         "q": "¿Qué es VPFI y necesito tenerlo para usar la app?",
-        "a1": "VPFI es el token nativo de la plataforma Vaipakam. <s>No</s> hace falta tener VPFI para prestar o pedir prestado — la app funciona perfectamente sin él, y todas las funciones principales están abiertas a cualquiera.",
-        "a2": "VPFI resulta útil para los usuarios habituales. Mantenerlo en la custodia de Vaipakam otorga un descuento en las comisiones de la plataforma y permite obtener recompensas pasivas. Pensarlo como una capa de fidelización opcional, no como una barrera."
+        "a1": "VPFI es el token nativo de la plataforma Vaipakam. <s>No</s> hace falta tener VPFI para prestar o pedir prestado — la app funciona perfectamente sin él, y todas las funciones principales están abiertas a cualquiera."
       },
       "assets": {
         "q": "¿Qué activos puedo prestar o pedir prestado?",
@@ -990,7 +965,6 @@
       },
       "chains": {
         "q": "¿Qué blockchains se admiten?",
-        "a1": "La Fase 1 apunta a <s>Base</s>, <s>Polygon</s>, <s>Arbitrum</s>, <s>Optimism</s> y <s>Ethereum mainnet</s>. Base es la cadena canónica de VPFI (donde se acuña el token), y VPFI se mueve a cada cadena compatible mediante el puente oficial de Chainlink CCIP, de modo que el usuario nunca tenga que cambiar de red solo para mantener VPFI en la cadena que elija.",
         "a2": "El despliegue en vivo hoy es <s>Sepolia</s>, mientras se incorporan más cadenas. Todas las fases de un mismo préstamo deben transcurrir en la misma red."
       },
       "sequencer": {
@@ -1038,13 +1012,10 @@
       },
       "vpfi-rewards": {
         "q": "¿Cómo puedo ganar recompensas VPFI?",
-        "a1": "Las recompensas provienen de una superficie basada en el uso, vinculada a tu participación:",
         "li2": "<s>Recompensas por interacción</s> pagan VPFI sobre los intereses de préstamo pagados o recibidos, con un tope de <s2>0,5 VPFI por cada 0,001 ETH de interés</s2> por usuario, financiadas con el pool del 30% de recompensas por interacción (69 M VPFI). El tope evita el farming con préstamos lavados."
       },
       "tokenomics": {
         "q": "¿Cuál es la tokenómica de VPFI?",
-        "a1": "Tope máximo de <s>230M VPFI</s>. La acuñación inicial es de <s2>23M (10%)</s2> en Base; el suministro restante se desbloquea contra el uso y los drawdowns de los pools.",
-        "a2": "La compra anticipada está limitada a 2,3M VPFI (1% del suministro), con un tope por cartera y por cadena de 30.000 VPFI durante la ventana de arranque. Asignaciones:",
         "tableBucket": "Categoría",
         "tableShare": "Porcentaje",
         "row1Bucket": "Recompensas por interacción",
@@ -1054,8 +1025,7 @@
         "row6Bucket": "Contribuidores tempranos",
         "row7Bucket": "Administradores de la plataforma",
         "row8Bucket": "Auditores de seguridad",
-        "row9Bucket": "Bug bounty",
-        "row10Bucket": "Reserve (pending reallocation)"
+        "row9Bucket": "Bug bounty"
       },
       "nft-positions": {
         "q": "¿Qué son los NFT de posición de Vaipakam?",
@@ -1226,22 +1196,18 @@
     "vaultBalance": "Saldo VPFI del vault",
     "vaultTooltip": "VPFI actualmente depositado en el vault por usuario en esta cadena. Cuenta para el Tier de descuento de comisión del prestatario.",
     "shareCirculating": "Cuota circulante",
-    "shareTooltip": "Propiedad efectiva del suministro de VPFI de esta cadena — saldo de la billetera más saldo bloqueado en vault, dividido por el circulante. El VPFI en vault sigue siendo propiedad del usuario; solo está bloqueado para el nivel de descuento de comisiones.",
     "circulatingThisChain": "Circulante (esta cadena)",
     "remainingMintable": "Acuñable restante",
     "tokenLabel": "Token",
     "authorizedMinter": "Acuñador autorizado",
     "treasuryMintDestination": "Tesorería (destino de acuñación)",
-    "yourActivity": "Tu actividad VPFI",
-    "noActivity": "Aún no hay transferencias VPFI que afecten a esta cartera en {{chain}}. Las distribuciones de recompensas orientadas al usuario llegarán en una fase posterior.",
-    "vaultCountsAsStaked": "El VPFI en el vault cuenta para tu nivel de descuento de comisiones"
+    "yourActivity": "Tu actividad VPFI"
   },
   "buyVpfiCards": {
     "discountStatusTitle": "Tu estado de descuento VPFI",
     "currentTier": "Tier actual",
     "noDiscountYet": "Aún sin descuento",
     "vaultVpfi": "VPFI en el vault",
-    "vaultCountsAsStaked": "El VPFI en el vault cuenta para tu nivel de descuento de comisiones",
     "statusLabel": "Estado",
     "inactiveOff": "Inactivo · consentimiento de descuento DESACTIVADO",
     "inactiveBelowTier1": "Inactivo · por debajo de Tier 1 ({{tier1Min}} VPFI en el vault)",
@@ -1271,7 +1237,6 @@
     "exceedsVaultBalance": "El monto excede el saldo VPFI del vault de {{balance}} VPFI.",
     "depositTitle": "Depositar VPFI en el vault",
     "depositSubtitle": "Requerido en cada cadena — incluida la canónica.",
-    "depositSpecNote": "Por especificación, transferir VPFI al vault es siempre una acción explícita del usuario. El protocolo nunca financia automáticamente el vault.",
     "walletVpfiBalance": "Saldo VPFI de la cartera",
     "vaultVpfiBalance": "Saldo VPFI del vault ({{chain}})",
     "depositAmount": "Cantidad de VPFI a depositar",
@@ -1280,7 +1245,6 @@
     "unstakeTitle": "Retirar VPFI del vault",
     "unstakeSubtitle": "Mover VPFI desde el vault en {{chain}} de vuelta a la cartera. Si el saldo del vault cae por debajo del umbral de un Tier, el Tier de descuento también baja.",
     "unstakeAmount": "Cantidad de VPFI a retirar",
-    "unstakeWarning": "El VPFI en vault cuenta para el nivel de descuento de comisiones del prestatario. Hacer unstake devuelve los tokens a la billetera — si el saldo restante del vault cae por debajo de un umbral de nivel, el descuento baja con él en el próximo préstamo.",
     "unstakeButton": "Retirar a la cartera"
   },
   "alertsPage": {
@@ -1498,7 +1462,6 @@
     "dashboardYourLoans": "Cada préstamo del que la wallet conectada forma parte en esta cadena — como prestamista, prestatario o ambos. Cada fila enlaza con la página completa de la posición, con HF, LTV, colateral y los controles de pago y reclamación.",
     "dashboardVpfiPanel": "VPFI es el token del protocolo. Esta tarjeta muestra el saldo en wallet + vault en esta cadena, la cuota del suministro circulante y el límite acuñable restante. La cadena canónica bloquea/libera; las cadenas espejo acuñan/queman mediante CCT de Chainlink CCIP.",
     "dashboardFeeDiscountConsent": "Aceptación voluntaria para que el protocolo pague comisiones descontadas en VPFI desde el vault. El descuento escala con el saldo de VPFI en el vault: {{tier1Discount}}% en Tier 1 (≥{{tier1Min}} VPFI), {{tier2Discount}}% Tier 2 (≥{{tier2Min}}), {{tier3Discount}}% Tier 3 (≥{{tier3Min}}), {{tier4Discount}}% Tier 4 (>{{tier4Min}}).",
-    "dashboardRewardsSummary": "Vista de tus recompensas por interacción con la plataforma: una porción diaria de VPFI por cada préstamo en el que participes. Haz clic en una fila para ir a la tarjeta de reclamación completa en la página correspondiente.",
     "offerBookFilters": "Reduce las listas de mercado de abajo por activo, lado, estado y otros criterios. Los filtros se aplican a las ofertas de prestamista / prestatario — las propias ofertas activas de la wallet conectada (mostradas arriba) siempre permanecen visibles.",
     "offerBookYourActiveOffers": "Ofertas que la wallet conectada creó en esta cadena y que aún no han sido aceptadas. Pueden cancelarse en cualquier momento antes de que alguien las acepte; una vez aceptadas, el ciclo del préstamo pasa a \"Tus préstamos\" en el Dashboard.",
     "offerBookLenderOffers": "Ofertas publicadas por prestamistas listos para prestar. Un prestatario que acepta una inicia un préstamo: el colateral del prestatario queda bloqueado, el activo principal llega a su wallet y los intereses se acumulan hasta el reembolso. El HF debe ser ≥ 1.5 al iniciarse.",
@@ -1544,14 +1507,7 @@
     "loanDetailsParties": "Direcciones del prestamista y del prestatario, los proxies de vault por usuario que custodian sus activos y los NFTs de posición que cada lado recibió al inicio del préstamo. Cada NFT es el instrumento al portador de la reclamación de ese lado — perderlo es perder la reclamación.",
     "loanDetailsActionsLender": "Acciones disponibles para el prestamista en este préstamo. Reclamar una vez liquidado el préstamo (devuelve principal + intereses, menos el {{treasuryFee}}% de comisión de tesorería). Iniciar Retirada Anticipada para vender el NFT del prestamista a un comprador a mitad del préstamo. Cualquiera (incluido el prestamista) puede activar Liquidar cuando HF < 1 o el período de gracia haya expirado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
     "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "buyVpfiOverview": "Adquiere VPFI en el mercado abierto o muévelo por puente. VPFI es un token cross-chain de Chainlink CCIP, así que se mueve entre cadenas compatibles usando el puente oficial y llega a la wallet en la cadena desde la que te conectaste — no se requiere cambio de cadena.",
-    "buyVpfiDiscountStatus": "El nivel activo de descuento de comisiones VPFI en esta cadena. El nivel se determina por el saldo de Vault VPFI: Tier 1 ≥{{tier1Min}}, Tier 2 ≥{{tier2Min}}, Tier 3 ≥{{tier3Min}}, Tier 4 >{{tier4Min}}. El descuento solo se aplica en préstamos líquidos y solo mientras el conmutador de consentimiento a nivel de plataforma del Dashboard esté activado.",
-    "buyVpfiDeposit": "Mueve VPFI de la billetera al vault en esta cadena. Siempre una acción explícita del usuario: el protocolo nunca financia el vault automáticamente. Requerido para calificar a descuentos de comisiones. Se usa Permit2 cuando está disponible para que una sola firma reemplace al par approve + transfer.",
-    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento.",
-    "rewardsOverview": "El flujo de recompensas por interacción acumula en esta cadena: cada USD de interés liquidado en un préstamo gana una participación diaria del pool de interacción. Las recompensas se acuñan directamente en la cadena actual al reclamar — sin bridging.",
-    "rewardsClaim": "Acuña cualquier VPFI pendiente de recompensas de interacción a la wallet, en la cadena actual, en una sola transacción. El pool de interacción se finaliza diariamente — las recompensas pendientes de interacción quedan reclamables poco después del cierre de cada ventana de liquidación.",
-    "rewardsWithdrawStaked": "Mueve VPFI fuera del vault de vuelta a la billetera. El VPFI retirado ya no cuenta para el nivel de descuento de comisiones — el acumulador ponderado por tiempo re-estampa inmediatamente cada préstamo abierto con el nuevo saldo (menor).",
-    "activityFeed": "Eventos on-chain que involucran a la wallet conectada en la cadena activa — ofertas creadas o aceptadas, préstamos, reembolsos, reclamaciones, liquidaciones, mints/burns de NFTs, depósitos/retiros de VPFI en vault. Obtenidos en vivo desde los logs de eventos del Diamond (sin backend), agrupados por transacción y ordenados de más reciente a más antiguo."
+    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento."
   },
   "acceptReview": {
     "partialRepayLabel": "Reembolso parcial",

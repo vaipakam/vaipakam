@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -103,6 +103,26 @@ function PublicDataRights() {
  * dominant industry posture (Morpho, etc.) of
  * "each surface owns its own URL space."
  */
+/**
+ * Back-compat redirect for the renamed `/buy-vpfi` → `/vpfi` marketing
+ * route (#712, fixed-rate sale removed). Uses a *path-relative*
+ * `../vpfi` rather than an absolute `/vpfi` so the active locale prefix
+ * survives — `/es/buy-vpfi` lands on `/es/vpfi`, not the English root —
+ * and `location.search` / `location.hash` are carried through so deep
+ * links like `/es/buy-vpfi#benefits` keep working. Mirrors defi's
+ * `BuyVpfiRedirect`.
+ */
+function LegacyVpfiRedirect(): ReactElement {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../vpfi${location.search}${location.hash}`}
+      replace
+      relative="path"
+    />
+  );
+}
+
 function pageRoutes(): ReactElement {
   return (
     <>
@@ -111,7 +131,7 @@ function pageRoutes(): ReactElement {
       {/* #712: the page moved from /buy-vpfi → /vpfi when the fixed-rate
           sale was removed; keep a redirect so old inbound links / cached
           sitemap entries don't 404. */}
-      <Route path="buy-vpfi" element={<Navigate to="/vpfi" replace />} />
+      <Route path="buy-vpfi" element={<LegacyVpfiRedirect />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />

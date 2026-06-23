@@ -101,14 +101,16 @@ export default function BuyVPFIMarketing() {
         </p>
       </div>
 
-      {/* Launch-App CTA — opens the in-app `/app/buy-vpfi` surface in a
+      {/* Launch-App CTA — opens the in-app `/vpfi-vault` surface in a
           new tab so the marketing page stays open behind. The new-tab
           behaviour matches the public Navbar's Launch App and the
-          VPFI dropdown's Buy / Stake-Unstake action items, so users
-          land on the same expectation regardless of entry point. */}
+          VPFI dropdown's deposit/withdraw action items, so users land
+          on the same expectation regardless of entry point. Anchors at
+          `#step-2` — the first actionable deposit card after the
+          fixed-rate buy card was removed in #712. */}
       <div style={{ marginTop: 32, textAlign: 'center' }}>
         <a
-          href={defiUrl('/buy-vpfi#step-1')}
+          href={defiUrl('/vpfi-vault#step-2')}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-primary btn-lg"

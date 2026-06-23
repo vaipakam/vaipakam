@@ -1234,8 +1234,7 @@
     "tokenLabel": "代币",
     "authorizedMinter": "授权铸造者",
     "treasuryMintDestination": "金库（铸造目的地）",
-    "yourActivity": "VPFI活动",
-    "noActivity": "{{chain}}上尚无与此钱包相关的VPFI转账。面向用户的分发（奖励、staking）将在后续阶段推出。"
+    "yourActivity": "VPFI活动"
   },
   "vpfiVaultCards": {
     "discountStatusTitle": "VPFI折扣状态",
@@ -1523,7 +1522,6 @@
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
     "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
     "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此 unstake 自此刻起对手续费折扣计算即生效。",
-    "rewardsClaim": "在当前链上、单笔交易内将两条奖励流（staking + 交互）的待领 VPFI 铸造至钱包。交互池按日定稿 — 待领交互奖励在每个结算窗口关闭后不久即可领取。",
     "activityFeed": "已连接钱包在活跃链上参与的链上事件 — 报价创建或接受、贷款、还款、领取、清算、NFT 铸造/销毁、VPFI 购买/质押/解押。直接来自 Diamond 事件日志（无后端），按交易分组并按最新优先排序。"
   },
   "acceptReview": {
