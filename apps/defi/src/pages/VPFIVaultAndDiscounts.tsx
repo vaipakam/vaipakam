@@ -567,7 +567,11 @@ export default function VPFIVaultAndDiscounts() {
           discountBps={discountTier?.discountBps ?? 0}
           consentEnabled={consentEnabled}
           isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? readChain.isCanonicalVPFI}
-          canonicalName={canonical.name}
+          canonicalName={
+            getCanonicalVPFIChain(
+              (activeChain ?? readChain).testnet ? 'testnet' : 'mainnet',
+            ).name
+          }
         />
       )}
 
