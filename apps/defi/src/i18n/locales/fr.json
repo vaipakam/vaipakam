@@ -1200,7 +1200,6 @@
     "discountStatusTitle": "Votre statut de remise VPFI",
     "currentTier": "Palier actuel",
     "noDiscountYet": "Aucune remise pour le moment",
-    "vaultVpfi": "VPFI en vault",
     "statusLabel": "Statut",
     "inactiveOff": "Inactif · consentement de remise DÉSACTIVÉ",
     "inactiveBelowTier1": "Inactif · sous le palier 1 ({{tier1Min}} VPFI en vault)",

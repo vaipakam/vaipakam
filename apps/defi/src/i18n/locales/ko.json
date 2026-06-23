@@ -1200,7 +1200,6 @@
     "discountStatusTitle": "VPFI 할인 상태",
     "currentTier": "현재 Tier",
     "noDiscountYet": "아직 할인 없음",
-    "vaultVpfi": "Vault VPFI",
     "statusLabel": "상태",
     "inactiveOff": "비활성 · 할인 동의 OFF",
     "inactiveBelowTier1": "비활성 · Tier 1 미만(Vault {{tier1Min}} VPFI)",

@@ -1200,7 +1200,6 @@
     "discountStatusTitle": "VPFI割引ステータス",
     "currentTier": "現在のTier",
     "noDiscountYet": "まだ割引はありません",
-    "vaultVpfi": "VaultVPFI",
     "statusLabel": "ステータス",
     "inactiveOff": "非アクティブ · 割引同意 OFF",
     "inactiveBelowTier1": "非アクティブ · Tier 1未満（Vault{{tier1Min}} VPFI）",

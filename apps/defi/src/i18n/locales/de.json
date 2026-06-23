@@ -1200,7 +1200,6 @@
     "discountStatusTitle": "VPFI-Rabattstatus",
     "currentTier": "Aktueller Tier",
     "noDiscountYet": "Noch kein Rabatt",
-    "vaultVpfi": "Vault-VPFI",
     "statusLabel": "Status",
     "inactiveOff": "Inaktiv · Rabatt-Zustimmung AUS",
     "inactiveBelowTier1": "Inaktiv · unter Tier 1 ({{tier1Min}} VPFI im Vault)",

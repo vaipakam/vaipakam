@@ -1199,7 +1199,6 @@
     "discountStatusTitle": "حالة خصم VPFI",
     "currentTier": "Tier الحالي",
     "noDiscountYet": "لا يوجد خصم بعد",
-    "vaultVpfi": "VPFI في الضمان",
     "statusLabel": "الحالة",
     "inactiveOff": "غير نشط · موافقة الخصم متوقفة",
     "inactiveBelowTier1": "غير نشط · أقل من Tier 1 ({{tier1Min}} VPFI في الضمان)",

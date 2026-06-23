@@ -1199,7 +1199,6 @@
     "discountStatusTitle": "आपकी VPFI छूट स्थिति",
     "currentTier": "वर्तमान Tier",
     "noDiscountYet": "अभी कोई छूट नहीं",
-    "vaultVpfi": "Vault VPFI",
     "statusLabel": "स्थिति",
     "inactiveOff": "निष्क्रिय · छूट सहमति बंद",
     "inactiveBelowTier1": "निष्क्रिय · Tier 1 से नीचे (Vault में {{tier1Min}} VPFI)",

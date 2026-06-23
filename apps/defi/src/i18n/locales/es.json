@@ -1199,7 +1199,6 @@
     "discountStatusTitle": "Tu estado de descuento VPFI",
     "currentTier": "Tier actual",
     "noDiscountYet": "Aún sin descuento",
-    "vaultVpfi": "VPFI en el vault",
     "statusLabel": "Estado",
     "inactiveOff": "Inactivo · consentimiento de descuento DESACTIVADO",
     "inactiveBelowTier1": "Inactivo · por debajo de Tier 1 ({{tier1Min}} VPFI en el vault)",

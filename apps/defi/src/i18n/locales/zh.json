@@ -1200,7 +1200,6 @@
     "discountStatusTitle": "VPFI折扣状态",
     "currentTier": "当前Tier",
     "noDiscountYet": "暂无折扣",
-    "vaultVpfi": "Vault VPFI",
     "statusLabel": "状态",
     "inactiveOff": "未激活 · 折扣同意 关闭",
     "inactiveBelowTier1": "未激活 · 低于 Tier 1（Vault 中 {{tier1Min}} VPFI）",
