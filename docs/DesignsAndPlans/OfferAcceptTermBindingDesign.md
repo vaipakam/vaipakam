@@ -355,6 +355,49 @@ Still open:
   now and add gasless relay later, or wire a relayer entry point in this PR?
   (Recommend self-submit-only first.)
 
+## 8b. Implementation amendment — entry-only binding (supersedes §4b/§5 thread-down)
+
+**Decision (user, 2026-06-23):** during the implementation scout the binding
+was found to be a **pure function of `(stored offer, signed terms)`** —
+nothing in it depends on loan-creation state — so the entire check (EIP-712
+signature verify + per-field equality + acknowledged-illiquid validation) is
+enforced **at each of the 4 public accept entries**, before `_acceptOffer`
+runs. This **supersedes** the §4b/§5 framing that threaded the verified
+`AcceptTerms` down into `_acceptOffer → acceptOfferInternal → LoanFacet.initiateLoan`
+and put the acknowledged-asset check inside `_maybeRunInitialRiskGates`.
+
+Identical security and UX; strictly less surface:
+
+- **Where binding lives:** `acceptOffer`, `acceptOfferWithPermit`,
+  `SignedOfferFacet.acceptSignedOffer`, `acceptSignedOfferWithPermit` each (1)
+  verify the EIP-712 `AcceptTerms` signature (`SignatureChecker`, ERC-1271-
+  capable) with `acceptor == the resolved funds-mover`, consume the per-acceptor
+  nonce, check the deadline; (2) bind every field by equality against the stored
+  offer + the **role-correct** endpoint (ERC-20 lender ⇒ `amountMax` /
+  `interestRateBps`; ERC-20 borrower ⇒ `amount` / `interestRateBpsMax`; NFT ⇒
+  `amount` for both — `LoanFacet.sol:788-797`); (3) validate the acknowledged-
+  illiquid asset per leg via `OracleFacet.checkLiquidity`. Then they call the
+  **unchanged** `_acceptOffer`.
+- **Unchanged (no signature/selector churn):** `_acceptOffer`,
+  `acceptOfferInternal`, `OfferMatchFacet`, `LoanFacet.initiateLoan`,
+  `_maybeRunInitialRiskGates`. The illiquid LTV/HF bypass in LoanFacet stays
+  byte-for-byte — because the entry has already proven, before any value moves,
+  that the acceptor named the exact illiquid asset, the bypass is reached only
+  on an acknowledged pair.
+- **Match path exempt by construction:** the keeper match path reaches
+  `_acceptOffer` only via `acceptOfferInternal` (never a public accept entry),
+  so it performs no binding — exactly the §5 exemption, now structural rather
+  than a `matchOverride.active` branch inside `_acceptOffer`.
+- **No transient flag:** the earlier `acceptBindingVerified` storage flag is
+  removed (commit `0cf8a09`); the compiler-required `terms`/`signature` params
+  on every public entry are a stronger guarantee than a runtime flag.
+- **Cost:** ~2 extra `checkLiquidity` view calls per accept (the entry's
+  acknowledged-asset validation), redundant with the later `InitCtx`
+  classification. Accepted: correctness over a view-call micro-cost, pre-live.
+- **Deploy-sanity / ABI:** only the 4 public entry selectors change (plus the
+  new `LibAcceptTerms`); `acceptOfferInternal`'s selector is **unchanged**, so
+  the cross-facet selector lists shrink relative to the §5/§6 checklist.
+
 ## 9. Relationship to #671
 
 #671 (progressive risk tiers) layers **on top** of this: #662 binds terms so a
