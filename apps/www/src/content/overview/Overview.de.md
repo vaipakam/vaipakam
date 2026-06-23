@@ -259,7 +259,7 @@ zwei Zahlen oben.
 
 ## Was ist VPFI?
 
-**VPFI** ist Vaipakams Utility-Token. Er erfüllt drei Aufgaben:
+**VPFI** ist Vaipakams Utility-Token. Er erfüllt zwei Aufgaben:
 
 ### 1. Gebührenrabatte
 
@@ -280,15 +280,7 @@ Kredits**, also manipuliert Aufladen kurz vor Kreditende die
 Berechnung nicht — Sie verdienen den Rabatt anteilig zur Zeit, in
 der Sie tatsächlich die Stufe gehalten haben.
 
-### 2. Staking — 5 % APR
-
-Jedes VPFI im Vault verdient automatisch Staking-
-Belohnungen mit 5 % Jahresrendite. Es gibt keine separate Staking-
-Aktion, keine Sperrfrist, keine Wartezeit zum „Unstake". Verschieben
-Sie VPFI in Ihren Vault und es verdient ab diesem
-Moment. Verschieben Sie es heraus und die Akkumulation hört auf.
-
-### 3. Plattform-Interaktionsbelohnungen
+### 2. Plattform-Interaktionsbelohnungen
 
 Jeden Tag wird ein fester Pool von VPFI an Kreditgeber und
 Kreditnehmer ausgeschüttet, anteilig zu den **Zinsen**, die durch
@@ -302,14 +294,13 @@ Emissionen.
 
 ### Wie man VPFI bekommt
 
-Drei Wege:
+Zwei Wege:
 
 - **Verdienen** — durch Teilnahme (Interaktionsbelohnungen oben).
-- **Kaufen** — zum Festpreis (`1 VPFI = 0,001 ETH`) auf der Seite
-  **VPFI kaufen**. Das Festpreisprogramm ist pro Wallet pro Chain
-  gedeckelt.
 - **Bridgen** — VPFI ist ein Chainlink CCIP CCT-Token, also bewegt
   er sich zwischen unterstützten Chains über die offizielle Bridge.
+  Sie können VPFI außerdem auf dem freien Markt erwerben, wo immer
+  er gehandelt wird.
 
 ---
 
@@ -358,9 +349,9 @@ Gleicher Ablauf, aber auf der Seite **Angebot erstellen** wählen
 Sie „NFT-Miete" statt ERC-20-Verleihen. Das Formular wird Sie
 führen.
 
-Wenn Sie nur **passive Rendite auf Ihre VPFI** verdienen wollen,
-hinterlegen Sie sie in Ihrem Vault auf der **Dashboard**-
-Seite. Das ist alles — Staking ist ab diesem Moment automatisch.
+Wenn Sie nur **Ihre Protokollgebühren senken** wollen, hinterlegen
+Sie VPFI in Ihrem Vault auf der **Dashboard**-Seite. Das ist alles —
+Ihre Gebührenrabatt-Stufe gilt ab diesem Moment automatisch.
 
 ---
 

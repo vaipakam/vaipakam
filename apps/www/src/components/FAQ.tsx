@@ -629,19 +629,13 @@ const FAQS: FaqEntry[] = [
     id: "vpfi-rewards",
     category: "economics",
     searchText:
-      "rewards staking interactions apr vault yield cap per-user interaction earning",
+      "rewards interactions vault cap per-user interaction earning",
     renderA: () => (
       <>
         <p>
           <Trans i18nKey="faq.entries.vpfi-rewards.a1" />
         </p>
         <ul>
-          <li>
-            <Trans
-              i18nKey="faq.entries.vpfi-rewards.li1"
-              components={{ s: <strong /> }}
-            />
-          </li>
           <li>
             <Trans
               i18nKey="faq.entries.vpfi-rewards.li2"
@@ -656,7 +650,7 @@ const FAQS: FaqEntry[] = [
     id: "tokenomics",
     category: "economics",
     searchText:
-      "tokenomics supply allocation cap mint base layerzero oft early purchase wallet limit founders team auditors treasury",
+      "tokenomics supply allocation cap mint base founders team auditors treasury reserve",
     renderA: (t) => {
       return (
         <>
@@ -684,10 +678,6 @@ const FAQS: FaqEntry[] = [
               <tr>
                 <td>{t("faq.entries.tokenomics.row1Bucket")}</td>
                 <td>30%</td>
-              </tr>
-              <tr>
-                <td>{t("faq.entries.tokenomics.row2Bucket")}</td>
-                <td>24%</td>
               </tr>
               <tr>
                 <td>{t("faq.entries.tokenomics.row3Bucket")}</td>
@@ -719,11 +709,7 @@ const FAQS: FaqEntry[] = [
               </tr>
               <tr>
                 <td>{t("faq.entries.tokenomics.row10Bucket")}</td>
-                <td>1%</td>
-              </tr>
-              <tr>
-                <td>{t("faq.entries.tokenomics.row11Bucket")}</td>
-                <td>1%</td>
+                <td>25%</td>
               </tr>
             </tbody>
           </table>

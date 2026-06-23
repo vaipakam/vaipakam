@@ -54,12 +54,11 @@ Ort, verschiedene Zeilen.
 ### VPFI auf dieser Chain
 
 **VPFI** ist der eigene Token des Protokolls. Etwas davon im Vault
-zu halten verschafft dir einen Rabatt auf Protokollgebühren und
-bringt dir eine kleine passive Rendite (5% APR). Diese Karte sagt
-dir, auf der Chain, mit der du verbunden bist:
+zu halten verschafft dir einen Rabatt auf Protokollgebühren. Diese
+Karte sagt dir, auf der Chain, mit der du verbunden bist:
 
 - Wie viel VPFI gerade in deinem Wallet liegt.
-- Wie viel in deinem Vault liegt (was als "gestaked" zählt).
+- Wie viel in deinem Vault liegt (was zu deiner Rabatt-Stufe zählt).
 - Welchen Anteil am Gesamt-VPFI-Supply du hältst.
 - Wie viel VPFI insgesamt noch geminted werden kann (das Protokoll
   hat eine harte Obergrenze).
@@ -109,21 +108,13 @@ verdient haben, an einem Ort zusammen. Die große Zahl oben ist
 die kombinierte Summe — was Sie bereits beansprucht haben plus
 was darauf wartet, beansprucht zu werden.
 
-Es gibt zwei Belohnungsströme und die Karte schlüsselt die
-Summe nach jedem auf:
+Belohnungen stammen aus der **Plattform-Interaktion** — Sie
+verdienen täglich ein wenig für jeden Kredit, an dem Sie auf einer
+Seite beteiligt sind. Ausgezahlt in VPFI auf der Kette, auf der Sie
+sich befinden, ohne Bridge.
 
-- **Staking-Rendite** — automatisch auf jedem VPFI verdient,
-  das Sie in Ihrem Vault halten. Der Satz ist der Protokoll-
-  APR, der auf der Buy-VPFI-Seite angezeigt wird.
-- **Plattform-Interaktions-Belohnungen** — täglich ein wenig
-  für jeden Kredit verdient, an dem Sie auf einer Seite
-  beteiligt sind. Ausgezahlt in VPFI auf der Kette, auf der
-  Sie sich befinden, ohne Bridge.
-
-Jede Zeile hat einen kleinen Pfeil rechts. Klicken Sie darauf,
-um direkt zur vollständigen Anspruchskarte für diesen Strom zu
-springen — Staking lebt auf der Buy-VPFI-Seite, Plattform-
-Interaktion lebt im Claim Center.
+Die Zeile hat einen kleinen Pfeil rechts. Klicken Sie darauf, um
+direkt zur vollständigen Anspruchskarte im Claim Center zu springen.
 
 Wenn Sie noch nichts verdient haben, wird die Karte trotzdem
 mit *Insgesamt verdient: 0 VPFI* plus einem Hinweis zum
@@ -402,17 +393,17 @@ gemacht hast, zusammenbleiben.
 
 ---
 
-## VPFI kaufen
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### VPFI kaufen
+### VPFI bekommen
 
-Die Kaufseite lässt dich ETH gegen VPFI zum festen Frühphasen-Kurs
-des Protokolls tauschen. Du kannst das von jeder unterstützten
-Chain aus tun — wir routen den Trade für dich im Hintergrund. Das
-VPFI landet immer in deinem Wallet auf derselben Chain, mit der du
-verbunden bist. Kein Netzwerkwechsel nötig.
+VPFI ist frei übertragbar. Erwirb es auf dem freien Markt, wo immer
+es gehandelt wird, oder bridge es herein — VPFI ist ein Chainlink
+CCIP-Token, also bewegt es sich zwischen unterstützten Chains über
+die offizielle Bridge und landet in deinem Wallet auf der Chain, mit
+der du gerade verbunden bist.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -425,33 +416,20 @@ außerdem (a) wie viel VPFI mehr du im Vault brauchen würdest, um
 ins nächste Tier aufzusteigen, und (b) ob der Zustimmungsschalter
 auf dem Dashboard an ist — der Rabatt gilt nur, solange er an ist.
 
-Dasselbe VPFI in deinem Vault ist außerdem automatisch "gestaked"
-und bringt dir 5% APR.
-
-<a id="buy-vpfi.buy"></a>
-
-### Schritt 1 — VPFI mit ETH kaufen
-
-Tippe ein, wie viel ETH du ausgeben willst, drück Kaufen, signier
-die Transaktion. Das war's. Es gibt eine Pro-Kauf-Obergrenze und
-eine rollende 24-Stunden-Obergrenze, um Missbrauch zu vermeiden —
-du siehst die Live-Zahlen neben dem Formular, sodass du weißt, wie
-viel dir noch bleibt.
-
 <a id="buy-vpfi.deposit"></a>
 
-### Schritt 2 — VPFI in deinen Vault einzahlen
+### VPFI in deinen Vault einzahlen
 
-VPFI zu kaufen legt es in dein Wallet, nicht in deinen Vault. Um
-den Gebühren-Rabatt und die 5%-Staking-Rendite zu bekommen, musst
-du es selbst in den Vault bewegen. Das ist immer ein expliziter
-Klick — die App bewegt dein VPFI nie ohne deine Aufforderung. Eine
-Transaktion (oder eine einzige Signatur, auf Chains, die das
-unterstützen) und du bist fertig.
+VPFI in deinem Wallet zählt nicht zur Rabatt-Stufe. Um den
+Gebühren-Rabatt freizuschalten, musst du VPFI selbst in deinen
+Vault bewegen. Das ist immer ein expliziter Klick — die App bewegt
+dein VPFI nie ohne deine Aufforderung. Eine Transaktion (oder eine
+einzige Signatur, auf Chains, die das unterstützen) und du bist
+fertig.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Schritt 3 — VPFI aus deinem Vault unstaken
+### VPFI aus deinem Vault unstaken
 
 Willst du etwas VPFI zurück in deinem Wallet? Diese Karte schickt
 es vom Vault zurück zu dir. Achtung: VPFI rauszuziehen senkt dein
@@ -466,37 +444,23 @@ Rabatt-Mathematik ab diesem Moment auf das niedrigere Tier.
 
 ### Über Rewards
 
-Vaipakam zahlt dir für zwei Dinge:
+Vaipakam zahlt dir eine **Plattform-Interaktions-Belohnung**: jeder
+Dollar Zinsen, den ein Loan, an dem du beteiligt bist, tatsächlich
+settled, bringt dir einen täglichen Anteil an einem
+gemeinschaftsweiten Reward-Pool.
 
-1. **Staking** — VPFI, das du im Vault hältst, verdient
-   automatisch 5% APR.
-2. **Interaktion** — jeder Dollar Zinsen, den ein Loan, an dem du
-   beteiligt bist, tatsächlich settled, bringt dir einen täglichen
-   Anteil an einem gemeinschaftsweiten Reward-Pool.
-
-Beide werden in VPFI ausgezahlt, direkt auf der Chain geminted, auf
-der du bist. Keine Bridges, keine Chain-Wechsel.
+Rewards werden in VPFI ausgezahlt, direkt auf der Chain geminted,
+auf der du bist. Keine Bridges, keine Chain-Wechsel.
 
 <a id="rewards.claim"></a>
 
 ### Rewards claimen
 
-Ein Button claimed alles aus beiden Reward-Streams in einer
-einzigen Transaktion. Staking-Rewards sind immer in Echtzeit
-claimbar. Der Anteil aus dem Interaktions-Pool settled einmal pro
+Ein Button claimed deine aufgelaufenen Rewards in einer einzigen
+Transaktion. Der Anteil aus dem Interaktions-Pool settled einmal pro
 Tag, also wenn du seit dem letzten Settlement etwas verdient hast,
-wird der Interaktions-Anteil des Totals erst kurz nach Schluss des
-nächsten Tagesfensters scharfgeschaltet.
-
-<a id="rewards.withdraw-staked"></a>
-
-### Gestaktes VPFI abheben
-
-Bewege VPFI aus deinem Vault zurück in dein Wallet. Sobald es im
-Wallet ist, hört es auf, die 5% APR zu verdienen, und zählt nicht
-mehr für dein Rabatt-Tier. Dasselbe wie der "Unstake"-Schritt auf
-der VPFI-kaufen-Seite — gleiche Aktion, lebt nur auch hier zur
-Bequemlichkeit.
+wird er erst kurz nach Schluss des nächsten Tagesfensters
+scharfgeschaltet.
 
 ---
 

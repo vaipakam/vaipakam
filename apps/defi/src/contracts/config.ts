@@ -19,16 +19,8 @@ function normalizeAddress(addr: string | null): string | null {
   return getAddress(trimmed.toLowerCase());
 }
 
-/** Solidity convention: `address(0)` in the `vpfiBuyPaymentToken` slot
- *  means "pay in native gas (ETH / BNB)". The TS layer prefers `null`
- *  for that case to keep JS-truthiness checks honest, so map at the
- *  deployments-JSON boundary. */
-const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
-function nullIfZero(addr: string | undefined): string | null {
-  if (addr == null) return null;
-  if (addr.toLowerCase() === ZERO_ADDRESS) return null;
-  return addr;
-}
+// #687: nullIfZero (mapped the vpfiBuyPaymentToken address(0) sentinel) was
+// removed with the VPFI buy surface.
 
 /**
  * Registry of chains the Vaipakam app is aware of.
@@ -120,8 +112,6 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     deployBlock: dep?.deployBlock ?? 0,
     isCanonicalVPFI: meta.isCanonicalVPFI,
     testnet: meta.testnet,
-    vpfiBuyAdapter: dep?.vpfiBuyAdapter ?? null,
-    vpfiBuyPaymentToken: nullIfZero(dep?.vpfiBuyPaymentToken),
     metricsFacetAddress: dep?.facets?.metricsFacet ?? null,
     vaultImplAddress: dep?.vaultImpl ?? null,
     riskFacetAddress: dep?.facets?.riskFacet ?? null,
@@ -425,8 +415,6 @@ for (const c of [
   ANVIL,
 ]) {
   c.diamondAddress = normalizeAddress(c.diamondAddress);
-  c.vpfiBuyAdapter = normalizeAddress(c.vpfiBuyAdapter);
-  c.vpfiBuyPaymentToken = normalizeAddress(c.vpfiBuyPaymentToken);
   c.metricsFacetAddress = normalizeAddress(c.metricsFacetAddress);
   c.vaultImplAddress = normalizeAddress(c.vaultImplAddress);
   c.riskFacetAddress = normalizeAddress(c.riskFacetAddress);

@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import {
   Gift,
-  TrendingUp,
   ShieldCheck,
   ArrowRight,
   Coins,
@@ -10,18 +9,19 @@ import { defiUrl } from '../lib/defiUrl';
 import { usePageMeta } from '../lib/usePageMeta';
 
 /**
- * Public-route marketing page for VPFI (mounted at `/buy-vpfi`).
+ * Public-route marketing page for VPFI (mounted at `/vpfi`).
  *
- * Pure pitch — no wallet connection. The actual buy / stake / unstake
- * surfaces live inside the app at `/app/buy-vpfi` (wallet-gated like
+ * Pure pitch — no wallet connection. The actual deposit / withdraw
+ * surface lives inside the app at `/app/buy-vpfi` (wallet-gated like
  * every other in-app page). The CTA at the bottom opens that surface
  * in a new tab so a marketing-page visitor never has to navigate
  * back to read more.
  *
- * Three cards in the same order the dropdown lists actions:
- *   1. Tiered fee discount  — pitch for borrowers / lenders
- *   2. Staking yield        — pitch for anyone with VPFI sitting idle
- *   3. How it works         — concrete next steps
+ * The page explains why holding VPFI is useful — the time-weighted
+ * fee-discount tiers (lower borrower Loan-Initiation Fee + lower
+ * lender yield fee) plus the interaction-reward stream — and how to
+ * acquire and stake it. Depositing VPFI into the vault lowers fees;
+ * it does not pay any yield on the deposit itself.
  *
  * Read-only protocol stats (TVL / circulating supply / etc.) live on
  * the public Analytics page — keeping that out of here lets this
@@ -80,17 +80,6 @@ export default function BuyVPFIMarketing() {
           className="card-title"
           style={{ display: 'flex', alignItems: 'center', gap: 8 }}
         >
-          <TrendingUp size={16} />
-          {t('buyVpfi.preconnect.stakingTitle')}
-        </div>
-        <p>{t('buyVpfi.preconnect.stakingBody')}</p>
-      </div>
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <div
-          className="card-title"
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-        >
           <ShieldCheck size={16} />
           {t('buyVpfi.preconnect.howTitle')}
         </div>
@@ -112,14 +101,16 @@ export default function BuyVPFIMarketing() {
         </p>
       </div>
 
-      {/* Launch-App CTA — opens the in-app `/app/buy-vpfi` surface in a
+      {/* Launch-App CTA — opens the in-app `/vpfi-vault` surface in a
           new tab so the marketing page stays open behind. The new-tab
           behaviour matches the public Navbar's Launch App and the
-          VPFI dropdown's Buy / Stake-Unstake action items, so users
-          land on the same expectation regardless of entry point. */}
+          VPFI dropdown's deposit/withdraw action items, so users land
+          on the same expectation regardless of entry point. Anchors at
+          `#step-2` — the first actionable deposit card after the
+          fixed-rate buy card was removed in #712. */}
       <div style={{ marginTop: 32, textAlign: 'center' }}>
         <a
-          href={defiUrl('/buy-vpfi#step-1')}
+          href={defiUrl('/vpfi-vault#step-2')}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-primary btn-lg"

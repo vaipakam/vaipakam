@@ -70,7 +70,7 @@ export default function Footer() {
             >
               {t('nav.nftVerifier')}
             </a>
-            <Link to="/buy-vpfi">{t('appNav.buyVpfi')}</Link>
+            <Link to="/vpfi">{t('appNav.buyVpfi')}</Link>
           </div>
 
           <div className="footer-col">

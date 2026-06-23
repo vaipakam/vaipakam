@@ -123,21 +123,14 @@ en la liquidación, y a la Loan Initiation Fee del prestatario
 ### Tus recompensas VPFI
 
 Tarjeta de resumen aspiracional que muestra, en una sola vista, el
-panorama combinado de recompensas VPFI de la billetera conectada en
-ambos flujos de recompensa. La cifra principal es la suma de:
-recompensas de staking pendientes, recompensas de staking reclamadas
-históricamente, recompensas de interacción pendientes y recompensas
-de interacción reclamadas históricamente.
+panorama de recompensas VPFI de la billetera conectada. La cifra
+principal es la suma de las recompensas de interacción pendientes y
+las recompensas de interacción reclamadas históricamente.
 
-Las filas de desglose por flujo muestran pendiente + reclamado y un
-enlace profundo con chevron hacia la tarjeta de reclamación completa
-en su página nativa:
+La fila de desglose muestra pendiente + reclamado y un enlace
+profundo con chevron hacia la tarjeta de reclamación completa en su
+página nativa:
 
-- **Rendimiento de staking** — VPFI pendiente acumulado al APR del
-  protocolo sobre tu saldo de vault, más todas las recompensas de
-  staking que hayas reclamado previamente desde esta billetera.
-  Enlaza a la tarjeta de reclamación de staking en la página Comprar
-  VPFI.
 - **Recompensas de interacción con la plataforma** — VPFI pendiente
   acumulado en todos los préstamos en los que hayas participado
   (lado prestamista o prestatario), más todas las recompensas de
@@ -155,9 +148,9 @@ que el de las tarjetas de reclamación subyacentes.
 
 La tarjeta siempre se muestra para billeteras conectadas, incluso
 cuando todos los valores son cero. La pista del estado vacío es
-intencional —ocultar la tarjeta en cero haría invisibles los
-programas de recompensas para usuarios nuevos hasta que entraran a
-Comprar VPFI o al Centro de reclamaciones.
+intencional —ocultar la tarjeta en cero haría invisible el programa
+de recompensas para usuarios nuevos hasta que entraran al Centro de
+reclamaciones.
 
 ---
 
@@ -771,32 +764,22 @@ carga vuelve a obtener los datos. Los eventos se agrupan por hash de
 transacción para que las txns multi-evento (por ejemplo, accept +
 initiate cayendo en el mismo bloque) se mantengan juntas. Los más
 nuevos primero. Muestra ofertas, préstamos, repagos,
-reclamaciones, liquidaciones, mints y burns de NFT, y compras /
-stakes / unstakes de VPFI.
+reclamaciones, liquidaciones, mints y burns de NFT, y depósitos /
+retiros de VPFI en vault.
 
 ---
 
-## Comprar VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Comprando VPFI
+### Conseguir VPFI
 
-Dos caminos:
-
-- **Canónico (Base)** — llamada directa al flujo canónico de
-  compra en el protocolo. Mintea VPFI directamente a tu billetera
-  en Base.
-- **No canónico** — el adaptador de compra de la cadena local
-  envía un paquete Chainlink CCIP al receptor canónico en Base, que
-  realiza la compra en Base y puentea el resultado de regreso vía
-  el estándar de token cross-chain. Latencia end-to-end ≈ 1 min
-  en pares L2-a-L2. El VPFI llega a tu billetera en la cadena de
-  **origen**.
-
-Límites de tasa del adaptador (post-endurecimiento): 50.000 VPFI
-por solicitud y 500.000 VPFI como ventana móvil de 24 horas. Ajustables
-por gobernanza a través de un timelock.
+VPFI es libremente transferible. Adquiérelo en el mercado abierto
+allá donde se negocie, o muévelo por puente: VPFI es un token
+cross-chain de Chainlink CCIP, así que se mueve entre cadenas
+compatibles usando el puente oficial y llega a tu billetera en la
+cadena hacia la que hiciste el puente.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -810,37 +793,24 @@ Estado en vivo:
 - Porcentaje de descuento al nivel actual.
 - Bandera de consentimiento a nivel de billetera.
 
-Nota que el VPFI en vault también acumula 5% APR vía el pool de
-staking —no hay acción separada de "stake". Depositar VPFI en tu
-vault ES hacer staking.
-
-<a id="buy-vpfi.buy"></a>
-
-### Paso 1 — Compra VPFI con ETH
-
-Envía la compra. En la cadena canónica, el protocolo mintea
-directamente. En cadenas espejo, el adaptador de compra recibe el
-pago, envía un mensaje cross-chain, y el receptor ejecuta la
-compra en Base y puentea VPFI de vuelta. La comisión del puente más el
-costo de la red de verificadores se cotiza en vivo y se muestra
-en el formulario. El VPFI no se auto-deposita en vault —el Paso
-2 es una acción explícita del usuario por diseño.
+El VPFI en vault cuenta para tu tier de descuento mientras siga
+depositado —no hay una acción separada de "stake".
 
 <a id="buy-vpfi.deposit"></a>
 
-### Paso 2 — Deposita VPFI en tu vault
+### Deposita VPFI en tu vault
 
-Un paso de depósito explícito separado, desde tu billetera a tu
-vault en la misma cadena. Requerido en cada cadena —incluso la
-canónica— porque el depósito en vault siempre es una acción
-explícita del usuario por especificación. En cadenas donde está
-configurado Permit2, la app prefiere el camino de firma única
-sobre el patrón clásico de approve + deposit; hace fallback limpio
-si Permit2 no está configurado en esa cadena.
+Un paso de depósito explícito, desde tu billetera a tu vault en la
+misma cadena. Requerido en cada cadena —incluso la canónica— porque
+el depósito en vault siempre es una acción explícita del usuario por
+especificación. En cadenas donde está configurado Permit2, la app
+prefiere el camino de firma única sobre el patrón clásico de approve
++ deposit; hace fallback limpio si Permit2 no está configurado en esa
+cadena.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Paso 3 — Saca VPFI del staking en tu vault
+### Saca VPFI de tu vault
 
 Retira VPFI desde tu vault de vuelta a tu billetera. No hay
 etapa de aprobación —el protocolo es dueño del vault y se debita
@@ -857,17 +827,13 @@ aún aplique el nivel anterior.
 
 ### Sobre las recompensas
 
-Dos flujos:
+El **pool de interacción** paga una cuota diaria pro-rata de una
+emisión diaria fija, ponderada por tu contribución de intereses
+liquidados al volumen de préstamos de ese día. Las ventanas diarias
+se finalizan de forma lazy en la primera reclamación o liquidación
+después del cierre de ventana.
 
-- **Pool de staking** — el VPFI en vault acumula al 5% APR
-  continuamente, con capitalización por segundo.
-- **Pool de interacción** — cuota diaria pro-rata de una emisión
-  diaria fija, ponderada por tu contribución de intereses
-  liquidados al volumen de préstamos de ese día. Las ventanas
-  diarias se finalizan de forma lazy en la primera reclamación o
-  liquidación después del cierre de ventana.
-
-Ambos flujos se mintean directamente en la cadena activa —no hay
+Las recompensas se mintean directamente en la cadena activa —no hay
 ida y vuelta cross-chain para el usuario. La agregación cross-chain
 de recompensas ocurre sólo entre contratos del protocolo.
 
@@ -875,23 +841,20 @@ de recompensas ocurre sólo entre contratos del protocolo.
 
 ### Reclamar recompensas
 
-Una sola transacción reclama ambos flujos a la vez. Las
-recompensas de staking siempre están disponibles; las recompensas
-de interacción son cero hasta que la ventana diaria relevante se
-finalice (finalización lazy disparada por la siguiente
-reclamación o liquidación distinta de cero en esa cadena). La UI bloquea
-el botón mientras la ventana aún se está finalizando para que los
-usuarios no reclamen de menos.
+Una sola transacción reclama tus recompensas acumuladas. Las
+recompensas de interacción son cero hasta que la ventana diaria
+relevante se finalice (finalización lazy disparada por la siguiente
+reclamación o liquidación distinta de cero en esa cadena). La UI
+bloquea el botón mientras la ventana aún se está finalizando para que
+los usuarios no reclamen de menos.
 
 <a id="rewards.withdraw-staked"></a>
 
-### Retirar VPFI stakeado
+### Retirar VPFI de tu vault
 
-Superficie idéntica al "Paso 3 — Unstake" en la página Comprar
-VPFI —retira VPFI desde el vault de vuelta a tu billetera. El
-VPFI retirado sale del pool de staking inmediatamente (las
-recompensas dejan de acumularse para ese monto en ese bloque) y
-sale del acumulador de descuento inmediatamente (refijación
+Superficie idéntica a "Saca VPFI de tu vault" en la sección VPFI
+—retira VPFI desde el vault de vuelta a tu billetera. El VPFI
+retirado sale del acumulador de descuento inmediatamente (refijación
 posterior al saldo en cada préstamo abierto).
 
 ---

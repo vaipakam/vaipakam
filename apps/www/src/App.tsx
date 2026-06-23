@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -45,8 +45,8 @@ const HelpSearch = lazy(() => import('./pages/HelpSearch'));
 const AdminKnobsDocs = lazy(() => import('./pages/AdminKnobsDocs'));
 
 /**
- * Public Buy-VPFI shell — wraps the marketing page in the standard
- * Navbar + Footer chrome. The actual buy / stake / unstake flow
+ * Public VPFI shell — wraps the VPFI-benefits marketing page in the
+ * standard Navbar + Footer chrome. The actual deposit / withdraw flow
  * lives at `<defi>/buy-vpfi` (wallet-gated); CTAs inside
  * `BuyVPFIMarketing` open that URL in a new tab via the
  * `defiUrl(...)` helper.
@@ -103,11 +103,35 @@ function PublicDataRights() {
  * dominant industry posture (Morpho, etc.) of
  * "each surface owns its own URL space."
  */
+/**
+ * Back-compat redirect for the renamed `/buy-vpfi` → `/vpfi` marketing
+ * route (#712, fixed-rate sale removed). Uses a *path-relative*
+ * `../vpfi` rather than an absolute `/vpfi` so the active locale prefix
+ * survives — `/es/buy-vpfi` lands on `/es/vpfi`, not the English root —
+ * and `location.search` / `location.hash` are carried through so deep
+ * links like `/es/buy-vpfi#benefits` keep working. Mirrors defi's
+ * `BuyVpfiRedirect`.
+ */
+function LegacyVpfiRedirect(): ReactElement {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../vpfi${location.search}${location.hash}`}
+      replace
+      relative="path"
+    />
+  );
+}
+
 function pageRoutes(): ReactElement {
   return (
     <>
       <Route index element={<LandingPage />} />
-      <Route path="buy-vpfi" element={<PublicBuyVPFI />} />
+      <Route path="vpfi" element={<PublicBuyVPFI />} />
+      {/* #712: the page moved from /buy-vpfi → /vpfi when the fixed-rate
+          sale was removed; keep a redirect so old inbound links / cached
+          sitemap entries don't 404. */}
+      <Route path="buy-vpfi" element={<LegacyVpfiRedirect />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />

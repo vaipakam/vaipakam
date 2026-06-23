@@ -123,7 +123,7 @@ list_pause_targets() {
   local slug="$1"
   local addr_file="$DEPLOY_ROOT/$slug/addresses.json"
   [ ! -f "$addr_file" ] && return 1
-  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror vpfiBuyReceiver vpfiBuyAdapter; do
+  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
     # Legacy fallback: pre-T-068 deployment artifacts stored the cross-
     # chain reward messenger under the LayerZero-era key `rewardOApp`.

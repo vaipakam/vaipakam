@@ -115,19 +115,13 @@ VPFI rebate として支払われます)。
 
 ### あなたの VPFI Rewards
 
-connected wallet の VPFI rewards 全体像を、2 つの reward streams
-にまたがって 1 つの view にまとめる summary card です。headline
-figure は、pending staking rewards、lifetime-claimed staking
-rewards、pending interaction rewards、lifetime-claimed interaction
-rewards の合計です。
+connected wallet の VPFI rewards 全体像を 1 つの view にまとめる
+summary card です。headline figure は、pending interaction rewards
+と lifetime-claimed interaction rewards の合計です。
 
-stream ごとの breakdown rows には pending + claimed が表示され、
-native page 上の full claim card へ chevron deep-link します:
+breakdown row には pending + claimed が表示され、native page 上の
+full claim card へ chevron deep-link します:
 
-- **Staking yield** — vault balance に対して protocol APR で accrue
-  した pending VPFI と、この wallet から過去に claim したすべての
-  staking rewards。Buy VPFI page の staking claim card に deep-link
-  します。
 - **Platform-interaction rewards** — あなたが参加したすべての loan
   (lender side または borrower side) で accrue した pending VPFI と、
   過去に claim したすべての interaction rewards。Claim Center の
@@ -142,8 +136,8 @@ claim cards と同じです。
 
 card は connected wallets に対して常に render されます。すべての値が
 zero の状態でも同じです。empty-state hint は意図的なものです — zero
-で card を非表示にすると、新しい users は Buy VPFI や Claim Center に
-入るまで rewards programs に気づけません。
+で card を非表示にすると、新しい users は Claim Center に入るまで
+rewards program に気づけません。
 
 ---
 
@@ -714,32 +708,21 @@ backend cache はありません — page load ごとに再取得します。
 events は transaction hash ごとに group されるため、multi-event
 transactions (例: accept + initiate が同じ block 内) はまとまって
 表示されます。新しい順です。offers、loans、repayments、claims、
-liquidations、NFT mints / burns、VPFI buys / stakes / unstakes を
-表示します。
+liquidations、NFT mints / burns、VPFI vault deposits / withdrawals
+を表示します。
 
 ---
 
-## Buy VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### VPFI を購入する
+### VPFI を入手する
 
-2 つの paths:
-
-- **Canonical (Base)** — protocol の canonical buy flow を直接
-  call します。VPFI は Base 上のあなたの wallet に直接 mint され
-  ます。
-- **Off-canonical** — local-chain buy adapter が Base 上の
-  canonical receiver へ Chainlink CCIP packet を送ります。receiver は
-  Base で purchase を execute し、cross-chain token standard で
-  result を bridge して戻します。L2-to-L2 pairs で end-to-end
-  latency は ≈ 1 分です。VPFI は **origin** chain 上のあなたの
-  wallet に land します。
-
-Adapter rate limits (post-hardening): request あたり 50,000 VPFI、
-rolling 24 hours で 500,000 VPFI。governance が timelock 経由で
-tune できます。
+VPFI は自由に transfer できます。VPFI が取引されている open market
+で入手するか、bridge で持ち込んでください: VPFI は Chainlink CCIP
+cross-chain token なので、official bridge を使って supported chains
+間を移動し、あなたが bridge した chain の wallet に land します。
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -752,27 +735,14 @@ Live status:
 - 現在の tier における割引パーセンテージ。
 - wallet-level consent flag。
 
-vault VPFI は staking pool 経由で自動的に 5% APR も accrue します
-— 別の "stake" action はありません。VPFI を vault に deposit
-すること自体が staking です。
-
-<a id="buy-vpfi.buy"></a>
-
-### Step 1 — ETH で VPFI を購入する
-
-purchase を submit します。canonical chain では protocol が直接
-mint します。Mirror chains では buy adapter が payment を受け取り、
-cross-chain message を送り、receiver が Base で purchase を execute
-して VPFI を bridge して戻します。Bridge fee + verifier-network
-cost は form 内で live quote され表示されます。VPFI は vault に
-自動 deposit されません — design 上、Step 2 は explicit user action
-です。
+vault VPFI は deposit されている限り discount tier の判定に count
+されます — 別の "stake" action はありません。
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — VPFI を vault に入金する
+### VPFI を vault に入金する
 
-wallet から同じ chain 上のあなたの vault へ移す、別の explicit
+wallet から同じ chain 上のあなたの vault へ移す explicit な
 deposit step です。すべての chains で必要です — canonical でも —
 vault deposit spec では常に explicit user action だからです。
 Permit2 が configured されている chains では、app は classic
@@ -782,7 +752,7 @@ cleanly fall back します。
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — vault から VPFI をアンステークする
+### vault から VPFI をアンステークする
 
 VPFI を vault から wallet に戻します。approval leg はありません
 — protocol が vault owner であり、自身を debit します。withdraw
@@ -798,16 +768,13 @@ apply される grace window はありません。
 
 ### Rewards について
 
-2 つの streams:
+**Interaction pool** は、fixed daily emission の per-day pro-rata
+share を支払います。その日の loan volume に対するあなたの
+settled-interest contribution で weighted されます。Daily windows
+は window close 後の最初の claim または settlement で lazily
+finalise されます。
 
-- **Staking pool** — vault にある VPFI は 5% APR で継続的に
-  accrue し、per-second compounding されます。
-- **Interaction pool** — fixed daily emission の per-day pro-rata
-  share です。その日の loan volume に対するあなたの settled-interest
-  contribution で weighted されます。Daily windows は window close
-  後の最初の claim または settlement で lazily finalise されます。
-
-両方の streams は active chain 上で直接 mint されます — user 側の
+rewards は active chain 上で直接 mint されます — user 側の
 cross-chain round-trip はありません。Cross-chain reward aggregation
 は protocol contracts 間でのみ行われます。
 
@@ -815,22 +782,20 @@ cross-chain round-trip はありません。Cross-chain reward aggregation
 
 ### Rewards を Claim する
 
-1 transaction で両方の streams をまとめて claim します。Staking
-rewards は常に available です。Interaction rewards は、該当する
-daily window が finalise されるまで zero です (その chain 上の次の
-non-zero claim または settlement で trigger される lazy finalisation)。
-window がまだ finalise 中のときは UI が button を guard し、users
-が under-claim しないようにします。
+1 transaction で accrued した rewards を claim します。Interaction
+rewards は、該当する daily window が finalise されるまで zero です
+(その chain 上の次の non-zero claim または settlement で trigger
+される lazy finalisation)。window がまだ finalise 中のときは UI が
+button を guard し、users が under-claim しないようにします。
 
 <a id="rewards.withdraw-staked"></a>
 
-### ステーキング済みの VPFI を引き出す
+### vault から VPFI を引き出す
 
-Buy VPFI ページの "Step 3 — Unstake" と同じ interface です —
-vault から wallet に VPFI を戻します。withdraw された VPFI は
-即座に staking pool から外れ (その amount の rewards は同じ block
-で accrue を停止)、discount accumulator からも即座に外れます
-(各 open loan で post-balance re-stamp)。
+VPFI セクションの "vault から VPFI をアンステークする" と同じ
+interface です — vault から wallet に VPFI を戻します。withdraw
+された VPFI は discount accumulator から即座に外れます (各 open
+loan で post-balance re-stamp)。
 
 ---
 

@@ -123,21 +123,15 @@ der Borrower claimt).
 
 ### Deine VPFI-Rewards
 
-Eine ambitionierte Übersichtskarte, die das kombinierte
-VPFI-Rewards-Bild des verbundenen Wallets über beide Reward-Ströme
-in einer Ansicht zeigt. Die Hauptzahl ist die Summe aus:
-ausstehenden Staking-Rewards, historisch geclaimten
-Staking-Rewards, ausstehenden Interaction-Rewards und historisch
+Eine ambitionierte Übersichtskarte, die das VPFI-Rewards-Bild des
+verbundenen Wallets in einer Ansicht zeigt. Die Hauptzahl ist die
+Summe aus ausstehenden Interaction-Rewards und historisch
 geclaimten Interaction-Rewards.
 
-Die Aufschlüsselungszeilen pro Strom zeigen ausstehend + geclaimt
-und einen Chevron-Deep-Link zur vollständigen Claim-Karte auf der
-jeweiligen Ursprungsseite:
+Die Aufschlüsselungszeile zeigt ausstehend + geclaimt und einen
+Chevron-Deep-Link zur vollständigen Claim-Karte auf ihrer
+Ursprungsseite:
 
-- **Staking-Rendite** — ausstehendes VPFI, das mit der
-  Protokoll-APR auf deinen Vault-Saldo aufläuft, plus alle
-  Staking-Rewards, die du mit diesem Wallet bereits geclaimt hast.
-  Deep-Link zur Staking-Claim-Karte auf der VPFI-kaufen-Seite.
 - **Plattform-Interaction-Rewards** — ausstehendes VPFI, das über
   alle Loans aufläuft, an denen du teilgenommen hast (Lender- oder
   Borrower-Seite), plus alle Interaction-Rewards, die du bereits
@@ -155,9 +149,8 @@ zugrunde liegenden Claim-Karten.
 
 Die Karte wird für verbundene Wallets immer gerendert, auch wenn
 alle Werte null sind. Der Empty-State-Hinweis ist Absicht — würde
-die Karte bei null ausgeblendet, wären die Rewards-Programme für
-neue Nutzer unsichtbar, bis sie zufällig auf VPFI kaufen oder ins
-Claim Center gehen.
+die Karte bei null ausgeblendet, wäre das Rewards-Programm für
+neue Nutzer unsichtbar, bis sie zufällig ins Claim Center gehen.
 
 ---
 
@@ -768,31 +761,21 @@ der Seite holt die Daten neu. Ereignisse werden nach
 Transaktions-Hash gruppiert, sodass Multi-Event-Transaktionen
 (z. B. Accept + Initiate im selben Block) zusammenbleiben. Neueste
 zuerst. Zeigt Offers, Loans, Rückzahlungen, Claims, Liquidationen,
-NFT-Mints/-Burns und VPFI-Käufe / -Stakes / -Unstakes.
+NFT-Mints/-Burns und VPFI-Vault-Einzahlungen / -Abhebungen.
 
 ---
 
-## VPFI kaufen
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### VPFI kaufen
+### VPFI bekommen
 
-Zwei Pfade:
-
-- **Kanonisch (Base)** — direkter Aufruf des kanonischen
-  Buy-Flows am Protokoll. Mintet VPFI direkt in dein Wallet auf
-  Base.
-- **Off-canonical** — der Buy-Adapter auf der lokalen Chain
-  schickt ein Chainlink CCIP-Paket an den kanonischen Receiver auf
-  Base, der den Kauf auf Base ausführt und das Ergebnis über den
-  Cross-Chain-Token-Standard zurückbridget. End-to-End-Latenz
-  ≈ 1 Min auf L2-zu-L2-Paaren. Das VPFI landet im Wallet auf der
-  **Origin**-Chain.
-
-Adapter-Rate-Limits (post-Hardening): 50.000 VPFI pro Anfrage und
-500.000 VPFI als rollierendes Limit über 24 Stunden. Durch
-Governance über einen Timelock anpassbar.
+VPFI ist frei übertragbar. Erwirb es auf dem freien Markt, wo immer
+es gehandelt wird, oder bridge es herein: VPFI ist ein Chainlink
+CCIP Cross-Chain-Token, also bewegt es sich zwischen unterstützten
+Chains über die offizielle Bridge und landet in deinem Wallet auf
+der Chain, auf die du gebridget hast.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -805,29 +788,15 @@ Live-Status:
 - Rabatt-Prozentsatz auf dem aktuellen Tier.
 - Consent-Flag auf Wallet-Ebene.
 
-Beachte, dass VPFI im Vault auch 5% APR über den Staking-Pool
-verdient — es gibt keine separate "Stake"-Aktion. VPFI in deinen
-Vault einzuzahlen IST Staking.
-
-<a id="buy-vpfi.buy"></a>
-
-### Schritt 1 — VPFI mit ETH kaufen
-
-Reicht den Kauf ein. Auf der kanonischen Chain mintet das
-Protokoll direkt. Auf Mirror-Chains nimmt der Buy-Adapter die
-Zahlung, schickt eine Cross-Chain-Nachricht, und der Receiver
-führt den Kauf auf Base aus und bridget VPFI zurück. Bridge-Fee
-plus Verifier-Netzwerk-Kosten werden live quotiert und im
-Formular angezeigt. VPFI wird nicht automatisch in den Vault
-eingezahlt — Schritt 2 ist per Design eine explizite
-Nutzeraktion.
+VPFI im Vault zählt zu deinem Rabatt-Tier, solange es eingezahlt
+bleibt — es gibt keine separate "Stake"-Aktion.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Schritt 2 — VPFI in deinen Vault einzahlen
+### VPFI in deinen Vault einzahlen
 
-Ein separater, expliziter Deposit-Schritt von deinem Wallet zu
-deinem Vault auf derselben Chain. Auf jeder Chain erforderlich —
+Ein expliziter Deposit-Schritt von deinem Wallet zu deinem Vault
+auf derselben Chain. Auf jeder Chain erforderlich —
 auch auf der kanonischen — weil Vault-Deposit per Spec immer
 eine explizite Nutzeraktion ist. Auf Chains, auf denen Permit2
 konfiguriert ist, bevorzugt die App den Single-Signature-Pfad
@@ -837,7 +806,7 @@ ist.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Schritt 3 — VPFI aus deinem Vault unstaken
+### VPFI aus deinem Vault unstaken
 
 Hebe VPFI aus deinem Vault zurück in dein Wallet ab. Es gibt
 keinen separaten Approve-Schritt — das Protokoll besitzt den
@@ -855,18 +824,14 @@ noch gilt.
 
 ### Über Rewards
 
-Zwei Streams:
+Der **Interaction-Pool** zahlt einen täglichen Pro-rata-Anteil an
+einer festen täglichen Emission, gewichtet nach deinem Beitrag an
+gesettleten Zinsen zum Loan-Volumen dieses Tages. Tagesfenster
+finalisieren lazy beim ersten Claim oder Settlement nach
+Fenster-Schluss.
 
-- **Staking-Pool** — im Vault gehaltenes VPFI läuft kontinuierlich
-  zu 5% APR auf, mit Verzinsung pro Sekunde.
-- **Interaction-Pool** — täglicher Pro-rata-Anteil an einer festen
-  täglichen Emission, gewichtet nach deinem Beitrag an
-  gesettleten Zinsen zum Loan-Volumen dieses Tages. Tagesfenster
-  finalisieren lazy beim ersten Claim oder Settlement nach
-  Fenster-Schluss.
-
-Beide Streams werden direkt auf der aktiven Chain geminted — es
-gibt keinen Cross-Chain-Round-Trip für den Nutzer.
+Rewards werden direkt auf der aktiven Chain geminted — es gibt
+keinen Cross-Chain-Round-Trip für den Nutzer.
 Cross-Chain-Reward-Aggregation findet nur zwischen
 Protokollverträgen statt.
 
@@ -874,23 +839,20 @@ Protokollverträgen statt.
 
 ### Rewards claimen
 
-Eine einzige Transaktion claimt beide Streams gleichzeitig.
-Staking-Rewards sind immer verfügbar; Interaction-Rewards sind
-null, bis das relevante Tagesfenster finalisiert
-(Lazy-Finalisierung getriggert durch den nächsten
+Eine einzige Transaktion claimt deine aufgelaufenen Rewards.
+Interaction-Rewards sind null, bis das relevante Tagesfenster
+finalisiert (Lazy-Finalisierung getriggert durch den nächsten
 Nicht-Null-Claim oder das nächste Settlement auf dieser Chain).
 Die UI sperrt den Button, während das Fenster noch finalisiert,
 damit Nutzer nicht unter-claimen.
 
 <a id="rewards.withdraw-staked"></a>
 
-### Gestaktes VPFI abheben
+### VPFI aus deinem Vault abheben
 
-Identische Oberfläche wie "Schritt 3 — Unstake" auf der
-VPFI-kaufen-Seite — hebe VPFI aus dem Vault zurück in dein Wallet
-ab. Abgehobenes VPFI verlässt den Staking-Pool sofort
-(Rewards hören für diesen Betrag in diesem Block auf
-aufzulaufen) und verlässt den Rabatt-Akkumulator sofort
+Identische Oberfläche wie "VPFI aus deinem Vault unstaken" im
+VPFI-Bereich — hebe VPFI aus dem Vault zurück in dein Wallet ab.
+Abgehobenes VPFI verlässt den Rabatt-Akkumulator sofort
 (Post-Saldo-Re-Stamp auf jedem offenen Loan).
 
 ---

@@ -51,12 +51,11 @@ en otro), ambos aparecen —mismo lugar, filas distintas.
 ### VPFI en esta cadena
 
 **VPFI** es el token propio del protocolo. Tener algo en tu vault te
-da un descuento sobre las comisiones del protocolo y te genera un
-pequeño rendimiento pasivo (5% APR). Esta tarjeta te dice, en la
-cadena a la que estás conectado:
+da un descuento sobre las comisiones del protocolo. Esta tarjeta te
+dice, en la cadena a la que estás conectado:
 
 - Cuánto VPFI tienes en tu billetera ahora mismo.
-- Cuánto está en tu vault (lo que cuenta como "stakeado").
+- Cuánto está en tu vault (lo que cuenta para tu tier de descuento).
 - Qué proporción del suministro total de VPFI tienes.
 - Cuánto VPFI queda por mintear en total (el protocolo tiene un
   tope rígido).
@@ -104,21 +103,14 @@ has ganado del protocolo. El número grande en la parte superior
 es el total combinado — lo que ya has reclamado más lo que
 está esperando ser reclamado.
 
-Hay dos flujos de recompensas y la tarjeta desglosa el total
-por cada uno:
+Las recompensas provienen de la **interacción con la
+plataforma** — ganas un poco cada día por cada préstamo en el
+que participes, en cualquier lado. Pagado en VPFI en la cadena
+en la que estás, sin puente.
 
-- **Rendimiento de staking** — ganado automáticamente sobre
-  cualquier VPFI que mantengas en tu vault. La tasa es el APR
-  del protocolo mostrado en la página Buy VPFI.
-- **Recompensas de interacción con la plataforma** — ganado un
-  poco cada día por cada préstamo en el que participes, en
-  cualquier lado. Pagado en VPFI en la cadena en la que estás,
-  sin puente.
-
-Cada fila tiene una pequeña flecha de chevron a la derecha.
-Haz clic en ella para saltar directamente a la tarjeta de
-reclamación completa de ese flujo — staking vive en la página
-Buy VPFI, interacción con la plataforma vive en el Claim Center.
+La fila tiene una pequeña flecha de chevron a la derecha. Haz
+clic en ella para saltar directamente a la tarjeta de
+reclamación completa en el Claim Center.
 
 Si aún no has ganado nada, la tarjeta se renderiza igualmente
 con *Total ganado: 0 VPFI* más una pista sobre cómo empezar.
@@ -394,17 +386,17 @@ las cosas que hiciste en un mismo clic se mantengan juntas.
 
 ---
 
-## Comprar VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Comprando VPFI
+### Conseguir VPFI
 
-La página de compra te permite intercambiar ETH por VPFI a la tasa
-fija de etapa temprana del protocolo. Puedes hacerlo desde cualquier
-cadena soportada —enrutamos la operación por debajo. El VPFI siempre
-llega a tu billetera en la misma cadena a la que estás conectado.
-Sin necesidad de cambiar de red.
+VPFI es libremente transferible. Adquiérelo en el mercado abierto
+allá donde se negocie, o muévelo por puente —VPFI es un token
+Chainlink CCIP, así que se mueve entre cadenas compatibles usando el
+puente oficial y llega a tu billetera en la cadena a la que estés
+conectado.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -417,31 +409,19 @@ vault para subir al siguiente tier, y (b) si el interruptor de
 consentimiento del Dashboard está activado —el descuento sólo aplica
 mientras lo esté.
 
-El mismo VPFI en tu vault también está "stakeado" automáticamente y
-te genera un 5% APR.
-
-<a id="buy-vpfi.buy"></a>
-
-### Paso 1 — Compra VPFI con ETH
-
-Escribe cuánto ETH quieres gastar, presiona Comprar, firma la
-transacción. Eso es todo. Hay un tope por compra y un tope rolling
-de 24 horas para evitar abusos —verás los números en vivo junto al
-formulario para saber cuánto te queda.
-
 <a id="buy-vpfi.deposit"></a>
 
-### Paso 2 — Deposita VPFI en tu vault
+### Deposita VPFI en tu vault
 
-Comprar VPFI lo coloca en tu billetera, no en tu vault. Para
-obtener el descuento de comisiones y el rendimiento por staking del
-5%, tienes que moverlo al vault tú mismo. Esto siempre es un clic
-explícito —la app nunca mueve tu VPFI sin que se lo pidas. Una
-transacción (o una sola firma, en cadenas que lo soporten) y listo.
+El VPFI en tu billetera no cuenta para el tier de descuento. Para
+desbloquear el descuento de comisiones, mueve VPFI a tu vault tú
+mismo. Esto siempre es un clic explícito —la app nunca mueve tu VPFI
+sin que se lo pidas. Una transacción (o una sola firma, en cadenas
+que lo soporten) y listo.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Paso 3 — Saca VPFI del staking en tu vault
+### Saca VPFI de tu vault
 
 ¿Quieres recuperar algo de VPFI en tu billetera? Esta tarjeta lo
 envía desde el vault de vuelta a ti. Ten en cuenta: sacar VPFI baja
@@ -457,36 +437,22 @@ ese momento en adelante.
 
 ### Sobre las recompensas
 
-Vaipakam te paga por dos cosas:
+Vaipakam te paga una **recompensa por interacción con la
+plataforma**: cada dólar de intereses que un préstamo del que formas
+parte llegue efectivamente a liquidar te otorga una porción diaria de
+un pool de recompensas comunitario.
 
-1. **Staking** — el VPFI que mantienes en vault gana 5% APR,
-   automáticamente.
-2. **Interacción** — cada dólar de intereses que un préstamo del que
-   formas parte llegue a liquidar te otorga una porción diaria de un
-   pool de recompensas comunitario.
-
-Ambas se pagan en VPFI, minteado directamente en la cadena en la que
-estés. Sin puentes, sin cambios de cadena.
+Las recompensas se pagan en VPFI, minteado directamente en la cadena
+en la que estés. Sin puentes, sin cambios de cadena.
 
 <a id="rewards.claim"></a>
 
 ### Reclamar recompensas
 
-Un sólo botón reclama todo de ambos flujos de recompensas en una
-única transacción. Las recompensas de staking siempre son
-reclamables en tiempo real. La porción del pool de interacción se
-liquida una vez al día, así que si has ganado algo desde la última
-liquidación, la parte de interacción del total sólo entra en vigor
-poco después de que cierre la próxima ventana diaria.
-
-<a id="rewards.withdraw-staked"></a>
-
-### Retirar VPFI stakeado
-
-Mueve VPFI de tu vault de vuelta a tu billetera. Una vez en la
-billetera deja de ganar el 5% APR y deja de contar para tu tier de
-descuento. Lo mismo que el paso "unstake" en la página Comprar VPFI
-—misma acción, sólo que también vive aquí por comodidad.
+Un sólo botón reclama tus recompensas acumuladas en una única
+transacción. La porción del pool de interacción se liquida una vez al
+día, así que si has ganado algo desde la última liquidación, sólo
+entra en vigor poco después de que cierre la próxima ventana diaria.
 
 ---
 

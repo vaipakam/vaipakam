@@ -19,7 +19,7 @@ import Allowances from './pages/Allowances';
 import VaultAssets from './pages/VaultAssets';
 import VaultRecover from './pages/VaultRecover';
 import DataRights from './pages/DataRights';
-import VPFIVaultAndDiscounts from './pages/BuyVPFI';
+import VPFIVaultAndDiscounts from './pages/VPFIVaultAndDiscounts';
 import Activity from './pages/Activity';
 import AdminDashboard from './pages/AdminDashboard';
 import { marketingUrl } from './lib/marketingUrl';

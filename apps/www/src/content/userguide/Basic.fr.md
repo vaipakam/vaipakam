@@ -50,12 +50,11 @@ un autre), les deux apparaissent — même endroit, lignes différentes.
 ### VPFI sur cette chaîne
 
 **VPFI** est le token natif du protocole. En détenir dans ton vault
-te donne une remise sur les frais du protocole et te génère un petit
-rendement passif (5% APR). Cette carte t'indique, sur la chaîne à
-laquelle tu es connecté :
+te donne une remise sur les frais du protocole. Cette carte
+t'indique, sur la chaîne à laquelle tu es connecté :
 
 - Combien de VPFI se trouvent dans ton wallet en ce moment.
-- Combien sont dans ton vault (ce qui compte comme "staké").
+- Combien sont dans ton vault (ce qui compte pour ton palier de remise).
 - Quelle part de l'offre totale de VPFI tu détiens.
 - Combien de VPFI il reste à minter au total (le protocole a un
   plafond strict).
@@ -104,21 +103,14 @@ récompenses VPFI que vous avez gagnées du protocole. Le grand
 nombre en haut est le total combiné — ce que vous avez déjà
 réclamé plus ce qui attend d'être réclamé.
 
-Il y a deux flux de récompenses et la carte ventile le total
-par chacun :
+Les récompenses proviennent de l'**interaction avec la
+plateforme** — vous gagnez un peu chaque jour pour chaque prêt
+auquel vous participez, des deux côtés. Payé en VPFI sur la
+chaîne sur laquelle vous êtes, sans pont.
 
-- **Rendement du staking** — gagné automatiquement sur tout
-  VPFI que vous gardez dans votre vault. Le taux est l'APR du
-  protocole affiché sur la page Buy VPFI.
-- **Récompenses d'interaction avec la plateforme** — gagné un
-  peu chaque jour pour chaque prêt auquel vous participez, des
-  deux côtés. Payé en VPFI sur la chaîne sur laquelle vous
-  êtes, sans pont.
-
-Chaque ligne a une petite flèche chevron à droite. Cliquez
-dessus pour sauter directement à la carte de réclamation
-complète pour ce flux — le staking vit sur la page Buy VPFI,
-l'interaction avec la plateforme vit dans le Claim Center.
+La ligne a une petite flèche chevron à droite. Cliquez dessus
+pour sauter directement à la carte de réclamation complète dans
+le Claim Center.
 
 Si vous n'avez encore rien gagné, la carte s'affiche quand
 même avec *Total gagné : 0 VPFI* plus un indice sur comment
@@ -397,17 +389,17 @@ choses faites en un même clic restent ensemble.
 
 ---
 
-## Acheter VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Acheter du VPFI
+### Obtenir du VPFI
 
-La page d'achat te permet d'échanger de l'ETH contre du VPFI au
-taux fixe de phase initiale du protocole. Tu peux le faire depuis
-n'importe quelle chaîne supportée — on route l'opération en arrière-
-plan pour toi. Le VPFI atterrit toujours dans ton wallet sur la même
-chaîne à laquelle tu es connecté. Pas besoin de changer de réseau.
+VPFI est librement transférable. Procure-t'en sur le marché ouvert
+partout où il s'échange, ou transfère-le par bridge — VPFI est un
+token Chainlink CCIP, donc il circule entre les chaînes prises en
+charge via le bridge officiel et atterrit dans ton wallet sur
+n'importe quelle chaîne à laquelle tu es connecté.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -421,33 +413,20 @@ passer au tier suivant, et (b) si l'interrupteur de consentement du
 Tableau de bord est activé — la remise ne s'applique que tant
 qu'il l'est.
 
-Le même VPFI dans ton vault est aussi automatiquement "staké" et
-te génère 5% APR.
-
-<a id="buy-vpfi.buy"></a>
-
-### Étape 1 — Achète du VPFI avec de l'ETH
-
-Tape combien d'ETH tu veux dépenser, clique sur Acheter, signe la
-transaction. C'est tout. Il y a un plafond par achat et un plafond
-glissant sur 24 heures pour prévenir les abus — tu verras les
-chiffres en direct à côté du formulaire pour savoir combien il te
-reste.
-
 <a id="buy-vpfi.deposit"></a>
 
-### Étape 2 — Dépose le VPFI dans ton vault
+### Dépose le VPFI dans ton vault
 
-Acheter du VPFI le met dans ton wallet, pas dans ton vault. Pour
-obtenir la remise sur les frais et le rendement de staking de 5%,
-tu dois le déplacer toi-même dans l'vault. C'est toujours un clic
-explicite — l'application ne déplace jamais ton VPFI sans que tu le
-demandes. Une transaction (ou une seule signature, sur les chaînes
-qui le supportent) et c'est réglé.
+Le VPFI dans ton wallet ne compte pas pour le palier de remise.
+Pour débloquer la remise sur les frais, tu dois déplacer le VPFI
+dans ton vault toi-même. C'est toujours un clic explicite —
+l'application ne déplace jamais ton VPFI sans que tu le demandes.
+Une transaction (ou une seule signature, sur les chaînes qui le
+supportent) et c'est réglé.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Étape 3 — Désengage du VPFI de ton vault
+### Désengage du VPFI de ton vault
 
 Tu veux récupérer du VPFI dans ton wallet ? Cette carte le renvoie
 de l'vault vers toi. Attention : retirer du VPFI fait baisser ton
@@ -463,36 +442,23 @@ instant.
 
 ### À propos des récompenses
 
-Vaipakam te paie pour deux choses :
+Vaipakam te verse une **récompense d'interaction avec la
+plateforme** : chaque dollar d'intérêts qu'un prêt auquel tu
+participes parvient réellement à régler te rapporte une part
+journalière d'une enveloppe de récompenses communautaire.
 
-1. **Staking** — le VPFI que tu gardes en vault génère 5% APR,
-   automatiquement.
-2. **Interaction** — chaque dollar d'intérêts qu'un prêt auquel tu
-   participes parvient à régler te rapporte une part journalière
-   d'une enveloppe de récompenses communautaire.
-
-Les deux sont versées en VPFI, mintés directement sur la chaîne où
-tu te trouves. Pas de pont, pas de changement de chaîne.
+Les récompenses sont versées en VPFI, mintées directement sur la
+chaîne où tu te trouves. Pas de pont, pas de changement de chaîne.
 
 <a id="rewards.claim"></a>
 
 ### Réclamer les récompenses
 
-Un seul bouton réclame tout des deux flux de récompenses en une
-seule transaction. Les récompenses de staking sont toujours
-réclamables en temps réel. La part de l'enveloppe d'interaction se
-règle une fois par jour, donc si tu en as gagné depuis le dernier
-règlement, la portion interaction du total ne devient effective que
-peu après la fermeture de la prochaine fenêtre journalière.
-
-<a id="rewards.withdraw-staked"></a>
-
-### Retirer le VPFI staké
-
-Déplace du VPFI de ton vault vers ton wallet. Une fois dans le
-wallet il cesse de générer le 5% APR et cesse de compter pour ton
-tier de remise. Identique à l'étape "désengage" sur la page Acheter
-VPFI — même action, mais aussi présente ici par commodité.
+Un seul bouton réclame tes récompenses accumulées en une seule
+transaction. La part de l'enveloppe d'interaction se règle une fois
+par jour, donc si tu en as gagné depuis le dernier règlement, elle
+ne devient effective que peu après la fermeture de la prochaine
+fenêtre journalière.
 
 ---
 

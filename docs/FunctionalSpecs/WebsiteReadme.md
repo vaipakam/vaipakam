@@ -331,7 +331,7 @@ Alerts and notification preferences:
 - `/app/alerts` should let borrowers configure per-loan HF threshold alerts and delivery rails
 - HF threshold notifications stay compulsory once any delivery rail is enabled
 - borrowers with refinance-offer posting caps enabled should be prompted from Loan Details to configure Telegram or Push alerts so the pre-grace watcher can warn them when no compatible lender offer is found before grace expiry
-- paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, cross-chain VPFI buy received, offer matched, maturity approaching, and partial repayment received
+- paid Push notification event types should be individually toggleable, defaulting on for new subscribers: claim available, loan settled / defaulted, offer matched, maturity approaching, and partial repayment received
 - periodic-interest checkpoint reminders should reuse the loan-alert rail. Borrower reminders are priority notifications, lender reminders are courtesy notifications, and the lead time should come from the live `preNotifyDays` governance setting shared with maturity reminders.
 - the Push rail should disclose the current flat notification fee in the active protocol numeraire, explain that Telegram remains free, and make clear that the VPFI fee is deducted from the user's Vaipakam Vault only on the first paid Push notification per loan side
 - the UI should warn when the user's Vault-held VPFI balance appears insufficient for the notification fee, while the on-chain billing path remains authoritative

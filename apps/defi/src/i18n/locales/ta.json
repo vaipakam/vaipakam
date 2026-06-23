@@ -76,7 +76,6 @@
     "security": "பாதுகாப்பு",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI பற்றி அறிக",
-    "vpfiBuy": "வாங்கு",
     "vpfiStakeUnstake": "Stake / Unstake",
     "vpfiStake": "Stake",
     "vpfiUnstake": "Unstake",
@@ -368,45 +367,27 @@
     "viewOnExplorer": "Explorer-இல் காண்க",
     "trustWarning": "எந்த symbol-உடனும் யாரும் token deploy செய்யலாம் — காட்டப்படும் symbol-ஐ நம்பாமல், contract address-ஐ நேரடியாகச் சரிபார்த்து இந்த token-ஐ நீங்கள் நம்புகிறீர்கள் என்பதை உறுதிப்படுத்தவும்."
   },
-  "buyVpfi": {
+  "vpfiVault": {
     "preconnect": {
-      "whatTitle": "VPFI என்றால் என்ன?",
-      "whatBody1": "VPFI என்பது Vaipakam-இன் protocol token — ETH கொண்டு வாங்கி, உங்கள் தனிப்பட்ட vault-வில் வைத்துக்கொண்டு, platform முழுவதும் பயன்படுத்தலாம். Lockup period இல்லை; சுதந்திரமாக transfer செய்யலாம்.",
-      "whatBody2": "VPFI வைத்திருப்பது protocol-இன் வெற்றியுடன் உங்களை இரண்டு நடைமுறை வழிகளில் இணைக்கிறது: Vaipakam வசூலிக்கும் fees-இல் discounts கிடைக்கும் (கடன் வழங்கும்போது அதிகம் வைத்துக்கொள்ளவும், கடன் வாங்கும்போது குறைவாக செலுத்தவும்), மேலும் அது உங்கள் vault-வில் இருக்கும் போது staking yield ஈட்டும்.",
-      "whatBody3": "ETH உள்ள யாரும் வாங்கி stake செய்யலாம். கீழே உள்ள இரண்டு benefit cards, VPFI வைத்திருப்பதால் கிடைப்பதைத் தெளிவாகக் காட்டுகின்றன.",
       "discountTitle": "Tiered fee discount",
       "discountBody": "உங்கள் தனிப்பட்ட vault-வில் வைத்திருக்கும் VPFI, Vaipakam protocol fees-இல் time-weighted discount தருகிறது — ஒவ்வொரு loan settle ஆகும் போது தானாகப் பயன்படுத்தப்படும்; தனியான claim step தேவையில்லை:",
       "discountBullet1": "Lenders: சம்பாதித்த வட்டியில் இருந்து treasury எடுக்கும் cut-க்கு discount. Loan lifetime முழுவதும் நீங்கள் வைத்திருந்த VPFI அதிகமாக இருந்தால், cut குறையும்.",
       "discountBullet2": "Borrowers: loan-initiation fee-க்கு VPFI rebate; proper close (repay / preclose / refinance) நேரத்தில் திருப்பிக் கிடைக்கும். Default ஆனால் rebate இழக்கப்படும்.",
-      "stakingTitle": "காத்திருக்கும் நேரத்திலும் staking yield",
-      "stakingBody": "உங்கள் தனிப்பட்ட vault-வில் இருக்கும் எந்த VPFI-யும் அங்கே இருக்கும் வரை staking APR ஈட்டும். Loan தேவையில்லை — staking அனைவருக்கும் திறந்தது; அதே balance fee-discount tier-க்கும் கணக்கிடப்படும்.",
       "howTitle": "இது எப்படி வேலை செய்கிறது",
       "analyticsHint": "Protocol-wide stats மற்றும் circulating supply வேண்டுமா? பார்க்கவும்",
-      "analyticsLink": "Analytics page",
-      "launchAppCta": "வாங்க / Stake / Unstake செய்ய Vaipakam-ஐத் திற",
-      "launchAppHint": "புதிய tab-இல் app திறக்கும். Wallet இணைத்த பிறகு buy, stake, unstake controls அனைத்தும் அங்கே இருக்கும்."
+      "analyticsLink": "Analytics page"
     },
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
     "unsupportedNetwork": "ஆதரிக்கப்படாத நெட்வொர்க்",
-    "step1Title": "ETH உடன் VPFI வாங்கவும்",
-    "step1SubtitleCanonical": "{{chain}} இல் நேரடியாக. VPFI இந்த செயினில் உங்கள் வாலெட்டுக்கு வரும்.",
-    "step1SubtitleBridged": "{{chain}} இலிருந்து நேரடியாக — எந்த கிராஸ்-செயின் ரூட்டிங்கும் உங்களுக்காக கையாளப்படுகிறது. VPFI இந்த செயினில் உங்கள் வாலெட்டுக்கு வரும்.",
-    "step1SubtitlePending": "வாங்கும் அடாப்டர் {{chain}} இல் வெளியீட்டில் உள்ளது. நீங்கள் இங்கே தொடரலாம் — செயின் மாற்றம் தேவையில்லை.",
     "step2Title": "உங்கள் Vault-இல் VPFI Deposit / Stake செய்யுங்கள்",
     "step3Title": "உங்கள் Vault-இலிருந்து VPFI Withdraw / Unstake செய்யுங்கள்",
-    "buy": "VPFI வாங்கு",
-    "buying": "வாங்கப்படுகிறது…",
-    "approving": "ஒப்புதல் வழங்கப்படுகிறது…",
     "approvingVpfi": "VPFI ஒப்புதல் வழங்கப்படுகிறது…",
     "depositToVault": "Vault இல் வைப்பு செய்",
     "depositing": "வைப்பு செய்யப்படுகிறது…",
     "unstakeToWallet": "வாலெட்டுக்கு வெளியேற்று",
     "unstaking": "வெளியேற்றப்படுகிறது…",
-    "buyFailed": "வாங்குதல் தோல்வி",
     "depositFailed": "வைப்பு தோல்வி",
-    "unstakeFailed": "வெளியேற்றம் தோல்வி",
-    "buyTimedOut": "வாங்குதல் நேரம் முடிந்தது — நிதி திருப்பி அனுப்பப்பட்டது",
-    "vaultBalanceZero": "உங்கள் Vault VPFI இருப்பு 0 — முதலில் VPFI வைப்பு செய்யவும்."
+    "unstakeFailed": "வெளியேற்றம் தோல்வி"
   },
   "claimCenter": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
@@ -522,18 +503,6 @@
     "pendingLabel": "நிலுவை",
     "claimedLabel": "கோரப்பட்டது",
     "openClaimCenter": "Claim Center-ல் கோரிக்கை"
-  },
-  "stakingRewards": {
-    "titleAvailable": "VPFI staking வெகுமதிகள் கிடைக்கின்றன",
-    "titleEmpty": "VPFI staking வெகுமதிகள்",
-    "subtitle": "உங்கள் Vault VPFI protocol APR இல் சம்பாதிக்கிறது. Claim செய்தால் சேமிக்கப்பட்ட VPFI உங்கள் wallet க்கு மாற்றப்படும்.",
-    "subtitleEmpty": "மேலே உள்ள படி 2-இல் VPFI stake செய்தால் உங்கள் Vault இருப்பு {{apr}}% APR ஈட்டும் — சேர்க்கப்பட்ட rewards இங்கே claim செய்யலாம்.",
-    "pendingLabel": "நிலுவையில்",
-    "lifetimeClaimedLabel": "மொத்தம் claim செய்யப்பட்டது",
-    "claim": "Claim",
-    "claiming": "Claim செய்கிறது…",
-    "claimFailed": "Claim தோல்வியடைந்தது",
-    "submitted": "Claim சமர்ப்பிக்கப்பட்டது:"
   },
   "interactionRewards": {
     "title": "Platform-interaction VPFI வெகுமதிகள்",
@@ -1264,11 +1233,9 @@
     "tokenLabel": "டோக்கன்",
     "authorizedMinter": "அங்கீகரிக்கப்பட்ட மிண்டர்",
     "treasuryMintDestination": "treasuryம் (mint இலக்கு)",
-    "yourActivity": "உங்கள் VPFI செயல்பாடு",
-    "noActivity": "{{chain}} இல் இந்த வாலட்டைத் தொடும் VPFI பரிமாற்றங்கள் இன்னும் இல்லை. பயனர் சார்ந்த விநியோகங்கள் (வெகுமதிகள், staking) பிற்காலம் வெளியீட்டு கட்டத்தில் வரும்.",
-    "vaultCountsAsStaked": "Vault VPFI staked-ஆக கணக்கிடப்படுகிறது ({{apr}}% APR)"
+    "yourActivity": "உங்கள் VPFI செயல்பாடு"
   },
-  "buyVpfiCards": {
+  "vpfiVaultCards": {
     "discountStatusTitle": "உங்கள் VPFI தள்ளுபடி நிலை",
     "currentTier": "தற்போதைய Tier",
     "noDiscountYet": "இன்னும் தள்ளுபடி இல்லை",
@@ -1277,7 +1244,6 @@
     "inactiveOff": "செயலற்ற · தள்ளுபடி ஒப்புதல் OFF",
     "inactiveBelowTier1": "செயலற்ற · Tier 1க்கு கீழே (Vaultவில் {{tier1Min}} VPFI)",
     "activeTier": "செயலில் · Tier {{tier}} தள்ளுபடி ({{pct}}%)",
-    "activeOn": "செயலில் · தள்ளுபடி ஒப்புதல் ON",
     "depositGapAchieved": "Vault இருப்பு அடுத்த கடனில் {{tier}}க்கு தகுதியானது. மேலே தள்ளுபடி ஒப்புதல் செயல்படுத்தப்பட்டுள்ளதை உறுதிப்படுத்தவும்.",
     "liquidLendingOnly": "திரவ கடன் சொத்துகள் மட்டும்.",
     "enableSharedConsent": "<dashboardLink>Dashboard</dashboardLink>-ல் பகிரப்பட்ட தள்ளுபடி ஒப்புதலை இயக்கவும்.",
@@ -1298,21 +1264,7 @@
     "discount15": "15% தள்ளுபடி",
     "discount20": "20% தள்ளுபடி",
     "discount24": "24% தள்ளுபடி",
-    "buyTitle": "ETH உடன் VPFI வாங்கு",
-    "buySubtitle": "{{chain}} நேரடியாக. VPFI இந்த செயினில் வாலட்டில் வந்து சேரும்.",
-    "fixedRate": "0.001 ETH / VPFI",
-    "fixedRateLabel": "நிலையான விகிதம்",
-    "assetCoinGeckoAria": "{{symbol}} இன் CoinGecko பக்கத்தை திறக்கவும்",
-    "remainingGlobal": "மீதமுள்ள உலகளாவிய ஆரம்ப கொள்முதல்",
-    "remainingAllowance": "உங்கள் மீதமுள்ள ஒதுக்கீடு",
-    "payEth": "செலுத்து (ETH)",
-    "youReceive": "நீங்கள் பெறுவது",
-    "useMaxEth": "அதிகபட்சம் {{amount}} ETH ஐப் பயன்படுத்தவும்",
-    "gasReserveTooltip": "வாங்கும் tx இன்னும் ஒளிபரப்பப்பட முடியும் என்பதற்காக வாலட் இருப்பில் இருந்து சிறிய gas கையிருப்பு ({{reserve}} ETH) வைக்கப்படுகிறது.",
-    "capExceeded": "இந்த தொகை மீதமுள்ள உச்சவரம்பை மீறுகிறது. ETH உள்ளீட்டைக் குறைத்து மீண்டும் முயற்சிக்கவும்.",
-    "exceedsBalance": "தொகை வாலட் ETH இருப்பு {{balance}} ETH ஐ மீறுகிறது (சிறிய gas கையிருப்பு ஒதுக்கப்பட்டுள்ளது).",
     "exceedsVaultBalance": "தொகை Vault VPFI இருப்பு {{balance}} VPFI ஐ மீறுகிறது.",
-    "buyButton": "VPFI வாங்கு",
     "depositTitle": "VPFI ஐ Vaultவில் வைப்பு செய்",
     "depositSubtitle": "ஒவ்வொரு செயினிலும் தேவை — நியதி உட்பட.",
     "depositSpecNote": "விவரக்குறிப்புப்படி, VPFI ஐ Vaultவில் மாற்றுவது எப்போதும் வெளிப்படையான பயனர் செயலாகும். வாங்கல் அல்லது பாலத்திற்குப் பிறகு புரோட்டோகால் Vaultவை தானாகவே நிதியளிக்காது.",
@@ -1357,8 +1309,6 @@
     "eventClaimAvailableDesc": "Claim Center இலிருந்து நீங்கள் எடுக்கக்கூடிய நிதிகள் உள்ளன — திருப்பிச்செலுத்தப்பட்ட அசல்/வட்டி, தவறுக்குப் பின் வருவாய், அல்லது VPFI திருப்பீடு.",
     "eventLoanTerminalTitle": "கடன் தீர்வு அல்லது தவறு",
     "eventLoanTerminalDesc": "உங்கள் கடன் முடிவு நிலையை அடைந்துள்ளது — முழுமையாக திருப்பிச்செலுத்தப்பட்டது, காலாவதியாகி தவறு, அல்லது HF-தீர்க்கப்பட்டது. இரு தரப்பினருக்கும் அறிவிக்கிறது.",
-    "eventVpfiBuyReceivedTitle": "குறுக்கு-சங்கிலி VPFI வாங்கல் பெறப்பட்டது",
-    "eventVpfiBuyReceivedDesc": "நீங்கள் தொடங்கிய Chainlink CCIP-வழிப்படுத்தப்பட்ட VPFI வாங்கல் நியதி சங்கிலியில் உருவாக்கப்பட்டு உங்கள் வாலெட்டுக்கு வரவு வைக்கப்பட்டது.",
     "eventLoanInitiatedCreatorTitle": "உங்கள் சலுகை கடனாக பொருத்தப்பட்டது",
     "eventLoanInitiatedCreatorDesc": "சலுகை ஏற்கப்படும் (அல்லது போட்டால் பொருத்தப்படும்) போது மற்றும் கடன் செயலில் ஆகும் போது சலுகை உருவாக்கியவருக்கு அனுப்பப்படும்.",
     "eventMaturityApproachingTitle": "கடன் முதிர்வு நெருங்குகிறது",
@@ -1568,12 +1518,7 @@
     "loanDetailsParties": "கடன் வழங்குபவர் மற்றும் கடன் வாங்குபவர் முகவரிகள், அவர்களின் சொத்துக்களை வைத்திருக்கும் Vaipakam Vault proxies, மற்றும் கடன் தொடங்கும் போது ஒவ்வொரு பக்கமும் பெற்ற நிலை NFT-கள். ஒவ்வொரு NFT-உம் அந்தப் பக்கத்தின் claim-க்கான bearer instrument — அதை இழப்பது claim-ஐ இழப்பதாகும்.",
     "loanDetailsActionsLender": "இந்தக் கடனில் கடன் வழங்குபவருக்குக் கிடைக்கும் செயல்கள். கடன் தீர்வு செய்த பிறகு Claim செய்யவும் ({{treasuryFee}}% Treasury கழிவைக் கழித்து அசல் + வட்டியை திருப்பித் தருகிறது). கடன் இடையில் கடன் வழங்குபவர் NFT-ஐ ஒரு வாங்குபவருக்கு விற்க Early Withdrawal-ஐ தொடங்கவும். HF < 1 அல்லது grace காலம் முடிந்துவிட்டால், எவரும் (கடன் வழங்குபவர் உட்பட) Liquidate-ஐ இயக்க முடியும். முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
     "loanDetailsActionsBorrower": "இந்தக் கடனில் கடன் வாங்குபவருக்குக் கிடைக்கும் செயல்கள். முழு அல்லது பகுதி Repay; Preclose direct (நிலுவையை இப்போது செலுத்தவும்) அல்லது offset (DEX வழியாக பிணையத்தை விற்கவும்); புதிய நிபந்தனைகளுடன் ஒரு புதிய கடனில் Refinance. முழு திருப்பிச் செலுத்தலில் Claim பிணையத்தைத் திருப்பித் தருகிறது, அல்லது பயன்படுத்தப்படாத VPFI rebate. முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
-    "buyVpfiBuy": "படி 1 — ETH-ஐ VPFI-ஆக மாற்றவும். canonical செயினில் call நேரடியாக Diamond-க்குச் செல்கிறது; off-canonical-இல் buy adapter மற்றும் ஒரு Chainlink CCIP round-trip வழியாகச் செல்கிறது. Per-tx மற்றும் rolling caps பொருந்தும் (TokenomicsTechSpec-ஐக் காண்க). VPFI wallet-க்கு வழங்கப்படுகிறது, vault-க்கு auto-deposit செய்யப்படவில்லை.",
-    "buyVpfiUnstake": "இந்தச் செயினில் VPFI-ஐ vault-இலிருந்து wallet-க்கு திருப்பி நகர்த்தவும். தள்ளுபடி tier-ஐ real-time-இல் குறைக்கிறது — time-weighted accumulator திறந்திருக்கும் ஒவ்வொரு கடனையும் புதிய (குறைந்த) இருப்பில் உடனடியாக re-stamp செய்கிறது, எனவே ஒரு unstake அந்தத் தருணத்திலிருந்து கட்டண-தள்ளுபடி கணிதத்திற்கு உடனடியாக நடைமுறைக்கு வருகிறது.",
-    "rewardsOverview": "இந்த chain-இல் இரண்டு reward streams சேர்கின்றன. Vault-இல் வைத்திருக்கும் VPFI passive {{apr}}% APR (staking pool) ஈட்டுகிறது. ஒரு loan-இல் தீர்க்கப்பட்ட ஒவ்வொரு USD வட்டியும் interaction pool-இன் தினசரி பங்கு ஈட்டுகிறது. Claim செய்யும் போது இரண்டும் தற்போதைய chain-இல் நேரடியாக mint செய்யப்படும் — bridging இல்லை.",
-    "rewardsClaim": "இரண்டு reward streams (staking + interaction) ஆகியவற்றிலிருந்து நிலுவையில் உள்ள எந்த VPFI-ஐயும் தற்போதைய செயினில் wallet-க்கு ஒரே transaction-இல் mint செய்கிறது. Interaction pool தினசரி finalize ஆகிறது — நிலுவையில் உள்ள interaction rewards ஒவ்வொரு settlement window மூடிய சிறிது நேரத்திற்குப் பின் claim செய்யக்கூடியதாகின்றன.",
-    "rewardsWithdrawStaked": "VPFI-ஐ vault-இலிருந்து wallet-க்கு திருப்பவும். எடுக்கப்பட்ட VPFI {{apr}}% staking APR சேர்வதை நிறுத்துகிறது மற்றும் இனி fee-discount tier-க்கு கணக்கிடப்படாது — time-weighted accumulator உடனடியாக ஒவ்வொரு open loan-ஐயும் புதிய (குறைந்த) balance-உடன் re-stamp செய்கிறது.",
-    "activityFeed": "செயலில் உள்ள செயினில் இணைக்கப்பட்ட wallet-ஐ உள்ளடக்கிய on-chain events — உருவாக்கப்பட்ட அல்லது ஏற்றுக்கொள்ளப்பட்ட வாய்ப்புகள், கடன்கள், திருப்பிச் செலுத்தல்கள், claims, Liquidation-கள், NFT mints/burns, VPFI buys/stakes/unstakes. Diamond event log-களிலிருந்து நேரலையில் பெறப்பட்டவை (backend இல்லை), transaction வாரியாக குழுவாக்கப்பட்டு புதியது-முதலில் வரிசையில்."
+    "buyVpfiUnstake": "இந்தச் செயினில் VPFI-ஐ vault-இலிருந்து wallet-க்கு திருப்பி நகர்த்தவும். தள்ளுபடி tier-ஐ real-time-இல் குறைக்கிறது — time-weighted accumulator திறந்திருக்கும் ஒவ்வொரு கடனையும் புதிய (குறைந்த) இருப்பில் உடனடியாக re-stamp செய்கிறது, எனவே ஒரு unstake அந்தத் தருணத்திலிருந்து கட்டண-தள்ளுபடி கணிதத்திற்கு உடனடியாக நடைமுறைக்கு வருகிறது."
   },
   "acceptReview": {
     "partialRepayLabel": "பகுதி திருப்பிச்செலுத்தல்",

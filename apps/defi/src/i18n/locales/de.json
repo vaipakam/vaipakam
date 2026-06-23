@@ -76,7 +76,6 @@
     "security": "Sicherheit",
     "vpfi": "VPFI",
     "vpfiLearn": "Mehr über VPFI erfahren",
-    "vpfiBuy": "VPFI kaufen",
     "vpfiStakeUnstake": "Staken / Unstaken",
     "vpfiStake": "Staken",
     "vpfiUnstake": "Unstaken",
@@ -368,45 +367,27 @@
     "viewOnExplorer": "Im Explorer ansehen",
     "trustWarning": "Jeder kann einen Token mit beliebigem Symbol bereitstellen — bestätigen Sie Ihr Vertrauen in diesen Token, indem Sie die Contract-Adresse selbst prüfen, nicht das angezeigte Symbol."
   },
-  "buyVpfi": {
+  "vpfiVault": {
     "preconnect": {
-      "whatTitle": "Was ist VPFI?",
-      "whatBody1": "VPFI ist Vaipakams Protokoll-Token — Sie können ihn mit ETH kaufen, in Ihrer persönlichen Vault halten und auf der Plattform nutzen. Keine Sperrfrist, frei übertragbar.",
-      "whatBody2": "VPFI zu halten verbindet Sie auf zwei praktische Arten mit dem Erfolg des Protokolls: Sie erhalten Rabatte auf die Gebühren, die Vaipakam erhebt (Sie behalten also mehr von dem, was Sie verleihen, und zahlen weniger beim Leihen), und Sie verdienen Staking-Rendite, während VPFI in Ihrer Vault liegt.",
-      "whatBody3": "Jeder mit ETH kann kaufen und staken. Die beiden Nutzenkarten unten zeigen genau, was Ihnen das Halten von VPFI bringt.",
       "discountTitle": "Gestaffelter Gebührenrabatt",
       "discountBody": "VPFI in Ihrer persönlichen Vault bringt Ihnen einen zeitgewichteten Rabatt auf Vaipakams Protokollgebühren — automatisch angewendet, wenn jeder Kredit abgewickelt wird, ohne separaten Claim-Schritt:",
       "discountBullet1": "Kreditgeber: Rabatt auf den Treasury-Abzug aus verdienten Zinsen. Je mehr VPFI Sie über die Laufzeit des Kredits gehalten haben, desto kleiner der Abzug.",
       "discountBullet2": "Kreditnehmer: VPFI-Rückvergütung auf die Kreditinitiationsgebühr, ausgezahlt bei ordnungsgemäßem Abschluss (Rückzahlung / Preclose / Refinanzierung). Bei Default verfällt die Rückvergütung.",
-      "stakingTitle": "Staking-Rendite während Sie warten",
-      "stakingBody": "Jedes VPFI in Ihrer persönlichen Vault verdient Staking-APR, solange es dort liegt. Kein Kredit erforderlich — Staking steht allen offen, und derselbe Saldo zählt auch für Ihren Gebührenrabatt-Tier.",
       "howTitle": "So funktioniert es",
       "analyticsHint": "Suchen Sie protokollweite Statistiken und den umlaufenden Bestand? Siehe",
-      "analyticsLink": "Analyse-Seite",
-      "launchAppCta": "Vaipakam öffnen zum Kaufen / Staken / Unstaken",
-      "launchAppHint": "Öffnet die App in einem neuen Tab. Die Kauf-, Stake- und Unstake-Steuerungen befinden sich dort, sobald Ihre Wallet verbunden ist."
+      "analyticsLink": "Analyse-Seite"
     },
     "connectTitle": "Wallet verbinden",
     "unsupportedNetwork": "Nicht unterstütztes Netzwerk",
-    "step1Title": "VPFI mit ETH kaufen",
-    "step1SubtitleCanonical": "Direkt auf {{chain}}. VPFI landet in Ihrer Wallet auf dieser Chain.",
-    "step1SubtitleBridged": "Direkt von {{chain}} — jegliches Cross-Chain-Routing wird für Sie erledigt. VPFI landet in Ihrer Wallet auf dieser Chain.",
-    "step1SubtitlePending": "Der Buy-Adapter wird gerade auf {{chain}} bereitgestellt. Sie können hier fortfahren — kein Chain-Wechsel erforderlich.",
     "step2Title": "VPFI in Ihre Vault einzahlen / staken",
     "step3Title": "VPFI aus Ihrer Vault abziehen / unstaken",
-    "buy": "VPFI kaufen",
-    "buying": "Kaufe…",
-    "approving": "Genehmige…",
     "approvingVpfi": "Genehmige VPFI…",
     "depositToVault": "In Vault einzahlen",
     "depositing": "Einzahlung läuft…",
     "unstakeToWallet": "In Wallet abziehen",
     "unstaking": "Abzug läuft…",
-    "buyFailed": "Kauf fehlgeschlagen",
     "depositFailed": "Einzahlung fehlgeschlagen",
-    "unstakeFailed": "Abzug fehlgeschlagen",
-    "buyTimedOut": "Kauf-Timeout — Mittel zurückgegeben",
-    "vaultBalanceZero": "Ihr VPFI-Saldo in der Vault ist 0 — zahlen Sie zuerst VPFI ein."
+    "unstakeFailed": "Abzug fehlgeschlagen"
   },
   "claimCenter": {
     "connectTitle": "Wallet verbinden",
@@ -523,18 +504,6 @@
     "pendingLabel": "Ausstehend",
     "claimedLabel": "Beansprucht",
     "openClaimCenter": "Im Claim Center beanspruchen"
-  },
-  "stakingRewards": {
-    "titleAvailable": "VPFI-Staking-Belohnungen verfügbar",
-    "titleEmpty": "VPFI-Staking-Belohnungen",
-    "subtitle": "Ihr Vaipakam Vault-VPFI verdient zum Protokoll-APR. Einlösen überträgt das angesammelte VPFI an Ihre Wallet.",
-    "subtitleEmpty": "Staken Sie VPFI in Schritt 2 oben und Ihr Vaipakam Vault-Saldo verdient {{apr}}% APR — angesammelte Belohnungen können Sie hier einlösen.",
-    "pendingLabel": "Ausstehend",
-    "lifetimeClaimedLabel": "Lebenszeit eingelöst",
-    "claim": "Einlösen",
-    "claiming": "Wird eingelöst…",
-    "claimFailed": "Einlösen fehlgeschlagen",
-    "submitted": "Anspruch eingereicht:"
   },
   "interactionRewards": {
     "title": "Plattform-Interaktions-VPFI-Belohnungen",
@@ -1265,11 +1234,9 @@
     "tokenLabel": "Token",
     "authorizedMinter": "Autorisierter Minter",
     "treasuryMintDestination": "Treasury (Mint-Ziel)",
-    "yourActivity": "VPFI-Aktivität",
-    "noActivity": "Es gibt noch keine VPFI-Transfers, die dieses Wallet auf {{chain}} betreffen. Nutzergerichtete Verteilungen (Belohnungen, Staking) erfolgen in einer späteren Phase.",
-    "vaultCountsAsStaked": "Vault-VPFI zählt als gestaked ({{apr}}% APR)"
+    "yourActivity": "VPFI-Aktivität"
   },
-  "buyVpfiCards": {
+  "vpfiVaultCards": {
     "discountStatusTitle": "VPFI-Rabattstatus",
     "currentTier": "Aktueller Tier",
     "noDiscountYet": "Noch kein Rabatt",
@@ -1278,7 +1245,6 @@
     "inactiveOff": "Inaktiv · Rabatt-Zustimmung AUS",
     "inactiveBelowTier1": "Inaktiv · unter Tier 1 ({{tier1Min}} VPFI im Vault)",
     "activeTier": "Aktiv · Tier-{{tier}}-Rabatt ({{pct}} %)",
-    "activeOn": "Aktiv · Rabatt-Zustimmung AN",
     "depositGapAchieved": "Der Vault-Saldo qualifiziert für {{tier}} beim nächsten Kredit. Sicherstellen, dass die Rabatt-Zustimmung oben aktiviert ist.",
     "liquidLendingOnly": "Nur liquide Kreditvermögenswerte.",
     "enableSharedConsent": "Die geteilte Rabatt-Zustimmung im <dashboardLink>Dashboard</dashboardLink> aktivieren.",
@@ -1299,21 +1265,7 @@
     "discount15": "15 % Rabatt",
     "discount20": "20 % Rabatt",
     "discount24": "24 % Rabatt",
-    "buyTitle": "VPFI mit ETH kaufen",
-    "buySubtitle": "{{chain}} direkt. VPFI gelangt in das Wallet auf dieser Chain.",
-    "fixedRate": "0.001 ETH / VPFI",
-    "fixedRateLabel": "Festkurs",
-    "assetCoinGeckoAria": "CoinGecko-Seite für {{symbol}} öffnen",
-    "remainingGlobal": "Verbleibender globaler Frühkauf",
-    "remainingAllowance": "Verbleibendes Kontingent",
-    "payEth": "Zahlen (ETH)",
-    "youReceive": "Erhalten",
-    "useMaxEth": "Max {{amount}} ETH verwenden",
-    "gasReserveTooltip": "Eine kleine Gas-Reserve ({{reserve}} ETH) wird vom Wallet-Saldo zurückgehalten, damit die Kauftransaktion noch gesendet werden kann.",
-    "capExceeded": "Dieser Betrag überschreitet das verbleibende Limit. ETH-Eingabe reduzieren und erneut versuchen.",
-    "exceedsBalance": "Der Betrag überschreitet den Wallet-ETH-Saldo von {{balance}} ETH (eine kleine Gas-Reserve wird zurückgehalten).",
     "exceedsVaultBalance": "Der Betrag überschreitet den Vault-VPFI-Saldo von {{balance}} VPFI.",
-    "buyButton": "VPFI kaufen",
     "depositTitle": "VPFI in den Vault einzahlen",
     "depositSubtitle": "Auf jeder Chain erforderlich — auch auf der kanonischen.",
     "depositSpecNote": "Per Spezifikation ist die Übertragung von VPFI in den Vault stets eine explizite Nutzeraktion. Das Protokoll füllt den Vault nach einem Kauf oder einer Bridge niemals automatisch auf.",
@@ -1358,8 +1310,6 @@
     "eventClaimAvailableDesc": "Du hast Mittel, die du aus dem Claim Center abheben kannst — zurückgezahltes Kapital/Zinsen, Erlöse nach Ausfall oder VPFI-Rabatt.",
     "eventLoanTerminalTitle": "Kredit abgeschlossen oder ausgefallen",
     "eventLoanTerminalDesc": "Dein Kredit hat einen Endzustand erreicht — vollständig zurückgezahlt, zeitlich ausgefallen oder HF-liquidiert. Benachrichtigt beide Seiten.",
-    "eventVpfiBuyReceivedTitle": "Cross-Chain-VPFI-Kauf erhalten",
-    "eventVpfiBuyReceivedDesc": "Ein von dir initiierter VPFI-Kauf über Chainlink CCIP wurde auf der kanonischen Chain geprägt und deinem Wallet gutgeschrieben.",
     "eventLoanInitiatedCreatorTitle": "Dein Angebot wurde zu einem Kredit zugeordnet",
     "eventLoanInitiatedCreatorDesc": "An den Angebotsersteller gesendet, wenn das Angebot angenommen (oder von einem Bot zugeordnet) wird und der Kredit auf Aktiv geht.",
     "eventMaturityApproachingTitle": "Kreditfälligkeit nähert sich",
@@ -1569,12 +1519,7 @@
     "loanDetailsParties": "Adressen von Kreditgeber und Kreditnehmer, die per-Nutzer-Vault-Proxies, die ihre Vermögenswerte halten, und die Positions-NFTs, die jede Seite bei Kreditinitiierung erhalten hat. Jedes NFT ist das Inhaberinstrument für den Anspruch dieser Seite — es zu verlieren bedeutet, den Anspruch zu verlieren.",
     "loanDetailsActionsLender": "Für den Kreditgeber auf diesem Kredit verfügbare Aktionen. Beanspruchen, sobald der Kredit abgewickelt ist (gibt Hauptbetrag + Zinsen zurück, abzüglich des {{treasuryFee}}% Treasury-Anteils). Vorzeitiger Ausstieg initiieren, um das Kreditgeber-NFT mitten im Kredit an einen Käufer zu verkaufen. Jeder (einschließlich des Kreditgebers) kann Liquidieren auslösen, wenn HF < 1 oder die Gnadenfrist abgelaufen ist. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
-    "buyVpfiBuy": "Schritt 1 — ETH in VPFI umwandeln. Auf der kanonischen Chain geht der Aufruf direkt an den Diamond; off-canonical über den Buy-Adapter und einen Chainlink CCIP-Round-Trip. Pro-Tx- und Rolling-Caps gelten (siehe TokenomicsTechSpec). VPFI wird ans Wallet geliefert, nicht automatisch in den Vault eingezahlt.",
-    "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass ein Unstake ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist.",
-    "rewardsOverview": "Auf dieser Chain laufen zwei Belohnungs-Streams. Vault-gehaltenes VPFI verdient einen passiven {{apr}}% APR (Staking-Pool). Jeder USD an Zinsen, der auf einem Kredit abgerechnet wird, verdient einen täglichen Anteil am Interaktions-Pool. Beide werden bei Einlösung direkt auf der aktuellen Chain geprägt — kein Bridging.",
-    "rewardsClaim": "Prägt jegliche ausstehenden VPFI aus beiden Belohnungsströmen (Staking + Interaction) in das Wallet auf der aktuellen Chain in einer Transaktion. Der Interaction-Pool wird täglich finalisiert — ausstehende Interaction-Belohnungen werden kurz nach Schließung jedes Settlement-Fensters beanspruchbar.",
-    "rewardsWithdrawStaked": "VPFI aus der Vault zurück in die Wallet verschieben. Abgehobenes VPFI verdient den {{apr}}% Staking-APR nicht mehr und zählt nicht mehr für die Gebührenrabatt-Stufe — der zeitgewichtete Akkumulator stempelt jeden offenen Kredit sofort mit dem neuen (niedrigeren) Saldo neu.",
-    "activityFeed": "On-Chain-Ereignisse, an denen das verbundene Wallet auf der aktiven Chain beteiligt ist — erstellte oder akzeptierte Angebote, Kredite, Rückzahlungen, Beanspruchungen, Liquidationen, NFT-Mints/Burns, VPFI-Käufe/Stakes/Unstakes. Live aus den Diamond-Event-Logs bezogen (kein Backend), nach Transaktion gruppiert und neueste zuerst sortiert."
+    "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass ein Unstake ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist."
   },
   "acceptReview": {
     "partialRepayLabel": "Teilrückzahlung",

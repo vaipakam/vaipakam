@@ -4,7 +4,7 @@ import { useLocation } from 'react-router-dom';
 /**
  * Scrolls to the element matching `location.hash` whenever the route or hash
  * changes. Needed because React Router suppresses the browser's native
- * hash-anchor behavior on cross-route navigation (e.g. /buy-vpfi → /#features)
+ * hash-anchor behavior on cross-route navigation (e.g. /vpfi-vault → /#features)
  * — the target element does not exist until the new route mounts, so we wait
  * a frame before locating it.
  */

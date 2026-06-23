@@ -401,8 +401,8 @@ export default function VPFIVaultAndDiscounts() {
     return (
       <div className="buy-vpfi" style={{ maxWidth: 760, margin: '0 auto' }}>
         <div className="page-header">
-          <h1 className="page-title">{t('buyVpfi.title')}</h1>
-          <p className="page-subtitle">{t('buyVpfi.preconnect.tagline')}</p>
+          <h1 className="page-title">{t('vpfiVault.title')}</h1>
+          <p className="page-subtitle">{t('vpfiVault.preconnect.tagline')}</p>
         </div>
 
         <div className="card" style={{ marginTop: 16 }}>
@@ -411,12 +411,12 @@ export default function VPFIVaultAndDiscounts() {
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
             <Gift size={16} />
-            {t('buyVpfi.preconnect.discountTitle')}
+            {t('vpfiVault.preconnect.discountTitle')}
           </div>
-          <p>{t('buyVpfi.preconnect.discountBody')}</p>
+          <p>{t('vpfiVault.preconnect.discountBody')}</p>
           <ul style={{ margin: '8px 0 0 0', paddingLeft: 20 }}>
-            <li>{t('buyVpfi.preconnect.discountBullet1')}</li>
-            <li>{t('buyVpfi.preconnect.discountBullet2')}</li>
+            <li>{t('vpfiVault.preconnect.discountBullet1')}</li>
+            <li>{t('vpfiVault.preconnect.discountBullet2')}</li>
           </ul>
         </div>
 
@@ -426,13 +426,13 @@ export default function VPFIVaultAndDiscounts() {
             style={{ display: 'flex', alignItems: 'center', gap: 8 }}
           >
             <ShieldCheck size={16} />
-            {t('buyVpfi.preconnect.howTitle')}
+            {t('vpfiVault.preconnect.howTitle')}
           </div>
-          <p>{t('buyVpfi.preconnect.howBody')}</p>
+          <p>{t('vpfiVault.preconnect.howBody')}</p>
           <p style={{ marginTop: 12, opacity: 0.75, fontSize: '0.85rem' }}>
-            {t('buyVpfi.preconnect.analyticsHint')}{' '}
+            {t('vpfiVault.preconnect.analyticsHint')}{' '}
             <Link to="/analytics" style={{ color: 'var(--brand)' }}>
-              {t('buyVpfi.preconnect.analyticsLink')}
+              {t('vpfiVault.preconnect.analyticsLink')}
             </Link>
             .
           </p>
@@ -445,8 +445,8 @@ export default function VPFIVaultAndDiscounts() {
           <div className="empty-state-icon">
             <Wallet size={24} />
           </div>
-          <h3>{t('buyVpfi.connectTitle')}</h3>
-          <p>{t('buyVpfi.connectBody')}</p>
+          <h3>{t('vpfiVault.connectTitle')}</h3>
+          <p>{t('vpfiVault.connectBody')}</p>
         </div>
       </div>
     );
@@ -463,8 +463,8 @@ export default function VPFIVaultAndDiscounts() {
         <div className="empty-state-icon">
           <AlertTriangle size={28} />
         </div>
-        <h3>{t('buyVpfi.unsupportedNetwork')}</h3>
-        <p style={{ maxWidth: 520 }}>{t('buyVpfi.unsupportedNetworkBody')}</p>
+        <h3>{t('vpfiVault.unsupportedNetwork')}</h3>
+        <p style={{ maxWidth: 520 }}>{t('vpfiVault.unsupportedNetworkBody')}</p>
         <button
           className="btn btn-primary"
           style={{ marginTop: 16 }}
@@ -489,7 +489,7 @@ export default function VPFIVaultAndDiscounts() {
           {t('appNav.buyVpfi')}
           <CardInfo id="buy-vpfi.overview" />
         </h1>
-        <p className="page-subtitle">{t('buyVpfi.pageSubtitle')}</p>
+        <p className="page-subtitle">{t('vpfiVault.pageSubtitle')}</p>
       </div>
 
       {address && (
@@ -575,7 +575,7 @@ export default function VPFIVaultAndDiscounts() {
       <div id="step-2" className="card" style={{ marginBottom: 20 }}>
         <StepHeader
           index={1}
-          title={t('buyVpfi.step2Title')}
+          title={t('vpfiVault.step2Title')}
           cardHelpId="buy-vpfi.deposit"
         />
         <div
@@ -595,7 +595,7 @@ export default function VPFIVaultAndDiscounts() {
             style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
           />
           <p className="stat-label" style={{ margin: 0 }}>
-            {t('buyVpfi.step2Info')}
+            {t('vpfiVault.step2Info')}
           </p>
         </div>
 
@@ -679,7 +679,7 @@ export default function VPFIVaultAndDiscounts() {
         <div id="step-3" className="card" style={{ marginBottom: 20 }}>
           <StepHeader
             index={2}
-            title={t('buyVpfi.step3Title')}
+            title={t('vpfiVault.step3Title')}
             cardHelpId="buy-vpfi.unstake"
           />
           <UnstakeCard
@@ -830,22 +830,22 @@ export function DiscountStatusCard({
   let qualificationLabel: string;
   let qualificationColor: string;
   if (consentEnabled === false) {
-    qualificationLabel = t('buyVpfiCards.inactiveOff');
+    qualificationLabel = t('vpfiVaultCards.inactiveOff');
     qualificationColor = "var(--accent-yellow)";
   } else if (tier === 0) {
-    qualificationLabel = t('buyVpfiCards.inactiveBelowTier1', {
+    qualificationLabel = t('vpfiVaultCards.inactiveBelowTier1', {
       tier1Min: tierTable[0]?.minVpfi ?? 100,
     });
     qualificationColor = "var(--text-secondary)";
   } else {
-    qualificationLabel = t('buyVpfiCards.activeTier', { tier, pct: discountBps / 100 });
+    qualificationLabel = t('vpfiVaultCards.activeTier', { tier, pct: discountBps / 100 });
     qualificationColor = "var(--accent-green)";
   }
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
-        {t('buyVpfiCards.discountStatusTitle')}
+        {t('vpfiVaultCards.discountStatusTitle')}
         <CardInfo id="buy-vpfi.discount-status" />
       </div>
 
@@ -858,25 +858,25 @@ export function DiscountStatusCard({
         }}
       >
         <div>
-          <div className="stat-label">{t('buyVpfiCards.currentTier')}</div>
+          <div className="stat-label">{t('vpfiVaultCards.currentTier')}</div>
           <div style={{ fontSize: 22, fontWeight: 600 }}>
-            {tier === 0 ? "—" : t('buyVpfiCards.tierN', { tier })}
+            {tier === 0 ? "—" : t('vpfiVaultCards.tierN', { tier })}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {currentTierRow ? currentTierRow.discountLabel : t('buyVpfiCards.noDiscountYet')}
+            {currentTierRow ? currentTierRow.discountLabel : t('vpfiVaultCards.noDiscountYet')}
           </div>
         </div>
         <div>
-          <div className="stat-label">{t('buyVpfiCards.vaultVpfi')} </div>
+          <div className="stat-label">{t('vpfiVaultCards.vaultVpfi')} </div>
           <div style={{ fontSize: 22, fontWeight: 600 }}>
             {vaultVpfi == null ? "—" : vaultUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {t('buyVpfiCards.vaultCountsAsStaked')}
+            {t('vpfiVaultCards.vaultCountsAsStaked')}
           </div>
         </div>
         <div>
-          <div className="stat-label">{t('buyVpfiCards.statusLabel')}</div>
+          <div className="stat-label">{t('vpfiVaultCards.statusLabel')}</div>
           <div
             style={{
               fontSize: 14,
@@ -896,7 +896,7 @@ export function DiscountStatusCard({
               // stay one sentence with the link inline rather than
               // a tacked-on "(see Dashboard)" suffix.
               <Trans
-                i18nKey="buyVpfiCards.enableSharedConsent"
+                i18nKey="vpfiVaultCards.enableSharedConsent"
                 components={{
                   dashboardLink: (
                     <Link
@@ -907,7 +907,7 @@ export function DiscountStatusCard({
                 }}
               />
             ) : (
-              t('buyVpfiCards.liquidLendingOnly')
+              t('vpfiVaultCards.liquidLendingOnly')
             )}
           </div>
         </div>
@@ -932,13 +932,13 @@ export function DiscountStatusCard({
           />
           <div className="stat-label" style={{ margin: 0, fontSize: 12 }}>
             {gapToNext > 0 ? (
-              t('buyVpfiCards.depositMore', {
+              t('vpfiVaultCards.depositMore', {
                 amount: gapToNext.toFixed(2),
                 tier: nextTier.label,
                 discount: nextTier.discountLabel,
               })
             ) : (
-              t('buyVpfiCards.depositGapAchieved', { tier: nextTier.label })
+              t('vpfiVaultCards.depositGapAchieved', { tier: nextTier.label })
             )}
           </div>
         </div>
@@ -954,11 +954,11 @@ export function DiscountStatusCard({
         >
           <thead>
             <tr style={{ textAlign: "left", color: "var(--text-secondary)" }}>
-              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColTier')}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('vpfiVaultCards.tierColTier')}</th>
               <th style={{ padding: "6px 8px", fontWeight: 500 }}>
-                {t('buyVpfiCards.tierColVault')}
+                {t('vpfiVaultCards.tierColVault')}
               </th>
-              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('buyVpfiCards.tierColDiscount')}</th>
+              <th style={{ padding: "6px 8px", fontWeight: 500 }}>{t('vpfiVaultCards.tierColDiscount')}</th>
             </tr>
           </thead>
           <tbody>
@@ -1047,7 +1047,7 @@ function DepositCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          {t('buyVpfiCards.depositAmount')}
+          {t('vpfiVaultCards.depositAmount')}
         </label>
         <button
           type="button"
@@ -1055,7 +1055,7 @@ function DepositCard({
           onClick={() => onChange(walletBalance.toString())}
           disabled={walletBalance === 0}
         >
-          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(walletBalance) })}
+          {t('vpfiVaultCards.useMaxVpfi', { amount: formatAmount(walletBalance) })}
         </button>
       </div>
       <input
@@ -1140,10 +1140,10 @@ function DepositCard({
         data-tooltip={disableReason ?? undefined}
       >
         {step === "approving-deposit"
-          ? t('buyVpfi.approvingVpfi')
+          ? t('vpfiVault.approvingVpfi')
           : step === "depositing"
-            ? t('buyVpfi.depositing')
-            : t('buyVpfi.depositToVault')}
+            ? t('vpfiVault.depositing')
+            : t('vpfiVault.depositToVault')}
       </button>
     </div>
   );
@@ -1208,7 +1208,7 @@ function UnstakeCard({
         }}
       >
         <label className="stat-label" style={{ margin: 0, fontWeight: 500 }}>
-          {t('buyVpfiCards.unstakeAmount')}
+          {t('vpfiVaultCards.unstakeAmount')}
         </label>
         <button
           type="button"
@@ -1216,7 +1216,7 @@ function UnstakeCard({
           onClick={() => onChange(vaultBalanceUnits.toString())}
           disabled={balanceZero || pending}
         >
-          {t('buyVpfiCards.useMaxVpfi', { amount: formatAmount(vaultBalanceUnits) })}
+          {t('vpfiVaultCards.useMaxVpfi', { amount: formatAmount(vaultBalanceUnits) })}
         </button>
       </div>
       <input
@@ -1235,7 +1235,7 @@ function UnstakeCard({
           className="stat-label"
           style={{ margin: "-4px 0 8px", color: "var(--accent-red, #ef4444)" }}
         >
-          {t('buyVpfiCards.exceedsVaultBalance', { balance: formatAmount(vaultBalanceUnits) })}
+          {t('vpfiVaultCards.exceedsVaultBalance', { balance: formatAmount(vaultBalanceUnits) })}
         </p>
       )}
 
@@ -1265,7 +1265,7 @@ function UnstakeCard({
           // className="stat-label"
           style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
         >
-          {t('buyVpfiCards.unstakeWarning')}
+          {t('vpfiVaultCards.unstakeWarning')}
         </p>
       </div>
 
@@ -1277,7 +1277,7 @@ function UnstakeCard({
         }
         data-tooltip={disableReason ?? undefined}
       >
-        {step === "unstaking" ? t('buyVpfi.unstaking') : t('buyVpfi.unstakeToWallet')}
+        {step === "unstaking" ? t('vpfiVault.unstaking') : t('vpfiVault.unstakeToWallet')}
       </button>
     </div>
   );

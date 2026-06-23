@@ -721,14 +721,13 @@ export default function LoanDetails() {
                 save up to 24%
               </div>
               <p className="stat-label" style={{ margin: "0 0 8px" }}>
-                Stake VPFI into your Vaipakam Vault on this chain and flip the
+                Hold VPFI in your Vaipakam Vault on this chain and flip the
                 platform-level VPFI consent once on your Dashboard. Future
-                liquid loans will auto-settle the tier-discounted fee in VPFI.
-                Need VPFI?{" "}
-                <a href="/buy-vpfi" target="_blank" rel="noopener noreferrer">
-                  Buy VPFI
+                liquid loans will auto-settle the tier-discounted fee in VPFI.{" "}
+                <a href="/vpfi-vault" target="_blank" rel="noopener noreferrer">
+                  Open the VPFI vault
                 </a>{" "}
-                (buy from your preferred chain — routing is handled for you).
+                to deposit or manage your VPFI.
               </p>
               <Link to="" className="btn btn-secondary btn-sm">
                 Enable consent on Dashboard

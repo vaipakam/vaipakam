@@ -257,7 +257,7 @@ ci-dessus.
 
 ## Qu'est-ce que VPFI ?
 
-**VPFI** est le token utilitaire de Vaipakam. Il fait trois choses :
+**VPFI** est le token utilitaire de Vaipakam. Il fait deux choses :
 
 ### 1. Remises sur les frais
 
@@ -278,15 +278,7 @@ du prêt**, donc recharger juste avant la fin d'un prêt ne biaise
 pas le calcul — vous gagnez la remise au prorata du temps pendant
 lequel vous avez réellement détenu le palier.
 
-### 2. Staking — 5 % APR
-
-Tout VPFI posé dans votre Vaipakam Vault génère automatiquement des
-récompenses de staking au rendement annuel de 5 %. Pas d'action de
-staking séparée, pas de blocage, pas d'attente pour « unstake ».
-Déplacez du VPFI dans votre Vaipakam Vault et il rapporte à partir de
-ce moment. Sortez-le et l'accumulation s'arrête.
-
-### 3. Récompenses d'interaction sur la plateforme
+### 2. Récompenses d'interaction sur la plateforme
 
 Chaque jour, un pool fixe de VPFI est distribué aux prêteurs et
 emprunteurs au prorata des **intérêts** brassés à travers le
@@ -300,16 +292,14 @@ grosses émissions.
 
 ### Comment obtenir du VPFI
 
-Trois voies :
+Deux voies :
 
 - **Le gagner** — en participant (récompenses d'interaction
   ci-dessus).
-- **L'acheter** — à un taux fixe (`1 VPFI = 0,001 ETH`) sur la page
-  **Acheter VPFI**. Le programme à taux fixe est plafonné par
-  portefeuille par chaîne.
 - **Le transférer par bridge** — VPFI est un token Chainlink CCIP CCT,
   donc il circule entre les chaînes prises en charge via le bridge
-  officiel.
+  officiel. Vous pouvez aussi acquérir du VPFI sur le marché ouvert
+  partout où il s'échange.
 
 ---
 
@@ -357,9 +347,10 @@ Même flux, mais sur la page **Créer une offre** vous choisissez
 « Location de NFT » au lieu de prêt ERC-20. Le formulaire vous
 guidera.
 
-Si vous voulez juste **gagner du rendement passif sur votre VPFI**,
-déposez-le dans votre Vaipakam Vault depuis la page **Tableau de bord**.
-C'est tout — le staking est automatique à partir de ce moment.
+Si vous voulez juste **réduire vos frais de protocole**, déposez du
+VPFI dans votre Vaipakam Vault depuis la page **Tableau de bord**.
+C'est tout — votre palier de remise s'applique automatiquement à
+partir de ce moment.
 
 ---
 
