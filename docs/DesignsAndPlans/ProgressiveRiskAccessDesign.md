@@ -198,9 +198,10 @@ mapping(address user => mapping(bytes32 pairKey => bool)) illiquidPairConsent;  
 - Both mappings append to the **flat** `Storage` struct
   ([`LibVaipakam.sol:2234-4305`](../../contracts/src/libraries/LibVaipakam.sol#L2234),
   slot `VANGKI_STORAGE_POSITION` at
-  [`:62`](../../contracts/src/libraries/LibVaipakam.sol#L62)), appended at
-  the tail near the existing `signedOfferNonceUsed` mapping
-  ([`:4079`](../../contracts/src/libraries/LibVaipakam.sol#L4079)). The
+  [`:62`](../../contracts/src/libraries/LibVaipakam.sol#L62)), appended at the
+  **true current tail** — NOT near `signedOfferNonceUsed` (`:4079`), which is
+  *not* the tail; the struct continues with live fields after it (see §8 for the
+  full placement + the pre-live note). The
   struct is flat (no nested structs) — **keep these flat** to avoid
   worsening the viaIR whole-unit stack ceiling (see
   [[viaIR stack-too-deep lever]]).
@@ -468,10 +469,12 @@ upgrade-safe regardless.
 enum RiskAccessLevel { BlueChipOnly, BroadLiquid, IlliquidCustom }       // 0 = safe default
 
 mapping(address => RiskAccessLevel) userRiskAccess;                       // broad tier
-mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;          // per-pair illiquid ack
+mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;          // L2 HARD per-pair illiquid ack
+mapping(address => mapping(bytes32 => bool)) midTierPairAck;               // L1 SOFT mid-tier ack — SEPARATE map (Codex r2 L4Yj/L475): never reuse illiquidPairConsent for strict-mode acks
 mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;          // EIP-712 anti-replay (dedicated)
-mapping(address => uint64) riskTierUnlockedAt;                             // cooldown anchor (broad tier)
+mapping(address => mapping(uint8 => uint64)) riskTierUnlockedAt;           // cooldown anchor PER LEVEL (Codex r2 L473): a single ts would let a BroadLiquid→IlliquidCustom raise overwrite the broad unlock
 mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockedAt;      // cooldown anchor (per-pair)
+mapping(address => mapping(bytes32 => bytes32)) riskConsentVersion;        // {level/pair → consentVersionHash} (Codex r2 P3 L476): detect later terms-revisions
 mapping(address => bool) riskStrictMode;                                   // optional RD-1 flag (default-off)
 uint32 riskAccessUnlockCooldownSec;                                        // TOP-LEVEL field, NOT in protocolCfg (see below); default 0
 ```
@@ -489,27 +492,35 @@ read-accessor mirror the existing bounded-knob pattern of
 - **New facet — `RiskAccessFacet`** (or fold into `ProfileFacet` if size
   permits; `ProfileFacet` already owns `setKeeperAccess` self-config —
   natural home, but check EIP-170 after adding the EIP-712 verify path):
-  `setVaultRiskTier`, `setIlliquidPairConsent`, and views
-  `getVaultRiskTier(address)`, `getIlliquidPairConsent(address, bytes32)`,
-  `requiredLevelForAssets(address, address)` (derives the gate result for
-  the frontend).
+  `setVaultRiskTier`, `setIlliquidPairConsent`, and views. All asset-pair
+  APIs take the **raw typed assets** — `(lendingAsset, lendingAssetType,
+  tokenId, collateralAsset, collateralAssetType, collateralTokenId)` — NOT two
+  bare addresses (Codex r2 L498), so they can recompute the tokenId-inclusive
+  pair key + the wallet can render the concrete pair:
+  `getVaultRiskTier(address)`, `getIlliquidPairConsent(address, …typed assets)`,
+  `requiredLevelForAssets(address, …typed assets)`.
 - **New internal library — `LibRiskAccess`** holding the gate helper
-  `_assertOriginationAllowed(actor, lendingAsset, collateralAsset)` and
-  `_assertPairConsented(actor, pairKey)` + `pairKeyFor(...)`. Call sites
-  invoke the library; logic lives in one place (the
-  `_assertNotSanctioned`/`LibAuth` pattern — a shared gate helper, not
-  copy-pasted checks).
+  `_assertOriginationAllowed(actor, …typed assets)`,
+  `_assertPairConsented(actor, …typed assets)`, and `pairKeyFor(…typed assets)`
+  (folds tokenIds + asset types). Call sites invoke the library; logic lives in
+  one place (the `_assertNotSanctioned`/`LibAuth` shared-gate pattern).
 - **Modified (additive checks, no signature change to existing flows):**
-  - [`OfferCreateFacet.createOffer`](../../contracts/src/facets/OfferCreateFacet.sol#L367)
-    — add the origination gate against `msg.sender`.
+  - **All offer-creation entries** — `createOffer`, `createOfferWithPermit`,
+    `createOfferInternal`, the signed-offer materializers — gate against the
+    **resolved `creator`** (not `msg.sender`; Codex r2 L504), at the shared
+    create chokepoint.
   - [`OfferAcceptFacet._acceptOffer`](../../contracts/src/facets/OfferAcceptFacet.sol#L517)
-    — add the origination gate against the resolved acceptor (composes
-    with #662's binding at the same site).
-  - [`ClaimFacet.claimAsLender`/`claimAsBorrower`](../../contracts/src/facets/ClaimFacet.sol#L205)
-    — add the one-time pair-ack gate **only** when the claimed
-    collateral classifies illiquid (RD-2). Self-resolvable in-flow.
-  - Ongoing-action sites (refinance / obligation-transfer; preclose +
-    swap-to-repay pending O4): gate against current NFT owner.
+    — gate the resolved acceptor AND re-assert the offer creator's tier
+    (composes with #662's binding at the same site).
+  - **Claim entries** — `claimAsLender`, `claimAsBorrower`, **and
+    `claimAsLenderWithRetry`** (Codex r2 L510 — it forwards to the same
+    `_claimAsLenderImpl`, so gating only the first two leaves a hole): one-time
+    pair-ack gate **only** when the claimed collateral classifies illiquid
+    (RD-2). Self-resolvable in-flow.
+  - Ongoing risk-adding actions: refinance (current NFT owner);
+    **obligation-transfer gated on the INCOMING obligee `offer.creator`**, not
+    the exiting owner (Codex r2 L512). Pure close-out exits (preclose-direct,
+    swap-to-repay-full) NOT gated (D4).
 - **Explicitly NOT modified (must stay ungated — §5c):**
   `ConsolidationFacet`, the push-payout paths inside `repayLoan` /
   `markDefaulted` / `triggerDefault`, position-NFT `_transfer`.
@@ -519,7 +530,8 @@ read-accessor mirror the existing bounded-knob pattern of
 ## 10. ABI / deploy-sanity / frontend / spec impact
 
 - **ABI re-export + deploy-sanity:** new external selectors
-  (`setVaultRiskTier`, `setIlliquidPairConsent`, the views) on the new
+  (`setVaultRiskTier`, `setIlliquidPairConsent`, **`setRiskAccessUnlockCooldown`**
+  — the RD-3 per-deploy tunable; Codex r2 L527 — and the views) on the new
   facet (or `ProfileFacet`). Per CLAUDE.md: add the facet to
   `DiamondFacetNames.cutFacetNames()`, add its `_get<Facet>Selectors()` to
   `SelectorCoverageTest._populateRoutedSet()` + the `DeployDiamond` /
