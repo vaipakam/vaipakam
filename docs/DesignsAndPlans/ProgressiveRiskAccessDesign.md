@@ -652,6 +652,13 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
     resolutions: (a) those contracts only ever transact blue-chip assets, so
     they never need to opt up (verify per-contract); or (b) expose an
     **owner-gated, signature-free** `setVaultRiskTierFor(account, level)`.
+    **The signature-free escape hatch still stamps the version (Codex r11 P2
+    L655):** because the gate reads `tierConsentVersion` / `illiquidConsentVersion`
+    for EVERY origination, `setVaultRiskTierFor` / `setIlliquidPairConsentFor`
+    must write `currentRiskTermsVersion` into those maps for the managed account
+    too — the owner attests on the non-signing contract's behalf. Skipping it
+    would leave the managed vault at version 0 (read as "stale/never consented")
+    and its originations would fail the freshness check despite the raised tier.
     **`account` MUST be constrained to a registered known-protocol contract,
     not an arbitrary address (Codex r8 P2 L574):** the function requires
     `account.code.length > 0` AND `account ∈ s.protocolManagedVaults` (an
@@ -693,9 +700,16 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   *reducing* risk; cooldown only gates *first use after raising*).
   **Re-stamp the cooldown anchor on every RE-RAISE, for every level newly
   granted** (Codex r3 P2 L455 + r4 P2 L478): a raise to level `N` writes
-  `unlockedAt[user][L] = block.timestamp` **and**
-  `tierConsentVersion[user][L] = currentRiskTermsVersion` for **every** `L` in
-  `(oldLevel, N]` — not just level `N` (Codex r4 P2 L478 + r8 P2 L606).
+  `unlockedAt[user][L] = block.timestamp` for every NEWLY-granted `L` in
+  `(oldLevel, N]` **and `tierConsentVersion[user][L] = currentRiskTermsVersion`
+  for every granted `L` in `[BroadLiquid .. N]`** — the version stamp spans ALL
+  held levels, not just the newly-granted ones (Codex r4 P2 L478 + r8 P2 L606 +
+  r11 P2 L698). A `BroadLiquid` user whose L1 consent went stale after a terms
+  bump, then up-tiers to `IlliquidCustom`, must have L1 refreshed too (it's not
+  in `(oldLevel, N]`, yet a later L1-only offer reads the L1 slot) — so the
+  up-tier doubles as the all-levels version refresh. (The cooldown anchor stays
+  scoped to newly-granted levels — no new privilege is conferred on an
+  already-held lower level.)
   Otherwise a direct `BlueChipOnly → IlliquidCustom` jump leaves the
   intermediate `BroadLiquid` (level 1) anchor at zero/stale (cooldown bypass)
   AND its version unstamped (a tier-1 offer would read a zero version and never
@@ -733,6 +747,7 @@ mapping(address => mapping(bytes32 => bytes32)) illiquidConsentVersion;    // HA
 mapping(address => mapping(bytes32 => bytes32)) midTierAckVersion;         // SOFT mid-tier-use version (Codex r7 P2 L600): {pairKey → consentVersionHash} for the non-blocking midTierPairAck stamp; never shares a slot with illiquidConsentVersion
 mapping(address => mapping(bytes32 => bytes32)) midTierExplicitAckVersion; // version of the EXPLICIT strict-mode ack (Codex r9 P2 L670): {pairKey → consentVersionHash} captured by setMidTierPairAck. Strict mode requires this == currentRiskTermsVersion (a FRESH ack), so an old setter-ack goes stale on a terms bump just like the unlock versions.
 mapping(address => bool) riskStrictMode;                                   // optional RD-1 flag (default-off)
+mapping(address => uint64) strictModeDisabledAt;                           // cooldown anchor for the risk-increasing strict-mode DISABLE (Codex r11 P2 L765): stamped on disable; the OFF-mode origination gate enforces now >= this + riskAccessUnlockCooldownSec
 mapping(address => bool) protocolManagedVaults;                            // owner-maintained allow-set (Codex r8 P2 L574 + r9 P2 L595): the ONLY accounts setVaultRiskTierFor / setIlliquidPairConsentFor may target. Maintained via admin addProtocolManagedVault / removeProtocolManagedVault (§9). Empty by default; backstop/adapter vaults added at deploy.
 bool saleVehicleCreate;                                                    // TRANSIENT injection flag (Codex r7 P2 L338 + r8 P2 L640): set by the lender-sale flow before its cross-facet createOffer hop, read by the create gate to skip the tier check, cleared same-tx. MUST be false at rest (like matchOverride.active / signedOfferAcceptor).
 bytes32 currentRiskTermsVersion;                                           // AUTHORITATIVE global risk-terms version (Codex r8 P2 L716): admin/governance-set hash of the current risk-disclosure text via setRiskTermsVersion (§9). The gate stamps THIS into the per-user version maps; the setters REQUIRE the caller's signed consentVersion == this (reject stale, Codex r9 P2 L635) before stamping; bumping it flags every prior unlock/stamp as stale. Single source of "currentTermsVersion".
@@ -762,15 +777,23 @@ read-accessor mirror the existing bounded-knob pattern of
   strict mode ON may stay a plain self-call. **Disabling strict mode is ALSO
   subject to `riskAccessUnlockCooldownSec` (Codex r10 P2 L737)** — it's a
   risk-increasing privilege change, so on a non-zero deploy cooldown the
-  same-op disable+exploit window is closed exactly like a tier raise), and
+  same-op disable+exploit window is closed exactly like a tier raise.
+  **This needs its own cooldown anchor (Codex r11 P2 L765):** the disable
+  stamps `strictModeDisabledAt[user] = block.timestamp` (a dedicated anchor
+  field appended to §8) and the origination gate, when strict mode is OFF,
+  enforces `block.timestamp >= strictModeDisabledAt[user] + cooldown` — without
+  a dedicated anchor there is nothing for the cooldown to measure against), and
   **`setMidTierPairAck`** (the L1 EXPLICIT strict-mode ack setter; writes
   `midTierExplicitAck` + `midTierExplicitAckVersion`, NOT the passive
   `midTierPairAck` the gate auto-stamps, and never `illiquidPairConsent` —
-  Codex r3 P3 L499 + r9 P2 L695. **When `riskStrictMode` is on this ack
-  authorizes a real origination privilege, so it carries the full EIP-712
-  signed envelope (assets, user, consentVersion, nonce, deadline, sig) — Codex
-  r10 P2 L741 — not a plain self-call**, matching the other privilege-granting
-  setters),
+  Codex r3 P3 L499 + r9 P2 L695. **This explicit ack ALWAYS carries the full
+  EIP-712 signed envelope (assets, user, consentVersion, nonce, deadline, sig),
+  not only when `riskStrictMode` is on (Codex r10 P2 L741 + r11 P2 L772)** — the
+  setter records a versioned, user-attested consent, so it must be a signed,
+  replay-protected, terms-bound action regardless of the strict flag's current
+  value (which the user can toggle); gating the signature on a mutable flag
+  would let an unsigned ack written while strict was off later satisfy a
+  strict-on gate. Matching the other privilege-granting setters),
   the **admin-only** `setRiskAccessUnlockCooldown`, **`setRiskTermsVersion(bytes32)`**
   (admin/governance-only — bumps `currentRiskTermsVersion`, the single act that
   invalidates every prior unlock/ack on a terms revision, Codex r9 P2 L673), and
