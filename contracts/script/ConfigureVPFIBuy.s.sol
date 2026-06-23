@@ -8,62 +8,76 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
- * @title ConfigureVPFIBuy
- * @notice One-shot post-deploy script that wires the fixed-rate VPFI buy
- *         parameters on the canonical Base-chain Diamond. Idempotent.
- * @dev Must be broadcast by a holder of `ADMIN_ROLE`. Only runs on the
- *      canonical chain — the sale rate and caps are authoritative there
- *      and the mesh reads them via bridged BUY_REQUEST messages.
+ * @title ConfigureVPFIBuy (VPFI fee-discount price config)
+ * @notice One-shot post-deploy script that wires the VPFI **fee-discount**
+ *         price config on the canonical Base-chain Diamond. Idempotent.
+ * @dev #687-A: the issuer fixed-rate SALE was removed. The buy rate/caps/enabled
+ *      surface is gone; what remains is the consumptive fee-discount utility,
+ *      which needs a VPFI price anchor (wei per VPFI) + an ETH/USD reference
+ *      asset to value the discount (see `LibVPFIDiscount._feeAssetWeiToVpfi`).
+ *      Contract name kept (`ConfigureVPFIBuy`) so callers/spells importing it are
+ *      unaffected; its job is now discount-config only.
  *
- *      Required env vars:
- *        - ADMIN_PRIVATE_KEY                  : admin-role key (matches the
- *                                               ADMIN_ADDRESS granted
- *                                               ADMIN_ROLE during deploy)
- *        - BASE_SEPOLIA_DIAMOND_ADDRESS       : canonical Diamond proxy
- *        - VPFI_BUY_WEI_PER_VPFI              : sale rate, wei of ETH per 1 VPFI
- *                                               (1 VPFI = 0.001 ETH → 1e15)
- *        - VPFI_BUY_GLOBAL_CAP                : lifetime VPFI cap across the mesh
- *                                               (e.g. 2300000e18)
- *        - VPFI_BUY_PER_WALLET_CAP            : per-buyer VPFI cap
- *                                               (e.g. 30000e18)
- *        - VPFI_BUY_ENABLED                   : "true" / "false"
- *        - BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET :
- *            asset the Diamond prices internally as the ETH reference
- *            for discount math. Usually WETH on Base.
+ *      Must be broadcast by a holder of `ADMIN_ROLE`. Runs on EVERY chain —
+ *      unlike the removed sale (canonical-only), the fee discount applies on
+ *      every chain a loan can be opened on, so both the price anchor and the
+ *      per-chain ETH reference asset must be set everywhere or
+ *      `LibVPFIDiscount._feeAssetWeiToVpfi` returns `(false, 0)` and the
+ *      discount silently no-ops there.
+ *
+ *      Required env vars (chain-prefixed, mirroring ConfigureOracle):
+ *        - ADMIN_PRIVATE_KEY                  : admin-role key
+ *        - VPFI_BUY_WEI_PER_VPFI              : discount price anchor — wei of
+ *                                               ETH per 1 VPFI (1 VPFI = 0.001
+ *                                               ETH → 1e15). Global rate, same
+ *                                               value on every chain.
+ *        - <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET :
+ *            the chain's ETH reference asset for discount math (the canonical
+ *            WETH on that network), e.g. BASE_VPFI_DISCOUNT_ETH_PRICE_ASSET,
+ *            ARB_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET.
  */
 contract ConfigureVPFIBuy is Script {
-    function _ethPriceAsset() internal view returns (address) {
+    /// @dev Chain-prefix for the per-chain ETH reference asset env var. Mirrors
+    ///      ConfigureOracle._prefix() so the same .env shape works everywhere.
+    function _prefix() internal view returns (string memory) {
         uint256 chainId = block.chainid;
-        if (chainId == 84532) {
-            return vm.envAddress("BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET");
-        }
-        if (chainId == 8453) {
-            return vm.envAddress("BASE_VPFI_DISCOUNT_ETH_PRICE_ASSET");
-        }
-        revert("ConfigureVPFIBuy: unsupported chain");
+        if (chainId == 84532) return "BASE_SEPOLIA_";
+        if (chainId == 8453) return "BASE_";
+        if (chainId == 11155111) return "SEPOLIA_";
+        if (chainId == 1) return "MAINNET_";
+        if (chainId == 421614) return "ARB_SEPOLIA_";
+        if (chainId == 11155420) return "OP_SEPOLIA_";
+        if (chainId == 80002) return "POLYGON_AMOY_";
+        if (chainId == 42161) return "ARBITRUM_";
+        if (chainId == 10) return "OPTIMISM_";
+        if (chainId == 56) return "BNB_";
+        if (chainId == 137) return "POLYGON_";
+        revert(
+            string.concat(
+                "ConfigureVPFIBuy: unsupported chainId ",
+                vm.toString(chainId)
+            )
+        );
+    }
+
+    function _ethPriceAsset() internal view returns (address) {
+        return vm.envAddress(
+            string.concat(_prefix(), "VPFI_DISCOUNT_ETH_PRICE_ASSET")
+        );
     }
 
     function run() external {
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
-        // Reads from deployments/<chain>/addresses.json with legacy
-        // BASE_SEPOLIA_DIAMOND_ADDRESS / BASE_DIAMOND_ADDRESS env
-        // fallback. Must run on the canonical chain — caller's onus
-        // to ensure block.chainid matches the canonical-VPFI chain.
         address diamond = Deployments.readDiamond();
         address ethPriceAsset = _ethPriceAsset();
 
         uint256 weiPerVpfi = vm.envUint("VPFI_BUY_WEI_PER_VPFI");
-        uint256 globalCap = vm.envUint("VPFI_BUY_GLOBAL_CAP");
-        uint256 perWalletCap = vm.envUint("VPFI_BUY_PER_WALLET_CAP");
-        bool enabled = vm.envBool("VPFI_BUY_ENABLED");
 
-        console.log("=== Configure VPFI Buy (canonical Base) ===");
+        console.log("=== Configure VPFI Discount Price ===");
+        console.log("Chain id:         ", block.chainid);
         console.log("Diamond:          ", diamond);
         console.log("ETH price asset:  ", ethPriceAsset);
         console.log("Wei per VPFI:     ", weiPerVpfi);
-        console.log("Global cap:       ", globalCap);
-        console.log("Per-wallet cap:   ", perWalletCap);
-        console.log("Enabled:          ", enabled);
 
         // Pre-flight role check. VPFIDiscountFacet setters enforce
         // `onlyRole(LibAccessControl.ADMIN_ROLE)`. Without ADMIN_ROLE
@@ -86,21 +100,15 @@ contract ConfigureVPFIBuy is Script {
         vm.startBroadcast(adminKey);
         VPFIDiscountFacet v = VPFIDiscountFacet(diamond);
         v.setVPFIDiscountETHPriceAsset(ethPriceAsset);
-        v.setVPFIBuyRate(weiPerVpfi);
-        v.setVPFIBuyCaps(globalCap, perWalletCap);
-        v.setVPFIBuyEnabled(enabled);
+        v.setVPFIDiscountRate(weiPerVpfi);
         vm.stopBroadcast();
 
-        // Mirror the canonical-chain rate/caps/enabled config into the
-        // per-chain artifact so the frontend env builder + downstream
-        // scripts see one source of truth (no more grepping .env on
-        // each redeploy).
+        // Mirror the canonical-chain discount price config into the per-chain
+        // artifact so the frontend env builder + downstream scripts see one
+        // source of truth.
         Deployments.writeVpfiDiscountEthPriceAsset(ethPriceAsset);
-        Deployments.writeUint(".vpfiBuyWeiPerVpfi", weiPerVpfi);
-        Deployments.writeUint(".vpfiBuyGlobalCap", globalCap);
-        Deployments.writeUint(".vpfiBuyPerWalletCap", perWalletCap);
-        Deployments.writeBool(".vpfiBuyEnabled", enabled);
+        Deployments.writeUint(".vpfiDiscountWeiPerVpfi", weiPerVpfi);
 
-        console.log("VPFI buy config applied.");
+        console.log("VPFI discount price config applied.");
     }
 }

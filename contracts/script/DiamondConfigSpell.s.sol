@@ -26,9 +26,9 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *        - ConfigureRewardReporter   — sets the cross-chain reward
  *                                       reporter's localEid + baseEid
  *                                       so reward reports flow.
- *        - ConfigureVPFIBuy          — sets the canonical-chain
- *                                       wei-per-VPFI rate + receiver
- *                                       config (no-op on mirror).
+ *        - ConfigureVPFIBuy          — sets the VPFI fee-discount price
+ *                                       config; runs on every chain (the
+ *                                       discount applies chain-wide).
  *        - ConfigureNFTImageURIs     — sets the position-NFT artwork
  *                                       URIs (rotates without code).
  *
@@ -75,10 +75,10 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *           before the reward OApp peers are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
- *        3. ConfigureVPFIBuy — sets the buy rate AFTER oracle is
- *           wired (the rate config doesn't read oracle, but having
- *           oracle live lets `--phase verify` sanity-check the rate
- *           against current prices).
+ *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
+ *           AFTER oracle is wired (the config doesn't read oracle, but
+ *           having oracle live lets `--phase verify` sanity-check the
+ *           discount price against current prices).
  *        4. ConfigureNFTImageURIs LAST — pure metadata; no on-chain
  *           dependencies on the others.
  *
@@ -89,8 +89,8 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *        - per-chain oracle / risk params (ConfigureOracle reads
  *          chain-prefixed vars so the same .env works across testnets)
  *        - REWARD_OAPP_PROXY / LOCAL_EID / BASE_EID (reporter)
- *        - VPFI_BUY_WEI_PER_VPFI + the discount-eth-price-asset
- *          per-chain var (canonical chain only)
+ *        - VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
+ *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET (every chain)
  *        - NFT_DEFAULT_IMAGE_LENDER / _BORROWER and the per-state
  *          override URIs (NFT artwork; defaults are baked into the
  *          contract so all of these are optional).
@@ -100,19 +100,7 @@ import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
  *      ADMIN_PRIVATE_KEY) and runs at `--phase lz-config` separately.
  */
 contract DiamondConfigSpell is Script {
-    /// @dev Canonical-VPFI chains (Base Sepolia 84532 and Base mainnet 8453)
-    ///      are the only chains that run ConfigureVPFIBuy. The script's
-    ///      `_ethPriceAsset()` helper hard-reverts on any other chainid, so
-    ///      mirror-chain runs of the spell would abort at step 3 of 4
-    ///      without this gate. Mirror chains skip step 3 with a
-    ///      console-log marker so the operator sees the deliberate skip.
-    function _isCanonicalVpfiChain() internal view returns (bool) {
-        return block.chainid == 84532 || block.chainid == 8453;
-    }
-
     function run() external {
-        bool canonical = _isCanonicalVpfiChain();
-
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
         console.log("[DiamondConfigSpell] 1/4: ConfigureOracle");
@@ -129,17 +117,12 @@ contract DiamondConfigSpell is Script {
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        if (canonical) {
-            console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy");
-            console.log("[DiamondConfigSpell] ============================================");
-            ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
-            buy.run();
-        } else {
-            console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy (SKIPPED - non-canonical chain)");
-            console.log("[DiamondConfigSpell] ============================================");
-            console.log("[DiamondConfigSpell] chainid:", block.chainid);
-            console.log("[DiamondConfigSpell] VPFI buy is canonical-only; mirror chains have no buy receiver to configure.");
-        }
+        console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy (discount price)");
+        console.log("[DiamondConfigSpell] ============================================");
+        // #687-A: the discount applies on EVERY chain (not the removed
+        // canonical-only sale), so the discount price config runs everywhere.
+        ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
+        buy.run();
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
@@ -150,11 +133,7 @@ contract DiamondConfigSpell is Script {
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        if (canonical) {
-            console.log("[DiamondConfigSpell] All four configures landed.");
-        } else {
-            console.log("[DiamondConfigSpell] Three configures landed (VPFIBuy skipped on non-canonical).");
-        }
+        console.log("[DiamondConfigSpell] All four configures landed.");
         console.log("[DiamondConfigSpell] ============================================");
     }
 }

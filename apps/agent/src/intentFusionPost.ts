@@ -64,9 +64,8 @@ const BUYBACK_INTENT_VALIDATED_TOPIC0 = keccak256(
   toBytes('BuybackIntentValidated(bytes32)'),
 );
 
-// T-090 v1.2 #428 — per-chain RPC binding lookup. Mirror of the
-// pattern used in `buyWatchdog.ts`; reuses the same secrets the
-// other agent handlers read from.
+// T-090 v1.2 #428 — per-chain RPC binding lookup. Reuses the same
+// per-chain RPC secrets the other agent handlers read from.
 function rpcForChain(env: Env, chainId: number): string | undefined {
   if (chainId === 1) return env.RPC_ETH;
   if (chainId === 8453) return env.RPC_BASE;

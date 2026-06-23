@@ -23,8 +23,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *        - Ownable2Step ownership of every CCIP cross-chain contract
  *          deployed on this chain — `CcipMessenger`, the VPFI
  *          `TokenPool`, `VpfiPoolRateGovernor`, `VaipakamRewardMessenger`,
- *          and the chain-scoped `VPFIMirrorToken` + `VpfiBuyAdapter`
- *          (mirror) / `VpfiBuyReceiver` (canonical). `DeployCrosschain`
+ *          and the chain-scoped `VPFIMirrorToken` (mirror). `DeployCrosschain`
  *          initializes every one with ADMIN as owner — and `ConfigureCcip`
  *          accepts the pool's `Ownable2Step` handover as ADMIN — so the
  *          whole CCIP stack is ADMIN-owned through the `ccip-wire`
@@ -104,7 +103,7 @@ import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
  *      Reads from addresses.json:
  *        diamond, timelock, ccipMessenger, vpfiTokenPool,
  *        vpfiPoolRateGovernor, rewardMessenger,
- *        vpfiToken | vpfiMirror, vpfiBuyReceiver | vpfiBuyAdapter,
+ *        vpfiToken | vpfiMirror,
  *        buybackRemittanceReceiver (canonical only — T-087 Sub 3.A)
  *
  *      Per CLAUDE.md "Deployments sync — Omit-keys policy", canonical
@@ -170,11 +169,10 @@ contract Handover is Script {
             rewardMessenger = _readAddrOptional(addrJson, "rewardOApp");
         }
         // Chain-scoped per the omit-keys policy: a mirror carries
-        // `vpfiMirror` + `vpfiBuyAdapter`; canonical Base carries
-        // `vpfiBuyReceiver` (its VPFI is the pre-existing `vpfiToken`).
+        // `vpfiMirror`; canonical Base's VPFI is the pre-existing `vpfiToken`.
+        // (#687-A removed the `vpfiBuyAdapter`/`vpfiBuyReceiver` handover legs
+        // along with the cross-chain VPFI sale.)
         address mirror = _readAddrOptional(addrJson, "vpfiMirror");
-        address buyAdapter = _readAddrOptional(addrJson, "vpfiBuyAdapter");
-        address buyReceiver = _readAddrOptional(addrJson, "vpfiBuyReceiver");
         // T-087 Sub 3.A — Base-only handler for the buyback channel.
         address buybackReceiver =
             _readAddrOptional(addrJson, "buybackRemittanceReceiver");
@@ -266,8 +264,6 @@ contract Handover is Script {
         _transferCrossChainOwnership(adminKey, rateGovernor,    "vpfiPoolRateGovernor", timelock);
         _transferCrossChainOwnership(adminKey, rewardMessenger, "rewardMessenger",      timelock);
         _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
-        _transferCrossChainOwnership(adminKey, buyAdapter,      "vpfiBuyAdapter",       timelock);
-        _transferCrossChainOwnership(adminKey, buyReceiver,     "vpfiBuyReceiver",      timelock);
         _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
 
         // ── 3g. CCT admin → Timelock ────────────────────────────────────
@@ -301,8 +297,6 @@ contract Handover is Script {
         if (rateGovernor != address(0)) console.log("    target: vpfiPoolRateGovernor @", rateGovernor);
         if (rewardMessenger != address(0)) console.log("    target: rewardMessenger      @", rewardMessenger);
         if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
-        if (buyAdapter != address(0)) console.log("    target: vpfiBuyAdapter       @", buyAdapter);
-        if (buyReceiver != address(0)) console.log("    target: vpfiBuyReceiver      @", buyReceiver);
         if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");

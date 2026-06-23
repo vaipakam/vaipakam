@@ -1,16 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  createPublicClient,
-  http,
-  type Address,
-  type PublicClient,
-} from 'viem';
+import { type Address } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
 import { useWallet } from '../context/WalletContext';
 import { useProtocolConfig } from './useProtocolConfig';
 import { beginStep } from '../lib/journeyLog';
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from '@vaipakam/contracts/abis';
-import type { ChainConfig } from '../contracts/config';
 
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 /** Default decimals scale used when a caller hasn't threaded the live
@@ -19,200 +13,9 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
  *  contract truth on every chain. Hooks that have access to the live
  *  config should pass `decimals` explicitly. */
 const VPFI_DECIMALS_DEFAULT = 18;
-const STALE_MS = 30_000;
 
 function decimalsScale(decimals: number): bigint {
   return 10n ** BigInt(decimals);
-}
-
-/**
- * Current VPFI buy-side config + running totals, plus the caller's
- * per-wallet purchased tally. Mirrors `VPFIDiscountFacet.getVPFIBuyConfig`
- * with wallet-scoped additions.
- */
-export interface VPFIBuyConfig {
-  /** ETH wei accepted per 1 VPFI (18-dec). 0 when rate is unset. */
-  weiPerVpfi: bigint;
-  /**
-   * Effective global cap on VPFI sold at fixed rate (18-dec). Always a
-   * positive value — the on-chain getter resolves a stored zero to the
-   * 2.3M spec default (docs/TokenomicsTechSpec.md §8). No "uncapped" mode.
-   */
-  globalCap: bigint;
-  /**
-   * Effective per-wallet cap on VPFI buys (18-dec). Always a positive
-   * value — the on-chain getter resolves a stored zero to the 30k spec
-   * default (docs/TokenomicsTechSpec.md §8a).
-   */
-  perWalletCap: bigint;
-  /** Cumulative VPFI sold at fixed rate. */
-  totalSold: bigint;
-  /** True iff the buy path is currently open. */
-  enabled: boolean;
-  /** ERC-20 used as the ETH/USD reference asset for discount quotes. */
-  ethPriceAsset: string;
-  /** Cumulative VPFI the connected wallet has purchased. 0 when no wallet. */
-  soldToWallet: bigint;
-  /** Remaining headroom for this wallet (perWalletCap - soldToWallet, clamped ≥0). */
-  walletHeadroom: bigint;
-  /** Remaining headroom globally (globalCap - totalSold, clamped ≥0). */
-  globalHeadroom: bigint;
-  /** True iff buy path is live (enabled AND rate set AND headroom remains). */
-  canBuy: boolean;
-  fetchedAt: number;
-}
-
-interface CacheEntry {
-  data: VPFIBuyConfig;
-  at: number;
-  key: string;
-}
-
-let cached: CacheEntry | null = null;
-
-/**
- * Wallet-aware view over the VPFI fixed-rate buy mechanism. Used by the
- * Buy VPFI page and by CreateOffer / LoanDetails banners to decide whether
- * to show the discount CTA. Safe to call without a wallet connected —
- * `soldToWallet` will be zero.
- *
- * Caches under chainId + diamond + wallet for {@link STALE_MS} so multiple
- * consumers on the same page don't thrash the RPC.
- *
- * @param chainOverride When set, read the buy config from this chain's
- *   Diamond instead of the wallet's active chain. Required for the bridged
- *   buy flow: the fixed-rate and caps are stored only on the canonical
- *   chain's Diamond, so a Sepolia-origin user who wants to bridge-buy must
- *   read the canonical (Base Sepolia) state to see a non-zero `weiPerVpfi`.
- *   When omitted, the active chain's Diamond is used (the historical
- *   behavior, correct for the direct canonical-chain buy).
- */
-export function useVPFIDiscount(chainOverride?: ChainConfig | null) {
-  const defaultClient = useDiamondPublicClient();
-  const defaultChain = useReadChain();
-  const { address } = useWallet();
-  const overrideClient = useMemo<PublicClient | null>(() => {
-    if (!chainOverride || !chainOverride.diamondAddress) return null;
-    return createPublicClient({
-      transport: http(chainOverride.rpcUrl),
-    }) as PublicClient;
-    // Intentionally depend on the two stable primitive fields rather than
-    // the `chainOverride` object reference — callers often pass a freshly
-    // constructed ChainConfig each render (e.g. `getCanonicalVPFIChain()`),
-    // which would otherwise invalidate the memo every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chainOverride?.rpcUrl, chainOverride?.diamondAddress]);
-  const publicClient = overrideClient ?? defaultClient;
-  const chain =
-    chainOverride && chainOverride.diamondAddress ? chainOverride : defaultChain;
-  const diamondAddress = (chain.diamondAddress ?? ZERO_ADDRESS) as Address;
-  // Cache key includes the wallet's ORIGIN chainId because the per-
-  // wallet cap bucket is keyed on the origin chain. Otherwise two
-  // users on different origin chains hitting the same canonical-
-  // override read would share a cached `soldToWallet` from the wrong
-  // bucket. The earlier `lzEid` salt that lived here was a LayerZero-
-  // era artifact dropped with the per-chain `lzEid` field in #230 —
-  // `defaultChain.chainId` is the post-T-068 (CCIP) origin-chain key.
-  const cacheKey = `${chain.chainId}:${(chain.diamondAddress ?? 'none').toLowerCase()}:${(address ?? 'none').toLowerCase()}:origin${defaultChain.chainId}`;
-
-  const [config, setConfig] = useState<VPFIBuyConfig | null>(() =>
-    cached && cached.key === cacheKey ? cached.data : null,
-  );
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
-
-  const load = useCallback(async () => {
-    if (cached && cached.key === cacheKey && Date.now() - cached.at < STALE_MS) {
-      setConfig(cached.data);
-      setLoading(false);
-      return;
-    }
-    // Clear any config belonging to a different cacheKey so a stale
-    // zero-rate from the previous chain/wallet doesn't flash a false
-    // "not configured" banner while the fresh fetch is in flight.
-    setConfig(null);
-    setLoading(true);
-    setError(null);
-    const step = beginStep({ area: 'vpfi-buy', flow: 'useVPFIDiscount', step: 'readConfig' });
-    try {
-      // Per-wallet cap is bucketed by **origin chain** on the canonical
-      // Diamond (per docs/TokenomicsTechSpec.md §8a + the on-chain
-      // {VPFIDiscountFacet._computeBuyAndDebitCaps} debit path). The
-      // canonical Diamond debits the bucket keyed on the user's ORIGIN
-      // EVM chain id — for a bridged buy, the source chain id carried in
-      // the CCIP message; for a direct buy, Base's own `block.chainid`.
-      // Read that same per-chain bucket here, keyed on `defaultChain`
-      // (the wallet's connected chain), so the displayed remaining
-      // allowance matches what a buy will actually debit — regardless of
-      // any `chainOverride` used to read config from the canonical Diamond.
-      const originChainId = defaultChain.chainId;
-      const soldToPromise: Promise<bigint> = !address
-        ? Promise.resolve(0n)
-        : (publicClient.readContract({
-            address: diamondAddress,
-            abi: DIAMOND_ABI,
-            functionName: 'getVPFISoldToByChainId',
-            args: [address as Address, originChainId],
-          }) as Promise<bigint>);
-      const [tuple, soldToWallet] = await Promise.all([
-        publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI,
-          functionName: 'getVPFIBuyConfig',
-        }) as Promise<readonly [bigint, bigint, bigint, bigint, boolean, string]>,
-        soldToPromise,
-      ]);
-      const [weiPerVpfi, globalCap, perWalletCap, totalSold, enabled, ethPriceAsset] = tuple;
-
-      // Caps arrive pre-resolved (stored zero → spec default) from
-      // VPFIDiscountFacet.getVPFIBuyConfig, so we can compute headroom
-      // unconditionally.
-      const globalHeadroom =
-        globalCap > totalSold ? globalCap - totalSold : 0n;
-      const walletHeadroom =
-        perWalletCap > soldToWallet ? perWalletCap - soldToWallet : 0n;
-      const canBuy =
-        enabled &&
-        weiPerVpfi > 0n &&
-        globalHeadroom > 0n &&
-        walletHeadroom > 0n;
-
-      const next: VPFIBuyConfig = {
-        weiPerVpfi,
-        globalCap,
-        perWalletCap,
-        totalSold,
-        enabled,
-        ethPriceAsset,
-        soldToWallet,
-        walletHeadroom,
-        globalHeadroom,
-        canBuy,
-        fetchedAt: Date.now(),
-      };
-      cached = { data: next, at: Date.now(), key: cacheKey };
-      setConfig(next);
-      step.success({
-        note: `rate=${weiPerVpfi}, enabled=${enabled}, sold=${totalSold}, wallet=${soldToWallet}`,
-      });
-    } catch (err) {
-      setError(err as Error);
-      step.failure(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [publicClient, diamondAddress, cacheKey, address]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const reload = useCallback(async () => {
-    cached = null;
-    await load();
-  }, [load]);
-
-  return { config, loading, error, reload };
 }
 
 export interface VPFIDiscountQuote {
@@ -603,29 +406,6 @@ export function formatVpfiUnits(
 ): number {
   if (v == null) return 0;
   return Number(v) / Number(decimalsScale(decimals));
-}
-
-/** Compute ETH wei needed to receive exactly `vpfiOut` VPFI at
- *  `weiPerVpfi`. `decimals` is the VPFI ERC-20 decimals; defaults to
- *  18 to match contract truth. */
-export function vpfiToEthWei(
-  vpfiOut: bigint,
-  weiPerVpfi: bigint,
-  decimals: number = VPFI_DECIMALS_DEFAULT,
-): bigint {
-  if (weiPerVpfi === 0n) return 0n;
-  return (vpfiOut * weiPerVpfi) / decimalsScale(decimals);
-}
-
-/** Compute VPFI out received for `ethWei` at `weiPerVpfi`. `decimals`
- *  is the VPFI ERC-20 decimals; defaults to 18 to match contract truth. */
-export function ethWeiToVpfi(
-  ethWei: bigint,
-  weiPerVpfi: bigint,
-  decimals: number = VPFI_DECIMALS_DEFAULT,
-): bigint {
-  if (weiPerVpfi === 0n) return 0n;
-  return (ethWei * decimalsScale(decimals)) / weiPerVpfi;
 }
 
 /**

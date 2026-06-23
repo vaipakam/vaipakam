@@ -17,24 +17,18 @@ import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
-import {VpfiBuyAdapter} from "../src/crosschain/VpfiBuyAdapter.sol";
-import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
 
 import {MockCcipRouter} from "./mocks/MockCcipRouter.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
- * @dev One mock Vaipakam Diamond serving both cross-chain ingress points a
- *      canonical chain exposes — the buy receiver's `processBridgedBuy` and
- *      the reward messenger's report / broadcast callbacks. On a buy it
- *      "mints" the canonical vpfi onto its caller (the receiver), the same
- *      shape `MockBuyDiamond` / `MockRewardDiamond` use in the per-flow
- *      unit tests.
+ * @dev One mock Vaipakam Diamond serving the canonical chain's cross-chain
+ *      ingress points — the reward messenger's report / broadcast callbacks.
+ *      (#687-A removed the buy receiver's `processBridgedBuy` flow.)
  */
 contract MockRehearsalDiamond {
     ERC20Mock public immutable vpfi;
-    uint256 public fixedOut = 1_000 ether;
 
     uint256 public reportCount;
     uint32 public lastReportChain;
@@ -45,15 +39,6 @@ contract MockRehearsalDiamond {
 
     constructor(ERC20Mock vpfi_) {
         vpfi = vpfi_;
-    }
-
-    function processBridgedBuy(address, uint32, uint256, uint256 minVpfiOut)
-        external
-        returns (uint256)
-    {
-        require(fixedOut >= minVpfiOut, "diamond: slippage");
-        vpfi.mint(msg.sender, fixedOut);
-        return fixedOut;
     }
 
     function onChainReportReceived(uint32 src, uint256 day, uint256, uint256)
@@ -76,8 +61,8 @@ contract MockRehearsalDiamond {
  * @title CcipDeploymentRehearsalTest
  * @notice T-068 Phase 6.3 — the CCIP deploy + config *rehearsal*. The
  *         individual cross-chain contracts already have dedicated unit
- *         tests ({CcipMessengerTest}, {VpfiBuyFlowTest},
- *         {VaipakamRewardFlowTest}); what was un-covered is the
+ *         tests ({CcipMessengerTest}, {VaipakamRewardFlowTest}); what
+ *         was un-covered is the
  *         *assembly* — that the contract set `DeployCrosschain.s.sol`
  *         deploys, wired by the exact call sequence `ConfigureCcip.s.sol`
  *         emits, holds together as one coherent two-chain system and that
@@ -96,8 +81,8 @@ contract MockRehearsalDiamond {
  *         scripts' env / filesystem / live-CCIP dependencies force:
  *           - `MockCcipRouter` stands in for the CCIP Router; it moves a
  *             token-bearing message as a plain ERC20 transfer rather than
- *             a pool burn/mint, so the buy flow uses one shared vpfi ERC20
- *             across both legs (as {VpfiBuyFlowTest} does). The Cross-Chain
+ *             a pool burn/mint, so a token-bearing flow uses one shared
+ *             vpfi ERC20 across both legs. The Cross-Chain
  *             *Token* mint/burn path is rehearsed separately, on the real
  *             {VPFIMirrorToken} + {BurnMintTokenPool}, by
  *             {test_Rehearsal_CctMintBurnAuthority}.
@@ -114,8 +99,6 @@ contract CcipDeploymentRehearsalTest is Test {
     uint64 internal constant SEL_BASE = 15971525489660198786;
     uint64 internal constant SEL_MIRROR = 5009297550715157269;
 
-    bytes32 internal constant BUY_CHANNEL =
-        keccak256("vaipakam.ccip.channel.vpfi-buy");
     bytes32 internal constant REWARD_CHANNEL =
         keccak256("vaipakam.ccip.channel.vpfi-reward");
 
@@ -130,19 +113,16 @@ contract CcipDeploymentRehearsalTest is Test {
     // proxy initializer and accept as the pools' owner.
     address internal admin = makeAddr("admin");
     address internal rmnProxy = makeAddr("rmnProxy");
-    address internal treasury = makeAddr("treasury");
-    address internal buyer = makeAddr("buyer");
     address internal user = makeAddr("user");
 
     MockCcipRouter internal router;
-    ERC20Mock internal vpfi; // canonical vpfi (LockRelease pool + buy flow)
+    ERC20Mock internal vpfi; // canonical vpfi (LockRelease pool)
 
     // ── Canonical (Base) stack ──
     CcipMessenger internal messengerBase;
     LockReleaseTokenPool internal lockPool;
     VpfiPoolRateGovernor internal govBase;
     VaipakamRewardMessenger internal rewardBase;
-    VpfiBuyReceiver internal buyReceiver;
     MockRehearsalDiamond internal diamondBase;
 
     // ── Mirror stack ──
@@ -151,7 +131,6 @@ contract CcipDeploymentRehearsalTest is Test {
     BurnMintTokenPool internal burnPool;
     VpfiPoolRateGovernor internal govMirror;
     VaipakamRewardMessenger internal rewardMirror;
-    VpfiBuyAdapter internal buyAdapter;
     MockRehearsalDiamond internal diamondMirror;
 
     uint256 internal fee;
@@ -171,8 +150,6 @@ contract CcipDeploymentRehearsalTest is Test {
         _configure(); //       mirrors ConfigureCcip.s.sol on both chains
 
         // Operational funding the runbook prescribes post-deploy.
-        vm.deal(buyer, 100 ether);
-        vm.deal(address(buyReceiver), 10 ether); // leg-2 CCIP fee float
         vm.deal(address(diamondBase), 10 ether);
         vm.deal(address(diamondMirror), 10 ether);
     }
@@ -192,19 +169,6 @@ contract CcipDeploymentRehearsalTest is Test {
 
         govBase = _deployGovernor(address(lockPool));
         rewardBase = _deployReward(messengerBase, diamondBase, true, 0);
-
-        VpfiBuyReceiver recvImpl = new VpfiBuyReceiver();
-        buyReceiver = VpfiBuyReceiver(
-            payable(
-                new ERC1967Proxy(
-                    address(recvImpl),
-                    abi.encodeCall(
-                        VpfiBuyReceiver.initialize,
-                        (admin, address(messengerBase), address(diamondBase), address(vpfi), GAS)
-                    )
-                )
-            )
-        );
     }
 
     // ── DeployCrosschain.s.sol — mirror ─────────────────────────────────────
@@ -232,28 +196,6 @@ contract CcipDeploymentRehearsalTest is Test {
 
         govMirror = _deployGovernor(address(burnPool));
         rewardMirror = _deployReward(messengerMirror, diamondMirror, false, BASE);
-
-        VpfiBuyAdapter adapterImpl = new VpfiBuyAdapter();
-        buyAdapter = VpfiBuyAdapter(
-            payable(
-                new ERC1967Proxy(
-                    address(adapterImpl),
-                    abi.encodeCall(
-                        VpfiBuyAdapter.initialize,
-                        (
-                            admin,
-                            address(messengerMirror),
-                            BASE,
-                            treasury,
-                            address(0), // native-ETH mode
-                            address(vpfi), // shared buy-flow vpfi (see contract doc)
-                            TIMEOUT,
-                            GAS
-                        )
-                    )
-                )
-            )
-        );
     }
 
     // ── ConfigureCcip.s.sol — both chains ───────────────────────────────────
@@ -268,16 +210,12 @@ contract CcipDeploymentRehearsalTest is Test {
         // CcipMessenger lanes + channels — canonical Base ⇄ mirror.
         messengerBase.setChainSelector(MIRROR, SEL_MIRROR);
         messengerBase.setRemoteMessenger(MIRROR, address(messengerMirror));
-        messengerBase.registerChannel(BUY_CHANNEL, address(buyReceiver));
         messengerBase.registerChannel(REWARD_CHANNEL, address(rewardBase));
-        messengerBase.setChannelPeer(BUY_CHANNEL, MIRROR, address(buyAdapter));
         messengerBase.setChannelPeer(REWARD_CHANNEL, MIRROR, address(rewardMirror));
 
         messengerMirror.setChainSelector(BASE, SEL_BASE);
         messengerMirror.setRemoteMessenger(BASE, address(messengerBase));
-        messengerMirror.registerChannel(BUY_CHANNEL, address(buyAdapter));
         messengerMirror.registerChannel(REWARD_CHANNEL, address(rewardMirror));
-        messengerMirror.setChannelPeer(BUY_CHANNEL, BASE, address(buyReceiver));
         messengerMirror.setChannelPeer(REWARD_CHANNEL, BASE, address(rewardBase));
 
         // Mirror vpfi → its Burn/Mint pool (the sole mint/burn authority).
@@ -397,11 +335,7 @@ contract CcipDeploymentRehearsalTest is Test {
         assertEq(messengerBase.remoteMessengerOf(MIRROR), address(messengerMirror), "Base remote messenger");
         assertEq(messengerMirror.remoteMessengerOf(BASE), address(messengerBase), "mirror remote messenger");
 
-        // Channel handlers (local) + peers (remote), both channels.
-        assertEq(messengerBase.handlerOf(BUY_CHANNEL), address(buyReceiver), "Base buy handler");
-        assertEq(messengerMirror.handlerOf(BUY_CHANNEL), address(buyAdapter), "mirror buy handler");
-        assertEq(messengerBase.channelPeerOf(BUY_CHANNEL, MIRROR), address(buyAdapter), "Base buy peer");
-        assertEq(messengerMirror.channelPeerOf(BUY_CHANNEL, BASE), address(buyReceiver), "mirror buy peer");
+        // Channel handlers (local) + peers (remote) for the reward channel.
         assertEq(messengerBase.handlerOf(REWARD_CHANNEL), address(rewardBase), "Base reward handler");
         assertEq(messengerMirror.handlerOf(REWARD_CHANNEL), address(rewardMirror), "mirror reward handler");
         assertEq(messengerBase.channelPeerOf(REWARD_CHANNEL, MIRROR), address(rewardMirror), "Base reward peer");
@@ -419,31 +353,7 @@ contract CcipDeploymentRehearsalTest is Test {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    //  Rehearsal 2 — the cross-chain buy flow runs on the deployed stack
-    // ════════════════════════════════════════════════════════════════════════
-
-    /// @notice A buyer on the mirror pays native ETH; the two-leg CCIP buy
-    ///         delivers vpfi back and releases the payment to treasury.
-    function test_Rehearsal_BuyFlowRoundTrip() public {
-        uint256 amountIn = 1 ether;
-        uint256 treasuryBefore = treasury.balance;
-
-        vm.prank(buyer);
-        (uint64 requestId, ) = buyAdapter.buy{value: amountIn + fee}(amountIn, 0);
-        assertEq(requestId, 1, "first buy request");
-
-        // Leg 1 — BUY_REQUEST mirror → Base; the receiver mints + dispatches.
-        router.deliver(0, SEL_MIRROR);
-        // Leg 2 — vpfi delivery Base → mirror; the adapter releases to buyer.
-        router.deliver(1, SEL_BASE);
-
-        assertEq(vpfi.balanceOf(buyer), 1_000 ether, "buyer received vpfi");
-        assertEq(treasury.balance, treasuryBefore + amountIn, "payment released to treasury");
-        assertEq(buyAdapter.totalPendingAmountIn(), 0, "no buy left pending");
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    //  Rehearsal 3 — the reward REPORT / BROADCAST round-trip
+    //  Rehearsal 2 — the reward REPORT / BROADCAST round-trip
     // ════════════════════════════════════════════════════════════════════════
 
     /// @notice A mirror chain reports a closed day to Base; Base broadcasts
@@ -470,7 +380,7 @@ contract CcipDeploymentRehearsalTest is Test {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    //  Rehearsal 4 — the vpfi Cross-Chain Token mint/burn authority
+    //  Rehearsal 3 — the vpfi Cross-Chain Token mint/burn authority
     // ════════════════════════════════════════════════════════════════════════
 
     /// @notice The CCT wiring leaves the mirror vpfi mintable / burnable by

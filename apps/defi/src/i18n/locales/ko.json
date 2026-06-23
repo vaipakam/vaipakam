@@ -98,7 +98,6 @@
     "dashboard": "대시보드",
     "offerBook": "오퍼북",
     "createOffer": "오퍼 생성",
-    "buyVpfi": "VPFI 구매",
     "claimCenter": "클레임 센터",
     "activity": "활동",
     "alerts": "알림",
@@ -370,7 +369,6 @@
     "trustWarning": "누구나 임의의 symbol로 token을 배포할 수 있습니다 — 표시된 symbol이 아니라 contract address 자체를 확인하여 이 token을 신뢰할 수 있는지 확인하세요."
   },
   "buyVpfi": {
-    "title": "VPFI 구매",
     "preconnect": {
       "tagline": "대출 수수료를 낮추고, 스테이킹한 VPFI에서 수익을 얻으세요.",
       "whatTitle": "VPFI란?",
@@ -384,17 +382,13 @@
       "stakingTitle": "대기 중에도 스테이킹 수익",
       "stakingBody": "개인 Vault의 VPFI는 그곳에 머무는 동안 staking APR을 얻습니다. Loan은 필요 없습니다 — staking은 누구에게나 열려 있으며, 같은 balance가 fee discount tier에도 반영됩니다.",
       "howTitle": "작동 방식",
-      "howBody": "초기 단계의 fixed rate로 ETH를 VPFI로 구매한 뒤, 수익을 시작하려면 Vault에 deposit하세요. Cross-chain routing은 자동으로 처리되며, VPFI는 구매한 chain에 도착합니다.",
       "analyticsHint": "프로토콜 전체 통계와 circulating supply를 찾고 있나요? ",
       "analyticsLink": "Analytics 페이지",
       "launchAppCta": "구매 / stake / unstake를 위해 Vaipakam 열기",
       "launchAppHint": "App은 새 탭에서 열립니다. Wallet을 연결하면 buy, stake, unstake 컨트롤을 사용할 수 있습니다."
     },
     "connectTitle": "지갑을 연결하세요",
-    "connectBody": "VPFI를 구매하고 계층 할인을 잠금 해제하려면 지갑을 연결하세요.",
     "unsupportedNetwork": "지원되지 않는 네트워크",
-    "unsupportedNetworkBody": "VPFI 구매는 지원되는 모든 Vaipakam 체인에서 가능합니다. 현재 지갑이 Vaipakam Diamond를 호스팅하지 않는 네트워크에 있습니다. 계속하려면 지원되는 체인으로 전환하세요.",
-    "pageSubtitle": "ETH로 고정 초기 단계 요금으로 VPFI를 구매하고 Vault에 예치 / 스테이킹하여 스테이킹 보상을 얻으세요 — 그리고 유동성 대출의 계층 할인도 잠금 해제하세요.",
     "step1Title": "ETH로 VPFI 구매",
     "step1SubtitleCanonical": "{{chain}}에서 직접. VPFI가 이 체인의 지갑으로 도착합니다.",
     "step1SubtitleBridged": "{{chain}}에서 직접 — 모든 크로스체인 라우팅이 자동 처리됩니다. VPFI가 이 체인의 지갑으로 도착합니다.",
@@ -531,7 +525,6 @@
     "interactionSubtitle": "참여하는 모든 대출에 대해 매일 VPFI 지분을 획득합니다.",
     "pendingLabel": "대기 중",
     "claimedLabel": "청구됨",
-    "manageOnBuyVpfi": "Buy VPFI에서 스테이킹 관리",
     "openClaimCenter": "Claim Center에서 청구"
   },
   "stakingRewards": {
@@ -838,7 +831,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "토큰을 대출하고 차용하고, NFT를 임대하고, 자체 조건을 설정할 수 있도록 합니다. 모든 포지션은 고유한 NFT로 추적됩니다 — 제안에서 정산까지 투명하고 추적 가능하며 신뢰가 필요 없습니다.",
     "launchApp": "Vaipakam 실행",
-    "buyVpfi": "VPFI 구매",
     "howItWorks": "작동 방식",
     "statP2pValue": "P2P",
     "statP2pLabel": "직접 대출",
@@ -1221,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "수수료 할인 동의",
     "bodyPrefix": "활성화하면, 프로토콜은 차입자의 Loan Initiation Fee 및/또는 대여자의 Yield Fee에 대한 할인 수수료를 지급하기 위해 Vault에서 VPFI를 차감할 수 있습니다. 할인은 Vault VPFI 잔액에 따라 조정됩니다 — Tier 1 (≥ {{tier1Min}} VPFI)에서 {{tier1Discount}}% 할인, Tier 2 (≥ {{tier2Min}})에서 {{tier2Discount}}%, Tier 3 (≥ {{tier3Min}})에서 {{tier3Discount}}%, Tier 4 (> {{tier4Min}})에서 {{tier4Discount}}%. VPFI 구매 및 입금은 ",
-    "buyVpfiLink": "VPFI 구매",
     "bodySuffix": "에서 가능합니다.",
     "stateLoading": "로드 중…",
     "stateEnabled": "활성화됨",
@@ -1236,7 +1227,6 @@
     "borrowerBody1": "개인 Vault에 VPFI를 보유하고 Dashboard에서 일회성 platform-level VPFI consent를 활성화하세요. 프로토콜은 전체 {{loanInitiationFee}}% 개시 수수료를 VPFI로 선납받은 후, 대출 정상 종료(repay / preclose / refinance) 시 차입자가 대출 기간 동안 VPFI를 보유한 시간에 따라 시간 가중 리베이트를 적립합니다. Default 또는 청산 시 리베이트는 소멸됩니다. VPFI가 필요합니까? ",
     "lenderTitle": "유동 ERC-20을 대여하나요? 수익 수수료에서 최대 {{maxDiscount}}% VPFI 할인 획득",
     "lenderBody1": "개인 Vault에 VPFI를 보유하고 Dashboard에서 일회성 platform-level VPFI consent를 활성화하세요. 정산 시, 획득한 이자에 대한 {{treasuryFee}}% Treasury 차감은 대출 생애 전반의 시간 가중 VPFI 할인으로 줄어듭니다 — 최대 {{maxDiscount}}%, 따라서 대여자는 획득한 이자를 더 많이 보유합니다. 선납은 없으며, 대출이 정상 정산될 때(repay / preclose / refinance) 할인이 자동 적용됩니다. Default 또는 청산 시 할인은 소멸됩니다. VPFI가 필요합니까? ",
-    "buyVpfi": "VPFI 구매",
     "routingNote": " (선호하는 체인에서 구매 — 라우팅은 처리됩니다).",
     "enableConsent": "Dashboard에서 동의 활성화",
     "loanTitle": "대여자 수익 수수료 할인",
@@ -1586,10 +1576,8 @@
     "loanDetailsParties": "대여자와 차입자 주소, 자산을 보관하는 사용자별 Vault 프록시, 그리고 양측이 대출 개시 시 받은 포지션 NFT입니다. 각 NFT는 해당 측 청구권의 무기명 증서이며, 분실하면 청구권을 잃습니다.",
     "loanDetailsActionsLender": "이 대출에서 대여자가 사용 가능한 액션입니다. 대출 정산 후 청구(원금 + 이자를 {{treasuryFee}}% Treasury 차감 후 반환). 대출 도중 대여자 NFT를 매수자에게 매도하기 위해 조기 인출(Early Withdrawal) 개시. HF < 1이거나 유예 기간이 만료되면 누구나(대여자 포함) 청산을 트리거할 수 있습니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
     "loanDetailsActionsBorrower": "이 대출에서 차입자가 사용 가능한 액션입니다. 전액 또는 부분 상환, Preclose 직접(미상환분을 지금 지불) 또는 오프셋(DEX 통해 담보 매도), 새 조건의 대출로 리파이낸스. 청구는 전액 상환 시 담보를 반환하거나 미사용 VPFI 환급분을 반환합니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
-    "buyVpfiOverview": "지원되는 모든 체인에서 ETH로 고정된 초기 단계 환율로 VPFI를 구매합니다. 정규 체인(Base)은 Diamond로 직접 라우팅되며, 다른 모든 체인은 VpfiBuyAdapter + Chainlink CCIP 왕복을 통해 브리지됩니다. VPFI는 항상 연결된 체인의 지갑에 도착하며, 체인 전환은 필요 없습니다.",
     "buyVpfiDiscountStatus": "이 체인에서 활성화된 VPFI 수수료 할인 등급입니다. 등급은 Vault VPFI 잔액으로 결정됩니다: Tier 1 ≥{{tier1Min}}, Tier 2 ≥{{tier2Min}}, Tier 3 ≥{{tier3Min}}, Tier 4 >{{tier4Min}}. 할인은 유동성 대출에만 적용되며, Dashboard의 플랫폼 수준 동의 토글이 켜져 있는 동안만 적용됩니다. Vault VPFI는 스테이킹된 것으로도 간주되어 {{apr}}% 스테이킹 APR을 얻습니다.",
     "buyVpfiBuy": "1단계 — ETH를 VPFI로 변환합니다. 정규 체인에서는 호출이 Diamond로 직접 가며, 비정규에서는 buy adapter와 Chainlink CCIP 왕복을 거칩니다. 트랜잭션당 한도와 롤링 한도가 적용됩니다(TokenomicsTechSpec 참조). VPFI는 지갑으로 전달되며, Vault에 자동 입금되지는 않습니다.",
-    "buyVpfiDeposit": "2단계 — VPFI를 지갑에서 이 체인의 Vault로 이동합니다. 항상 명시적인 사용자 작업입니다: 프로토콜은 구매 후 Vault를 자동으로 충전하지 않습니다. 수수료 할인과 {{apr}}% 스테이킹 APR을 받으려면 필요합니다. 가능한 경우 Permit2가 사용되어 단일 서명이 approve + transfer 쌍을 대체합니다.",
     "buyVpfiUnstake": "이 체인에서 VPFI를 Vault에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, unstake는 그 순간부터 수수료 할인 수식에 효력이 있습니다.",
     "rewardsOverview": "이 체인에서 두 가지 보상 스트림이 누적됩니다. Vault에 보유된 VPFI는 패시브 {{apr}}% APR(스테이킹 풀)을 얻습니다. 대출에서 결제된 USD 이자 1달러마다 인터랙션 풀의 일일 지분을 얻습니다. 청구 시 두 보상 모두 현재 체인에서 직접 발행됩니다 — 브리징 없음.",
     "rewardsClaim": "두 보상 흐름(staking + 인터랙션) 모두에서 대기 중인 VPFI를 현재 체인의 지갑으로 단일 트랜잭션으로 발행합니다. 인터랙션 풀은 일일로 마감되며, 대기 중인 인터랙션 보상은 각 정산 윈도우가 닫힌 직후에 청구 가능해집니다.",

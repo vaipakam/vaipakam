@@ -19,7 +19,7 @@ import Allowances from './pages/Allowances';
 import VaultAssets from './pages/VaultAssets';
 import VaultRecover from './pages/VaultRecover';
 import DataRights from './pages/DataRights';
-import BuyVPFI from './pages/BuyVPFI';
+import VPFIVaultAndDiscounts from './pages/BuyVPFI';
 import Activity from './pages/Activity';
 import AdminDashboard from './pages/AdminDashboard';
 import { marketingUrl } from './lib/marketingUrl';
@@ -163,9 +163,34 @@ function pageRoutes(): ReactElement {
             URL doesn't get indexed by search engines. */}
         <Route path="recover" element={<VaultRecover />} />
         <Route path="data-rights" element={<DataRights />} />
-        <Route path="buy-vpfi" element={<BuyVPFI />} />
+        <Route path="vpfi-vault" element={<VPFIVaultAndDiscounts />} />
+        {/* Back-compat redirect: the page was renamed from the
+            fixed-rate "Buy VPFI" surface to the VPFI vault + discount
+            surface (#687-A removed the on-chain fixed-rate sale).
+            Deep links to /buy-vpfi still land on the new page —
+            carrying the hash so anchors like #staking-rewards survive. */}
+        <Route path="buy-vpfi" element={<BuyVpfiRedirect />} />
       </Route>
     </>
+  );
+}
+
+/**
+ * Back-compat redirect for the renamed `/buy-vpfi` → `/vpfi-vault` route.
+ * `relative="path"` targets the sibling segment, so the redirect preserves
+ * BOTH the active locale prefix (e.g. `/es/buy-vpfi` → `/es/vpfi-vault`,
+ * since this route mounts under the unprefixed root AND the `:locale` tree)
+ * and the hash + query, so localized deep links like
+ * `/es/buy-vpfi#staking-rewards` keep working (#687-A).
+ */
+function BuyVpfiRedirect() {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={`../vpfi-vault${location.search}${location.hash}`}
+      relative="path"
+      replace
+    />
   );
 }
 

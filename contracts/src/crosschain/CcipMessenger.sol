@@ -31,10 +31,11 @@ import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMe
  *
  * ── Channels ───────────────────────────────────────────────────────────
  * A *channel* is a logical cross-chain conversation between a matched pair
- * of domain contracts — e.g. the "vpfi-buy" channel pairs `VpfiBuyAdapter`
- * (mirror chains) with `VpfiBuyReceiver` (Base). One deployed CcipMessenger
- * carries every channel for its chain; inbound messages are dispatched to
- * the right local handler by `channelId`.
+ * of domain contracts — e.g. the "vpfi-reward" channel pairs the two
+ * `VaipakamRewardMessenger` deployments, and the "vpfi-buyback" channel
+ * pairs each mirror Diamond with the Base `BuybackRemittanceReceiver`. One
+ * deployed CcipMessenger carries every channel for its chain; inbound
+ * messages are dispatched to the right local handler by `channelId`.
  *
  *   - `handlerOf[channelId]`  — the domain contract on THIS chain for a
  *                               channel (the receive target).
@@ -63,8 +64,8 @@ import {ICrossChainMessenger, ICrossChainMessageRecipient} from "./ICrossChainMe
  *   3. Channel config — both ends of a channel must be configured
  *      (`handlerOf` here, `channelPeerOf` for the source). An
  *      unconfigured channel is rejected, never silently dropped.
- * The two-step buy release (§5 of the design) is the domain layer's own
- * secondary guard and lives in `VpfiBuyAdapter`, not here.
+ * Any domain-layer secondary guard (e.g. two-step releases) lives in the
+ * channel's handler contract, not here.
  *
  * ── Tokens ─────────────────────────────────────────────────────────────
  * Pull model on send: a calling handler approves this adapter for each

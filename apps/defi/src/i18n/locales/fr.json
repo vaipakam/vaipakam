@@ -98,7 +98,6 @@
     "dashboard": "Tableau de bord",
     "offerBook": "Carnet d'offres",
     "createOffer": "Créer une offre",
-    "buyVpfi": "Acheter VPFI",
     "claimCenter": "Centre de retrait",
     "activity": "Activité",
     "alerts": "Alertes",
@@ -370,7 +369,6 @@
     "trustWarning": "N'importe qui peut déployer un token avec n'importe quel symbole — confirmez votre confiance dans ce token en vérifiant l'adresse du contrat elle-même, pas le symbole affiché."
   },
   "buyVpfi": {
-    "title": "Acheter VPFI",
     "preconnect": {
       "tagline": "Payez moins de frais sur vos prêts et générez du rendement sur le VPFI que vous déposez.",
       "whatTitle": "Qu'est-ce que VPFI ?",
@@ -384,17 +382,13 @@
       "stakingTitle": "Rendement pendant l'attente",
       "stakingBody": "Tout VPFI présent dans votre Vaipakam Vault personnel gagne l'APR de staking tant qu'il y reste. Aucun prêt n'est requis — le staking est ouvert à tous, et le même solde compte aussi pour votre palier de remise sur les frais.",
       "howTitle": "Comment ça marche",
-      "howBody": "Achetez du VPFI avec ETH au taux fixe de phase initiale, puis déposez-le dans votre Vaipakam Vault pour commencer à générer du rendement. Le routage cross-chain est géré pour vous — le VPFI arrive sur la chaîne depuis laquelle vous avez acheté.",
       "analyticsHint": "Vous cherchez des statistiques globales du protocole et l'offre en circulation ? Consultez la",
       "analyticsLink": "page d'analyses",
       "launchAppCta": "Ouvrir Vaipakam pour acheter / déposer / retirer",
       "launchAppHint": "Ouvre l'app dans un nouvel onglet. Les contrôles d'achat, de dépôt et de retrait s'y trouvent une fois votre portefeuille connecté."
     },
     "connectTitle": "Connectez votre portefeuille",
-    "connectBody": "Connectez votre portefeuille pour acheter, déposer ou retirer du VPFI. La même page gère les trois actions — votre portefeuille détermine celles qui sont disponibles.",
     "unsupportedNetwork": "Réseau non pris en charge",
-    "unsupportedNetworkBody": "Acheter VPFI est disponible sur toute chaîne Vaipakam prise en charge. Votre portefeuille est actuellement sur un réseau qui n'héberge pas de Vaipakam Diamond. Passez à une chaîne prise en charge pour continuer.",
-    "pageSubtitle": "Achetez du VPFI au taux fixe de phase initiale avec ETH, puis déposez-le dans votre Vaipakam Vault pour gagner des récompenses de staking et débloquer la remise par paliers sur les prêts liquides.",
     "step1Title": "Acheter VPFI avec ETH",
     "step1SubtitleCanonical": "Direct sur {{chain}}. VPFI arrive dans votre portefeuille sur cette chaîne.",
     "step1SubtitleBridged": "Direct depuis {{chain}} — tout routage inter-chaîne est géré pour vous. VPFI arrive dans votre portefeuille sur cette chaîne.",
@@ -531,7 +525,6 @@
     "interactionSubtitle": "Gagnez une part quotidienne de VPFI pour chaque prêt auquel vous participez.",
     "pendingLabel": "En attente",
     "claimedLabel": "Réclamé",
-    "manageOnBuyVpfi": "Gérer le staking sur Acheter VPFI",
     "openClaimCenter": "Retirer dans le centre de retrait"
   },
   "stakingRewards": {
@@ -838,7 +831,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "vous permet de prêter et emprunter des tokens, de louer des NFTs et de définir vos propres conditions. Chaque position est suivie par un NFT unique — transparente, traçable et sans confiance de l'offre au règlement.",
     "launchApp": "Ouvrir Vaipakam",
-    "buyVpfi": "Acheter VPFI",
     "howItWorks": "Comment ça marche",
     "statP2pValue": "P2P",
     "statP2pLabel": "Prêt direct",
@@ -1221,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "Consentement à la remise sur les frais",
     "bodyPrefix": "Une fois activé, le protocole peut prélever du VPFI dans le vault pour payer les frais réduits, à la fois pour les frais d'initiation du prêt côté emprunteur et / ou les frais de rendement côté prêteur. La remise dépend du solde VPFI dans le vault — {{tier1Discount}}% au palier 1 (≥ {{tier1Min}} VPFI), {{tier2Discount}}% au palier 2 (≥ {{tier2Min}}), {{tier3Discount}}% au palier 3 (≥ {{tier3Min}}) et {{tier4Discount}}% au palier 4 (> {{tier4Min}}). Achetez et déposez du VPFI sur ",
-    "buyVpfiLink": "Acheter du VPFI",
     "bodySuffix": ".",
     "stateLoading": "Chargement…",
     "stateEnabled": "Activé",
@@ -1236,7 +1227,6 @@
     "borrowerBody1": "Conservez du VPFI dans votre Vaipakam Vault personnel et activez le consentement VPFI unique au niveau de la plateforme depuis le tableau de bord. Le protocole prélève d'avance la totalité des frais d'initiation de {{loanInitiationFee}}% en VPFI, puis crédite un remboursement pondéré dans le temps à la clôture régulière du prêt (remboursement / preclose / refinancement), selon la durée pendant laquelle l'emprunteur a détenu du VPFI pendant le prêt. Un défaut ou une liquidation entraîne la perte du remboursement. Besoin de VPFI ? ",
     "lenderTitle": "Vous prêtez un ERC-20 liquide ? Obtenez jusqu'à {{maxDiscount}}% de remise VPFI sur les frais de rendement",
     "lenderBody1": "Conservez du VPFI dans votre Vaipakam Vault personnel et activez le consentement VPFI unique au niveau de la plateforme depuis le tableau de bord. Au règlement, le prélèvement de {{treasuryFee}}% de la trésorerie sur les intérêts perçus est réduit par une remise VPFI pondérée dans le temps sur toute la durée de vie du prêt — jusqu'à {{maxDiscount}}%, ce qui permet au prêteur de conserver davantage d'intérêts. Aucun paiement à l'avance ; la remise est appliquée automatiquement lorsque le prêt est correctement réglé (remboursement / preclose / refinancement). Un défaut ou une liquidation entraîne la perte de la remise. Besoin de VPFI ? ",
-    "buyVpfi": "Acheter du VPFI",
     "routingNote": " (acheter depuis une chaîne préférée — le routage est géré).",
     "enableConsent": "Activer le consentement sur le tableau de bord",
     "loanTitle": "Remise sur les frais de rendement du prêteur",
@@ -1586,10 +1576,8 @@
     "loanDetailsParties": "Adresses du prêteur et de l'emprunteur, proxies de vault par utilisateur qui détiennent leurs actifs, et NFT de position que chaque côté a reçus à l'initiation du prêt. Chaque NFT est l'instrument au porteur de la créance de ce côté — le perdre, c'est perdre la créance.",
     "loanDetailsActionsLender": "Actions disponibles pour le prêteur sur ce prêt. Réclamer une fois le prêt réglé (restitue principal + intérêts, moins les {{treasuryFee}}% prélevés par la trésorerie). Initier une Sortie Anticipée pour vendre le NFT prêteur à un acheteur en cours de prêt. N'importe qui (y compris le prêteur) peut déclencher Liquider quand HF < 1 ou que la période de grâce a expiré. Les actions désactivées affichent une raison au survol.",
     "loanDetailsActionsBorrower": "Actions disponibles pour l'emprunteur sur ce prêt. Rembourser intégralement ou partiellement ; Preclose direct (payer le restant maintenant) ou compensation (vendre du collatéral via DEX) ; Refinancer en un nouveau prêt avec de nouveaux termes. Réclamer restitue le collatéral en cas de remboursement intégral, ou toute remise VPFI inutilisée. Les actions désactivées affichent une raison au survol.",
-    "buyVpfiOverview": "Acheter du VPFI au taux fixe d'amorçage en utilisant de l'ETH sur n'importe quelle chaîne prise en charge. La chaîne canonique (Base) route directement vers le Diamond ; toute autre chaîne passe par VpfiBuyAdapter + un aller-retour Chainlink CCIP. Le VPFI arrive toujours dans le portefeuille sur la chaîne connectée — pas de changement de chaîne requis.",
     "buyVpfiDiscountStatus": "Le niveau actif de remise de frais VPFI sur cette chaîne. Le niveau est défini par le solde VPFI du vault : palier 1 ≥{{tier1Min}}, palier 2 ≥{{tier2Min}}, palier 3 ≥{{tier3Min}}, palier 4 >{{tier4Min}}. La remise ne s'applique qu'aux prêts liquides et uniquement tant que l'interrupteur de consentement plateforme du tableau de bord est activé. Le VPFI en vault compte aussi comme staké et gagne le {{apr}}% APR de staking.",
     "buyVpfiBuy": "Étape 1 — convertir l'ETH en VPFI. Sur la chaîne canonique, l'appel va directement au Diamond ; hors canonique, il passe par l'adaptateur d'achat et un aller-retour Chainlink CCIP. Des plafonds par transaction et glissants s'appliquent (voir TokenomicsTechSpec). Le VPFI est livré au portefeuille, pas auto-déposé en vault.",
-    "buyVpfiDeposit": "Étape 2 — déplacer VPFI du portefeuille vers le vault sur cette chaîne. Toujours une action utilisateur explicite : le protocole ne finance jamais automatiquement le vault après un achat. Nécessaire pour bénéficier des remises de frais et du {{apr}}% APR de staking. Permit2 est utilisé lorsqu'il est disponible afin qu'une seule signature remplace la paire approve + transfer.",
     "buyVpfiUnstake": "Déplacer du VPFI du vault vers le portefeuille sur cette chaîne. Réduit le palier de remise en temps réel — l'accumulateur pondéré dans le temps recalcule immédiatement chaque prêt ouvert au nouveau solde (plus bas), de sorte qu'un retrait est effectif pour la mécanique de remise dès cet instant.",
     "rewardsOverview": "Deux flux de récompenses s'accumulent sur cette chaîne. Le VPFI conservé en vault gagne un {{apr}}% APR passif (pool de staking). Chaque dollar d'intérêts réglé sur un prêt gagne une part quotidienne du pool d'interaction. Les deux sont émis directement sur la chaîne actuelle lors du retrait — sans bridging.",
     "rewardsClaim": "Émet tout VPFI en attente issu des deux flux de récompenses (staking + interaction) vers le portefeuille, sur la chaîne courante, en une seule transaction. Le pool d'interaction se finalise quotidiennement — les récompenses d'interaction en attente deviennent retirables peu après la fermeture de chaque fenêtre de règlement.",

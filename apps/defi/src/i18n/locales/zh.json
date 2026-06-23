@@ -98,7 +98,6 @@
     "dashboard": "仪表板",
     "offerBook": "报价簿",
     "createOffer": "创建报价",
-    "buyVpfi": "购买 VPFI",
     "claimCenter": "领取中心",
     "activity": "活动",
     "alerts": "提醒",
@@ -370,7 +369,6 @@
     "trustWarning": "任何人都可以使用任意 symbol 部署 token — 请通过验证 contract address 本身（而不是显示的 symbol）来确认您信任此 token。"
   },
   "buyVpfi": {
-    "title": "购买 VPFI",
     "preconnect": {
       "tagline": "降低贷款费用，并让质押的资产持续产生收益。",
       "whatTitle": "什么是 VPFI？",
@@ -384,17 +382,13 @@
       "stakingTitle": "等待期间也有质押收益",
       "stakingBody": "任何存放在个人 Vault 中的 VPFI，只要留在那里就会赚取质押 APR。无需贷款即可参与 — 质押向所有人开放，同一余额也计入您的费用折扣等级。",
       "howTitle": "如何运作",
-      "howBody": "以固定早期阶段费率用 ETH 购买 VPFI，然后将其存入您的 Vault 开始赚取收益。跨链路由由系统处理 — VPFI 会落到您发起购买的那条链上。",
       "analyticsHint": "想查看协议整体统计和流通供应量？请查看",
       "analyticsLink": "数据分析页面",
       "launchAppCta": "启动 Vaipakam 以购买 / 质押 / 取消质押",
       "launchAppHint": "将在新标签页中打开应用。连接钱包后，购买、质押和取消质押控件都在那里。"
     },
     "connectTitle": "连接您的钱包",
-    "connectBody": "连接您的钱包以购买 VPFI 并解锁分级折扣。",
     "unsupportedNetwork": "不支持的网络",
-    "unsupportedNetworkBody": "在任何受支持的 Vaipakam 链上都可购买 VPFI。您的钱包当前所在的网络未保管 Vaipakam Diamond。请切换到受支持的链以继续。",
-    "pageSubtitle": "以固定的早期阶段费率使用 ETH 购买 VPFI 并存入 / 质押到您的 Vault 以赚取质押奖励 — 同时解锁流动性贷款的分级折扣。",
     "step1Title": "用 ETH 购买 VPFI",
     "step1SubtitleCanonical": "在 {{chain}} 上直接进行。VPFI 将进入您在此链上的钱包。",
     "step1SubtitleBridged": "从 {{chain}} 直接进行 — 任何跨链路由都会为您处理。VPFI 将进入您在此链上的钱包。",
@@ -531,7 +525,6 @@
     "interactionSubtitle": "为您参与的每笔贷款赚取每日 VPFI 份额。",
     "pendingLabel": "待领取",
     "claimedLabel": "已领取",
-    "manageOnBuyVpfi": "在 Buy VPFI 管理质押",
     "openClaimCenter": "在 Claim Center 领取"
   },
   "stakingRewards": {
@@ -838,7 +831,6 @@
     "subtitlePrefix": "Vaipakam",
     "subtitleBody": "让您可以借出和借入代币、租赁 NFT 并设置自己的条款。每个仓位都通过独特的 NFT 进行跟踪 — 从报价到结算都是透明、可追溯和无需信任的。",
     "launchApp": "启动 Vaipakam",
-    "buyVpfi": "购买 VPFI",
     "howItWorks": "运作机制",
     "statP2pValue": "P2P",
     "statP2pLabel": "直接借贷",
@@ -1221,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "费用折扣同意",
     "bodyPrefix": "启用后，协议可以从 Vault 中扣除 VPFI，用于支付借款方贷款发起费和 / 或出借方收益费的折扣后费用。折扣随 Vault VPFI 余额变化 — Tier 1（≥ {{tier1Min}} VPFI）享 {{tier1Discount}}% 折扣，Tier 2（≥ {{tier2Min}}）享 {{tier2Discount}}%，Tier 3（≥ {{tier3Min}}）享 {{tier3Discount}}%，Tier 4（> {{tier4Min}}）享 {{tier4Discount}}%。请在 ",
-    "buyVpfiLink": "购买VPFI",
     "bodySuffix": " 处获取并存入VPFI。",
     "stateLoading": "加载中…",
     "stateEnabled": "已启用",
@@ -1236,7 +1227,6 @@
     "borrowerBody1": "在个人 Vault 中持有 VPFI，并在 Dashboard 上启用一次性平台级 VPFI 同意。协议会预先以 VPFI 收取完整的 {{loanInitiationFee}}% 发起费，然后在贷款正常关闭时（还款 / preclose / refinance）根据借款方在贷款期间持有 VPFI 的时长，按时间加权返还。违约或清算会使返还失效。需要 VPFI？ ",
     "lenderTitle": "出借流动性 ERC-20？在收益费上获得最高 {{maxDiscount}}% 的 VPFI 折扣",
     "lenderBody1": "在个人 Vault 中持有 VPFI，并在 Dashboard 上启用一次性平台级 VPFI 同意。结算时，对已赚利息收取的 {{treasuryFee}}% treasury 分成会按贷款生命周期内的时间加权 VPFI 折扣降低 — 最高 {{maxDiscount}}%，因此出借方保留更多已赚利息。无需预先支付；当贷款正常结算时（还款 / preclose / refinance），折扣会自动应用。违约或清算会使折扣失效。需要 VPFI？ ",
-    "buyVpfi": "购买VPFI",
     "routingNote": "（从首选链购买 — 路由由系统处理）。",
     "enableConsent": "在Dashboard上启用同意",
     "loanTitle": "出借方收益费折扣",
@@ -1586,10 +1576,8 @@
     "loanDetailsParties": "出借方与借款方地址、保管其资产的逐用户保管代理，以及双方在贷款开启时收到的仓位 NFT。每个 NFT 是该方债权的不记名凭证 — 丢失即丧失债权。",
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
     "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
-    "buyVpfiOverview": "在任意受支持链上以 ETH 按固定的早期阶段汇率购买 VPFI。Canonical 链（Base）直接路由至 Diamond；其他每条链通过 VpfiBuyAdapter + Chainlink CCIP 往返桥接。VPFI 始终落在所连接链上的钱包 — 无需切换链。",
     "buyVpfiDiscountStatus": "此链上活跃的 VPFI 手续费折扣等级。等级由 Vault VPFI 余额决定：Tier 1 ≥{{tier1Min}}、Tier 2 ≥{{tier2Min}}、Tier 3 ≥{{tier3Min}}、Tier 4 >{{tier4Min}}。折扣仅适用于流动性贷款，并且仅在 Dashboard 上的平台级同意开关开启时生效。Vault VPFI 也算作已质押并获得 {{apr}}% 的质押 APR。",
     "buyVpfiBuy": "步骤 1 — 将 ETH 转换为 VPFI。Canonical 链上调用直接到 Diamond；非 canonical 链则经由 buy adapter 与 Chainlink CCIP 往返。每笔与滚动上限均生效（参见 TokenomicsTechSpec）。VPFI 交付到钱包，不会自动存入保管。",
-    "buyVpfiDeposit": "第 2 步 — 将 VPFI 从钱包移入此链上的 vault。始终是显式用户操作：协议永远不会在购买后自动注资 vault。需要这样做才能获得手续费折扣和 {{apr}}% 的质押 APR。可用时使用 Permit2，一个签名即可替代 approve + transfer 组合。",
     "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此 unstake 自此刻起对手续费折扣计算即生效。",
     "rewardsOverview": "此链上累积两种奖励流。Vault 中持有的 VPFI 获得被动 {{apr}}% APR（质押池）。在贷款上结算的每 1 USD 利息可获得交互池的每日份额。两者在领取时直接在当前链上铸造 — 无需 bridging。",
     "rewardsClaim": "在当前链上、单笔交易内将两条奖励流（staking + 交互）的待领 VPFI 铸造至钱包。交互池按日定稿 — 待领交互奖励在每个结算窗口关闭后不久即可领取。",

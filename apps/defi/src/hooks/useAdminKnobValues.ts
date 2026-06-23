@@ -24,12 +24,11 @@
  * loads.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { type Abi } from 'viem';
 import { useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
-import { DIAMOND_ABI_VIEM, VpfiBuyReceiverABI } from '@vaipakam/contracts/abis';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { ADMIN_KNOBS, type KnobMeta } from '../lib/protocolConsoleKnobs';
-import { getDeployment } from '@vaipakam/contracts/deployments';
 
 export type KnobReadValue = bigint | boolean | string | null;
 
@@ -62,30 +61,13 @@ export function useAdminKnobValues(): KnobValuesMap {
     ),
   );
 
-  // Resolve the standalone-contract addresses we may need beyond the
-  // diamond. VpfiBuyReceiver lives at its own address on the
-  // canonical-VPFI chain.
-  const vpfiBuyReceiver = useMemo(() => {
-    const dep = getDeployment(chain.chainId) as
-      | { vpfiBuyReceiver?: string }
-      | undefined;
-    return dep?.vpfiBuyReceiver ?? null;
-  }, [chain.chainId]);
-
   useEffect(() => {
     if (!chain.diamondAddress) return;
     let cancelled = false;
 
-    const target = (knob: KnobMeta): { address: string; abi: Abi } | null => {
-      // VpfiBuyReceiver knobs read from the standalone contract;
-      // every other knob targets the diamond.
-      if (knob.getter.facet === 'VpfiBuyReceiver') {
-        if (!vpfiBuyReceiver) return null;
-        return {
-          address: vpfiBuyReceiver,
-          abi: VpfiBuyReceiverABI as unknown as Abi,
-        };
-      }
+    // #687-A removed the standalone VpfiBuyReceiver; every knob now
+    // targets the diamond.
+    const target = (_knob: KnobMeta): { address: string; abi: Abi } | null => {
       return {
         address: chain.diamondAddress!,
         abi: DIAMOND_ABI_VIEM,
@@ -122,7 +104,7 @@ export function useAdminKnobValues(): KnobValuesMap {
     return () => {
       cancelled = true;
     };
-  }, [client, chain.diamondAddress, vpfiBuyReceiver]);
+  }, [client, chain.diamondAddress]);
 
   return values;
 }

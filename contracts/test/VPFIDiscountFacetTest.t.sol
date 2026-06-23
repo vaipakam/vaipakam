@@ -26,14 +26,16 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
 ///         (docs/TokenomicsTechSpec.md):
-///          - canonical-chain-only fixed-rate ETH → VPFI buy
-///          - cap + kill-switch + reserve guards
-///          - bridge-then-deposit helper
-///          - quote view
+///          - depositVPFIToVault / withdrawVPFIFromVault (encumbrance-aware)
+///          - the discount price-anchor config (setVPFIDiscountRate /
+///            setVPFIDiscountETHPriceAsset) feeding the quote view
+///          - quote view eligibility (rate-set / tier / offer existence)
 ///          - OfferAcceptFacet.acceptOffer discount path gated by the platform-
 ///            level VPFI-discount consent flag (happy + silent-fallback
 ///            branches)
 ///          - emitDiscountApplied access gating
+/// @dev #687-A removed the issuer fixed-rate ETH → VPFI sale; this suite now
+///      covers only the consumptive fee-discount utility that remains.
 contract VPFIDiscountFacetTest is SetupTest {
     // #229: VPFIDiscountFacet is cut + constructed inside
     // `SetupTest.setupHelper()` now; the prior local declaration +
@@ -43,10 +45,12 @@ contract VPFIDiscountFacetTest is SetupTest {
     VPFIToken internal vpfiToken;
     ERC20Mock internal weth; // ETH price-reference asset
 
-    // Rate: 1 VPFI = 0.001 ETH  → 1e15 wei per VPFI (18 dec).
+    // Discount price anchor: 1 VPFI = 0.001 ETH → 1e15 wei per VPFI (18 dec).
+    // Seeds `setVPFIDiscountRate` so the fee-discount conversion chain has a
+    // non-zero VPFI price (the issuer fixed-rate sale was removed in #687-A).
     uint256 internal constant RATE_WEI_PER_VPFI = 1e15;
-    uint256 internal constant GLOBAL_CAP = 200_000 ether;
-    uint256 internal constant WALLET_CAP = 2_000 ether;
+    // Diamond VPFI reserve seeded for discount rebates / interaction rewards.
+    uint256 internal constant DIAMOND_VPFI_RESERVE = 200_000 ether;
 
     // Price constants for the conversion chain. mockERC20 is the lending
     // asset (already priced in SetupTest at $1 with 8 decimals). WETH is
@@ -55,14 +59,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     uint256 internal constant ETH_USD_PRICE = 2000e8;
 
     address internal treasuryRecipient;
-    address internal buyer;
 
-    event VPFIPurchasedWithETH(
-        address indexed buyer,
-        uint256 vpfiAmount,
-        uint256 ethAmount,
-        uint256 newVaultBalance
-    );
     event VPFIDepositedToVault(
         address indexed user,
         uint256 amount,
@@ -84,8 +81,8 @@ contract VPFIDiscountFacetTest is SetupTest {
     function setUp() public {
         setupHelper();
 
-        // Point the protocol's treasury at a real address so buy-path ETH
-        // forwards don't clash with the diamond balance assertions.
+        // Point the protocol's treasury at a real address so the yield-fee /
+        // LIF treasury legs don't clash with the diamond balance assertions.
         treasuryRecipient = makeAddr("treasury");
         AdminFacet(address(diamond)).setTreasury(treasuryRecipient);
 
@@ -98,12 +95,12 @@ contract VPFIDiscountFacetTest is SetupTest {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
         vpfiToken = VPFIToken(address(proxy));
 
-        // Register VPFI on the diamond + mark this chain as canonical so
-        // buyVPFIWithETH is permitted. Fund the diamond's reserve with the
-        // full global cap + some slack.
+        // Register VPFI on the diamond + mark this chain as canonical. Fund
+        // the diamond's reserve so discount rebates / interaction rewards have
+        // VPFI to draw from.
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfiToken));
-        vpfiToken.transfer(address(diamond), GLOBAL_CAP + 1_000 ether);
+        vpfiToken.transfer(address(diamond), DIAMOND_VPFI_RESERVE + 1_000 ether);
 
         // Give `lender`/`borrower` some VPFI in their wallets for deposit
         // + discount tests.
@@ -114,13 +111,9 @@ contract VPFIDiscountFacetTest is SetupTest {
         // The prior local `new VPFIDiscountFacet()` + local diamondCut
         // here would double-cut the same selectors and revert. Dropped.
 
-        // Configure buy-side parameters + ETH reference asset.
+        // Configure the discount price anchor + ETH reference asset.
         weth = new ERC20Mock("Wrapped Ether", "WETH", 18);
-        _facet().setVPFIBuyRate(RATE_WEI_PER_VPFI);
-        _facet().setVPFIBuyCaps(GLOBAL_CAP, WALLET_CAP);
-        // T-068: no `localEid` stamping needed — the direct-buy path
-        // keys the per-wallet cap bucket by `block.chainid`.
-        _facet().setVPFIBuyEnabled(true);
+        _facet().setVPFIDiscountRate(RATE_WEI_PER_VPFI);
         _facet().setVPFIDiscountETHPriceAsset(address(weth));
 
         // Mock the WETH oracle feed. SetupTest already mocks mockERC20 at
@@ -130,9 +123,6 @@ contract VPFIDiscountFacetTest is SetupTest {
             abi.encodeWithSelector(OracleFacet.getAssetPrice.selector, address(weth)),
             abi.encode(ETH_USD_PRICE, uint8(8))
         );
-
-        buyer = makeAddr("buyer");
-        vm.deal(buyer, 10 ether);
     }
 
     // ─── Shorthand ───────────────────────────────────────────────────────────
@@ -143,188 +133,6 @@ contract VPFIDiscountFacetTest is SetupTest {
 
     function _buyerVault(address user) internal returns (address) {
         return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user);
-    }
-
-    // ─── buyVPFIWithETH ──────────────────────────────────────────────────────
-
-    function testBuyVPFIWithETHHappyPath() public {
-        uint256 sendValue = 1 ether; // → 1000 VPFI at 1e15 wei each
-        uint256 expectedVpfi = (sendValue * 1e18) / RATE_WEI_PER_VPFI;
-
-        vm.expectEmit(true, false, false, true, address(diamond));
-        // Same-chain buy delivers VPFI to wallet (not vault), so vault balance is unchanged at 0.
-        emit VPFIPurchasedWithETH(buyer, expectedVpfi, sendValue, /* newVaultBalance */ 0);
-
-        uint256 buyerBalBefore = vpfiToken.balanceOf(buyer);
-
-        vm.prank(buyer);
-        _facet().buyVPFIWithETH{value: sendValue}();
-
-        // Per spec: VPFI is credited to the buyer's wallet, NOT auto-deposited
-        // into vault. Funding vault is a separate explicit user action.
-        assertEq(
-            vpfiToken.balanceOf(buyer) - buyerBalBefore,
-            expectedVpfi,
-            "buyer wallet credited"
-        );
-        // Vault proxy was not created implicitly either.
-        assertEq(
-            vpfiToken.balanceOf(_buyerVault(buyer)),
-            0,
-            "vault untouched on buy"
-        );
-        assertEq(treasuryRecipient.balance, sendValue, "treasury received ETH");
-        assertEq(_facet().getVPFISoldTo(buyer), expectedVpfi, "per-wallet tally");
-    }
-
-    function testBuyVPFIRevertsWhenNotCanonical() public {
-        VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(false);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.NotCanonicalVPFIChain.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
-    }
-
-    function testBuyVPFIRevertsWhenDisabled() public {
-        _facet().setVPFIBuyEnabled(false);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIBuyDisabled.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
-    }
-
-    function testBuyVPFIRevertsWhenRateNotSet() public {
-        _facet().setVPFIBuyRate(0);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIBuyRateNotSet.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
-    }
-
-    // T-068 removed `testBuyVPFIRevertsWhenLocalEidUnset`: the direct-buy
-    // path now keys the cap bucket by `block.chainid`, which is never
-    // zero, so the old `localEid == 0` revert is unreachable. The
-    // surviving `VPFIInvalidOriginChainId` guard in `_computeBuyAndDebitCaps`
-    // is defence-in-depth against a malformed origin and cannot be
-    // triggered through any well-formed public entry point.
-
-    function testBuyVPFIRevertsOnZeroValue() public {
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
-        _facet().buyVPFIWithETH{value: 0}();
-    }
-
-    /// @notice Codex review — the direct-buy path keys the per-wallet cap
-    ///         bucket by `uint32(block.chainid)`; a chain id wider than
-    ///         uint32 is rejected rather than silently truncated into the
-    ///         wrong bucket.
-    function testBuyVPFIRevertsWhenChainIdExceedsUint32() public {
-        vm.chainId(uint256(type(uint32).max) + 1);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIInvalidOriginChainId.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
-    }
-
-    function testBuyVPFIRevertsWhenAmountRoundsToZero() public {
-        // With weiPerVpfi == 1e15, any msg.value < 1e-3 wei would round to
-        // zero VPFI. Set a much larger rate so a realistic msg.value rounds
-        // down to zero.
-        _facet().setVPFIBuyRate(10 ether);
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIBuyAmountTooSmall.selector);
-        _facet().buyVPFIWithETH{value: 1}();
-    }
-
-    function testBuyVPFIRevertsOnPerWalletCap() public {
-        // Buy up to the wallet cap, then one more wei of VPFI should break.
-        uint256 capEth = (WALLET_CAP * RATE_WEI_PER_VPFI) / 1e18;
-        vm.deal(buyer, capEth + 1 ether);
-        vm.prank(buyer);
-        _facet().buyVPFIWithETH{value: capEth}();
-
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIPerWalletCapExceeded.selector);
-        _facet().buyVPFIWithETH{value: RATE_WEI_PER_VPFI}();
-    }
-
-    function testBuyVPFIRevertsOnGlobalCap() public {
-        // Push wallet cap above global cap so the global gate fires first.
-        _facet().setVPFIBuyCaps(WALLET_CAP, GLOBAL_CAP + 1 ether);
-
-        uint256 globalCapEth = (WALLET_CAP * RATE_WEI_PER_VPFI) / 1e18;
-        vm.deal(buyer, globalCapEth + 1 ether);
-
-        // Drain the wallet cap by buying from a series of addresses isn't
-        // necessary; we just raise the per-wallet cap above the global cap
-        // and drive total sold to the global cap from a single wallet.
-        _facet().setVPFIBuyCaps(GLOBAL_CAP, GLOBAL_CAP + 1 ether);
-        uint256 fullCapEth = (GLOBAL_CAP * RATE_WEI_PER_VPFI) / 1e18;
-        vm.deal(buyer, fullCapEth + 1 ether);
-        vm.prank(buyer);
-        _facet().buyVPFIWithETH{value: fullCapEth}();
-
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIGlobalCapExceeded.selector);
-        _facet().buyVPFIWithETH{value: RATE_WEI_PER_VPFI}();
-    }
-
-    // ─── Zero-fallback cap semantics (spec §8 / §8a) ─────────────────────────
-
-    function testGetVPFIBuyConfigReturnsSpecDefaultsWhenStoredCapsZero() public {
-        // Reset both caps to 0 — the on-chain getter must resolve them to
-        // the spec defaults (docs/TokenomicsTechSpec.md §8 / §8a), never
-        // "uncapped".
-        _facet().setVPFIBuyCaps(0, 0);
-        (, uint256 globalCap, uint256 perWalletCap, , , ) = _facet()
-            .getVPFIBuyConfig();
-        assertEq(
-            globalCap,
-            LibVaipakam.VPFI_FIXED_GLOBAL_CAP,
-            "zero stored global cap resolves to spec default (2.3M VPFI)"
-        );
-        assertEq(
-            perWalletCap,
-            LibVaipakam.VPFI_FIXED_WALLET_CAP,
-            "zero stored per-wallet cap resolves to spec default (30k VPFI)"
-        );
-    }
-
-    function testBuyVPFIRevertsAtDefaultPerWalletCapWhenStoredZero() public {
-        // With both caps stored as 0, the effective per-wallet cap is the
-        // 30k VPFI spec default. Drive a buy up to that cap and confirm the
-        // next wei reverts — zero-fallback is enforced, not uncapped.
-        _facet().setVPFIBuyCaps(0, 0);
-        uint256 defaultWalletCap = LibVaipakam.VPFI_FIXED_WALLET_CAP;
-        uint256 capEth = (defaultWalletCap * RATE_WEI_PER_VPFI) / 1e18;
-        vm.deal(buyer, capEth + 1 ether);
-
-        vm.prank(buyer);
-        _facet().buyVPFIWithETH{value: capEth}();
-        assertEq(
-            _facet().getVPFISoldTo(buyer),
-            defaultWalletCap,
-            "wallet tally reached 30k default"
-        );
-
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIPerWalletCapExceeded.selector);
-        _facet().buyVPFIWithETH{value: RATE_WEI_PER_VPFI}();
-    }
-
-    function testBuyVPFIRevertsWhenReserveInsufficient() public {
-        // Pull the diamond's VPFI reserve out so the on-hand balance is
-        // lower than the buy-out amount.
-        address treasury2 = makeAddr("treasury2");
-        AdminFacet(address(diamond)).setTreasury(treasury2);
-        uint256 diamondBal = vpfiToken.balanceOf(address(diamond));
-        TreasuryFacet(address(diamond)).claimTreasuryFees; // silence unused lint
-        // Easiest way: transfer diamond's reserve to someone else via a
-        // direct vm.prank-free bridge — just call the token directly as
-        // the Diamond via low-level call is unavailable. Use vm.store to
-        // zero it.
-        vm.prank(address(diamond));
-        vpfiToken.transfer(treasury2, diamondBal);
-
-        vm.prank(buyer);
-        vm.expectRevert(IVaipakamErrors.VPFIReserveInsufficient.selector);
-        _facet().buyVPFIWithETH{value: 1 ether}();
     }
 
     // ─── depositVPFIToVault ─────────────────────────────────────────────────
@@ -500,7 +308,7 @@ contract VPFIDiscountFacetTest is SetupTest {
     }
 
     function testQuoteVPFIDiscountIneligibleWhenRateNotSet() public {
-        _facet().setVPFIBuyRate(0);
+        _facet().setVPFIDiscountRate(0);
         uint256 offerId = _createLenderErc20Offer(10_000 ether);
         address borrowerVault = _buyerVault(borrower);
         vpfiToken.transfer(borrowerVault, 500 ether);

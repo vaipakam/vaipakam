@@ -120,9 +120,8 @@
 #       sub-5-minute N-chain simultaneous-pause drill.
 #       Reads addresses.json on this chain, prints the `pause()`
 #       calldata for the Diamond + every GuardianPausable CCIP contract
-#       (CcipMessenger, VaipakamRewardMessenger, VpfiBuyReceiver /
-#       VpfiBuyAdapter) so the operator can sign through the Pauser
-#       Safe UI on this
+#       (CcipMessenger, VaipakamRewardMessenger) so the operator can
+#       sign through the Pauser Safe UI on this
 #       chain and the same set across every other chain in parallel.
 #       After the drill, re-run with `--mode check` to read paused()
 #       on every contract and report elapsed time vs the 5-minute
@@ -302,36 +301,30 @@ fi
 
 # ── Testnet chain registry ────────────────────────────────────────────
 # Mirrors deploy-mainnet.sh's registry shape (CHAIN_ID + RPC_VAR +
-# IS_CANONICAL + CCIP_SLUG + WETH_PULL_VAR) so every
-# downstream phase can stay phase-for-phase identical to mainnet.
-#
-# WETH-pull policy on testnets: per CLAUDE.md "VPFIBuyAdapter — payment-
-# token mode by chain", BNB Smart Chain Testnet (97) and Polygon Amoy
-# (80002) are exempt from the strict-WETH-pull requirement that applies
-# to their mainnets. Native-gas mode is acceptable here (the testnet
-# rate is symbolic; gas tokens have no real value). The mainnet
-# equivalents WILL require WETH-pull — that's exercised in
-# deploy-mainnet.sh.
+# IS_CANONICAL + CCIP_SLUG) so every downstream phase can stay
+# phase-for-phase identical to mainnet.
+# (#687-A removed the cross-chain VPFI buy adapter and its per-chain
+# WETH-pull payment-token column.)
 
 case "$CHAIN_SLUG" in
   base-sepolia)
     CHAIN_ID=84532;     RPC_VAR="BASE_SEPOLIA_RPC_URL";   IS_CANONICAL=1
-    CCIP_SLUG="BASE_SEPOLIA";  WETH_PULL_VAR="" ;;
+    CCIP_SLUG="BASE_SEPOLIA" ;;
   sepolia)
     CHAIN_ID=11155111;  RPC_VAR="SEPOLIA_RPC_URL";        IS_CANONICAL=0
-    CCIP_SLUG="SEPOLIA";       WETH_PULL_VAR="" ;;
+    CCIP_SLUG="SEPOLIA" ;;
   arb-sepolia)
     CHAIN_ID=421614;    RPC_VAR="ARB_SEPOLIA_RPC_URL";    IS_CANONICAL=0
-    CCIP_SLUG="ARB_SEPOLIA";   WETH_PULL_VAR="" ;;
+    CCIP_SLUG="ARB_SEPOLIA" ;;
   op-sepolia)
     CHAIN_ID=11155420;  RPC_VAR="OP_SEPOLIA_RPC_URL";     IS_CANONICAL=0
-    CCIP_SLUG="OP_SEPOLIA";    WETH_PULL_VAR="" ;;
+    CCIP_SLUG="OP_SEPOLIA" ;;
   bnb-testnet)
     CHAIN_ID=97;        RPC_VAR="BNB_TESTNET_RPC_URL";    IS_CANONICAL=0
-    CCIP_SLUG="BNB_TESTNET";   WETH_PULL_VAR="" ;;
+    CCIP_SLUG="BNB_TESTNET" ;;
   polygon-amoy)
     CHAIN_ID=80002;     RPC_VAR="POLYGON_AMOY_RPC_URL";   IS_CANONICAL=0
-    CCIP_SLUG="POLYGON_AMOY";  WETH_PULL_VAR="" ;;
+    CCIP_SLUG="POLYGON_AMOY" ;;
   anvil)
     cat >&2 <<EOF
 Refusing to run anvil from deploy-testnet.sh — the tiered phase model
@@ -474,13 +467,8 @@ phase_preflight() {
            TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
     if [ -z "${!v:-}" ]; then MISSING+=("$v"); fi
   done
-  if [ -n "$WETH_PULL_VAR" ]; then
-    if [ -z "${!WETH_PULL_VAR:-}" ]; then
-      MISSING+=("$WETH_PULL_VAR  (REQUIRED on $CHAIN_SLUG — bridged WETH9 address)")
-    fi
-  fi
   # Mirror chains need BASE_CHAIN_ID — the canonical Base EVM chain id —
-  # for DeployCrosschain to wire the reward + buy flows back to Base.
+  # for DeployCrosschain to wire the reward flow back to Base.
   if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
     MISSING+=("BASE_CHAIN_ID  (REQUIRED on mirror chains — canonical Base chain id)")
   fi
@@ -495,16 +483,6 @@ phase_preflight() {
   DEPLOYER_ADDR=$(cast wallet address --private-key "$DEPLOYER_PRIVATE_KEY" 2>/dev/null || echo "?")
   BAL=$(cast balance "$DEPLOYER_ADDR" --rpc-url "$RPC" 2>/dev/null || echo "?")
   echo "  ✓ Deployer:  $DEPLOYER_ADDR    balance: $BAL wei"
-
-  # 4. WETH-pull check (if applicable)
-  if [ -n "$WETH_PULL_VAR" ]; then
-    WETH_ADDR="${!WETH_PULL_VAR}"
-    DECIMALS=$(cast call "$WETH_ADDR" "decimals()(uint8)" --rpc-url "$RPC" 2>/dev/null || echo "?")
-    SYMBOL=$(cast call "$WETH_ADDR" "symbol()(string)" --rpc-url "$RPC" 2>/dev/null || echo "?")
-    echo "  ✓ $WETH_PULL_VAR = $WETH_ADDR  symbol=$SYMBOL decimals=$DECIMALS"
-    echo "    ⚠ Eyeball-confirm against the chain's official bridged-WETH9 registry"
-    echo "      before --phase contracts. CLAUDE.md lists the canonical addresses."
-  fi
 
   # Mainnet-parity rehearsal signal: WARN-only, log presence to .markers/.
   # The mainnet equivalent HARD-FAILS on missing flag; testnet WARNS so

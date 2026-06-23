@@ -541,11 +541,6 @@
   },
   {
     "type": "error",
-    "name": "BridgedBuyReceiverNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "CadenceNotAllowed",
     "inputs": [
       {
@@ -922,11 +917,6 @@
   {
     "type": "error",
     "name": "NotBorrower",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NotBridgedBuyReceiver",
     "inputs": []
   },
   {
@@ -1365,37 +1355,7 @@
   },
   {
     "type": "error",
-    "name": "VPFIBuyAmountTooSmall",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIBuyDisabled",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIBuyRateNotSet",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIGlobalCapExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "VPFIInvalidOriginChainId",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIPerWalletCapExceeded",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "VPFIReserveInsufficient",
     "inputs": []
   },
   {

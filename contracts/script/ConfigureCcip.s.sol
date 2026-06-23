@@ -103,12 +103,10 @@ interface ITreasuryFacetCcip {
  */
 contract ConfigureCcip is Script {
     /// @dev The `ICrossChainMessenger` channel ids. These MUST match the
-    ///      canonical constants in `IVpfiBuyCcipMessages` (`vpfi-buy`) and
-    ///      `VaipakamRewardMessenger` (`vpfi-reward`) — the channel id is
-    ///      a `keccak256` of a fixed string in both, and the wiring here
-    ///      pins the same value.
-    bytes32 internal constant VPFI_BUY_CHANNEL =
-        keccak256("vaipakam.ccip.channel.vpfi-buy");
+    ///      canonical constant in `VaipakamRewardMessenger` (`vpfi-reward`) —
+    ///      the channel id is a `keccak256` of a fixed string in both, and the
+    ///      wiring here pins the same value. (#687-A removed the `vpfi-buy`
+    ///      channel along with the cross-chain VPFI sale.)
     bytes32 internal constant VPFI_REWARD_CHANNEL =
         keccak256("vaipakam.ccip.channel.vpfi-reward");
     /// @dev T-087 Sub 3.A — buyback remittance channel. On every
@@ -131,7 +129,6 @@ contract ConfigureCcip is Script {
         address rateGovernor;
         address rewardMessenger;
         address localToken;
-        address localBuyContract;
         // T-087 Sub 3.A — on Base this is the BuybackRemittanceReceiver
         // (the inbound CCIP handler); on mirrors this is the Diamond
         // itself (the source-sender for outbound `remitBuyback`).
@@ -177,7 +174,6 @@ contract ConfigureCcip is Script {
         c.rewardMessenger = Deployments.readRewardMessenger();
         if (c.canonical) {
             c.localToken = Deployments.readVpfiToken();
-            c.localBuyContract = Deployments.readVpfiBuyReceiver();
             // T-087 Sub 3.A — on Base, the inbound buyback channel
             // handler is the BuybackRemittanceReceiver.
             c.localBuybackHandler = Deployments.readAddress(
@@ -187,7 +183,6 @@ contract ConfigureCcip is Script {
         } else {
             c.localToken =
                 Deployments.readAddress(".vpfiMirror", "VPFI_MIRROR_ADDRESS");
-            c.localBuyContract = Deployments.readVpfiBuyAdapter();
             // T-087 Sub 3.A — on mirrors, the Diamond is the
             // source-sender for `remitBuyback`; register it as the
             // buyback channel handler so `CcipMessenger`'s
@@ -281,16 +276,15 @@ contract ConfigureCcip is Script {
         }
     }
 
-    /// @dev Register the local handler for each channel: the buy contract
-    ///      on the `vpfi-buy` channel, the reward messenger on
-    ///      `vpfi-reward`. Both ends of a channel must be configured for
-    ///      the messenger to accept its traffic.
+    /// @dev Register the local handler for each channel: the reward messenger
+    ///      on `vpfi-reward`, the buyback handler on `vpfi-buyback`. Both ends
+    ///      of a channel must be configured for the messenger to accept its
+    ///      traffic.
     function _registerChannels(Ctx memory c) internal {
         CcipMessenger m = CcipMessenger(c.messenger);
-        m.registerChannel(VPFI_BUY_CHANNEL, c.localBuyContract);
         m.registerChannel(VPFI_REWARD_CHANNEL, c.rewardMessenger);
         m.registerChannel(VPFI_BUYBACK_CHANNEL, c.localBuybackHandler);
-        console.log("Channels registered: vpfi-buy, vpfi-reward, vpfi-buyback.");
+        console.log("Channels registered: vpfi-reward, vpfi-buyback.");
     }
 
     /// @dev Set the remote business peer for each channel. Hub-and-spoke:
@@ -302,11 +296,6 @@ contract ConfigureCcip is Script {
             for (uint256 i; i < c.laneChainIds.length; ++i) {
                 uint256 cid = c.laneChainIds[i];
                 if (_isCanonical(cid)) continue; // Base ↔ mirror only.
-                m.setChannelPeer(
-                    VPFI_BUY_CHANNEL,
-                    cid,
-                    Deployments.readAddressForChain(cid, ".vpfiBuyAdapter")
-                );
                 m.setChannelPeer(
                     VPFI_REWARD_CHANNEL,
                     cid,
@@ -323,13 +312,6 @@ contract ConfigureCcip is Script {
                 console.log("  channel peers wired -> mirror", cid);
             }
         } else {
-            m.setChannelPeer(
-                VPFI_BUY_CHANNEL,
-                c.baseChainId,
-                Deployments.readAddressForChain(
-                    c.baseChainId, ".vpfiBuyReceiver"
-                )
-            );
             m.setChannelPeer(
                 VPFI_REWARD_CHANNEL,
                 c.baseChainId,
@@ -354,20 +336,20 @@ contract ConfigureCcip is Script {
     ///      always be set later, owner-only).
     ///
     ///      Coverage map per chain class:
-    ///        - Canonical (Base): `CcipMessenger`, `VaipakamRewardMessenger`,
-    ///          `VpfiBuyReceiver`. The canonical VPFI ERC-20
-    ///          (`VPFIToken`) does NOT extend `GuardianPausable` — it's
-    ///          the long-lived OFT token, paused via its own
-    ///          AccessControl path, not the cross-chain guardian. The
+    ///        - Canonical (Base): `CcipMessenger`, `VaipakamRewardMessenger`.
+    ///          The canonical VPFI ERC-20 (`VPFIToken`) does NOT extend
+    ///          `GuardianPausable` — it's the long-lived OFT token, paused via
+    ///          its own AccessControl path, not the cross-chain guardian. The
     ///          rate governor (`VpfiPoolRateGovernor`) is the
     ///          rate-limit admin only — no runtime send/receive path
     ///          of its own, no `GuardianPausable` inheritance (see
     ///          ADR-0004's "*VpfiPoolRateGovernor exception*" note).
-    ///        - Mirrors: `CcipMessenger`, `VaipakamRewardMessenger`,
-    ///          `VpfiBuyAdapter`, plus the mirror VPFI ERC-20
-    ///          (`VPFIMirrorToken`), which DOES extend
+    ///        - Mirrors: `CcipMessenger`, `VaipakamRewardMessenger`, plus the
+    ///          mirror VPFI ERC-20 (`VPFIMirrorToken`), which DOES extend
     ///          `GuardianPausable`. Pre-#200 the mirror token was
     ///          left to the operator's memory; #200 wires it here.
+    ///      (#687-A removed the `VpfiBuyAdapter`/`VpfiBuyReceiver` from this
+    ///      coverage map along with the cross-chain VPFI sale.)
     function _setGuardians(Ctx memory c) internal {
         if (c.guardian == address(0)) {
             console.log("Guardian: CCIP_GUARDIAN unset, skip.");
@@ -375,15 +357,13 @@ contract ConfigureCcip is Script {
         }
         GuardianPausable(c.messenger).setGuardian(c.guardian);
         GuardianPausable(c.rewardMessenger).setGuardian(c.guardian);
-        GuardianPausable(c.localBuyContract).setGuardian(c.guardian);
         if (!c.canonical) {
             // #200 — mirror-only: `VPFIMirrorToken` extends
             // `GuardianPausable` for the same incident-response
-            // fast-pause reason the messenger + buy adapter do.
-            // Wiring it here closes the operator-memory footgun
-            // documented in #201.
+            // fast-pause reason the messenger does. Wiring it here
+            // closes the operator-memory footgun documented in #201.
             GuardianPausable(c.localToken).setGuardian(c.guardian);
-            console.log("Guardian set on messenger / reward / buy / mirrorToken:", c.guardian);
+            console.log("Guardian set on messenger / reward / mirrorToken:", c.guardian);
         } else {
             // Codex Sub 3.A round-4 P2 #2 — the Base-side
             // BuybackRemittanceReceiver also extends GuardianPausable;

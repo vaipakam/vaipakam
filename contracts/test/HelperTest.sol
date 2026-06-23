@@ -1265,53 +1265,33 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](27);
-        selectors[0] = VPFIDiscountFacet.buyVPFIWithETH.selector;
-        selectors[1] = VPFIDiscountFacet.depositVPFIToVault.selector;
-        selectors[2] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
-        selectors[3] = VPFIDiscountFacet.getVPFIBuyConfig.selector;
-        selectors[4] = VPFIDiscountFacet.getVPFISoldTo.selector;
-        selectors[5] = VPFIDiscountFacet.setVPFIBuyRate.selector;
-        selectors[6] = VPFIDiscountFacet.setVPFIBuyCaps.selector;
-        selectors[7] = VPFIDiscountFacet.setVPFIBuyEnabled.selector;
-        selectors[8] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
-        selectors[9] = VPFIDiscountFacet.emitDiscountApplied.selector;
-        selectors[10] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
-        selectors[11] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
-        selectors[12] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
-        selectors[13] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
-        selectors[14] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
-        selectors[15] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
-        // #229 Codex round-1 P1 — bridged-buy quartet was missing from
-        // the HelperTest mirror of production's _getVpfiDiscountSelectors.
-        // Without these four selectors, SetupTest would not actually
-        // be a strict superset of production for the bridged-buy
-        // surface; calls to setBridgedBuyReceiver / processBridgedBuy
-        // / quoteFixedRateBuy through the test diamond would have
-        // reverted FunctionDoesNotExist. Indexed alongside the
-        // remaining production selectors below.
-        selectors[16] = VPFIDiscountFacet.setBridgedBuyReceiver.selector;
-        selectors[17] = VPFIDiscountFacet.getBridgedBuyReceiver.selector;
-        selectors[18] = VPFIDiscountFacet.processBridgedBuy.selector;
-        selectors[19] = VPFIDiscountFacet.quoteFixedRateBuy.selector;
-        selectors[20] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
-        // Phase 8b.1 Permit2 addition — signature-transfer variant of
-        // {depositVPFIToVault}.
-        selectors[21] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
-        // Per-(buyer, originChainId) wallet-cap query. The Phase 1 30K
-        // per-wallet cap applies independently per origin chain
-        // (docs/TokenomicsTechSpec.md §8a); this selector lets
-        // off-chain consumers read each origin bucket explicitly.
-        selectors[22] = VPFIDiscountFacet.getVPFISoldToByChainId.selector;
-        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS
-        // getter for the dapp's lender-discount preview hook.
-        selectors[23] = VPFIDiscountFacet.getEffectiveDiscount.selector;
+        // #687-A: fixed-rate SALE surface removed — mirror of production's
+        // pruned _getVpfiDiscountSelectors (kept discount surface + the renamed
+        // getVPFIDiscountConfig / setVPFIDiscountRate price config).
+        selectors = new bytes4[](18);
+        selectors[0] = VPFIDiscountFacet.depositVPFIToVault.selector;
+        selectors[1] = VPFIDiscountFacet.quoteVPFIDiscount.selector;
+        selectors[2] = VPFIDiscountFacet.getVPFIDiscountConfig.selector;
+        selectors[3] = VPFIDiscountFacet.setVPFIDiscountRate.selector;
+        selectors[4] = VPFIDiscountFacet.setVPFIDiscountETHPriceAsset.selector;
+        selectors[5] = VPFIDiscountFacet.emitDiscountApplied.selector;
+        selectors[6] = VPFIDiscountFacet.setVPFIDiscountConsent.selector;
+        selectors[7] = VPFIDiscountFacet.getVPFIDiscountConsent.selector;
+        selectors[8] = VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector;
+        selectors[9] = VPFIDiscountFacet.quoteVPFIDiscountFor.selector;
+        selectors[10] = VPFIDiscountFacet.getVPFIDiscountTier.selector;
+        selectors[11] = VPFIDiscountFacet.withdrawVPFIFromVault.selector;
+        selectors[12] = VPFIDiscountFacet.getUserVpfiDiscountState.selector;
+        // Phase 8b.1 Permit2 addition.
+        selectors[13] = VPFIDiscountFacet.depositVPFIToVaultWithPermit.selector;
+        // T-087 Sub 1.D — post-gate EFFECTIVE_TIER + EFFECTIVE_BPS getter.
+        selectors[14] = VPFIDiscountFacet.getEffectiveDiscount.selector;
         // T-087 Sub 4 — balance-mutation-free tier rollup.
-        selectors[24] = VPFIDiscountFacet.pokeMyTier.selector;
+        selectors[15] = VPFIDiscountFacet.pokeMyTier.selector;
         // T-087 Sub 4 round-2 P2 — public tracked-balance getter.
-        selectors[25] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
+        selectors[16] = VPFIDiscountFacet.getTrackedVPFIBalance.selector;
         // T-087 Sub 4 round-3 P2 #1 — tracked-tier getter.
-        selectors[26] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
+        selectors[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
         return selectors;
     }
 

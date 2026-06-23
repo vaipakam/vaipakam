@@ -51,7 +51,7 @@ contract CrossChainTierPropagationIntegrationTest is SetupTest {
 
         VPFITokenFacet(address(diamond)).setCanonicalVPFIChain(true);
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfiToken));
-        VPFIDiscountFacet(address(diamond)).setVPFIBuyRate(1e15);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountRate(1e15);
 
         // ── CCIP scaffolding ────────────────────────────────────
         router = new MockCcipRouter();

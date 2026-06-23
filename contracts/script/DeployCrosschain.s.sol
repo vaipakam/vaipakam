@@ -17,8 +17,6 @@ import {BurnMintTokenPool} from "@chainlink/contracts-ccip/contracts/pools/BurnM
 import {CcipMessenger} from "../src/crosschain/CcipMessenger.sol";
 import {VPFIMirrorToken} from "../src/crosschain/VPFIMirrorToken.sol";
 import {VpfiPoolRateGovernor} from "../src/crosschain/VpfiPoolRateGovernor.sol";
-import {VpfiBuyAdapter} from "../src/crosschain/VpfiBuyAdapter.sol";
-import {VpfiBuyReceiver} from "../src/crosschain/VpfiBuyReceiver.sol";
 // T-087 Sub 3.A — Base-side inbound handler for the buyback channel.
 import {BuybackRemittanceReceiver} from "../src/crosschain/BuybackRemittanceReceiver.sol";
 import {VaipakamRewardMessenger} from "../src/crosschain/VaipakamRewardMessenger.sol";
@@ -46,11 +44,8 @@ interface IOwnable2Step {
  *           - the VPFI CCIP `TokenPool` — Lock/Release on Base, Burn/Mint on mirrors
  *           - `VpfiPoolRateGovernor`    — UUPS proxy; the pool `rateLimitAdmin`
  *           - `VaipakamRewardMessenger` — UUPS proxy
- *         Canonical only:
- *           - `VpfiBuyReceiver`         — UUPS proxy
  *         Mirror only:
  *           - `VPFIMirrorToken`         — UUPS proxy (the mirror VPFI ERC20)
- *           - `VpfiBuyAdapter`          — UUPS proxy
  *
  *         Required env:
  *           - DEPLOYER_PRIVATE_KEY  : the deploying EOA
@@ -167,87 +162,10 @@ contract DeployCrosschain is Script {
         );
         console.log("VaipakamRewardMessenger:", rewardMessenger);
 
-        // ── Buy flow — receiver on canonical, adapter on mirrors. ────────
-        address buyContract;
-        if (canonical) {
-            VpfiBuyReceiver recvImpl = new VpfiBuyReceiver();
-            buyContract = address(
-                new ERC1967Proxy(
-                    address(recvImpl),
-                    abi.encodeCall(
-                        VpfiBuyReceiver.initialize,
-                        (admin, messenger, diamond, vpfiToken, destGasLimit)
-                    )
-                )
-            );
-            console.log("VpfiBuyReceiver:        ", buyContract);
-        } else {
-            // Mirror chains don't get a BuybackRemittanceReceiver
-            // (only Base receives buyback remittances). The Diamond
-            // is the source-sender; the source-side channel handler
-            // registration on the CcipMessenger is the Diamond
-            // itself, wired by `ConfigureCcip`.
-            address treasury = vm.envAddress("TREASURY_ADDRESS");
-            address paymentToken = vm.envOr("VPFI_BUY_PAYMENT_TOKEN", address(0));
-            // ── Pre-flight: payment-token mode by chain ─────────────────
-            // BNB Chain mainnet (56) and Polygon PoS mainnet (137) must
-            // use WETH-pull mode, not native-gas. The `VpfiBuyAdapter`
-            // quotes a single global ETH-equivalent rate; using native
-            // gas on a chain where the native token isn't ETH-priced
-            // would silently misprice every buy (1 BNB ≠ 1 ETH worth of
-            // value, 1 MATIC/POL ≠ 1 ETH worth of value). The runtime
-            // `_assertPaymentTokenSane` on `VpfiBuyAdapter.initialize`
-            // already checks shape (contract + 18 decimals) but cannot
-            // detect "operator forgot to set the env var on the wrong
-            // chain" — that's this gate's job.
-            //
-            // Testnet exemption (BNB Smart Chain Testnet 97 + Polygon
-            // Amoy 80002): gas tokens have no real value and the
-            // testnet rate is symbolic, so native-gas mode is fine for
-            // dev-loop convenience. Mainnet equivalents must use
-            // WETH-pull.
-            //
-            // See CLAUDE.md §"VpfiBuyAdapter — payment-token mode by
-            // chain" for the policy + canonical bridged-WETH addresses
-            // (BNB: 0x2170Ed0880ac9A755fd29B2688956BD959F933F8 ;
-            //  Polygon: 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619).
-            if (paymentToken == address(0)) {
-                require(
-                    block.chainid != 56,
-                    "DeployCrosschain: VPFI_BUY_PAYMENT_TOKEN unset on BNB Chain mainnet "
-                    "(chainId 56) - native-gas mode would misprice. Set the env to canonical "
-                    "bridged WETH 0x2170Ed0880ac9A755fd29B2688956BD959F933F8."
-                );
-                require(
-                    block.chainid != 137,
-                    "DeployCrosschain: VPFI_BUY_PAYMENT_TOKEN unset on Polygon PoS mainnet "
-                    "(chainId 137) - native-gas mode would misprice. Set the env to canonical "
-                    "WETH9 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619."
-                );
-            }
-            uint64 refundTimeout =
-                uint64(vm.envOr("VPFI_BUY_REFUND_TIMEOUT", uint256(900)));
-            VpfiBuyAdapter adapterImpl = new VpfiBuyAdapter();
-            buyContract = address(
-                new ERC1967Proxy(
-                    address(adapterImpl),
-                    abi.encodeCall(
-                        VpfiBuyAdapter.initialize,
-                        (
-                            admin,
-                            messenger,
-                            baseChainId,
-                            treasury,
-                            paymentToken,
-                            vpfiToken,
-                            refundTimeout,
-                            destGasLimit
-                        )
-                    )
-                )
-            );
-            console.log("VpfiBuyAdapter:         ", buyContract);
-        }
+        // #687-A: the cross-chain VPFI fixed-rate buy (VpfiBuyReceiver on the
+        // canonical chain / VpfiBuyAdapter on mirrors) was removed alongside
+        // the on-chain issuer sale. Mirror chains still record `vpfiMirror`;
+        // the canonical chain still deploys the buyback-remittance receiver.
 
         vm.stopBroadcast();
 
@@ -277,12 +195,10 @@ contract DeployCrosschain is Script {
         Deployments.writeVpfiPoolRateGovernor(rateGovernor);
         Deployments.writeRewardMessenger(rewardMessenger);
         if (canonical) {
-            Deployments.writeVpfiBuyReceiver(buyContract);
             Deployments.writeBuybackRemittanceReceiver(buybackReceiver);
             Deployments.writeBuybackRemittanceReceiverImpl(buybackReceiverImpl);
         } else {
             Deployments.writeVpfiMirror(vpfiToken);
-            Deployments.writeVpfiBuyAdapter(buyContract);
         }
 
         console.log("");

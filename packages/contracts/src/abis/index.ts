@@ -66,11 +66,8 @@ import MirrorTierReceiverFacetABI from './MirrorTierReceiverFacet.json';
 import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
 import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
-// T-068 renamed these contracts VPFIBuyAdapter/VPFIBuyReceiver →
-// VpfiBuyAdapter/VpfiBuyReceiver when the cross-chain buy flow moved
-// from LayerZero to CCIP. Export identifiers track the contract names.
-import VpfiBuyAdapterABI from './VpfiBuyAdapter.json';
-import VpfiBuyReceiverABI from './VpfiBuyReceiver.json';
+// #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
+// VpfiBuyReceiver) along with the fixed-rate sale.
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
@@ -155,8 +152,6 @@ export {
   ProtocolBroadcastFacetABI,
   StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
-  VpfiBuyAdapterABI,
-  VpfiBuyReceiverABI,
   RewardReporterFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
