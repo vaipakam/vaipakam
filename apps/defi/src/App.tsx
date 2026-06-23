@@ -167,10 +167,23 @@ function pageRoutes(): ReactElement {
         {/* Back-compat redirect: the page was renamed from the
             fixed-rate "Buy VPFI" surface to the VPFI vault + discount
             surface (#687-A removed the on-chain fixed-rate sale).
-            Deep links to /buy-vpfi still land on the new page. */}
-        <Route path="buy-vpfi" element={<Navigate to="/vpfi-vault" replace />} />
+            Deep links to /buy-vpfi still land on the new page —
+            carrying the hash so anchors like #staking-rewards survive. */}
+        <Route path="buy-vpfi" element={<BuyVpfiRedirect />} />
       </Route>
     </>
+  );
+}
+
+/**
+ * Back-compat redirect for the renamed `/buy-vpfi` → `/vpfi-vault` route.
+ * Preserves the hash + query so deep links like `/buy-vpfi#staking-rewards`
+ * land on the matching anchor instead of the page top (#687-A).
+ */
+function BuyVpfiRedirect() {
+  const location = useLocation();
+  return (
+    <Navigate to={`/vpfi-vault${location.search}${location.hash}`} replace />
   );
 }
 
