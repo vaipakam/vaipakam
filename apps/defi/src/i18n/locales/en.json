@@ -1017,7 +1017,7 @@
   "buyVpfi": {
     "title": "VPFI Vault & Discounts",
     "preconnect": {
-      "tagline": "Pay lower fees on your loans, earn yield on what you stake.",
+      "tagline": "Pay lower fees on your loans by staking VPFI in your vault.",
       "whatTitle": "What is VPFI?",
       "whatBody1": "VPFI is Vaipakam's protocol token — you can buy with ETH, hold in your Vaipakam Vault, and use across the platform. No lockup period, freely transferable.",
       "whatBody2": "Holding VPFI ties you to the protocol's success in two practical ways: it earns you discounts on the fees Vaipakam charges (so you keep more of what you lend, and pay less when you borrow), and it earns staking yield while it sits in your vault.",
@@ -1029,7 +1029,7 @@
       "stakingTitle": "Staking yield while you wait",
       "stakingBody": "Any VPFI sitting in your Vaipakam Vault earns staking APR for as long as it stays there. No loan required — staking is open to everyone, and the same balance also counts toward your fee-discount tier.",
       "howTitle": "How it works",
-      "howBody": "Deposit VPFI into your Vaipakam Vault to start earning. Your staked balance unlocks the tiered fee discount on liquid loans and earns staking yield while it sits there.",
+      "howBody": "Deposit VPFI into your Vaipakam Vault. Your staked balance unlocks the tiered fee discount on liquid loans.",
       "analyticsHint": "Looking for protocol-wide stats and circulating supply? See the",
       "analyticsLink": "Analytics page",
       "launchAppCta": "Launch Vaipakam to Buy / Stake / Unstake",
@@ -1039,7 +1039,7 @@
     "connectBody": "Connect your wallet to deposit, stake, or unstake VPFI. The same page handles all three — your wallet decides which action you can take.",
     "unsupportedNetwork": "Unsupported network",
     "unsupportedNetworkBody": "The VPFI vault is available on any supported Vaipakam chain. Your wallet is currently on a network that does not host a Vaipakam Diamond. Switch to a supported chain to continue.",
-    "pageSubtitle": "Deposit / stake VPFI into your vault to earn staking rewards — and unlock the tiered discount on liquid loans.",
+    "pageSubtitle": "Deposit VPFI into your vault to unlock the tiered discount on protocol fees for your liquid loans.",
     "step1Title": "Buy VPFI with ETH",
     "step1SubtitleCanonical": "Direct on {{chain}}. VPFI lands in your wallet on this chain.",
     "step1SubtitleBridged": "Direct from {{chain}} — any cross-chain routing is handled for you. VPFI lands in your wallet on this chain.",

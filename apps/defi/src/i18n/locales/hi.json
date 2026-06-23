@@ -370,7 +370,6 @@
   },
   "buyVpfi": {
     "preconnect": {
-      "tagline": "अपने loans पर कम fees चुकाएँ और stake किए गए VPFI पर yield कमाएँ।",
       "whatTitle": "VPFI क्या है?",
       "whatBody1": "VPFI Vaipakam का protocol token है — आप इसे ETH से खरीद सकते हैं, अपने personal vault में रख सकते हैं और platform पर उपयोग कर सकते हैं। कोई lock-up period नहीं; यह freely transferable है।",
       "whatBody2": "VPFI रखने से आप protocol की सफलता से दो व्यावहारिक तरीकों से जुड़ते हैं: Vaipakam fees पर discount मिलता है (lending पर अधिक बचता है और borrowing पर कम खर्च होता है), और vault में रहने तक staking yield मिलता है।",

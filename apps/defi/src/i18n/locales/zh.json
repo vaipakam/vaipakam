@@ -370,7 +370,6 @@
   },
   "buyVpfi": {
     "preconnect": {
-      "tagline": "降低贷款费用，并让质押的资产持续产生收益。",
       "whatTitle": "什么是 VPFI？",
       "whatBody1": "VPFI 是 Vaipakam 的协议代币 — 可用 ETH 购买，存放在您的个人 Vault 中，并在整个平台内使用。没有锁仓期，可自由转移。",
       "whatBody2": "持有 VPFI 会通过两种实际方式让您参与协议的成长：它可降低 Vaipakam 收取的费用（出借时保留更多收益，借款时支付更少成本），并在存放于 Vault 期间赚取质押收益。",

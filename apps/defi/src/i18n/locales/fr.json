@@ -370,7 +370,6 @@
   },
   "buyVpfi": {
     "preconnect": {
-      "tagline": "Payez moins de frais sur vos prêts et générez du rendement sur le VPFI que vous déposez.",
       "whatTitle": "Qu'est-ce que VPFI ?",
       "whatBody1": "VPFI est le token de protocole de Vaipakam — vous pouvez l'acheter avec ETH, le conserver dans votre Vaipakam Vault personnel et l'utiliser sur toute la plateforme. Pas de période de blocage : il reste librement transférable.",
       "whatBody2": "Détenir du VPFI vous relie au succès du protocole de deux manières concrètes : il réduit les frais facturés par Vaipakam (vous conservez donc davantage lorsque vous prêtez et payez moins lorsque vous empruntez), et il génère un rendement tant qu'il reste dans votre Vaipakam Vault.",
