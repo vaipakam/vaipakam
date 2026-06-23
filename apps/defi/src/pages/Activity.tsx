@@ -65,11 +65,9 @@ const KIND_LABELS: Record<ActivityEventKind, string> = {
   SwapToRepayIntentForceCancelled: 'Best-price intent force-cancelled (lender protection)',
   ClaimRetryExecuted: 'Claim-time swap retry',
   BorrowerLifRebateClaimed: 'VPFI rebate claimed',
-  StakingRewardsClaimed: 'VPFI staking rewards claimed',
   InteractionRewardsClaimed: 'Platform-interaction rewards claimed',
-  VPFIPurchasedWithETH: 'VPFI bought with ETH',
-  VPFIDepositedToVault: 'VPFI staked to vault',
-  VPFIWithdrawnFromVault: 'VPFI unstaked from vault',
+  VPFIDepositedToVault: 'VPFI deposited to vault',
+  VPFIWithdrawnFromVault: 'VPFI withdrawn from vault',
 };
 
 // Kind-kind → primary row accent colour class. Mirrors status accents from the
@@ -108,9 +106,7 @@ const KIND_ACCENT: Record<ActivityEventKind, string> = {
   SwapToRepayIntentForceCancelled: 'warning',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
-  StakingRewardsClaimed: 'success',
   InteractionRewardsClaimed: 'success',
-  VPFIPurchasedWithETH: 'success',
   VPFIDepositedToVault: 'success',
   VPFIWithdrawnFromVault: 'info',
 };
@@ -179,7 +175,6 @@ const KIND_PRIORITY: ActivityEventKind[] = [
   'CollateralAdded',
   'LenderFundsClaimed',
   'BorrowerFundsClaimed',
-  'VPFIPurchasedWithETH',
   'VPFIDepositedToVault',
   'VPFIWithdrawnFromVault',
   'OfferCreated',

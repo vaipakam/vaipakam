@@ -100,13 +100,10 @@ const LOAN_OBLIGATION_TRANSFERRED_TOPIC0 = id(
   'LoanObligationTransferred(uint256,address,address,uint256)',
 );
 // VPFI token activities surfaced on the Activity page so users can see
-// their fixed-rate buys and their vault deposits/unstakes alongside
-// lending events. All three carry the user address as the first indexed
-// topic; non-indexed amounts live in `data`. Signatures pinned to the
-// VPFIDiscountFacet ABI.
-const VPFI_PURCHASED_TOPIC0 = id(
-  'VPFIPurchasedWithETH(address,uint256,uint256)',
-);
+// their vault deposits/withdrawals alongside lending events. Both carry
+// the user address as the first indexed topic; non-indexed amounts live
+// in `data`. Signatures pinned to the VPFIDiscountFacet ABI. (#687-A
+// removed the fixed-rate `VPFIPurchasedWithETH` buy event.)
 const VPFI_DEPOSITED_TOPIC0 = id(
   'VPFIDepositedToVault(address,uint256)',
 );
@@ -305,9 +302,8 @@ const CLAIM_RETRY_EXECUTED_TOPIC0 = id(
 const BORROWER_LIF_REBATE_CLAIMED_TOPIC0 = id(
   'BorrowerLifRebateClaimed(uint256,address,uint256)',
 );
-const STAKING_REWARDS_CLAIMED_TOPIC0 = id(
-  'StakingRewardsClaimed(address,uint256)',
-);
+// #687-B removed the 5% staking yield, so `StakingRewardsClaimed` no
+// longer exists in the ABI — only the interaction-rewards claim remains.
 const INTERACTION_REWARDS_CLAIMED_TOPIC0 = id(
   'InteractionRewardsClaimed(address,uint256,uint256,uint256)',
 );
@@ -372,9 +368,10 @@ export type ActivityEventKind =
   | 'SwapToRepayIntentForceCancelled'
   | 'ClaimRetryExecuted'
   | 'BorrowerLifRebateClaimed'
-  | 'StakingRewardsClaimed'
+  // #687-A/B removed the fixed-rate sale + 5% staking yield, so the
+  // `VPFIPurchasedWithETH` and `StakingRewardsClaimed` events no longer
+  // exist in the diamond ABI — their decode branches are gone too.
   | 'InteractionRewardsClaimed'
-  | 'VPFIPurchasedWithETH'
   | 'VPFIDepositedToVault'
   | 'VPFIWithdrawnFromVault';
 
@@ -564,7 +561,15 @@ function storageKey(chainId: number, diamond: string): string {
   // never replay against the historical Filled log. Bumping the
   // version forces every browser to re-scan from scratch the
   // next time the fallback path runs.
-  return `vaipakam:logIndex:v4:${chainId}:${diamond.toLowerCase()}`;
+  //
+  // #717 — bump to v5. The retired `StakingRewardsClaimed` (#687-B)
+  // and `VPFIPurchasedWithETH` (#687-A) event kinds were dropped from
+  // the union + decode branches here; a stale v4 cache could still
+  // hold rows of those kinds, which would now render with blank
+  // labels / `status-undefined` in the Activity feed. Bumping forces
+  // a clean rescan so the excised kinds disappear without the user
+  // having to clear localStorage.
+  return `vaipakam:logIndex:v5:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {
@@ -1275,9 +1280,7 @@ async function runScan(
             // `OFFER_CONSUMED_BY_SALE_TOPIC0`.
             CLAIM_RETRY_EXECUTED_TOPIC0,
             BORROWER_LIF_REBATE_CLAIMED_TOPIC0,
-            STAKING_REWARDS_CLAIMED_TOPIC0,
             INTERACTION_REWARDS_CLAIMED_TOPIC0,
-            VPFI_PURCHASED_TOPIC0,
             VPFI_DEPOSITED_TOPIC0,
             VPFI_WITHDRAWN_TOPIC0,
           ],
@@ -1740,24 +1743,6 @@ async function runScan(
           amountAdded,
           newCollateralAmount,
         });
-      } else if (topic0 === VPFI_PURCHASED_TOPIC0) {
-        // VPFIPurchasedWithETH(buyer indexed, vpfiAmount, ethAmount)
-        if (topics.length < 2) continue;
-        const buyer = ('0x' + topics[1].slice(26)).toLowerCase();
-        let vpfiAmount = '0';
-        let ethAmount = '0';
-        try {
-          const [v, e] = decodeAbiParameters(parseAbiParameters('uint256, uint256'), event.data);
-          vpfiAmount = (v as bigint).toString();
-          ethAmount = (e as bigint).toString();
-        } catch {
-          // malformed — keep defaults
-        }
-        addEvent('VPFIPurchasedWithETH', [buyer], {
-          buyer,
-          vpfiAmount,
-          ethAmount,
-        });
       } else if (topic0 === VPFI_DEPOSITED_TOPIC0) {
         // VPFIDepositedToVault(user indexed, amount)
         if (topics.length < 2) continue;
@@ -2141,18 +2126,6 @@ async function runScan(
           claimant,
           amount,
         });
-      } else if (topic0 === STAKING_REWARDS_CLAIMED_TOPIC0) {
-        // StakingRewardsClaimed(user indexed, amount). Per-user, no loanId.
-        if (topics.length < 2) continue;
-        const user = ('0x' + topics[1].slice(26)).toLowerCase();
-        let amount = '0';
-        try {
-          const [a] = decodeAbiParameters(parseAbiParameters('uint256'), event.data);
-          amount = (a as bigint).toString();
-        } catch {
-          // malformed — keep default
-        }
-        addEvent('StakingRewardsClaimed', [user], { user, amount });
       } else if (topic0 === INTERACTION_REWARDS_CLAIMED_TOPIC0) {
         // InteractionRewardsClaimed(user indexed, fromDay, toDay, amount).
         // Drives the lifetime-claimed total surfaced on the Claim Center

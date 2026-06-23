@@ -82,9 +82,7 @@ const KIND_LABEL_KEY: Record<ActivityEventKind, string> = {
   // The following kinds aren't loan-scoped (no `args.loanId`) so they're
   // filtered out before rendering, but the keymap stays exhaustive so a
   // future kind addition fails the type-check until it gets a label.
-  StakingRewardsClaimed: 'loanTimeline.stakingRewardsClaimed',
   InteractionRewardsClaimed: 'loanTimeline.interactionRewardsClaimed',
-  VPFIPurchasedWithETH: 'loanTimeline.vpfiPurchased',
   VPFIDepositedToVault: 'loanTimeline.vpfiDeposited',
   VPFIWithdrawnFromVault: 'loanTimeline.vpfiWithdrawn',
 };
@@ -121,9 +119,7 @@ const KIND_ACCENT: Record<ActivityEventKind, 'success' | 'failure' | 'info' | 'w
   SwapToRepayIntentForceCancelled: 'warn',
   ClaimRetryExecuted: 'info',
   BorrowerLifRebateClaimed: 'info',
-  StakingRewardsClaimed: 'success',
   InteractionRewardsClaimed: 'success',
-  VPFIPurchasedWithETH: 'success',
   VPFIDepositedToVault: 'success',
   VPFIWithdrawnFromVault: 'info',
 };

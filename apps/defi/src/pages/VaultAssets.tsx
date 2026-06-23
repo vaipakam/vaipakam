@@ -731,7 +731,7 @@ export default function VaultAssets() {
                 })
               : t('vaultAssets.allZero', {
                   defaultValue:
-                    'No protocol-tracked balances on this chain. Re-deposit via the staking flow to make a balance visible.',
+                    'No protocol-tracked balances on this chain. Re-deposit via the deposit flow to make a balance visible.',
                 })}
           </p>
         ) : (

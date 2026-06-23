@@ -362,9 +362,9 @@ export default function Dashboard() {
           auto-lend + auto-opt-in-on-new-loan opt-ins. */}
       <AutoLifecycleSettingsCard />
 
-      {/* T-087 Sub 4 phase 2 — chain-agnostic Stake VPFI CTA.
+      {/* T-087 Sub 4 phase 2 — chain-agnostic Deposit VPFI CTA.
           On mirrors: switch-to-Base button.
-          On Base, no stake: "Stake VPFI now" CTA.
+          On Base, no deposit: "Deposit VPFI now" CTA.
           On Base, min-history pending tier: "Push tier" button.
           Hides itself when none of the above applies. */}
       <StakeVPFICTA />

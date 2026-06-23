@@ -76,9 +76,6 @@
     "security": "Seguridad",
     "vpfi": "VPFI",
     "vpfiLearn": "Aprender sobre VPFI",
-    "vpfiStakeUnstake": "Stake / Unstake",
-    "vpfiStake": "Stake",
-    "vpfiUnstake": "Unstake",
     "launchApp": "Abrir Vaipakam",
     "toggleMenu": "Alternar menú",
     "switchNetwork": "Cambiar de red",
@@ -379,15 +376,10 @@
     },
     "connectTitle": "Conecta tu billetera",
     "unsupportedNetwork": "Red no compatible",
-    "step2Title": "Depositar / Stake VPFI en tu Vault",
-    "step3Title": "Retirar / Unstake VPFI de tu Vault",
     "approvingVpfi": "Aprobando VPFI…",
     "depositToVault": "Depositar en Vault",
     "depositing": "Depositando…",
-    "unstakeToWallet": "Retirar a la billetera",
-    "unstaking": "Retirando…",
-    "depositFailed": "Depósito fallido",
-    "unstakeFailed": "Retiro fallido"
+    "depositFailed": "Depósito fallido"
   },
   "claimCenter": {
     "connectTitle": "Conecta tu billetera",
@@ -439,11 +431,7 @@
     "partialRepaid": "Pago parcial",
     "claimRetryExecuted": "Reintento de swap en reclamo",
     "lifRebateClaimed": "Reembolso de tarifa VPFI reclamado",
-    "stakingRewardsClaimed": "Recompensas de staking VPFI reclamadas",
     "interactionRewardsClaimed": "Recompensas por interacción reclamadas",
-    "vpfiPurchased": "VPFI comprado con ETH",
-    "vpfiDeposited": "VPFI puesto en stake",
-    "vpfiWithdrawn": "VPFI retirado de stake",
     "lblPrincipal": "Principal",
     "lblCollateral": "Colateral",
     "lblLender": "Prestamista",
@@ -496,7 +484,6 @@
   "rewardsSummary": {
     "title": "Tus recompensas VPFI",
     "totalEarnedLabel": "Total ganado",
-    "stakingTitle": "Rendimiento de staking",
     "stakingSubtitle": "Gana el APR del protocolo sobre el VPFI en tu Vaipakam Vault.",
     "interactionTitle": "Recompensas de interacción con la plataforma",
     "interactionSubtitle": "Gana una porción diaria de VPFI por cada préstamo en el que participes.",
@@ -1037,30 +1024,6 @@
         "row3Vault": "≥ 5.000, ≤ 20.000",
         "row4Vault": "> 20.000"
       },
-      "vpfi-rewards": {
-        "q": "¿Cómo puedo ganar recompensas VPFI?",
-        "a1": "Hay dos superficies de recompensa, ambas vinculadas al saldo en custodia — sin contrato de staking adicional que gestionar:",
-        "li1": "<s>Recompensas por staking — 5% APR</s> sobre el VPFI mantenido en custodia (24% del suministro total = 55,2 M VPFI asignados a este pool). El saldo devenga continuamente mientras esté ahí.",
-        "li2": "<s>Recompensas por interacción</s> pagan VPFI sobre los intereses de préstamo pagados o recibidos, con un tope de <s2>0,5 VPFI por cada 0,001 ETH de interés</s2> por usuario, financiadas con el pool del 30% de recompensas por interacción (69 M VPFI). El tope evita el farming con préstamos lavados."
-      },
-      "tokenomics": {
-        "q": "¿Cuál es la tokenómica de VPFI?",
-        "a1": "Tope máximo de <s>230M VPFI</s>. La acuñación inicial es de <s2>23M (10%)</s2> en Base; el suministro restante se desbloquea contra el uso y los drawdowns de los pools. La compra a tipo fijo está fijada en <s3>1 VPFI = 0,001 ETH</s3>.",
-        "a2": "La compra anticipada está limitada a 2,3M VPFI (1% del suministro), con un tope por cartera y por cadena de 30.000 VPFI durante la ventana de arranque. Asignaciones:",
-        "tableBucket": "Categoría",
-        "tableShare": "Porcentaje",
-        "row1Bucket": "Recompensas por interacción",
-        "row2Bucket": "Recompensas por staking",
-        "row3Bucket": "Exchange / market-makers",
-        "row4Bucket": "Equipo",
-        "row5Bucket": "Fundadores",
-        "row6Bucket": "Contribuidores tempranos",
-        "row7Bucket": "Administradores de la plataforma",
-        "row8Bucket": "Auditores de seguridad",
-        "row9Bucket": "Bug bounty",
-        "row10Bucket": "Reserva regulatoria",
-        "row11Bucket": "Compra anticipada"
-      },
       "nft-positions": {
         "q": "¿Qué son los NFT de posición de Vaipakam?",
         "a1": "Cada oferta y cada préstamo acuña un ERC-721 único con <s>metadatos en cadena</s> (tipos de activo, importes, tipos, estado). El NFT <em>es</em> la posición — acredita la titularidad y se requiere para reclamar fondos tras el repago, el impago o la liquidación. Como los metadatos están en cadena, cualquier marketplace de NFT estándar puede mostrar el estado actual."
@@ -1209,10 +1172,8 @@
     "durationMins": "{{mins}}m",
     "durationSecs": "{{seconds}}s",
     "consentMissingTitle": "Nivel de descuento desactivado",
-    "consentMissingBody": "No has dado consentimiento para usar VPFI en stake / depositado para descuentos de comisiones en este préstamo. El nivel de descuento es opt-in — hasta que lo habilites en el Dashboard, la comisión de rendimiento al liquidar se cobrará al {{treasuryFee}}% completo, sin reembolso de VPFI.",
     "consentMissingCta": "Habilitar en el Dashboard",
-    "consentEnabledNoVpfiTitle": "Consentimiento activo, sin VPFI elegible",
-    "consentEnabledNoVpfiBody": "Has dado consentimiento, pero actualmente no hay VPFI elegible en stake / depositado en tu Vaipakam Vault en esta cadena. Agrega VPFI para empezar a ganar un descuento ponderado por tiempo sobre la comisión de rendimiento."
+    "consentEnabledNoVpfiTitle": "Consentimiento activo, sin VPFI elegible"
   },
   "vpfiTokenCard": {
     "title": "Token VPFI (esta cadena)",
@@ -1226,7 +1187,6 @@
     "notRegistered": "VPFI aún no está registrado con el Diamond en {{chain}}. Una vez que el administrador llame a setVPFIToken, los saldos y la actividad aparecerán aquí.",
     "walletBalance": "Saldo VPFI de la cartera",
     "vaultBalance": "Saldo VPFI del vault",
-    "vaultTooltip": "VPFI actualmente bloqueado en el vault por usuario en esta cadena. Cuenta para el Tier de descuento de comisión del prestatario.",
     "shareCirculating": "Cuota circulante",
     "circulatingThisChain": "Circulante (esta cadena)",
     "remainingMintable": "Acuñable restante",
@@ -1239,7 +1199,6 @@
     "discountStatusTitle": "Tu estado de descuento VPFI",
     "currentTier": "Tier actual",
     "noDiscountYet": "Aún sin descuento",
-    "vaultVpfi": "VPFI en el vault",
     "statusLabel": "Estado",
     "inactiveOff": "Inactivo · consentimiento de descuento DESACTIVADO",
     "inactiveBelowTier1": "Inactivo · por debajo de Tier 1 ({{tier1Min}} VPFI en el vault)",
@@ -1273,9 +1232,6 @@
     "depositAmount": "Cantidad de VPFI a depositar",
     "useMaxVpfi": "Usar máximo ({{amount}} VPFI)",
     "depositButton": "Depositar en el vault",
-    "unstakeTitle": "Retirar VPFI del vault",
-    "unstakeSubtitle": "Mover VPFI desde el vault en {{chain}} de vuelta a la cartera. Si el saldo del vault cae por debajo del umbral de un Tier, el Tier de descuento también baja.",
-    "unstakeAmount": "Cantidad de VPFI a retirar",
     "unstakeButton": "Retirar a la cartera"
   },
   "alertsPage": {
@@ -1517,8 +1473,7 @@
     "loanDetailsCollateralRiskBorrower": "El colateral que el prestatario ha bloqueado + el Health Factor y LTV en vivo. Mantén el HF por encima de 1 — si cae por debajo, el colateral puede liquidarse. El colateral líquido se valora automáticamente vía oráculo; el colateral ilíquido no tiene valoración on-chain y se transfiere al prestamista en su totalidad en caso de default.",
     "loanDetailsParties": "Direcciones del prestamista y del prestatario, los proxies de vault por usuario que custodian sus activos y los NFTs de posición que cada lado recibió al inicio del préstamo. Cada NFT es el instrumento al portador de la reclamación de ese lado — perderlo es perder la reclamación.",
     "loanDetailsActionsLender": "Acciones disponibles para el prestamista en este préstamo. Reclamar una vez liquidado el préstamo (devuelve principal + intereses, menos el {{treasuryFee}}% de comisión de tesorería). Iniciar Retirada Anticipada para vender el NFT del prestamista a un comprador a mitad del préstamo. Cualquiera (incluido el prestamista) puede activar Liquidar cuando HF < 1 o el período de gracia haya expirado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento."
+    "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón."
   },
   "acceptReview": {
     "partialRepayLabel": "Reembolso parcial",

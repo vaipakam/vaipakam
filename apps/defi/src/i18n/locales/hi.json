@@ -76,9 +76,6 @@
     "security": "सुरक्षा",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI के बारे में जानें",
-    "vpfiStakeUnstake": "Stake / Unstake करें",
-    "vpfiStake": "Stake",
-    "vpfiUnstake": "Unstake",
     "launchApp": "Vaipakam खोलें",
     "toggleMenu": "मेनू खोलें या बंद करें",
     "switchNetwork": "नेटवर्क बदलें",
@@ -379,15 +376,10 @@
     },
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
     "unsupportedNetwork": "असमर्थित नेटवर्क",
-    "step2Title": "अपने Vault में VPFI deposit / stake करें",
-    "step3Title": "अपने Vault से VPFI withdraw / unstake करें",
     "approvingVpfi": "VPFI अप्रूव हो रहा है…",
     "depositToVault": "Vault में जमा करें",
     "depositing": "जमा हो रहा है…",
-    "unstakeToWallet": "वॉलेट में निकालें",
-    "unstaking": "निकाल रहे हैं…",
-    "depositFailed": "जमा विफल",
-    "unstakeFailed": "निकासी विफल"
+    "depositFailed": "जमा विफल"
   },
   "claimCenter": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
@@ -439,11 +431,7 @@
     "partialRepaid": "आंशिक भुगतान",
     "claimRetryExecuted": "Claim समय पर swap पुनः प्रयास",
     "lifRebateClaimed": "VPFI शुल्क छूट claim की गई",
-    "stakingRewardsClaimed": "VPFI staking rewards claim किए गए",
     "interactionRewardsClaimed": "Platform-interaction rewards claim किए गए",
-    "vpfiPurchased": "ETH से VPFI खरीदा",
-    "vpfiDeposited": "VPFI staked",
-    "vpfiWithdrawn": "VPFI unstaked",
     "lblPrincipal": "मूलधन",
     "lblCollateral": "Collateral",
     "lblLender": "Lender",
@@ -496,7 +484,6 @@
   "rewardsSummary": {
     "title": "आपके VPFI पुरस्कार",
     "totalEarnedLabel": "कुल अर्जित",
-    "stakingTitle": "स्टेकिंग प्रतिफल",
     "stakingSubtitle": "अपने Vault में रखे VPFI पर प्रोटोकॉल APR कमाएं।",
     "interactionTitle": "प्लेटफ़ॉर्म-इंटरैक्शन पुरस्कार",
     "interactionSubtitle": "हर ऋण के लिए जिसमें आप भाग लेते हैं, दैनिक VPFI हिस्सा कमाएं।",
@@ -1037,30 +1024,6 @@
         "row3Vault": "≥ 5,000, ≤ 20,000",
         "row4Vault": "> 20,000"
       },
-      "vpfi-rewards": {
-        "q": "मैं VPFI रिवॉर्ड कैसे कमा सकता हूँ?",
-        "a1": "रिवॉर्ड के दो स्रोत हैं, दोनों Vault शेष से जुड़े — कोई अतिरिक्त स्टेकिंग कॉन्ट्रैक्ट प्रबंधित करने की आवश्यकता नहीं:",
-        "li1": "<s>स्टेकिंग रिवॉर्ड — 5% APR</s>: Vault में रखे VPFI पर लागू (कुल आपूर्ति का 24% = इस पूल को आवंटित 5.52 करोड़ VPFI)। जब तक शेष राशि वहाँ रहती है, वह सतत् रूप से बढ़ती रहती है।",
-        "li2": "<s>इंटरैक्शन रिवॉर्ड:</s> चुकाए या प्राप्त किए गए ऋण ब्याज पर VPFI देता है, प्रति उपयोगकर्ता <s2>प्रति 0.001 ETH ब्याज पर 0.5 VPFI</s2> की अधिकतम सीमा के साथ, 30% इंटरैक्शन-रिवॉर्ड पूल (6.9 करोड़ VPFI) से। यह सीमा वॉश-लोन फार्मिंग को रोकती है।"
-      },
-      "tokenomics": {
-        "q": "VPFI टोकेनॉमिक्स क्या है?",
-        "a1": "अधिकतम आपूर्ति <s>23 करोड़ VPFI</s>। जेनेसिस मिंट Base पर <s2>2.3 करोड़ (10%)</s2>; शेष आपूर्ति उपयोग और पूल ड्रॉडाउन के विरुद्ध अनलॉक होती है। निश्चित-दर खरीद <s3>1 VPFI = 0.001 ETH</s3> पर तय है।",
-        "a2": "अर्ली परचेज़ की सीमा 23 लाख VPFI (आपूर्ति का 1%) है, और बूटस्ट्रैप विंडो के दौरान प्रति वॉलेट प्रति चेन 30,000 VPFI की कैप लगती है। आवंटन:",
-        "tableBucket": "श्रेणी",
-        "tableShare": "हिस्सेदारी",
-        "row1Bucket": "इंटरैक्शन रिवॉर्ड",
-        "row2Bucket": "स्टेकिंग रिवॉर्ड",
-        "row3Bucket": "एक्सचेंज / मार्केट-मेकर",
-        "row4Bucket": "टीम",
-        "row5Bucket": "संस्थापक",
-        "row6Bucket": "प्रारंभिक योगदानकर्ता",
-        "row7Bucket": "प्लेटफ़ॉर्म एडमिन",
-        "row8Bucket": "सुरक्षा ऑडिटर",
-        "row9Bucket": "बग बाउंटी",
-        "row10Bucket": "रेगुलेटरी रिज़र्व",
-        "row11Bucket": "अर्ली परचेज़"
-      },
       "nft-positions": {
         "q": "Vaipakam पोज़िशन NFT क्या हैं?",
         "a1": "हर ऑफर और हर ऋण एक अद्वितीय ERC-721 का मिंट करता है जिसमें <s>ऑन-चेन मेटाडेटा</s> (परिसंपत्ति प्रकार, राशियाँ, दरें, स्थिति) होता है। NFT <em>स्वयं</em> पोज़िशन है — यह स्वामित्व सिद्ध करता है और चुकौती, डिफ़ॉल्ट या लिक्विडेशन के बाद फंड क्लेम करने के लिए आवश्यक है। चूँकि मेटाडेटा ऑन-चेन है, इसलिए कोई भी मानक NFT मार्केटप्लेस वर्तमान स्थिति को रेंडर कर सकता है।"
@@ -1209,10 +1172,8 @@
     "durationMins": "{{mins}}मि",
     "durationSecs": "{{seconds}}से",
     "consentMissingTitle": "Discount tier बंद है",
-    "consentMissingBody": "आपने इस loan पर fee discounts के लिए staked / deposited VPFI उपयोग करने की consent नहीं दी है। Discount tier opt-in है — जब तक आप Dashboard पर इसे enable नहीं करते, settlement पर yield fee पूरे {{treasuryFee}}% rate पर लगेगी, VPFI rebate के बिना।",
     "consentMissingCta": "Dashboard में enable करें",
-    "consentEnabledNoVpfiTitle": "Consent active है, eligible VPFI नहीं",
-    "consentEnabledNoVpfiBody": "आपने consent दे दी है, लेकिन इस chain पर आपके vault में अभी कोई eligible staked / deposited VPFI नहीं है। Yield fee पर time-weighted discount कमाना शुरू करने के लिए VPFI जोड़ें।"
+    "consentEnabledNoVpfiTitle": "Consent active है, eligible VPFI नहीं"
   },
   "vpfiTokenCard": {
     "title": "VPFI टोकन (यह चेन)",
@@ -1226,7 +1187,6 @@
     "notRegistered": "VPFI अभी {{chain}} पर Diamond के साथ पंजीकृत नहीं है। एक बार admin setVPFIToken कॉल करता है, तो शेष राशि और गतिविधि यहाँ दिखाई देगी।",
     "walletBalance": "वॉलेट VPFI शेष",
     "vaultBalance": "Vault VPFI शेष",
-    "vaultTooltip": "इस चेन पर प्रति-उपयोगकर्ता Vault में वर्तमान में स्टेक किया गया VPFI। ऋणकर्ता शुल्क छूट Tier में गिना जाता है।",
     "shareCirculating": "परिसंचारी हिस्सा",
     "circulatingThisChain": "परिसंचारी (यह चेन)",
     "remainingMintable": "शेष मिंट योग्य",
@@ -1239,7 +1199,6 @@
     "discountStatusTitle": "आपकी VPFI छूट स्थिति",
     "currentTier": "वर्तमान Tier",
     "noDiscountYet": "अभी कोई छूट नहीं",
-    "vaultVpfi": "Vault VPFI",
     "statusLabel": "स्थिति",
     "inactiveOff": "निष्क्रिय · छूट सहमति बंद",
     "inactiveBelowTier1": "निष्क्रिय · Tier 1 से नीचे (Vault में {{tier1Min}} VPFI)",
@@ -1273,9 +1232,6 @@
     "depositAmount": "जमा करने के लिए VPFI राशि",
     "useMaxVpfi": "अधिकतम ({{amount}} VPFI) उपयोग करें",
     "depositButton": "Vault में जमा करें",
-    "unstakeTitle": "Vault से VPFI अनस्टेक करें",
-    "unstakeSubtitle": "{{chain}} पर Vault से VPFI को वापस वॉलेट में ले जाएँ। यदि Vault शेष Tier सीमा से नीचे गिरता है, तो छूट Tier भी गिर जाता है।",
-    "unstakeAmount": "अनस्टेक करने के लिए VPFI राशि",
     "unstakeButton": "वॉलेट में निकालें"
   },
   "alertsPage": {
@@ -1517,8 +1473,7 @@
     "loanDetailsCollateralRiskBorrower": "ऋणकर्ता ने जो गिरवी लॉक किया है + लाइव Health Factor और LTV। HF को 1 से ऊपर रखें — यदि नीचे गिर गया तो गिरवी लिक्विडेट हो सकता है। लिक्विड गिरवी ऑरेकल के माध्यम से ऑटो-प्राइस्ड होता है; अनलिक्विड गिरवी का ऑन-चेन मूल्यांकन नहीं होता और डिफ़ॉल्ट पर पूर्ण रूप से ऋणदाता को हस्तांतरित हो जाता है।",
     "loanDetailsParties": "ऋणदाता और ऋणकर्ता के एड्रेस, उनके एसेट रखने वाले प्रति-उपयोगकर्ता Vault प्रॉक्सी, और हर साइड को लोन शुरू होने पर मिले पोजीशन NFT। हर NFT उस साइड के दावे का बेयरर इंस्ट्रूमेंट है — इसे खोना दावे को खोना है।",
     "loanDetailsActionsLender": "इस लोन पर ऋणदाता के लिए उपलब्ध क्रियाएँ। लोन सेटल होने पर क्लेम (प्रिंसिपल + ब्याज लौटाता है, {{treasuryFee}}% ट्रेज़री कटौती के बाद)। लोन के बीच में ऋणदाता NFT को खरीदार को बेचने के लिए अर्ली विदड्रॉल शुरू करें। कोई भी (ऋणदाता सहित) Liquidate ट्रिगर कर सकता है जब HF < 1 हो या ग्रेस अवधि समाप्त हो जाए। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "buyVpfiUnstake": "इस चेन पर VPFI को Vault से वॉलेट में वापस ले जाएँ। डिस्काउंट टियर रियल-टाइम में घटाता है — टाइम-वेटेड एक्युमुलेटर हर खुले लोन को नए (कम) बैलेंस पर तुरंत री-स्टांप करता है, इसलिए एक unstake उस क्षण से शुल्क-डिस्काउंट गणित के लिए प्रभावी होता है।"
+    "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।"
   },
   "acceptReview": {
     "partialRepayLabel": "आंशिक पुनर्भुगतान",
