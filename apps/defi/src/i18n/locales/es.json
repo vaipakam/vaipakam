@@ -1309,8 +1309,6 @@
     "eventClaimAvailableDesc": "Tienes fondos que puedes retirar del Centro de Reclamaciones — principal/interés reembolsado, ingresos post-incumplimiento o reembolso VPFI.",
     "eventLoanTerminalTitle": "Préstamo liquidado o en incumplimiento",
     "eventLoanTerminalDesc": "Tu préstamo alcanzó un estado terminal — reembolsado por completo, incumplido por tiempo o liquidado por HF. Notifica a ambos lados.",
-    "eventVpfiBuyReceivedTitle": "Compra de VPFI cross-chain recibida",
-    "eventVpfiBuyReceivedDesc": "Una compra de VPFI vía Chainlink CCIP que iniciaste se ha emitido en la cadena canónica y acreditado en tu billetera.",
     "eventLoanInitiatedCreatorTitle": "Tu oferta se emparejó con un préstamo",
     "eventLoanInitiatedCreatorDesc": "Enviado al creador de la oferta cuando es aceptada (o emparejada por un bot) y el préstamo pasa a Activo.",
     "eventMaturityApproachingTitle": "Vencimiento del préstamo próximo",
@@ -1520,8 +1518,7 @@
     "loanDetailsParties": "Direcciones del prestamista y del prestatario, los proxies de vault por usuario que custodian sus activos y los NFTs de posición que cada lado recibió al inicio del préstamo. Cada NFT es el instrumento al portador de la reclamación de ese lado — perderlo es perder la reclamación.",
     "loanDetailsActionsLender": "Acciones disponibles para el prestamista en este préstamo. Reclamar una vez liquidado el préstamo (devuelve principal + intereses, menos el {{treasuryFee}}% de comisión de tesorería). Iniciar Retirada Anticipada para vender el NFT del prestamista a un comprador a mitad del préstamo. Cualquiera (incluido el prestamista) puede activar Liquidar cuando HF < 1 o el período de gracia haya expirado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
     "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento.",
-    "activityFeed": "Eventos on-chain que involucran a la wallet conectada en la cadena activa — ofertas creadas o aceptadas, préstamos, reembolsos, reclamaciones, liquidaciones, mints/burns de NFTs, compras/stakes/unstakes de VPFI. Obtenidos en vivo desde los logs de eventos del Diamond (sin backend), agrupados por transacción y ordenados de más reciente a más antiguo."
+    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento."
   },
   "acceptReview": {
     "partialRepayLabel": "Reembolso parcial",

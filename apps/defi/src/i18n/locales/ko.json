@@ -1310,8 +1310,6 @@
     "eventClaimAvailableDesc": "Claim Center에서 인출할 자금이 있습니다 — 상환된 원금/이자, 디폴트 이후 수익, 또는 VPFI 리베이트.",
     "eventLoanTerminalTitle": "대출 종결 또는 디폴트",
     "eventLoanTerminalDesc": "대출이 종결 상태에 도달했습니다 — 전액 상환, 시간 만료 디폴트, 또는 HF 청산. 양 당사자에게 알림을 보냅니다.",
-    "eventVpfiBuyReceivedTitle": "크로스체인 VPFI 구매 수신",
-    "eventVpfiBuyReceivedDesc": "당신이 시작한 Chainlink CCIP 경유 VPFI 구매가 표준 체인에서 민팅되어 지갑에 입금되었습니다.",
     "eventLoanInitiatedCreatorTitle": "오퍼가 대출과 매칭되었습니다",
     "eventLoanInitiatedCreatorDesc": "오퍼가 수락되거나(또는 봇에 의해 매칭되어) 대출이 활성화될 때 오퍼 작성자에게 전송됩니다.",
     "eventMaturityApproachingTitle": "대출 만기 임박",
@@ -1521,8 +1519,7 @@
     "loanDetailsParties": "대여자와 차입자 주소, 자산을 보관하는 사용자별 Vault 프록시, 그리고 양측이 대출 개시 시 받은 포지션 NFT입니다. 각 NFT는 해당 측 청구권의 무기명 증서이며, 분실하면 청구권을 잃습니다.",
     "loanDetailsActionsLender": "이 대출에서 대여자가 사용 가능한 액션입니다. 대출 정산 후 청구(원금 + 이자를 {{treasuryFee}}% Treasury 차감 후 반환). 대출 도중 대여자 NFT를 매수자에게 매도하기 위해 조기 인출(Early Withdrawal) 개시. HF < 1이거나 유예 기간이 만료되면 누구나(대여자 포함) 청산을 트리거할 수 있습니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
     "loanDetailsActionsBorrower": "이 대출에서 차입자가 사용 가능한 액션입니다. 전액 또는 부분 상환, Preclose 직접(미상환분을 지금 지불) 또는 오프셋(DEX 통해 담보 매도), 새 조건의 대출로 리파이낸스. 청구는 전액 상환 시 담보를 반환하거나 미사용 VPFI 환급분을 반환합니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
-    "buyVpfiUnstake": "이 체인에서 VPFI를 Vault에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, unstake는 그 순간부터 수수료 할인 수식에 효력이 있습니다.",
-    "activityFeed": "활성 체인에서 연결된 지갑이 관여하는 온체인 이벤트 — 오퍼 생성 또는 수락, 대출, 상환, 청구, 청산, NFT 발행/소각, VPFI 매수/스테이크/언스테이크. Diamond 이벤트 로그에서 라이브로 가져오며(백엔드 없음), 트랜잭션별로 그룹화되고 최신순으로 정렬됩니다."
+    "buyVpfiUnstake": "이 체인에서 VPFI를 Vault에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, unstake는 그 순간부터 수수료 할인 수식에 효력이 있습니다."
   },
   "acceptReview": {
     "partialRepayLabel": "부분 상환",

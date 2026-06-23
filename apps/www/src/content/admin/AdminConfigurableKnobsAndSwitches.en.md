@@ -650,18 +650,6 @@ pre-notify lane (HF watcher's existing surface) and the periodic-
 interest pre-notify lane (T-034) read from the same `getPreNotifyDays()`
 view.
 
-## Cross-chain VPFI buy (T-031 Layer 4a)
-
-### Reconciliation watchdog enabled flag (reconciliationWatchdogEnabled)
-
-Master switch for the
-off-chain buy-flow reconciliation watchdog. Default `true`
-post-init. The watchdog Worker reads this flag before each pass —
-when `false`, it skips reconciliation and emits no alerts. Same
-governance auth as every other lever. Lets governance silence the
-watchdog during a planned bridge ceremony or known reconciliation
-gap without redeploying the Worker. Boolean — no range.
-
 ## Range Orders match constraints
 
 ### Range-orders cancel cooldown

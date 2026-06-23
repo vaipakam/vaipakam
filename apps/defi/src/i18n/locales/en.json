@@ -211,7 +211,7 @@
     "buyVpfiDeposit": "Move VPFI from the wallet into the vault on this chain. Always an explicit user action: the protocol never auto-funds the vault. Required to qualify for fee discounts. Permit2 is used when available so a single signature replaces the approve + transfer pair.",
     "buyVpfiUnstake": "Move VPFI from the vault back to the wallet on this chain. Reduces the discount tier in real time — the time-weighted accumulator re-stamps every open loan at the new (lower) balance immediately, so an unstake is effective for fee-discount math from this moment forward.",
     "rewardsClaim": "Mints any pending VPFI from the interaction reward stream into the wallet, on the current chain, in one transaction. The interaction pool finalizes daily — pending interaction rewards become claimable shortly after each settlement window closes.",
-    "activityFeed": "On-chain events involving the connected wallet on the active chain — offers created or accepted, loans, repayments, claims, liquidations, NFT mints/burns, VPFI buys/stakes/unstakes. Sourced live from Diamond event logs (no backend), grouped by transaction and ordered newest-first."
+    "activityFeed": "On-chain events involving the connected wallet on the active chain — offers created or accepted, loans, repayments, claims, liquidations, NFT mints/burns, VPFI vault deposits/withdrawals. Sourced live from Diamond event logs (no backend), grouped by transaction and ordered newest-first."
   },
   "infoTip": {
     "defaultAria": "More info"
@@ -369,8 +369,6 @@
     "eventClaimAvailableDesc": "You have funds you can pull from the Claim Center — repaid principal/interest, post-default proceeds, or a VPFI rebate.",
     "eventLoanTerminalTitle": "Loan settled or defaulted",
     "eventLoanTerminalDesc": "Your loan reached a terminal state — fully repaid, time-defaulted, or HF-liquidated. Both lender and borrower-side notify.",
-    "eventVpfiBuyReceivedTitle": "Cross-chain VPFI buy received",
-    "eventVpfiBuyReceivedDesc": "A CCIP-routed VPFI buy you initiated has been minted on the canonical chain and credited to your wallet.",
     "eventLoanInitiatedCreatorTitle": "Your offer matched into a loan",
     "eventLoanInitiatedCreatorDesc": "Sent to the offer creator when their offer is accepted (or matched by a bot) and the loan goes Active.",
     "eventMaturityApproachingTitle": "Loan maturity approaching",

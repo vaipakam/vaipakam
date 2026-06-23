@@ -62,12 +62,11 @@ export default function Alerts() {
   // T-032 — per-event category opt-ins. Independent of HF (which is
   // compulsory once any rail is enabled — see CLAUDE.md). All default
   // to ON: a user opting into the alerts product almost certainly
-  // wants the high-value events too, and forcing them to flip six
+  // wants the high-value events too, and forcing them to flip five
   // switches just to start receiving notifications is friction with
   // no signal value. They can opt out individually later.
   const [notifyClaimAvailable, setNotifyClaimAvailable] = useState(true);
   const [notifyLoanTerminal, setNotifyLoanTerminal] = useState(true);
-  const [notifyVpfiBuyReceived, setNotifyVpfiBuyReceived] = useState(true);
   const [notifyLoanInitiatedCreator, setNotifyLoanInitiatedCreator] = useState(true);
   const [notifyMaturityApproaching, setNotifyMaturityApproaching] = useState(true);
   const [notifyPartialRepayReceived, setNotifyPartialRepayReceived] = useState(true);
@@ -169,10 +168,9 @@ export default function Alerts() {
           // columns; unknown fields are no-ops until the backend
           // detector for each event lands). HF bands above are
           // always on for any rail-enabled subscriber — these flags
-          // ONLY toggle the six paid-tier event types.
+          // ONLY toggle the five paid-tier event types.
           notify_claim_available: notifyClaimAvailable,
           notify_loan_terminal: notifyLoanTerminal,
-          notify_vpfi_buy_received: notifyVpfiBuyReceived,
           notify_loan_initiated_creator: notifyLoanInitiatedCreator,
           notify_maturity_approaching: notifyMaturityApproaching,
           notify_partial_repay_received: notifyPartialRepayReceived,
@@ -289,7 +287,6 @@ export default function Alerts() {
           // event categories are toggled here.
           notify_claim_available: notifyClaimAvailable,
           notify_loan_terminal: notifyLoanTerminal,
-          notify_vpfi_buy_received: notifyVpfiBuyReceived,
           notify_loan_initiated_creator: notifyLoanInitiatedCreator,
           notify_maturity_approaching: notifyMaturityApproaching,
           notify_partial_repay_received: notifyPartialRepayReceived,
@@ -443,7 +440,7 @@ export default function Alerts() {
       </section>
 
       {/* T-032 — per-event opt-ins. HF bands above are compulsory once
-          a rail is enabled; these six toggles control which of the
+          a rail is enabled; these five toggles control which of the
           paid-tier events fire on top. All default-on for new users
           (high-value events), individually opt-out-able. The "Save"
           button under the thresholds section persists everything in
@@ -490,20 +487,6 @@ export default function Alerts() {
               <br />
               <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
                 {t('alertsPage.eventLoanTerminalDesc')}
-              </span>
-            </span>
-          </label>
-          <label style={{ display: "flex", alignItems: "center", gap: 10, fontSize: "0.92rem" }}>
-            <input
-              type="checkbox"
-              checked={notifyVpfiBuyReceived}
-              onChange={(e) => setNotifyVpfiBuyReceived(e.target.checked)}
-            />
-            <span>
-              <strong>{t('alertsPage.eventVpfiBuyReceivedTitle')}</strong>
-              <br />
-              <span style={{ fontSize: "0.8rem", opacity: 0.7 }}>
-                {t('alertsPage.eventVpfiBuyReceivedDesc')}
               </span>
             </span>
           </label>
