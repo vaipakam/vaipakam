@@ -299,11 +299,16 @@ leg that carries value.
 > already re-screens the lend/collateral legs for pauses (an asset can be paused
 > in the window between create and accept), so the rental prepay leg must be
 > re-screened there as well, or a prepay-asset paused after offer creation would
-> still bind into a loan at accept.
+> still bind into a loan at accept. **The accept-preview / dry-run surface
+> (`previewAccept` and the offer-book UX guard) must mirror this prepay-pause
+> check too (Codex r10 P2 L302)** so the frontend shows "prepay asset paused"
+> before the user submits, rather than only reverting on-chain.
 
 **Pair-consent setter takes the RAW typed assets, not an opaque `bytes32`**
 (Codex r1 P2, L4Yj): `setIlliquidPairConsent(lendingAsset, lendingAssetType,
-tokenId, collateralAsset, collateralAssetType, collateralTokenId, …sig)` and
+tokenId, collateralAsset, collateralAssetType, collateralTokenId, prepayAsset,
+…sig)` — `prepayAsset` included for the rental-key substitution (Codex r10 P2
+L306; `address(0)` for ERC-20), matching the signed digest in §7 — and
 computes the key on-chain. Passing a pre-hashed `bytes32 pairKey` would make
 the EIP-712 prompt unrenderable (the wallet must show the concrete `<A>/<B>`
 pair the user is unlocking) and prevent the contract from validating the key.
@@ -576,13 +581,32 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
     setter REQUIRES the caller's signed `consentVersion == currentRiskTermsVersion`
     and reverts `StaleRiskTermsVersion` otherwise — the wallet rendered, and the
     user signed, a SPECIFIC version; if governance bumped the terms in between,
-    the user must re-sign against the new text. Without this check a setter would
+    the user must re-sign against the new text. **Exemption — revocations skip
+    the stale-version check (Codex r10 P2 L577):** lowering a tier or revoking a
+    pair consent (`consent == false`, or a down-tier `setVaultRiskTier`) is
+    risk-REDUCING, so it must succeed regardless of the current terms version —
+    requiring a fresh-terms signature to *withdraw* consent would trap a user
+    under stale terms. Only risk-INCREASING grants enforce
+    `consentVersion == currentRiskTermsVersion`. Without this check a setter would
     happily stamp `currentRiskTermsVersion` even though the signer approved an
     older revision, defeating the whole version mechanism.
-  - **Same-level re-consent must refresh, not no-op (Codex r9 P2 L635):**
-    `setVaultRiskTier` with `level == current level` is a valid call (not a
-    revert) whose purpose is to **re-stamp** `tierConsentVersion[user][level] =
-    currentRiskTermsVersion` after a terms bump. Otherwise a user already at
+  - **Reject a zero terms version (Codex r10 P2 L714):** `currentRiskTermsVersion`
+    defaults to `bytes32(0)` and so do all per-user version maps, so the
+    equality check must NOT treat "both zero" as a valid match. `setRiskTermsVersion`
+    must be called with a non-zero hash at deploy (and the setters revert
+    `RiskTermsVersionUnset` while it is zero); a per-user stored version of
+    `bytes32(0)` always means "never consented / stale," never "current." This
+    closes the bootstrap hole where an unconfigured terms version would let an
+    unsigned/never-consented user satisfy the freshness check by default.
+  - **Same-level re-consent must refresh ALL granted levels, not just the top
+    (Codex r9 P2 L635 + r10 P2 L585):** `setVaultRiskTier` with `level == current
+    level` is a valid call (not a revert) whose purpose is to **re-stamp
+    `tierConsentVersion[user][L] = currentRiskTermsVersion` for every granted
+    `L` in `[BroadLiquid .. currentLevel]`** after a terms bump — not only the
+    top level. A user at `IlliquidCustom` has both the L1 and L2 versions go
+    stale on a bump, and a later L1-only offer reads the L1 slot, so refreshing
+    only the current level would leave the intermediate slot stale and wedge
+    that offer. Otherwise a user already at
     `BroadLiquid`/`IlliquidCustom` could never refresh their consent to the new
     terms (the level isn't changing) and would be wedged — either permanently
     flagged stale or, worse, silently treated as current. Same-level calls skip
@@ -735,10 +759,18 @@ read-accessor mirror the existing bounded-knob pattern of
   same EIP-712 signed envelope as the unlock setters — `setRiskStrictMode(bool
   enabled, address user, bytes32 consentVersion, uint256 nonce, uint256
   deadline, bytes sig)` — not a plain setter (Codex r9 P2 L692)**; turning
-  strict mode ON may stay a plain self-call), **`setMidTierPairAck`** (the L1
-  EXPLICIT strict-mode ack setter; writes `midTierExplicitAck` +
-  `midTierExplicitAckVersion`, NOT the passive `midTierPairAck` the gate
-  auto-stamps, and never `illiquidPairConsent` — Codex r3 P3 L499 + r9 P2 L695),
+  strict mode ON may stay a plain self-call. **Disabling strict mode is ALSO
+  subject to `riskAccessUnlockCooldownSec` (Codex r10 P2 L737)** — it's a
+  risk-increasing privilege change, so on a non-zero deploy cooldown the
+  same-op disable+exploit window is closed exactly like a tier raise), and
+  **`setMidTierPairAck`** (the L1 EXPLICIT strict-mode ack setter; writes
+  `midTierExplicitAck` + `midTierExplicitAckVersion`, NOT the passive
+  `midTierPairAck` the gate auto-stamps, and never `illiquidPairConsent` —
+  Codex r3 P3 L499 + r9 P2 L695. **When `riskStrictMode` is on this ack
+  authorizes a real origination privilege, so it carries the full EIP-712
+  signed envelope (assets, user, consentVersion, nonce, deadline, sig) — Codex
+  r10 P2 L741 — not a plain self-call**, matching the other privilege-granting
+  setters),
   the **admin-only** `setRiskAccessUnlockCooldown`, **`setRiskTermsVersion(bytes32)`**
   (admin/governance-only — bumps `currentRiskTermsVersion`, the single act that
   invalidates every prior unlock/ack on a terms revision, Codex r9 P2 L673), and
@@ -826,16 +858,21 @@ read-accessor mirror the existing bounded-knob pattern of
 - **ABI re-export + deploy-sanity:** new external selectors — `setVaultRiskTier`,
   `setIlliquidPairConsent`, **`setRiskStrictMode`** + **`setMidTierPairAck`** (iff
   riskStrictMode ships; Codex r5 P3 L596), **`setRiskAccessUnlockCooldown`**
-  (admin-only RD-3 tunable; Codex r2 L527), the contract-account escape-hatch
-  setters (`setVaultRiskTierFor` / `setIlliquidPairConsentFor`), and the views —
-  on the new facet (or `ProfileFacet`). Per CLAUDE.md: add the facet to
+  (admin-only RD-3 tunable; Codex r2 L527), **`setRiskTermsVersion`** +
+  **`addProtocolManagedVault` / `removeProtocolManagedVault`** (admin-only;
+  Codex r10 P2 L830 — the risk-admin selectors introduced in §8/§9 must be in
+  the deploy/ABI coverage too, not just the user-facing setters), the
+  contract-account escape-hatch setters (`setVaultRiskTierFor` /
+  `setIlliquidPairConsentFor`), and the views — on the new facet (or
+  `ProfileFacet`). Per CLAUDE.md: add the facet to
   `DiamondFacetNames.cutFacetNames()`, add its `_get<Facet>Selectors()` to
   `SelectorCoverageTest._populateRoutedSet()` + the `DeployDiamond` /
   `HelperTest` selector lists, append to `exportFrontendAbis.sh`'s
   `FACETS=(...)` and the `packages/contracts/src/abis/index.ts` barrel.
   New custom **errors** (`RiskAccessTooLow`, `IlliquidPairNotConsented`,
   `RiskUnlockCooldownActive`, `RiskAccessSignatureInvalid`,
-  `RiskAccessDeadlineExpired`) are in the ABI → re-export catches them
+  `RiskAccessDeadlineExpired`, `StaleRiskTermsVersion`, `RiskTermsVersionUnset`,
+  `NotProtocolManagedVault`) are in the ABI → re-export catches them
   (per [[abi-sync-after-contract-changes]]).
 - **Indexer:** the new consent-capture events
   (`VaultRiskTierSet`, `IlliquidPairConsented`, `MidTierPairUsed` soft
@@ -961,6 +998,13 @@ corrections the implementation must absorb:
   re-check would miss a revoked pair; this mirrors the §5a direct-accept and
   stale-offer re-assertion exactly), or trust the create-time stamp?
   (Recommend re-assert **both dimensions**; cheap view.)
+- **O6 — WETH / default-route tiering (Codex r5 P2 L264, tracked here per
+  r10 P2 L329):** resolve how WETH itself reaches tier-3 and how a
+  WETH-only effective route set pins a thin asset to tier-0 (§4) before the
+  tier-3 `BlueChipOnly` default ships — pick (a) numeraire special-case,
+  (b) guaranteed non-WETH PAA route, or (c) `tier==3 OR asset ∈ reference set`.
+  This is the one **blocker** open question (the default gate is unusable until
+  resolved); O1–O5 are ratification choices, O6 is a must-fix-before-ship.
 
 ## 14. Relationship to #662
 
