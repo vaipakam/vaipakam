@@ -51,9 +51,6 @@ export interface ProtocolConfig {
   /** Safety buffer on NFT rental prepayment (default 5%). */
   rentalBufferBps: number;
   rentalBufferPct: number;
-  /** Annualized staking reward on vault-held VPFI (default 5%). */
-  vpfiStakingAprBps: number;
-  vpfiStakingAprPct: number;
   /** VPFI tier thresholds (token wei, 18-dec): T1 entry, T2 entry, T3 entry, T4 cutoff. */
   tierThresholds: [bigint, bigint, bigint, bigint];
   /** Same thresholds as {@link tierThresholds} but pre-divided to whole VPFI
@@ -74,10 +71,6 @@ export interface ProtocolConfig {
   /** Same as {@link minHealthFactor} but as a display-ready decimal
    *  ("1.5", "1.25"). */
   minHealthFactorDisplay: string;
-  /** Hard cap on the staking-rewards pool (wei). */
-  vpfiStakingPoolCap: bigint;
-  /** Compact "55.2M" / "69M" string for marketing-style display. */
-  vpfiStakingPoolCapCompact: string;
   /** Hard cap on the interaction-rewards pool (wei). */
   vpfiInteractionPoolCap: bigint;
   /** Compact display version of {@link vpfiInteractionPoolCap}. */
@@ -186,7 +179,6 @@ type BundleTuple = [
   bigint, // maxLiquidatorIncentiveBps
   bigint, // volatilityLtvThresholdBps
   bigint, // rentalBufferBps
-  bigint, // vpfiStakingAprBps
   [bigint, bigint, bigint, bigint], // tierThresholds
   [bigint, bigint, bigint, bigint], // tierDiscountBps
   // Range Orders Phase 1 master kill-switch flags. All three default
@@ -300,7 +292,7 @@ export function useProtocolConfig() {
     try {
       const d = diamond as unknown as {
         getProtocolConfigBundle: () => Promise<BundleTuple>;
-        getProtocolConstants: () => Promise<[bigint, bigint, bigint, bigint]>;
+        getProtocolConstants: () => Promise<[bigint, bigint, bigint]>;
         getVPFIToken: () => Promise<string>;
         getDepthTierConfigBundle: () => Promise<DepthTierBundleTuple>;
         getPaaAssets: () => Promise<readonly Address[]>;
@@ -317,10 +309,9 @@ export function useProtocolConfig() {
         d.getProtocolConfigBundle(),
         d.getProtocolConstants().catch(() => [
           1500000000000000000n, // MIN_HEALTH_FACTOR default 1.5e18
-          55_200_000n * 10n ** 18n,
-          69_000_000n * 10n ** 18n,
+          69_000_000n * 10n ** 18n, // vpfiInteractionPoolCap default
           30n,
-        ] as [bigint, bigint, bigint, bigint]),
+        ] as [bigint, bigint, bigint]),
         d.getVPFIToken().catch(() => ZERO_ADDRESS),
         d.getDepthTierConfigBundle().catch(
           () => [false, 200n, 1800n, 300n, 5_000_000_000n, 50_000_000_000n, 500_000_000_000n, 5_000_000_000_000n, 5000n, 6000n, 6500n] as DepthTierBundleTuple,
@@ -361,7 +352,6 @@ export function useProtocolConfig() {
         maxLiquidatorIncentiveBps,
         volatilityLtvThresholdBps,
         rentalBufferBps,
-        vpfiStakingAprBps,
         tierThresholds,
         tierDiscountBps,
         rangeAmountEnabled,
@@ -370,7 +360,7 @@ export function useProtocolConfig() {
         lifMatcherFeeBps,
         autoPauseDurationSeconds,
       ] = tuple;
-      const [minHealthFactor, vpfiStakingPoolCap, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
+      const [minHealthFactor, vpfiInteractionPoolCap, maxInteractionClaimDays] = consts;
       const [
         depthTieredLtvEnabled,
         liquiditySlippageBps,
@@ -400,8 +390,6 @@ export function useProtocolConfig() {
         volatilityLtvThresholdPct: bpsToPct(volatilityLtvThresholdBps),
         rentalBufferBps: Number(rentalBufferBps),
         rentalBufferPct: bpsToPct(rentalBufferBps),
-        vpfiStakingAprBps: Number(vpfiStakingAprBps),
-        vpfiStakingAprPct: bpsToPct(vpfiStakingAprBps),
         tierThresholds: [
           tierThresholds[0],
           tierThresholds[1],
@@ -433,8 +421,6 @@ export function useProtocolConfig() {
         ],
         minHealthFactor,
         minHealthFactorDisplay: hfToDisplay(minHealthFactor),
-        vpfiStakingPoolCap,
-        vpfiStakingPoolCapCompact: vpfiCapToCompact(vpfiStakingPoolCap, vpfiDecimals),
         vpfiInteractionPoolCap,
         vpfiInteractionPoolCapCompact: vpfiCapToCompact(vpfiInteractionPoolCap, vpfiDecimals),
         maxInteractionClaimDays: Number(maxInteractionClaimDays),
@@ -469,7 +455,6 @@ export function useProtocolConfig() {
       step.success({
         note:
           `treasury=${next.treasuryFeeBps}bps, ` +
-          `stakingApr=${next.vpfiStakingAprBps}bps, ` +
           `tiers=[${next.tierDiscountBps.join(',')}]`,
       });
     } catch (err) {

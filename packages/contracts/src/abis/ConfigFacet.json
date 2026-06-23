@@ -402,11 +402,6 @@
         "internalType": "uint256"
       },
       {
-        "name": "vpfiStakingAprBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "tierThresholds",
         "type": "uint256[4]",
         "internalType": "uint256[4]"
@@ -456,11 +451,6 @@
     "outputs": [
       {
         "name": "minHealthFactor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "vpfiStakingPoolCap",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -515,19 +505,6 @@
       },
       {
         "name": "rentalBufferBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getStakingAprBps",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -1161,19 +1138,6 @@
       },
       {
         "name": "rentalBufferBps",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setStakingApr",
-    "inputs": [
-      {
-        "name": "aprBps",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -1904,19 +1868,6 @@
   },
   {
     "type": "event",
-    "name": "StakingAprSet",
-    "inputs": [
-      {
-        "name": "aprBps",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "TierLiqDiscountBpsSet",
     "inputs": [
       {
@@ -2528,17 +2479,6 @@
       },
       {
         "name": "maxAllowed",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "InvalidStakingAprBps",
-    "inputs": [
-      {
-        "name": "bps",
         "type": "uint256",
         "internalType": "uint256"
       }

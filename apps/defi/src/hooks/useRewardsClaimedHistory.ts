@@ -15,13 +15,12 @@ interface RewardsClaimedHistory {
  * diamond) log-index. There's no on-chain getter for either running
  * total — the events carry the full history, so we sum them client-side.
  *
- * Three surfaces consume this: `<StakingRewardsClaim>` (Buy VPFI),
- * `<InteractionRewardsClaim>` (Claim Center), and the new dashboard
- * `<RewardsSummaryCard>`. Hoisting the scan into a shared hook keeps
- * the three lifetime numbers in lockstep — a stale cache that hasn't
- * yet seen the latest claim will show identical figures everywhere
- * rather than a paradoxical mix where the dashboard total disagrees
- * with the per-card breakdown.
+ * Two surfaces consume this: `<InteractionRewardsClaim>` (Claim
+ * Center) and the dashboard `<RewardsSummaryCard>`. Hoisting the scan
+ * into a shared hook keeps the lifetime numbers in lockstep — a stale
+ * cache that hasn't yet seen the latest claim will show identical
+ * figures everywhere rather than a paradoxical mix where the dashboard
+ * total disagrees with the per-card breakdown.
  *
  * Same caveat as inherited from `useLogIndex`: a fresh browser cache
  * shows 0 (or partial) lifetime until the per-(chain, diamond) log-

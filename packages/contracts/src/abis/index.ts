@@ -64,7 +64,6 @@ import VPFIDiscountAccumulatorFacetABI from './VPFIDiscountAccumulatorFacet.json
 import MirrorTierReceiverFacetABI from './MirrorTierReceiverFacet.json';
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
-import StakingRewardsFacetABI from './StakingRewardsFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
 // VpfiBuyReceiver) along with the fixed-rate sale.
@@ -150,7 +149,6 @@ export {
   VPFIDiscountAccumulatorFacetABI,
   MirrorTierReceiverFacetABI,
   ProtocolBroadcastFacetABI,
-  StakingRewardsFacetABI,
   InteractionRewardsFacetABI,
   RewardReporterFacetABI,
   ConfigFacetABI,
@@ -227,7 +225,6 @@ export const DIAMOND_ABI = [
   ...VPFIDiscountAccumulatorFacetABI,
   ...MirrorTierReceiverFacetABI,
   ...ProtocolBroadcastFacetABI,
-  ...StakingRewardsFacetABI,
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,
   ...ConfigFacetABI,

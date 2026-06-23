@@ -36,7 +36,6 @@ contract ConfigFacetTest is Test {
     uint256 constant DEFAULT_MAX_INCENTIVE_BPS = 300;
     uint256 constant DEFAULT_VOL_LTV_BPS = 11_000;
     uint256 constant DEFAULT_RENTAL_BUFFER_BPS = 500;
-    uint256 constant DEFAULT_STAKING_APR_BPS = 500;
 
     function setUp() public {
         owner = address(this);
@@ -82,11 +81,6 @@ contract ConfigFacetTest is Test {
         (uint256 vltv, uint256 rb) = ConfigFacet(address(diamond)).getRiskConfig();
         assertEq(vltv, DEFAULT_VOL_LTV_BPS);
         assertEq(rb, DEFAULT_RENTAL_BUFFER_BPS);
-
-        assertEq(
-            ConfigFacet(address(diamond)).getStakingAprBps(),
-            DEFAULT_STAKING_APR_BPS
-        );
 
         (uint256 a, uint256 b, uint256 c, uint256 d) =
             ConfigFacet(address(diamond)).getVpfiTierThresholds();
@@ -244,39 +238,7 @@ contract ConfigFacetTest is Test {
         ConfigFacet(address(diamond)).setRiskConfig(11_000, 5_000);
     }
 
-    // ─── setStakingApr ───────────────────────────────────────────────────
-
-    function testSetStakingAprUpdatesEffectiveValue() public {
-        ConfigFacet(address(diamond)).setStakingApr(750);
-        assertEq(ConfigFacet(address(diamond)).getStakingAprBps(), 750);
-    }
-
-    function testSetStakingAprRevertsAboveCap() public {
-        // T-033 setter range audit: tightened from `≤ BASIS_POINTS`
-        // (100% APR) to `≤ STAKING_APR_BPS_MAX` (20% APR). Setter now
-        // surfaces `ParameterOutOfRange` instead of the legacy
-        // `InvalidStakingAprBps`.
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IVaipakamErrors.ParameterOutOfRange.selector,
-                // forge-lint: disable-next-line(unsafe-typecast)
-                bytes32("stakingAprBps"),
-                uint256(10_001),
-                uint256(0),
-                uint256(LibVaipakam.STAKING_APR_BPS_MAX)
-            )
-        );
-        ConfigFacet(address(diamond)).setStakingApr(10_001);
-    }
-
-    function testSetStakingAprZeroResetsToDefault() public {
-        ConfigFacet(address(diamond)).setStakingApr(750);
-        ConfigFacet(address(diamond)).setStakingApr(0);
-        assertEq(
-            ConfigFacet(address(diamond)).getStakingAprBps(),
-            DEFAULT_STAKING_APR_BPS
-        );
-    }
+    // #687-B: the setStakingApr tests were removed with the 5% VPFI staking yield.
 
     // ─── setVpfiTierThresholds ───────────────────────────────────────────
 
@@ -368,7 +330,6 @@ contract ConfigFacetTest is Test {
 
     function testGetProtocolConfigBundleReturnsEffectiveValues() public {
         ConfigFacet(address(diamond)).setFeesConfig(150, 20);
-        ConfigFacet(address(diamond)).setStakingApr(800);
 
         (
             uint256 tFee,
@@ -378,7 +339,6 @@ contract ConfigFacetTest is Test {
             uint256 inc,
             uint256 vltv,
             uint256 rb,
-            uint256 apr,
             uint256[4] memory tiers,
             uint256[4] memory disc,
             // Range Orders Phase 1 master kill-switch flags. All 3
@@ -403,7 +363,6 @@ contract ConfigFacetTest is Test {
         // Overridden:
         assertEq(tFee, 150);
         assertEq(lFee, 20);
-        assertEq(apr, 800);
         // Untouched — resolve to defaults:
         assertEq(h, DEFAULT_LIQ_HANDLING_FEE_BPS);
         assertEq(sl, DEFAULT_MAX_SLIPPAGE_BPS);
@@ -430,12 +389,10 @@ contract ConfigFacetTest is Test {
     function testGetProtocolConstantsMatchesLibrary() public view {
         (
             uint256 minHf,
-            uint256 stakingCap,
             uint256 interactionCap,
             uint256 maxClaimDays
         ) = ConfigFacet(address(diamond)).getProtocolConstants();
         assertEq(minHf, LibVaipakam.MIN_HEALTH_FACTOR);
-        assertEq(stakingCap, LibVaipakam.VPFI_STAKING_POOL_CAP);
         assertEq(interactionCap, LibVaipakam.VPFI_INTERACTION_POOL_CAP);
         assertEq(maxClaimDays, LibVaipakam.MAX_INTERACTION_CLAIM_DAYS);
     }

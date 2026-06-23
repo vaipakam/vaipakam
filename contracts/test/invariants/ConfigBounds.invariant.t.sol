@@ -28,9 +28,9 @@ import {HelperTest} from "../HelperTest.sol";
  *           MAX_SLIPPAGE_BPS  = 2_500 (25%)
  *           MAX_INCENTIVE_BPS = 2_000 (20%)
  *           MAX_DISCOUNT_BPS  = 9_000 (90%)
- *         plus volatilityLtvThresholdBps > 10_000 when non-zero, staking APR
- *         capped at 100%, and tier monotonicity (strict thresholds up to t3,
- *         ≤ to t4; non-strict on discount BPS T1..T4).
+ *         plus volatilityLtvThresholdBps > 10_000 when non-zero, and tier
+ *         monotonicity (strict thresholds up to t3, ≤ to t4; non-strict on
+ *         discount BPS T1..T4).
  *
  *         Minimal diamond: only AccessControlFacet + ConfigFacet needed.
  *         No lending machinery deployed so the fuzz surface stays tight.
@@ -84,7 +84,6 @@ contract ConfigBoundsInvariant is Test {
     uint256 private constant MAX_SLIPPAGE_BPS = 2_500;
     uint256 private constant MAX_INCENTIVE_BPS = 2_000;
     uint256 private constant MAX_DISCOUNT_BPS = 9_000;
-    uint256 private constant MAX_STAKING_APR_BPS = 10_000;
 
     /// @notice Fees resolved through ConfigFacet never exceed MAX_FEE_BPS.
     function invariant_FeesWithinCap() public view {
@@ -113,11 +112,7 @@ contract ConfigBoundsInvariant is Test {
         assertLe(rental, MAX_FEE_BPS, "rentalBufferBps > cap");
     }
 
-    /// @notice Staking APR resolved through the getter stays within 100%.
-    function invariant_StakingAprWithinCap() public view {
-        uint256 apr = ConfigFacet(address(diamond)).getStakingAprBps();
-        assertLe(apr, MAX_STAKING_APR_BPS, "stakingAprBps > 100%");
-    }
+    // #687-B: invariant_StakingAprWithinCap removed with the 5% VPFI staking yield.
 
     /// @notice Tier thresholds are strictly increasing up to T3 and
     ///         non-decreasing T3 → T4, regardless of how setters were
@@ -173,10 +168,6 @@ contract ConfigHandler is Test {
 
     function setRiskConfig(uint16 volLtv, uint16 rental) external {
         try ConfigFacet(diamond).setRiskConfig(volLtv, rental) {} catch {}
-    }
-
-    function setStakingApr(uint16 apr) external {
-        try ConfigFacet(diamond).setStakingApr(apr) {} catch {}
     }
 
     function setVpfiTierThresholds(

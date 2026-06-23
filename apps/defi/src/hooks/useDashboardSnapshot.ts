@@ -13,7 +13,7 @@ const STALE_MS = 30_000;
  * One on-chain `eth_call` to
  * `MetricsDashboardFacet.getUserDashboardSnapshot(user)` replaces
  * ~5 separate hook fetches the legacy implementation issued
- * (`useStakingRewards`, `useInteractionRewards`,
+ * (`useInteractionRewards`,
  * `useUserVPFI`, `useVPFIDiscountConsent`, plus the per-side
  * counts derived from `useUserLoans` + `useMyOffers`).
  *
@@ -25,7 +25,6 @@ const STALE_MS = 30_000;
  * switching without a full reload (per-user mini-store).
  */
 export interface DashboardSnapshot {
-  stakingRewardsPending: bigint;
   vaultVpfiBalance: bigint;
   vpfiTier: number;
   interactionRewardsPending: bigint;
@@ -76,7 +75,6 @@ export function useDashboardSnapshot(user: Address | null) {
       const raw = await (
         diamond as unknown as {
           getUserDashboardSnapshot: (u: Address) => Promise<{
-            stakingRewardsPending: bigint;
             vaultVpfiBalance: bigint;
             vpfiTier: number;
             interactionRewardsPending: bigint;
@@ -92,7 +90,6 @@ export function useDashboardSnapshot(user: Address | null) {
       ).getUserDashboardSnapshot(user);
 
       const next: DashboardSnapshot = {
-        stakingRewardsPending: BigInt(raw.stakingRewardsPending ?? 0),
         vaultVpfiBalance: BigInt(raw.vaultVpfiBalance ?? 0),
         vpfiTier: Number(raw.vpfiTier ?? 0),
         interactionRewardsPending: BigInt(raw.interactionRewardsPending ?? 0),

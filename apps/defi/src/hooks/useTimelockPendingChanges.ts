@@ -97,7 +97,7 @@ export interface PendingChange {
    *  any specific card. */
   knobId: string | null;
   /** Function name decoded from the calldata. Used in the badge
-   *  copy ("1 PENDING — setStakingApr"). */
+   *  copy ("1 PENDING — setTreasuryFee"). */
   functionName: string;
   /** Decoded args. Best-effort; some calls may fail to decode if
    *  the ABI doesn't match (shouldn't happen in practice since the

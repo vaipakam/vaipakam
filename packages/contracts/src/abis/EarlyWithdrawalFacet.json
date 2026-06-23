@@ -535,11 +535,6 @@
   },
   {
     "type": "error",
-    "name": "NoStakingRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NonLiquidAsset",
     "inputs": []
   },
@@ -863,11 +858,6 @@
   {
     "type": "error",
     "name": "SourceChainIdNotExpected",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "StakingPoolExhausted",
     "inputs": []
   },
   {

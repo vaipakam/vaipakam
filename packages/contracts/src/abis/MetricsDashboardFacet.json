@@ -527,11 +527,6 @@
         "internalType": "struct MetricsDashboardFacet.DashboardScalars",
         "components": [
           {
-            "name": "stakingRewardsPending",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "vaultVpfiBalance",
             "type": "uint256",
             "internalType": "uint256"

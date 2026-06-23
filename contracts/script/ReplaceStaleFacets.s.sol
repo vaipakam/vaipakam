@@ -177,18 +177,20 @@ contract ReplaceStaleFacets is Script {
     ///      first ReplaceStaleFacets Add). Replace targets a fresh
     ///      ConfigFacet bytecode for consolidation.
     function _configFacetExistingSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](26);
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
         s[2] = ConfigFacet.setRiskConfig.selector;
-        s[3] = ConfigFacet.setStakingApr.selector;
+        // #687-B: setStakingApr (was [3]) / getStakingAprBps (was [10]) removed
+        // with the 5% staking yield; tail entries fill the freed slots.
+        s[3] = ConfigFacet.getLoanInitiationFeeBps.selector;
         s[4] = ConfigFacet.setVpfiTierThresholds.selector;
         s[5] = ConfigFacet.setVpfiTierDiscountBps.selector;
         s[6] = ConfigFacet.setFallbackSplit.selector;
         s[7] = ConfigFacet.getFeesConfig.selector;
         s[8] = ConfigFacet.getLiquidationConfig.selector;
         s[9] = ConfigFacet.getRiskConfig.selector;
-        s[10] = ConfigFacet.getStakingAprBps.selector;
+        s[10] = ConfigFacet.getLifMatcherFeeBps.selector; // #687-B: reused (was getStakingAprBps)
         s[11] = ConfigFacet.getFallbackSplit.selector;
         s[12] = ConfigFacet.getVpfiTierThresholds.selector;
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
@@ -204,8 +206,8 @@ contract ReplaceStaleFacets is Script {
         s[23] = ConfigFacet.setNotificationFee.selector;
         s[24] = ConfigFacet.getNotificationFeeConfig.selector;
         s[25] = ConfigFacet.getTreasuryFeeBps.selector;
-        s[26] = ConfigFacet.getLoanInitiationFeeBps.selector;
-        s[27] = ConfigFacet.getLifMatcherFeeBps.selector;
+        // #687-B: former [26] getLoanInitiationFeeBps + [27] getLifMatcherFeeBps
+        // relocated into the slots freed by the removed staking selectors.
     }
 
     /// @dev The 27 ConfigFacet selectors NOT yet registered on the

@@ -24,7 +24,7 @@
  *
  * Why frontend-curated zones (vs on-chain): operational opinion
  * evolves faster than contract upgrades. Adjusting "what's safe vs
- * cautious for the staking APR" should not require a `diamondCut`.
+ * cautious for the treasury fee" should not require a `diamondCut`.
  * The hard bounds — which DO live on-chain — already prevent
  * actually-degenerate values; the soft zones are advisory, not
  * load-bearing for security.
@@ -191,27 +191,6 @@ export const ADMIN_KNOBS: KnobMeta[] = [
       args: [{ name: 'newBps', type: 'uint16' }],
     },
     infoAnchor: 'lif-matcher-kickback',
-    hasNumericRange: true,
-  },
-  {
-    id: 'stakingAprBps',
-    label: 'Staking APR',
-    short: 'VPFI staking annual return. 0 disables rewards while preserving stake.',
-    category: 'fees',
-    unit: 'bps',
-    hardMin: '0',
-    hardMax: '2000', // STAKING_APR_BPS_MAX = 20%
-    safeMin: '500', // 5%
-    safeMax: '1500', // 15%
-    midMin: '0',
-    midMax: '1800', // 18%
-    getter: { facet: 'ConfigFacet', fn: 'getStakingAprBps', returns: 'uint16' },
-    setter: {
-      facet: 'ConfigFacet',
-      fn: 'setStakingApr',
-      args: [{ name: 'aprBps', type: 'uint16' }],
-    },
-    infoAnchor: 'staking-apr',
     hasNumericRange: true,
   },
 

@@ -494,11 +494,6 @@
   },
   {
     "type": "error",
-    "name": "NoStakingRewardsToClaim",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NoSwapAdaptersConfigured",
     "inputs": []
   },
@@ -850,11 +845,6 @@
         "internalType": "uint256"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "StakingPoolExhausted",
-    "inputs": []
   },
   {
     "type": "error",

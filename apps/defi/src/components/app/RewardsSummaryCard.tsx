@@ -1,8 +1,6 @@
 import { useTranslation } from 'react-i18next';
-import { Coins, Activity, ChevronRight } from 'lucide-react';
+import { Activity, ChevronRight } from 'lucide-react';
 import { L as Link } from '../L';
-import { useStakingRewards } from '../../hooks/useStakingRewards';
-import { useStakingApr } from '../../hooks/useStakingApr';
 import { useInteractionRewards } from '../../hooks/useInteractionRewards';
 import { useRewardsClaimedHistory } from '../../hooks/useRewardsClaimedHistory';
 import { TokenAmount } from './TokenAmount';
@@ -15,50 +13,33 @@ interface Props {
 
 /**
  * Aspirational rewards summary on the Dashboard. Surfaces the
- * connected wallet's combined VPFI rewards picture in one card:
+ * connected wallet's VPFI interaction-rewards picture in one card:
  *
- *   - Big "total earned" headline = sum of (staking pending +
- *     staking lifetime claimed + interaction pending + interaction
- *     lifetime claimed).
- *   - Two breakdown rows — one per reward stream — each showing
- *     pending + lifetime claimed and a chevron deep-link to the
- *     full claim card on the appropriate page (staking lives on
- *     Buy VPFI; interaction lives on Claim Center).
+ *   - Big "total earned" headline = interaction pending +
+ *     interaction lifetime claimed.
+ *   - A breakdown row showing pending + lifetime claimed and a
+ *     chevron deep-link to the full claim card on Claim Center.
  *
  * Always renders for connected wallets, even at all-zero state. The
  * "0 VPFI earned, here's how to start" framing is itself the value
- * — a fresh user otherwise has no signal that the rewards programs
- * exist short of wandering into Buy VPFI or Claim Center.
+ * — a fresh user otherwise has no signal that the rewards program
+ * exists short of wandering into Claim Center.
  *
- * Data sources are the same hooks the underlying claim cards use,
+ * Data sources are the same hooks the underlying claim card uses,
  * so the dashboard can never disagree with the per-card breakdown
  * about either a pending number or a lifetime number.
  */
 export function RewardsSummaryCard({ address }: Props) {
   const { t } = useTranslation();
-  const { pending: stakingPending, stale: stakingStale } = useStakingRewards(
-    address ?? null,
-  );
   const { pending: interactionPending, stale: interactionStale } =
     useInteractionRewards(address ?? null);
-  const { stakingLifetimeClaimed, interactionLifetimeClaimed } =
-    useRewardsClaimedHistory(address);
-  // Live staking APR for the empty-state hint's `{{apr}}%` placeholder.
-  // Goes through the live read so governance rate changes flow through
-  // to the copy without a frontend redeploy — same convention as the
-  // rest of the app's APR-mentioning surfaces.
-  const { aprPct } = useStakingApr();
+  const { interactionLifetimeClaimed } = useRewardsClaimedHistory(address);
 
   if (!address) return null;
 
   const totalEarned =
-    (stakingStale ? 0n : stakingPending) +
-    (interactionStale ? 0n : interactionPending) +
-    stakingLifetimeClaimed +
-    interactionLifetimeClaimed;
+    (interactionStale ? 0n : interactionPending) + interactionLifetimeClaimed;
 
-  const stakingTotal =
-    (stakingStale ? 0n : stakingPending) + stakingLifetimeClaimed;
   const interactionTotal =
     (interactionStale ? 0n : interactionPending) + interactionLifetimeClaimed;
 
@@ -112,22 +93,10 @@ export function RewardsSummaryCard({ address }: Props) {
               marginTop: 6,
             }}
           >
-            {t('rewardsSummary.freshUserHint', { apr: aprPct })}
+            {t('rewardsSummary.freshUserHint')}
           </div>
         )}
       </div>
-
-      {/* Staking row — links to Buy VPFI's StakingRewardsClaim card. */}
-      <RewardRow
-        icon={<Coins size={16} aria-hidden="true" />}
-        title={t('rewardsSummary.stakingTitle')}
-        subtitle={t('rewardsSummary.stakingSubtitle')}
-        pending={stakingStale ? 0n : stakingPending}
-        lifetime={stakingLifetimeClaimed}
-        total={stakingTotal}
-        linkTo="/buy-vpfi#staking-rewards"
-        linkLabel={t('rewardsSummary.manageOnBuyVpfi')}
-      />
 
       {/* Interaction row — links to Claim Center's InteractionRewardsClaim. */}
       <RewardRow

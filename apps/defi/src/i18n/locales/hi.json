@@ -370,7 +370,6 @@
   },
   "buyVpfi": {
     "preconnect": {
-      "tagline": "अपने loans पर कम fees चुकाएँ और stake किए गए VPFI पर yield कमाएँ।",
       "whatTitle": "VPFI क्या है?",
       "whatBody1": "VPFI Vaipakam का protocol token है — आप इसे ETH से खरीद सकते हैं, अपने personal vault में रख सकते हैं और platform पर उपयोग कर सकते हैं। कोई lock-up period नहीं; यह freely transferable है।",
       "whatBody2": "VPFI रखने से आप protocol की सफलता से दो व्यावहारिक तरीकों से जुड़ते हैं: Vaipakam fees पर discount मिलता है (lending पर अधिक बचता है और borrowing पर कम खर्च होता है), और vault में रहने तक staking yield मिलता है।",
@@ -394,7 +393,6 @@
     "step1SubtitleBridged": "{{chain}} से सीधे — कोई भी क्रॉस-चेन रूटिंग आपके लिए संभाली जाती है। VPFI इस चेन पर आपके वॉलेट में आता है।",
     "step1SubtitlePending": "खरीद एडॉप्टर {{chain}} पर तैनात हो रहा है। आप यहां जारी रख सकते हैं — चेन स्विच की आवश्यकता नहीं।",
     "step2Title": "अपने Vault में VPFI deposit / stake करें",
-    "step2Info": "Staking सभी के लिए खुला है — भाग लेने के लिए loan की आवश्यकता नहीं। Vault में deposit किया गया VPFI वहाँ रहने तक {{apr}}% APR कमाता है। पहली बार staking कर रहे हैं? पहले deposit पर आपका Vault अपने-आप बन जाएगा — कोई setup नहीं चाहिए।",
     "step3Title": "अपने Vault से VPFI withdraw / unstake करें",
     "buy": "VPFI खरीदें",
     "buying": "खरीद रहे हैं…",
@@ -517,7 +515,6 @@
   "rewardsSummary": {
     "title": "आपके VPFI पुरस्कार",
     "totalEarnedLabel": "कुल अर्जित",
-    "freshUserHint": "आपने अभी तक कोई VPFI पुरस्कार नहीं कमाया है। {{apr}}% APR कमाने के लिए अपने Vault में VPFI स्टेक करें, या प्लेटफ़ॉर्म इंटरैक्शन रिबेट जमा करना शुरू करने के लिए ऋण लें।",
     "stakingTitle": "स्टेकिंग प्रतिफल",
     "stakingSubtitle": "अपने Vault में रखे VPFI पर प्रोटोकॉल APR कमाएं।",
     "interactionTitle": "प्लेटफ़ॉर्म-इंटरैक्शन पुरस्कार",
@@ -1262,7 +1259,6 @@
     "vaultBalance": "Vault VPFI शेष",
     "vaultTooltip": "इस चेन पर प्रति-उपयोगकर्ता Vault में वर्तमान में स्टेक किया गया VPFI। ऋणकर्ता शुल्क छूट Tier में गिना जाता है।",
     "shareCirculating": "परिसंचारी हिस्सा",
-    "shareTooltip": "इस chain के VPFI supply पर प्रभावी स्वामित्व — wallet balance प्लस vault में लॉक balance, circulating से विभाजित। Vault VPFI अभी भी user का है; यह केवल tier discount / {{apr}}% APR के लिए लॉक है।",
     "circulatingThisChain": "परिसंचारी (यह चेन)",
     "remainingMintable": "शेष मिंट योग्य",
     "tokenLabel": "टोकन",
@@ -1277,7 +1273,6 @@
     "currentTier": "वर्तमान Tier",
     "noDiscountYet": "अभी कोई छूट नहीं",
     "vaultVpfi": "Vault VPFI",
-    "vaultCountsAsStaked": "Vault VPFI staked के रूप में गिना जाता है ({{apr}}% APR)",
     "statusLabel": "स्थिति",
     "inactiveOff": "निष्क्रिय · छूट सहमति बंद",
     "inactiveBelowTier1": "निष्क्रिय · Tier 1 से नीचे (Vault में {{tier1Min}} VPFI)",
@@ -1329,7 +1324,6 @@
     "unstakeTitle": "Vault से VPFI अनस्टेक करें",
     "unstakeSubtitle": "{{chain}} पर Vault से VPFI को वापस वॉलेट में ले जाएँ। यदि Vault शेष Tier सीमा से नीचे गिरता है, तो छूट Tier भी गिर जाता है।",
     "unstakeAmount": "अनस्टेक करने के लिए VPFI राशि",
-    "unstakeWarning": "Vault VPFI borrower fee discount tier की ओर गिना जाता है और {{apr}}% APR कमाता है। Unstaking tokens को wallet में वापस ले जाता है — यदि शेष vault balance tier threshold से नीचे गिरता है, तो अगले loan पर discount भी कम हो जाता है।",
     "unstakeButton": "वॉलेट में निकालें"
   },
   "alertsPage": {
@@ -1529,7 +1523,6 @@
     "dashboardYourLoans": "इस चेन पर हर वह लोन जिसमें कनेक्ट किया गया वॉलेट शामिल है — ऋणदाता, ऋणकर्ता या दोनों के रूप में। प्रत्येक रो HF, LTV, गिरवी, रीपे और क्लेम कंट्रोल सहित पूर्ण पोजीशन पेज से लिंक करती है।",
     "dashboardVpfiPanel": "VPFI प्रोटोकॉल टोकन है। यह कार्ड इस चेन पर वॉलेट + Vault बैलेंस, सर्कुलेटिंग सप्लाई का हिस्सा और शेष माइंट करने योग्य कैप दिखाता है। कैनोनिकल चेन लॉक/रिलीज़ करती है; मिरर चेन Chainlink CCIP CCT के माध्यम से माइंट/बर्न करती हैं।",
     "dashboardFeeDiscountConsent": "प्रोटोकॉल को Vault से VPFI में रियायती शुल्क का भुगतान करने के लिए ऑप्ट-इन। डिस्काउंट Vault VPFI बैलेंस के साथ बढ़ता है: Tier 1 (≥{{tier1Min}} VPFI) पर {{tier1Discount}}%, Tier 2 (≥{{tier2Min}}) पर {{tier2Discount}}%, Tier 3 (≥{{tier3Min}}) पर {{tier3Discount}}%, Tier 4 (>{{tier4Min}}) पर {{tier4Discount}}%।",
-    "dashboardRewardsSummary": "दोनों स्ट्रीम पर आपके VPFI पुरस्कारों का संयुक्त दृश्य: स्टेकिंग प्रतिफल (Vault VPFI पर {{apr}}% APR) और प्लेटफ़ॉर्म इंटरैक्शन पुरस्कार (हर ऋण के लिए दैनिक VPFI हिस्सा जिसमें आप शामिल हैं)। संबंधित पृष्ठ पर पूर्ण दावा कार्ड पर जाने के लिए एक पंक्ति पर क्लिक करें।",
     "offerBookFilters": "नीचे दी गई मार्केट सूचियों को एसेट, साइड, स्टेटस और अन्य मानदंडों के अनुसार सीमित करें। फ़िल्टर ऋणदाता / ऋणकर्ता ऑफ़र पर लागू होते हैं — कनेक्ट किए गए वॉलेट के अपने सक्रिय ऑफ़र (ऊपर दिखाए गए) हमेशा फ़िल्टर की परवाह किए बिना दिखते हैं।",
     "offerBookYourActiveOffers": "इस चेन पर कनेक्ट किए गए वॉलेट द्वारा बनाए गए ऑफ़र जो अभी तक स्वीकार नहीं हुए हैं। किसी के स्वीकार करने से पहले कभी भी रद्द किए जा सकते हैं; स्वीकार होने पर लोन लाइफसाइकल Dashboard के \"Your Loans\" में चली जाती है।",
     "offerBookLenderOffers": "उधार देने के लिए तैयार ऋणदाता्स द्वारा पोस्ट किए गए ऑफ़र। एक ऋणकर्ता इनमें से किसी एक को स्वीकार करता है तो लोन शुरू होता है: ऋणकर्ता का गिरवी लॉक हो जाता है, प्रिंसिपल एसेट ऋणकर्ता के वॉलेट में पहुंचता है, और रीपेमेंट तक ब्याज जमा होता रहता है। शुरू होते समय HF ≥ 1.5 होना चाहिए।",
@@ -1575,7 +1568,6 @@
     "loanDetailsParties": "ऋणदाता और ऋणकर्ता के एड्रेस, उनके एसेट रखने वाले प्रति-उपयोगकर्ता Vault प्रॉक्सी, और हर साइड को लोन शुरू होने पर मिले पोजीशन NFT। हर NFT उस साइड के दावे का बेयरर इंस्ट्रूमेंट है — इसे खोना दावे को खोना है।",
     "loanDetailsActionsLender": "इस लोन पर ऋणदाता के लिए उपलब्ध क्रियाएँ। लोन सेटल होने पर क्लेम (प्रिंसिपल + ब्याज लौटाता है, {{treasuryFee}}% ट्रेज़री कटौती के बाद)। लोन के बीच में ऋणदाता NFT को खरीदार को बेचने के लिए अर्ली विदड्रॉल शुरू करें। कोई भी (ऋणदाता सहित) Liquidate ट्रिगर कर सकता है जब HF < 1 हो या ग्रेस अवधि समाप्त हो जाए। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
     "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "buyVpfiDiscountStatus": "इस chain पर सक्रिय VPFI fee-discount tier। Tier vault VPFI balance से सेट होता है: Tier 1 ≥{{tier1Min}}, Tier 2 ≥{{tier2Min}}, Tier 3 ≥{{tier3Min}}, Tier 4 >{{tier4Min}}। Discount केवल liquid loans पर लागू होता है और केवल जब Dashboard पर platform-level consent toggle चालू हो। Vault VPFI staked भी गिना जाता है और {{apr}}% staking APR कमाता है।",
     "buyVpfiBuy": "स्टेप 1 — ETH को VPFI में बदलें। कैनोनिकल चेन पर कॉल सीधे Diamond पर जाती है; ऑफ़-कैनोनिकल पर यह buy adapter और एक Chainlink CCIP राउंड-ट्रिप से होकर जाती है। प्रति-tx और रोलिंग कैप लागू होते हैं (TokenomicsTechSpec देखें)। VPFI वॉलेट को डिलीवर होता है, Vault में ऑटो-डिपॉज़िट नहीं।",
     "buyVpfiUnstake": "इस चेन पर VPFI को Vault से वॉलेट में वापस ले जाएँ। डिस्काउंट टियर रियल-टाइम में घटाता है — टाइम-वेटेड एक्युमुलेटर हर खुले लोन को नए (कम) बैलेंस पर तुरंत री-स्टांप करता है, इसलिए एक unstake उस क्षण से शुल्क-डिस्काउंट गणित के लिए प्रभावी होता है।",
     "rewardsOverview": "इस chain पर दो reward streams संचित होती हैं। Vault में रखा VPFI passive {{apr}}% APR (staking pool) कमाता है। एक loan पर सेटल किया गया प्रत्येक USD interest interaction pool का दैनिक हिस्सा कमाता है। Claim करने पर दोनों सीधे current chain पर mint होते हैं — कोई bridging नहीं।",
