@@ -13,8 +13,6 @@
  *   - `runPeriodicPreNotify`     — push borrowers (priority) and
  *                                  lenders (courtesy) before the
  *                                  next interest-payment checkpoint.
- *   - `runBuyWatchdog`           — cross-chain VPFI buy
- *                                  reconciliation watchdog.
  *   - `pruneOldDiagErrors`       — diagnostics retention prune.
  *
  * `runDailyOracleSnapshot` USED to live here but moved to
@@ -66,7 +64,6 @@
 
 import { resolveEnv, type Env, type WorkerEnv } from './env';
 import { runPeriodicPreNotify } from './periodicPreNotify';
-import { runBuyWatchdog } from './buyWatchdog';
 import { handle0xQuote, handle1inchQuote } from './quoteProxy';
 import { handleOpenSeaListingPost } from './openseaProxy';
 import { handleIntentFusionPost } from './intentFusionPost';
@@ -110,12 +107,6 @@ export default {
       runPeriodicPreNotify(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] runPeriodicPreNotify pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runBuyWatchdog(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[agent] runBuyWatchdog pass failed:', err);
       }),
     );
     ctx.waitUntil(

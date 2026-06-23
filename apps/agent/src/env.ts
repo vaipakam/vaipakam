@@ -51,7 +51,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
  *   - `TG_BOT_TOKEN`       — Telegram bot token. Powers the
  *                            `/tg/webhook` handshake AND the outbound
  *                            notifications dispatched by
- *                            `periodicPreNotify` and `buyWatchdog`.
+ *                            `periodicPreNotify`.
  *                            Secrets Store binding (T-078).
  *   - `TG_BOT_USERNAME`    — public Telegram bot handle. A plain
  *                            `var` — not a secret.
