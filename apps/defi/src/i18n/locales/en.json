@@ -222,7 +222,7 @@
   "vpfiDiscountConsent": {
     "title": "Fee-discount consent",
     "bodyPrefix": "When enabled, the protocol may deduct VPFI from the vault to pay the discounted fee on both the borrower Loan Initiation Fee and / or the lender Yield Fee. The discount scales with the vault VPFI balance — {{tier1Discount}}% off at Tier 1 (≥ {{tier1Min}} VPFI), {{tier2Discount}}% at Tier 2 (≥ {{tier2Min}}), {{tier3Discount}}% at Tier 3 (≥ {{tier3Min}}), and {{tier4Discount}}% at Tier 4 (> {{tier4Min}}). Acquire and deposit VPFI on ",
-    "buyVpfiLink": "Buy VPFI",
+    "buyVpfiLink": "VPFI Vault",
     "bodySuffix": ".",
     "stateLoading": "Loading…",
     "stateEnabled": "Enabled",
@@ -266,7 +266,7 @@
     "title": "Stake VPFI",
     "managedOnBaseSubtitle": "VPFI staking is managed on {{canonicalName}}. Switch chains to stake or check your tier.",
     "switchToBaseLabel": "Switch to {{canonicalName}}",
-    "noStakeYetBody": "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the Buy VPFI page.",
+    "noStakeYetBody": "Stake VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the VPFI Vault page.",
     "stakeNowLabel": "Stake VPFI now",
     "tierPendingTitle": "Tier update pending propagation",
     "tierPendingBody": "Your stake qualifies for a tier, but mirror chains haven't been notified yet. Click below to push the update; the protocol pays the cross-chain fee.",
@@ -1186,7 +1186,7 @@
     "interactionSubtitle": "Earn a daily VPFI share for every loan you participate in.",
     "pendingLabel": "Pending",
     "claimedLabel": "Claimed",
-    "manageOnBuyVpfi": "Manage staking on Buy VPFI",
+    "manageOnBuyVpfi": "Manage staking in VPFI Vault",
     "openClaimCenter": "Claim on Claim Center"
   },
   "stakingRewards": {

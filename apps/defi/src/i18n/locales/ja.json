@@ -525,7 +525,6 @@
     "interactionSubtitle": "参加した各ローンに対して毎日 VPFI シェアを獲得します。",
     "pendingLabel": "保留中",
     "claimedLabel": "請求済み",
-    "manageOnBuyVpfi": "Buy VPFI でステーキングを管理",
     "openClaimCenter": "Claim Center で請求"
   },
   "stakingRewards": {
@@ -1214,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "手数料割引同意",
     "bodyPrefix": "有効化されると、プロトコルは借り手のLoan Initiation Feeおよび/または貸し手のYield Feeの割引後手数料を支払うために、VaultからVPFIを差し引くことができます。割引はVaultのVPFI残高に応じてスケールします — Tier 1 (≥ {{tier1Min}} VPFI) で{{tier1Discount}}%オフ、Tier 2 (≥ {{tier2Min}}) で{{tier2Discount}}%、Tier 3 (≥ {{tier3Min}}) で{{tier3Discount}}%、Tier 4 (> {{tier4Min}}) で{{tier4Discount}}%。VPFIの取得と入金は ",
-    "buyVpfiLink": "VPFIを購入",
     "bodySuffix": "から行えます。",
     "stateLoading": "読み込み中…",
     "stateEnabled": "有効",

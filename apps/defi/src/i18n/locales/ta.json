@@ -524,7 +524,6 @@
     "interactionSubtitle": "நீங்கள் பங்கேற்கும் ஒவ்வொரு கடனுக்கும் தினசரி VPFI பங்கைப் பெறுங்கள்.",
     "pendingLabel": "நிலுவை",
     "claimedLabel": "கோரப்பட்டது",
-    "manageOnBuyVpfi": "Buy VPFI-ல் ஸ்டேக்கிங்கை நிர்வகியுங்கள்",
     "openClaimCenter": "Claim Center-ல் கோரிக்கை"
   },
   "stakingRewards": {
@@ -1213,7 +1212,6 @@
   "vpfiDiscountConsent": {
     "title": "கட்டண தள்ளுபடி ஒப்புதல்",
     "bodyPrefix": "செயல்படுத்தப்பட்டால், borrower Loan Initiation Fee மற்றும் / அல்லது lender Yield Fee ஆகியவற்றில் discounted fee செலுத்த protocol vault-வில் இருந்து VPFI-ஐ கழிக்கலாம். தள்ளுபடி vault VPFI இருப்புடன் அளவிடுகிறது — Tier 1 (≥ {{tier1Min}} VPFI) இல் {{tier1Discount}}% off, Tier 2 (≥ {{tier2Min}}) இல் {{tier2Discount}}%, Tier 3 (≥ {{tier3Min}}) இல் {{tier3Discount}}%, மற்றும் Tier 4 (> {{tier4Min}}) இல் {{tier4Discount}}%. VPFI-ஐ வாங்கி deposit செய்ய ",
-    "buyVpfiLink": "VPFI ஐ வாங்கவும்",
     "bodySuffix": " இல் வைப்பு செய்யவும்.",
     "stateLoading": "ஏற்றுகிறது…",
     "stateEnabled": "செயல்படுத்தப்பட்டது",

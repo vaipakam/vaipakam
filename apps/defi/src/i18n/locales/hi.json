@@ -524,7 +524,6 @@
     "interactionSubtitle": "हर ऋण के लिए जिसमें आप भाग लेते हैं, दैनिक VPFI हिस्सा कमाएं।",
     "pendingLabel": "लंबित",
     "claimedLabel": "दावा किया गया",
-    "manageOnBuyVpfi": "Buy VPFI पर स्टेकिंग प्रबंधित करें",
     "openClaimCenter": "Claim Center पर दावा करें"
   },
   "stakingRewards": {
@@ -1213,7 +1212,6 @@
   "vpfiDiscountConsent": {
     "title": "शुल्क छूट सहमति",
     "bodyPrefix": "सक्षम होने पर, प्रोटोकॉल ऋणकर्ता की Loan Initiation Fee और / या ऋणदाता की Yield Fee पर discounted fee चुकाने के लिए vault से VPFI काट सकता है। Discount vault VPFI balance के साथ बढ़ता है — Tier 1 (≥ {{tier1Min}} VPFI) पर {{tier1Discount}}% off, Tier 2 (≥ {{tier2Min}}) पर {{tier2Discount}}%, Tier 3 (≥ {{tier3Min}}) पर {{tier3Discount}}%, और Tier 4 (> {{tier4Min}}) पर {{tier4Discount}}%। VPFI प्राप्त करें और जमा करें ",
-    "buyVpfiLink": "VPFI खरीदें",
     "bodySuffix": " पर।",
     "stateLoading": "लोड हो रहा है…",
     "stateEnabled": "सक्षम",

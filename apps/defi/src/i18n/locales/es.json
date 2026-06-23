@@ -524,7 +524,6 @@
     "interactionSubtitle": "Gana una porción diaria de VPFI por cada préstamo en el que participes.",
     "pendingLabel": "Pendiente",
     "claimedLabel": "Reclamado",
-    "manageOnBuyVpfi": "Gestionar staking en Buy VPFI",
     "openClaimCenter": "Reclamar en Claim Center"
   },
   "stakingRewards": {
@@ -1213,7 +1212,6 @@
   "vpfiDiscountConsent": {
     "title": "Consentimiento del descuento de comisión",
     "bodyPrefix": "Cuando está habilitado, el protocolo puede deducir VPFI del vault para pagar la comisión con descuento tanto en la Comisión de Iniciación de Préstamo del prestatario como en la Comisión de Rendimiento del prestamista. El descuento escala con el saldo de VPFI en el vault — {{tier1Discount}}% de descuento en Tier 1 (≥ {{tier1Min}} VPFI), {{tier2Discount}}% en Tier 2 (≥ {{tier2Min}}), {{tier3Discount}}% en Tier 3 (≥ {{tier3Min}}) y {{tier4Discount}}% en Tier 4 (> {{tier4Min}}). Adquiere y deposita VPFI en ",
-    "buyVpfiLink": "Comprar VPFI",
     "bodySuffix": ".",
     "stateLoading": "Cargando…",
     "stateEnabled": "Habilitado",

@@ -525,7 +525,6 @@
     "interactionSubtitle": "참여하는 모든 대출에 대해 매일 VPFI 지분을 획득합니다.",
     "pendingLabel": "대기 중",
     "claimedLabel": "청구됨",
-    "manageOnBuyVpfi": "Buy VPFI에서 스테이킹 관리",
     "openClaimCenter": "Claim Center에서 청구"
   },
   "stakingRewards": {
@@ -1214,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "수수료 할인 동의",
     "bodyPrefix": "활성화하면, 프로토콜은 차입자의 Loan Initiation Fee 및/또는 대여자의 Yield Fee에 대한 할인 수수료를 지급하기 위해 Vault에서 VPFI를 차감할 수 있습니다. 할인은 Vault VPFI 잔액에 따라 조정됩니다 — Tier 1 (≥ {{tier1Min}} VPFI)에서 {{tier1Discount}}% 할인, Tier 2 (≥ {{tier2Min}})에서 {{tier2Discount}}%, Tier 3 (≥ {{tier3Min}})에서 {{tier3Discount}}%, Tier 4 (> {{tier4Min}})에서 {{tier4Discount}}%. VPFI 구매 및 입금은 ",
-    "buyVpfiLink": "VPFI 구매",
     "bodySuffix": "에서 가능합니다.",
     "stateLoading": "로드 중…",
     "stateEnabled": "활성화됨",

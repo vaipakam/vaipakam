@@ -525,7 +525,6 @@
     "interactionSubtitle": "Gagnez une part quotidienne de VPFI pour chaque prêt auquel vous participez.",
     "pendingLabel": "En attente",
     "claimedLabel": "Réclamé",
-    "manageOnBuyVpfi": "Gérer le staking sur Acheter VPFI",
     "openClaimCenter": "Retirer dans le centre de retrait"
   },
   "stakingRewards": {
@@ -1214,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "Consentement à la remise sur les frais",
     "bodyPrefix": "Une fois activé, le protocole peut prélever du VPFI dans le vault pour payer les frais réduits, à la fois pour les frais d'initiation du prêt côté emprunteur et / ou les frais de rendement côté prêteur. La remise dépend du solde VPFI dans le vault — {{tier1Discount}}% au palier 1 (≥ {{tier1Min}} VPFI), {{tier2Discount}}% au palier 2 (≥ {{tier2Min}}), {{tier3Discount}}% au palier 3 (≥ {{tier3Min}}) et {{tier4Discount}}% au palier 4 (> {{tier4Min}}). Achetez et déposez du VPFI sur ",
-    "buyVpfiLink": "Acheter du VPFI",
     "bodySuffix": ".",
     "stateLoading": "Chargement…",
     "stateEnabled": "Activé",

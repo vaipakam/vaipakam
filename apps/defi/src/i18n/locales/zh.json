@@ -525,7 +525,6 @@
     "interactionSubtitle": "为您参与的每笔贷款赚取每日 VPFI 份额。",
     "pendingLabel": "待领取",
     "claimedLabel": "已领取",
-    "manageOnBuyVpfi": "在 Buy VPFI 管理质押",
     "openClaimCenter": "在 Claim Center 领取"
   },
   "stakingRewards": {
@@ -1214,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "费用折扣同意",
     "bodyPrefix": "启用后，协议可以从 Vault 中扣除 VPFI，用于支付借款方贷款发起费和 / 或出借方收益费的折扣后费用。折扣随 Vault VPFI 余额变化 — Tier 1（≥ {{tier1Min}} VPFI）享 {{tier1Discount}}% 折扣，Tier 2（≥ {{tier2Min}}）享 {{tier2Discount}}%，Tier 3（≥ {{tier3Min}}）享 {{tier3Discount}}%，Tier 4（> {{tier4Min}}）享 {{tier4Discount}}%。请在 ",
-    "buyVpfiLink": "购买VPFI",
     "bodySuffix": " 处获取并存入VPFI。",
     "stateLoading": "加载中…",
     "stateEnabled": "已启用",

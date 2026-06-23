@@ -524,7 +524,6 @@
     "interactionSubtitle": "اكسب حصة يومية من VPFI عن كل قرض تشارك فيه.",
     "pendingLabel": "معلق",
     "claimedLabel": "مُطالب به",
-    "manageOnBuyVpfi": "إدارة الإيداع في صفحة شراء VPFI",
     "openClaimCenter": "المطالبة في مركز المطالبات"
   },
   "stakingRewards": {
@@ -1213,7 +1212,6 @@
   "vpfiDiscountConsent": {
     "title": "موافقة خصم الرسوم",
     "bodyPrefix": "عند التفعيل، يجوز للبروتوكول خصم VPFI من الضمان لدفع الرسوم المخصومة على كل من رسوم بدء القرض الخاصة بالمقترض و/أو رسوم العائد الخاصة بالمُقرض. يتدرج الخصم وفقاً لرصيد VPFI في الضمان — خصم {{tier1Discount}}% عند Tier 1 (≥ {{tier1Min}} VPFI)، و{{tier2Discount}}% عند Tier 2 (≥ {{tier2Min}})، و{{tier3Discount}}% عند Tier 3 (≥ {{tier3Min}})، و{{tier4Discount}}% عند Tier 4 (> {{tier4Min}}). يمكن الحصول على VPFI وإيداعه عبر ",
-    "buyVpfiLink": "شراء VPFI",
     "bodySuffix": ".",
     "stateLoading": "جارٍ التحميل…",
     "stateEnabled": "مُفعّل",

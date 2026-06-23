@@ -525,7 +525,6 @@
     "interactionSubtitle": "Verdienen Sie täglich VPFI-Anteile für jeden Kredit, an dem Sie teilnehmen.",
     "pendingLabel": "Ausstehend",
     "claimedLabel": "Beansprucht",
-    "manageOnBuyVpfi": "Staking auf Buy VPFI verwalten",
     "openClaimCenter": "Im Claim Center beanspruchen"
   },
   "stakingRewards": {
@@ -1214,7 +1213,6 @@
   "vpfiDiscountConsent": {
     "title": "Zustimmung zum Gebührenrabatt",
     "bodyPrefix": "Ist diese aktiviert, kann das Protokoll VPFI aus dem Vault abziehen, um die rabattierte Gebühr sowohl für die Kreditinitiierungsgebühr des Kreditnehmers als auch für die Renditegebühr des Kreditgebers zu zahlen. Der Rabatt skaliert mit dem VPFI-Saldo im Vault — {{tier1Discount}}% Rabatt bei Tier 1 (≥ {{tier1Min}} VPFI), {{tier2Discount}}% bei Tier 2 (≥ {{tier2Min}}), {{tier3Discount}}% bei Tier 3 (≥ {{tier3Min}}) und {{tier4Discount}}% bei Tier 4 (> {{tier4Min}}). VPFI erwerben und einzahlen unter ",
-    "buyVpfiLink": "VPFI kaufen",
     "bodySuffix": ".",
     "stateLoading": "Wird geladen…",
     "stateEnabled": "Aktiviert",
