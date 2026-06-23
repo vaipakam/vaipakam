@@ -896,7 +896,7 @@ export function DiscountStatusCard({
               // stay one sentence with the link inline rather than
               // a tacked-on "(see Dashboard)" suffix.
               <Trans
-                i18nKey="buyVpfiCards.enableSharedConsent"
+                i18nKey="vpfiVaultCards.enableSharedConsent"
                 components={{
                   dashboardLink: (
                     <Link
