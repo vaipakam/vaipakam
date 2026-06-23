@@ -222,10 +222,18 @@ uniformly):
   prompt the user approved *is* what executes.
 - `nonce` + `deadline` give replay protection + a signing-window bound (mirrors
   the Permit2 / stuck-recovery EIP-712 patterns already in the spec, §623/§1968).
-- **Submission:** the acceptor can self-submit (sign + send) or a relayer can
-  submit the signed `AcceptTerms` (gasless). Either way the *signing* step is
-  the trusted prompt. (Self-submit is the default; relay is a future option, not
-  required.)
+- **Submission:** ship **self-submit only** (the acceptor signs + sends, so
+  `msg.sender == AcceptTerms.acceptor == recovered signer`). The trusted prompt
+  is the *signing* step. **Relay is deferred (O5)** and carries a front-running
+  caveat (Codex r5 P2, L228): the accept plumbing pays the LIF matcher cut from
+  `msg.sender` and records `loan.matcher = msg.sender`
+  ([`OfferAcceptFacet._acceptOffer:920-936/1104-1108`](../../contracts/src/facets/OfferAcceptFacet.sol#L920)),
+  so an open relayed submission would let any mempool observer front-submit a
+  signed `AcceptTerms` and steal the matcher cut / attribution. When relay is
+  added it MUST either gate the submitter (allowlisted relayer) or attribute the
+  matcher cut + `loan.matcher` to `AcceptTerms.acceptor` rather than
+  `msg.sender`. The self-submit path shipping now has no such exposure
+  (`msg.sender` is the acceptor).
 
 This makes the calldata-decode fallback unnecessary and satisfies the
 acceptance-criterion "EIP-712 typed so wallets render terms" for real.
