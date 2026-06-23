@@ -177,13 +177,20 @@ function pageRoutes(): ReactElement {
 
 /**
  * Back-compat redirect for the renamed `/buy-vpfi` → `/vpfi-vault` route.
- * Preserves the hash + query so deep links like `/buy-vpfi#staking-rewards`
- * land on the matching anchor instead of the page top (#687-A).
+ * `relative="path"` targets the sibling segment, so the redirect preserves
+ * BOTH the active locale prefix (e.g. `/es/buy-vpfi` → `/es/vpfi-vault`,
+ * since this route mounts under the unprefixed root AND the `:locale` tree)
+ * and the hash + query, so localized deep links like
+ * `/es/buy-vpfi#staking-rewards` keep working (#687-A).
  */
 function BuyVpfiRedirect() {
   const location = useLocation();
   return (
-    <Navigate to={`/vpfi-vault${location.search}${location.hash}`} replace />
+    <Navigate
+      to={`../vpfi-vault${location.search}${location.hash}`}
+      relative="path"
+      replace
+    />
   );
 }
 
