@@ -93,12 +93,18 @@ term-binding and would train click-through. Stamp
 `{pairKey, timestamp, consentVersion}` + event on first use of a mid-tier
 pair, non-blocking. **Illiquid (L2) keeps the HARD per-pair gate.**
 
-**Grounded:** the HF≥1.5 floor at loan init is real and unconditional for
-liquid assets — `_maybeRunInitialRiskGates` only *skips* `_checkInitialLtvAndHf`
-on the **`!bothLiquid && mutualIlliquidConsent`** branch
-([`LoanFacet.sol:474-487`](../../contracts/src/facets/LoanFacet.sol#L474)).
-So any asset that classifies `Liquid` (tier ≥ 1) is already protected by
-the quantitative gate; the categorical-loss path is reachable only via
+**Grounded:** a quantitative LTV/HF gate at loan init runs for every
+liquid-classified leg — `_maybeRunInitialRiskGates` only *skips*
+`_checkInitialLtvAndHf` on the **`!bothLiquid && mutualIlliquidConsent`**
+branch ([`LoanFacet.sol:474-487`](../../contracts/src/facets/LoanFacet.sol#L474)).
+The admission **threshold** is NOT a flat unconditional HF≥1.5, though
+(Codex r6 P2 L99): when `depthTieredLtvEnabled` is on, `_checkInitialLtvAndHf`
+deliberately **relaxes** the LTV ceiling for deeper-tier liquid assets and
+tightens it for thinner liquid pools (the depth-tiered-LTV design). So the
+accurate invariant is "*a quantitative gate always runs for liquid legs; its
+strictness is tier-dependent when depth-tiering is enabled, a flat HF≥1.5
+floor when it is not*." Either way the **categorical-loss** path (full
+collateral transfer, no quantitative check at all) is reachable only via
 the illiquid bypass. The card's quantitative-vs-categorical distinction
 is **code-accurate**. The two L1 sub-options (user-elected *strict mode*
 per-vault flag → require per-pair acks even for mid-tier; *notional-
@@ -280,6 +286,18 @@ pair the user is unlocking) and prevent the contract from validating the key.
 > tiers correctly, or (c) define BlueChipOnly as `tier == 3 OR asset ∈
 > {reference assets}`. Tracked as **O6**. Until resolved, the default tier would
 > be too strict (excludes WETH), not too loose — fail-safe, but unusable.
+>
+> **Symmetric WETH-fallback hazard (Codex r6 P2 L282):** for a NON-WETH asset
+> whose `effectivePaaAssets()` route set has collapsed to the default
+> `[wethContract]` fallback, the only depth signal is the asset↔WETH pool. The
+> tier derivation MUST treat that WETH-only-route case as **tier-0** (riskiest)
+> for every gate — never let the WETH fallback route inflate a thin asset's tier
+> toward 3. Otherwise a sparsely-routed token could borrow WETH's blue-chip
+> standing and slip past `BlueChipOnly`. The fix is one-sided and conservative:
+> a real tier ≥1 requires a genuine non-fallback route; the fallback route alone
+> pins the asset at tier-0. This is the gate-side complement to the WETH-itself
+> special-casing above — together they make the numeraire blue-chip while
+> denying borrowed-credibility to anything whose only route is *through* it.
 
 The gate evaluates against `min(tier(lendingAsset), tier(collateralAsset))`
 — **the RISKIER leg governs** (Codex r1 P1, L235). The tier scale is inverted
@@ -466,11 +484,15 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   uint256 deadline, bytes sig)` and `setIlliquidPairConsent(address lendingAsset,
   uint8 lendingAssetType, uint256 tokenId, address collateralAsset, uint8
   collateralAssetType, uint256 collateralTokenId, bool consent, address user,
-  uint256 nonce, uint256 deadline, bytes sig)` — the typed assets (not an opaque
-  `bytes32`, L4Yj) let the wallet render the concrete pair, and `user`/`nonce`/
-  `deadline`/`sig` are what make the wrong-domain / expired / replay tests
-  enforceable. They are **deliberate standalone txs**, separable in the wallet
-  prompt.
+  bytes32 consentVersion, uint256 nonce, uint256 deadline, bytes sig)` — the
+  typed assets (not an opaque `bytes32`, L4Yj) let the wallet render the
+  concrete pair, and `user`/`nonce`/`deadline`/`sig` are what make the
+  wrong-domain / expired / replay tests enforceable. **`consentVersion` is bound
+  INTO the signed digest (Codex r6 P3 L472)** — not just stored after the fact:
+  the signer commits to the exact terms revision they were shown, so a later
+  terms bump (§8 `riskConsentVersion`) can detect a stale unlock and a relayer
+  can't substitute a different version than what the wallet rendered. They are
+  **deliberate standalone txs**, separable in the wallet prompt.
 - **Bundling caveat (Codex r1 P2, L4Y4):** "never bundleable" is NOT
   contract-enforceable for smart-account (AA/Safe) users, who can batch
   `setVaultRiskTier` + `acceptOffer` into one user-approved op; with the default
@@ -492,12 +514,17 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   typehashes, so a signed-offer or accept signature can't be cross-replayed
   as a risk-unlock and the wallet labels the prompt distinctly. Mirrors
   #662 §4c's domain-separation discipline.
-  - **Self-submit caveat (mirrors #662 O5):** ship **self-submit only**
-    (`msg.sender == recovered signer == the account whose tier changes`),
-    so the digest binds to one account (no cross-ERC-1271 replay). Relay is
-    deferred — a relayed risk-unlock has no economic front-run (no matcher
-    cut), so the only requirement when relay is added is binding the tier
-    change to the signed `user`, not `msg.sender`.
+  - **Self-submit caveat (mirrors #662 O5):** ship **self-submit only**, but
+    verify via **`SignatureChecker.isValidSignatureNow(user, digest, sig)` with
+    `user == msg.sender`** — NOT an `ecrecover(...) == msg.sender` equality
+    (Codex r6 P2 L497). A naive `recovered signer == msg.sender` check silently
+    excludes AA/Safe accounts (ERC-1271 has no recoverable signer), defeating
+    the stated ERC-1271 support; `SignatureChecker` accepts both an EOA ECDSA
+    sig and a contract `isValidSignature` reply, and pinning `user == msg.sender`
+    keeps the digest bound to one self-submitting account (no cross-ERC-1271
+    replay). Relay is deferred — a relayed risk-unlock has no economic front-run
+    (no matcher cut), so the only requirement when relay is added is binding the
+    tier change to the signed `user`, not `msg.sender`.
   - **Contract-vault unlock path (Codex r3 P2, L437):** protocol contract
     accounts that originate offers via `setLenderIntent` / `matchIntent` (the
     backstop vault, aggregator adapters) do NOT implement `isValidSignature`,
@@ -512,6 +539,18 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
     (Codex r4 P3, L461) — raising only the broad tier leaves the second required
     dimension (`illiquidPairConsent`) unsettable for a non-signing contract, so
     the level-2 gate would never pass. Default (a) sidesteps both.
+    - **Backstop non-blue-chip fills REQUIRE the escape hatch (Codex r6 P2
+      L509):** option (a) is the default ONLY for as long as the backstop / an
+      adapter genuinely transacts blue-chip-only. The gate is uniform — it does
+      NOT special-case protocol contracts — so the moment the backstop is asked
+      to fill a mid-tier or illiquid pair (e.g. absorbing a non-blue-chip
+      liquidation it must take onto its book), its vault MUST first be raised via
+      the owner-gated `setVaultRiskTierFor` (+ `setIlliquidPairConsentFor` for an
+      illiquid pair) by governance, exactly like any other account. There is no
+      implicit "contracts bypass the tier gate" path; an unraised backstop vault
+      reverts on a non-blue-chip fill, which is the intended fail-safe. So (a) is
+      a deployment-time assertion to re-verify whenever the backstop's mandate
+      widens — not a permanent exemption.
 - **Nonce + deadline** for replay protection / signing-window bound. Reuse
   the per-signer nonce pattern of `signedOfferNonceUsed`
   ([`LibVaipakam.sol:4079`](../../contracts/src/libraries/LibVaipakam.sol#L4079))
@@ -613,6 +652,17 @@ read-accessor mirror the existing bounded-knob pattern of
     **obligation-transfer gated on the INCOMING obligee `offer.creator`**, not
     the exiting owner (Codex r2 L512). Pure close-out exits (preclose-direct,
     swap-to-repay-full) NOT gated (D4).
+    - **Refinance must gate BEFORE the replacement loan exists (Codex r6 P2
+      L615):** the legacy borrower-direct refinance path accepts a *borrower
+      offer* first — which already initiates the new loan via the normal accept
+      chokepoint — and only then links it to the old loan. So a refinance gate
+      hung on the post-link "refinance" action fires too late (the risk-adding
+      loan is already open). The gate therefore lives at the **same origination
+      chokepoint as any other accept** (the borrower-offer accept that
+      *originates* the refi), evaluated against the party taking on the new
+      obligation, so the pair tier is checked before the replacement loan is
+      created — not as a separate post-hoc refinance hook. The matched-refinance
+      path (#595) gates at its own match origination identically.
   - **Strict-mode ENFORCEMENT (Codex r5 P3 L552 — not just the setter):** when
     `riskStrictMode[actor] == true`, the origination gate additionally requires
     a fresh `midTierPairAck` for the **mid-tier (L1)** pair too — i.e. a
@@ -620,6 +670,18 @@ read-accessor mirror the existing bounded-knob pattern of
     (least-privilege for the cautious). Without strict mode, L1 needs no per-pair
     ack (the soft record is non-blocking). This is what makes the `setRiskStrictMode`
     flag actually do something.
+    - **Soft mid-tier stamp is written BY the gate, not only by the setter
+      (Codex r6 P3 L584):** RD-1's non-blocking record is the gate's
+      responsibility, not an optional user call. On the first mid-tier (L1)
+      origination for a given `pairKey`, the origination gate itself writes
+      `midTierPairAck[user][pairKey] = {block.timestamp, riskConsentVersion}` if
+      absent — it never reverts a non-strict L1 user, it just records that this
+      user transacted this mid-tier pair (for later analytics / a future
+      strict-mode retro-ack / consent-version drift detection). `setMidTierPairAck`
+      remains the *explicit* path (and the strict-mode prerequisite), but the
+      passive stamp guarantees the record exists for every mid-tier user even
+      when strict mode is off, so RD-1's "stamp first mid-tier use" is satisfied
+      structurally rather than relying on the user remembering to call the setter.
 - **Explicitly NOT modified (must stay ungated — §5c):**
   `ConsolidationFacet`, the push-payout paths inside `repayLoan` /
   `markDefaulted` / `triggerDefault`, position-NFT `_transfer`.
@@ -689,8 +751,11 @@ corrections the implementation must absorb:
   `matchOffers` as an origination enforcement site, but `matchOffers` is a
   **permissionless third party**; gating *its* vault punishes the matcher.
   Enforce the tier on **each paired offer's creator at create-time**; at
-  match, optionally re-assert each offer still satisfies its creator's
-  recorded tier (defends a post-create re-lock). This mirrors #662's
+  match, re-assert each offer still satisfies its creator's recorded tier
+  **and, for an `IlliquidCustom` pair, the still-held per-pair
+  `illiquidPairConsent`** (Codex r6 P2 L761 — both dimensions, since pair
+  consent is revocable; consistent with O5 and the §5a direct path). This
+  mirrors #662's
   finding that the matcher carries no `AcceptTerms` and safety rests on
   both sides being self-authored.
 - **D4 — pure close-outs may not need the ongoing gate.** Preclose-direct
@@ -757,9 +822,12 @@ corrections the implementation must absorb:
   actions (refinance roll, obligation transfer), treating full close-outs
   (preclose-direct, swap-to-repay-full) as ungated exits? Confirm.
 - **O5 — match re-assertion (D3):** at `matchOffers`, re-assert each
-  offer's creator still satisfies the recorded tier (defends post-create
-  re-lock), or trust the create-time stamp? (Recommend re-assert; cheap
-  view.)
+  offer's creator still satisfies the recorded tier **AND, for an
+  `IlliquidCustom` pair, still holds the per-pair `illiquidPairConsent`**
+  (Codex r6 P2 L761 — pair consent is revocable post-create, so a tier-only
+  re-check would miss a revoked pair; this mirrors the §5a direct-accept and
+  stale-offer re-assertion exactly), or trust the create-time stamp?
+  (Recommend re-assert **both dimensions**; cheap view.)
 
 ## 14. Relationship to #662
 
