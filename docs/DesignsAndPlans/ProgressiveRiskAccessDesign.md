@@ -62,10 +62,16 @@ the per-tx integrity guard; #671 is the per-vault structural floor.
     = `min(getLiquidityTier(asset), effectiveKeeperTier(asset))`
     ([`OracleFacet.sol:1225-1231`](../../contracts/src/facets/OracleFacet.sol#L1225)),
     returning `0` (illiquid/untierable) through `3` (deepest band).
-  - No hand-maintained blue-chip list. The only per-asset governance
-    lever is the existing `pauseAsset` blacklist, which makes
-    `_checkLiquidity` fail (the asset drops to tier 0) — already in the
-    code, not introduced here.
+  - No hand-maintained blue-chip list. The per-asset governance levers are
+    the existing `pauseAsset` blacklist (drops the asset to tier 0) **and**
+    `ConfigFacet.setKeeperTier` (Codex r1 P2, L4Yl), which lets `KEEPER_ROLE`
+    promote/demote an asset within its on-chain ceiling — both already in the
+    code, not introduced here. Note the interaction: a brand-new asset's stored
+    keeper tier defaults such that it is NOT tier-3, so BlueChipOnly excludes it
+    until a keeper promotion lifts its *effective* tier to 3 — intentionally
+    conservative, but means the blue-chip set is keeper-influenced, not purely
+    depth-derived. This is still permissionless-compatible (the keeper can only
+    move within the depth-bounded ceiling; it cannot curate an arbitrary list).
 - **Marketing framing.** A self-set *safety rail* (spending-limit
   analog), never KYC / identity / permissioning (per the CLAUDE.md
   retail-copy prohibitions).
@@ -223,6 +229,21 @@ hash-collision ambiguity across the address+enum mix. The `chainId`
 component is belt-and-suspenders here (storage is already per-chain) but
 matches the EIP-712 domain convention and is cheap.
 
+**Include NFT token IDs in the key (Codex r1 P2, L4Ym):** for ERC-721/1155
+legs, distinct `tokenId`s under the *same* contract can have wildly different
+value, so a consent for `(coll, id=5)` must NOT authorise `(coll, id=9)`. The
+key therefore folds in `tokenId` + `collateralTokenId` (zero for ERC-20):
+`keccak256(abi.encode(chainId, lendingAsset, lendingAssetType, tokenId,
+collateralAsset, collateralAssetType, collateralTokenId))`. (1155 *quantity* is
+NOT in the key — it's an amount, bound by #662's `AcceptTerms`, not an identity.)
+
+**Pair-consent setter takes the RAW typed assets, not an opaque `bytes32`**
+(Codex r1 P2, L4Yj): `setIlliquidPairConsent(lendingAsset, lendingAssetType,
+tokenId, collateralAsset, collateralAssetType, collateralTokenId, …sig)` and
+computes the key on-chain. Passing a pre-hashed `bytes32 pairKey` would make
+the EIP-712 prompt unrenderable (the wallet must show the concrete `<A>/<B>`
+pair the user is unlocking) and prevent the contract from validating the key.
+
 ### Asset → required level (derived)
 
 | Vault level (default = **0 BlueChipOnly**) | Asset allowed (derived) |
@@ -231,24 +252,33 @@ matches the EIP-712 domain convention and is cheap.
 | **1 BroadLiquid** (explicit opt-in) | `getEffectiveLiquidityTier >= 1` (oracle + protocol risk params still apply) |
 | **2 IlliquidCustom** (strongest opt-in) | any, incl. tier 0 / `checkLiquidity == Illiquid` — **and** `illiquidPairConsent[pairKey] == true` |
 
-The gate evaluates against `max(tier(lendingAsset), tier(collateralAsset))`
-— i.e. **the lower of the two assets' tiers drives the required level**
-(an acceptor is exposed to the *collateral's* quality and vice-versa, so
-the riskier leg sets the bar).
+The gate evaluates against `min(tier(lendingAsset), tier(collateralAsset))`
+— **the RISKIER leg governs** (Codex r1 P1, L235). The tier scale is inverted
+(`0` = illiquid/riskiest, `3` = deepest/safest), so the riskier leg is the one
+with the **lower** tier and the required level must derive from `min`, not
+`max`: `max` would let a tier-3 principal paired with tier-0 collateral pass as
+BlueChip while the worthless collateral is the real danger. An acceptor is
+exposed to the collateral's quality and vice-versa, so the worse leg sets the
+bar.
 
 ## 5. Creation-time vs ongoing-action consent
 
 ### 5a. Creation-time (acting signer)
 
 Checked at the three origination chokepoints against the acting signer,
-on `max(tier(lendingAsset), tier(collateralAsset))`:
+on `min(tier(lendingAsset), tier(collateralAsset))`:
 
-- [`OfferCreateFacet.createOffer(CreateOfferParams):367`](../../contracts/src/facets/OfferCreateFacet.sol#L367)
-  — already enforces the consent bool at
-  [`:872`](../../contracts/src/facets/OfferCreateFacet.sol#L872)
-  (`RiskAndTermsConsentRequired`) and runs the liquidity check at
-  [`:865-870`](../../contracts/src/facets/OfferCreateFacet.sol#L865). The
-  tier gate slots in alongside, checked against `msg.sender` (the creator).
+- **Every offer-creation entry point, gated against the real `creator`**
+  (Codex r1 P1, L251 — `createOffer` is NOT the only one, and on some paths
+  `msg.sender != creator`): the gate must live in the shared create chokepoint
+  (or be replicated at each) and evaluate `creator`, not `msg.sender` —
+  covering `createOffer`, `createOfferWithPermit`, the cross-facet
+  `createOfferInternal`, and the **signed-offer materializers** (`SignedOfferFacet`
+  / `OfferMatchFacet.matchSignedOffer`, where the signer is the real creator and
+  `msg.sender` is the diamond/relayer). `createOffer` already enforces the
+  consent bool ([`OfferCreateFacet.sol:872`](../../contracts/src/facets/OfferCreateFacet.sol#L872),
+  `RiskAndTermsConsentRequired`) + liquidity check ([`:865-870`](../../contracts/src/facets/OfferCreateFacet.sol#L865));
+  the tier gate slots in at the same shared point so no creation path is missed.
 - [`OfferAcceptFacet._acceptOffer:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517)
   — **the single chokepoint** both `acceptOffer`
   ([`:242`](../../contracts/src/facets/OfferAcceptFacet.sol#L242)) and the
@@ -260,6 +290,13 @@ on `max(tier(lendingAsset), tier(collateralAsset))`:
   the tier gate evaluates against the **resolved acceptor**, not
   `msg.sender` blindly. Mirrors exactly where #662's `AcceptTerms` binding
   lands, so the two checks compose at one site.
+  **Re-assert the offer creator's tier here too (Codex r1 P2, L4Ye):** an
+  offer can be created while the creator's tier/assets are acceptable, then the
+  creator re-locks (ratchets down) or the asset is downgraded/paused before
+  anyone accepts. So `_acceptOffer` re-checks **both** the resolved acceptor
+  AND the stored offer's creator against the (possibly-changed) current tiers
+  before binding — not just the acceptor. Cheap (two view reads); defends the
+  stale-offer window symmetrically with the match-path re-assertion (D3/O5).
 - [`OfferMatchFacet.matchOffers:158`](../../contracts/src/facets/OfferMatchFacet.sol#L158)
   / `matchSignedOffer` (
   [`:278`](../../contracts/src/facets/OfferMatchFacet.sol#L278)) — these
@@ -303,13 +340,22 @@ ongoing-action sites:
 | Swap-to-repay | [`SwapToRepayFacet.swapToRepayFull:199`](../../contracts/src/facets/SwapToRepayFacet.sol#L199) | `LibAuth.requireBorrowerNftOwner(loan)` ([`:233`](../../contracts/src/facets/SwapToRepayFacet.sol#L233)) |
 | Keeper delegation | [`ProfileFacet.setKeeperAccess:315`](../../contracts/src/facets/ProfileFacet.sol#L315) | per-`msg.sender` opt-in; auth resolves to current owner in `requireKeeperFor` |
 
-**Note on ongoing actions that only *reduce* risk:** preclose and
-swap-to-repay *close* exposure, not create it. The gate should apply to
-actions that **add or rotate into new collateral/principal exposure** for
-the current owner — primarily refinance (rolls into a new offer's terms)
-and obligation transfer (the *incoming* obligee acquires a position). A
-pure close-out (full preclose, swap-to-repay-full) arguably should NOT be
-gated for the same reason payouts aren't — it lets the holder *exit*. See
+**Obligation transfer gates the INCOMING obligee, not the exiting owner**
+(Codex r1 P2, L4Yb): in `transferObligationViaOffer`, `ownerOf(loan.borrowerTokenId)`
+is still the *exiting* borrower at the gate point (the NFT migrates only later
+in the function), and the exiting borrower is *reducing* exposure. The party
+acquiring the position is `offer.creator` (the incoming obligee) — so the tier
+gate must evaluate **`offer.creator`**, not the current owner. Gating the
+current owner would make Alice's risk-reducing exit depend on Alice's tier,
+which is backwards.
+
+**Note on ongoing actions that only *reduce* risk (Codex r1 P2, L4-D4):**
+preclose and swap-to-repay *close* exposure, not create it. The gate applies to
+actions that **add or rotate into new collateral/principal exposure** —
+primarily refinance (rolls into a new offer's terms) and obligation transfer
+(gated on the incoming obligee, above). A pure close-out (full preclose,
+swap-to-repay-full) is NOT gated for the same reason payouts aren't — it lets
+the holder *exit* (gating it would trap a holder who later down-tiered). See
 §11 / O4 for the open question on which ongoing actions truly need the
 gate vs. which are exits.
 
@@ -351,9 +397,24 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
 
 ## 7. Unlock as the phishing chokepoint (hardening)
 
-- `setVaultRiskTier(RiskAccessLevel)` / `setIlliquidPairConsent(bytes32
-  pairKey, bool)` are **standalone**, never bundleable with accept —
-  raising risk is its own deliberate tx, separable in the wallet prompt.
+- The setters **carry the full EIP-712 envelope** (Codex r1 P2, L4Yz):
+  `setVaultRiskTier(RiskAccessLevel level, address user, uint256 nonce,
+  uint256 deadline, bytes sig)` and `setIlliquidPairConsent(address lendingAsset,
+  uint8 lendingAssetType, uint256 tokenId, address collateralAsset, uint8
+  collateralAssetType, uint256 collateralTokenId, bool consent, address user,
+  uint256 nonce, uint256 deadline, bytes sig)` — the typed assets (not an opaque
+  `bytes32`, L4Yj) let the wallet render the concrete pair, and `user`/`nonce`/
+  `deadline`/`sig` are what make the wrong-domain / expired / replay tests
+  enforceable. They are **deliberate standalone txs**, separable in the wallet
+  prompt.
+- **Bundling caveat (Codex r1 P2, L4Y4):** "never bundleable" is NOT
+  contract-enforceable for smart-account (AA/Safe) users, who can batch
+  `setVaultRiskTier` + `acceptOffer` into one user-approved op; with the default
+  cooldown `0` the accept executes immediately after the unlock. So the
+  separability is a UX property for EOAs, and the **`riskAccessUnlockCooldownSec`
+  cooldown (RD-3) is the actual on-chain mitigation** if a deploy wants to make a
+  phished same-op unlock+use impossible. Documented as a known limitation, not a
+  guarantee.
 - **EIP-712 typed** so the wallet renders "raising your risk level to
   IlliquidCustom" / "consenting to pair <A>/<B>." Reuse the
   `LibSignedOffer` EIP-712 *machinery pattern* —
@@ -394,27 +455,33 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
 
 ## 8. Storage additions
 
-Appended flat to the `Storage` struct
-([`LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol#L4079),
-near `signedOfferNonceUsed`):
+Appended flat at the **actual current `Storage` tail** (Codex r1 P1, L399 —
+`signedOfferNonceUsed` is NOT the tail; the struct continues with signed-offer
+transient state, lender intents, backstop/swap-pause/liquidation/consolidation
+fields). Locate the true last field before appending. *Pre-live note:* the
+retail deploy is pre-live (fresh `DeployDiamond` redeploy, the canonical
+policy), so slot placement isn't load-bearing for an in-place upgrade — but
+appending at the genuine tail is correct hygiene and keeps the diamond
+upgrade-safe regardless.
 
 ```solidity
 enum RiskAccessLevel { BlueChipOnly, BroadLiquid, IlliquidCustom }       // 0 = safe default
 
 mapping(address => RiskAccessLevel) userRiskAccess;                       // broad tier
 mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;          // per-pair illiquid ack
-mapping(address => mapping(bytes32 => bool)) riskAccessNonceUsed;          // EIP-712 anti-replay (dedicated)
+mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;          // EIP-712 anti-replay (dedicated)
 mapping(address => uint64) riskTierUnlockedAt;                             // cooldown anchor (broad tier)
 mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockedAt;      // cooldown anchor (per-pair)
-// optional L1 flags (RD-1 sub-options, default-off):
-mapping(address => bool) riskStrictMode;                                   // require pair ack even at L1
-// + protocolCfg.riskAccessUnlockCooldownSec (uint32, default 0) in the existing protocolCfg struct
+mapping(address => bool) riskStrictMode;                                   // optional RD-1 flag (default-off)
+uint32 riskAccessUnlockCooldownSec;                                        // TOP-LEVEL field, NOT in protocolCfg (see below); default 0
 ```
 
-All flat primitives/mappings — no nested structs (viaIR ceiling). The
-`protocolCfg` cooldown field modeled on `tier3SizePad`
-([`LibVaipakam.sol:996`](../../contracts/src/libraries/LibVaipakam.sol#L996))
-with a `cfgRiskAccessUnlockCooldownSec()` accessor like
+All flat primitives/mappings — no nested structs (viaIR ceiling). The cooldown
+is a **top-level `Storage` field, NOT inside `protocolCfg`** (Codex r1 P1,
+L411): `ProtocolConfig` is embedded before many live top-level fields and the
+code explicitly warns that appending to it shifts subsequent slots. A
+range-bounded `setRiskAccessUnlockCooldown` setter + a `cfgRiskAccessUnlockCooldownSec()`
+read-accessor mirror the existing bounded-knob pattern of
 [`cfgTier3SizePad():5008`](../../contracts/src/libraries/LibVaipakam.sol#L5008).
 
 ## 9. Surface delta (which facets change)
