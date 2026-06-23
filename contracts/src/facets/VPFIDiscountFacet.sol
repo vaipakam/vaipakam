@@ -5,7 +5,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -298,10 +297,6 @@ contract VPFIDiscountFacet is
         // post-mutation balance so the next period accrues at the tier
         // the user will actually hold after this deposit lands.
         LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
-        // Checkpoint the staker BEFORE the deposit lands so the accrual
-        // captures the pre-deposit staked amount for the period it was
-        // active, then adopts the new balance as the next accrual baseline.
-        LibStakingRewards.updateUser(msg.sender, newStakedBal);
     }
 
     /**
@@ -383,8 +378,6 @@ contract VPFIDiscountFacet is
         // the next period starts at the tier the user will hold after
         // this withdraw.
         LibVPFIDiscount.rollupUserDiscount(msg.sender, newStakedBal);
-        // Staking checkpoint on the OLD balance before the pull.
-        LibStakingRewards.updateUser(msg.sender, newStakedBal);
 
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,

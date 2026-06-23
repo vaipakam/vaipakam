@@ -129,7 +129,6 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
-import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -285,7 +284,6 @@ contract SetupTest is Test {
     VPFIDiscountAccumulatorFacet vpfiDiscountAccumulatorFacet;
     MirrorTierReceiverFacet mirrorTierReceiverFacet;
     ProtocolBroadcastFacet protocolBroadcastFacet;
-    StakingRewardsFacet stakingRewardsFacet;
     InteractionRewardsFacet interactionRewardsFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardReporterFacet rewardReporterFacet;
@@ -388,7 +386,6 @@ contract SetupTest is Test {
         vpfiDiscountAccumulatorFacet = new VPFIDiscountAccumulatorFacet();
         mirrorTierReceiverFacet = new MirrorTierReceiverFacet();
         protocolBroadcastFacet = new ProtocolBroadcastFacet();
-        stakingRewardsFacet = new StakingRewardsFacet();
         interactionRewardsFacet = new InteractionRewardsFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardReporterFacet = new RewardReporterFacet();
@@ -420,7 +417,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -618,10 +615,13 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
         });
+        // #687-B: StakingRewardsFacet (5% VPFI staking yield) removed. Slot 33
+        // reused by the #594 consolidation facet (was slot 61) so the fixed-size
+        // cut array stays hole-free after shrinking 62 -> 61.
         cuts[33] = IDiamondCut.FacetCut({
-            facetAddress: address(stakingRewardsFacet),
+            facetAddress: address(consolidationFacet),
             action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getStakingRewardsFacetSelectors()
+            functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
         cuts[34] = IDiamondCut.FacetCut({
             facetAddress: address(interactionRewardsFacet),
@@ -784,12 +784,8 @@ contract SetupTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReceiverFacetSelectors()
         });
-        // #594 — standalone holder-only consolidation entry points.
-        cuts[61] = IDiamondCut.FacetCut({
-            facetAddress: address(consolidationFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: helperTest.getConsolidationFacetSelectors()
-        });
+        // #594 — standalone holder-only consolidation entry points are cut at
+        // slot 33 (see the #687-B note above).
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 

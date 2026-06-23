@@ -133,7 +133,6 @@ FACETS=(
   "RiskFacet"
   "RiskMatchLiquidationFacet"
   "RiskSplitLiquidationFacet"
-  "StakingRewardsFacet"
   "SwapToRepayFacet"
   "SwapToRepayIntentFacet"
   "IntentDispatchFacet"

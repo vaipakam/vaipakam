@@ -6,7 +6,6 @@ import {LibEncumbrance} from "./LibEncumbrance.sol";
 import {LibInteractionRewards} from "./LibInteractionRewards.sol";
 import {LibMetricsHooks} from "./LibMetricsHooks.sol";
 import {LibVPFIDiscount} from "./LibVPFIDiscount.sol";
-import {LibStakingRewards} from "./LibStakingRewards.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {LenderIntentFacet} from "../facets/LenderIntentFacet.sol";
@@ -414,8 +413,6 @@ library LibConsolidation {
         uint256 currentBal = s.protocolTrackedVaultBalance[current][vpfi];
         LibVPFIDiscount.rollupUserDiscount(stored, storedBal);
         LibVPFIDiscount.rollupUserDiscount(current, currentBal);
-        LibStakingRewards.updateUser(stored, storedBal);
-        LibStakingRewards.updateUser(current, currentBal);
     }
 
     /// @notice Re-stamp a SINGLE user's VPFI discount tier + staking checkpoint
@@ -438,6 +435,5 @@ library LibConsolidation {
         if (vpfi == address(0)) return;
         uint256 bal = s.protocolTrackedVaultBalance[user][vpfi];
         LibVPFIDiscount.rollupUserDiscount(user, bal);
-        LibStakingRewards.updateUser(user, bal);
     }
 }

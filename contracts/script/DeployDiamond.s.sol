@@ -64,7 +64,6 @@ import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulato
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
-import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -215,7 +214,6 @@ contract DeployDiamond is Script {
         // T-087 Sub 2.D — protocol-funded mirror broadcast orchestrator.
         ProtocolBroadcastFacet protocolBroadcastFacet =
             new ProtocolBroadcastFacet();
-        StakingRewardsFacet stakingRewardsFacet = new StakingRewardsFacet();
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
@@ -249,7 +247,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](60);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -275,7 +273,13 @@ contract DeployDiamond is Script {
         cuts[21] = _buildCut(address(metricsFacet), _getMetricsSelectors());
         cuts[22] = _buildCut(address(vpfiTokenFacet), _getVpfiTokenSelectors());
         cuts[23] = _buildCut(address(vpfiDiscountFacet), _getVpfiDiscountSelectors());
-        cuts[24] = _buildCut(address(stakingRewardsFacet), _getStakingRewardsSelectors());
+        // #687-B: the StakingRewardsFacet (5% VPFI staking yield) was removed.
+        // Slot 24 is reused by the #594 consolidation facet (was slot 60) so the
+        // fixed-size cut array stays hole-free after shrinking 61 -> 60.
+        cuts[24] = _buildCut(
+            address(consolidationFacet),
+            _getConsolidationFacetSelectors()
+        );
         cuts[25] = _buildCut(address(interactionRewardsFacet), _getInteractionRewardsSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
@@ -456,11 +460,8 @@ contract DeployDiamond is Script {
             address(receiverFacet),
             _getReceiverFacetSelectors()
         );
-        // #594 — standalone holder-only consolidation entry points.
-        cuts[60] = _buildCut(
-            address(consolidationFacet),
-            _getConsolidationFacetSelectors()
-        );
+        // #594 — standalone holder-only consolidation entry points are cut at
+        // slot 24 (see the #687-B note above).
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
         // Split into two halves to stay under Base Sepolia's per-tx
@@ -776,7 +777,6 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("vpfiDiscountAccumulatorFacet", address(vpfiDiscountAccumulatorFacet));
         Deployments.writeFacet("mirrorTierReceiverFacet", address(mirrorTierReceiverFacet));
         Deployments.writeFacet("protocolBroadcastFacet", address(protocolBroadcastFacet));
-        Deployments.writeFacet("stakingRewardsFacet",     address(stakingRewardsFacet));
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
@@ -844,7 +844,6 @@ contract DeployDiamond is Script {
         console.log("VPFIDiscountAccumulatorFacet:", address(vpfiDiscountAccumulatorFacet));
         console.log("MirrorTierReceiverFacet:", address(mirrorTierReceiverFacet));
         console.log("ProtocolBroadcastFacet:", address(protocolBroadcastFacet));
-        console.log("StakingRewardsFacet:  ", address(stakingRewardsFacet));
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
@@ -1858,22 +1857,7 @@ contract DeployDiamond is Script {
         s[17] = VPFIDiscountFacet.getTrackedVPFIDiscountTier.selector;
     }
 
-    function _getStakingRewardsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](9);
-        s[0] = StakingRewardsFacet.claimStakingRewards.selector;
-        s[1] = StakingRewardsFacet.previewStakingRewards.selector;
-        s[2] = StakingRewardsFacet.getUserStakedVPFI.selector;
-        s[3] = StakingRewardsFacet.getTotalStakedVPFI.selector;
-        s[4] = StakingRewardsFacet.getStakingPoolRemaining.selector;
-        s[5] = StakingRewardsFacet.getStakingPoolPaidOut.selector;
-        s[6] = StakingRewardsFacet.getStakingAPRBps.selector;
-        s[7] = StakingRewardsFacet.getStakingSnapshot.selector;
-        // Off-chain analytics view: returns the cumulative
-        // reward-per-token accumulator without requiring the caller
-        // to know a specific user. Used by the staking dashboard for
-        // chain-wide accrual rate display.
-        s[8] = StakingRewardsFacet.getStakingRewardPerTokenStored.selector;
-    }
+    // #687-B: _getStakingRewardsSelectors removed with the 5% VPFI staking yield.
 
     function _getInteractionRewardsSelectors() internal pure returns (bytes4[] memory s) {
         s = new bytes4[](18);
@@ -1969,12 +1953,16 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](73);
+        s = new bytes4[](71);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
         s[2] = ConfigFacet.setRiskConfig.selector;
-        s[3] = ConfigFacet.setStakingApr.selector;
+        // #687-B: setStakingApr (was s[3]) / getStakingAprBps (was s[10])
+        // removed with the 5% VPFI staking yield. The two freed slots are
+        // reused by the former tail entries so this fixed-size selector
+        // array stays hole-free (SelectorCoverage compares the set).
+        s[3] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
         s[4] = ConfigFacet.setVpfiTierThresholds.selector;
         s[5] = ConfigFacet.setVpfiTierDiscountBps.selector;
         // Abnormal-market fallback: lender-bonus + treasury bps split
@@ -1985,7 +1973,7 @@ contract DeployDiamond is Script {
         s[7] = ConfigFacet.getFeesConfig.selector;
         s[8] = ConfigFacet.getLiquidationConfig.selector;
         s[9] = ConfigFacet.getRiskConfig.selector;
-        s[10] = ConfigFacet.getStakingAprBps.selector;
+        s[10] = ConfigFacet.setTwaMinStakedDays.selector; // #687-B: reused (was getStakingAprBps)
         s[11] = ConfigFacet.getFallbackSplit.selector;
         s[12] = ConfigFacet.getVpfiTierThresholds.selector;
         s[13] = ConfigFacet.getVpfiTierDiscountBps.selector;
@@ -2121,8 +2109,8 @@ contract DeployDiamond is Script {
         s[68] = ConfigFacet.setTwaRecentDays.selector;
         s[69] = ConfigFacet.setTwaWindowDays.selector;
         s[70] = ConfigFacet.setTwaRecentWeight.selector;
-        s[71] = ConfigFacet.setTwaMinStakedDays.selector;
-        s[72] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
+        // #687-B: former s[71] setTwaMinStakedDays + s[72] setMirrorTierMaxAgeSec
+        // were relocated into the slots freed by the removed staking selectors.
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

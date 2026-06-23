@@ -3,7 +3,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
-import {LibStakingRewards} from "./LibStakingRewards.sol";
 import {LibOfferMatch} from "./LibOfferMatch.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -570,11 +569,6 @@ library LibVPFIDiscount {
         );
         if (!ok) return (false, 0);
 
-        // Staking checkpoint at the post-mutation balance (now that the
-        // withdraw committed). `newStakedBal` is the intended post-
-        // deduction staked amount, computed pre-withdraw above.
-        LibStakingRewards.updateUser(borrower, newStakedBal);
-
         // Rollup the borrower's discount accumulator at the post-
         // mutation balance now that the withdraw has committed. Seeds
         // the stamp so the next period's accrual reflects the tier the
@@ -780,8 +774,6 @@ library LibVPFIDiscount {
             )
         );
         if (!ok) return (false, 0);
-
-        LibStakingRewards.updateUser(lender, newStakedBal);
 
         // 4. Re-stamp the accumulator at the post-mutation balance now
         //    that the withdraw has committed. Zero elapsed between this

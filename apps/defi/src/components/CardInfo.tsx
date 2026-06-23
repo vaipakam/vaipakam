@@ -47,8 +47,7 @@ export interface CardInfoProps {
   role?: 'lender' | 'borrower';
   /** Optional interpolation params forwarded to i18next's `t()`. Use
    *  when a registered help key contains `{{placeholder}}` segments
-   *  that need live values — e.g. the on-chain staking APR fetched
-   *  via {useStakingApr}. */
+   *  that need live values supplied by the caller. */
   params?: Record<string, unknown>;
 }
 
@@ -88,7 +87,7 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
   // `{{tier1Min}}` / `{{maxSlippage}}` / etc. without per-call-site
   // wiring. Per-call `params` (passed by the caller) override these
   // auto-injected values when there's a name collision, so callers
-  // can still customise per-context values like `{{apr}}` if needed.
+  // can still customise per-context values if needed.
   const { config } = useProtocolConfig();
   const autoParams = config
     ? {
@@ -99,7 +98,6 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
         maxLiquidatorIncentive: bpsAsPctStr(config.maxLiquidatorIncentiveBps),
         volatilityLtv: bpsAsPctStr(config.volatilityLtvThresholdBps),
         rentalBuffer: bpsAsPctStr(config.rentalBufferBps),
-        apr: bpsAsPctStr(config.vpfiStakingAprBps),
         // Use the pre-divided `tierThresholdsTokens` so a wei value of
         // `100_000_000_000_000_000_000_000` renders as "100,000" not
         // "100,000,000,000,000,000,000". See useProtocolConfig.
@@ -120,7 +118,6 @@ export function CardInfo({ id, role, params }: CardInfoProps) {
           ),
         ),
         minHealthFactor: config.minHealthFactorDisplay,
-        vpfiStakingPoolCap: config.vpfiStakingPoolCapCompact,
         vpfiInteractionPoolCap: config.vpfiInteractionPoolCapCompact,
       }
     : {};

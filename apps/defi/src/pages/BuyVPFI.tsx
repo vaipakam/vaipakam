@@ -47,9 +47,7 @@ import { ReportIssueLink } from "../components/app/ReportIssueLink";
 import { SanctionsBanner } from "../components/app/SanctionsBanner";
 import { CardInfo } from "../components/CardInfo";
 import { VPFIPanel } from "../components/app/VPFIPanel";
-import { StakingRewardsClaim } from "../components/app/StakingRewardsClaim";
 import { useVPFIToken } from "../hooks/useVPFIToken";
-import { useStakingApr } from "../hooks/useStakingApr";
 import { useMode } from "../context/ModeContext";
 import "./Dashboard.css";
 
@@ -164,10 +162,6 @@ export default function VPFIVaultAndDiscounts() {
   const canonical = getCanonicalVPFIChain();
   const { snapshot: userVpfi, reload: reloadUserVpfi } = useUserVPFI(address);
   const { snapshot: vpfiSnapshot } = useVPFIToken();
-  // Live staking APR — single read of `getStakingAPRBps`. Interpolated
-  // into i18n strings via `{{apr}}` so copy never falsely advertises
-  // 5% when governance has changed the rate via `setStakingApr`.
-  const { aprPct } = useStakingApr();
   const { balance: vaultBal, reload: reloadVault } =
     useVaultVPFIBalance(address);
   const { mode } = useMode();
@@ -595,7 +589,6 @@ export default function VPFIVaultAndDiscounts() {
           index={1}
           title={t('buyVpfi.step2Title')}
           cardHelpId="buy-vpfi.deposit"
-          cardHelpParams={{ apr: aprPct }}
         />
         <div
           style={{
@@ -614,7 +607,7 @@ export default function VPFIVaultAndDiscounts() {
             style={{ color: "var(--brand)", flexShrink: 0, marginTop: 2 }}
           />
           <p className="stat-label" style={{ margin: 0 }}>
-            {t('buyVpfi.step2Info', { apr: aprPct })}
+            {t('buyVpfi.step2Info')}
           </p>
         </div>
 
@@ -685,19 +678,6 @@ export default function VPFIVaultAndDiscounts() {
           />
         )}
       </div>
-
-      {/* Staking-rewards claim card — sits right after Step 2 (Deposit/
-          Stake) since the rewards literally accrue from what gets
-          deposited there. Always renders (even at zero pending) so the
-          program is visible to fresh users; the chrome flips green +
-          "available" copy only when there's something to claim, otherwise
-          stays neutral with informational copy that promotes the program. */}
-      <StakingRewardsClaim
-        address={address ?? null}
-        chainId={activeChain?.chainId}
-        blockExplorer={activeChain?.blockExplorer ?? readChain.blockExplorer}
-        variant="card"
-      />
 
       {/* Unstake — pull VPFI back out of vault into the wallet. Pairs with
           Step 2 (Deposit): same token, same chain, opposite direction.
@@ -849,10 +829,6 @@ export function DiscountStatusCard({
   consentEnabled,
 }: DiscountStatusCardProps) {
   const { t } = useTranslation();
-  // Live staking APR for the help-tooltip interpolation. Pulled here
-  // (not from a parent prop) so this component stays self-contained
-  // — it's mounted on both the Dashboard and historically on Buy VPFI.
-  const { aprPct } = useStakingApr();
   // Live tier table — derived from on-chain `getVpfiTierThresholds` /
   // `getVpfiTierDiscountBps` so governance changes flow through to the
   // displayed thresholds and discounts without a frontend redeploy.
@@ -882,7 +858,7 @@ export function DiscountStatusCard({
     <div className="card" style={{ marginBottom: 20 }}>
       <div className="card-title" style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
         {t('buyVpfiCards.discountStatusTitle')}
-        <CardInfo id="buy-vpfi.discount-status" params={{ apr: aprPct }} />
+        <CardInfo id="buy-vpfi.discount-status" />
       </div>
 
       <div
@@ -908,7 +884,7 @@ export function DiscountStatusCard({
             {vaultVpfi == null ? "—" : vaultUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {t('buyVpfiCards.vaultCountsAsStaked', { apr: aprPct })}
+            {t('buyVpfiCards.vaultCountsAsStaked')}
           </div>
         </div>
         <div>
@@ -1216,8 +1192,6 @@ function UnstakeCard({
   onUnstake,
 }: UnstakeCardProps) {
   const { t } = useTranslation();
-  // Live staking APR for the unstake-warning copy. Single read.
-  const { aprPct } = useStakingApr();
   const vaultBalanceUnits = formatVpfiUnits(vaultBalance);
   const rawInput = value.trim();
   const inputEmpty = rawInput === "";
@@ -1303,7 +1277,7 @@ function UnstakeCard({
           // className="stat-label"
           style={{ margin: 0, fontSize: 12, lineHeight: 1.5 }}
         >
-          {t('buyVpfiCards.unstakeWarning', { apr: aprPct })}
+          {t('buyVpfiCards.unstakeWarning')}
         </p>
       </div>
 

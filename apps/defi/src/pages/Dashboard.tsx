@@ -369,13 +369,10 @@ export default function Dashboard() {
           Hides itself when none of the above applies. */}
       <StakeVPFICTA />
 
-      {/* Aspirational rewards summary — combined view of pending +
-          lifetime-claimed across both reward streams (staking yield
-          on vault VPFI; platform-interaction rebate). Each row deep-
-          links to the full claim card on its native page so the user
-          can act with one click. Replaces the old inline-variant
-          StakingRewardsClaim mirror — that variant only ever lived
-          here, the new card supersedes it with broader coverage. */}
+      {/* Aspirational rewards summary — view of pending +
+          lifetime-claimed platform-interaction rebate. The row deep-
+          links to the full claim card on Claim Center so the user
+          can act with one click. */}
       <RewardsSummaryCard address={address ?? null} />
 
       {/* Connected wallet's own currently-open offers. Lifted from the

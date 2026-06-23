@@ -7,14 +7,15 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
-import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 
 /// @title StakingAndInteractionRewardsTest
-/// @notice Smoke tests for the Phase-1 VPFI reward surfaces — staking (5% APR
-///         on vault-held VPFI) and interaction (daily USD-share emissions).
-///         See docs/TokenomicsTechSpec.md §4 and §7.
+/// @notice Smoke tests for the Phase-1 VPFI reward surfaces — vault
+///         deposit / withdraw and interaction (daily USD-share emissions).
+///         See docs/TokenomicsTechSpec.md §4. (#687-B removed the 5% VPFI
+///         staking-yield surface; the discount tiers + interaction rewards
+///         remain.)
 contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
     VPFIToken internal vpfiToken;
     // #229: VPFIDiscount + StakingRewards + InteractionRewards facets
@@ -63,59 +64,21 @@ contract StakingAndInteractionRewardsTest is SetupTest, IVaipakamErrors {
         vm.stopPrank();
     }
 
-    function _staking() internal view returns (StakingRewardsFacet) {
-        return StakingRewardsFacet(address(diamond));
-    }
-
     function _interaction() internal view returns (InteractionRewardsFacet) {
         return InteractionRewardsFacet(address(diamond));
     }
 
-    // ─── Staking ─────────────────────────────────────────────────────────────
+    // ─── Vault deposit / withdraw ──────────────────────────────────────────────
+    // #687-B: the 5% staking-yield accrual/claim tests were removed with the
+    // yield. The deposit/withdraw mechanics (which back the discount tiers) stay.
 
-    function testStakingAccruesAtFivePercentAPR() public {
-        _deposit(lender, 10_000 ether);
-        assertEq(_staking().getUserStakedVPFI(lender), 10_000 ether);
-        assertEq(_staking().getTotalStakedVPFI(), 10_000 ether);
-
-        vm.warp(block.timestamp + 365 days);
-
-        // expected ≈ 10_000 * 5% = 500 VPFI (within 1 wei of rounding)
-        uint256 pending = _staking().previewStakingRewards(lender);
-        uint256 expected = (10_000 ether * 500) / 10_000;
-        assertApproxEqAbs(pending, expected, 1e12);
-    }
-
-    function testStakingClaimTransfersAndUpdatesPool() public {
-        _deposit(lender, 10_000 ether);
-        vm.warp(block.timestamp + 30 days);
-
-        uint256 balBefore = vpfiToken.balanceOf(lender);
-        vm.prank(lender);
-        uint256 paid = _staking().claimStakingRewards();
-
-        assertGt(paid, 0);
-        assertEq(vpfiToken.balanceOf(lender), balBefore + paid);
-        assertEq(_staking().getStakingPoolPaidOut(), paid);
-        // pending should reset to ~0
-        assertLt(_staking().previewStakingRewards(lender), 1e9);
-    }
-
-    function testStakingClaimRevertsWhenNothingPending() public {
-        vm.prank(lender);
-        vm.expectRevert(NoStakingRewardsToClaim.selector);
-        _staking().claimStakingRewards();
-    }
-
-    function testWithdrawReducesStakeAndReturnsWallet() public {
+    function testWithdrawReturnsVPFIToWallet() public {
         _deposit(lender, 5_000 ether);
-        assertEq(_staking().getUserStakedVPFI(lender), 5_000 ether);
 
         uint256 walletBefore = vpfiToken.balanceOf(lender);
         vm.prank(lender);
         VPFIDiscountFacet(address(diamond)).withdrawVPFIFromVault(2_000 ether);
 
-        assertEq(_staking().getUserStakedVPFI(lender), 3_000 ether);
         assertEq(vpfiToken.balanceOf(lender), walletBefore + 2_000 ether);
     }
 

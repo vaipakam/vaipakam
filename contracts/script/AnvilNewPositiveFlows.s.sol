@@ -22,7 +22,6 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
-import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {TreasuryFacet} from "../src/facets/TreasuryFacet.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -124,7 +123,7 @@ contract AnvilNewPositiveFlows is Script {
         _scenarioN11SanctionsTier1Deny();
         _scenarioN12KeeperPerAction();
         _scenarioN10VpfiStakingDiscount();
-        _scenarioN13StakingRewardsClaim();
+        // #687-B: N13 (staking-rewards claim) removed with the 5% staking yield.
         _scenarioN14UnstakeVpfi();
         _restoreVpfiConfig();
         _scenarioN18PauseAsset();
@@ -1410,110 +1409,35 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Pre-N10 VPFI config restored (testnet-safe).");
     }
 
-    // ─── N13: Staking Rewards Claim ─────────────────────────────────────
-
-    /// @dev Verifies the implicit-staking accrual on vault-held VPFI.
-    ///      Pre-state: N10 left ~2,000 VPFI (Tier-2) sitting in
-    ///      `borrower`'s vault. Time on Anvil during `--broadcast`
-    ///      cannot be advanced from inside the script (`vm.warp`
-    ///      mutates only simulation EVM state; `vm.rpc(\"evm_increaseTime\")`
-    ///      trips Foundry's response parser per the SepoliaPositiveFlows
-    ///      comment). The script runs `--slow` so a handful of real
-    ///      seconds elapse between scenarios; at 5% APR on 2,000 VPFI
-    ///      that's ~3.2e12 wei/second, well above zero. The assertion
-    ///      surface is therefore: pre-fund the pool, attempt the claim,
-    ///      and verify EITHER (a) `pending > 0` AND `wallet grew on
-    ///      claim` OR (b) `pending == 0` AND the claim reverted with
-    ///      `NoStakingRewardsToClaim`. Either branch proves the
-    ///      accrual + claim plumbing is wired end-to-end.
-    function _scenarioN13StakingRewardsClaim() internal {
-        console.log("");
-        console.log("=== N13: VPFI Staking Rewards Claim ===");
-
-        // Step 1: fund diamond with VPFI for the staking pool. In
-        // production this is the 55.2M `TreasuryFacet.mintVPFI`
-        // allocation; here we use the mock's mint directly.
-        vm.startBroadcast(deployerKey);
-        vpfi.mint(diamond, 1_000_000e18);
-        vm.stopBroadcast();
-        console.log("Diamond funded with 1M VPFI for staking pool");
-
-        // Step 2: peek at the current pending. Whatever real seconds
-        // have elapsed under `--slow` since N10's deposit show up here.
-        uint256 pending = StakingRewardsFacet(diamond).previewStakingRewards(borrower);
-        console.log("Previewed staking rewards (VPFI wei):", pending);
-
-        uint256 walletBefore = vpfi.balanceOf(borrower);
-        if (pending > 0) {
-            // Accrual happy path: claim should transfer paid > 0.
-            vm.startBroadcast(borrowerKey);
-            StakingRewardsFacet(diamond).claimStakingRewards();
-            vm.stopBroadcast();
-            uint256 walletAfter = vpfi.balanceOf(borrower);
-            console.log("VPFI wallet pre-claim:", walletBefore);
-            console.log("VPFI wallet post-claim:", walletAfter);
-            require(
-                walletAfter > walletBefore,
-                "N13: wallet should grow on claimStakingRewards"
-            );
-            console.log("Claim path verified: wallet grew by", walletAfter - walletBefore);
-        } else {
-            // Zero-accrual path: claim should revert with
-            // `NoStakingRewardsToClaim`. We verify by attempting the
-            // call inside try/catch (no broadcast — view-style probe
-            // via low-level call to keep simulation clean).
-            (bool ok, ) = address(diamond).call(
-                abi.encodeWithSelector(StakingRewardsFacet.claimStakingRewards.selector)
-            );
-            require(!ok, "N13: claim with zero pending should revert");
-            console.log("Zero-accrual path verified: claim reverts as expected");
-        }
-
-        console.log(">>> N13 PASSED <<<");
-    }
-
     // ─── N14: Unstake VPFI (withdraw from vault) ───────────────────────
 
-    /// @dev After N13 claims rewards, the borrower's stake (vault VPFI)
-    ///      remains. Unstake by calling `withdrawVPFIFromVault`. Verify
-    ///      the wallet grows by the unstaked amount and the staked
-    ///      counter falls to zero. This also exercises T-051's
+    /// @dev N10 left ~2,000 VPFI (Tier-2) in `borrower`'s vault. Unstake by
+    ///      calling `withdrawVPFIFromVault` and verify the wallet grows by the
+    ///      unstaked amount. This also exercises T-051's
     ///      `protocolTrackedVaultBalance` decrement on the VPFI side.
+    ///      (#687-B: the staked-counter assertion was removed with the 5%
+    ///      staking yield; the wallet-delta assertion is the live observable.)
     function _scenarioN14UnstakeVpfi() internal {
         console.log("");
         console.log("=== N14: Unstake VPFI from vault ===");
 
-        uint256 stakedBefore = StakingRewardsFacet(diamond).getUserStakedVPFI(borrower);
-        require(stakedBefore > 0, "N14: borrower should have stake before unstake");
         uint256 walletBefore = vpfi.balanceOf(borrower);
 
-        // Withdraw a fixed amount strictly smaller than the deposit
-        // (1,000 VPFI of the 2,000 deposited in N10). The exact-balance
-        // approach (`withdrawVPFIFromVault(stakedBefore)`) bakes the
-        // simulation-time balance into the tx args; if the broadcast-
-        // time balance diverges by even 1 wei due to ordering or
-        // checkpoint nuance, the withdraw reverts. Withdrawing a
-        // partial-but-known-safe amount sidesteps that without losing
-        // assertion strength.
+        // Withdraw a fixed amount strictly smaller than the 2,000 VPFI N10
+        // deposited. A partial-but-known-safe amount sidesteps the exact-
+        // balance race where a 1-wei broadcast-time divergence reverts.
         uint256 unstakeAmt = 1_000e18;
-        require(unstakeAmt <= stakedBefore, "N14: precondition - stake should be >= unstake amount");
 
         vm.startBroadcast(borrowerKey);
         VPFIDiscountFacet(diamond).withdrawVPFIFromVault(unstakeAmt);
         vm.stopBroadcast();
 
         uint256 walletAfter = vpfi.balanceOf(borrower);
-        uint256 stakedAfter = StakingRewardsFacet(diamond).getUserStakedVPFI(borrower);
-        console.log("VPFI staked pre / post:", stakedBefore, stakedAfter);
         console.log("VPFI wallet pre / post:", walletBefore, walletAfter);
 
         require(
             walletAfter == walletBefore + unstakeAmt,
             "N14: wallet should grow by exactly the unstaked amount"
-        );
-        require(
-            stakedAfter == stakedBefore - unstakeAmt,
-            "N14: stake should drop by exactly the unstaked amount"
         );
 
         console.log(">>> N14 PASSED <<<");

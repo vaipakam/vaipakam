@@ -64,7 +64,6 @@ import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol";
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
-import {StakingRewardsFacet} from "../src/facets/StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -79,22 +78,25 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](88);
+        selectors = new bytes4[](83);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
         selectors[3] = TestMutatorFacet.setNextOfferId.selector;
         selectors[4] = TestMutatorFacet.setTreasuryAddress.selector;
         selectors[5] = TestMutatorFacet.setKYCEnforcementFlag.selector;
-        selectors[6] = TestMutatorFacet.setStakingPoolPaidOut.selector;
+        // #687-B: 5 staking accrual mutator/getters removed with the 5% yield;
+        // the 5 former tail entries fill the freed slots ([6],[11]-[14]) so this
+        // fixed-size set stays complete.
+        selectors[6] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
         selectors[7] = TestMutatorFacet.setInteractionPoolPaidOut.selector;
         selectors[8] = TestMutatorFacet.setInteractionLastClaimedDay.selector;
         selectors[9] = TestMutatorFacet.setDailyLenderInterest.selector;
         selectors[10] = TestMutatorFacet.setDailyBorrowerInterest.selector;
-        selectors[11] = TestMutatorFacet.getStakingRPTStored.selector;
-        selectors[12] = TestMutatorFacet.getStakingLastUpdateTime.selector;
-        selectors[13] = TestMutatorFacet.getUserStakingPaid.selector;
-        selectors[14] = TestMutatorFacet.getUserStakingPending.selector;
+        selectors[11] = TestMutatorFacet.pushUserLoanIdRaw.selector;
+        selectors[12] = TestMutatorFacet.vpfiTokenRaw.selector;
+        selectors[13] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
+        selectors[14] = TestMutatorFacet.setVpfiTokenRaw.selector;
         selectors[15] = TestMutatorFacet.setKnownGlobalDailyInterest.selector;
         selectors[16] = TestMutatorFacet.setKnownGlobalSet.selector;
         selectors[17] = TestMutatorFacet.pushUserLoanId.selector;
@@ -243,13 +245,10 @@ contract HelperTest {
         // residual tests (drain-block + claimability).
         selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
         selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
-        // #399 backstop v0 Role B — isolate the absorb insufficient-cash guard.
-        selectors[83] = TestMutatorFacet.setBackstopAbsorbCashRaw.selector;
-        selectors[84] = TestMutatorFacet.pushUserLoanIdRaw.selector;
-        selectors[85] = TestMutatorFacet.vpfiTokenRaw.selector;
-        selectors[86] = TestMutatorFacet.setLenderProceedsEncumberedRaw.selector;
-        // #673 — designate VPFI directly in harnesses that don't cut VPFITokenFacet.
-        selectors[87] = TestMutatorFacet.setVpfiTokenRaw.selector;
+        // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
+        // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
+        // setVpfiTokenRaw) were relocated into the slots freed by the removed
+        // staking accrual mutator/getters.
         return selectors;
     }
 
@@ -1341,40 +1340,27 @@ contract HelperTest {
         return selectors;
     }
 
-    function getStakingRewardsFacetSelectors()
-        public
-        pure
-        returns (bytes4[] memory selectors)
-    {
-        selectors = new bytes4[](9);
-        selectors[0] = StakingRewardsFacet.claimStakingRewards.selector;
-        selectors[1] = StakingRewardsFacet.previewStakingRewards.selector;
-        selectors[2] = StakingRewardsFacet.getUserStakedVPFI.selector;
-        selectors[3] = StakingRewardsFacet.getTotalStakedVPFI.selector;
-        selectors[4] = StakingRewardsFacet.getStakingPoolRemaining.selector;
-        selectors[5] = StakingRewardsFacet.getStakingPoolPaidOut.selector;
-        selectors[6] = StakingRewardsFacet.getStakingAPRBps.selector;
-        selectors[7] = StakingRewardsFacet.getStakingSnapshot.selector;
-        selectors[8] = StakingRewardsFacet.getStakingRewardPerTokenStored.selector;
-        return selectors;
-    }
+    // #687-B: getStakingRewardsFacetSelectors removed with the 5% VPFI staking yield.
 
     function getConfigFacetSelectors()
         public
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](73);
+        selectors = new bytes4[](71);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
-        selectors[3] = ConfigFacet.setStakingApr.selector;
+        // #687-B: setStakingApr (was [3]) / getStakingAprBps (was [9]) removed
+        // with the 5% staking yield; the two tail entries fill the holes so the
+        // fixed-size set stays complete.
+        selectors[3] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
         selectors[4] = ConfigFacet.setVpfiTierThresholds.selector;
         selectors[5] = ConfigFacet.setVpfiTierDiscountBps.selector;
         selectors[6] = ConfigFacet.getFeesConfig.selector;
         selectors[7] = ConfigFacet.getLiquidationConfig.selector;
         selectors[8] = ConfigFacet.getRiskConfig.selector;
-        selectors[9] = ConfigFacet.getStakingAprBps.selector;
+        selectors[9] = ConfigFacet.setTwaMinStakedDays.selector;
         selectors[10] = ConfigFacet.getVpfiTierThresholds.selector;
         selectors[11] = ConfigFacet.getVpfiTierDiscountBps.selector;
         selectors[12] = ConfigFacet.getProtocolConfigBundle.selector;
@@ -1480,8 +1466,8 @@ contract HelperTest {
         selectors[68] = ConfigFacet.setTwaRecentDays.selector;
         selectors[69] = ConfigFacet.setTwaWindowDays.selector;
         selectors[70] = ConfigFacet.setTwaRecentWeight.selector;
-        selectors[71] = ConfigFacet.setTwaMinStakedDays.selector;
-        selectors[72] = ConfigFacet.setMirrorTierMaxAgeSec.selector;
+        // #687-B: former [71] setTwaMinStakedDays + [72] setMirrorTierMaxAgeSec
+        // relocated into the slots freed by the removed staking selectors.
         return selectors;
     }
 

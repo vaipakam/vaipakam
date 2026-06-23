@@ -135,12 +135,8 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled = enabled;
     }
 
-    // ─── Reward-pool mutators (for staking + interaction coverage tests) ─────
-
-    /// @notice Set the cumulative paid-out counter for the staking pool.
-    function setStakingPoolPaidOut(uint256 v) external {
-        LibVaipakam.storageSlot().stakingPoolPaidOut = v;
-    }
+    // ─── Reward-pool mutators (for interaction coverage tests) ───────────────
+    // #687-B: setStakingPoolPaidOut removed with the 5% VPFI staking yield.
 
     /// @notice Set the cumulative paid-out counter for the interaction pool.
     function setInteractionPoolPaidOut(uint256 v) external {
@@ -448,25 +444,9 @@ contract TestMutatorFacet {
         return LibVaipakam.storageSlot().userVaipakamVaults[user];
     }
 
-    /// @notice Test-only: expose raw staking accrual storage fields so tests
-    ///         can assert against the internal reward-per-token counters
-    ///         without grepping storage slots.
-    // forge-lint: disable-next-line(mixed-case-function)
-    function getStakingRPTStored() external view returns (uint256) {
-        return LibVaipakam.storageSlot().stakingRewardPerTokenStored;
-    }
-
-    function getStakingLastUpdateTime() external view returns (uint256) {
-        return LibVaipakam.storageSlot().stakingLastUpdateTime;
-    }
-
-    function getUserStakingPaid(address u) external view returns (uint256) {
-        return LibVaipakam.storageSlot().userStakingRewardPerTokenPaid[u];
-    }
-
-    function getUserStakingPending(address u) external view returns (uint256) {
-        return LibVaipakam.storageSlot().userStakingPendingReward[u];
-    }
+    // #687-B: the staking-accrual storage getters (getStakingRPTStored,
+    // getStakingLastUpdateTime, getUserStakingPaid, getUserStakingPending)
+    // were removed with the 5% VPFI staking yield.
 
     // ─── Reverse-index mutators (enumeration tests) ─────────────────────────
 

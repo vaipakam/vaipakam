@@ -3,7 +3,6 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
-import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
@@ -11,7 +10,6 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  * @author Vaipakam Developer Team
  * @notice Admin-configurable protocol parameters: fees, VPFI discount
  *         tier table, liquidation-path risk knobs, rental prepay buffer,
- *         and staking APR.
  * @dev Every setter is ADMIN_ROLE-gated (routed through the 48h
  *      Timelock post-handover) and writes into
  *      {LibVaipakam.Storage.protocolCfg}. A stored zero means "use the
@@ -34,7 +32,6 @@ contract ConfigFacet is DiamondAccessControl {
     error InvalidIncentiveBps(uint256 bps, uint256 maxAllowed);
     error InvalidVolatilityLtvBps(uint256 bps);
     error InvalidRentalBufferBps(uint256 bps);
-    error InvalidStakingAprBps(uint256 bps);
     error NonMonotoneTierThresholds(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     error NonMonotoneTierDiscounts(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     error DiscountBpsTooHigh(uint256 bps, uint256 maxAllowed);
@@ -69,7 +66,6 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event RiskConfigSet(uint16 volatilityLtvThresholdBps, uint16 rentalBufferBps);
     /// @custom:event-category informational/config
-    event StakingAprSet(uint16 aprBps);
     /// @custom:event-category informational/config
     event VpfiTierThresholdsSet(uint256 t1, uint256 t2, uint256 t3, uint256 t4);
     /// @custom:event-category informational/config
@@ -896,43 +892,7 @@ contract ConfigFacet is DiamondAccessControl {
         emit RiskConfigSet(volatilityLtvThresholdBps, rentalBufferBps);
     }
 
-    /**
-     * @notice Update the VPFI vault staking APR.
-     * @param aprBps Annual rate in BPS (default 500 ≡ 5%). Passing `0`
-     *        resets to the default.
-     * @dev ADMIN_ROLE-only. Capped at 100% APR to guard against typos.
-     *
-     *      {LibStakingRewards.checkpointGlobal} MUST fire BEFORE writing
-     *      the new rate. That call folds the OLD APR × elapsed time into
-     *      `stakingRewardPerTokenStored` and stamps `stakingLastUpdateTime
-     *      = now`, so the subsequent `currentRewardPerToken()` view uses
-     *      the new APR only for time AFTER this tx. Without the checkpoint,
-     *      `currentRewardPerToken()` computes `dt × newApr` for the whole
-     *      elapsed period since the last update — effectively applying the
-     *      new rate retroactively to the old era. The fix makes every APR
-     *      era non-retroactive: each value applies to exactly the duration
-     *      it was in effect, automatically across both active and dormant
-     *      stakers (the global counter stores the full historical integral).
-     */
-    function setStakingApr(uint16 aprBps) external onlyRole(LibAccessControl.ADMIN_ROLE) {
-        // Setter-range audit (2026-05-02): tightened from
-        // `≤ BASIS_POINTS` (100% APR) to `≤ STAKING_APR_BPS_MAX`
-        // (20% APR). Above 20% is unrealistic for VPFI staking and
-        // a compromised admin pushing past it is a governance-error
-        // vector. Zero is permitted (disables rewards while
-        // preserving the staked principal accounting).
-        if (aprBps > LibVaipakam.STAKING_APR_BPS_MAX) {
-            revert IVaipakamErrors.ParameterOutOfRange(
-                "stakingAprBps",
-                uint256(aprBps),
-                0,
-                uint256(LibVaipakam.STAKING_APR_BPS_MAX)
-            );
-        }
-        LibStakingRewards.checkpointGlobal();
-        LibVaipakam.storageSlot().protocolCfg.vpfiStakingAprBps = aprBps;
-        emit StakingAprSet(aprBps);
-    }
+    // #687-B: setStakingApr was removed with the 5% VPFI staking yield.
 
     /**
      * @notice Update all four VPFI discount tier thresholds atomically.
@@ -1723,10 +1683,6 @@ contract ConfigFacet is DiamondAccessControl {
         rentalBufferBps = LibVaipakam.cfgRentalBufferBps();
     }
 
-    function getStakingAprBps() external view returns (uint256) {
-        return LibVaipakam.cfgVpfiStakingAprBps();
-    }
-
     /// @notice Single-field getter for the treasury fee. Mirrors the
     ///         tuple-returning {getFeesConfig} but returns just the
     ///         treasury slice. Added for the protocol console knob
@@ -1889,7 +1845,6 @@ contract ConfigFacet is DiamondAccessControl {
             uint256 maxLiquidatorIncentiveBps,
             uint256 volatilityLtvThresholdBps,
             uint256 rentalBufferBps,
-            uint256 vpfiStakingAprBps,
             uint256[4] memory tierThresholds,
             uint256[4] memory tierDiscountBps,
             // Range Orders Phase 1 master kill-switch flags. Frontend
@@ -1923,7 +1878,6 @@ contract ConfigFacet is DiamondAccessControl {
         maxLiquidatorIncentiveBps = LibVaipakam.cfgMaxLiquidatorIncentiveBps();
         volatilityLtvThresholdBps = LibVaipakam.cfgVolatilityLtvThresholdBps();
         rentalBufferBps = LibVaipakam.cfgRentalBufferBps();
-        vpfiStakingAprBps = LibVaipakam.cfgVpfiStakingAprBps();
         (uint256 a, uint256 b, uint256 c, uint256 d) = LibVaipakam.cfgVpfiTierThresholds();
         tierThresholds = [a, b, c, d];
         tierDiscountBps = [
@@ -1952,13 +1906,11 @@ contract ConfigFacet is DiamondAccessControl {
     ///         purely to give the frontend a single source of truth so
     ///         tooltip / explainer copy never drifts from the deployed
     ///         contract. For governance-mutable values (treasury fee,
-    ///         tier thresholds, staking APR, ...) use
+    ///         tier thresholds, ...) use
     ///         {getProtocolConfigBundle}.
     /// @return minHealthFactor       1e18-scaled HF floor at loan
     ///                               initiation and after partial-
     ///                               withdrawal / cure / refinance.
-    /// @return vpfiStakingPoolCap    Hard cap on the staking-rewards
-    ///                               pool (55.2M VPFI = 24% of total).
     /// @return vpfiInteractionPoolCap Hard cap on the interaction-
     ///                               rewards pool (69M VPFI = 30%).
     /// @return maxInteractionClaimDays Per-tx upper bound on the days
@@ -1966,12 +1918,12 @@ contract ConfigFacet is DiamondAccessControl {
     ///                               walk in one window (split across
     ///                               multiple claims if it'd otherwise
     ///                               exceed this).
+    /// @dev #687-B removed `vpfiStakingPoolCap` with the 5% VPFI staking yield.
     function getProtocolConstants()
         external
         view
         returns (
             uint256 minHealthFactor,
-            uint256 vpfiStakingPoolCap,
             uint256 vpfiInteractionPoolCap,
             uint256 maxInteractionClaimDays
         )
@@ -1983,7 +1935,6 @@ contract ConfigFacet is DiamondAccessControl {
             // governance retune instead of silently quoting the stale 1.5.
             // This makes the function `view` (was `pure`).
             LibVaipakam.minHealthFactor(),
-            LibVaipakam.VPFI_STAKING_POOL_CAP,
             LibVaipakam.VPFI_INTERACTION_POOL_CAP,
             LibVaipakam.MAX_INTERACTION_CLAIM_DAYS
         );
@@ -2008,7 +1959,7 @@ contract ConfigFacet is DiamondAccessControl {
      *        GRACE_SECONDS_MAX]` floor / ceiling (defense in depth).
      *      Per-slot bounds defend against a compromised admin pushing
      *      a single slot to either extreme — same policy as
-     *      setStakingApr, setSecondaryOracleMaxStaleness, etc. (T-033).
+     *      setSecondaryOracleMaxStaleness, etc. (T-033).
      * @param buckets New schedule. Order matters; rejected if invalid.
      */
     function setGraceBuckets(

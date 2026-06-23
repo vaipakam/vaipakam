@@ -64,8 +64,9 @@ contract BootstrapAnvil is Script {
 
         // Verify with a single bundle read so the script can't return
         // success on a silently-failed setter.
+        // #687-B: getProtocolConfigBundle dropped vpfiStakingAprBps, so the
+        // leading skip group is one shorter (tFee..disc = 9 fields).
         (
-            ,
             ,
             ,
             ,

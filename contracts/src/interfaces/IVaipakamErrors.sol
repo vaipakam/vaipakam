@@ -168,10 +168,6 @@ interface IVaipakamErrors {
     /// @notice VPFI token has not been registered on this diamond yet
     ///         (VPFITokenFacet.setVPFIToken).
     error VPFITokenNotSet();
-    /// @notice No staking rewards pending for the caller at claim time.
-    error NoStakingRewardsToClaim();
-    /// @notice The 55.2M VPFI staking rewards cap has been fully paid out.
-    error StakingPoolExhausted();
     /// @notice Interaction reward emissions have not been started by admin
     ///         (InteractionRewardsFacet.setInteractionLaunchTimestamp).
     error InteractionEmissionsNotStarted();

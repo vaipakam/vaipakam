@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useStakingApr } from '../../hooks/useStakingApr';
 import { Coins, ExternalLink } from 'lucide-react';
 import i18n from '../../i18n';
 import { useVPFIToken } from '../../hooks/useVPFIToken';
@@ -73,8 +72,6 @@ export function VPFIPanel({
   isAdvanced,
 }: VPFIPanelProps) {
   const { t } = useTranslation();
-  // Live staking APR for the share-tooltip interpolation. Single read.
-  const { aprPct } = useStakingApr();
   const registered = !!vpfi?.registered;
   const tokenAddr = vpfi?.token ?? null;
   const minterAddr = vpfi?.minter ?? null;
@@ -164,7 +161,7 @@ export function VPFIPanel({
             <div>
               <div
                 className="stat-value"
-                data-tooltip={t('vpfiTokenCard.shareTooltip', { apr: aprPct })}
+                data-tooltip={t('vpfiTokenCard.shareTooltip')}
                 data-tooltip-placement="below-start"
               >
                 {(effectiveShareOfCirculating * 100).toFixed(2)}%

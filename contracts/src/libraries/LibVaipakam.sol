@@ -599,14 +599,13 @@ library LibVaipakam {
     // Hard caps on each Phase-1 emission category. The diamond pays
     // claims from its own VPFI balance; a cumulative paid-out counter
     // enforces these caps at claim time.
-    uint256 constant VPFI_STAKING_POOL_CAP = 55_200_000 * 1e18; // 24% of supply
+    // #687-B: VPFI_STAKING_POOL_CAP (24%) was removed with the 5% staking
+    // yield. The freed supply allocation is an owner tokenomics decision
+    // tracked under #687 / #694; this constant no longer gates any claim.
     uint256 constant VPFI_INTERACTION_POOL_CAP = 69_000_000 * 1e18; // 30% of supply
     // Reward base for interaction daily pool — multiplied by the
     // schedule's annualRate and `dt / 365` to size each day's emission.
     uint256 constant VPFI_INITIAL_MINT = 23_000_000 * 1e18;
-    // APR paid on vault-held VPFI (spec §7). In BPS, applied as
-    //   increment_1e18 = APR_BPS * 1e18 * dt / (BASIS_POINTS * SECONDS_PER_YEAR)
-    uint256 constant VPFI_STAKING_APR_BPS = 500; // 5%
     // Max days walked in a single claimInteractionRewards() call — bounds
     // gas cost for long-dormant users without denying access.
     uint256 constant MAX_INTERACTION_CLAIM_DAYS = 30;
@@ -798,8 +797,8 @@ library LibVaipakam {
      *      18-decimal VPFI balances that routinely exceed `uint128`).
      *
      *      Scope (user directive 2026-04-21): tunable = fees, VPFI tier
-     *      table, LTV / liquidation risk knobs, rental buffer, staking
-     *      APR. Kept immutable: tokenomics supply caps (`VPFI_*_CAP`,
+     *      table, LTV / liquidation risk knobs, rental buffer. Kept
+     *      immutable: tokenomics supply caps (`VPFI_*_CAP`,
      *      `VPFI_INITIAL_MINT`), `MIN_HEALTH_FACTOR`, fallback 3%/2%
      *      settlement split, `BASIS_POINTS` and other scale constants.
      */
@@ -812,7 +811,6 @@ library LibVaipakam {
         uint16 maxLiquidatorIncentiveBps; // 0 ⇒ MAX_LIQUIDATOR_INCENTIVE_BPS (300)
         uint16 volatilityLtvThresholdBps; // 0 ⇒ VOLATILITY_LTV_THRESHOLD_BPS (11000)
         uint16 rentalBufferBps; // 0 ⇒ RENTAL_BUFFER_BPS (500)
-        uint16 vpfiStakingAprBps; // 0 ⇒ VPFI_STAKING_APR_BPS (500)
         uint16 vpfiTier1DiscountBps; // 0 ⇒ VPFI_TIER1_DISCOUNT_BPS (1000)
         uint16 vpfiTier2DiscountBps; // 0 ⇒ VPFI_TIER2_DISCOUNT_BPS (1500)
         uint16 vpfiTier3DiscountBps; // 0 ⇒ VPFI_TIER3_DISCOUNT_BPS (2000)
@@ -1999,7 +1997,7 @@ library LibVaipakam {
      *      a slot's day id from a single `firstWriteDayId` mis-labels
      *      old balances after the ring wraps.
      *
-     *      `balance` is the protocol-tracked staking balance
+     *      `balance` is the protocol-tracked vault VPFI balance
      *      (`s.protocolTrackedVaultBalance[user][s.vpfiToken]`), NOT
      *      the raw vault VPFI balance — unsolicited transfers can't
      *      inflate the tier (Codex round-7 P1 #7).
@@ -2449,28 +2447,10 @@ library LibVaipakam {
         // applied automatically whenever the vault holds enough VPFI and
         // the asset leg is eligible (liquidity + oracle availability).
         mapping(address => bool) vpfiDiscountConsent;
-        // ─── VPFI Staking Rewards (spec §7) ─────────────────────────────
-        // Vault-held VPFI is automatically "staked" and earns 5% APR from
-        // VPFI_STAKING_POOL_CAP. reward-per-token time-weighted accrual —
-        // every VPFI vault balance mutation (deposit, discount deduction,
-        // withdrawVPFIFromVault) MUST call LibStakingRewards.updateUser
-        // BEFORE mutating the vault balance, passing the user's current
-        // staked balance as the checkpoint input.
-        //
-        // rewardPerTokenStored is VPFI-per-staked-VPFI scaled by 1e18.
-        // totalStakedVpfi is the sum of every user's `userStakedVpfi`.
-        // stakingPoolPaidOut is monotone — claims are capped so this
-        // never exceeds VPFI_STAKING_POOL_CAP. userStakedVpfi mirrors the
-        // user's actual vault VPFI balance; it is authoritative for the
-        // accrual math and decouples the reward bookkeeping from any
-        // vault-side balance read.
-        uint256 stakingRewardPerTokenStored;
-        uint256 stakingLastUpdateTime;
-        uint256 totalStakedVpfi;
-        uint256 stakingPoolPaidOut;
-        mapping(address => uint256) userStakedVpfi;
-        mapping(address => uint256) userStakingRewardPerTokenPaid;
-        mapping(address => uint256) userStakingPendingReward;
+        // #687-B: the VPFI 5% staking-yield accrual storage was removed with
+        // the staking yield itself (the balance-based fee-discount tiers +
+        // interaction rewards are unaffected — they read the vault balance /
+        // discount accumulator, never the staking accrual).
         // ─── VPFI Lender Yield-Fee Time-Weighted Discount (§5.2a) ──────
         // Per-user accumulator backing the lender-side time-weighted
         // yield-fee discount. Each loan stores `lenderDiscountAccAtInit`
@@ -3122,10 +3102,9 @@ library LibVaipakam {
         //      staked VPFI no matter what other checks were
         //      bypassed. Load-bearing safety property.
         //
-        // The staking checkpoint (`LibStakingRewards.updateUser`) and
-        // VPFI discount accumulator (`LibVPFIDiscount.rollupUserDiscount`)
-        // also clamp to `min(balanceOf, tracked)` so unsolicited VPFI
-        // dust does NOT earn yield and does NOT inflate the tier.
+        // The VPFI discount accumulator (`LibVPFIDiscount.rollupUserDiscount`)
+        // also clamps to `min(balanceOf, tracked)` so unsolicited VPFI
+        // dust does NOT inflate the tier.
         //
         // Underflow on withdraw means a withdrawal fired without a
         // matching deposit — that's an accounting bug somewhere upstream
@@ -4650,13 +4629,6 @@ library LibVaipakam {
     ///      by this tighter cap.
     uint16 internal constant RISK_PARAMS_RESERVE_FACTOR_BPS_MAX = 5000;
 
-    /// @dev Bound for {ConfigFacet.setStakingApr}. Max 20% APR.
-    ///      Previous `≤ BASIS_POINTS` (100%) is permissive but
-    ///      unrealistic; protocol staking APRs even reaching 20% are
-    ///      already very generous for VPFI staking, and a higher
-    ///      cap is a governance-error vector rather than a feature.
-    uint16 internal constant STAKING_APR_BPS_MAX = 2000;
-
     /// @dev Bounds for {ProfileFacet.updateKYCThresholds}. The
     ///      existing inline check enforces `tier0 < tier1`;
     ///      these bounds prevent governance from setting absurdly
@@ -4821,11 +4793,6 @@ library LibVaipakam {
     function cfgRentalBufferBps() internal view returns (uint256) {
         uint16 v = storageSlot().protocolCfg.rentalBufferBps;
         return v == 0 ? RENTAL_BUFFER_BPS : uint256(v);
-    }
-
-    function cfgVpfiStakingAprBps() internal view returns (uint256) {
-        uint16 v = storageSlot().protocolCfg.vpfiStakingAprBps;
-        return v == 0 ? VPFI_STAKING_APR_BPS : uint256(v);
     }
 
     /// @dev Fallback-path split, with zero-is-default fall-through to the

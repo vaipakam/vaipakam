@@ -9,7 +9,6 @@ import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibStakingRewards} from "../libraries/LibStakingRewards.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
@@ -407,7 +406,6 @@ contract LenderIntentFacet is
                 prevBal - amount, prevTracked - amount
             );
             LibVPFIDiscount.rollupUserDiscount(msg.sender, newBal);
-            LibStakingRewards.updateUser(msg.sender, newBal);
         }
         VaultFactoryFacet(address(this)).vaultWithdrawERC20(
             msg.sender,

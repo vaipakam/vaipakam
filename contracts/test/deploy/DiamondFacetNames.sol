@@ -42,7 +42,7 @@ abstract contract DiamondFacetNames {
     ///      58 → 59 in #394 with `NumeraireConfigFacet` (numeraire / PAD /
     ///      periodic-interest config carved out of `ConfigFacet` for
     ///      EIP-170 headroom, Codex #647).)
-    function cutFacetNames() internal pure returns (string[61] memory) {
+    function cutFacetNames() internal pure returns (string[60] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -114,7 +114,6 @@ abstract contract DiamondFacetNames {
             "RiskFacet",
             "RiskMatchLiquidationFacet",
             "RiskSplitLiquidationFacet",
-            "StakingRewardsFacet",
             "SwapToRepayFacet",
             "SwapToRepayIntentFacet",
             "TreasuryFacet",

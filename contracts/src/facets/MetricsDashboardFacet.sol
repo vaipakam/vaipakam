@@ -6,7 +6,6 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {RiskFacet} from "./RiskFacet.sol";
-import {StakingRewardsFacet} from "./StakingRewardsFacet.sol";
 import {InteractionRewardsFacet} from "./InteractionRewardsFacet.sol";
 
 /**
@@ -55,8 +54,6 @@ contract MetricsDashboardFacet {
     ///         field is recoverable from a single `eth_call` so the
     ///         IPFS-hosted frontend doesn't depend on the indexer
     ///         layer.
-    /// @param stakingRewardsPending     VPFI claimable from
-    ///        {StakingRewardsFacet.previewStakingRewards}.
     /// @param vaultVpfiBalance         User's vault VPFI (stake +
     ///        rebate held + fees-not-yet-spent). Drives the discount
     ///        tier indicator.
@@ -76,7 +73,6 @@ contract MetricsDashboardFacet {
     /// @param lenderClaimableCount      Pending lender claims for user.
     /// @param borrowerClaimableCount    Pending borrower claims for user.
     struct DashboardScalars {
-        uint256 stakingRewardsPending;
         uint256 vaultVpfiBalance;
         uint8 vpfiTier;
         uint256 interactionRewardsPending;
@@ -138,9 +134,6 @@ contract MetricsDashboardFacet {
         // Reward + vault scalars — pulled via cross-facet view so
         // each subsystem stays the source of truth for its own
         // calculations.
-        try StakingRewardsFacet(address(this)).previewStakingRewards(user) returns (uint256 pending) {
-            snap.stakingRewardsPending = pending;
-        } catch {}
         try InteractionRewardsFacet(address(this)).previewInteractionRewards(user) returns (
             uint256 pending,
             uint256 /* finalizedThroughDay */,
