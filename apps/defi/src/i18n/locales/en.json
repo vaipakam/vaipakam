@@ -299,7 +299,7 @@
     "currentTier": "Current tier",
     "noDiscountYet": "No discount yet",
     "vaultVpfi": "Vault VPFI (this chain)",
-    "vaultCountsAsStaked": "Counts toward your fee-discount tier.",
+    "vaultCountsAsStaked": "Protocol-tracked VPFI counts toward your fee-discount tier (VPFI sent directly to the vault doesn't).",
     "vaultHeldOnMirror": "Raw balance on this chain; only protocol-tracked VPFI deposited via the flow below applies your discount here. Your tier is set by your balance on {{canonical}}.",
     "statusLabel": "Status",
     "inactiveOff": "Inactive · discount consent OFF",
