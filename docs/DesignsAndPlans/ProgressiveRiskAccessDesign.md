@@ -126,10 +126,11 @@ deliberately acks, which they can always do.
 **Grounded:**
 - Pull-claim entries: [`ClaimFacet.claimAsLender(uint256):205`](../../contracts/src/facets/ClaimFacet.sol#L205)
   and [`ClaimFacet.claimAsBorrower(uint256):990`](../../contracts/src/facets/ClaimFacet.sol#L990).
-  Both resolve the **current** NFT holder — `claimAsLender` via
-  `IERC721(address(this)).ownerOf(loan.lenderTokenId)`
-  ([`ClaimFacet.sol:344`](../../contracts/src/facets/ClaimFacet.sol#L344)),
-  `claimAsBorrower` via `LibAuth.requireBorrowerNftOwner(loan)`
+  Both resolve the **current** NFT holder — `claimAsLender` /
+  `claimAsLenderWithRetry` via the `requireLenderNftOwner(loan)` holder gate
+  inside the shared `_claimAsLenderImpl` (Codex r5 P3 L131 — NOT the
+  `:344` line, which is the backstop opt-in branch; cite the impl's owner check
+  at implementation time), `claimAsBorrower` via `LibAuth.requireBorrowerNftOwner(loan)`
   ([`ClaimFacet.sol:1030`](../../contracts/src/facets/ClaimFacet.sol#L1030))
   + withdraw-to-`msg.sender`
   ([`ClaimFacet.sol:1085-1120`](../../contracts/src/facets/ClaimFacet.sol#L1085)).
@@ -268,6 +269,18 @@ pair the user is unlocking) and prevent the contract from validating the key.
 | **1 BroadLiquid** (explicit opt-in) | `getEffectiveLiquidityTier >= 1` (oracle + protocol risk params still apply) |
 | **2 IlliquidCustom** (strongest opt-in) | any, incl. tier 0 / `checkLiquidity == Illiquid` — **and** `illiquidPairConsent[pairKey] == true` |
 
+> **⚠️ WETH-tiering gotcha (Codex r5 P2, L264) — verify before shipping
+> BlueChip=tier3.** `_liquidityTier` probes `effectivePaaAssets()` routes and
+> skips any quote equal to the asset itself; the reference/numeraire asset
+> (WETH) is `checkLiquidity == Liquid` but may **not** reach `getEffectiveLiquidityTier == 3`
+> by that route — which would make the default `BlueChipOnly` vault unable to
+> transact **WETH itself**, the canonical blue-chip. This must be resolved
+> before the tier-3 rule ships: either (a) special-case the numeraire/WETH as
+> tier-3-equivalent in the gate, or (b) guarantee a non-WETH PAA route so WETH
+> tiers correctly, or (c) define BlueChipOnly as `tier == 3 OR asset ∈
+> {reference assets}`. Tracked as **O6**. Until resolved, the default tier would
+> be too strict (excludes WETH), not too loose — fail-safe, but unusable.
+
 The gate evaluates against `min(tier(lendingAsset), tier(collateralAsset))`
 — **the RISKIER leg governs** (Codex r1 P1, L235). The tier scale is inverted
 (`0` = illiquid/riskiest, `3` = deepest/safest), so the riskier leg is the one
@@ -299,10 +312,14 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   builds a borrower-style sale vehicle *through* `createOffer` so the **current
   lender can EXIT an existing position** — that's a risk-reducing exit, not new
   exposure, so it must be exempt from the create gate (same rationale as the D4
-  close-out exemption). Detect the sale-vehicle context (the `saleOfferToLoanId`
-  origination marker) at the shared chokepoint and skip the tier check; a
-  blanket gate at `createOffer` would otherwise trap a down-tiered lender trying
-  to sell out.
+  close-out exemption). **Use a PRE-create signal, not `saleOfferToLoanId`**
+  (Codex r5 P2, L303): that marker is written only *after* `createOffer` returns
+  (`EarlyWithdrawalFacet.sol:449-456`), so it isn't visible at the create
+  chokepoint. The sale flow must set a transient `saleVehicleCreate` injection
+  flag *before* its `createOffer` call (same idiom as `matchOverride` /
+  `signedOfferAcceptor`, cleared after), and the gate skips the tier check when
+  it's set. A blanket gate at `createOffer` would otherwise trap a down-tiered
+  lender trying to sell out.
 - [`OfferAcceptFacet._acceptOffer:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517)
   — **the single chokepoint** both `acceptOffer`
   ([`:242`](../../contracts/src/facets/OfferAcceptFacet.sol#L242)) and the
@@ -319,7 +336,14 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   creator re-locks (ratchets down) or the asset is downgraded/paused before
   anyone accepts. So `_acceptOffer` re-checks **both** the resolved acceptor
   AND the stored offer's creator against the (possibly-changed) current tiers
-  before binding — not just the acceptor. **For an `IlliquidCustom` pair, also
+  before binding — not just the acceptor. **Exception — sale-vehicle offers
+  (Codex r5 P2, L321):** for a `createLoanSaleOffer` vehicle the stored
+  `offer.creator` is the *outgoing lender*, and accepting auto-completes the
+  sale (`OfferAcceptFacet.sol:1216-1223`) — i.e. the creator is *exiting*. So
+  the creator re-assert is SKIPPED for sale-vehicle offers (only the incoming
+  acceptor is gated), symmetric with the create-time sale-vehicle exemption;
+  re-gating the exiting seller would trap a down-tiered lender mid-sale. **For
+  a (non-sale) `IlliquidCustom` pair, also
   re-check the per-pair `illiquidPairConsent` (and the acceptor's), not only
   the broad `userRiskAccess` tier** (Codex r3 P2, L300): pair consent is the
   second load-bearing dimension and can be *revoked* after offer creation, so a
@@ -340,9 +364,12 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   origination enforcement site, but the correct enforcement is at *each
   offer's create*, not at match — re-gating the matcher's own vault would
   punish a third party who never takes a position. Recommend: enforce on
-  both offers' creators at create-time, and at match assert only that each
-  *paired offer* still satisfies its creator's recorded tier (recompute is
-  cheap, defends against a post-create re-lock). See §11.
+  both offers' creators at create-time, and at match re-assert each *paired
+  offer* still satisfies its creator's level **AND, for an `IlliquidCustom`
+  pair, the creator's per-pair `illiquidPairConsent`** (Codex r5 P2, L345 —
+  pair consent is revocable post-create, so a broad-tier-only match re-check
+  would miss a revoked pair, exactly as on the direct-accept path). Recompute
+  is cheap. See §11.
 
 The creation-time decision is **re-derivable**, not snapshotted: the tier is
 recomputed from current on-chain liquidity + the actor's stored level at each
@@ -366,13 +393,16 @@ and keeper auth already resolves against the current owner via
 [`:100-101`](../../contracts/src/libraries/LibAuth.sol#L100)). The
 ongoing-action sites:
 
-| Action | Site | Current-owner resolution |
-|---|---|---|
-| Refinance | [`RefinanceFacet.refinanceLoan:129`](../../contracts/src/facets/RefinanceFacet.sol#L129) | `LibERC721.ownerOf(oldLoan.borrowerTokenId)` ([`:189`](../../contracts/src/facets/RefinanceFacet.sol#L189)) |
-| Preclose | [`PrecloseFacet.precloseDirect:160`](../../contracts/src/facets/PrecloseFacet.sol#L160) | via `requireKeeperFor(INIT_PRECLOSE, …)` ([`:174`](../../contracts/src/facets/PrecloseFacet.sol#L174)) |
-| Obligation transfer | [`PrecloseFacet.transferObligationViaOffer:473`](../../contracts/src/facets/PrecloseFacet.sol#L473) | `LibERC721.ownerOf(loan.borrowerTokenId)` ([`:656`](../../contracts/src/facets/PrecloseFacet.sol#L656)) |
-| Swap-to-repay | [`SwapToRepayFacet.swapToRepayFull:199`](../../contracts/src/facets/SwapToRepayFacet.sol#L199) | `LibAuth.requireBorrowerNftOwner(loan)` ([`:233`](../../contracts/src/facets/SwapToRepayFacet.sol#L233)) |
-| Keeper delegation | [`ProfileFacet.setKeeperAccess:315`](../../contracts/src/facets/ProfileFacet.sol#L315) | per-`msg.sender` opt-in; auth resolves to current owner in `requireKeeperFor` |
+(Risk-gated? column added per Codex r5 P3 L374 — pure close-out EXITS are NOT
+gated, only risk-adding actions are; see the D4 note below.)
+
+| Action | Site | Current-owner resolution | Risk-gated? |
+|---|---|---|---|
+| Refinance (roll into new terms) | [`RefinanceFacet.refinanceLoan:129`](../../contracts/src/facets/RefinanceFacet.sol#L129) | `LibERC721.ownerOf(oldLoan.borrowerTokenId)` ([`:189`](../../contracts/src/facets/RefinanceFacet.sol#L189)) | **YES** (adds/rotates exposure) |
+| Obligation transfer | [`PrecloseFacet.transferObligationViaOffer:473`](../../contracts/src/facets/PrecloseFacet.sol#L473) | gate the **incoming obligee** `offer.creator`, not `ownerOf(loan.borrowerTokenId)` ([`:656`](../../contracts/src/facets/PrecloseFacet.sol#L656)) | **YES** (incoming obligee) |
+| Preclose-direct | [`PrecloseFacet.precloseDirect:160`](../../contracts/src/facets/PrecloseFacet.sol#L160) | via `requireKeeperFor(INIT_PRECLOSE, …)` ([`:174`](../../contracts/src/facets/PrecloseFacet.sol#L174)) | **NO** — exit (D4) |
+| Swap-to-repay-full | [`SwapToRepayFacet.swapToRepayFull:199`](../../contracts/src/facets/SwapToRepayFacet.sol#L199) | `LibAuth.requireBorrowerNftOwner(loan)` ([`:233`](../../contracts/src/facets/SwapToRepayFacet.sol#L233)) | **NO** — exit (D4) |
+| Keeper delegation | [`ProfileFacet.setKeeperAccess:315`](../../contracts/src/facets/ProfileFacet.sol#L315) | per-`msg.sender` opt-in; auth resolves to current owner in `requireKeeperFor` | n/a (delegation, not a position action) |
 
 **Obligation transfer gates the INCOMING obligee, not the exiting owner**
 (Codex r1 P2, L4Yb): in `transferObligationViaOffer`, `ownerOf(loan.borrowerTokenId)`
@@ -583,6 +613,13 @@ read-accessor mirror the existing bounded-knob pattern of
     **obligation-transfer gated on the INCOMING obligee `offer.creator`**, not
     the exiting owner (Codex r2 L512). Pure close-out exits (preclose-direct,
     swap-to-repay-full) NOT gated (D4).
+  - **Strict-mode ENFORCEMENT (Codex r5 P3 L552 — not just the setter):** when
+    `riskStrictMode[actor] == true`, the origination gate additionally requires
+    a fresh `midTierPairAck` for the **mid-tier (L1)** pair too — i.e. a
+    BroadLiquid user in strict mode must per-pair-ack even non-illiquid pairs
+    (least-privilege for the cautious). Without strict mode, L1 needs no per-pair
+    ack (the soft record is non-blocking). This is what makes the `setRiskStrictMode`
+    flag actually do something.
 - **Explicitly NOT modified (must stay ungated — §5c):**
   `ConsolidationFacet`, the push-payout paths inside `repayLoan` /
   `markDefaulted` / `triggerDefault`, position-NFT `_transfer`.
@@ -591,10 +628,12 @@ read-accessor mirror the existing bounded-knob pattern of
 
 ## 10. ABI / deploy-sanity / frontend / spec impact
 
-- **ABI re-export + deploy-sanity:** new external selectors
-  (`setVaultRiskTier`, `setIlliquidPairConsent`, **`setRiskAccessUnlockCooldown`**
-  — the RD-3 per-deploy tunable; Codex r2 L527 — and the views) on the new
-  facet (or `ProfileFacet`). Per CLAUDE.md: add the facet to
+- **ABI re-export + deploy-sanity:** new external selectors — `setVaultRiskTier`,
+  `setIlliquidPairConsent`, **`setRiskStrictMode`** + **`setMidTierPairAck`** (iff
+  riskStrictMode ships; Codex r5 P3 L596), **`setRiskAccessUnlockCooldown`**
+  (admin-only RD-3 tunable; Codex r2 L527), the contract-account escape-hatch
+  setters (`setVaultRiskTierFor` / `setIlliquidPairConsentFor`), and the views —
+  on the new facet (or `ProfileFacet`). Per CLAUDE.md: add the facet to
   `DiamondFacetNames.cutFacetNames()`, add its `_get<Facet>Selectors()` to
   `SelectorCoverageTest._populateRoutedSet()` + the `DeployDiamond` /
   `HelperTest` selector lists, append to `exportFrontendAbis.sh`'s
