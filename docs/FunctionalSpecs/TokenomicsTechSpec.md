@@ -1,5 +1,18 @@
 # Vaipakam VPFI Tokenomics & Multi-Chain Deployment – Technical Specification
 
+> **SUPERSEDED IN PART by the #687 legal-surface excision (2026-06-23).** Two
+> features described below were **removed** and are no longer in scope:
+> - the **`5% APR` staking yield** (#687-B) — see §7;
+> - the **fixed-rate VPFI sale** / Early Fixed-Rate Purchase Program (#687-A) —
+>   see §8.
+>
+> **Kept and unchanged:** the balance-based **fee-discount tiers** (vault-held VPFI
+> still lowers fees — it simply no longer earns a yield) and the **interaction
+> rewards** pool. Their freed `25%` allocation (24% staking + 1% sale) is a Reserve
+> pending governance reallocation (see §3). Any active-voice reference below to
+> "earning staking rewards/APR" or "buying VPFI at a fixed rate" is **historical**
+> and overridden by this banner.
+
 ## 1. Token Overview
 
 - **Token Name:** Vaipakam DeFi Token
@@ -12,7 +25,7 @@
 Primary uses:
 
 - paying and receiving discounted protocol fees through Vault-held VPFI
-- earning `5% APR` staking rewards through Vaipakam Vault-based staking
+- earning interaction rewards on protocol usage (loan interest paid / received)
 - future governance in `Phase 2`
 
 Key principles:
@@ -26,7 +39,7 @@ Key principles:
 
 Scope note:
 
-- token deployment, minting, utility, fixed-rate purchase, discounts, and Vaipakam Vault-based staking are in active scope for `Phase 1`
+- token deployment, minting, utility, fee discounts (Vault-held VPFI), and interaction rewards are in active scope for `Phase 1` (the fixed-rate sale and the `5% APR` staking yield were removed — see the supersede banner at the top)
 - governance activation remains `Phase 2`
 - Phase 1 lending, vault, oracle, and risk mechanics remain unchanged unless an approved tokenomics integration explicitly extends them
 - this document is the canonical home for the borrower VPFI `Loan Initiation Fee` path; the former standalone borrower-discount specification has been merged here so future references should point to this tokenomics spec
@@ -187,7 +200,7 @@ Public read surface:
 - `previewInteractionRewards(user)` returns the current pending VPFI headline for the active chain
 - `getUserRewardEntries(user)` returns the full `RewardEntry[]` array from storage, including loan ID, side, start / end day, per-day numeraire contribution, processed state, and forfeited state
 - `InteractionRewardsClaimed(user, fromDay, toDay, amount)` events are the source for lifetime-claimed totals in the UI and log-index cache
-- the Dashboard may summarize interaction pending + lifetime claimed alongside staking rewards, but Claim Center remains the canonical interaction-reward claim surface
+- the Dashboard may summarize interaction-reward pending + lifetime claimed, but Claim Center remains the canonical interaction-reward claim surface
 
 ---
 
@@ -318,8 +331,8 @@ Shared rules:
 
 - discount tiers are derived from the user's protocol-tracked Vaipakam Vault VPFI balance on the canonical chain, then propagated to mirrors through the approved cross-chain reward messenger
 - Base computes an `effective tier` and `effective discount bps`; mirrors must apply the cached effective values rather than recomputing tier math locally
-- effective VPFI utility balance must be clamped to `min(actualVaultBalance, protocolTrackedVaultBalance[user][VPFI])` so unsolicited direct transfers cannot earn staking rewards or inflate fee-discount tiers
-- moving VPFI into the Vault automatically counts as staking
+- effective VPFI utility balance must be clamped to `min(actualVaultBalance, protocolTrackedVaultBalance[user][VPFI])` so unsolicited direct transfers cannot inflate fee-discount tiers
+- moving VPFI into the Vault automatically counts toward the fee-discount tier
 - the user must explicitly consent through a single platform-level on-chain flag to allow vaulted VPFI to be used for fee discounts
 - in the frontend, this shared consent should be managed from `Dashboard`, not as an offer-level, loan-level, or `Buy VPFI`-page-only toggle
 - once this common consent is enabled, no separate offer-level or loan-level consent is required
@@ -393,7 +406,7 @@ Governance effects:
 
 Objective:
 
-- borrowers can acquire VPFI through the fixed-rate purchase flow, explicitly stake it into their canonical Vaipakam Vault on Base, and use the resulting effective tier to satisfy the full `0.1%` `Loan Initiation Fee` up front on Base or any mirror chain with a fresh cache
+- borrowers who hold VPFI deposit it into their canonical Vaipakam Vault on Base, and use the resulting effective tier to satisfy the full `0.1%` `Loan Initiation Fee` up front on Base or any mirror chain with a fresh cache (VPFI is acquired by transfer/holding — the fixed-rate sale was removed; see the supersede banner)
 - the borrower then earns the documented discount as an effective-tier VPFI rebate only if the loan closes properly
 - this removes the old point-in-time gaming vector where a borrower could briefly top up VPFI only at acceptance or settlement time to capture a full discount
 
@@ -581,9 +594,9 @@ Per-wallet cap display:
 
 VPFI held in the canonical vault simultaneously satisfies the staking model and the fee-discount tier table in §6. A single canonical stake can qualify loans on supported mirror chains once the effective tier has propagated, but stale or missing mirror cache entries resolve to tier `0` until refreshed.
 
-The app purchase page should expose `Buy`, `Stake`, and `Unstake` entry points as route anchors. `Stake` is a user-facing name for the wallet-to-canonical-vault deposit step; `Unstake` is the canonical-vault-to-wallet withdrawal path. The public marketing route may link into those anchors, but should not itself mount wallet controls.
+The app VPFI vault page should expose `Deposit` and `Withdraw` entry points as route anchors (the former `Buy` anchor was removed with the fixed-rate sale — see the supersede banner). `Deposit` is the wallet-to-canonical-vault step; `Withdraw` is the canonical-vault-to-wallet path. The public marketing route may link into those anchors, but should not itself mount wallet controls.
 
-The `Deposit / Stake` step should carry the single canonical user-facing open-staking message: staking is open to everyone, no existing loan is required, vault-held VPFI earns the staking APR while it remains deposited, and the user's vault can be created automatically on first deposit. Duplicated page-level staking prose should be avoided so this card remains the source of truth.
+The `Deposit` step should carry the single canonical user-facing message: depositing is open to everyone, no existing loan is required, vault-held VPFI counts toward the fee-discount tier while it remains deposited (it does **not** earn a yield — the `5% APR` staking pool was removed), and the user's vault can be created automatically on first deposit. Duplicated page-level prose should be avoided so this card remains the source of truth.
 
 Payment-token mode requirements:
 
@@ -619,7 +632,7 @@ Permit2 requirements for VPFI utility flows:
 
 ## 9. Treasury Recycling Rule
 
-All VPFI received as fees is recycled as follows, and ETH received from the fixed-rate purchase program is routed into Treasury under the same treasury-management policy:
+All VPFI received as fees is recycled as follows (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner):
 
 - **`38%` → Buy ETH**
 - **`38%` → Buy wBTC**
@@ -689,7 +702,7 @@ Additional rollout chains for the intended Phase 1 production rollout:
 Deployment flow:
 
 1. deploy the canonical VPFI token on `Base`
-2. if an initial supply tranche is used for treasury- or allocation-managed distribution, mint it to the secure multi-sig plus timelock-controlled treasury setup; the fixed-rate purchase program itself must not rely on a pre-minted sale reserve
+2. if an initial supply tranche is used for treasury- or allocation-managed distribution, mint it to the secure multi-sig plus timelock-controlled treasury setup (the fixed-rate purchase program that this constraint originally guarded was removed in #687-A — see the supersede banner)
 3. deploy connected mirror-token and cross-chain messenger contracts on the additional supported chains
 4. wire CCIP lanes, remote messengers, token pools, and channel peers so cross-chain transfers preserve one global supply model
 5. keep token symbol and metadata consistent as `VPFI` on every supported chain
@@ -810,18 +823,16 @@ Testing requirements:
 - extend the existing scenario tests
 - extend invariant coverage
 - include supply-cap enforcement tests
-- include receipt-based mint/release tests for the fixed-rate purchase path, including successful receipt, failed receipt, and partial receipt cases
 - include cross-chain token and messenger configuration tests where practical
 - include reward-accounting and vesting tests
 - include buyback-routing tests
-- include preferred-chain fixed-rate purchase tests where purchased VPFI is delivered to the user's wallet on that same chain
 - include explicit wallet-to-vault deposit tests for both Permit2 and classic approve-plus-deposit paths
 - include liquid-asset borrower LIF VPFI tests across every discount tier
 - include effective-tier borrower rebate tests for min-history pending, last-minute top-up, unstake-down, mirror-cache stale, and governance-tier-version-change cases
 - include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
 - include default and HF-liquidation tests proving held VPFI is forfeited to Treasury with no rebate
 - include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
-- include tests that vault-held VPFI updates staking rewards and fee-discount accrual without being counted as collateral
+- include tests that vault-held VPFI updates fee-discount accrual without being counted as collateral
 - include admin pause / disable tests for fixed-rate buying after cap exhaustion or sale shutdown
 
 Frontend integration requirements:
@@ -831,7 +842,7 @@ Frontend integration requirements:
 - `Dashboard` should specifically surface the shared fee-discount consent control for vaulted VPFI usage
 - the VPFI tier / discount-status table should live near the connected-app `Buy VPFI` purchase / deposit decision, while Dashboard remains the home for the fee-discount consent toggle and combined rewards summary
 - protocol-config-dependent UI copy should read live values from the Diamond wherever possible, including mutable config from `getProtocolConfigBundle()` and compile-time constants exposed through `getProtocolConstants()`
-- tier tables, staking APR labels, pool-cap labels, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
+- tier tables, rental buffer displays, max slippage, treasury fee, LIF, and minimum Health Factor copy should use live config placeholders instead of hardcoded locale text
 - VPFI tier thresholds returned in base units should be converted through shared token-display helpers before they appear in tier tables, consent copy, or tooltip placeholders
 - `/app/buy-vpfi` should let users buy from their preferred supported chain without manually switching to canonical `Base`
 - `/app/buy-vpfi` is the single user-facing purchase / stake / unstake flow; public `/buy-vpfi` is the education surface. Any bridge, canonical-chain settlement, cross-chain token routing, or Base-receiver complexity must be abstracted behind the app flow.
@@ -844,8 +855,7 @@ Frontend integration requirements:
 - `Offer Book` accept-review copy should explain that the borrower pays the full `0.1%` LIF up front in VPFI and earns any discount over the loan lifetime as a rebate
 - `Create Offer` borrower-tip copy should frame the benefit as earning up to a `24%` VPFI rebate, not as paying a reduced up-front fee
 - `Claim Center` should show a VPFI rebate line whenever a borrower claim includes a pending LIF rebate
-- `Claim Center` should also host platform-interaction reward claims, including lifetime claimed and contributing-loan context
-- `/app/buy-vpfi` Step 2 should host staking reward claims, including pending and lifetime claimed values
+- `Claim Center` should also host platform-interaction reward claims, including lifetime claimed and contributing-loan context (the former `/app/buy-vpfi` staking-reward-claim surface was removed with the `5% APR` staking yield — see the supersede banner)
 
 Acceptance criteria:
 

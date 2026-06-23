@@ -1610,8 +1610,8 @@ phase_verify() {
 #   - diamond            (Diamond — PausableFacet.pause())
 #   - ccipMessenger      (CCIP adapter — GuardianPausable, both paths)
 #   - rewardMessenger    (VaipakamRewardMessenger — GuardianPausable)
-#   - vpfiBuyReceiver    (canonical VPFI buy receiver only)  OR
-#     vpfiBuyAdapter     (mirror VPFI buy adapter only)
+# (#687-A removed the VPFI fixed-rate buy receiver/adapter — no longer a
+#  pause target on any chain.)
 # The VPFI CCIP TokenPool carries no pause — its blast radius is bounded
 # by the per-lane CCIP rate limits + the Risk Management Network.
 #
@@ -1628,7 +1628,7 @@ phase_pause_rehearsal() {
   # with the known-pauseable set. Skip null / missing entries cleanly
   # so canonical chains skip the mirror keys and vice versa.
   local PAUSE_TARGETS=()
-  for KEY in diamond ccipMessenger rewardMessenger vpfiBuyReceiver vpfiBuyAdapter; do
+  for KEY in diamond ccipMessenger rewardMessenger; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
     # Legacy fallback: pre-PR #272 artifacts stored the reward messenger
     # under the LayerZero-era key `rewardOApp`. Same pattern as
