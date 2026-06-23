@@ -19,8 +19,9 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  *                     `TreasuryFacet.commitBuybackIntent`.
  *   onFill          — called from `IntentDispatchFacet.postInteraction`
  *                     when the dispatch hits a BUYBACK kind. Releases
- *                     the reservation, credits the delivered VPFI to
- *                     `s.stakingPoolBuybackBudget`, marks the order
+ *                     the reservation, cascades the delivered VPFI across
+ *                     the rewards + keeper top-up budgets (#687-C removed
+ *                     the staking-pool overflow tier), marks the order
  *                     Filled, and clears the order-kind discriminator.
  *   expireBuyback   — permissionless; anyone can poke after a buyback
  *                     order's `expiresAt`. Rolls the reservation back
@@ -113,6 +114,19 @@ library LibTreasuryBuyback {
     ///         false`); partial fills would otherwise release the
     ///         full reservation on the first partial settlement.
     error BuybackPartialFill(uint256 consumed, uint256 expected);
+    /// @notice #687-C — a buyback fill delivered more VPFI than the
+    ///         rewards + keeper top-up gaps could absorb. The former
+    ///         staking-pool overflow sink was removed with the 5% staking
+    ///         yield, so the surplus has nowhere spendable to go; revert
+    ///         rather than strand it. Operator re-sizes the delivery or
+    ///         the top-up targets. Unreachable in the dormant Phase-1
+    ///         config (both targets default 0, no buyback committed).
+    error BuybackOverflowNotAllowed(
+        uint256 delivered,
+        uint256 toRewards,
+        uint256 toKeepers,
+        uint256 overflow
+    );
     /// @notice Codex Sub 3.B round-3 P1 #1 — actual VPFI delivered
     ///         was below the operator-pinned floor. Stops
     ///         underpriced fills from draining the source-token
@@ -175,14 +189,17 @@ library LibTreasuryBuyback {
     /// @custom:event-category state-change/buyback-priority-router
     /// @notice T-087 Sub 3 add-on #472 — emitted per partial fill,
     ///         after the priority cascade. `delivered` is the total
-    ///         VPFI delta; `toRewards` + `toKeepers` + `toStaking`
-    ///         sum to `delivered`. Indexer uses this to attribute
-    ///         the buyback proceeds to each destination budget.
+    ///         VPFI delta; `toRewards` + `toKeepers` sum to `delivered`.
+    ///         Indexer uses this to attribute the buyback proceeds to
+    ///         each destination budget.
+    /// @dev #687-C removed the third `toStaking` overflow tier with the
+    ///      5% staking pool; the cascade now spans rewards + keepers only,
+    ///      and any remainder past both top-up targets reverts
+    ///      (`BuybackOverflowNotAllowed`) rather than stranding VPFI.
     event BuybackPrioritySplit(
         uint256 delivered,
         uint256 toRewards,
-        uint256 toKeepers,
-        uint256 toStaking
+        uint256 toKeepers
     );
 
     // ─── Lifecycle ───────────────────────────────────────────────────
@@ -412,14 +429,11 @@ library LibTreasuryBuyback {
         // * consumed / amountIn)`) lets rounding loss compound: many
         // tiny fills each round their share down to 0 and the order
         // can settle with total delivered VPFI below minVpfiOut.
-        // Compare cumulative actual VPFI (tracked in
-        // `stakingPoolBuybackBudget` delta against the start-of-order
-        // snapshot taken at commit-time) against cumulative required.
+        // Compare cumulative actual VPFI against cumulative required.
         //
         // Trick: we only need to track *cumulative delivered VPFI per
-        // order* across partials. We could persist it as another
-        // mapping, but we can derive it inline using the order's
-        // stakingPoolBuybackBudget contribution. The simplest correct
+        // order* across partials, persisted in
+        // `s.buybackVpfiDeliveredSoFar[orderHash]`. The simplest correct
         // approach is to require, on every partial: cumulative
         // required <= cumulative delivered. Cumulative delivered =
         // prior delivered + actualVpfi (where prior delivered is
@@ -456,9 +470,9 @@ library LibTreasuryBuyback {
         //      fresh-mint emissions)
         //   2. keeperRewardBudget (target-bounded; funds keeper
         //      operational rewards)
-        //   3. stakingPoolBuybackBudget (final overflow → stakers)
-        // Each step claims up to its (target - current) gap; the
-        // remainder cascades. Zero target disables the step.
+        // Each step claims up to its (target - current) gap. Zero target
+        // disables the step. #687-C removed the step-3 staking-pool
+        // overflow; any remainder past both targets reverts.
         _routePriority(s, actualVpfi);
 
         // Codex round-1 P1 #3 — decrement the shared aggregate
@@ -621,11 +635,21 @@ library LibTreasuryBuyback {
             }
         }
 
-        // ── Step 3: staking pool — final overflow ──────────────────
+        // ── Step 3: no overflow sink (#687-C) ──────────────────────
+        // The former staking-pool overflow tier was removed with the 5%
+        // staking yield (#687-B). A buyback must not deliver more VPFI
+        // than the rewards + keeper top-up gaps absorb — otherwise the
+        // surplus would strand in the diamond with no spendable budget.
+        // Revert (atomic — undoes the fill) so the operator re-sizes the
+        // delivery or the top-up targets. In the dormant Phase-1 config
+        // (both targets default 0, no buyback committed) this is never
+        // reached.
         if (remaining != 0) {
-            s.stakingPoolBuybackBudget += remaining;
+            revert BuybackOverflowNotAllowed(
+                delivered, toRewards, toKeepers, remaining
+            );
         }
 
-        emit BuybackPrioritySplit(delivered, toRewards, toKeepers, remaining);
+        emit BuybackPrioritySplit(delivered, toRewards, toKeepers);
     }
 }

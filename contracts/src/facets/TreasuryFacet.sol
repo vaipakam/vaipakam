@@ -866,15 +866,8 @@ contract TreasuryFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccess
         return LibVaipakam.storageSlot().orderHashKind[orderHash];
     }
 
-    /// @notice T-087 Sub 3.B — current staking-pool buyback budget.
-    ///         `LibTreasuryBuyback.onFill` credits this slot with the
-    ///         delivered VPFI on every BUYBACK postInteraction; the
-    ///         staking distributor (Sub 3 add-on #472 will widen the
-    ///         claim cap from this slot) reads it as the spendable
-    ///         budget.
-    function getStakingPoolBuybackBudget() external view returns (uint256) {
-        return LibVaipakam.storageSlot().stakingPoolBuybackBudget;
-    }
+    // #687-C: getStakingPoolBuybackBudget removed with the staking-pool
+    // buyback-overflow accumulator (the 5% staking yield it widened is gone).
 
     // ─── T-087 Sub 3.C — validated buyback commit ────────────────────
 

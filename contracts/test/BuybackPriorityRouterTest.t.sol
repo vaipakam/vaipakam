@@ -21,7 +21,10 @@ contract _MockLOP {
 
 /// @title BuybackPriorityRouterTest
 /// @notice T-087 Sub 3 add-on #472 — priority cascade tests.
-///         rewardEmissionsBudget → keeperRewardBudget → stakingPoolBuybackBudget.
+///         rewardEmissionsBudget → keeperRewardBudget. #687-C removed the
+///         third staking-pool overflow tier; any remainder past both top-up
+///         targets now reverts (BuybackOverflowNotAllowed) instead of
+///         stranding VPFI in an unspendable budget.
 contract BuybackPriorityRouterTest is SetupTest {
     ERC20Mock internal usdc;
     ERC20Mock internal vpfi;
@@ -131,43 +134,69 @@ contract BuybackPriorityRouterTest is SetupTest {
         return orderHash;
     }
 
-    // ─── Default: zero targets → all to staking pool ──────────────
+    /// @dev #687-C — like `_commitAndFill` but asserts the final
+    ///      `postInteraction` reverts `BuybackOverflowNotAllowed` because the
+    ///      delivered VPFI exceeds the rewards + keeper top-up gaps (the former
+    ///      staking-pool overflow sink is gone).
+    function _commitAndFillExpectOverflow(uint256 delivered) internal {
+        _seed();
+        _saltNonce++;
+        uint64 expiresAt = uint64(block.timestamp + 30 minutes);
+        (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
+            _build(expiresAt, 1, _saltNonce);
 
-    function test_Routing_ZeroTargets_AllToStaking() public {
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
-        uint256 delivered = 100e18;
+        _t().commitBuybackIntentValidated(
+            orderHash, tpl, AMOUNT_IN, 1, expiresAt
+        );
 
-        _commitAndFill(delivered);
+        IOrderMixin.Order memory order;
+        vm.prank(lop);
+        _d().preInteraction(order, "", orderHash, address(0), 0, 0, 0, "");
+        vm.prank(lop);
+        usdc.transferFrom(address(diamond), lop, AMOUNT_IN);
+        vpfi.mint(address(diamond), delivered);
+        vm.prank(lop);
+        // Selector-only match — the error carries (delivered, toRewards,
+        // toKeepers, overflow) args that vary per test config.
+        vm.expectPartialRevert(LibTreasuryBuyback.BuybackOverflowNotAllowed.selector);
+        _d().postInteraction(order, "", orderHash, address(0), AMOUNT_IN, 0, 0, "");
+    }
+
+    // ─── #687-C: zero targets → any delivery overflows → revert ───
+
+    function test_Routing_ZeroTargets_OverflowReverts() public {
+        // Both top-up targets default to 0 (dormant Phase-1 config). A fill
+        // that delivers VPFI has no sink — the former staking-pool overflow
+        // was removed — so postInteraction reverts BuybackOverflowNotAllowed.
+        _commitAndFillExpectOverflow(100e18);
 
         assertEq(_t().getRewardEmissionsBudget(), 0, "no rewards");
         assertEq(_t().getKeeperRewardBudget(), 0, "no keepers");
-        assertEq(
-            _t().getStakingPoolBuybackBudget(), stakingPre + delivered,
-            "all to staking"
-        );
     }
 
-    // ─── Full cascade across all 3 destinations ──────────────────
+    // ─── Both targets filled exactly → no overflow ────────────────
 
-    function test_Routing_FullCascade() public {
+    function test_Routing_BothTargetsFillExactly() public {
         uint256 rewardsTarget = 30e18;
         uint256 keepersTarget = 20e18;
         _t().setRewardEmissionsTopUpTarget(rewardsTarget);
         _t().setKeeperRewardTopUpTarget(keepersTarget);
 
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
-        uint256 delivered = 100e18;
+        // Deliver exactly the sum of the two gaps — no remainder.
+        _commitAndFill(rewardsTarget + keepersTarget);
 
-        _commitAndFill(delivered);
-
-        // Rewards target reached, keepers target reached, remainder to staking.
         assertEq(_t().getRewardEmissionsBudget(), rewardsTarget, "rewards full");
         assertEq(_t().getKeeperRewardBudget(), keepersTarget, "keepers full");
-        assertEq(
-            _t().getStakingPoolBuybackBudget(),
-            stakingPre + delivered - rewardsTarget - keepersTarget,
-            "staking gets the rest"
-        );
+    }
+
+    // ─── Overflow past both targets → revert ──────────────────────
+
+    function test_Routing_OverflowPastBothTargets_Reverts() public {
+        _t().setRewardEmissionsTopUpTarget(30e18);
+        _t().setKeeperRewardTopUpTarget(20e18);
+
+        // 50 fills both gaps; the extra 1 has nowhere to go → revert.
+        _commitAndFillExpectOverflow(51e18);
     }
 
     // ─── Rewards step partially exhausts the delivery ─────────────
@@ -178,64 +207,47 @@ contract BuybackPriorityRouterTest is SetupTest {
         _t().setRewardEmissionsTopUpTarget(rewardsTarget);
         _t().setKeeperRewardTopUpTarget(keepersTarget);
 
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
-        uint256 delivered = 200e18; // less than rewards target
+        uint256 delivered = 200e18; // less than rewards target → no overflow
 
         _commitAndFill(delivered);
 
         assertEq(_t().getRewardEmissionsBudget(), delivered, "all to rewards");
         assertEq(_t().getKeeperRewardBudget(), 0, "no keepers");
-        assertEq(_t().getStakingPoolBuybackBudget(), stakingPre, "no staking");
     }
 
-    // ─── Reward at floor → straight to keepers ────────────────────
+    // ─── Rewards at target → cascades to keepers (no overflow) ────
 
-    function test_Routing_RewardsAtFloor_SkipsToKeepers() public {
+    function test_Routing_RewardsAtTarget_SkipsToKeepers() public {
         uint256 rewardsTarget = 30e18;
         uint256 keepersTarget = 20e18;
         _t().setRewardEmissionsTopUpTarget(rewardsTarget);
         _t().setKeeperRewardTopUpTarget(keepersTarget);
 
-        // First fill tops up rewards + keepers.
-        _commitAndFill(60e18); // 30 rewards + 20 keepers + 10 staking
-        uint256 rewardsAfterFirst = _t().getRewardEmissionsBudget();
-        uint256 keepersAfterFirst = _t().getKeeperRewardBudget();
-        uint256 stakingAfterFirst = _t().getStakingPoolBuybackBudget();
+        // First fill tops up rewards exactly; keepers still empty.
+        _commitAndFill(rewardsTarget);
+        assertEq(_t().getRewardEmissionsBudget(), rewardsTarget, "rewards full");
+        assertEq(_t().getKeeperRewardBudget(), 0, "keepers still empty");
 
-        // Second fill — rewards at target → 0 to rewards.
-        _commitAndFill(40e18);
-
+        // Second fill — rewards at target → all to keepers (exact gap).
+        _commitAndFill(keepersTarget);
         assertEq(
-            _t().getRewardEmissionsBudget(), rewardsAfterFirst,
-            "rewards unchanged"
+            _t().getRewardEmissionsBudget(), rewardsTarget, "rewards unchanged"
         );
-        // Keepers was at target already → 0 to keepers either.
-        assertEq(
-            _t().getKeeperRewardBudget(), keepersAfterFirst,
-            "keepers unchanged"
-        );
-        // Everything → staking.
-        assertEq(
-            _t().getStakingPoolBuybackBudget(),
-            stakingAfterFirst + 40e18,
-            "all extra to staking"
-        );
+        assertEq(_t().getKeeperRewardBudget(), keepersTarget, "keepers full");
     }
 
-    // ─── Sum invariant ───────────────────────────────────────────
+    // ─── Sum invariant (rewards + keepers == delivered) ───────────
 
     function test_Routing_SumInvariant() public {
         _t().setRewardEmissionsTopUpTarget(10e18);
         _t().setKeeperRewardTopUpTarget(5e18);
-        uint256 delivered = 50e18;
+        uint256 delivered = 15e18; // exactly fills both gaps
 
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
         _commitAndFill(delivered);
 
         uint256 toRewards = _t().getRewardEmissionsBudget();
         uint256 toKeepers = _t().getKeeperRewardBudget();
-        uint256 toStaking = _t().getStakingPoolBuybackBudget() - stakingPre;
-        assertEq(toRewards + toKeepers + toStaking, delivered, "sum invariant");
+        assertEq(toRewards + toKeepers, delivered, "sum invariant");
     }
 
     // ─── Setter access control ────────────────────────────────────
@@ -258,28 +270,6 @@ contract BuybackPriorityRouterTest is SetupTest {
         assertEq(_t().getRewardEmissionsTopUpTarget(), 0);
     }
 
-    // ─── Round-1 P1 #2 — staking cap widens with buyback budget ──
-
-    function test_Routing_StakingPoolCap_WidensWithBuybackBudget() public {
-        // Cascade lands 100 VPFI in the staking pool (default targets).
-        uint256 delivered = 100e18;
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
-        _commitAndFill(delivered);
-        uint256 stakingPost = _t().getStakingPoolBuybackBudget();
-
-        // The slot grew by `delivered`.
-        assertEq(stakingPost - stakingPre, delivered, "slot credited");
-
-        // Codex round-1 P1 #2 — the staking distributor's `poolRemaining`
-        // view must reflect the widened cap (original `VPFI_STAKING_POOL_CAP`
-        // plus the buyback overflow accumulated in
-        // `stakingPoolBuybackBudget`). The `poolRemaining` is internal to
-        // LibStakingRewards; we exercise it indirectly by asserting the
-        // budget slot value matches what we expect.
-        assertEq(
-            _t().getStakingPoolBuybackBudget(),
-            stakingPre + delivered,
-            "stakingPoolBuybackBudget tracked"
-        );
-    }
+    // #687-C: test_Routing_StakingPoolCap_WidensWithBuybackBudget removed with
+    // the staking pool + its buyback-overflow accumulator (5% yield gone).
 }

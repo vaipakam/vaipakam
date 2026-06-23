@@ -168,6 +168,10 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
     // ─── E2E: absorb → validated commit → two partial fills ───────
 
     function test_EndToEnd_AbsorbCommitFillCycle() public {
+        // #687-C: the buyback overflow tier (formerly the staking pool) now
+        // reverts, so a fill's delivered VPFI must be absorbed by a top-up
+        // target. Set a generous rewards target so the cascade lands there.
+        _t().setRewardEmissionsTopUpTarget(1_000e18);
         // ─── (1) Absorb ──────────────────────────────────────────
         _absorbRemittance();
         assertEq(
@@ -199,15 +203,15 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
         // ─── (3) First partial fill — 40% ─────────────────────────
         uint96 firstFill = (AMOUNT_IN * 40) / 100;
         uint256 firstVpfi = 50e18;  // exceeds pro-rata floor of 40e18.
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
+        uint256 rewardsPre = _t().getRewardEmissionsBudget();
         _simulateFusionFill(orderHash, firstFill, firstVpfi);
         assertEq(
             uint256(_t().getBuybackConsumedSoFar(orderHash)), uint256(firstFill),
             "3a: consumed after first"
         );
         assertEq(
-            _t().getStakingPoolBuybackBudget(), stakingPre + firstVpfi,
-            "3b: staking credit"
+            _t().getRewardEmissionsBudget(), rewardsPre + firstVpfi,
+            "3b: rewards-budget credit"
         );
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(orderHash);
         assertEq(
@@ -232,8 +236,8 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
         );
         assertFalse(_t().isBuybackValidated(orderHash), "5c: validated cleared");
         assertEq(
-            _t().getStakingPoolBuybackBudget(), stakingPre + firstVpfi + secondVpfi,
-            "5d: total VPFI to staking pool"
+            _t().getRewardEmissionsBudget(), rewardsPre + firstVpfi + secondVpfi,
+            "5d: total VPFI to rewards budget"
         );
         assertEq(
             usdc.allowance(address(diamond), lop), 0,
@@ -248,6 +252,9 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
     // ─── Negative: expire after partial returns unconsumed only ───
 
     function test_EndToEnd_ExpireAfterPartial_ReturnsUnconsumed() public {
+        // #687-C: absorb the delivered VPFI in the rewards budget (the staking
+        // overflow tier now reverts).
+        _t().setRewardEmissionsTopUpTarget(1_000e18);
         _absorbRemittance();
         uint64 expiresAt = uint64(block.timestamp + 30 minutes);
         (LibBuybackOrderValidation.BuybackOrderTemplate memory tpl, bytes32 orderHash) =
@@ -278,7 +285,7 @@ contract BuybackEndToEndIntegrationTest is SetupTest {
         );
         // Already-swapped portion stays settled.
         assertEq(
-            _t().getStakingPoolBuybackBudget(), 30e18,
+            _t().getRewardEmissionsBudget(), 30e18,
             "partial proceeds preserved"
         );
     }

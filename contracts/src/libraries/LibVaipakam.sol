@@ -3731,10 +3731,10 @@ library LibVaipakam {
         // fill underflows at `safeTransferFrom` (Codex round-8
         // P1 #5).
         mapping(address => uint256) baseBuybackReserved;
-        // Cumulative buyback-fed inflow widening the existing
-        // `VPFI_STAKING_POOL_CAP` claim gate. Incremented on each
-        // successful buyback fill (Codex round-2 P2 #13).
-        uint256 stakingPoolBuybackBudget;
+        // #687-C: stakingPoolBuybackBudget (the buyback-overflow accumulator
+        // that widened the staking pool cap) was removed with the 5% staking
+        // yield — it was write-only with no spend path. The buyback overflow
+        // tier now reverts instead of crediting it (LibTreasuryBuyback).
         // ── T-087 ConfigFacet knobs ─────────────────────────────────────
         //
         // All five knobs default to 0 in storage; the getter helpers
@@ -3893,9 +3893,10 @@ library LibVaipakam {
         // cascade:
         //   1. rewardEmissionsBudget (offsets fresh-mint inflation)
         //   2. keeperRewardBudget (operational keeper incentives)
-        //   3. stakingPoolBuybackBudget (overflow → staker yield)
-        // Each step claims up to `(target - current_budget)`; the
-        // remainder cascades. Zero target disables the step.
+        // Each step claims up to `(target - current_budget)`. Zero target
+        // disables the step. #687-C removed the former step-3 staking-pool
+        // overflow tier; any remainder past both targets now reverts
+        // (BuybackOverflowNotAllowed) rather than stranding VPFI.
         uint256 rewardEmissionsBudget;
         uint256 keeperRewardBudget;
         uint256 cfgRewardEmissionsTopUpTarget;
