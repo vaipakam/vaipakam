@@ -47,6 +47,12 @@ contract BuybackValidatedCommitTest is SetupTest {
 
         VPFITokenFacet(address(diamond)).setVPFIToken(address(vpfi));
         IntentConfigFacet(address(diamond)).setFusionLimitOrderProtocol(lop);
+
+        // #687-C: the former staking-pool overflow tier now reverts, so a
+        // buyback fill's delivered VPFI must land in a top-up budget. These
+        // lifecycle tests don't assert the budget value, so a generous rewards
+        // target simply absorbs every delivery and avoids a spurious overflow.
+        TreasuryFacet(address(diamond)).setRewardEmissionsTopUpTarget(1_000_000e18);
     }
 
     function _t() internal view returns (TreasuryFacet) {

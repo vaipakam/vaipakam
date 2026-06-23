@@ -327,13 +327,17 @@ contract BuybackIntentLedgerTest is SetupTest {
 
     // ─── IntentDispatchFacet — postInteraction (BUYBACK arm) ──────
 
-    function test_PostInteraction_BuybackFillCreditsStakingPoolViaDelta() public {
+    function test_PostInteraction_BuybackFillCreditsRewardsBudgetViaDelta() public {
         _seedBaseBudget(AMOUNT);
+        // #687-C: the delivered VPFI must land in a top-up budget; the former
+        // staking-pool overflow tier now reverts. Size the rewards target to
+        // absorb the full delivery.
+        _t().setRewardEmissionsTopUpTarget(20_000e18);
         _t().commitBuybackIntent(
             ORDER, address(token), AMOUNT, 0, uint64(block.timestamp + 1 hours)
         );
 
-        uint256 stakingPre = _t().getStakingPoolBuybackBudget();
+        uint256 rewardsPre = _t().getRewardEmissionsBudget();
         uint256 delivered = 12_345e18;
 
         IOrderMixin.Order memory order;
@@ -360,9 +364,9 @@ contract BuybackIntentLedgerTest is SetupTest {
         _d().postInteraction(order, "", ORDER, address(0), AMOUNT, 0, 0, "");
 
         assertEq(
-            _t().getStakingPoolBuybackBudget(),
-            stakingPre + delivered,
-            "staking pool credited by VPFI delta"
+            _t().getRewardEmissionsBudget(),
+            rewardsPre + delivered,
+            "rewards budget credited by VPFI delta"
         );
         LibVaipakam.BuybackOrderInfo memory info = _t().getBuybackOrder(ORDER);
         assertEq(uint256(info.status), uint256(LibVaipakam.BUYBACK_ORDER_STATUS_FILLED));

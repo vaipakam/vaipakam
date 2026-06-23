@@ -985,7 +985,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](57);
+        selectors = new bytes4[](56);
         selectors[0] = TreasuryFacet.claimTreasuryFees.selector;
         selectors[1] = TreasuryFacet.getTreasuryBalance.selector;
         selectors[2] = TreasuryFacet.mintVPFI.selector;
@@ -1011,7 +1011,9 @@ contract HelperTest {
         selectors[20] = TreasuryFacet.expireBuybackIntent.selector;
         selectors[21] = TreasuryFacet.getBuybackOrder.selector;
         selectors[22] = TreasuryFacet.getOrderHashKind.selector;
-        selectors[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
+        // #687-C: getStakingPoolBuybackBudget removed; slot 23 reused by the
+        // former tail entry (was selectors[56]) to keep the array hole-free.
+        selectors[23] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
         selectors[24] = TreasuryFacet.setBuybackMaxTranche.selector;
         selectors[25] = TreasuryFacet.getBuybackMaxTranche.selector;
         // T-087 Sub 3.C — validated buyback commit + TWAP config.
@@ -1048,7 +1050,7 @@ contract HelperTest {
         selectors[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
         selectors[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
         selectors[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
-        selectors[56] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
+        // #687-C: former selectors[56] getKeeperRewardTwapMaxAgeSec relocated to [23].
         return selectors;
     }
 

@@ -280,12 +280,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      },
-      {
-        "name": "toStaking",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -356,6 +350,32 @@
         "name": "status",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuybackOverflowNotAllowed",
+    "inputs": [
+      {
+        "name": "delivered",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toRewards",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "toKeepers",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "overflow",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },

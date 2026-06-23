@@ -1604,7 +1604,7 @@ contract DeployDiamond is Script {
     }
 
     function _getTreasurySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](57);
+        s = new bytes4[](56);
         s[0] = TreasuryFacet.claimTreasuryFees.selector;
         s[1] = TreasuryFacet.getTreasuryBalance.selector;
         s[2] = TreasuryFacet.mintVPFI.selector;
@@ -1630,7 +1630,9 @@ contract DeployDiamond is Script {
         s[20] = TreasuryFacet.expireBuybackIntent.selector;
         s[21] = TreasuryFacet.getBuybackOrder.selector;
         s[22] = TreasuryFacet.getOrderHashKind.selector;
-        s[23] = TreasuryFacet.getStakingPoolBuybackBudget.selector;
+        // #687-C: getStakingPoolBuybackBudget removed; slot 23 reused by the
+        // former tail entry (was s[56]) to keep this array hole-free.
+        s[23] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
         s[24] = TreasuryFacet.setBuybackMaxTranche.selector;
         s[25] = TreasuryFacet.getBuybackMaxTranche.selector;
         // T-087 Sub 3.C — validated buyback commit + TWAP config.
@@ -1667,7 +1669,7 @@ contract DeployDiamond is Script {
         s[53] = TreasuryFacet.setKeeperRewardEnabled.selector;
         s[54] = TreasuryFacet.getKeeperRewardEnabled.selector;
         s[55] = TreasuryFacet.setKeeperRewardTwapMaxAgeSec.selector;
-        s[56] = TreasuryFacet.getKeeperRewardTwapMaxAgeSec.selector;
+        // #687-C: former s[56] getKeeperRewardTwapMaxAgeSec relocated to s[23].
     }
 
     function _getPayrollSelectors() internal pure returns (bytes4[] memory s) {
