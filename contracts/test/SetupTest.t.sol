@@ -61,6 +61,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -159,6 +160,12 @@ contract SetupTest is Test {
     address owner;
     address lender; // User1
     address borrower; // User2
+    // #662 — EIP-712 AcceptTerms signing keys for the two core actors. Seeded
+    // via `makeAddrAndKey` (SAME deterministic address as `makeAddr`, plus the
+    // private key) so every existing address-based assertion is unchanged while
+    // `_signAndAcceptOffer` (HelperTest) can sign the acceptor's typed terms.
+    uint256 lenderPk;
+    uint256 borrowerPk;
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg — distinct from lending leg)
     address mockIlliquidERC20; // Illiquid asset
@@ -294,8 +301,8 @@ contract SetupTest is Test {
 
     function setupHelper() public {
         owner = address(this);
-        lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (lender, lenderPk) = makeAddrAndKey("lender");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
@@ -1090,6 +1097,122 @@ contract SetupTest is Test {
         ERC20Mock(token).mint(actor, walletAmount);
         vm.prank(actor);
         ERC20(token).approve(address(diamond), type(uint256).max);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // #662 — EIP-712 AcceptTerms signing helpers
+    //
+    // `acceptOffer` / `acceptOfferWithPermit` now require an acceptor-signed
+    // `AcceptTerms` bound to every loan-affecting offer field (anti-phishing,
+    // see OfferAcceptTermBindingDesign.md §8b). These helpers build that struct
+    // from the stored offer, sign it with the acceptor's key, and call the
+    // entry — so a test migrates `vm.prank(a); acceptOffer(id, true)` to a
+    // single `_signAndAcceptOffer(a, aPk, id)`. The actor MUST have a private
+    // key (use `makeAddrAndKey`; the core `lender`/`borrower` are seeded with
+    // `lenderPk`/`borrowerPk`).
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// @dev Monotonic per-acceptor nonce so repeated accepts in one test never
+    ///      collide on the contract's single-use `acceptNonceUsed` ledger.
+    mapping(address => uint256) private _acceptNonceCounter;
+
+    /// @dev The acknowledged-illiquid identity the contract expects for a leg:
+    ///      the asset itself iff it classifies Illiquid on-chain, else 0 (and 0
+    ///      for an absent/zero leg — `checkLiquidity` reverts on `address(0)`).
+    function _ackIlliquidAsset(address leg) internal view returns (address) {
+        if (leg == address(0)) return address(0);
+        return
+            OracleFacet(address(diamond)).checkLiquidity(leg) ==
+                LibVaipakam.LiquidityStatus.Illiquid
+                ? leg
+                : address(0);
+    }
+
+    /// @dev Build the `AcceptTerms` the contract will accept for `offerId`,
+    ///      reading the stored offer and mirroring the role-correct endpoint
+    ///      selection in `OfferAcceptFacet._bindTermsToOffer` exactly.
+    /// @param linkedLoanId Pass the auto-linked sale/offset target loan id for a
+    ///        sale-vehicle / offset accept; 0 for a normal offer.
+    function _buildAcceptTerms(
+        address acceptor,
+        uint256 offerId,
+        bool consent,
+        uint256 linkedLoanId,
+        uint256 nonce
+    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(offerId);
+        bool isERC20 = o.assetType == LibVaipakam.AssetType.ERC20;
+        bool isLender = o.offerType == LibVaipakam.OfferType.Lender;
+        t.acceptor = acceptor;
+        t.offerCreator = o.creator;
+        t.offerKey = OfferAcceptFacet(address(diamond)).directOfferKey(offerId);
+        t.offerType = uint8(o.offerType);
+        t.lendingAsset = o.lendingAsset;
+        t.collateralAsset = o.collateralAsset;
+        t.amount = isERC20 ? (isLender ? o.amountMax : o.amount) : o.amount;
+        t.collateralAmount = o.collateralAmount;
+        t.interestRateBps = isERC20
+            ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
+            : o.interestRateBps;
+        t.durationDays = o.durationDays;
+        t.tokenId = o.tokenId;
+        t.collateralTokenId = o.collateralTokenId;
+        t.quantity = o.quantity;
+        t.collateralQuantity = o.collateralQuantity;
+        t.assetType = uint8(o.assetType);
+        t.collateralAssetType = uint8(o.collateralAssetType);
+        t.prepayAsset = o.prepayAsset;
+        t.useFullTermInterest = o.useFullTermInterest;
+        t.allowsPartialRepay = o.allowsPartialRepay;
+        t.allowsPrepayListing = o.allowsPrepayListing;
+        t.allowsParallelSale = o.allowsParallelSale;
+        t.refinanceTargetLoanId = o.refinanceTargetLoanId;
+        t.linkedLoanId = linkedLoanId;
+        t.parallelSaleOrderHash = o.parallelSaleOrderHash;
+        t.periodicInterestCadence = uint8(o.periodicInterestCadence);
+        t.riskAndTermsConsent = consent;
+        t.acknowledgedIlliquidLendingAsset = _ackIlliquidAsset(o.lendingAsset);
+        t.acknowledgedIlliquidCollateralAsset = _ackIlliquidAsset(o.collateralAsset);
+        t.nonce = nonce;
+        t.deadline = block.timestamp + 1 hours;
+    }
+
+    /// @dev ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.
+    function _signAcceptTerms(LibAcceptTerms.AcceptTerms memory t, uint256 pk)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 d = OfferAcceptFacet(address(diamond)).hashAcceptTerms(t);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @notice Sign + accept `offerId` as `acceptor` (consent=true, no link).
+    function _signAndAcceptOffer(address acceptor, uint256 pk, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return _signAndAcceptOffer(acceptor, pk, offerId, true, 0);
+    }
+
+    /// @notice Sign + accept with explicit consent + linked-loan target. Use
+    ///         this overload for sale-vehicle / offset accepts (linkedLoanId)
+    ///         or a deliberately-false consent test.
+    function _signAndAcceptOffer(
+        address acceptor,
+        uint256 pk,
+        uint256 offerId,
+        bool consent,
+        uint256 linkedLoanId
+    ) internal returns (uint256) {
+        uint256 nonce = _acceptNonceCounter[acceptor]++;
+        LibAcceptTerms.AcceptTerms memory t = _buildAcceptTerms(
+            acceptor, offerId, consent, linkedLoanId, nonce
+        );
+        bytes memory sig = _signAcceptTerms(t, pk);
+        vm.prank(acceptor);
+        return OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
     }
 
     /**
