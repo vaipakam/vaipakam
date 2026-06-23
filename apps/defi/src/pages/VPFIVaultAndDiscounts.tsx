@@ -169,7 +169,8 @@ export default function VPFIVaultAndDiscounts() {
   // tier so `<DiscountStatusCard>` can render below. Was on the
   // Dashboard previously; moved here so the tier-thresholds reference
   // is co-located with the buying decision.
-  const { data: discountTier } = useVPFIDiscountTier(address);
+  const { data: discountTier, reload: reloadDiscountTier } =
+    useVPFIDiscountTier(address);
   const { enabled: consentEnabled } = useVPFIDiscountConsent();
 
   const [depositInput, setDepositInput] = useState<string>("");
@@ -270,7 +271,7 @@ export default function VPFIVaultAndDiscounts() {
           setStep("success");
           s.success({ note: `deposited ${depositWei} via Permit2` });
           setDepositInput("");
-          await Promise.all([reloadUserVpfi(), reloadVault()]);
+          await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
           return;
         } catch (permitErr) {
           console.debug(
@@ -318,7 +319,7 @@ export default function VPFIVaultAndDiscounts() {
       setStep("success");
       s.success({ note: `deposited ${depositWei}` });
       setDepositInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
     } catch (err) {
       setError(decodeContractError(err, "Deposit failed"));
       setStep("idle");
@@ -380,7 +381,7 @@ export default function VPFIVaultAndDiscounts() {
       setStep("success");
       s.success({ note: `withdrew ${unstakeWei}` });
       setUnstakeInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
     } catch (err) {
       setError(decodeContractError(err, "Withdrawal failed"));
       setStep("idle");
