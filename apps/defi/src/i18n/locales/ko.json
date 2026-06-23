@@ -1234,7 +1234,6 @@
     "depositAmount": "입금할 VPFI 양",
     "useMaxVpfi": "최대({{amount}} VPFI) 사용",
     "depositButton": "Vault에 입금",
-    "unstakeSubtitle": "{{chain}}의 Vault에서 지갑으로 VPFI를 이동합니다. Vault 잔액이 Tier 임계값 아래로 떨어지면 할인 Tier도 떨어집니다.",
     "unstakeButton": "지갑으로 출금"
   },
   "alertsPage": {

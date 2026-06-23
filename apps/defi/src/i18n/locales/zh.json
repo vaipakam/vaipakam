@@ -1234,7 +1234,6 @@
     "depositAmount": "存入的VPFI数量",
     "useMaxVpfi": "使用最大（{{amount}} VPFI）",
     "depositButton": "存入Vault",
-    "unstakeSubtitle": "将VPFI从{{chain}}的vault移回钱包。如果vault余额低于Tier阈值，折扣Tier也会下降。",
     "unstakeButton": "提取到钱包"
   },
   "alertsPage": {

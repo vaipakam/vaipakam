@@ -1234,7 +1234,6 @@
     "depositAmount": "入金するVPFI量",
     "useMaxVpfi": "最大（{{amount}} VPFI）を使用",
     "depositButton": "Vaultに入金",
-    "unstakeSubtitle": "{{chain}}のVaultからウォレットへVPFIを戻します。Vault 残高がTierしきい値を下回ると、割引Tierも下がります。",
     "unstakeButton": "ウォレットへ引き出し"
   },
   "alertsPage": {

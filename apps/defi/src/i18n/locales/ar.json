@@ -1233,7 +1233,6 @@
     "depositAmount": "كمية VPFI للإيداع",
     "useMaxVpfi": "استخدام الأقصى ({{amount}} VPFI)",
     "depositButton": "الإيداع في الضمان",
-    "unstakeSubtitle": "نقل VPFI من الضمان على {{chain}} إلى المحفظة. إذا انخفض رصيد الضمان دون عتبة Tier، فسينخفض Tier الخصم أيضاً.",
     "unstakeButton": "السحب إلى المحفظة"
   },
   "alertsPage": {

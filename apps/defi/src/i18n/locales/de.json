@@ -1234,7 +1234,6 @@
     "depositAmount": "Einzuzahlende VPFI-Menge",
     "useMaxVpfi": "Max ({{amount}} VPFI) verwenden",
     "depositButton": "In Vault einzahlen",
-    "unstakeSubtitle": "VPFI aus dem Vault auf {{chain}} zurück ins Wallet bewegen. Fällt der Vault-Saldo unter eine Tier-Schwelle, sinkt auch der Rabatt-Tier.",
     "unstakeButton": "Ins Wallet abheben"
   },
   "alertsPage": {

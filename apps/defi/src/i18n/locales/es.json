@@ -1233,7 +1233,6 @@
     "depositAmount": "Cantidad de VPFI a depositar",
     "useMaxVpfi": "Usar máximo ({{amount}} VPFI)",
     "depositButton": "Depositar en el vault",
-    "unstakeSubtitle": "Mover VPFI desde el vault en {{chain}} de vuelta a la cartera. Si el saldo del vault cae por debajo del umbral de un Tier, el Tier de descuento también baja.",
     "unstakeButton": "Retirar a la cartera"
   },
   "alertsPage": {

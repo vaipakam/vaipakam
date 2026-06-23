@@ -1233,7 +1233,6 @@
     "depositAmount": "வைப்பு செய்ய VPFI அளவு",
     "useMaxVpfi": "அதிகபட்சம் ({{amount}} VPFI) பயன்படுத்து",
     "depositButton": "Vaultவில் வைப்பு செய்",
-    "unstakeSubtitle": "{{chain}} இல் Vaultவில் இருந்து வாலட்டிற்கு VPFI ஐ நகர்த்து. Vault இருப்பு Tier வாசலுக்கு கீழே குறைந்தால், தள்ளுபடி Tier-ம் குறையும்.",
     "unstakeButton": "வாலட்டிற்கு திரும்பப் பெறு"
   },
   "alertsPage": {

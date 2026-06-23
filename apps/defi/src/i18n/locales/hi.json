@@ -1233,7 +1233,6 @@
     "depositAmount": "जमा करने के लिए VPFI राशि",
     "useMaxVpfi": "अधिकतम ({{amount}} VPFI) उपयोग करें",
     "depositButton": "Vault में जमा करें",
-    "unstakeSubtitle": "{{chain}} पर Vault से VPFI को वापस वॉलेट में ले जाएँ। यदि Vault शेष Tier सीमा से नीचे गिरता है, तो छूट Tier भी गिर जाता है।",
     "unstakeButton": "वॉलेट में निकालें"
   },
   "alertsPage": {

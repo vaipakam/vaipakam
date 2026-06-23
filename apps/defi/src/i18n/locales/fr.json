@@ -1234,7 +1234,6 @@
     "depositAmount": "Quantité de VPFI à déposer",
     "useMaxVpfi": "Utiliser le maximum ({{amount}} VPFI)",
     "depositButton": "Déposer dans le vault",
-    "unstakeSubtitle": "Déplacer du VPFI du vault sur {{chain}} vers le portefeuille. Si le solde du vault tombe sous un seuil de palier, le palier de remise baisse également.",
     "unstakeButton": "Retirer vers le portefeuille"
   },
   "alertsPage": {
