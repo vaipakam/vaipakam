@@ -93,29 +93,33 @@ obligations reopens the vector with a partial swap):
 
 ```solidity
 struct AcceptTerms {            // EIP-712-typed (see §4c) — every loan-affecting field
-    uint256 offerId;
-    LibVaipakam.OfferType offerType;   // borrower-vs-lender side selects which endpoints apply (Codex r2 P1)
+    address acceptor;           // signer/acceptor — binds the digest to one account (ERC-1271 cross-account replay, Codex r3 P2)
+    bytes32 offerKey;           // direct: keccak of offerId; signed: the signed-offer digest (id not yet allocated at sign time, Codex r3 P1)
+    LibVaipakam.OfferType offerType;   // selects which role-aware endpoints apply (r2 P1 / r3 P1)
     address lendingAsset;
     address collateralAsset;
-    uint256 amount;             // EQUALITY vs the offer endpoint used on direct accept
+    uint256 amount;             // EQUALITY vs the ROLE-CORRECT endpoint (see §4a)
     uint256 collateralAmount;   // EQUALITY
-    uint256 interestRateBps;    // EQUALITY (exact) — protects BOTH sides
+    uint256 interestRateBps;    // EQUALITY vs the role-correct rate endpoint
     uint256 durationDays;
-    // Asset discriminators — NFT/1155 identity AND units:
     uint256 tokenId;
     uint256 collateralTokenId;
     uint256 quantity;           // 1155 units lent
     uint256 collateralQuantity; // 1155 units locked
     LibVaipakam.AssetType assetType;
     LibVaipakam.AssetType collateralAssetType;
-    address prepayAsset;        // NFT-rental fee asset
-    // Obligation-shaping flags snapshotted into the loan / gating accept side effects:
+    address prepayAsset;
     bool useFullTermInterest;
     bool allowsPartialRepay;
-    bool allowsPrepayListing;   // gates postPrepayListing on the loan (Codex r2 P2)
-    bool allowsParallelSale;    // keeps a live Seaport listing across accept (Codex r2 P2)
-    uint256 refinanceTargetLoanId; // != 0 chains into RefinanceFacet.refinanceLoanFromAccept (Codex r2 P2)
+    bool allowsPrepayListing;
+    bool allowsParallelSale;
+    uint256 refinanceTargetLoanId;
+    uint256 linkedLoanId;       // saleOfferToLoanId / offsetOfferToLoanId target — the loan accept buys/closes (Codex r3 P2)
     LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
+    // Consent — folded INTO the signed digest so a relayer can't alter it (Codex r3 P2):
+    bool riskAndTermsConsent;
+    address acknowledgedIlliquidLendingAsset;    // == lendingAsset iff that leg is illiquid, else 0
+    address acknowledgedIlliquidCollateralAsset; // == collateralAsset iff that leg is illiquid, else 0
     // EIP-712 anti-replay:
     uint256 nonce;
     uint256 deadline;
@@ -127,14 +131,23 @@ struct AcceptTerms {            // EIP-712-typed (see §4c) — every loan-affec
   because the victim's wallet now signs calldata that *contains the real terms*
   and the contract enforces the match in `_acceptOffer` before any value
   moves.
-- **Direct accept binds by EQUALITY against the offer endpoints, not a slice**
-  (Codex round-1 P1 — corrected). Confirmed in code: direct accept consumes the
-  offer's endpoint values (`offer.amount`, `offer.interestRateBps`, …); only the
-  **keeper matcher** consumes an in-band slice, and it does so via the per-tx
-  `matchOverride` slot ([`LoanFacet.sol:759-762`](../../contracts/src/facets/LoanFacet.sol#L759)),
-  not through `acceptOffer`. So for the acceptor-facing paths there is no slice —
-  every `AcceptTerms` field is an exact equality check against the stored
-  offer's effective (post-collapse) value.
+- **Direct accept binds by EQUALITY against the ROLE-CORRECT endpoint, not a
+  slice** (Codex r1 + r3 P1). Confirmed in code ([`LoanFacet.sol:768-790`](../../contracts/src/facets/LoanFacet.sol#L768)):
+  for **ERC-20** offers a **lender** offer books the loan at `amountMax` +
+  `interestRateBps` (provide-max / rate-floor) while a **borrower** offer uses
+  `amount` + `interestRateBpsMax` (need-min / rate-ceiling); **NFT** offers use
+  `amount` for both (it's the daily rental fee). So `_acceptOffer` selects the
+  endpoint by `(offerType, assetType)` and equality-checks `AcceptTerms.amount` /
+  `.interestRateBps` against *that* endpoint — not blindly against `offer.amount`.
+  Only the **matcher** consumes an in-band slice, via the per-tx `matchOverride`
+  slot ([`:759-762`](../../contracts/src/facets/LoanFacet.sol#L759)), never
+  through `acceptOffer`.
+- **Signed-offer accepts bind on content + the signed-offer digest, not a future
+  id** (Codex r3 P1): `acceptSignedOffer*` materializes the offer and allocates
+  its id from `nextOfferId` *in the same tx*, so no `offerId` exists at sign
+  time. `AcceptTerms.offerKey` is therefore the **signed-offer EIP-712 digest**
+  for that path (and `keccak(offerId)` for direct accepts); the content fields
+  are checked against the materialized offer regardless.
 - **`interestRateBps` is bound by EQUALITY, not a one-sided ceiling** (Codex
   round-1 P1). A `maxInterestRateBps` ceiling only protects a borrower-acceptor
   (against a higher rate); a lender-acceptor needs protection against a *lower*
@@ -185,13 +198,17 @@ unreliable.
 trusted, structured, domain-bound terms prompt every major wallet renders
 uniformly):
 
-- The acceptor signs an EIP-712 `AcceptTerms` typed message (reusing
-  `LibSignedOffer`'s domain/typehash/digest machinery,
-  [`LibSignedOffer.sol`](../../contracts/src/libraries/LibSignedOffer.sol)) — the
-  wallet shows "Vaipakam — Accept: lend X of A against Y of B, rate r, …", so a
-  victim sees the *real* terms (incl. the illiquid collateral) and can refuse.
+- The acceptor signs an EIP-712 `AcceptTerms` typed message. Reuse
+  `LibSignedOffer`'s domain-separator/digest *machinery pattern* but with an
+  **acceptance-specific domain name** (`"Vaipakam AcceptOffer"`) + its own
+  `ACCEPT_TERMS_TYPEHASH` (Codex r3 P2) — not the `"Vaipakam SignedOffer"`
+  domain, so the wallet labels the prompt as an *acceptance* ("Vaipakam —
+  Accept: lend X of A against Y of B, rate r, …"), not a signed-offer action,
+  and a signed-offer signature can't be cross-replayed as an acceptance.
 - The accept entry point verifies the signature (ECDSA + ERC-1271 for smart
-  accounts) over the `AcceptTerms` digest, checks `signer == the acceptor`, and
+  accounts) over the `AcceptTerms` digest, checks `AcceptTerms.acceptor ==
+  recovered signer == the account whose funds move` (so the digest is bound to
+  one account — no cross-ERC-1271 replay, Codex r3 P2), and
   the same digest's fields are bound against the stored offer (§4a) — so the
   prompt the user approved *is* what executes.
 - `nonce` + `deadline` give replay protection + a signing-window bound (mirrors
@@ -251,9 +268,18 @@ creator consent to the created terms too, but this is **not** required to close
 
 ## 6. ABI / consumer / spec impact
 
-- **ABI re-export + deploy-sanity:** `acceptOffer`/`acceptOfferWithPermit`
-  selectors change → `exportFrontendAbis.sh`, `DeployDiamond` selector lists,
-  `SelectorCoverageTest`, `HelperTest`.
+- **ABI re-export + deploy-sanity:** `acceptOffer`, `acceptOfferWithPermit`,
+  **`acceptSignedOffer`, `acceptSignedOfferWithPermit`** selectors all change
+  (Codex r3 P2 — the SignedOfferFacet exports were missing from this checklist)
+  → `exportFrontendAbis.sh` (OfferAcceptFacet **and** SignedOfferFacet),
+  `DeployDiamond` selector lists, `SelectorCoverageTest`, `HelperTest`.
+- **Linked side-effect flows bound (Codex r3 P2):** accepting a lender-sale-vehicle
+  or offset offer auto-buys/closes a specific loan via the offerId-keyed
+  `saleOfferToLoanId` / `offsetOfferToLoanId` mappings
+  ([`OfferAcceptFacet.sol:1217/1235`](../../contracts/src/facets/OfferAcceptFacet.sol#L1217)).
+  `AcceptTerms.linkedLoanId` binds that target so the wallet-rendered prompt
+  reflects which position is bought/closed; `_acceptOffer` reverts if the bound
+  `linkedLoanId` ≠ the mapping's value.
 - **Frontend:** `OfferBook` accept call + `AcceptReviewModal`
   ([`apps/defi/src/pages/OfferBook.tsx`](../../apps/defi/src/pages/OfferBook.tsx))
   pass `AcceptTerms` (the modal already shows these exact terms) + the
