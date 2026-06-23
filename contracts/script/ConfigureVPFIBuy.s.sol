@@ -18,29 +18,52 @@ import {Deployments} from "./lib/Deployments.sol";
  *      Contract name kept (`ConfigureVPFIBuy`) so callers/spells importing it are
  *      unaffected; its job is now discount-config only.
  *
- *      Must be broadcast by a holder of `ADMIN_ROLE`. Only meaningful on the
- *      canonical VPFI chain.
+ *      Must be broadcast by a holder of `ADMIN_ROLE`. Runs on EVERY chain —
+ *      unlike the removed sale (canonical-only), the fee discount applies on
+ *      every chain a loan can be opened on, so both the price anchor and the
+ *      per-chain ETH reference asset must be set everywhere or
+ *      `LibVPFIDiscount._feeAssetWeiToVpfi` returns `(false, 0)` and the
+ *      discount silently no-ops there.
  *
- *      Required env vars:
+ *      Required env vars (chain-prefixed, mirroring ConfigureOracle):
  *        - ADMIN_PRIVATE_KEY                  : admin-role key
- *        - BASE_SEPOLIA_DIAMOND_ADDRESS       : canonical Diamond proxy
  *        - VPFI_BUY_WEI_PER_VPFI              : discount price anchor — wei of
  *                                               ETH per 1 VPFI (1 VPFI = 0.001
- *                                               ETH → 1e15)
- *        - BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET :
- *            asset priced internally as the ETH reference for discount math
- *            (usually WETH on Base).
+ *                                               ETH → 1e15). Global rate, same
+ *                                               value on every chain.
+ *        - <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET :
+ *            the chain's ETH reference asset for discount math (the canonical
+ *            WETH on that network), e.g. BASE_VPFI_DISCOUNT_ETH_PRICE_ASSET,
+ *            ARB_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET.
  */
 contract ConfigureVPFIBuy is Script {
-    function _ethPriceAsset() internal view returns (address) {
+    /// @dev Chain-prefix for the per-chain ETH reference asset env var. Mirrors
+    ///      ConfigureOracle._prefix() so the same .env shape works everywhere.
+    function _prefix() internal view returns (string memory) {
         uint256 chainId = block.chainid;
-        if (chainId == 84532) {
-            return vm.envAddress("BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET");
-        }
-        if (chainId == 8453) {
-            return vm.envAddress("BASE_VPFI_DISCOUNT_ETH_PRICE_ASSET");
-        }
-        revert("ConfigureVPFIBuy: unsupported chain");
+        if (chainId == 84532) return "BASE_SEPOLIA_";
+        if (chainId == 8453) return "BASE_";
+        if (chainId == 11155111) return "SEPOLIA_";
+        if (chainId == 1) return "MAINNET_";
+        if (chainId == 421614) return "ARB_SEPOLIA_";
+        if (chainId == 11155420) return "OP_SEPOLIA_";
+        if (chainId == 80002) return "POLYGON_AMOY_";
+        if (chainId == 42161) return "ARBITRUM_";
+        if (chainId == 10) return "OPTIMISM_";
+        if (chainId == 56) return "BNB_";
+        if (chainId == 137) return "POLYGON_";
+        revert(
+            string.concat(
+                "ConfigureVPFIBuy: unsupported chainId ",
+                vm.toString(chainId)
+            )
+        );
+    }
+
+    function _ethPriceAsset() internal view returns (address) {
+        return vm.envAddress(
+            string.concat(_prefix(), "VPFI_DISCOUNT_ETH_PRICE_ASSET")
+        );
     }
 
     function run() external {
@@ -50,7 +73,8 @@ contract ConfigureVPFIBuy is Script {
 
         uint256 weiPerVpfi = vm.envUint("VPFI_BUY_WEI_PER_VPFI");
 
-        console.log("=== Configure VPFI Discount Price (canonical Base) ===");
+        console.log("=== Configure VPFI Discount Price ===");
+        console.log("Chain id:         ", block.chainid);
         console.log("Diamond:          ", diamond);
         console.log("ETH price asset:  ", ethPriceAsset);
         console.log("Wei per VPFI:     ", weiPerVpfi);
