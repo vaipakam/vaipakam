@@ -1015,7 +1015,7 @@
     "trustWarning": "Anyone can deploy a token with any symbol — confirm you trust this token by checking the contract address itself, not the symbol shown."
   },
   "buyVpfi": {
-    "title": "Buy VPFI",
+    "title": "VPFI Vault & Discounts",
     "preconnect": {
       "tagline": "Pay lower fees on your loans, earn yield on what you stake.",
       "whatTitle": "What is VPFI?",
@@ -1029,7 +1029,7 @@
       "stakingTitle": "Staking yield while you wait",
       "stakingBody": "Any VPFI sitting in your Vaipakam Vault earns staking APR for as long as it stays there. No loan required — staking is open to everyone, and the same balance also counts toward your fee-discount tier.",
       "howTitle": "How it works",
-      "howBody": "Buy VPFI with ETH at the fixed early-stage rate, then deposit it into your vault to start earning. Cross-chain routing is handled for you — VPFI lands on whichever chain you bought from.",
+      "howBody": "Deposit VPFI into your Vaipakam Vault to start earning. Your staked balance unlocks the tiered fee discount on liquid loans and earns staking yield while it sits there.",
       "analyticsHint": "Looking for protocol-wide stats and circulating supply? See the",
       "analyticsLink": "Analytics page",
       "launchAppCta": "Launch Vaipakam to Buy / Stake / Unstake",
@@ -1039,7 +1039,7 @@
     "connectBody": "Connect your wallet to buy, stake, or unstake VPFI. The same page handles all three — your wallet decides which action you can take.",
     "unsupportedNetwork": "Unsupported network",
     "unsupportedNetworkBody": "Buy VPFI is available on any supported Vaipakam chain. Your wallet is currently on a network that does not host a Vaipakam Diamond. Switch to a supported chain to continue.",
-    "pageSubtitle": "Purchase VPFI at the fixed early-stage rate using ETH and deposit / stake into your vault to earn staking rewards — and unlock the tiered discount on liquid loans.",
+    "pageSubtitle": "Deposit / stake VPFI into your vault to earn staking rewards — and unlock the tiered discount on liquid loans.",
     "step1Title": "Buy VPFI with ETH",
     "step1SubtitleCanonical": "Direct on {{chain}}. VPFI lands in your wallet on this chain.",
     "step1SubtitleBridged": "Direct from {{chain}} — any cross-chain routing is handled for you. VPFI lands in your wallet on this chain.",
