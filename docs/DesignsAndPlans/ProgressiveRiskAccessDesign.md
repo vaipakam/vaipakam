@@ -63,10 +63,13 @@ the per-tx integrity guard; #671 is the per-vault structural floor.
     ([`OracleFacet.sol:1225-1231`](../../contracts/src/facets/OracleFacet.sol#L1225)),
     returning `0` (illiquid/untierable) through `3` (deepest band).
   - No hand-maintained blue-chip list. The per-asset governance levers are
-    the existing `pauseAsset` blacklist (drops the asset to tier 0) **and**
-    `ConfigFacet.setKeeperTier` (Codex r1 P2, L4Yl), which lets `KEEPER_ROLE`
-    promote/demote an asset within its on-chain ceiling — both already in the
-    code, not introduced here. Note the interaction: a brand-new asset's stored
+    the existing `pauseAsset` blacklist (which sets `assetPaused` and blocks
+    creation via `LibFacet.requireAssetNotPaused` — it does NOT change
+    `getEffectiveLiquidityTier`, which doesn't read the pause flag; Codex r3 P3
+    L69) **and** `ConfigFacet.setKeeperTier` (Codex r1 P2, L4Yl), which lets
+    `KEEPER_ROLE` promote/demote an asset within its on-chain ceiling and DOES
+    move the effective tier — both already in the code, not introduced here.
+    Note the interaction: a brand-new asset's stored
     keeper tier defaults such that it is NOT tier-3, so BlueChipOnly excludes it
     until a keeper promotion lifts its *effective* tier to 3 — intentionally
     conservative, but means the blue-chip set is keeper-influenced, not purely
@@ -137,12 +140,15 @@ the counterparty's close-out — the #667/C2 DoS class). The transferee
 
 A per-deploy-tunable delay between opt-up and first use at that tier;
 ships off so no friction by default. **Grounded:** a new
-`riskAccessUnlockCooldownSec` config field (default `0`) modeled on the
-existing protocol-config fields in
-[`LibVaipakam.sol`](../../contracts/src/libraries/LibVaipakam.sol#L996)
-(`protocolCfg` struct, e.g. `tier3SizePad` at `:996`) read via a
-`cfgRiskAccessUnlockCooldownSec()` accessor (same shape as
-[`cfgTier3SizePad():5008`](../../contracts/src/libraries/LibVaipakam.sol#L5008)).
+`riskAccessUnlockCooldownSec` field (default `0`) is a **top-level `Storage`
+field, NOT inside `protocolCfg`** (Codex r1/r3 — appending to the embedded
+`ProtocolConfig` shifts later top-level slots; see §8), read via a
+`cfgRiskAccessUnlockCooldownSec()` accessor (same *accessor* shape as
+[`cfgTier3SizePad():5008`](../../contracts/src/libraries/LibVaipakam.sol#L5008),
+just not the same storage location). Its setter `setRiskAccessUnlockCooldown`
+is **admin/governance-only** (a global deploy knob, range-bounded via the
+shared typed range-error pattern) — NOT a self-service user setter (Codex r3
+L535).
 While `0`, the comparison `block.timestamp >= unlockedAt + cooldown`
 collapses to "always satisfied" — no behavioural change. **Supported,
 purely additive.**
@@ -296,7 +302,11 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   creator re-locks (ratchets down) or the asset is downgraded/paused before
   anyone accepts. So `_acceptOffer` re-checks **both** the resolved acceptor
   AND the stored offer's creator against the (possibly-changed) current tiers
-  before binding — not just the acceptor. Cheap (two view reads); defends the
+  before binding — not just the acceptor. **For an `IlliquidCustom` pair, also
+  re-check the per-pair `illiquidPairConsent` (and the acceptor's), not only
+  the broad `userRiskAccess` tier** (Codex r3 P2, L300): pair consent is the
+  second load-bearing dimension and can be *revoked* after offer creation, so a
+  tier-only re-assert would miss a revoked pair. Cheap view reads; defends the
   stale-offer window symmetrically with the match-path re-assertion (D3/O5).
 - [`OfferMatchFacet.matchOffers:158`](../../contracts/src/facets/OfferMatchFacet.sol#L158)
   / `matchSignedOffer` (
@@ -317,9 +327,15 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   *paired offer* still satisfies its creator's recorded tier (recompute is
   cheap, defends against a post-create re-lock). See §11.
 
-The creation-time decision is recorded on the offer/loan as a historical
-artifact (alongside `riskAndTermsConsentFromBoth`,
-[`LibVaipakam.sol:1574`](../../contracts/src/libraries/LibVaipakam.sol#L1574)).
+The creation-time decision is **re-derivable**, not snapshotted: the tier is
+recomputed from current on-chain liquidity + the actor's stored level at each
+read (origination, match re-assert), and the existing
+`riskAndTermsConsentFromBoth` bool ([`LibVaipakam.sol:1574`](../../contracts/src/libraries/LibVaipakam.sol#L1574))
+remains the per-loan consent marker. **No new per-offer/loan snapshot field is
+added** (Codex r3 P3, L322 — §8 deliberately adds only user-level state); if a
+true point-in-time historical snapshot of the tier-at-creation is ever wanted
+for audit, it's an additive per-loan field tracked as an open item, not part of
+this design.
 
 ### 5b. Ongoing-action (current NFT owner)
 
@@ -435,6 +451,15 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
     deferred — a relayed risk-unlock has no economic front-run (no matcher
     cut), so the only requirement when relay is added is binding the tier
     change to the signed `user`, not `msg.sender`.
+  - **Contract-vault unlock path (Codex r3 P2, L437):** protocol contract
+    accounts that originate offers via `setLenderIntent` / `matchIntent` (the
+    backstop vault, aggregator adapters) do NOT implement `isValidSignature`,
+    so the EIP-712 self-submit path can't unlock *their* vault. Two acceptable
+    resolutions: (a) those contracts only ever transact blue-chip assets, so
+    they never need to opt up (verify per-contract); or (b) expose an
+    **owner-gated, signature-free** `setVaultRiskTierFor(account, level)`
+    callable only by the contract's own owner/governance, for these
+    known-protocol accounts. Pick per-account at implementation; default (a).
 - **Nonce + deadline** for replay protection / signing-window bound. Reuse
   the per-signer nonce pattern of `signedOfferNonceUsed`
   ([`LibVaipakam.sol:4079`](../../contracts/src/libraries/LibVaipakam.sol#L4079))
@@ -446,8 +471,13 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   `consentVersionHash` lets a later terms revision be detected (the
   `consentVersion` from RD-1's soft-record stamp).
 - Allow **ratcheting down** (re-lock) — `setVaultRiskTier(BlueChipOnly)`
-  and `setIlliquidPairConsent(pairKey, false)` always succeed (no cooldown
-  on *reducing* risk; cooldown only gates *first use after raising*).
+  and `setIlliquidPairConsent(…, false)` always succeed (no cooldown on
+  *reducing* risk; cooldown only gates *first use after raising*).
+  **Re-stamp the cooldown anchor on every RE-RAISE** (Codex r3 P2, L455):
+  each raise writes `unlockedAt[user][level] = block.timestamp` (and the
+  per-pair anchor on a pair re-consent). Otherwise a stale, already-aged
+  timestamp from an earlier opt-up would let a revoke→re-raise skip the
+  cooldown entirely.
 - **Cooldown (RD-3):** optional `riskAccessUnlockCooldownSec` (default 0)
   between unlock and first use at that tier, so a phished unlock is
   noticeable/cancellable. Store `unlockedAt` per (user, level) or per
@@ -470,7 +500,7 @@ enum RiskAccessLevel { BlueChipOnly, BroadLiquid, IlliquidCustom }       // 0 = 
 
 mapping(address => RiskAccessLevel) userRiskAccess;                       // broad tier
 mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;          // L2 HARD per-pair illiquid ack
-mapping(address => mapping(bytes32 => bool)) midTierPairAck;               // L1 SOFT mid-tier ack — SEPARATE map (Codex r2 L4Yj/L475): never reuse illiquidPairConsent for strict-mode acks
+mapping(address => mapping(bytes32 => uint64)) midTierPairAck;             // L1 SOFT mid-tier ack — SEPARATE map (Codex r2 L475); stores the ack TIMESTAMP not a bool (Codex r3 P3 L473: RD-1 wants {pairKey, timestamp, consentVersion}; 0 = not acked), version in riskConsentVersion. Never reuse illiquidPairConsent for L1 acks.
 mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;          // EIP-712 anti-replay (dedicated)
 mapping(address => mapping(uint8 => uint64)) riskTierUnlockedAt;           // cooldown anchor PER LEVEL (Codex r2 L473): a single ts would let a BroadLiquid→IlliquidCustom raise overwrite the broad unlock
 mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockedAt;      // cooldown anchor (per-pair)
@@ -492,7 +522,10 @@ read-accessor mirror the existing bounded-knob pattern of
 - **New facet — `RiskAccessFacet`** (or fold into `ProfileFacet` if size
   permits; `ProfileFacet` already owns `setKeeperAccess` self-config —
   natural home, but check EIP-170 after adding the EIP-712 verify path):
-  `setVaultRiskTier`, `setIlliquidPairConsent`, and views. All asset-pair
+  `setVaultRiskTier`, `setIlliquidPairConsent`, **`setMidTierPairAck`** (the L1
+  strict-mode soft-ack setter, present iff `riskStrictMode` ships — Codex r3 P3
+  L499; writes the `midTierPairAck` timestamp map, never `illiquidPairConsent`),
+  the admin-only `setRiskAccessUnlockCooldown`, and views. All asset-pair
   APIs take the **raw typed assets** — `(lendingAsset, lendingAssetType,
   tokenId, collateralAsset, collateralAssetType, collateralTokenId)` — NOT two
   bare addresses (Codex r2 L498), so they can recompute the tokenId-inclusive
@@ -640,7 +673,9 @@ corrections the implementation must absorb:
   `setKeeperAccess`) but the EIP-712 verify path adds bytecode — check
   EIP-170 before deciding.
 - **O2 — pairKey precedent (D2):** ratify the new composite-keccak key
-  shape (`abi.encode(chainId, lend, coll, lendType, collType)`), or prefer
+  shape (`abi.encode(chainId, lend, lendType, tokenId, coll, collType,
+  collTokenId)` — token IDs are **load-bearing** per §4, do NOT drop them;
+  Codex r3 L644), or prefer
   a nested `mapping(address => mapping(address => mapping(bytes32 => bool)))`
   to stay closer to existing nested precedents? (Composite is one storage
   word, cleaner; nested matches house style.)
