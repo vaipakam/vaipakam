@@ -4089,21 +4089,19 @@ library LibVaipakam {
         address signedOfferAcceptor;
         // #662 — offer-accept term binding (anti-phishing). APPEND-ONLY.
         // `acceptNonceUsed[acceptor][nonce]` — per-acceptor replay ledger for
-        // the EIP-712 `AcceptTerms` signature (see `LibAcceptTerms`). An accept
-        // entry point consumes the nonce when it verifies the typed signature.
+        // the EIP-712 `AcceptTerms` signature (see `LibAcceptTerms`). Each
+        // acceptor consumes its nonce once when a public accept entry verifies
+        // the typed signature, so a captured signature cannot be replayed.
+        // The binding itself (field-equality + acknowledged-illiquid asset) is
+        // enforced AT the public entry as a pure function of (stored offer,
+        // signed terms) BEFORE `_acceptOffer` runs — no transient "verified"
+        // flag is needed: every acceptor-facing entry (direct / Permit2 /
+        // signed-offer fill) performs the bind in line, while the keeper match
+        // path never routes through a public accept entry and so is exempt by
+        // construction (it pairs two self-authored offers — no phished
+        // acceptor; see `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md`
+        // §5).
         mapping(address => mapping(uint256 => bool)) acceptNonceUsed;
-        // Transient flag: an accept entry point has verified an EIP-712
-        // `AcceptTerms` signature AND bound every term against the stored offer
-        // for the in-flight accept. `_acceptOffer` REQUIRES this on every
-        // acceptor-facing path (direct / Permit2 / signed-offer fill) before
-        // binding the offer to a loan, and clears it immediately after — so the
-        // opaque "trust an unbound bool" path can no longer reach loan
-        // creation. The keeper match path (`matchOverride.active`) is exempt:
-        // it pairs two self-authored offers, so there is no phished acceptor
-        // (see `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md` §5). MUST
-        // be false at rest — always cleared in the same call; a true value
-        // outside an in-flight bound accept is a bug.
-        bool acceptBindingVerified;
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
         // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
         // standing lending terms for that asset-pair (one per pair in v1).
