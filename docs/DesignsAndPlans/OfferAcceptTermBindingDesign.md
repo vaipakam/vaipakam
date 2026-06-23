@@ -91,9 +91,17 @@ rendered prompt binding on execution.
 omitting any field that is snapshotted into the loan or changes the acceptor's
 obligations reopens the vector with a partial swap):
 
+> **EIP-712 encoding note (Codex r4 P2):** enum fields (`offerType`,
+> `assetType`, `collateralAssetType`, `periodicInterestCadence`) are encoded in
+> the typehash as **`uint8`** primitives — matching the existing signed-offer
+> typehash (`LibSignedOffer.sol:39-51`) — not Solidity enum names, so the
+> digest is portable to off-chain signers. The struct is shown with enum types
+> for readability; the `ACCEPT_TERMS_TYPEHASH` string uses `uint8`.
+
 ```solidity
 struct AcceptTerms {            // EIP-712-typed (see §4c) — every loan-affecting field
     address acceptor;           // signer/acceptor — binds the digest to one account (ERC-1271 cross-account replay, Codex r3 P2)
+    address offerCreator;       // == loan.lender/borrower counterparty (offer.creator copied at init) — binds who you face (Codex r4 P2)
     bytes32 offerKey;           // direct: keccak of offerId; signed: the signed-offer digest (id not yet allocated at sign time, Codex r3 P1)
     LibVaipakam.OfferType offerType;   // selects which role-aware endpoints apply (r2 P1 / r3 P1)
     address lendingAsset;
@@ -115,6 +123,7 @@ struct AcceptTerms {            // EIP-712-typed (see §4c) — every loan-affec
     bool allowsParallelSale;
     uint256 refinanceTargetLoanId;
     uint256 linkedLoanId;       // saleOfferToLoanId / offsetOfferToLoanId target — the loan accept buys/closes (Codex r3 P2)
+    bytes32 parallelSaleOrderHash; // live Seaport order kept across accept when allowsParallelSale (Codex r4 P2) — 0 when none
     LibVaipakam.PeriodicInterestCadence periodicInterestCadence;
     // Consent — folded INTO the signed digest so a relayer can't alter it (Codex r3 P2):
     bool riskAndTermsConsent;
@@ -243,11 +252,15 @@ creator consent to the created terms too, but this is **not** required to close
   `_acceptOffer`; the **signature verification** lives at each public entry
   (where `msg.sender`/the signed acceptor is known), threading the verified
   `AcceptTerms` down.
-- **Modified (additive):** `acceptOffer` / `acceptOfferWithPermit` /
-  `SignedOfferFacet.acceptSignedOffer*` signatures (+ signed `AcceptTerms` +
-  signature + acknowledged-asset params; the single `riskAndTermsConsent` bool
-  is **kept**); `_acceptOffer` (guard + bind); `_maybeRunInitialRiskGates`
-  (asset-match in addition to the bool).
+- **Modified (additive):** the public signatures `acceptOffer` /
+  `acceptOfferWithPermit` / `SignedOfferFacet.acceptSignedOffer*` **and the
+  internal cross-facet plumbing they thread through** (Codex r4 P2) —
+  `OfferAcceptFacet.acceptOfferInternal`, `SignedOfferFacet._routeAccept`, and
+  `LoanFacet.initiateLoan` — all carry the verified `AcceptTerms` (or its bound
+  fields) down to `_acceptOffer`; `_maybeRunInitialRiskGates` (asset-match in
+  addition to the kept `riskAndTermsConsent` bool). `acceptOfferInternal` is a
+  diamond-internal selector → it appears in the deploy-sanity selector lists,
+  so its signature change must be reflected there too.
 - **New:** `struct AcceptTerms` (EIP-712 typed) + its typehash; errors
   `OfferTermsMismatch`, `IlliquidAssetNotAcknowledged`, `AcceptSignatureInvalid`,
   `AcceptDeadlineExpired`; a per-acceptor nonce mapping.
