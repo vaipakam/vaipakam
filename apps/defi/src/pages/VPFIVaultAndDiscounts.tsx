@@ -169,7 +169,8 @@ export default function VPFIVaultAndDiscounts() {
   // tier so `<DiscountStatusCard>` can render below. Was on the
   // Dashboard previously; moved here so the tier-thresholds reference
   // is co-located with the buying decision.
-  const { data: discountTier } = useVPFIDiscountTier(address);
+  const { data: discountTier, reload: reloadDiscountTier } =
+    useVPFIDiscountTier(address);
   const { enabled: consentEnabled } = useVPFIDiscountConsent();
 
   const [depositInput, setDepositInput] = useState<string>("");
@@ -270,7 +271,7 @@ export default function VPFIVaultAndDiscounts() {
           setStep("success");
           s.success({ note: `deposited ${depositWei} via Permit2` });
           setDepositInput("");
-          await Promise.all([reloadUserVpfi(), reloadVault()]);
+          await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
           return;
         } catch (permitErr) {
           console.debug(
@@ -318,7 +319,7 @@ export default function VPFIVaultAndDiscounts() {
       setStep("success");
       s.success({ note: `deposited ${depositWei}` });
       setDepositInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
     } catch (err) {
       setError(decodeContractError(err, "Deposit failed"));
       setStep("idle");
@@ -380,7 +381,7 @@ export default function VPFIVaultAndDiscounts() {
       setStep("success");
       s.success({ note: `withdrew ${unstakeWei}` });
       setUnstakeInput("");
-      await Promise.all([reloadUserVpfi(), reloadVault()]);
+      await Promise.all([reloadUserVpfi(), reloadVault(), reloadDiscountTier()]);
     } catch (err) {
       setError(decodeContractError(err, "Withdrawal failed"));
       setStep("idle");
@@ -563,9 +564,15 @@ export default function VPFIVaultAndDiscounts() {
       {address && (
         <DiscountStatusCard
           tier={discountTier?.tier ?? 0}
-          vaultVpfi={vaultBal}
+          vaultVpfi={discountTier?.trackedBal ?? null}
           discountBps={discountTier?.discountBps ?? 0}
           consentEnabled={consentEnabled}
+          isCanonicalVPFI={activeChain?.isCanonicalVPFI ?? readChain.isCanonicalVPFI}
+          canonicalName={
+            getCanonicalVPFIChain(
+              (activeChain ?? readChain).testnet ? 'testnet' : 'mainnet',
+            ).name
+          }
         />
       )}
 
@@ -792,29 +799,49 @@ function Stat({ label, value }: StatProps) {
 interface DiscountStatusCardProps {
   /** Current on-chain tier 0..4 for the connected wallet. */
   tier: number;
-  /** Vault VPFI balance (18-dec) on the active chain; null = not loaded yet. */
+  /**
+   * Protocol-tracked vault VPFI balance (18-dec) on the active chain; null =
+   * not loaded yet. This is the deposit-flow balance the discount math counts
+   * (direct-transfer dust is excluded), so both the displayed figure and the
+   * next-tier gap are derived from it — not the raw ERC-20 vault balance.
+   */
   vaultVpfi: bigint | null;
   /** Discount bps associated with the current tier (e.g. 1000 = 10%). */
   discountBps: number;
   /** Platform-level consent flag; null while loading, false = opted out. */
   consentEnabled: boolean | null;
+  /**
+   * Whether the connected chain is the canonical VPFI chain. The fee-discount
+   * TIER is resolved from the canonical-chain vault balance and propagated to
+   * mirrors, so the "deposit X more to reach the next tier" gap (which is
+   * computed from the *local* vault balance) is only meaningful on canonical.
+   */
+  isCanonicalVPFI: boolean;
+  /** Display name of the canonical VPFI chain (for the mirror-chain banner). */
+  canonicalName: string;
 }
 
 /**
- * Surfaces the borrower's active VPFI fee-discount status directly on the Buy
- * page so the user can see, before buying, (a) the tier they sit in today,
- * (b) what the next tier requires, (c) whether the platform-level consent
- * switch is on, and (d) that vault-held VPFI doubles as staked (5% APR).
+ * Surfaces the borrower's active VPFI fee-discount status directly on the VPFI
+ * vault page so the user can see (a) the tier they sit in today, (b) what the
+ * next tier requires, and (c) whether the platform-level consent switch is on.
  *
- * Spec: TokenomicsTechSpec.md §6 (tier table, consent, liquid assets only)
- * and §8a (vault = staked). Consent is read-only here — the toggle itself
- * lives on the Dashboard per spec.
+ * Canonical-aware (#718): the displayed `tier` is the *effective* (cross-chain
+ * propagated) tier, so it's correct on every chain. But the tier is *driven* by
+ * the canonical-chain vault balance — so on a mirror chain we suppress the
+ * local-balance "deposit more to reach the next tier" gap (depositing locally
+ * can't raise the tier) and show a banner explaining the model instead.
+ *
+ * Spec: TokenomicsTechSpec.md §6 (tier table, consent, liquid assets only).
+ * Consent is read-only here — the toggle itself lives on the Dashboard per spec.
  */
 export function DiscountStatusCard({
   tier,
   vaultVpfi,
   discountBps,
   consentEnabled,
+  isCanonicalVPFI,
+  canonicalName,
 }: DiscountStatusCardProps) {
   const { t } = useTranslation();
   // Live tier table — derived from on-chain `getVpfiTierThresholds` /
@@ -872,7 +899,9 @@ export function DiscountStatusCard({
             {vaultVpfi == null ? "—" : vaultUnits.toFixed(4)}
           </div>
           <div className="stat-label" style={{ fontSize: 11 }}>
-            {t('vpfiVaultCards.vaultCountsAsStaked')}
+            {isCanonicalVPFI
+              ? t('vpfiVaultCards.vaultCountsAsStaked')
+              : t('vpfiVaultCards.vaultHeldOnMirror', { canonical: canonicalName })}
           </div>
         </div>
         <div>
@@ -913,7 +942,35 @@ export function DiscountStatusCard({
         </div>
       </div>
 
-      {nextTier && (
+      {/* Mirror chains: the effective tier above is correct (propagated from
+          the canonical chain), but it's *driven* by the canonical-chain vault
+          balance — so a local-balance "deposit X more to reach the next tier"
+          gap would be misleading. Show the model banner here instead, and
+          suppress the gap card below. */}
+      {!isCanonicalVPFI && (
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            padding: 10,
+            marginBottom: 12,
+            borderRadius: 6,
+            border: "1px solid var(--border)",
+            background: "rgba(234, 179, 8, 0.06)",
+            alignItems: "flex-start",
+          }}
+        >
+          <Info
+            size={16}
+            style={{ color: "var(--accent-yellow)", flexShrink: 0, marginTop: 2 }}
+          />
+          <div className="stat-label" style={{ margin: 0, fontSize: 12 }}>
+            {t('vpfiVaultCards.mirrorTierBanner', { canonical: canonicalName })}
+          </div>
+        </div>
+      )}
+
+      {isCanonicalVPFI && nextTier && (
         <div
           style={{
             display: "flex",
