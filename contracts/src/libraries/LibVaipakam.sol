@@ -4087,6 +4087,23 @@ library LibVaipakam {
         // address(0) outside an in-flight signed-offer fill — always cleared
         // in the same call; a non-zero value at rest is a bug.
         address signedOfferAcceptor;
+        // #662 — offer-accept term binding (anti-phishing). APPEND-ONLY.
+        // `acceptNonceUsed[acceptor][nonce]` — per-acceptor replay ledger for
+        // the EIP-712 `AcceptTerms` signature (see `LibAcceptTerms`). An accept
+        // entry point consumes the nonce when it verifies the typed signature.
+        mapping(address => mapping(uint256 => bool)) acceptNonceUsed;
+        // Transient flag: an accept entry point has verified an EIP-712
+        // `AcceptTerms` signature AND bound every term against the stored offer
+        // for the in-flight accept. `_acceptOffer` REQUIRES this on every
+        // acceptor-facing path (direct / Permit2 / signed-offer fill) before
+        // binding the offer to a loan, and clears it immediately after — so the
+        // opaque "trust an unbound bool" path can no longer reach loan
+        // creation. The keeper match path (`matchOverride.active`) is exempt:
+        // it pairs two self-authored offers, so there is no phished acceptor
+        // (see `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md` §5). MUST
+        // be false at rest — always cleared in the same call; a true value
+        // outside an in-flight bound accept is a bug.
+        bool acceptBindingVerified;
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
         // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
         // standing lending terms for that asset-pair (one per pair in v1).
