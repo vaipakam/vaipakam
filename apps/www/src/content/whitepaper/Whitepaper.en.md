@@ -919,17 +919,17 @@ emergency brake.
 | Testers & Early Contributors     |       6% |      13,800,000 | 6–12 mo cliff                       |
 | Platform Admins                  |       3% |       6,900,000 | Timelock controlled                 |
 | Security Auditors                |       2% |       4,600,000 | One-time on delivery                |
-| Reserve (incl. pending reallocation) |  26% |      59,800,000 | One-time                            |
+| Reserve (pending reallocation)   |      25% |      57,500,000 | One-time                            |
 | Bug Bounty                       |       2% |       4,600,000 | Multi-sig locked                    |
 | Exchange / Market Making         |      14% |      32,200,000 | 50% liquidity / 50% locked          |
 | **Platform Interaction Rewards** |      30% |      69,000,000 | Daily emission via 8-band schedule  |
 | **Total**                        | **100%** | **230,000,000** |                                     |
 
-> The Reserve figure folds in the **25%** freed by removing the fixed-rate
-> public sale (1%) and the staking-rewards pool (24%) in the #687 legal-surface
-> excision. The final disposition of that freed 25% — held in reserve, burned to
-> reduce the 230M cap, or otherwise reallocated — is a **pending governance
-> decision** and is shown here as Reserve only as a placeholder.
+> The 25% Reserve is the allocation freed by removing the fixed-rate public sale
+> (1%) and the staking-rewards pool (24%) in the #687 legal-surface excision. Its
+> final disposition — held in reserve, burned to reduce the 230M cap, or
+> otherwise reallocated — is a **pending governance decision**; it is shown here
+> as a Reserve placeholder so the table stays at 100% / 230M.
 
 ### 11.3 Fee Discount Tiers
 

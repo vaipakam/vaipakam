@@ -1055,7 +1055,7 @@
         "row7Bucket": "平台管理员",
         "row8Bucket": "安全审计方",
         "row9Bucket": "漏洞赏金",
-        "row10Bucket": "合规储备"
+        "row10Bucket": "Reserve (pending reallocation)"
       },
       "nft-positions": {
         "q": "Vaipakam 的仓位 NFT 是什么？",

@@ -1055,7 +1055,7 @@
         "row7Bucket": "플랫폼 관리자",
         "row8Bucket": "보안 감사자",
         "row9Bucket": "버그 바운티",
-        "row10Bucket": "규제 대응 리저브"
+        "row10Bucket": "Reserve (pending reallocation)"
       },
       "nft-positions": {
         "q": "Vaipakam의 포지션 NFT란 무엇인가요?",

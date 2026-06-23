@@ -709,7 +709,7 @@ const FAQS: FaqEntry[] = [
               </tr>
               <tr>
                 <td>{t("faq.entries.tokenomics.row10Bucket")}</td>
-                <td>26%</td>
+                <td>25%</td>
               </tr>
             </tbody>
           </table>

@@ -104,7 +104,7 @@ export default function Footer() {
             <Link to="/analytics#transparency">{t('footer.smartContracts')}</Link>
             <Link to="/protocol-console">{t('footer.protocolConsole', 'Protocol Console')}</Link>
             <Link to="/nft-verifier">{t('nav.nftVerifier')}</Link>
-            <a href={marketingUrl('/vpfi-vault')} target="_blank" rel="noopener noreferrer">
+            <a href={marketingUrl('/vpfi')} target="_blank" rel="noopener noreferrer">
               {t('appNav.buyVpfi')}
             </a>
           </div>

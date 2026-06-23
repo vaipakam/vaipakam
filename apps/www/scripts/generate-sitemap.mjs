@@ -81,7 +81,7 @@ const LOCALES = [
 // a crawler imposes a soft URL budget on huge sitemaps.
 const ROUTES = [
   '/',
-  '/buy-vpfi',
+  '/vpfi',
   '/help/overview',
   '/help/basic',
   '/help/advanced',
@@ -153,7 +153,7 @@ function buildSitemap() {
       let priority;
       if (route === '/') priority = '1.0';
       else if (route.startsWith('/help/')) priority = '0.8';
-      else if (route === '/buy-vpfi') priority = '0.9';
+      else if (route === '/vpfi') priority = '0.9';
       else priority = '0.5';
       lines.push(`    <priority>${priority}</priority>`);
       lines.push('  </url>');

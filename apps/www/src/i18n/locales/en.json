@@ -1558,7 +1558,7 @@
         "row7Bucket": "Platform admins",
         "row8Bucket": "Security auditors",
         "row9Bucket": "Bug bounty",
-        "row10Bucket": "Regulatory reserve"
+        "row10Bucket": "Reserve (pending reallocation)"
       },
       "nft-positions": {
         "q": "What are Vaipakam position NFTs?",

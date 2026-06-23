@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Suspense, lazy } from 'react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
@@ -108,6 +108,10 @@ function pageRoutes(): ReactElement {
     <>
       <Route index element={<LandingPage />} />
       <Route path="vpfi" element={<PublicBuyVPFI />} />
+      {/* #712: the page moved from /buy-vpfi → /vpfi when the fixed-rate
+          sale was removed; keep a redirect so old inbound links / cached
+          sitemap entries don't 404. */}
+      <Route path="buy-vpfi" element={<Navigate to="/vpfi" replace />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />
