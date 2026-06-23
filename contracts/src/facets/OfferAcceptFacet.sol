@@ -418,6 +418,30 @@ contract OfferAcceptFacet is
         _verifyAndBindAccept(offerId, offerKey, terms, signature, acceptor);
     }
 
+    /// @notice The EIP-712 digest an acceptor signs for `terms` (#662). Mirrors
+    ///         {SignedOfferFacet.hashSignedOffer}: the frontend renders the
+    ///         typed `AcceptTerms` for the wallet, and tests recover the digest
+    ///         here to produce the `signature` the accept entries verify. Bound
+    ///         to this chain + Diamond via the acceptance-specific EIP-712
+    ///         domain (`"Vaipakam AcceptOffer"`).
+    /// @param terms The acceptance terms to hash.
+    /// @return The `\x19\x01`-prefixed EIP-712 digest.
+    function hashAcceptTerms(LibAcceptTerms.AcceptTerms calldata terms)
+        external
+        view
+        returns (bytes32)
+    {
+        return LibAcceptTerms.digest(terms);
+    }
+
+    /// @notice The `AcceptTerms.offerKey` for a DIRECT accept of `offerId`
+    ///         (`keccak256(abi.encode(offerId))`) — exposed so the frontend
+    ///         and tests fill the field the contract will check. The signed-
+    ///         offer fill path instead binds the signed-offer order hash.
+    function directOfferKey(uint256 offerId) external pure returns (bytes32) {
+        return _directOfferKey(offerId);
+    }
+
     /// @dev The `AcceptTerms.offerKey` an acceptor signs on the DIRECT accept
     ///      paths — `keccak256(abi.encode(offerId))`. The signed-offer fill
     ///      path instead binds the signed-offer digest (no offerId exists at
