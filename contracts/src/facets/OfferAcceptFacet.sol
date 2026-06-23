@@ -198,11 +198,21 @@ contract OfferAcceptFacet is
     error OfferPartiallyFilled(uint256 offerId, uint256 amountFilled);
     // ── #662 — offer-accept term binding (anti-phishing) ───────────────
     /// @notice A field of the signed `AcceptTerms` did not equal the stored
-    ///         offer's value (or its role-correct endpoint). `field` is a
-    ///         short ASCII tag identifying the first diverging field, so the
-    ///         frontend can point the acceptor at exactly what drifted between
-    ///         what they signed and what the chain holds.
-    error OfferTermsMismatch(bytes32 field);
+    ///         offer's value (or its role-correct endpoint). `field` is a 1-based
+    ///         index identifying the first diverging field, so the frontend can
+    ///         point the acceptor at exactly what drifted between what they
+    ///         signed and what the chain holds. A `uint8` (not a `bytes32` tag)
+    ///         to keep the facet under the EIP-170 size limit. Legend:
+    ///         1 offerKey · 2 offerCreator · 3 offerType · 4 lendingAsset ·
+    ///         5 collateralAsset · 6 amount · 7 collateralAmount ·
+    ///         8 interestRateBps · 9 durationDays · 10 tokenId ·
+    ///         11 collateralTokenId · 12 quantity · 13 collateralQuantity ·
+    ///         14 assetType · 15 collateralAssetType · 16 prepayAsset ·
+    ///         17 useFullTermInterest · 18 allowsPartialRepay ·
+    ///         19 allowsPrepayListing · 20 allowsParallelSale ·
+    ///         21 refinanceTargetLoanId · 22 parallelSaleOrderHash ·
+    ///         23 periodicInterestCadence · 24 linkedLoanId.
+    error OfferTermsMismatch(uint8 field);
     /// @notice An illiquid leg's acknowledged-asset identity in the signed
     ///         `AcceptTerms` did not match the leg's actual asset (or a liquid
     ///         leg named a non-zero acknowledged asset). Blocks a clone that
@@ -434,18 +444,12 @@ contract OfferAcceptFacet is
         return LibAcceptTerms.digest(terms);
     }
 
-    /// @notice The `AcceptTerms.offerKey` for a DIRECT accept of `offerId`
-    ///         (`keccak256(abi.encode(offerId))`) — exposed so the frontend
-    ///         and tests fill the field the contract will check. The signed-
-    ///         offer fill path instead binds the signed-offer order hash.
-    function directOfferKey(uint256 offerId) external pure returns (bytes32) {
-        return _directOfferKey(offerId);
-    }
-
     /// @dev The `AcceptTerms.offerKey` an acceptor signs on the DIRECT accept
-    ///      paths — `keccak256(abi.encode(offerId))`. The signed-offer fill
-    ///      path instead binds the signed-offer digest (no offerId exists at
-    ///      sign time), passed explicitly to {verifyAndBindAccept}.
+    ///      paths — `keccak256(abi.encode(offerId))`. This is a pure client-side
+    ///      computation (the frontend / test signer derive it locally — there's
+    ///      no on-chain view, to keep the facet under EIP-170). The signed-offer
+    ///      fill path instead binds the signed-offer order hash, passed
+    ///      explicitly to {verifyAndBindAccept}.
     function _directOfferKey(uint256 offerId) private pure returns (bytes32) {
         return keccak256(abi.encode(offerId));
     }
@@ -511,50 +515,35 @@ contract OfferAcceptFacet is
             ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
             : o.interestRateBps;
 
-        if (t.offerKey != offerKey) revert OfferTermsMismatch("offerKey");
-        if (t.offerCreator != o.creator) revert OfferTermsMismatch("offerCreator");
-        if (t.offerType != uint8(o.offerType)) revert OfferTermsMismatch("offerType");
-        if (t.lendingAsset != o.lendingAsset) revert OfferTermsMismatch("lendingAsset");
-        if (t.collateralAsset != o.collateralAsset) revert OfferTermsMismatch("collateralAsset");
-        if (t.amount != roleAmount) revert OfferTermsMismatch("amount");
-        if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch("collateralAmount");
-        if (t.interestRateBps != roleRate) revert OfferTermsMismatch("interestRateBps");
-        if (t.durationDays != o.durationDays) revert OfferTermsMismatch("durationDays");
-        if (t.tokenId != o.tokenId) revert OfferTermsMismatch("tokenId");
-        if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch("collateralTokenId");
-        if (t.quantity != o.quantity) revert OfferTermsMismatch("quantity");
-        if (t.collateralQuantity != o.collateralQuantity) revert OfferTermsMismatch("collateralQuantity");
-        if (t.assetType != uint8(o.assetType)) revert OfferTermsMismatch("assetType");
-        if (t.collateralAssetType != uint8(o.collateralAssetType)) {
-            revert OfferTermsMismatch("collateralAssetType");
-        }
-        if (t.prepayAsset != o.prepayAsset) revert OfferTermsMismatch("prepayAsset");
-        if (t.useFullTermInterest != o.useFullTermInterest) {
-            revert OfferTermsMismatch("useFullTermInterest");
-        }
-        if (t.allowsPartialRepay != o.allowsPartialRepay) {
-            revert OfferTermsMismatch("allowsPartialRepay");
-        }
-        if (t.allowsPrepayListing != o.allowsPrepayListing) {
-            revert OfferTermsMismatch("allowsPrepayListing");
-        }
-        if (t.allowsParallelSale != o.allowsParallelSale) {
-            revert OfferTermsMismatch("allowsParallelSale");
-        }
-        if (t.refinanceTargetLoanId != o.refinanceTargetLoanId) {
-            revert OfferTermsMismatch("refinanceTargetLoanId");
-        }
-        if (t.parallelSaleOrderHash != o.parallelSaleOrderHash) {
-            revert OfferTermsMismatch("parallelSaleOrderHash");
-        }
-        if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) {
-            revert OfferTermsMismatch("periodicInterestCadence");
-        }
+        // Field indices match the legend on {OfferTermsMismatch}.
+        if (t.offerKey != offerKey) revert OfferTermsMismatch(1);
+        if (t.offerCreator != o.creator) revert OfferTermsMismatch(2);
+        if (t.offerType != uint8(o.offerType)) revert OfferTermsMismatch(3);
+        if (t.lendingAsset != o.lendingAsset) revert OfferTermsMismatch(4);
+        if (t.collateralAsset != o.collateralAsset) revert OfferTermsMismatch(5);
+        if (t.amount != roleAmount) revert OfferTermsMismatch(6);
+        if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+        if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
+        if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
+        if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
+        if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch(11);
+        if (t.quantity != o.quantity) revert OfferTermsMismatch(12);
+        if (t.collateralQuantity != o.collateralQuantity) revert OfferTermsMismatch(13);
+        if (t.assetType != uint8(o.assetType)) revert OfferTermsMismatch(14);
+        if (t.collateralAssetType != uint8(o.collateralAssetType)) revert OfferTermsMismatch(15);
+        if (t.prepayAsset != o.prepayAsset) revert OfferTermsMismatch(16);
+        if (t.useFullTermInterest != o.useFullTermInterest) revert OfferTermsMismatch(17);
+        if (t.allowsPartialRepay != o.allowsPartialRepay) revert OfferTermsMismatch(18);
+        if (t.allowsPrepayListing != o.allowsPrepayListing) revert OfferTermsMismatch(19);
+        if (t.allowsParallelSale != o.allowsParallelSale) revert OfferTermsMismatch(20);
+        if (t.refinanceTargetLoanId != o.refinanceTargetLoanId) revert OfferTermsMismatch(21);
+        if (t.parallelSaleOrderHash != o.parallelSaleOrderHash) revert OfferTermsMismatch(22);
+        if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) revert OfferTermsMismatch(23);
         // linkedLoanId — the auto-linked sale/offset target (0 for a normal
         // offer). saleOfferToLoanId takes precedence; both 0 ⇒ must bind 0.
         uint256 linked = s.saleOfferToLoanId[offerId];
         if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
-        if (t.linkedLoanId != linked) revert OfferTermsMismatch("linkedLoanId");
+        if (t.linkedLoanId != linked) revert OfferTermsMismatch(24);
     }
 
     /// @dev Validate one leg's acknowledged-illiquid asset identity: an illiquid

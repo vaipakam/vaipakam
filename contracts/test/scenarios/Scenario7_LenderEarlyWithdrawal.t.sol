@@ -29,6 +29,7 @@ import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title Scenario7_LenderEarlyWithdrawal
@@ -42,6 +43,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
     address lender;
     address newLender;
     address borrower;
+    uint256 borrowerPk;
     address mockERC20;
     address mockCollateralERC20;
     address mockZeroExProxy;
@@ -85,7 +87,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         owner = address(this);
         lender    = makeAddr("lender");
         newLender = makeAddr("newLender");
-        borrower  = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
@@ -240,8 +242,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Mint tokens to diamond for internal transfers (treasury fee etc.)
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);

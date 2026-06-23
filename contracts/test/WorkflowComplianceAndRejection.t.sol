@@ -34,6 +34,8 @@ import {HelperTest} from "./HelperTest.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 contract MockRentableNFT721Test is ERC721 {
     mapping(uint256 => address) private _users;
@@ -70,7 +72,10 @@ contract WorkflowComplianceAndRejection is Test {
     address owner;
     address lender;
     address borrower;
+    // #662 — acceptors need a key so the typed `AcceptTerms` can be signed.
+    uint256 borrowerPk;
     address sanctionedUser;
+    uint256 sanctionedUserPk;
     address newLender;
 
     ERC20Mock mockUsdc;
@@ -122,8 +127,8 @@ contract WorkflowComplianceAndRejection is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
-        sanctionedUser = makeAddr("sanctionedUser");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
+        (sanctionedUser, sanctionedUserPk) = makeAddrAndKey("sanctionedUser");
         newLender = makeAddr("newLender");
 
         // Deploy mock tokens
@@ -315,8 +320,9 @@ contract WorkflowComplianceAndRejection is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(erc20OfferId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, erc20OfferId
+        );
 
         // ── Create active NFT rental loan ──
         // Mint NFT to lender, approve to diamond
@@ -378,8 +384,9 @@ contract WorkflowComplianceAndRejection is Test {
         );
 
         // Borrower accepts the NFT rental offer (pays prepay from mockUsdc)
-        vm.prank(borrower);
-        nftLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(nftOfferId, true);
+        nftLoanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, nftOfferId
+        );
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -424,10 +431,17 @@ contract WorkflowComplianceAndRejection is Test {
             })
         );
 
-        // sanctionedUser (IR) tries to accept -> CountriesNotCompatible
-        vm.prank(sanctionedUser);
+        // sanctionedUser (IR) tries to accept -> CountriesNotCompatible.
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert.
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(
+            address(diamond), sanctionedUser, offerId, true, 0
+        );
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, sanctionedUserPk);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(sanctionedUser);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @notice sanctionedUser creates a borrower offer. Borrower tries transferObligationViaOffer -> reverts CountriesNotCompatible
@@ -526,7 +540,7 @@ contract WorkflowComplianceAndRejection is Test {
     /// @notice A small loan (below $1000) can be accepted by a Tier0 (no KYC) user
     function test_KYC_BelowThreshold_NoKYCRequired() public {
         // Create a new user with Tier0 KYC (default, no explicit tier set needed)
-        address noKycUser = makeAddr("noKycUser");
+        (address noKycUser, uint256 noKycUserPk) = makeAddrAndKey("noKycUser");
         mockUsdc.mint(noKycUser, 100000 ether);
         mockWeth.mint(noKycUser, 100000 ether);
         vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
@@ -572,8 +586,9 @@ contract WorkflowComplianceAndRejection is Test {
         );
 
         // Tier0 user can accept small offer (no KYC required)
-        vm.prank(noKycUser);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(smallOfferId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), noKycUser, noKycUserPk, smallOfferId
+        );
         assertTrue(loanId > 0, "Loan should be created for small amount without KYC");
     }
 
@@ -582,7 +597,7 @@ contract WorkflowComplianceAndRejection is Test {
         // README §16 Phase 1 default is pass-through; this test exercises
         // the retained tiered-threshold path, so flip enforcement on.
         AdminFacet(address(diamond)).setKYCEnforcement(true);
-        address noKycUser = makeAddr("noKycUser2");
+        (address noKycUser, uint256 noKycUserPk) = makeAddrAndKey("noKycUser2");
         mockUsdc.mint(noKycUser, 100000 ether);
         vm.prank(noKycUser); ERC20(address(mockUsdc)).approve(address(diamond), type(uint256).max);
         vm.prank(noKycUser); ProfileFacet(address(diamond)).setUserCountry("US");
@@ -624,10 +639,17 @@ contract WorkflowComplianceAndRejection is Test {
             })
         );
 
-        // Tier0 user cannot accept large offer -> KYCRequired
-        vm.prank(noKycUser);
+        // Tier0 user cannot accept large offer -> KYCRequired.
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert.
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(
+            address(diamond), noKycUser, largeOfferId, true, 0
+        );
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, noKycUserPk);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(largeOfferId, true);
+        vm.prank(noKycUser);
+        OfferAcceptFacet(address(diamond)).acceptOffer(largeOfferId, _t, _sig);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

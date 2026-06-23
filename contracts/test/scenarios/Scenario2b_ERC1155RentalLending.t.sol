@@ -31,6 +31,7 @@ import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {ERC1155RentableMock} from "../mocks/ERC1155RentableMock.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
@@ -48,6 +49,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address mockUsdc;
     address mockNft1155;
     address mockZeroExProxy;
@@ -105,7 +107,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
         mockNft1155 = address(new ERC1155RentableMock());
@@ -272,8 +274,7 @@ contract Scenario2b_ERC1155RentalLending is Test {
             })
         );
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         loanId = 1;
     }
 

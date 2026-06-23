@@ -8,6 +8,8 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
@@ -117,9 +119,12 @@ contract SepoliaActiveLoan is Script {
         console.log("Offer created:", offerId);
 
         // ── Borrower accepts ────────────────────────────────────────────
+        LibAcceptTerms.AcceptTerms memory _t1 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig1 = LibAcceptTestSigner.sign(diamond, _t1, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t1, _sig1);
         vm.stopBroadcast();
 
         LibVaipakam.Loan memory loan = LoanFacet(diamond).getLoanDetails(loanId);

@@ -81,6 +81,8 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
@@ -92,6 +94,9 @@ contract RiskFacetTest is Test {
     address owner;
     address lender; // User1
     address borrower; // User2
+    // #662 — borrower accepts offers, so it needs a key to sign AcceptTerms.
+    // SanctionsOracleTest (is RiskFacetTest) reuses these actors + key.
+    uint256 borrowerPk;
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg)
     address mockIlliquidERC20; // Illiquid asset
@@ -189,7 +194,7 @@ contract RiskFacetTest is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
@@ -765,8 +770,9 @@ contract RiskFacetTest is Test {
             })
         );
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
 
         loanId = 1; // Assuming first loan ID
     }
@@ -1068,8 +1074,9 @@ contract RiskFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
         uint256 loanId = 1;
         // Restore mockERC20 to liquid after loan creation
         mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
@@ -1839,10 +1846,8 @@ contract RiskFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
         );
 
         // Now mock collateral price to 0

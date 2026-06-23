@@ -6,6 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -283,9 +285,13 @@ contract AnvilNegativeFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t15 = LibAcceptTestSigner.buildTerms(
+            diamond, vm.addr(borrowerKey), offerId, true, 0
+        );
+        bytes memory _sig15 = LibAcceptTestSigner.sign(diamond, _t15, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t15, _sig15);
         vm.stopBroadcast();
 
         // Try claimAsLender on the still-Active loan.
@@ -312,9 +318,13 @@ contract AnvilNegativeFlows is Script {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t20 = LibAcceptTestSigner.buildTerms(
+            diamond, vm.addr(borrowerKey), offerId, true, 0
+        );
+        bytes memory _sig20 = LibAcceptTestSigner.sign(diamond, _t20, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t20, _sig20);
         vm.stopBroadcast();
 
         // Try a partial repay.

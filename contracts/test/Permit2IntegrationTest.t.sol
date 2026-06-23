@@ -14,6 +14,8 @@ import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
 
@@ -176,10 +178,17 @@ contract Permit2IntegrationTest is SetupTest {
             borrowerVault
         );
 
+        // #662 — borrower signs the AcceptTerms (offer exists by id, so build
+        // from the stored offer); the Permit2 sig is the separate last arg.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _acceptSig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.prank(borrower);
         OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
-            /*acceptorRiskAndTermsConsent=*/ true,
+            _t,
+            _acceptSig,
             permit,
             ""
         );
@@ -261,6 +270,13 @@ contract Permit2IntegrationTest is SetupTest {
         ISignatureTransfer.PermitTransferFrom memory wrongPermit =
             _buildPermit(mockERC20, principal);
 
+        // #662 — build+sign BEFORE expectRevert (the view-calls would consume
+        // it). Terms are valid, so binding passes and the permit pull is what
+        // reverts with Permit2TokenMismatch — original intent preserved.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _acceptSig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -271,7 +287,8 @@ contract Permit2IntegrationTest is SetupTest {
         );
         OfferAcceptFacet(address(diamond)).acceptOfferWithPermit(
             offerId,
-            /*acceptorRiskAndTermsConsent=*/ true,
+            _t,
+            _acceptSig,
             wrongPermit,
             ""
         );

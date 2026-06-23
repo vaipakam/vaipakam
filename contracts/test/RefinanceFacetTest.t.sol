@@ -28,6 +28,7 @@ import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -41,7 +42,9 @@ contract RefinanceFacetTest is Test {
     address owner;
     address lender;
     address newLender;
+    uint256 newLenderPk; // #662 — acceptor key for the AcceptTerms signature
     address borrower;
+    uint256 borrowerPk; // #662 — acceptor key for the AcceptTerms signature
     address mockERC20;
     address mockCollateralERC20;
     address mockZeroExProxy;
@@ -81,8 +84,8 @@ contract RefinanceFacetTest is Test {
     function setUp() public {
         owner     = address(this);
         lender    = makeAddr("lender");
-        newLender = makeAddr("newLender");
-        borrower  = makeAddr("borrower");
+        (newLender, newLenderPk) = makeAddrAndKey("newLender");
+        (borrower, borrowerPk)   = makeAddrAndKey("borrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
@@ -235,8 +238,9 @@ contract RefinanceFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
 
         // alice creates a Borrower Offer for refinancing (lower rate = better terms)
         vm.prank(borrower);
@@ -286,8 +290,9 @@ contract RefinanceFacetTest is Test {
         ERC20(mockERC20).transfer(newLenderVault, PRINCIPAL);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        vm.prank(newLender);
-        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, offerId
+        );
     }
 
     // ─── refinanceLoan reverts ────────────────────────────────────────────────
@@ -525,8 +530,9 @@ contract RefinanceFacetTest is Test {
         ERC20(mockERC20).transfer(nlVault, PRINCIPAL / 2);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL / 2);
-        vm.prank(newLender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(smallOffer, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, smallOffer
+        );
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -831,8 +837,9 @@ contract RefinanceFacetTest is Test {
         vm.prank(newLender); ERC20(otherERC20).transfer(nlVault, PRINCIPAL);
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, otherERC20, PRINCIPAL);
-        vm.prank(newLender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, badOffer
+        );
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -895,8 +902,9 @@ contract RefinanceFacetTest is Test {
         // T-051 — back the direct transfer with a counter record.
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        vm.prank(newLender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, badOffer
+        );
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -954,8 +962,9 @@ contract RefinanceFacetTest is Test {
         // T-051 — back the direct transfer with a counter record.
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        vm.prank(newLender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(badOffer, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, badOffer
+        );
 
         vm.prank(borrower);
         vm.expectRevert(RefinanceFacet.InvalidRefinanceOffer.selector);
@@ -1006,8 +1015,9 @@ contract RefinanceFacetTest is Test {
         // T-051 — back the direct transfer with a counter record.
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(newLender, mockERC20, PRINCIPAL);
-        vm.prank(newLender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(fakeOffer, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), newLender, newLenderPk, fakeOffer
+        );
 
         // Clear the offerIdToLoanId mapping via the layout-resilient
         // mutator so newLoanId lookup returns 0.

@@ -8,10 +8,13 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibSignedOffer} from "../src/libraries/LibSignedOffer.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {ISignatureTransfer} from "../src/libraries/LibPermit2.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {MockPermit2} from "./mocks/MockPermit2.sol";
@@ -105,6 +108,109 @@ contract SignedOfferBookTest is SetupTest {
         sig = abi.encodePacked(r, s, v);
     }
 
+    // ─── #662 acceptor-side AcceptTerms (anti-phishing binding) ───────────
+
+    /// @dev Build the EIP-712 `AcceptTerms` the materialized offer will bind
+    ///      against (#662). The signed-offer fill MATERIALIZES the on-chain
+    ///      offer from `o` inside `acceptSignedOffer`, so there is no offerId
+    ///      to read pre-call: every field is mapped DIRECTLY from the signed
+    ///      offer exactly as `LibSignedOffer.toCreateOfferParams` sets it on
+    ///      the materialized offer, then run through
+    ///      `OfferAcceptFacet._bindTermsToOffer`'s role-correct endpoint
+    ///      selection. The materialized offer's creator is `o.signer`.
+    ///
+    ///      `offerKey` is the **signed-offer order hash** (`hashStruct(o)` =
+    ///      `signedOfferOrderHash(o)`) — NOT `keccak256(offerId)` — because the
+    ///      facet passes `orderHash` from `_vetSignedOffer(o)` as the offerKey
+    ///      to `verifyAndBindAccept` (SignedOfferFacet:100/135).
+    ///
+    ///      All offers built here are single-value ERC-20 **Lender** offers, so
+    ///      the role-correct endpoints are `amountMax` / `interestRateBps`
+    ///      (`isERC20 && isLender`). The `nonce` is `uint256(orderHash)` —
+    ///      collision-free per acceptor per signed offer.
+    function _buildAcceptTerms(
+        LibSignedOffer.SignedOffer memory o,
+        address acceptor,
+        bool consent
+    ) internal view returns (LibAcceptTerms.AcceptTerms memory t) {
+        bytes32 orderHash =
+            SignedOfferFacet(address(diamond)).signedOfferOrderHash(o);
+        bool isERC20 = LibVaipakam.AssetType(o.assetType) ==
+            LibVaipakam.AssetType.ERC20;
+        bool isLender = LibVaipakam.OfferType(o.offerType) ==
+            LibVaipakam.OfferType.Lender;
+
+        t.acceptor = acceptor;
+        t.offerCreator = o.signer; // materialized offer's creator
+        t.offerKey = orderHash; // signed-offer order hash (not keccak(offerId))
+        t.offerType = o.offerType;
+        t.lendingAsset = o.lendingAsset;
+        t.collateralAsset = o.collateralAsset;
+        // Role-correct endpoint selection — mirrors `_bindTermsToOffer`:
+        // ERC-20 lender ⇒ amountMax / interestRateBps.
+        t.amount = isERC20 ? (isLender ? o.amountMax : o.amount) : o.amount;
+        t.collateralAmount = o.collateralAmount;
+        t.interestRateBps = isERC20
+            ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
+            : o.interestRateBps;
+        t.durationDays = o.durationDays;
+        t.tokenId = o.tokenId;
+        t.collateralTokenId = o.collateralTokenId;
+        t.quantity = o.quantity;
+        t.collateralQuantity = o.collateralQuantity;
+        t.assetType = o.assetType;
+        t.collateralAssetType = o.collateralAssetType;
+        t.prepayAsset = o.prepayAsset;
+        t.useFullTermInterest = o.useFullTermInterest;
+        t.allowsPartialRepay = o.allowsPartialRepay;
+        t.allowsPrepayListing = o.allowsPrepayListing;
+        t.allowsParallelSale = o.allowsParallelSale;
+        t.refinanceTargetLoanId = o.refinanceTargetLoanId;
+        // Materialized offers carry no auto-linked sale/offset and no live
+        // parallel-sale order — both 0 on the on-chain offer.
+        t.linkedLoanId = 0;
+        t.parallelSaleOrderHash = bytes32(0);
+        t.periodicInterestCadence = o.periodicInterestCadence;
+        t.riskAndTermsConsent = consent;
+        t.acknowledgedIlliquidLendingAsset = _ack(o.lendingAsset);
+        t.acknowledgedIlliquidCollateralAsset = _ack(o.collateralAsset);
+        t.nonce = uint256(orderHash); // unique per acceptor per signed offer
+        t.deadline = block.timestamp + 1 hours;
+    }
+
+    /// @dev ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.
+    function _signAcceptTerms(LibAcceptTerms.AcceptTerms memory t, uint256 pk)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 d = OfferAcceptFacet(address(diamond)).hashAcceptTerms(t);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Build + sign the acceptor's `AcceptTerms` for a borrower fill of
+    ///      `o` (consent=true). Returns both so `expectRevert` sites can do the
+    ///      view-calls FIRST, then the typed call. The acceptor is `borrower`.
+    function _borrowerAcceptTerms(LibSignedOffer.SignedOffer memory o)
+        internal
+        view
+        returns (LibAcceptTerms.AcceptTerms memory t, bytes memory acceptSig)
+    {
+        t = _buildAcceptTerms(o, borrower, true);
+        acceptSig = _signAcceptTerms(t, borrowerPk);
+    }
+
+    /// @dev Mirror `LibAcceptTestSigner._ack`: an illiquid leg names its exact
+    ///      asset; a liquid (or zero) leg names `address(0)`.
+    function _ack(address leg) internal view returns (address) {
+        if (leg == address(0)) return address(0);
+        return OracleFacet(address(diamond)).checkLiquidity(leg) ==
+            LibVaipakam.LiquidityStatus.Illiquid
+            ? leg
+            : address(0);
+    }
+
     // ─── 1. Vault-backed happy path ───────────────────────────────────────
 
     function testVaultBackedHappyPath() public {
@@ -120,10 +226,14 @@ contract SignedOfferBookTest is SetupTest {
         // SignedOfferFilled emitted (don't pin loanId/offerId in topics —
         // assert by reading state afterwards; just confirm the event fires
         // with the signer + acceptor + non-zero ids).
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.recordLogs();
         vm.prank(borrower);
-        uint256 loanId =
-            SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
 
         assertGt(loanId, 0, "loan initiated");
 
@@ -163,9 +273,19 @@ contract SignedOfferBookTest is SetupTest {
         // recovers to `o.signer`.
         o.amount = PRINCIPAL + 1 ether;
 
+        // AcceptTerms are built from the FINAL `o` so they would be VALID
+        // against what gets materialized — the OFFER signature is the only thing
+        // that fails here. (Only `o.amount` was tampered; the lender role binds
+        // the unchanged `amountMax`, so terms.amount is correct either way.)
+        // Build the view-call payload before expectRevert so it isn't consumed.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     function testWrongKeySignatureReverts() public {
@@ -178,9 +298,15 @@ contract SignedOfferBookTest is SetupTest {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongPk, digest);
         bytes memory badSig = abi.encodePacked(r, s, v);
 
+        // Valid acceptor terms so the OFFER signature is the failing check.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, badSig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, badSig, terms, acceptSig
+        );
     }
 
     // ─── 3. Replay ────────────────────────────────────────────────────────
@@ -192,11 +318,19 @@ contract SignedOfferBookTest is SetupTest {
         // ledger, not a balance shortfall.
         _fundActorVault(signer, mockERC20, PRINCIPAL * 2);
 
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
 
         bytes32 orderHash =
             SignedOfferFacet(address(diamond)).signedOfferOrderHash(o);
+        // The replay reverts at `_vetSignedOffer`'s consume-ledger check
+        // (SignedOfferConsumed), which runs BEFORE any term binding — so the
+        // same `terms`/`acceptSig` can be reused; they're never reached.
         vm.prank(borrower);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -204,7 +338,9 @@ contract SignedOfferBookTest is SetupTest {
                 orderHash
             )
         );
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     // ─── 4. Cancel ────────────────────────────────────────────────────────
@@ -213,6 +349,9 @@ contract SignedOfferBookTest is SetupTest {
         LibSignedOffer.SignedOffer memory o = _lenderSignedOffer(5, 0);
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
+
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
 
         // Signer cancels on-chain.
         vm.prank(signer);
@@ -227,7 +366,9 @@ contract SignedOfferBookTest is SetupTest {
                 orderHash
             )
         );
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     function testCancelByNonSignerReverts() public {
@@ -245,6 +386,9 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
 
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(signer);
         SignedOfferFacet(address(diamond)).invalidateSignedOfferNonce(o.nonce);
         assertTrue(
@@ -261,7 +405,9 @@ contract SignedOfferBookTest is SetupTest {
                 o.nonce
             )
         );
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     // ─── 6. Signature deadline expired ────────────────────────────────────
@@ -272,6 +418,12 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
 
+        // Build terms BEFORE the warp so their own deadline (now + 1h) stays in
+        // the future — the OFFER's `_vetSignedOffer` deadline check fires first
+        // regardless, but this keeps the acceptor terms unambiguously valid.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.warp(deadline + 1);
 
         vm.prank(borrower);
@@ -281,7 +433,9 @@ contract SignedOfferBookTest is SetupTest {
                 deadline
             )
         );
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     // ─── 7. Offer GTT expired ─────────────────────────────────────────────
@@ -293,6 +447,10 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
 
+        // Build terms before the warp (offer GTT check fires first regardless).
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.warp(uint256(expiresAt) + 1);
 
         vm.prank(borrower);
@@ -302,7 +460,9 @@ contract SignedOfferBookTest is SetupTest {
                 expiresAt
             )
         );
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 
     // ─── 8. Wrong-chain domain ────────────────────────────────────────────
@@ -339,10 +499,14 @@ contract SignedOfferBookTest is SetupTest {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(signerPk, wrongChainDigest);
         bytes memory wrongChainSig = abi.encodePacked(r, s, v);
 
+        // Valid acceptor terms so the OFFER signature is the failing check.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         vm.expectRevert(SignedOfferFacet.SignedOfferBadSignature.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOffer(
-            o, wrongChainSig, true
+            o, wrongChainSig, terms, acceptSig
         );
     }
 
@@ -367,9 +531,15 @@ contract SignedOfferBookTest is SetupTest {
         // free balance as the offer principal.
         _fundActorVault(address(wallet), mockERC20, PRINCIPAL);
 
+        // The acceptor (filler) is the EOA borrower; offerCreator binds to the
+        // 1271 wallet (`o.signer`), which `_buildAcceptTerms` maps correctly.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
-        uint256 loanId =
-            SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        uint256 loanId = SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
 
         assertGt(loanId, 0, "1271-signed loan initiated");
         LibVaipakam.Loan memory loan =
@@ -412,9 +582,12 @@ contract SignedOfferBookTest is SetupTest {
             .getOrCreateUserVault(signer);
         uint256 vaultBefore = IERC20(mockERC20).balanceOf(signerVault);
 
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         uint256 loanId = SignedOfferFacet(address(diamond))
-            .acceptSignedOfferWithPermit(o, permit, "", true);
+            .acceptSignedOfferWithPermit(o, permit, "", terms, acceptSig);
 
         assertGt(loanId, 0, "wallet-backed loan initiated");
         LibVaipakam.Loan memory loan =
@@ -452,10 +625,15 @@ contract SignedOfferBookTest is SetupTest {
                 deadline: block.timestamp + 1800
             });
 
+        // `WalletBackedMustBeAon` is the first check (before binding), so terms
+        // are never reached — but pass well-formed ones for shape correctness.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         vm.expectRevert(SignedOfferFacet.WalletBackedMustBeAon.selector);
         SignedOfferFacet(address(diamond)).acceptSignedOfferWithPermit(
-            o, permit, "", true
+            o, permit, "", terms, acceptSig
         );
     }
 
@@ -473,9 +651,16 @@ contract SignedOfferBookTest is SetupTest {
         bytes memory sig = _sign(o);
         _fundActorVault(signer, mockERC20, PRINCIPAL);
 
+        // The materialize shape guard fires before `verifyAndBindAccept`, so
+        // these terms are never bound — pass shape-correct ones regardless.
+        (LibAcceptTerms.AcceptTerms memory terms, bytes memory acceptSig) =
+            _borrowerAcceptTerms(o);
+
         vm.prank(borrower);
         vm.expectRevert(OfferCreateFacet.SignedOfferUnsupportedShape.selector);
-        SignedOfferFacet(address(diamond)).acceptSignedOffer(o, sig, true);
+        SignedOfferFacet(address(diamond)).acceptSignedOffer(
+            o, sig, terms, acceptSig
+        );
     }
 }
 

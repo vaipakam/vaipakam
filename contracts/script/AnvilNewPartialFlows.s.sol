@@ -6,6 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -208,9 +210,12 @@ contract AnvilNewPartialFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 filledOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t1 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), filledOfferId, true, 0);
+        bytes memory _sig1 = LibAcceptTestSigner.sign(diamond, _t1, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 filledLoanId = OfferAcceptFacet(diamond).acceptOffer(filledOfferId, true);
+        uint256 filledLoanId = OfferAcceptFacet(diamond).acceptOffer(filledOfferId, _t1, _sig1);
         vm.stopBroadcast();
         console.log("Filled offer:", filledOfferId, "loan:", filledLoanId);
 
@@ -266,9 +271,12 @@ contract AnvilNewPartialFlows is Script {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(p);
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t2 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig2 = LibAcceptTestSigner.sign(diamond, _t2, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t2, _sig2);
         vm.stopBroadcast();
 
         // Repay 30% (300 USDC) — typical partial-repay UX.
@@ -305,9 +313,12 @@ contract AnvilNewPartialFlows is Script {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t3 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig3 = LibAcceptTestSigner.sign(diamond, _t3, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t3, _sig3);
         vm.stopBroadcast();
 
         // Borrower doubles collateral (adds another 1 WETH).
@@ -340,9 +351,12 @@ contract AnvilNewPartialFlows is Script {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t4 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig4 = LibAcceptTestSigner.sign(diamond, _t4, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t4, _sig4);
         vm.stopBroadcast();
 
         // Borrower → keeper authorization (3 switches per LibAuth):
@@ -383,9 +397,12 @@ contract AnvilNewPartialFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 origOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t5 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), origOfferId, true, 0);
+        bytes memory _sig5 = LibAcceptTestSigner.sign(diamond, _t5, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(origOfferId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(origOfferId, _t5, _sig5);
         vm.stopBroadcast();
 
         // Step 2: borrower posts a refinance offer (cheaper rate).
@@ -495,9 +512,12 @@ contract AnvilNewPartialFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t6 =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig6 = LibAcceptTestSigner.sign(diamond, _t6, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t6, _sig6);
         vm.stopBroadcast();
 
         // Borrower repays without anyone calling claim — leaves both

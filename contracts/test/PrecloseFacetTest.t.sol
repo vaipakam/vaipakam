@@ -12,6 +12,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -42,6 +43,7 @@ contract PrecloseFacetTest is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address newBorrower;
     address mockERC20;
     address mockCollateralERC20;
@@ -121,7 +123,7 @@ contract PrecloseFacetTest is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
         newBorrower = makeAddr("newBorrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
@@ -285,8 +287,7 @@ contract PrecloseFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Give diamond some ERC20 for internal transfers (treasury fee etc.)
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);

@@ -54,6 +54,14 @@ contract InvariantBase is Test {
     address[3] public lenders;
     address[3] public borrowers;
 
+    // #662 — the accept entries now require an acceptor-signed `AcceptTerms`,
+    // so the invariant handlers must sign as the chosen actor. Keep the actor
+    // private keys alongside the addresses (yielded by `makeAddrAndKey`, which
+    // produces the SAME deterministic address as `makeAddr`) so handlers can
+    // build + sign the typed accept payload via `LibAcceptTestSigner`.
+    uint256[3] public lenderPks;
+    uint256[3] public borrowerPks;
+
     uint256 public constant MINT_AMOUNT = 1_000_000 ether;
 
     function deploy() public {
@@ -63,8 +71,10 @@ contract InvariantBase is Test {
         mockWeth = address(new ERC20Mock("MockWETH", "WETH", 18));
 
         for (uint256 i = 0; i < 3; i++) {
-            lenders[i] = makeAddr(string.concat("lender", vm.toString(i)));
-            borrowers[i] = makeAddr(string.concat("borrower", vm.toString(i)));
+            (lenders[i], lenderPks[i]) =
+                makeAddrAndKey(string.concat("lender", vm.toString(i)));
+            (borrowers[i], borrowerPks[i]) =
+                makeAddrAndKey(string.concat("borrower", vm.toString(i)));
             ERC20Mock(mockUsdc).mint(lenders[i], MINT_AMOUNT);
             ERC20Mock(mockUsdc).mint(borrowers[i], MINT_AMOUNT);
             ERC20Mock(mockWeth).mint(lenders[i], MINT_AMOUNT);
@@ -218,5 +228,15 @@ contract InvariantBase is Test {
 
     function borrowerAt(uint256 i) external view returns (address) {
         return borrowers[i % 3];
+    }
+
+    /// @notice Private key for the lender at index `i % 3` (#662 accept signing).
+    function lenderPkAt(uint256 i) external view returns (uint256) {
+        return lenderPks[i % 3];
+    }
+
+    /// @notice Private key for the borrower at index `i % 3` (#662 accept signing).
+    function borrowerPkAt(uint256 i) external view returns (uint256) {
+        return borrowerPks[i % 3];
     }
 }

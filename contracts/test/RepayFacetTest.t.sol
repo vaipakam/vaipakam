@@ -35,6 +35,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
@@ -57,7 +58,9 @@ contract RepayFacetTest is Test {
     VaipakamDiamond diamond;
     address owner;
     address lender;
+    uint256 lenderPk; // #662 — acceptor key for the AcceptTerms signature
     address borrower;
+    uint256 borrowerPk; // #662 — acceptor key for the AcceptTerms signature
     address mockERC20;
     address mockCollateralERC20;
     address mockNft721;
@@ -112,8 +115,8 @@ contract RepayFacetTest is Test {
 
     function setUp() public {
         owner = address(this);
-        lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (lender, lenderPk) = makeAddrAndKey("lender");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Mocks
         mockERC20 = address(new ERC20Mock("MockToken", "MTK", 18));
@@ -381,10 +384,8 @@ contract RepayFacetTest is Test {
             })
         );
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
         );
 
         vm.prank(lender);
@@ -419,10 +420,8 @@ contract RepayFacetTest is Test {
             })
         );
 
-        vm.prank(borrower);
-        uint256 loanId2 = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId2,
-            true
+        uint256 loanId2 = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId2
         );
     }
 
@@ -706,8 +705,9 @@ contract RepayFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
 
         // Snapshot reads correctly: loan inherits the offer's flag.
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -773,8 +773,9 @@ contract RepayFacetTest is Test {
         vm.prank(address(diamond));
         VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 2000);
 
-        vm.prank(lender);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), lender, lenderPk, offerId
+        );
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertTrue(loan.allowsPartialRepay, "snapshot should reflect borrower's request");
@@ -1395,8 +1396,9 @@ contract RepayFacetTest is Test {
             })
         );
 
-        vm.prank(borrower);
-        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
     }
 
     /// @dev 3-day loan: grace = 1 hour. Repay at endTime + 59 minutes succeeds.
@@ -1631,8 +1633,9 @@ contract RepayFacetTest is Test {
                 useFullTermInterest: true
             })
         );
-        vm.prank(borrower);
-        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
     }
 
     /// @notice #408 — early repay on a full-term loan charges floor

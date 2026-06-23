@@ -188,9 +188,7 @@ contract PreviewAcceptTest is SetupTest {
         // preview projected. If `previewAccept` drifts from
         // `_acceptOffer` / `_copyOfferToLoan`, this assertion block
         // is what fails.
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, p.effectivePrincipal, "loan.principal matches preview");
@@ -223,9 +221,7 @@ contract PreviewAcceptTest is SetupTest {
         // LIF on 1k @ 10 bps = 1
         assertEq(p.lifEstimate, 1, "LIF = 0.1% of 1k principal");
 
-        vm.prank(lender);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(lender, lenderPk, offerId);
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, p.effectivePrincipal);
@@ -281,9 +277,7 @@ contract PreviewAcceptTest is SetupTest {
         // 0.1% of 5_000 = 5
         assertEq(p.lifEstimate, 5);
 
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.principal, p.effectivePrincipal);
@@ -318,8 +312,7 @@ contract PreviewAcceptTest is SetupTest {
             rateMax: 500,
             collateralRequired: 200
         });
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         OfferAcceptFacet.AcceptPreview memory p =
             OfferAcceptFacet(address(diamond)).previewAccept(offerId, borrower);

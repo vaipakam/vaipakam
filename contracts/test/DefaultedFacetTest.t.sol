@@ -8,6 +8,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -87,6 +88,7 @@ contract DefaultedFacetTest is Test {
     address owner;
     address lender; // User1
     address borrower; // User2
+    uint256 borrowerPk;
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Distinct liquid asset for collateral (SelfCollateralizedOffer invariant)
     address mockIlliquidERC20; // Illiquid asset
@@ -157,7 +159,7 @@ contract DefaultedFacetTest is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
@@ -607,8 +609,7 @@ contract DefaultedFacetTest is Test {
             })
         );
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Assume loanId = 1 (first loan)
         loanId = 1; // Adjust if multiple

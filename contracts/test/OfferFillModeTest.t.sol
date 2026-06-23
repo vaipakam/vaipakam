@@ -9,6 +9,8 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 /// @title OfferFillModeTest
 /// @notice #125 — coverage for the new `FillMode` flavour of an offer
@@ -144,8 +146,7 @@ contract OfferFillModeTest is SetupTest {
         // invariant makes the accept path AON-compatible without any
         // additional gating.
         uint256 id = _create(_lenderParams(LibVaipakam.FillMode.Aon, 1000 ether, 1000 ether, 0));
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, id);
         assertGt(loanId, 0, "AON direct-accept full fill");
     }
 
@@ -177,11 +178,17 @@ contract OfferFillModeTest is SetupTest {
         uint64 deadline = uint64(block.timestamp + ONE_HOUR);
         uint256 id = _create(_lenderParams(LibVaipakam.FillMode.Ioc, 1000 ether, 1000 ether, deadline));
         vm.warp(uint256(deadline) + 1);
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the IOC offer-expiry guard then fires.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, id, true, 0);
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(OfferAcceptFacet.OfferExpired.selector, id, deadline)
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(id, _t, _sig);
     }
 
     // ─── AON match-time enforcement (via previewMatch) ──────────────

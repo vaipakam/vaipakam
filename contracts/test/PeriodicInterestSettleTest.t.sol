@@ -87,8 +87,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         return 1;
     }
 
@@ -175,8 +174,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 noneLoanId = 2;
         (
             uint8 cadence,
@@ -268,8 +266,7 @@ contract PeriodicInterestSettleTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         uint256 noneLoanId = 2;
         vm.warp(block.timestamp + 30 days + 2 days);
         vm.expectPartialRevert(IVaipakamErrors.PeriodicSettleNotApplicable.selector);

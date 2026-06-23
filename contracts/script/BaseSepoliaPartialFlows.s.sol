@@ -7,6 +7,8 @@ import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -180,9 +182,12 @@ contract BaseSepoliaPartialFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerC = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _tC =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerC, true, 0);
+        bytes memory _sigC = LibAcceptTestSigner.sign(diamond, _tC, newBorrowerKey);
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanC = OfferAcceptFacet(diamond).acceptOffer(offerC, true);
+        uint256 loanC = OfferAcceptFacet(diamond).acceptOffer(offerC, _tC, _sigC);
         vm.stopBroadcast();
         console.log("Active loan id:", loanC);
         console.log("Action: open Loan Details and exercise repay / preclose / etc.");
@@ -198,9 +203,12 @@ contract BaseSepoliaPartialFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerD = OfferCreateFacet(diamond).createOffer(_lenderOfferParams());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _tD =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerD, true, 0);
+        bytes memory _sigD = LibAcceptTestSigner.sign(diamond, _tD, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanD = OfferAcceptFacet(diamond).acceptOffer(offerD, true);
+        uint256 loanD = OfferAcceptFacet(diamond).acceptOffer(offerD, _tD, _sigD);
         vm.stopBroadcast();
         vm.startBroadcast(borrowerKey);
         uint256 repayAmtD = RepayFacet(diamond).calculateRepaymentAmount(loanD);
@@ -255,9 +263,12 @@ contract BaseSepoliaPartialFlows is Script {
         // `vaultDepositERC20` chokepoint, so an approve is enough —
         // the legacy direct-transfer-to-vault workaround would
         // underflow the `protocolTrackedVaultBalance` counter.
+        LibAcceptTerms.AcceptTerms memory _tE =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(lenderKey), offerE, true, 0);
+        bytes memory _sigE = LibAcceptTestSigner.sign(diamond, _tE, lenderKey);
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanE = OfferAcceptFacet(diamond).acceptOffer(offerE, true);
+        uint256 loanE = OfferAcceptFacet(diamond).acceptOffer(offerE, _tE, _sigE);
         vm.stopBroadcast();
         console.log("Active NFT-collateral loan id:", loanE);
         console.log("Token id locked:", nftTokenId);
@@ -306,9 +317,12 @@ contract BaseSepoliaPartialFlows is Script {
         );
         vm.stopBroadcast();
         uint256 totalPrepay = DAILY_FEE * 7 + (DAILY_FEE * 7 * 500) / 10000; // 5% buffer
+        LibAcceptTerms.AcceptTerms memory _tF =
+            LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerF, true, 0);
+        bytes memory _sigF = LibAcceptTestSigner.sign(diamond, _tF, newBorrowerKey);
         vm.startBroadcast(newBorrowerKey);
         usdc.approve(diamond, totalPrepay);
-        uint256 loanF = OfferAcceptFacet(diamond).acceptOffer(offerF, true);
+        uint256 loanF = OfferAcceptFacet(diamond).acceptOffer(offerF, _tF, _sigF);
         vm.stopBroadcast();
         console.log("Active rental loan id:", loanF);
         console.log("Rented token id:", rentTokenId);
