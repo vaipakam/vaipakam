@@ -66,10 +66,22 @@ Implementation target:
 | Bug Bounty Programs                   |       `2%` |     `4,600,000` | Ongoing, locked in multi-sig                     |
 | Exchange Listings & Market Making     |      `12%` |    `27,600,000` | Liquidity + CEX incentives                       |
 | Ecosystem / Community / Marketing     |       `2%` |     `4,600,000` | 0 cliff + ~12–18 mo linear; ops/governance multisig — see §3a |
-| **Early Fixed-Rate Purchase Program** |       `1%` |     `2,300,000` | Sold at `1 VPFI = 0.001 ETH`, caps admin-managed |
 | Platform Interaction Rewards          |      `30%` |    `69,000,000` | Usage-based rewards                              |
-| Staking Rewards                       |      `24%` |    `55,200,000` | `5% APR`, Vault-based                            |
-| **Total**                             |   **100%** | **230,000,000** | Hard cap enforced on Base                        |
+| Reserve (pending reallocation)        |      `25%` |    `57,500,000` | Freed by the #687 excision (24% staking + 1% fixed-rate sale) — disposition governance-pending |
+| **Total (pre-reconciliation)**        |   **101%** | **232,300,000** | See note — normalization to 100% / 230M is governance-pending |
+
+> **Reserve + reconciliation note.** The `25%` Reserve is the allocation freed by
+> the #687 legal-surface excision — the `5% APR` staking-rewards pool (`24%`,
+> removed in #687-B; see §7) and the Early Fixed-Rate Purchase Program (`1%`,
+> removed in #687-A; see §8). Its final disposition — held in reserve, burned to
+> reduce the `230M` cap, or otherwise reallocated — is a **pending governance
+> decision**, shown here as a placeholder so the freed supply is accounted for.
+> The granular rows above currently sum to `101%` / `232.3M` — a **pre-existing**
+> over-allocation that predates this excision. Normalizing to exactly `100%` /
+> `230M` (the Whitepaper §11.2 table shows one candidate reconciliation: dropping
+> the granular Regulatory-Compliance and Ecosystem rows and setting Market Making
+> to `14%`) is part of the same pending governance reallocation; the Market-Making
+> figure itself (`12%` here vs `14%` in the whitepaper) is one of the open items.
 
 ### 3a. People-pool semantics (Founders / Team / Testers / Ecosystem)
 
@@ -437,6 +449,14 @@ Integration surface:
 
 ## 7. Staking Rewards
 
+> **REMOVED (#687-B, 2026-06-23).** The `5% APR` staking-yield pool was excised
+> in the legal-surface reduction — the on-chain accrual surface, the APR config,
+> and the user-facing yield are gone. **Fee-discount tiers are unaffected**: the
+> tier is a balance-based lookup, not a staking reward (see §5). Vault-held VPFI
+> still counts toward the discount tier — it simply no longer earns a yield. The
+> `24%` allocation is folded into the §3 Reserve pending governance reallocation.
+> The text below is retained for historical context only.
+
 Phase note:
 
 - this section is `Phase 1` scope
@@ -522,6 +542,15 @@ Governance audit trail:
 ---
 
 ## 8. Early Fixed-Rate Purchase Program
+
+> **REMOVED (#687-A, 2026-06-23).** The fixed-rate public sale was excised in the
+> legal-surface reduction — the on-chain buy surface (`VpfiBuyAdapter` /
+> `VpfiBuyReceiver` / the CCIP buy channel) and the `/app/buy-vpfi` sale flow are
+> gone (the route now redirects to the deposit/withdraw VPFI vault). The price
+> anchor was renamed and retained **only** to quote the fee discount
+> (`setVPFIDiscountRate`), not to sell VPFI. The `1%` allocation is folded into the
+> §3 Reserve pending governance reallocation. The text below is retained for
+> historical context only.
 
 To enable easy early access to VPFI for discounts:
 

@@ -137,17 +137,14 @@ export interface Deployment {
   vpfiMirror?: HexAddress;
   vpfiMirrorImpl?: HexAddress;
 
-  // #687: the VPFI buy surface (VpfiBuyReceiver/Adapter + payment token) was
-  // removed with the fixed-rate sale — those deployment keys no longer exist.
+  // #687: the VPFI buy surface (VpfiBuyReceiver/Adapter + payment token) and its
+  // per-chain rate/cap config were removed with the fixed-rate sale — those
+  // deployment keys no longer exist. The discount rate that replaced the sale
+  // anchor (`setVPFIDiscountRate`) is on-chain runtime config read via
+  // `getVPFIDiscountConfig`, not a deployment artifact, so it is not carried here.
 
   /** Asset whose price feeds the VPFI discount calculation. */
   vpfiDiscountEthPriceAsset?: HexAddress;
-
-  /** Per-chain hard caps and rate config for the buy adapter. */
-  vpfiBuyWeiPerVpfi?: number | string;
-  vpfiBuyGlobalCap?: number | string;
-  vpfiBuyPerWalletCap?: number | string;
-  vpfiBuyEnabled?: boolean;
 
   // ── Reward OApp ─────────────────────────────────────────────────
   rewardOApp?: HexAddress;
