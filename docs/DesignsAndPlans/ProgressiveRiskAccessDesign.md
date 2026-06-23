@@ -108,11 +108,20 @@ additive flags; both are optional and default-off (see §11 / O3).
 ### RD-2 — Plain pull-claim of unusual collateral is GATED with a one-time pair-ack
 
 The card: applies ONLY to the holder-initiated pull-claim
-(`claimAsLender` / `claimAsBorrower`); the holder satisfies the ack in the
-same flow so no value is trapped. **Push-payouts / #594 consolidation that
-run inside a counterparty's tx remain UNGATED** (gating them would brick
-the counterparty's close-out — the #667/C2 DoS class). The transferee
-(new owner) must ack before claiming.
+(`claimAsLender` / `claimAsBorrower`); the holder satisfies the ack so no
+value is trapped. **Push-payouts / #594 consolidation that run inside a
+counterparty's tx remain UNGATED** (gating them would brick the
+counterparty's close-out — the #667/C2 DoS class). The transferee (new
+owner) must ack before claiming.
+
+**Ack flow for ordinary EOAs (Codex r4 P3, L128):** since the existing claim
+selectors are unchanged, the ack is a **preceding standalone tx** —
+`setIlliquidPairConsent(…)` then `claimAsLender(…)` (two txs; value isn't
+trapped because the holder controls both and can ack any time). Optionally add
+an **atomic `claimWithPairAck(...)`** convenience variant that takes the ack +
+claims in one tx for UX; not required for correctness. Either way RD-2's "no
+value trapped" holds — the gate only defers the claim until the holder
+deliberately acks, which they can always do.
 
 **Grounded:**
 - Pull-claim entries: [`ClaimFacet.claimAsLender(uint256):205`](../../contracts/src/facets/ClaimFacet.sol#L205)
@@ -286,6 +295,14 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   consent bool ([`OfferCreateFacet.sol:872`](../../contracts/src/facets/OfferCreateFacet.sol#L872),
   `RiskAndTermsConsentRequired`) + liquidity check ([`:865-870`](../../contracts/src/facets/OfferCreateFacet.sol#L865));
   the tier gate slots in at the same shared point so no creation path is missed.
+  **Exempt lender-sale-vehicle creation (Codex r4 P2, L281):** `createLoanSaleOffer`
+  builds a borrower-style sale vehicle *through* `createOffer` so the **current
+  lender can EXIT an existing position** — that's a risk-reducing exit, not new
+  exposure, so it must be exempt from the create gate (same rationale as the D4
+  close-out exemption). Detect the sale-vehicle context (the `saleOfferToLoanId`
+  origination marker) at the shared chokepoint and skip the tier check; a
+  blanket gate at `createOffer` would otherwise trap a down-tiered lender trying
+  to sell out.
 - [`OfferAcceptFacet._acceptOffer:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517)
   — **the single chokepoint** both `acceptOffer`
   ([`:242`](../../contracts/src/facets/OfferAcceptFacet.sol#L242)) and the
@@ -460,6 +477,11 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
     **owner-gated, signature-free** `setVaultRiskTierFor(account, level)`
     callable only by the contract's own owner/governance, for these
     known-protocol accounts. Pick per-account at implementation; default (a).
+    If a contract ever needs `IlliquidCustom`, the escape hatch must ALSO
+    expose an owner-gated `setIlliquidPairConsentFor(account, …typed assets)`
+    (Codex r4 P3, L461) — raising only the broad tier leaves the second required
+    dimension (`illiquidPairConsent`) unsettable for a non-signing contract, so
+    the level-2 gate would never pass. Default (a) sidesteps both.
 - **Nonce + deadline** for replay protection / signing-window bound. Reuse
   the per-signer nonce pattern of `signedOfferNonceUsed`
   ([`LibVaipakam.sol:4079`](../../contracts/src/libraries/LibVaipakam.sol#L4079))
@@ -473,11 +495,13 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
 - Allow **ratcheting down** (re-lock) — `setVaultRiskTier(BlueChipOnly)`
   and `setIlliquidPairConsent(…, false)` always succeed (no cooldown on
   *reducing* risk; cooldown only gates *first use after raising*).
-  **Re-stamp the cooldown anchor on every RE-RAISE** (Codex r3 P2, L455):
-  each raise writes `unlockedAt[user][level] = block.timestamp` (and the
-  per-pair anchor on a pair re-consent). Otherwise a stale, already-aged
-  timestamp from an earlier opt-up would let a revoke→re-raise skip the
-  cooldown entirely.
+  **Re-stamp the cooldown anchor on every RE-RAISE, for every level newly
+  granted** (Codex r3 P2 L455 + r4 P2 L478): a raise to level `N` writes
+  `unlockedAt[user][L] = block.timestamp` for **every** `L` in `(oldLevel, N]`
+  — not just `unlockedAt[user][N]`. Otherwise a direct `BlueChipOnly →
+  IlliquidCustom` jump leaves the intermediate `BroadLiquid` (level 1) anchor
+  at zero/stale, and a tier-1 offer (which only requires level 1) would bypass
+  the cooldown. (And the per-pair anchor re-stamps on each pair re-consent.)
 - **Cooldown (RD-3):** optional `riskAccessUnlockCooldownSec` (default 0)
   between unlock and first use at that tier, so a phished unlock is
   noticeable/cancellable. Store `unlockedAt` per (user, level) or per
@@ -522,10 +546,12 @@ read-accessor mirror the existing bounded-knob pattern of
 - **New facet — `RiskAccessFacet`** (or fold into `ProfileFacet` if size
   permits; `ProfileFacet` already owns `setKeeperAccess` self-config —
   natural home, but check EIP-170 after adding the EIP-712 verify path):
-  `setVaultRiskTier`, `setIlliquidPairConsent`, **`setMidTierPairAck`** (the L1
-  strict-mode soft-ack setter, present iff `riskStrictMode` ships — Codex r3 P3
-  L499; writes the `midTierPairAck` timestamp map, never `illiquidPairConsent`),
-  the admin-only `setRiskAccessUnlockCooldown`, and views. All asset-pair
+  `setVaultRiskTier`, `setIlliquidPairConsent`, **`setRiskStrictMode(bool)`**
+  (the user-facing opt-IN to L1 strict mode — present iff `riskStrictMode`
+  ships; without it the flag is permanently false and strict mode is dead,
+  Codex r4 P3 L527), **`setMidTierPairAck`** (the L1 soft-ack setter; writes the
+  `midTierPairAck` timestamp map, never `illiquidPairConsent` — Codex r3 P3
+  L499), the admin-only `setRiskAccessUnlockCooldown`, and views. All asset-pair
   APIs take the **raw typed assets** — `(lendingAsset, lendingAssetType,
   tokenId, collateralAsset, collateralAssetType, collateralTokenId)` — NOT two
   bare addresses (Codex r2 L498), so they can recompute the tokenId-inclusive
@@ -548,8 +574,11 @@ read-accessor mirror the existing bounded-knob pattern of
   - **Claim entries** — `claimAsLender`, `claimAsBorrower`, **and
     `claimAsLenderWithRetry`** (Codex r2 L510 — it forwards to the same
     `_claimAsLenderImpl`, so gating only the first two leaves a hole): one-time
-    pair-ack gate **only** when the claimed collateral classifies illiquid
-    (RD-2). Self-resolvable in-flow.
+    pair-ack gate **for EVERY illiquid asset a claim flow withdraws to the
+    holder** — not just the singular claimed collateral (Codex r4 P3, L552):
+    `claimAsBorrower` can also pay an `extraLienedAsset`, and `claimAsLender`
+    can pay held funds / return residual collateral, so each such asset's pair
+    must be acked when it classifies illiquid (RD-2). Self-resolvable in-flow.
   - Ongoing risk-adding actions: refinance (current NFT owner);
     **obligation-transfer gated on the INCOMING obligee `offer.creator`**, not
     the exiting owner (Codex r2 L512). Pure close-out exits (preclose-direct,
@@ -650,9 +679,11 @@ corrections the implementation must absorb:
   consent; the creator's prior consent does not carry.
 - **Tier-3 happy path:** a Level-0 vault transacts a tier-3 asset with no
   opt-up; a tier-1 asset reverts until `setVaultRiskTier(BroadLiquid)`.
-- **Derived-classification, no curation:** changing only on-chain liquidity
-  (e.g. pausing the asset → tier 0) flips the required level without any
-  governance list write.
+- **Derived-classification, no curation:** changing only the on-chain tier
+  signal (e.g. a keeper demotion via `setKeeperTier`, or natural depth loss)
+  flips the required level without any governance list write. (NOT `pauseAsset`
+  — that blocks creation via `requireAssetNotPaused` and does not change
+  `getEffectiveLiquidityTier`; Codex r4 P3 L655.)
 - **EIP-712 unlock:** valid typed `setVaultRiskTier` / `setIlliquidPairConsent`
   succeed; wrong-domain (signed-offer / accept) signature rejected
   (`RiskAccessSignatureInvalid`); expired deadline rejected; replayed nonce
