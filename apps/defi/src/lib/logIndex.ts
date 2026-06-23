@@ -561,7 +561,15 @@ function storageKey(chainId: number, diamond: string): string {
   // never replay against the historical Filled log. Bumping the
   // version forces every browser to re-scan from scratch the
   // next time the fallback path runs.
-  return `vaipakam:logIndex:v4:${chainId}:${diamond.toLowerCase()}`;
+  //
+  // #717 — bump to v5. The retired `StakingRewardsClaimed` (#687-B)
+  // and `VPFIPurchasedWithETH` (#687-A) event kinds were dropped from
+  // the union + decode branches here; a stale v4 cache could still
+  // hold rows of those kinds, which would now render with blank
+  // labels / `status-undefined` in the Activity feed. Bumping forces
+  // a clean rescan so the excised kinds disappear without the user
+  // having to clear localStorage.
+  return `vaipakam:logIndex:v5:${chainId}:${diamond.toLowerCase()}`;
 }
 
 function emptyCache(deployBlock: number): CachedShape {

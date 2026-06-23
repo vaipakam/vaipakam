@@ -261,7 +261,7 @@
   },
   "stakeVpfiCta": {
     "title": "Deposit VPFI",
-    "managedOnBaseSubtitle": "VPFI deposits are managed on {{canonicalName}}. Switch chains to deposit or check your tier.",
+    "managedOnBaseSubtitle": "Your VPFI fee-discount tier is resolved from your vault balance on {{canonicalName}}. You can deposit on any supported chain, but only your {{canonicalName}} balance lifts your tier — switch there to raise it, or check your current tier.",
     "switchToBaseLabel": "Switch to {{canonicalName}}",
     "noStakeYetBody": "Deposit VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the VPFI Vault page.",
     "stakeNowLabel": "Deposit VPFI now",
