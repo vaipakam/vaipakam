@@ -112,19 +112,13 @@ when the borrower claims).
 ### Your VPFI rewards
 
 Aspirational summary card surfacing the connected wallet's
-combined VPFI rewards picture across both reward streams in
-one view. The headline figure is the sum of: pending staking
-rewards, lifetime-claimed staking rewards, pending
-interaction rewards, and lifetime-claimed interaction
-rewards.
+VPFI rewards picture in one view. The headline figure is the
+sum of pending interaction rewards and lifetime-claimed
+interaction rewards.
 
-Per-stream breakdown rows show pending + claimed and a
-chevron deep-link to the full claim card on its native page:
+The breakdown row shows pending + claimed and a chevron
+deep-link to the full claim card on its native page:
 
-- **Staking yield** — pending VPFI accrued at the protocol
-  APR on your vault balance, plus every staking reward
-  you've previously claimed from this wallet. Deep-links to
-  the staking claim card on the Buy VPFI page.
 - **Platform-interaction rewards** — pending VPFI accrued
   across every loan you've participated in (lender or
   borrower side), plus every interaction reward you've
@@ -141,9 +135,8 @@ Same trust model as the underlying claim cards.
 
 The card always renders for connected wallets, even at all-
 zero state. The empty-state hint is intentional — hiding
-the card on zero would make the rewards programs invisible
-to fresh users until they wandered into Buy VPFI or Claim
-Center.
+the card on zero would make the rewards program invisible
+to fresh users until they wandered into the Claim Center.
 
 ---
 
@@ -715,30 +708,21 @@ are grouped by transaction hash so multi-event transactions
 (for example, accept + initiate landing in the same block)
 stay together. Newest first. Surfaces offers, loans,
 repayments, claims, liquidations, NFT mints and burns, and
-VPFI buys / stakes / unstakes.
+VPFI vault deposits / withdrawals.
 
 ---
 
-## Buy VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Buying VPFI
+### Getting VPFI
 
-Two paths:
-
-- **Canonical (Base)** — direct call to the canonical buy flow
-  on the protocol. Mints VPFI directly to your wallet on Base.
-- **Off-canonical** — the local-chain buy adapter sends a
-  Chainlink CCIP packet to the canonical receiver on Base, which
-  performs the buy on Base and bridges the result back via
-  the cross-chain token standard. End-to-end latency is ≈ 1
-  minute on L2-to-L2 pairs. The VPFI lands in your wallet on
-  the **origin** chain.
-
-Adapter rate limits (post-hardening): 50,000 VPFI per request
-and 500,000 VPFI rolling over 24 hours. Tunable by governance
-through a timelock.
+VPFI is freely transferable. Acquire it on the open market
+wherever it trades, or bridge it in: VPFI is a Chainlink CCIP
+cross-chain token, so it moves between supported chains using
+the official bridge and lands in your wallet on the chain you
+bridged to.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -751,37 +735,24 @@ Live status:
 - Discount percentage at the current tier.
 - Wallet-level consent flag.
 
-Note that vault VPFI also accrues 5% APR via the staking
-pool — there is no separate "stake" action. Depositing VPFI
-into your vault IS staking.
-
-<a id="buy-vpfi.buy"></a>
-
-### Step 1 — Buy VPFI with ETH
-
-Submits the buy. On the canonical chain, the protocol mints
-directly. On mirror chains, the buy adapter takes payment,
-sends a cross-chain message, and the receiver executes the buy
-on Base and bridges VPFI back. The bridge fee plus
-verifier-network cost is quoted live and shown in the form.
-VPFI does not auto-deposit into your vault — Step 2 is an
-explicit user action by design.
+Vault VPFI counts toward your discount tier for as long as it
+stays deposited — there is no separate "stake" action.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — Deposit VPFI into your vault
+### Deposit VPFI into your vault
 
-A separate explicit deposit step from your wallet to your
-vault on the same chain. Required on every chain — even the
-canonical one — because vault deposit is always an explicit
-user action per spec. On chains where Permit2 is configured,
-the app prefers the single-signature path over the classic
-approve + deposit pattern; it falls back gracefully if Permit2
-isn't configured on that chain.
+An explicit deposit step from your wallet to your vault on the
+same chain. Required on every chain — even the canonical one —
+because vault deposit is always an explicit user action per
+spec. On chains where Permit2 is configured, the app prefers
+the single-signature path over the classic approve + deposit
+pattern; it falls back gracefully if Permit2 isn't configured
+on that chain.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — Unstake VPFI from your vault
+### Unstake VPFI from your vault
 
 Withdraw VPFI from your vault back to your wallet. There is
 no separate approval leg — the protocol owns the vault and
@@ -794,8 +765,8 @@ tier still applies.
 
 ### How your VPFI tier travels across chains
 
-You stake VPFI on Base — Base is the canonical chain that
-owns your accumulator state. When you act on a different chain
+You deposit VPFI into your vault on Base — Base is the canonical
+chain that owns your accumulator state. When you act on a different chain
 (borrow on Sepolia, lend on Arbitrum, etc.), that chain reads
 a *cached* copy of your tier. The cache is kept fresh by a
 cross-chain push: when your effective tier on Base changes,
@@ -854,40 +825,33 @@ detect staleness, see the
 
 ### About Rewards
 
-Two streams:
+The **interaction pool** pays a per-day pro-rata share of a
+fixed daily emission, weighted by your settled-interest
+contribution to that day's loan volume. Daily windows finalise
+lazily on the first claim or settlement after window close.
 
-- **Staking pool** — vault-held VPFI accrues at 5% APR
-  continuously, with per-second compounding.
-- **Interaction pool** — per-day pro-rata share of a fixed
-  daily emission, weighted by your settled-interest
-  contribution to that day's loan volume. Daily windows
-  finalise lazily on the first claim or settlement after
-  window close.
-
-Both streams are minted directly on the active chain — there
-is no cross-chain round-trip for the user. Cross-chain reward
+Rewards are minted directly on the active chain — there is no
+cross-chain round-trip for the user. Cross-chain reward
 aggregation happens between protocol contracts only.
 
 <a id="rewards.claim"></a>
 
 ### Claim Rewards
 
-A single transaction claims both streams at once. Staking
-rewards are always available; interaction rewards are zero
-until the relevant daily window finalises (lazy finalisation
-triggered by the next non-zero claim or settlement on that
-chain). The UI guards the button while the window is still
-finalising so users don't under-claim.
+A single transaction claims your accrued rewards. Interaction
+rewards are zero until the relevant daily window finalises (lazy
+finalisation triggered by the next non-zero claim or settlement
+on that chain). The UI guards the button while the window is
+still finalising so users don't under-claim.
 
 <a id="rewards.withdraw-staked"></a>
 
-### Withdraw Staked VPFI
+### Withdraw VPFI from your vault
 
-Identical surface to "Step 3 — Unstake" on the Buy VPFI page —
-withdraw VPFI from vault back to your wallet. Withdrawn VPFI
-exits the staking pool immediately (rewards stop accruing for
-that amount that block) and exits the discount accumulator
-immediately (post-balance re-stamp on every open loan).
+Identical surface to "Unstake VPFI from your vault" in the VPFI
+section — withdraw VPFI from vault back to your wallet. Withdrawn
+VPFI exits the discount accumulator immediately (post-balance
+re-stamp on every open loan).
 
 ---
 
@@ -2191,73 +2155,3 @@ system without surprises.
   `cfgMirrorTierMaxAgeSecEffective()`). Lowering the
   threshold can invalidate cached mirror discounts
   immediately on next read — no rollup or push needed.
-
-## Treasury Buyback Flywheel
-
-The protocol collects fees on every loan, swap-to-repay
-settlement, and aggregator-routed liquidation. A portion of
-that fee revenue is routed back to VPFI stakers via the
-**buyback flywheel** — a continuous, governance-bounded buy
-pressure on VPFI whose proceeds flow into the staking pool.
-
-The flywheel runs in three stages:
-
-1. **Accumulate.** Fee revenue in bridgeable source assets
-   (USDC, WETH, WBTC, etc.) accumulates per-chain in the
-   protocol's buyback budget. The operator decides when a
-   tranche is large enough to bridge.
-
-2. **Bridge + commit.** On a cadence, the operator bridges the
-   accumulated value to Base (via Chainlink CCIP) and opens a
-   1inch Fusion TWAP order against VPFI. The order is signed
-   by the diamond itself (ERC-1271); 1inch solvers compete
-   over a 30-minute window to fill it. Partial fills are
-   allowed by design — solvers can split the order across
-   multiple smaller swaps to minimise price impact.
-
-3. **Deliver.** Each partial fill delivers VPFI to the diamond
-   and credits a dedicated **staking pool buyback budget**
-   slot on chain. The slot accumulates as fills land.
-
-What this means for you as a staker today vs. when the
-priority router ships:
-
-- **Today**: buyback proceeds accumulate in the dedicated
-  on-chain slot but are NOT yet routed into your claimable
-  staking rewards. The existing `claimStakingRewards` path
-  still pays out from the original reward bucket only. The
-  buyback slot is the staging area; the distribution leg ships
-  in a follow-up.
-- **Once the priority router (Sub 3 add-on #472) lands**: the
-  same slot will widen the staker claim cap. At that point
-  your claimable VPFI grows automatically as buyback velocity
-  accumulates, on top of the original reward bucket. Buyback
-  APR will be variable — it scales with platform usage.
-- There's no slashing tied to the buyback flow. You can
-  withdraw your VPFI from your vault at any time using the
-  existing VPFI Discount surface.
-- The TWAP design means buybacks don't create discrete large
-  market orders that could destabilise the VPFI floor. The
-  buying is dispersed across solver auctions throughout the
-  day.
-
-Operator-visible failure modes (you'll see these as failed
-operator transactions in the public dashboard, not as
-user-side errors):
-
-- **Budget insufficient** — the per-token Base-side budget
-  cannot fund the proposed tranche. Operator waits for more
-  remittances or commits a smaller tranche.
-- **Tranche cap exceeded** — the proposed tranche is larger
-  than the per-token cap (a defensive ceiling, not a
-  threshold). Operator either raises the cap via governance
-  or commits a smaller tranche.
-- **TWAP underdelivered** — solvers didn't clear the floor
-  within the 30-minute window. Operator expires the order
-  (releasing any unconsumed reservation back to the budget)
-  and commits a fresh one at a lower floor.
-
-The buyback flow is one of the few protocol-level mechanisms
-that ties VPFI's market dynamics directly to platform
-activity. Higher loan volume → more fees → more buyback
-velocity → larger staker proceeds.

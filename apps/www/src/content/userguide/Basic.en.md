@@ -48,12 +48,11 @@ both show up — same place, different rows.
 ### VPFI on this chain
 
 **VPFI** is the protocol's own token. Holding some in your vault
-gets you a discount on protocol fees and earns you a small passive
-yield (5% APR). This card tells you, on the chain you're connected
-to:
+gets you a discount on protocol fees. This card tells you, on the
+chain you're connected to:
 
 - How much VPFI sits in your wallet right now.
-- How much sits in your vault (which counts as "staked").
+- How much sits in your vault (which counts toward your discount tier).
 - What share of the total VPFI supply you hold.
 - How much VPFI is left to be minted overall (the protocol has a
   hard cap).
@@ -99,20 +98,12 @@ the protocol in one place. The big number at the top is the
 combined total — what you've already claimed plus what's
 sitting waiting to be claimed.
 
-There are two reward streams and the card breaks the total
-down by each one:
+Rewards come from **platform interaction** — you earn a little
+bit every day for each loan you're part of, on either side. Paid
+out in VPFI on the chain you're on, no bridging.
 
-- **Staking yield** — earned automatically on any VPFI you keep
-  in your vault. Rate is the protocol APR shown on the Buy
-  VPFI page.
-- **Platform-interaction rewards** — earned a little bit every
-  day for each loan you're part of, on either side. Paid out
-  in VPFI on the chain you're on, no bridging.
-
-Each row has a small chevron arrow on the right. Click it to
-jump straight to the full claim card for that stream — staking
-lives on the Buy VPFI page, platform-interaction lives on the
-Claim Center.
+The row has a small chevron arrow on the right. Click it to jump
+straight to the full claim card in the Claim Center.
 
 If you haven't earned anything yet the card still renders with
 *Total earned: 0 VPFI* plus a hint on how to start. You haven't
@@ -372,17 +363,16 @@ the same click stay together.
 
 ---
 
-## Buy VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Buying VPFI
+### Getting VPFI
 
-The buy page lets you swap ETH for VPFI at the protocol's fixed
-early-stage rate. You can do this from any supported chain — we'll
-route the trade for you under the hood. VPFI always lands back in
-your wallet on the same chain you're connected to. No need to
-switch networks.
+VPFI is freely transferable. Acquire it on the open market wherever
+it trades, or bridge it in — VPFI is a Chainlink CCIP token, so it
+moves between supported chains using the official bridge and lands
+in your wallet on whichever chain you're connected to.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -394,31 +384,19 @@ card also tells you (a) how much more VPFI you'd need in the vault to
 bump up to the next tier, and (b) whether the consent switch on
 the Dashboard is on — the discount only applies while it is.
 
-The same VPFI in your vault is also "staked" automatically and
-earns you 5% APR.
-
-<a id="buy-vpfi.buy"></a>
-
-### Step 1 — Buy VPFI with ETH
-
-Type how much ETH you want to spend, hit Buy, sign the
-transaction. That's it. There's a per-purchase cap and a rolling
-24-hour cap to prevent abuse — you'll see the live numbers next to
-the form so you know how much you have left.
-
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — Deposit VPFI into your vault
+### Deposit VPFI into your vault
 
-Buying VPFI puts it in your wallet, not your vault. To get the
-fee discount and the 5% staking yield, you need to move it into
-the vault yourself. This is always an explicit click — the app
-never moves your VPFI without you asking. One transaction (or a
-single signature, on chains that support it) and you're set.
+VPFI in your wallet doesn't count toward the discount tier. To
+unlock the fee discount, move VPFI into your vault yourself. This
+is always an explicit click — the app never moves your VPFI
+without you asking. One transaction (or a single signature, on
+chains that support it) and you're set.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — Unstake VPFI from your vault
+### Unstake VPFI from your vault
 
 Want some VPFI back in your wallet? This card sends it from vault
 back to you. Be aware: pulling VPFI out drops your discount tier
@@ -433,35 +411,21 @@ switches to the lower tier from this moment forward.
 
 ### About Rewards
 
-Vaipakam pays you for two things:
+Vaipakam pays you a **platform-interaction reward**: every dollar
+of interest a loan you're part of actually settles earns you a
+daily share of a community-wide reward pool.
 
-1. **Staking** — VPFI you keep in the vault earns 5% APR,
-   automatically.
-2. **Interaction** — every dollar of interest a loan you're part of
-   actually settles earns you a daily share of a community-wide
-   reward pool.
-
-Both pay out in VPFI, minted directly on the chain you're on. No
+Rewards pay out in VPFI, minted directly on the chain you're on. No
 bridges, no chain switches.
 
 <a id="rewards.claim"></a>
 
 ### Claim Rewards
 
-One button claims everything from both reward streams in a single
-transaction. Staking rewards are always claimable in real time.
+One button claims your accrued rewards in a single transaction.
 The interaction-pool share settles once a day, so if you've earned
-some since the last settlement, the interaction part of the total
-only goes live shortly after the next daily window closes.
-
-<a id="rewards.withdraw-staked"></a>
-
-### Withdraw Staked VPFI
-
-Move VPFI out of your vault back to your wallet. Once it's in the
-wallet it stops earning the 5% APR and stops counting toward your
-discount tier. Same as the "unstake" step on the Buy VPFI page —
-same action, just lives here too for convenience.
+some since the last settlement, it only goes live shortly after the
+next daily window closes.
 
 ---
 

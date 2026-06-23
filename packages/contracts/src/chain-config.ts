@@ -39,15 +39,7 @@ export interface ChainConfig {
   isCanonicalVPFI: boolean;
   /** Testnet vs mainnet — used only for UI grouping. */
   testnet: boolean;
-  /** VPFIBuyAdapter address on this chain, or null when buys here route
-   *  directly through the Diamond (canonical) or the adapter hasn't been
-   *  deployed yet. Mirror chains with a null adapter cannot originate
-   *  cross-chain buys. */
-  vpfiBuyAdapter: string | null;
-  /** When set, the adapter pulls this ERC20 for `amountIn` (WETH mode) so
-   *  the user only has to send the CCIP native fee as `msg.value`.
-   *  Null = native ETH mode (default). Ignored when `vpfiBuyAdapter` is null. */
-  vpfiBuyPaymentToken: string | null;
+  // #687: vpfiBuyAdapter + vpfiBuyPaymentToken removed with the fixed-rate sale.
   /** Standalone MetricsFacet implementation address (not the Diamond) on
    *  this chain. Surfaces on the Analytics page's Transparency & Source
    *  card so users can land directly on the facet's `#readContract` tab

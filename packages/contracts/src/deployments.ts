@@ -137,22 +137,8 @@ export interface Deployment {
   vpfiMirror?: HexAddress;
   vpfiMirrorImpl?: HexAddress;
 
-  // ── VPFI buy surface ────────────────────────────────────────────
-  /** Canonical-VPFI chain only — receiver that mints sold VPFI. */
-  vpfiBuyReceiver?: HexAddress;
-  vpfiBuyReceiverImpl?: HexAddress;
-  vpfiBuyReceiverEid?: number;
-
-  /** Mirror chains only — buy adapter that originates cross-chain buys. */
-  vpfiBuyAdapter?: HexAddress;
-  vpfiBuyAdapterImpl?: HexAddress;
-
-  /** Address used to pay for buys via the adapter. Solidity convention:
-   *  `0x0000…0000` means "pay in native gas (ETH/BNB)" — preserved as
-   *  the zero-address sentinel here because that's a meaningful runtime
-   *  value, not a missing field. Consumers map zero → null at the
-   *  boundary if they prefer the JS-idiom representation. */
-  vpfiBuyPaymentToken?: HexAddress;
+  // #687: the VPFI buy surface (VpfiBuyReceiver/Adapter + payment token) was
+  // removed with the fixed-rate sale — those deployment keys no longer exist.
 
   /** Asset whose price feeds the VPFI discount calculation. */
   vpfiDiscountEthPriceAsset?: HexAddress;

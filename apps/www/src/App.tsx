@@ -45,8 +45,8 @@ const HelpSearch = lazy(() => import('./pages/HelpSearch'));
 const AdminKnobsDocs = lazy(() => import('./pages/AdminKnobsDocs'));
 
 /**
- * Public Buy-VPFI shell — wraps the marketing page in the standard
- * Navbar + Footer chrome. The actual buy / stake / unstake flow
+ * Public VPFI shell — wraps the VPFI-benefits marketing page in the
+ * standard Navbar + Footer chrome. The actual deposit / withdraw flow
  * lives at `<defi>/buy-vpfi` (wallet-gated); CTAs inside
  * `BuyVPFIMarketing` open that URL in a new tab via the
  * `defiUrl(...)` helper.
@@ -107,7 +107,7 @@ function pageRoutes(): ReactElement {
   return (
     <>
       <Route index element={<LandingPage />} />
-      <Route path="buy-vpfi" element={<PublicBuyVPFI />} />
+      <Route path="vpfi" element={<PublicBuyVPFI />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />

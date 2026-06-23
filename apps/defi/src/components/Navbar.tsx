@@ -20,8 +20,8 @@ type NavLink = {
   labelKey: string;
   href: string;
   /** Open in a new browser tab. Used for VPFI dropdown's action items
-   *  (Buy / Stake-Unstake) which jump from the public marketing site
-   *  into the wallet-gated app at `/buy-vpfi`. */
+   *  (Stake / Unstake) which jump from the public marketing site
+   *  into the wallet-gated app at `/vpfi-vault`. */
   newTab?: boolean;
 };
 

@@ -268,10 +268,6 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     summary: "cardHelp.buyVpfiDiscountStatus",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
-  "buy-vpfi.buy": {
-    summary: "cardHelp.buyVpfiBuy",
-    learnMoreHref: `${TOKENOMICS}#3-vpfi-issuance--buy-flow`,
-  },
   "buy-vpfi.deposit": {
     summary: "cardHelp.buyVpfiDeposit",
     learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
@@ -282,17 +278,9 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
   },
 
   // ── Rewards ───────────────────────────────────────────────────────────
-  "rewards.overview": {
-    summary: "cardHelp.rewardsOverview",
-    learnMoreHref: `${TOKENOMICS}#4-platform-interaction-rewards`,
-  },
   "rewards.claim": {
     summary: "cardHelp.rewardsClaim",
     learnMoreHref: `${TOKENOMICS}#4-platform-interaction-rewards`,
-  },
-  "rewards.withdraw-staked": {
-    summary: "cardHelp.rewardsWithdrawStaked",
-    learnMoreHref: `${TOKENOMICS}#6-fee-discounts-and-vpfi-utility`,
   },
 
   // ── Activity ───────────────────────────────────────────────────────────

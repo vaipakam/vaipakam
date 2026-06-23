@@ -226,7 +226,7 @@ fees는 없습니다. protocol이 가져가는 것은 위의 두 fee뿐입니다
 
 ## VPFI란 무엇인가요?
 
-**VPFI**는 Vaipakam의 protocol token입니다. 세 가지 일을 합니다.
+**VPFI**는 Vaipakam의 protocol token입니다. 두 가지 일을 합니다.
 
 ### 1. Fee discounts
 
@@ -245,14 +245,7 @@ life 전체에 걸쳐 time-weighted**되므로, loan이 끝나기 직전에 top 
 calculation을 game할 수 없습니다. 실제로 해당 tier를 hold한 시간에 비례해
 discount를 얻습니다.
 
-### 2. Staking — 5% APR
-
-vault에 있는 모든 VPFI는 자동으로 5% annual yield의 staking rewards를
-얻습니다. 별도의 staking action도, lock-up도, "unstake" 대기 시간도 없습니다.
-VPFI를 vault로 move하면 그 순간부터 earn합니다. 밖으로 move하면 accrual은
-멈춥니다.
-
-### 3. Platform interaction rewards
+### 2. Platform interaction rewards
 
 매일 고정된 VPFI pool이 protocol을 통해 이동한 **interest**에 비례해 lenders와
 borrowers에게 distributed됩니다. lender로서 interest를 earned했거나,
@@ -264,14 +257,12 @@ early users가 가장 큰 emissions를 받습니다.
 
 ### VPFI를 얻는 방법
 
-세 가지 방법이 있습니다.
+두 가지 방법이 있습니다.
 
 - **Earn it** — 참여해서 얻기(위의 interaction rewards).
-- **Buy it** — **Buy VPFI** page에서 fixed rate
-  (`1 VPFI = 0.001 ETH`)로 구매하기. fixed-rate program은 per wallet
-  per chain으로 capped됩니다.
 - **Bridge it** — VPFI는 Chainlink CCIP CCT token이므로 official bridge를
-  사용해 supported chains 사이를 이동할 수 있습니다.
+  사용해 supported chains 사이를 이동할 수 있습니다. VPFI가 거래되는
+  open market에서 직접 취득할 수도 있습니다.
 
 ---
 
@@ -315,9 +306,9 @@ VPFI token과 daily reward denominator뿐입니다(활발한 chains와 조용한
 flow는 같지만 **Create Offer** page에서 ERC-20 lending 대신 "NFT rental"을
 선택합니다. form이 차례대로 안내해줍니다.
 
-**VPFI로 passive yield**만 얻고 싶다면, **Dashboard** page에서 VPFI를
-vault에 deposit하면 됩니다. 그게 전부입니다 — staking은 그 순간부터
-automatic입니다.
+**protocol fees를 낮추기**만 원한다면, **Dashboard** page에서 VPFI를
+vault에 deposit하면 됩니다. 그게 전부입니다 — fee-discount tier가 그
+순간부터 자동으로 적용됩니다.
 
 ---
 

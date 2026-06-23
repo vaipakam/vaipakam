@@ -1,9 +1,8 @@
 /**
  * T-042 Phase 2 — live-value reader for the admin dashboard.
  *
- * Issues a single batched read against the diamond (and the
- * `VpfiBuyReceiver` standalone contract on Base where applicable)
- * for every governance-tunable knob defined in `adminKnobsZones.ts`.
+ * Issues a single batched read against the diamond for every
+ * governance-tunable knob defined in `adminKnobsZones.ts`.
  * The dashboard cards subscribe to the returned map and render
  * each knob's current value relative to its hard bound + soft zones.
  *
@@ -41,16 +40,14 @@ export interface KnobReadResult {
 export type KnobValuesMap = Record<string, KnobReadResult>;
 
 /**
- * Read a knob's current value from the diamond (or, for the
- * `VpfiBuyReceiver` knob, from the canonical-Base receiver address
- * resolved from the deployments JSON).
+ * Read a knob's current value from the diamond.
  *
  * We don't use the project's `Multicall3` helper here because the
  * helper is specialised for "same function across many targets" —
- * our ~17 knobs hit different selectors on different facets / on a
- * separate contract. Promise.all of plain reads is cheaper to write
- * and the dashboard loads infrequently enough that batching wouldn't
- * meaningfully reduce request count.
+ * our ~17 knobs hit different selectors on different facets.
+ * Promise.all of plain reads is cheaper to write and the dashboard
+ * loads infrequently enough that batching wouldn't meaningfully
+ * reduce request count.
  */
 export function useAdminKnobValues(): KnobValuesMap {
   const client = useDiamondPublicClient();

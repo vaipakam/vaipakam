@@ -18,7 +18,7 @@ chain. The protocol couples bilateral offer negotiation with per-user isolated
 vaults, tokenized lender / borrower position rights, an oracle stack hardened
 by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
 pipeline, and a `Chainlink CCIP CCT` protocol token (`VPFI`) wired for fee
-discounts, vault-based staking, and locally-claimable interaction rewards
+discounts and locally-claimable interaction rewards
 that share a protocol-wide daily denominator.
 
 This document specifies the architecture, the loan and rental lifecycle,
@@ -121,8 +121,7 @@ Vaipakam supports:
 - loan refinance (active ERC-20 loans only)
 - partial collateral withdrawal when health permits
 - additional collateral top-up
-- VPFI fixed-rate purchase, vault deposit, fee discounts
-- vault-based VPFI staking
+- VPFI vault deposit, fee discounts
 - daily platform interaction rewards
 - public read-only NFT verifier and analytics dashboard
 
@@ -180,16 +179,15 @@ Risk and oracle:
 Token economics:
 
 - **VPFITokenFacet** — vault VPFI views and helpers
-- **VPFIDiscountFacet** — fixed-rate buy program, time-weighted tier resolution
+- **VPFIDiscountFacet** — time-weighted tier resolution
 - **InteractionRewardsFacet** — daily lender / borrower accrual under the 8-band emission schedule
-- **StakingRewardsFacet** — `5% APR` reward-per-token accrual on vault VPFI
 - **RewardReporterFacet** — every-chain reporter; sends mirror daily totals to canonical Base
 - **RewardAggregatorFacet** — Base-only aggregator; finalizes and broadcasts the daily global denominator
 
 Admin and config:
 
 - **AdminFacet** — treasury address, pause toggles, swap-adapter registry
-- **ConfigFacet** — runtime-tunable protocol parameters (fees, LTV, slippage, tier table, APR)
+- **ConfigFacet** — runtime-tunable protocol parameters (fees, LTV, slippage, tier table)
 - **AccessControlFacet** — RBAC role plumbing
 - **TreasuryFacet** — VPFI mint surface, treasury fee accumulation
 - **DiamondCutFacet / DiamondLoupeFacet / OwnershipFacet** — `EIP-2535` plumbing
@@ -264,8 +262,6 @@ Key constants in `LibVaipakam.sol`:
 | `VPFI_HARD_CAP`                | `230_000_000e18` | Global VPFI supply cap                 |
 | `VPFI_INITIAL_MINT`            |  `23_000_000e18` | Genesis mint on Base                   |
 | `VPFI_INTERACTION_POOL_CAP`    |  `69_000_000e18` | Interaction-reward category cap        |
-| `VPFI_STAKING_POOL_CAP`        |  `55_200_000e18` | Staking-reward category cap            |
-| `VPFI_STAKING_APR_BPS`         |            `500` | `5%` vault staking APR                |
 | `INTERACTION_CAP_VPFI_PER_ETH` |            `500` | `0.5 VPFI` per `0.001 ETH` of interest |
 
 ### 3.6 Rounding Doctrine
@@ -923,13 +919,17 @@ emergency brake.
 | Testers & Early Contributors     |       6% |      13,800,000 | 6–12 mo cliff                       |
 | Platform Admins                  |       3% |       6,900,000 | Timelock controlled                 |
 | Security Auditors                |       2% |       4,600,000 | One-time on delivery                |
-| Reserve                          |       1% |       2,300,000 | One-time                            |
+| Reserve (incl. pending reallocation) |  26% |      59,800,000 | One-time                            |
 | Bug Bounty                       |       2% |       4,600,000 | Multi-sig locked                    |
 | Exchange / Market Making         |      14% |      32,200,000 | 50% liquidity / 50% locked          |
-| **Early Fixed-Rate Purchase**    |       1% |       2,300,000 | Public sale at `1 VPFI = 0.001 ETH` |
 | **Platform Interaction Rewards** |      30% |      69,000,000 | Daily emission via 8-band schedule  |
-| **Staking Rewards**              |      24% |      55,200,000 | `5% APR` on vault balances         |
 | **Total**                        | **100%** | **230,000,000** |                                     |
+
+> The Reserve figure folds in the **25%** freed by removing the fixed-rate
+> public sale (1%) and the staking-rewards pool (24%) in the #687 legal-surface
+> excision. The final disposition of that freed 25% — held in reserve, burned to
+> reduce the 230M cap, or otherwise reallocated — is a **pending governance
+> decision** and is shown here as Reserve only as a placeholder.
 
 ### 11.3 Fee Discount Tiers
 
@@ -1001,34 +1001,20 @@ briefly top up VPFI at acceptance to capture a full discount and unstake
 immediately after. Borrowers pay full LIF up front and earn the discount
 **only for the time they actually held the tier balance**.
 
-### 11.6 Early Fixed-Rate Purchase
+### 11.6 Acquiring VPFI
 
-A `1%` allocation (`2,300,000 VPFI`) is sold publicly at the fixed rate
-`1 VPFI = 0.001 ETH`. Caps:
-
-- global: `2,300,000 VPFI`
-- per-wallet per-chain: `30,000 VPFI` (admin-configurable)
-
-User flow (the `Buy VPFI` page):
-
-1. The user, connected to their preferred supported chain, pays ETH at
-   the fixed rate. The page must not require a manual chain switch.
-2. Purchased VPFI is delivered to the user's **wallet** on that same
-   chain — never auto-routed into vault. If the flow settles through
-   a Base canonical receiver, mint/release is gated on actual ETH
-   receipt (not quoted amounts).
-3. A separate explicit user action moves VPFI from wallet into the
-   user's Vaipakam Vault on the same chain. Permit2 single-signature
-   path is supported as a convenience; classic approve-plus-deposit
-   remains the fallback.
-
-ETH from the fixed-rate program routes to Treasury under the recycling
-rule below.
+VPFI is freely transferable and is acquired on the open market or
+bridged in. VPFI is a Chainlink CCIP cross-chain token, so it moves
+between supported chains using the official bridge and lands in the
+user's wallet on the destination chain. A separate explicit user action
+then moves VPFI from wallet into the user's Vaipakam Vault on the same
+chain to unlock the fee-discount tier. Permit2 single-signature path is
+supported as a convenience; classic approve-plus-deposit remains the
+fallback. The protocol never auto-routes VPFI into the vault.
 
 ### 11.7 Treasury Recycling Rule
 
-VPFI received as fees and ETH received from the fixed-rate program both
-recycle as:
+VPFI received as fees recycles as:
 
 - `38%` → Buy ETH (via configured aggregator)
 - `38%` → Buy wBTC (via approved treasury path)
@@ -1042,38 +1028,7 @@ treasury-strengthening conversion, not a token burn.
 
 ## 12. Reward System
 
-### 12.1 Staking Rewards (`5% APR`)
-
-Any VPFI held in user vault on a lending chain is automatically treated
-as staked. Reward accrual uses the standard reward-per-token model:
-
-```
-rewardPerToken = rewardPerTokenStored
-               + (APR_BPS × 1e18 × dt)
-               / (BPS × SECONDS_PER_YEAR × totalStakedVPFI)
-
-userReward = userBalance × (rewardPerToken − userRewardPerTokenPaid)
-           + userPendingReward
-```
-
-Implementation notes:
-
-- when `totalStakedVPFI == 0`, `rewardPerToken` freezes (prevents
-  retroactive yield to the first staker after a quiet period)
-- balance changes (deposit, withdraw, fee deduction) checkpoint the
-  user's accrual before mutating the balance
-- the `55,200,000 VPFI` pool cap is enforced at claim time via a
-  monotone `stakingPoolPaidOut` counter
-- rewards are local per chain — there is no cross-chain staking
-- governance APR changes are era-bounded: the outgoing era closes its
-  accrual into the global accumulator before the new APR activates,
-  and dormant users still receive the correctly-weighted sum across
-  every era when they eventually claim
-
-Claim path: `claimStakingRewards()`. Unstaking is modeled simply as
-moving VPFI from vault back to wallet on the same chain. No lock-up.
-
-### 12.2 Platform Interaction Rewards
+### 12.1 Platform Interaction Rewards
 
 A `30%` allocation (`69,000,000 VPFI`) funds usage-based rewards. The
 emission schedule is front-loaded in 8 bands:
@@ -1104,7 +1059,7 @@ forfeit the borrower share. Both lender and borrower interaction rewards
 are claimable only **after the loan has closed** — `day 0` is excluded
 from accrual.
 
-### 12.3 Cross-Chain Reward Mesh
+### 12.2 Cross-Chain Reward Mesh
 
 Loans are chain-local but the interaction-reward denominator is
 **protocol-wide**. Computing rewards against a local-only denominator
@@ -1142,10 +1097,10 @@ during finalization. Mirror-side `claimInteractionRewards()` draws from
 the local VPFI reward vault — no synthetic IOUs, no cross-chain claim
 hops.
 
-### 12.4 Reward UX
+### 12.3 Reward UX
 
-Users have one `Rewards` page per chain that shows pending staking and
-interaction rewards. `Claim Rewards` mints VPFI directly on the
+Users have one `Rewards` page per chain that shows pending interaction
+rewards. `Claim Rewards` mints VPFI directly on the
 connected chain. After claim, an optional `Bridge to another chain`
 action surfaces the official Chainlink CCIP bridge.
 
@@ -1166,8 +1121,8 @@ cross-chain code now lives in `contracts/src/crosschain/`.
 `ICrossChainMessenger` is the provider-agnostic port; domain
 contracts depend only on it, never on a CCIP library. `CcipMessenger`
 is the single CCIP-aware adapter — owns the chainId ↔ CCIP selector
-map, the remote-messenger allowlist, and the `vpfi-buy` /
-`vpfi-reward` channel registry (local handlers + remote peers).
+map, the remote-messenger allowlist, and the `vpfi-reward`
+channel registry (local handlers + remote peers).
 
 ### 13.2 `VPFIToken` + `VPFIMirrorToken` (CCIP Cross-Chain Token)
 
@@ -1178,36 +1133,7 @@ map, the remote-messenger allowlist, and the `vpfi-buy` /
 source. Mirror token supply equals currently-bridged VPFI by
 construction.
 
-### 13.3 `VpfiBuyAdapter` (Mirror chains)
-
-Cross-chain fixed-rate buy entry point. The adapter is deployed
-ONLY on mirror chains — Base hosts the receiver, not the adapter.
-On EVM-mainnet-gas mirrors (Ethereum / Arbitrum / Optimism /
-Polygon zkEVM and their public testnets) the user sends ETH; on
-BNB Chain mainnet and Polygon PoS the adapter pulls bridged WETH
-instead, because the receiver quotes a single global wei-per-VPFI
-rate denominated in
-**ETH-equivalent value**. The adapter forwards a `BUY_REQUEST` over
-CCIP to the canonical Base receiver and has per-lane CCIP rate
-limits in addition to the Diamond-side cap:
-
-- per-lane capacity: `50,000 VPFI`
-- per-lane refill: `≈5.8 VPFI/s`
-
-Set through `VpfiPoolRateGovernor` — the bounds-checked
-`rateLimitAdmin` that refuses to disable a lane's limit and
-range-bounds every value (ET-008).
-
-### 13.4 `VpfiBuyReceiver` (Base)
-
-Lands cross-chain buys on canonical Base. Processes via
-`VPFIDiscountFacet` (debits VPFI from treasury balance),
-CCIP-bridges the result to the buyer's origin chain through the
-VPFI CCT path, and sends a `BUY_SUCCESS` / `BUY_FAILED` reply back
-to the originating adapter. Pre-funded with native gas for CCIP
-message fees.
-
-### 13.5 `VaipakamRewardMessenger`
+### 13.3 `VaipakamRewardMessenger`
 
 Dedicated CCIP messenger for cross-chain reward accounting.
 Mirrors send `REPORT` messages to Base (their daily
@@ -1215,7 +1141,7 @@ Mirrors send `REPORT` messages to Base (their daily
 finalized `dailyGlobalInterestUSD[dayId]`). Authenticates sender
 against the registered peer messenger address on each chain.
 
-### 13.6 Security model: CCIP RMN + per-lane rate limits + `GuardianPausable`
+### 13.4 Security model: CCIP RMN + per-lane rate limits + `GuardianPausable`
 
 CCIP's security is **operated by Chainlink** — a committing DON +
 an executing DON + an **independent Risk Management Network** (RMN,
@@ -1231,7 +1157,7 @@ gates that matter for this protocol are:
 - CCT admin (CCIP `TokenAdminRegistry`) and every cross-chain
   contract owner = the admin multisig → governance timelock.
 
-### 13.7 Pause surface — `GuardianPausable`
+### 13.5 Pause surface — `GuardianPausable`
 
 Every cross-chain contract with a runtime send / receive path
 carries `GuardianPausable`: guardian-or-owner `pause()`, owner-only
@@ -1407,7 +1333,7 @@ attempt; the test suite exercises this as a bright-line gate.
 ### 16.1 Public Website
 
 - homepage education
-- public `Buy VPFI` flow (reachable from homepage without wallet)
+- public `VPFI` benefits page (reachable from homepage without wallet)
 - public analytics dashboard (no wallet required)
 - FAQs and risk education
 - `Terms` and `Privacy` public routes
@@ -1431,8 +1357,8 @@ Built on React + wagmi v2 + viem + ConnectKit. Pages:
 - `Claim Center` — settled-loan claims, including the borrower
   VPFI rebate line
 - `Activity` — paginated lifecycle events
-- `Buy VPFI` — fixed-rate purchase with chain selector
-- `Rewards` — staking + interaction rewards, claim, unstake
+- `VPFI` — vault deposit / withdrawal and fee-discount tier status
+- `Rewards` — interaction rewards, claim
 - `Allowances` — ERC-20 / 721 / 1155 approvals to Diamond, with
   one-click revoke
 - `Alerts` — HF alert subscriptions per loan (Telegram + Push Protocol)
@@ -1511,7 +1437,7 @@ The Foundry test suite has 91 test files covering:
 - **5 risk and liquidation tests** (Risk / Defaulted / VolatilityLTV / LiquidationMainnetFork / `LiquidationMinOutputInvariant`)
 - **8 oracle tests** (Oracle / OracleAdmin / StalenessHybrid / OracleLiquidityOR / OracleMainnetFork / SecondaryQuorum / SequencerUptimeCheck / FeedOverride)
 - **7 VPFI tests** (Discount / Boundaries / Token / MirrorToken / SupplyCap invariant / TreasuryMint)
-- **10 reward tests** (Interaction / Coverage / Cap / Staking / Cross-chain plumbing / OApp delivery + 4 invariants)
+- **reward tests** (Interaction / Coverage / Cap / Cross-chain plumbing / OApp delivery + invariants)
 - **10 governance tests** (AccessControl / Admin / Config / GovernanceConfig / Handover / LZConfig / LZGuardian / PerAssetPause / PauseGating / DeployerZeroRoles)
 - **20+ invariant suites** (FundsConservation / VaultSolvency / FallbackSettlement / ClaimExclusivity / NFTOwnerAuthority / VPFISupplyCap / etc.)
 - **8 end-to-end scenario suites** (Scenario1 through Scenario8 + FallbackClaimRace + PositiveFlowsGapFillers)

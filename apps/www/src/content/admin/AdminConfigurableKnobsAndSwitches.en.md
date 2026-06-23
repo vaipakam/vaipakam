@@ -66,7 +66,7 @@ shift.
 ### VPFI tier discount thresholds + tier discount BPS
 
 (4 values
-each). Configures the time-weighted VPFI staking tier system that
+each). Configures the time-weighted VPFI vault tier system that
 discounts the loan-initiation fee. Thresholds must be strictly
 monotonic; discount BPS each ≤ `MAX_DISCOUNT_BPS` and
 non-decreasing across tiers. Setter rejects non-monotone or
@@ -174,13 +174,6 @@ emergency rollback if a bad schedule was pushed by mistake.
 - `reserveFactorBps`: range **[0%, 50%]**. The 50% ceiling prevents a
   compromised admin from setting `reserveFactor = 100%` (lender
   receives 0% interest, defeats the lending product).
-
-### Staking APR
-
-Range **[0%, 20%]**. APRs above 20% on VPFI staking
-are unrealistic and a higher cap is a governance-error vector rather
-than a feature. Zero permitted (disables rewards while preserving
-staked principal accounting).
 
 ### Notification fee (per loan-side)
 
@@ -699,7 +692,7 @@ only configs. Zero disables that adapter; non-zero enables it.
 
 ## Reward + cross-chain pairs
 
-### Reward OApp address / Buy receiver address / Buy adapter mapping
+### Reward OApp address mapping
 
 Address-only; non-zero enforced; zero disables that
 specific cross-chain lane.
@@ -736,8 +729,7 @@ pair OFF on the retail deploy.
 - **Default new chain bring-up**: every numeric knob defaults to a
   reasonable library value. Governance does NOT need to write each
   knob at deploy time; the only mandatory writes are the
-  chain-specific addresses (treasury, oracles, LZ endpoints, peers,
-  per-chain VPFI Buy adapter registry).
+  chain-specific addresses (treasury, oracles, LZ endpoints, peers).
 - **Governance handover** (DeploymentRunbook §6): post-deploy, every
   tunable transitions from EOA-controllable to multisig-via-timelock
   controllable. Range guards apply equally to both before and after

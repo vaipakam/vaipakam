@@ -93,7 +93,7 @@ export default function Footer() {
 
           <div className="footer-col">
             <h4>{t('footer.colResources')}</h4>
-            {/* `/help/overview` and `/buy-vpfi` are marketing pages
+            {/* `/help/overview` and `/vpfi-vault` are marketing pages
                 — cross-domain. `/analytics#transparency`,
                 `/protocol-console`, `/nft-verifier` are public-read
                 tools that live on this connected-app domain, so
@@ -104,7 +104,7 @@ export default function Footer() {
             <Link to="/analytics#transparency">{t('footer.smartContracts')}</Link>
             <Link to="/protocol-console">{t('footer.protocolConsole', 'Protocol Console')}</Link>
             <Link to="/nft-verifier">{t('nav.nftVerifier')}</Link>
-            <a href={marketingUrl('/buy-vpfi')} target="_blank" rel="noopener noreferrer">
+            <a href={marketingUrl('/vpfi-vault')} target="_blank" rel="noopener noreferrer">
               {t('appNav.buyVpfi')}
             </a>
           </div>

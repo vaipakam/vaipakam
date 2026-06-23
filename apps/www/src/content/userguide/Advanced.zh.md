@@ -95,17 +95,13 @@ Loan Initiation Fee (borrower claim 时以 VPFI rebate 形式支付)。
 
 ### 您的 VPFI rewards
 
-这张 summary card 会在一个视图里汇总 connected wallet 在两个 reward
-streams 中的 VPFI rewards。headline number 是 pending staking
-rewards、lifetime-claimed staking rewards、pending interaction rewards
-和 lifetime-claimed interaction rewards 的总和。
+这张 summary card 会在一个视图里汇总 connected wallet 的 VPFI
+rewards。headline number 是 pending interaction rewards 和
+lifetime-claimed interaction rewards 的总和。
 
-每个 stream 的 breakdown row 会显示 pending + claimed，并提供一个
-chevron deep-link，跳转到对应 native page 上的 full claim card：
+breakdown row 会显示 pending + claimed，并提供一个 chevron
+deep-link，跳转到对应 native page 上的 full claim card：
 
-- **Staking yield** — 基于您的 vault balance、按 protocol APR accrue
-  的 pending VPFI，加上此 wallet 先前 claim 过的所有 staking rewards。
-  deep-link 到 Buy VPFI page 上的 staking claim card。
 - **Platform-interaction rewards** — 您参与过的每笔 loan (lender side
   或 borrower side) 中 accrue 的 pending VPFI，加上先前 claim 过的
   所有 interaction rewards。deep-link 到 Claim Center 中的 interaction
@@ -119,7 +115,7 @@ wallet 在本 chain 上过去的 claim events 并求和。fresh browser cache
 
 card 会始终为 connected wallets render，即使所有值都是 zero。这个
 empty-state hint 是刻意保留的 — 如果在 zero 时隐藏 card，新 users 在
-进入 Buy VPFI 或 Claim Center 之前很难发现 rewards programs。
+进入 Claim Center 之前很难发现 rewards program。
 
 ---
 
@@ -596,29 +592,20 @@ logs 的 sliding block window 中实时获取。没有 backend cache — 每次
 page load 都会重新 fetch。Events 会按 transaction hash 分组，因此
 multi-event transactions (例如同一 block 中确认的 accept + initiate)
 会保持在一起。最新在前。展示 offers、loans、repayments、claims、
-liquidations、NFT mints 和 burns，以及 VPFI buys / stakes / unstakes。
+liquidations、NFT mints 和 burns，以及 VPFI vault deposits / withdrawals。
 
 ---
 
-## Buy VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### 购买 VPFI
+### 获取 VPFI
 
-两条 paths：
-
-- **Canonical (Base)** — 直接调用 protocol 上的 canonical buy
-  flow。在 Base 上直接 mint VPFI 到您的 wallet。
-- **Off-canonical** — local-chain buy adapter 向 Base 上的
-  canonical receiver 发送 Chainlink CCIP packet，它在 Base 上执行
-  buy 并通过 cross-chain token standard 把结果 bridge 回来。在
-  L2-to-L2 pairs 上端到端 latency ≈ 1 分钟。VPFI 会落到 **origin**
-  chain 上您的 wallet。
-
-Adapter rate limits (post-hardening)：每个 request 50,000 VPFI，
-rolling 24 小时内 500,000 VPFI。可由 governance 通过 timelock
-调整。
+VPFI 可自由转让。您可以在 VPFI 交易的任何 open market 上获取它，
+或者把它 bridge 进来：VPFI 是 Chainlink CCIP cross-chain token，
+因此可以通过 official bridge 在受支持的 chains 间移动，并到达您
+bridge 到的那条 chain 上的 wallet。
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -631,24 +618,14 @@ rolling 24 小时内 500,000 VPFI。可由 governance 通过 timelock
 - 当前 tier 的 Discount percentage。
 - Wallet 级 consent flag。
 
-请注意 vault VPFI 还通过 staking pool 累积 5% APR — 没有单独的
-"stake" 操作。把 VPFI deposit 到您的 vault **就是** staking。
-
-<a id="buy-vpfi.buy"></a>
-
-### Step 1 — 用 ETH 购买 VPFI
-
-提交 buy。在 canonical chain 上，protocol 会直接 mint。在 mirror
-chains 上，buy adapter 收款并发送 cross-chain message；receiver
-在 Base 上执行 buy，并把 VPFI bridge 回来。bridge fee 和 verifier
-network cost 会 live quote 并显示在表单中。VPFI 不会自动 deposit
-进您的 vault — Step 2 按设计是明确的 user action。
+只要 vault VPFI 保持 deposit 状态，它就会计入您的 discount tier
+— 没有单独的 "stake" 操作。
 
 <a id="buy-vpfi.deposit"></a>
 
-### Step 2 — 把 VPFI deposit 到您的 vault
+### 把 VPFI deposit 到您的 vault
 
-这是从您的 wallet 到同一 chain 上 vault 的单独 explicit deposit
+这是从您的 wallet 到同一 chain 上 vault 的 explicit deposit
 step。每条 chain 都需要 — 包括 canonical chain — 因为按 spec，
 vault deposit 始终必须是 explicit user action。在配置了 Permit2
 的 chains 上，App 会优先使用 single-signature path，而不是传统的
@@ -657,7 +634,7 @@ cleanly fall back。
 
 <a id="buy-vpfi.unstake"></a>
 
-### Step 3 — 从您的 vault unstake VPFI
+### 从您的 vault unstake VPFI
 
 把 VPFI 从您的 vault withdraw 回 wallet。没有单独的 approval leg
 — protocol 持有 vault，并 debit 自身。withdraw 会基于新的 (较低)
@@ -672,16 +649,12 @@ open loan。没有让旧 tier 继续适用的 grace window。
 
 ### 关于 Rewards
 
-两个 streams：
+**Interaction pool** 按 per-day pro-rata 方式发放固定 daily
+emission 的份额，按您对当天 loan volume 的 settled-interest 贡献
+加权。Daily windows 会在 window 关闭后的第一次 claim 或 settlement
+时 lazy finalise。
 
-- **Staking pool** — Vault 持有的 VPFI 以 5% APR 持续累积，按秒
-  复利。
-- **Interaction pool** — 固定 daily emission 的 per-day pro-rata
-  份额，按您对当天 loan volume 的 settled-interest 贡献加权。
-  Daily windows 会在 window 关闭后的第一次 claim 或 settlement 时
-  lazy finalise。
-
-两个 streams 都直接在 active chain 上 mint — 用户不需要 cross-chain
+Rewards 直接在 active chain 上 mint — 用户不需要 cross-chain
 round-trip。Cross-chain reward aggregation 只发生在 protocol
 contracts 之间。
 
@@ -689,19 +662,17 @@ contracts 之间。
 
 ### Claim Rewards
 
-单笔 transaction 会同时 claim 两个 streams。Staking rewards 始终可
-用；interaction rewards 在相关 daily window finalise 之前为零 (lazy
-finalisation 由该 chain 上下一次 non-zero claim 或 settlement 触发)。
-当 window 仍在 finalise 时，UI 会 guard button，因此用户不会
-under-claim。
+单笔 transaction 会 claim 您累计的 rewards。interaction rewards 在
+相关 daily window finalise 之前为零 (lazy finalisation 由该 chain
+上下一次 non-zero claim 或 settlement 触发)。当 window 仍在 finalise
+时，UI 会 guard button，因此用户不会 under-claim。
 
 <a id="rewards.withdraw-staked"></a>
 
-### 提取 Staked VPFI
+### 从您的 vault 提取 VPFI
 
-与 Buy VPFI 页面上的 "Step 3 — Unstake" 相同的 interface — 把 VPFI
-从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出 staking
-pool (该 amount 的 rewards 在该 block 停止 accrue)，也会立即退出
+与 VPFI 章节中 "从您的 vault unstake VPFI" 相同的 interface — 把
+VPFI 从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
 ---

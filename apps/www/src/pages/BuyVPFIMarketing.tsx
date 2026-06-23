@@ -1,7 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import {
   Gift,
-  TrendingUp,
   ShieldCheck,
   ArrowRight,
   Coins,
@@ -10,18 +9,19 @@ import { defiUrl } from '../lib/defiUrl';
 import { usePageMeta } from '../lib/usePageMeta';
 
 /**
- * Public-route marketing page for VPFI (mounted at `/buy-vpfi`).
+ * Public-route marketing page for VPFI (mounted at `/vpfi`).
  *
- * Pure pitch — no wallet connection. The actual buy / stake / unstake
- * surfaces live inside the app at `/app/buy-vpfi` (wallet-gated like
+ * Pure pitch — no wallet connection. The actual deposit / withdraw
+ * surface lives inside the app at `/app/buy-vpfi` (wallet-gated like
  * every other in-app page). The CTA at the bottom opens that surface
  * in a new tab so a marketing-page visitor never has to navigate
  * back to read more.
  *
- * Three cards in the same order the dropdown lists actions:
- *   1. Tiered fee discount  — pitch for borrowers / lenders
- *   2. Staking yield        — pitch for anyone with VPFI sitting idle
- *   3. How it works         — concrete next steps
+ * The page explains why holding VPFI is useful — the time-weighted
+ * fee-discount tiers (lower borrower Loan-Initiation Fee + lower
+ * lender yield fee) plus the interaction-reward stream — and how to
+ * acquire and stake it. Depositing VPFI into the vault lowers fees;
+ * it does not pay any yield on the deposit itself.
  *
  * Read-only protocol stats (TVL / circulating supply / etc.) live on
  * the public Analytics page — keeping that out of here lets this
@@ -73,17 +73,6 @@ export default function BuyVPFIMarketing() {
           <li>{t('buyVpfi.preconnect.discountBullet1')}</li>
           <li>{t('buyVpfi.preconnect.discountBullet2')}</li>
         </ul>
-      </div>
-
-      <div className="card" style={{ marginTop: 16 }}>
-        <div
-          className="card-title"
-          style={{ display: 'flex', alignItems: 'center', gap: 8 }}
-        >
-          <TrendingUp size={16} />
-          {t('buyVpfi.preconnect.stakingTitle')}
-        </div>
-        <p>{t('buyVpfi.preconnect.stakingBody')}</p>
       </div>
 
       <div className="card" style={{ marginTop: 16 }}>

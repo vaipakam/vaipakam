@@ -124,20 +124,14 @@ rabais VPFI lorsque l'emprunteur réclame).
 ### Tes récompenses VPFI
 
 Carte de résumé ambitieuse qui affiche, dans une seule vue, l'image
-combinée des récompenses VPFI du wallet connecté sur les deux flux
-de récompenses. Le chiffre principal est la somme de : récompenses
-de staking en attente, récompenses de staking déjà réclamées,
-récompenses d'interaction en attente et récompenses d'interaction
-déjà réclamées.
+des récompenses VPFI du wallet connecté. Le chiffre principal est la
+somme des récompenses d'interaction en attente et des récompenses
+d'interaction déjà réclamées sur toute la durée de vie du wallet.
 
-Les lignes de ventilation par flux affichent en attente + réclamé,
-avec un lien profond en chevron vers la carte de réclamation
-complète sur sa page native :
+La ligne de ventilation affiche en attente + réclamé, avec un lien
+profond en chevron vers la carte de réclamation complète sur sa page
+native :
 
-- **Rendement du staking** — VPFI en attente accumulé à l'APR du
-  protocole sur ton solde d'vault, plus toutes les récompenses de
-  staking que tu as déjà réclamées depuis ce wallet. Lien vers la
-  carte de réclamation de staking sur la page Acheter VPFI.
 - **Récompenses d'interaction avec la plateforme** — VPFI en attente
   accumulé sur tous les prêts auxquels tu as participé (côté prêteur
   ou emprunteur), plus toutes les récompenses d'interaction que tu
@@ -155,9 +149,9 @@ celui des cartes de réclamation sous-jacentes.
 
 La carte s'affiche toujours pour les wallets connectés, même quand
 toutes les valeurs sont à zéro. L'indice d'état vide est
-intentionnel — masquer la carte à zéro rendrait les programmes de
-récompenses invisibles pour les nouveaux utilisateurs jusqu'à ce
-qu'ils ouvrent Acheter VPFI ou le Centre de réclamations.
+intentionnel — masquer la carte à zéro rendrait le programme de
+récompenses invisible pour les nouveaux utilisateurs jusqu'à ce
+qu'ils ouvrent le Centre de réclamations.
 
 ---
 
@@ -768,32 +762,22 @@ récupère les données à nouveau. Les événements sont regroupés par hash de
 pour que les txns multi-événements (par exemple, accept +
 initiate dans le même bloc) restent ensemble. Les plus récents
 en premier. Affiche offres, prêts, remboursements, réclamations,
-liquidations, mints / burns de NFT, et achats / stakes /
-unstakes de VPFI.
+liquidations, mints / burns de NFT, et dépôts / retraits de VPFI
+en vault.
 
 ---
 
-## Acheter VPFI
+## VPFI
 
 <a id="buy-vpfi.overview"></a>
 
-### Acheter du VPFI
+### Obtenir du VPFI
 
-Deux voies :
-
-- **Canonique (Base)** — appel direct au flux d'achat canonique
-  sur le protocole. Mint VPFI directement vers ton wallet sur
-  Base.
-- **Hors canonique** — l'adaptateur d'achat de la chaîne locale
-  envoie un paquet Chainlink CCIP au récepteur canonique sur Base, qui
-  exécute l'achat sur Base et renvoie le résultat par bridge via
-  le standard de token cross-chain. Latence end-to-end ≈ 1 min
-  sur les paires L2-vers-L2. Le VPFI atterrit dans ton wallet
-  sur la chaîne d'**origine**.
-
-Limites de débit de l'adaptateur (post-durcissement) : 50 000 VPFI
-par requête et 500 000 VPFI glissants sur 24 heures. Réglables
-par la gouvernance via un timelock.
+VPFI est librement transférable. Procure-t'en sur le marché ouvert
+partout où il s'échange, ou transfère-le par bridge : VPFI est un
+token cross-chain Chainlink CCIP, donc il circule entre les chaînes
+prises en charge via le bridge officiel et atterrit dans ton wallet
+sur la chaîne vers laquelle tu as bridgé.
 
 <a id="buy-vpfi.discount-status"></a>
 
@@ -806,26 +790,12 @@ Statut en direct :
 - Pourcentage de remise au tier courant.
 - Drapeau de consentement au niveau wallet.
 
-À noter que le VPFI en vault accumule aussi 5% APR via le pool
-de staking — il n'y a pas d'action « stake » séparée. Déposer
-du VPFI dans ton vault EST staker.
-
-<a id="buy-vpfi.buy"></a>
-
-### Étape 1 — Achète du VPFI avec de l'ETH
-
-Soumet l'achat. Sur la chaîne canonique, le protocole mint
-directement. Sur les chaînes mirror, l'adaptateur d'achat encaisse,
-envoie un message cross-chain, et le récepteur exécute l'achat
-sur Base et renvoie le VPFI par bridge. Les frais de pont plus le
-coût du réseau de vérificateurs est coté en direct et affiché
-dans le formulaire. Le VPFI ne se dépose pas automatiquement en
-vault — l'étape 2 est une action explicite de l'utilisateur par
-conception.
+Le VPFI en vault compte pour ton tier de remise tant qu'il reste
+déposé — il n'y a pas d'action « stake » séparée.
 
 <a id="buy-vpfi.deposit"></a>
 
-### Étape 2 — Dépose le VPFI dans ton vault
+### Dépose le VPFI dans ton vault
 
 Une étape de dépôt explicite séparée, depuis ton wallet vers ton
 vault sur la même chaîne. Requise sur chaque chaîne — même la
@@ -837,7 +807,7 @@ si Permit2 n'est pas configuré sur cette chaîne.
 
 <a id="buy-vpfi.unstake"></a>
 
-### Étape 3 — Désengage le VPFI de ton vault
+### Désengage le VPFI de ton vault
 
 Retire du VPFI de ton vault vers ton wallet. Pas d'étape
 d'approbation — le protocole possède l'vault et se prélève
@@ -854,17 +824,13 @@ l'ancien tier s'applique encore.
 
 ### À propos des récompenses
 
-Deux flux :
+Le **pool d'interaction** verse une part journalière au prorata
+d'une émission journalière fixe, pondérée par ta contribution en
+intérêts réglés au volume de prêts du jour. Les fenêtres
+journalières finalisent paresseusement à la première réclamation
+ou règlement après la fermeture de fenêtre.
 
-- **Pool de staking** — le VPFI détenu en vault accumule à 5%
-  APR en continu, avec composition à la seconde.
-- **Pool d'interaction** — part journalière au prorata d'une
-  émission journalière fixe, pondérée par ta contribution en
-  intérêts réglés au volume de prêts du jour. Les fenêtres
-  journalières finalisent paresseusement à la première
-  réclamation ou règlement après la fermeture de fenêtre.
-
-Les deux flux sont mintés directement sur la chaîne active — il
+Les récompenses sont mintées directement sur la chaîne active — il
 n'y a pas d'aller-retour cross-chain pour l'utilisateur.
 L'agrégation cross-chain des récompenses se fait uniquement
 entre les contrats du protocole.
@@ -873,8 +839,7 @@ entre les contrats du protocole.
 
 ### Réclamer les récompenses
 
-Une seule transaction réclame les deux flux à la fois. Les
-récompenses de staking sont toujours disponibles ; les
+Une seule transaction réclame tes récompenses accumulées. Les
 récompenses d'interaction sont nulles jusqu'à ce que la fenêtre
 journalière concernée finalise (finalisation paresseuse
 déclenchée par la prochaine réclamation ou règlement non nul sur
@@ -884,14 +849,12 @@ ne sous-réclament pas.
 
 <a id="rewards.withdraw-staked"></a>
 
-### Retirer le VPFI staké
+### Retirer le VPFI de ton vault
 
-Interface identique à « Étape 3 — Désengage » sur la page Acheter
-VPFI — retire du VPFI de l'vault vers ton wallet. Le VPFI
-retiré sort du pool de staking immédiatement (les récompenses
-cessent de s'accumuler pour ce montant à ce bloc) et sort de
-l'accumulateur de remise immédiatement (refixation après solde sur
-chaque prêt ouvert).
+Interface identique à « Désengage le VPFI de ton vault » dans la
+section VPFI — retire du VPFI de l'vault vers ton wallet. Le VPFI
+retiré sort de l'accumulateur de remise immédiatement (refixation
+après solde sur chaque prêt ouvert).
 
 ---
 

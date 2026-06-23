@@ -123,7 +123,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 ## 什么是 VPFI？
 
-**VPFI** 是 Vaipakam 的 protocol token。它有三个用途：
+**VPFI** 是 Vaipakam 的 protocol token。它有两个用途：
 
 ### 1. Fee discounts
 
@@ -138,11 +138,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 
 Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中按时间加权**计算，因此在 loan 结束前临时 top up 不能 game the calculation - 你实际持有该 tier 多久，就按相应比例获得 discount。
 
-### 2. Staking — 5% APR
-
-任何停留在你 vault 中的 VPFI 都会自动获得 5% annual yield 的 staking rewards。不需要单独 staking action，没有 lock-up，也没有 “unstake” wait。把 VPFI 移入 vault，它从那一刻开始 earn；移出后 accrual 停止。
-
-### 3. Platform interaction rewards
+### 2. Platform interaction rewards
 
 每天，一个固定的 VPFI pool 会按照 protocol 中流动的 **interest** 比例分配给 lenders 和 borrowers。如果你作为 lender 赚取了 interest，或作为 borrower cleanly 支付了 interest（没有 late fees、没有 default），你就会获得一份 share。
 
@@ -150,11 +146,10 @@ Reward pool 在最初六个月最大，随后在七年内逐步 taper。Early us
 
 ### 如何获得 VPFI
 
-三种路径：
+两种路径：
 
 - **Earn it** - 通过参与 protocol 获得（即上面的 interaction rewards）。
-- **Buy it** - 在 **Buy VPFI** page 按 fixed rate（`1 VPFI = 0.001 ETH`）购买。Fixed-rate program 对每个 wallet、每条 chain 都有 cap。
-- **Bridge it** - VPFI 是 Chainlink CCIP CCT token，因此可以通过 official bridge 在 supported chains 间移动。
+- **Bridge it** - VPFI 是 Chainlink CCIP CCT token，因此可以通过 official bridge 在 supported chains 间移动。你也可以在 VPFI 交易的任何 open market 上获取它。
 
 ---
 
@@ -187,7 +182,7 @@ Vaipakam 在每条 supported chain 上都是 independent deployment：**Ethereum
 
 流程相同，但在 **Create Offer** page 中选择 “NFT rental”，而不是 ERC-20 lending。Form 会一步步引导你完成。
 
-如果你只是想用自己的 VPFI **earn passive yield**，在 **Dashboard** page 将它 deposit 到你的 vault。就这么简单 - staking 从那一刻起自动开始。
+如果你只是想 **lower 你的 protocol fees**，在 **Dashboard** page 将 VPFI deposit 到你的 vault。就这么简单 - 你的 fee-discount tier 会从那一刻起自动生效。
 
 ---
 

@@ -99,15 +99,11 @@ export const GLOSSARY_KEEP_VERBATIM = [
   // Pre-T-068 LayerZero-era contracts — kept verbatim in historical
   // copy + ADRs. Replaced by the CCIP-era set immediately below.
   'VaipakamRewardOApp',
-  'VPFIBuyAdapter',
-  'VPFIBuyReceiver',
   'VPFIOFTAdapter',
   'VPFIMirror',
   // Post-T-068 CCIP-era contracts (2026-05-18 onward).
   'CcipMessenger',
   'VaipakamRewardMessenger',
-  'VpfiBuyAdapter',
-  'VpfiBuyReceiver',
   'VPFIMirrorToken',
   'VpfiPoolRateGovernor',
   'LockReleaseTokenPool',

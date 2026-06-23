@@ -89,7 +89,7 @@ const BASIC_NAV = [
     end: false,
   },
   {
-    to: "/buy-vpfi",
+    to: "/vpfi-vault",
     icon: <Coins size={20} />,
     labelKey: "appNav.buyVpfi",
     end: false,

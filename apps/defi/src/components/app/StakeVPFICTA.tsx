@@ -240,7 +240,7 @@ export function StakeVPFICTA() {
             {t('stakeVpfiCta.noStakeYetBody')}
           </div>
           <Link
-            to="/buy-vpfi"
+            to="/vpfi-vault"
             className="btn btn-primary"
             style={{ marginTop: 8, display: 'inline-block' }}
           >

@@ -248,7 +248,7 @@ comisiones anteriores.
 
 ## ¿Qué es VPFI?
 
-**VPFI** es el token de utilidad de Vaipakam. Hace tres cosas:
+**VPFI** es el token de utilidad de Vaipakam. Hace dos cosas:
 
 ### 1. Descuentos en comisiones
 
@@ -269,14 +269,7 @@ largo de la vida del préstamo**, así que recargar justo antes de que
 acabe un préstamo no manipula el cálculo — ganas el descuento en
 proporción al tiempo que efectivamente mantuviste el nivel.
 
-### 2. Staking — 5% APR
-
-Cualquier VPFI en tu vault gana automáticamente recompensas de
-staking al 5% anual. No hay una acción de staking aparte, ni
-bloqueo, ni espera para retirar. Mueve VPFI a tu vault y gana desde
-ese momento. Sácalo y la acumulación se detiene.
-
-### 3. Recompensas por interacción en la plataforma
+### 2. Recompensas por interacción en la plataforma
 
 Cada día se distribuye un fondo fijo de VPFI a prestamistas y
 prestatarios proporcional a los **intereses** movidos por el
@@ -290,14 +283,12 @@ las mayores emisiones.
 
 ### Cómo conseguir VPFI
 
-Tres caminos:
+Dos caminos:
 
 - **Ganarlo** — participando (recompensas por interacción arriba).
-- **Comprarlo** — a tasa fija (`1 VPFI = 0,001 ETH`) en la página
-  **Comprar VPFI**. El programa de tasa fija tiene tope por
-  billetera por cadena.
 - **Moverlo por puente** — VPFI es un token Chainlink CCIP CCT, así que
-  se mueve entre cadenas compatibles usando el puente oficial.
+  se mueve entre cadenas compatibles usando el puente oficial. También
+  puedes adquirir VPFI en el mercado abierto allá donde se negocie.
 
 ---
 
@@ -343,9 +334,9 @@ Si quieres **alquilar o listar un NFT**:
 Mismo flujo, pero en la página **Crear oferta** eliges "Alquiler de
 NFT" en lugar de préstamo ERC-20. El formulario te guía.
 
-Si solo quieres **ganar rendimiento pasivo sobre tu VPFI**, deposítalo
-en tu vault en la página de **Panel**. Eso es todo — el staking es
-automático desde ese momento.
+Si solo quieres **rebajar tus comisiones de protocolo**, deposita VPFI
+en tu vault en la página de **Panel**. Eso es todo — tu nivel de
+descuento de comisiones se aplica automáticamente desde ese momento.
 
 ---
 

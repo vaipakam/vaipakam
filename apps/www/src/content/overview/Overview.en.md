@@ -227,7 +227,7 @@ is the two numbers above.
 
 ## What's VPFI?
 
-**VPFI** is Vaipakam's protocol token. It does three things:
+**VPFI** is Vaipakam's protocol token. It does two things:
 
 ### 1. Fee discounts
 
@@ -246,14 +246,7 @@ Discounts apply to both lender and borrower fees. The discount is
 a loan ends doesn't game the calculation — you earn the discount in
 proportion to how long you actually held the tier.
 
-### 2. Staking — 5% APR
-
-Any VPFI sitting in your vault automatically earns staking rewards
-at 5% annual yield. There's no separate staking action, no lock-up,
-no "unstake" wait. Move VPFI into your vault and it earns from that
-moment. Move it out and accrual stops.
-
-### 3. Platform interaction rewards
+### 2. Platform interaction rewards
 
 Every day, a fixed pool of VPFI is distributed to lenders and
 borrowers proportional to the **interest** moved through the
@@ -266,14 +259,12 @@ seven years. Early users get the largest emissions.
 
 ### How to get VPFI
 
-Three paths:
+Two paths:
 
 - **Earn it** — by participating (interaction rewards above).
-- **Buy it** — at a fixed rate (`1 VPFI = 0.001 ETH`) on the
-  **Buy VPFI** page. The fixed-rate program is capped per wallet
-  per chain.
 - **Bridge it** — VPFI is a Chainlink CCIP CCT token, so it moves
-  between supported chains using the official bridge.
+  between supported chains using the official bridge. You can also
+  acquire VPFI on the open market wherever it trades.
 
 ---
 
@@ -317,9 +308,9 @@ If you want to **rent or list an NFT**:
 Same flow, but on the **Create Offer** page you pick "NFT rental"
 instead of ERC-20 lending. The form will guide you.
 
-If you just want to **earn passive yield on your VPFI**, deposit it
-into your vault on the **Dashboard** page. That's it — staking is
-automatic from that moment.
+If you just want to **lower your protocol fees**, deposit VPFI into
+your vault on the **Dashboard** page. That's it — your fee-discount
+tier applies automatically from that moment.
 
 ---
 

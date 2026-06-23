@@ -25,10 +25,9 @@ export default function Hero() {
 
           <div className="hero-actions">
             {/* Launch App opens in a new tab so the marketing landing
-                page stays open behind. Buy VPFI link points at the
-                marketing page (`/buy-vpfi`); from there a "Launch App
-                to Buy / Stake / Unstake" CTA opens the wallet-gated
-                in-app surface in a new tab. */}
+                page stays open behind. The VPFI link points at the
+                VPFI-benefits page (`/vpfi`); from there a "Launch App"
+                CTA opens the wallet-gated in-app surface in a new tab. */}
             <a
               href={defiUrl('/')}
               target="_blank"
@@ -37,7 +36,7 @@ export default function Hero() {
             >
               {t('hero.launchApp')} <ArrowRight size={18} />
             </a>
-            <Link to="/buy-vpfi" className="btn btn-secondary btn-lg">
+            <Link to="/vpfi" className="btn btn-secondary btn-lg">
               <Coins size={18} /> {t('hero.buyVpfi')}
             </Link>
             <a href="#how-it-works" className="btn btn-ghost btn-lg">
