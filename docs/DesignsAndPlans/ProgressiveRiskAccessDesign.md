@@ -260,6 +260,20 @@ key therefore folds in `tokenId` + `collateralTokenId` (zero for ERC-20):
 collateralAsset, collateralAssetType, collateralTokenId))`. (1155 *quantity* is
 NOT in the key — it's an amount, bound by #662's `AcceptTerms`, not an identity.)
 
+**NFT-rental `prepayAsset` is the value-bearing leg — tier + key off it, not the
+NFT (Codex r7 P2 L260):** on an NFT-rental offer the `lendingAsset` is the NFT
+being rented, but the asset the borrower actually *posts* (and the lender is
+exposed to) is the ERC-20 `prepayAsset` (`amount × durationDays` + buffer). So
+for `assetType != ERC20` offers the risk **tier** is derived from
+`getEffectiveLiquidityTier(prepayAsset)` (the real economic exposure), and the
+pair key substitutes `prepayAsset` for the NFT leg:
+`keccak256(abi.encode(chainId, prepayAsset, ERC20, 0, collateralAsset,
+collateralAssetType, collateralTokenId))`. Tiering the rented NFT itself (always
+illiquid) would force every rental into `IlliquidCustom` even when the prepay is
+USDC — wrong gate, and it would miss a thin/worthless `prepayAsset` (the actual
+risk). The NFT identity is still bound by #662's `AcceptTerms`; #671 gates on the
+leg that carries value.
+
 **Pair-consent setter takes the RAW typed assets, not an opaque `bytes32`**
 (Codex r1 P2, L4Yj): `setIlliquidPairConsent(lendingAsset, lendingAssetType,
 tokenId, collateralAsset, collateralAssetType, collateralTokenId, …sig)` and
@@ -298,6 +312,15 @@ pair the user is unlocking) and prevent the contract from validating the key.
 > pins the asset at tier-0. This is the gate-side complement to the WETH-itself
 > special-casing above — together they make the numeraire blue-chip while
 > denying borrowed-credibility to anything whose only route is *through* it.
+>
+> **Explicit WETH-only lists count too (Codex r7 P2 L293):** the tier-0 rule
+> keys off the *resulting route set being `{WETH}` only* — NOT off "did we hit
+> the implicit default fallback." A governance-configured `effectivePaaAssets()`
+> that explicitly lists just `[wethContract]` for a thin asset is the identical
+> hazard and gets the identical tier-0 treatment. So the check is "is the asset's
+> effective route set ⊆ {WETH}?" (implicit fallback OR explicit single-entry),
+> not "was the fallback branch taken" — otherwise an operator could hand a thin
+> token blue-chip standing simply by hard-coding `[WETH]` as its PAA list.
 
 The gate evaluates against `min(tier(lendingAsset), tier(collateralAsset))`
 — **the RISKIER leg governs** (Codex r1 P1, L235). The tier scale is inverted
@@ -333,11 +356,17 @@ on `min(tier(lendingAsset), tier(collateralAsset))`:
   close-out exemption). **Use a PRE-create signal, not `saleOfferToLoanId`**
   (Codex r5 P2, L303): that marker is written only *after* `createOffer` returns
   (`EarlyWithdrawalFacet.sol:449-456`), so it isn't visible at the create
-  chokepoint. The sale flow must set a transient `saleVehicleCreate` injection
-  flag *before* its `createOffer` call (same idiom as `matchOverride` /
-  `signedOfferAcceptor`, cleared after), and the gate skips the tier check when
-  it's set. A blanket gate at `createOffer` would otherwise trap a down-tiered
-  lender trying to sell out.
+  chokepoint. The sale flow must set a transient `saleVehicleCreate` flag
+  *before* its `createOffer` call and clear it immediately after. **This flag is
+  a field on the shared ERC-7201 `Storage` struct (a `bool`, exactly like
+  `matchOverride.active` / `signedOfferAcceptor`), NOT a local or calldata arg
+  (Codex r7 P2 L338)** — the create gate runs inside `OfferCreateFacet`, a
+  *different* facet reached by a cross-facet `createOffer` hop, so a local in
+  the sale facet would be invisible there; only shared storage crosses the
+  delegatecall boundary. The gate reads `s.saleVehicleCreate` and skips the tier
+  check when set; it MUST be cleared in the same tx (a non-false value at rest is
+  a bug, same discipline as the other injection slots). A blanket gate at
+  `createOffer` would otherwise trap a down-tiered lender trying to sell out.
 - [`OfferAcceptFacet._acceptOffer:517`](../../contracts/src/facets/OfferAcceptFacet.sol#L517)
   — **the single chokepoint** both `acceptOffer`
   ([`:242`](../../contracts/src/facets/OfferAcceptFacet.sol#L242)) and the
@@ -480,19 +509,26 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
 ## 7. Unlock as the phishing chokepoint (hardening)
 
 - The setters **carry the full EIP-712 envelope** (Codex r1 P2, L4Yz):
-  `setVaultRiskTier(RiskAccessLevel level, address user, uint256 nonce,
-  uint256 deadline, bytes sig)` and `setIlliquidPairConsent(address lendingAsset,
+  `setVaultRiskTier(RiskAccessLevel level, address user, bytes32 consentVersion,
+  uint256 nonce, uint256 deadline, bytes sig)` and
+  `setIlliquidPairConsent(address lendingAsset,
   uint8 lendingAssetType, uint256 tokenId, address collateralAsset, uint8
   collateralAssetType, uint256 collateralTokenId, bool consent, address user,
   bytes32 consentVersion, uint256 nonce, uint256 deadline, bytes sig)` — the
   typed assets (not an opaque `bytes32`, L4Yj) let the wallet render the
   concrete pair, and `user`/`nonce`/`deadline`/`sig` are what make the
   wrong-domain / expired / replay tests enforceable. **`consentVersion` is bound
-  INTO the signed digest (Codex r6 P3 L472)** — not just stored after the fact:
-  the signer commits to the exact terms revision they were shown, so a later
-  terms bump (§8 `riskConsentVersion`) can detect a stale unlock and a relayer
-  can't substitute a different version than what the wallet rendered. They are
-  **deliberate standalone txs**, separable in the wallet prompt.
+  INTO the signed digest of BOTH setters (Codex r6 P3 L472 + r7 P2 L487)** — the
+  tier-raise (`setVaultRiskTier`) and the pair-consent (`setIlliquidPairConsent`)
+  each commit the signer to the exact terms revision they were shown, not just
+  stored after the fact. The tier-raise version lands in
+  the level-keyed `tierConsentVersion`; the pair-consent version
+  lands in `illiquidConsentVersion` (the HARD per-pair map); the soft mid-tier
+  stamp uses `midTierAckVersion` — three SEPARATE stores (Codex r7 P2 L600) so a
+  version write on one dimension can never alias another. A later terms bump
+  detects every stale unlock, and a relayer can't substitute a different version
+  than the wallet rendered. They are **deliberate standalone txs**, separable in
+  the wallet prompt.
 - **Bundling caveat (Codex r1 P2, L4Y4):** "never bundleable" is NOT
   contract-enforceable for smart-account (AA/Safe) users, who can batch
   `setVaultRiskTier` + `acceptOffer` into one user-approved op; with the default
@@ -593,11 +629,13 @@ enum RiskAccessLevel { BlueChipOnly, BroadLiquid, IlliquidCustom }       // 0 = 
 
 mapping(address => RiskAccessLevel) userRiskAccess;                       // broad tier
 mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;          // L2 HARD per-pair illiquid ack
-mapping(address => mapping(bytes32 => uint64)) midTierPairAck;             // L1 SOFT mid-tier ack — SEPARATE map (Codex r2 L475); stores the ack TIMESTAMP not a bool (Codex r3 P3 L473: RD-1 wants {pairKey, timestamp, consentVersion}; 0 = not acked), version in riskConsentVersion. Never reuse illiquidPairConsent for L1 acks.
+mapping(address => mapping(bytes32 => uint64)) midTierPairAck;             // L1 SOFT mid-tier ack — SEPARATE map (Codex r2 L475); stores the ack TIMESTAMP not a bool (Codex r3 P3 L473: RD-1 wants {pairKey, timestamp, consentVersion}; 0 = not acked), version in midTierAckVersion. Never reuse illiquidPairConsent for L1 acks.
 mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;          // EIP-712 anti-replay (dedicated)
 mapping(address => mapping(uint8 => uint64)) riskTierUnlockedAt;           // cooldown anchor PER LEVEL (Codex r2 L473): a single ts would let a BroadLiquid→IlliquidCustom raise overwrite the broad unlock
 mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockedAt;      // cooldown anchor (per-pair)
-mapping(address => mapping(bytes32 => bytes32)) riskConsentVersion;        // {level/pair → consentVersionHash} (Codex r2 P3 L476): detect later terms-revisions
+mapping(address => mapping(uint8 => bytes32)) tierConsentVersion;          // BROAD-tier raise version (Codex r7 P2 L487/L600): {level → consentVersionHash} set by setVaultRiskTier's digest; level-keyed, separate axis from the per-pair maps
+mapping(address => mapping(bytes32 => bytes32)) illiquidConsentVersion;    // HARD per-pair illiquid-consent version (Codex r6 P3 L472 + r7 P2 L600): {pairKey → consentVersionHash}; SEPARATE from the soft map below — a hard-consent pairKey and a soft mid-tier pairKey could otherwise alias and a mid-tier re-stamp would silently bump the illiquid-consent version (or vice-versa)
+mapping(address => mapping(bytes32 => bytes32)) midTierAckVersion;         // SOFT mid-tier-use version (Codex r7 P2 L600): {pairKey → consentVersionHash} for the non-blocking midTierPairAck stamp; never shares a slot with illiquidConsentVersion
 mapping(address => bool) riskStrictMode;                                   // optional RD-1 flag (default-off)
 uint32 riskAccessUnlockCooldownSec;                                        // TOP-LEVEL field, NOT in protocolCfg (see below); default 0
 ```
@@ -674,7 +712,8 @@ read-accessor mirror the existing bounded-knob pattern of
       (Codex r6 P3 L584):** RD-1's non-blocking record is the gate's
       responsibility, not an optional user call. On the first mid-tier (L1)
       origination for a given `pairKey`, the origination gate itself writes
-      `midTierPairAck[user][pairKey] = {block.timestamp, riskConsentVersion}` if
+      `midTierPairAck[user][pairKey] = block.timestamp` (and
+      `midTierAckVersion[user][pairKey] = currentTermsVersion`) if
       absent — it never reverts a non-strict L1 user, it just records that this
       user transacted this mid-tier pair (for later analytics / a future
       strict-mode retro-ack / consent-version drift detection). `setMidTierPairAck`
