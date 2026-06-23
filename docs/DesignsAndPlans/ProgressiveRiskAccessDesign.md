@@ -129,6 +129,20 @@ claims in one tx for UX; not required for correctness. Either way RD-2's "no
 value trapped" holds — the gate only defers the claim until the holder
 deliberately acks, which they can always do.
 
+> **Non-signing contract holders (Codex r9 P2 L126):** the "holder can always
+> ack" guarantee assumes the holder can produce a signature for
+> `setIlliquidPairConsent`. An EOA or ERC-1271 wallet can; a plain contract that
+> implements neither cannot self-submit the signed ack. For such a holder the
+> pair ack comes through the same owner-gated `setIlliquidPairConsentFor`
+> escape hatch as the tier raise — **but ONLY if it is in `protocolManagedVaults`**
+> (a known protocol contract). An *arbitrary* non-signing contract that ends up
+> holding a position NFT for an illiquid pair is therefore the one case where
+> the claim can't be self-resolved; this is an inherent property of a contract
+> that can neither sign nor be governance-managed, not a gate regression (the
+> same contract already couldn't have *originated* the position under §7's
+> self-submit rule). Flag it in the claim-path docs so integrators route NFT
+> custody through signing-capable accounts.
+
 **Grounded:**
 - Pull-claim entries: [`ClaimFacet.claimAsLender(uint256):205`](../../contracts/src/facets/ClaimFacet.sol#L205)
   and [`ClaimFacet.claimAsBorrower(uint256):990`](../../contracts/src/facets/ClaimFacet.sol#L990).
@@ -280,7 +294,12 @@ leg that carries value.
 > create — not just the NFT + collateral legs. An admin pausing a compromised
 > ERC-20 expects it blocked everywhere it carries value, and for a rental that
 > value lives in the prepay leg. Add `prepayAsset` to the create-time pause
-> sweep wherever the lend/collateral legs are already checked.
+> sweep wherever the lend/collateral legs are already checked — **and to the
+> ACCEPT-time pause recheck too (Codex r9 P2 L283):** the existing accept path
+> already re-screens the lend/collateral legs for pauses (an asset can be paused
+> in the window between create and accept), so the rental prepay leg must be
+> re-screened there as well, or a prepay-asset paused after offer creation would
+> still bind into a loan at accept.
 
 **Pair-consent setter takes the RAW typed assets, not an opaque `bytes32`**
 (Codex r1 P2, L4Yj): `setIlliquidPairConsent(lendingAsset, lendingAssetType,
@@ -534,8 +553,11 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   uint256 nonce, uint256 deadline, bytes sig)` and
   `setIlliquidPairConsent(address lendingAsset,
   uint8 lendingAssetType, uint256 tokenId, address collateralAsset, uint8
-  collateralAssetType, uint256 collateralTokenId, bool consent, address user,
-  bytes32 consentVersion, uint256 nonce, uint256 deadline, bytes sig)` — the
+  collateralAssetType, uint256 collateralTokenId, address prepayAsset, bool
+  consent, address user, bytes32 consentVersion, uint256 nonce, uint256
+  deadline, bytes sig)` — **`prepayAsset` is in the signed digest (Codex r9 P2
+  L538)** so an NFT-rental pair consent commits to the value-bearing ERC-20 leg
+  the key is actually built from (§4); `address(0)` for ERC-20 offers. The
   typed assets (not an opaque `bytes32`, L4Yj) let the wallet render the
   concrete pair, and `user`/`nonce`/`deadline`/`sig` are what make the
   wrong-domain / expired / replay tests enforceable. **`consentVersion` is bound
@@ -550,6 +572,23 @@ passive receipt or a payout inside someone else's tx?" → **no check**.
   detects every stale unlock, and a relayer can't substitute a different version
   than the wallet rendered. They are **deliberate standalone txs**, separable in
   the wallet prompt.
+  - **Reject a stale signed version before stamping (Codex r9 P2 L635):** each
+    setter REQUIRES the caller's signed `consentVersion == currentRiskTermsVersion`
+    and reverts `StaleRiskTermsVersion` otherwise — the wallet rendered, and the
+    user signed, a SPECIFIC version; if governance bumped the terms in between,
+    the user must re-sign against the new text. Without this check a setter would
+    happily stamp `currentRiskTermsVersion` even though the signer approved an
+    older revision, defeating the whole version mechanism.
+  - **Same-level re-consent must refresh, not no-op (Codex r9 P2 L635):**
+    `setVaultRiskTier` with `level == current level` is a valid call (not a
+    revert) whose purpose is to **re-stamp** `tierConsentVersion[user][level] =
+    currentRiskTermsVersion` after a terms bump. Otherwise a user already at
+    `BroadLiquid`/`IlliquidCustom` could never refresh their consent to the new
+    terms (the level isn't changing) and would be wedged — either permanently
+    flagged stale or, worse, silently treated as current. Same-level calls skip
+    the cooldown re-stamp (no new privilege granted) but always refresh the
+    version; pair re-consent (`setIlliquidPairConsent` on an already-consented
+    pair) behaves identically for `illiquidConsentVersion`.
 - **Bundling caveat (Codex r1 P2, L4Y4):** "never bundleable" is NOT
   contract-enforceable for smart-account (AA/Safe) users, who can batch
   `setVaultRiskTier` + `acceptOffer` into one user-approved op; with the default
@@ -668,9 +707,11 @@ mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockedAt;      // co
 mapping(address => mapping(uint8 => bytes32)) tierConsentVersion;          // BROAD-tier raise version (Codex r7 P2 L487/L600): {level → consentVersionHash} set by setVaultRiskTier's digest; level-keyed, separate axis from the per-pair maps
 mapping(address => mapping(bytes32 => bytes32)) illiquidConsentVersion;    // HARD per-pair illiquid-consent version (Codex r6 P3 L472 + r7 P2 L600): {pairKey → consentVersionHash}; SEPARATE from the soft map below — a hard-consent pairKey and a soft mid-tier pairKey could otherwise alias and a mid-tier re-stamp would silently bump the illiquid-consent version (or vice-versa)
 mapping(address => mapping(bytes32 => bytes32)) midTierAckVersion;         // SOFT mid-tier-use version (Codex r7 P2 L600): {pairKey → consentVersionHash} for the non-blocking midTierPairAck stamp; never shares a slot with illiquidConsentVersion
+mapping(address => mapping(bytes32 => bytes32)) midTierExplicitAckVersion; // version of the EXPLICIT strict-mode ack (Codex r9 P2 L670): {pairKey → consentVersionHash} captured by setMidTierPairAck. Strict mode requires this == currentRiskTermsVersion (a FRESH ack), so an old setter-ack goes stale on a terms bump just like the unlock versions.
 mapping(address => bool) riskStrictMode;                                   // optional RD-1 flag (default-off)
+mapping(address => bool) protocolManagedVaults;                            // owner-maintained allow-set (Codex r8 P2 L574 + r9 P2 L595): the ONLY accounts setVaultRiskTierFor / setIlliquidPairConsentFor may target. Maintained via admin addProtocolManagedVault / removeProtocolManagedVault (§9). Empty by default; backstop/adapter vaults added at deploy.
 bool saleVehicleCreate;                                                    // TRANSIENT injection flag (Codex r7 P2 L338 + r8 P2 L640): set by the lender-sale flow before its cross-facet createOffer hop, read by the create gate to skip the tier check, cleared same-tx. MUST be false at rest (like matchOverride.active / signedOfferAcceptor).
-bytes32 currentRiskTermsVersion;                                           // AUTHORITATIVE global risk-terms version (Codex r8 P2 L716): admin/governance-set hash of the current risk-disclosure text. The gate stamps THIS into the per-user version maps; the setters bind it into their digests; bumping it flags every prior unlock/stamp as stale. Single source of "currentTermsVersion".
+bytes32 currentRiskTermsVersion;                                           // AUTHORITATIVE global risk-terms version (Codex r8 P2 L716): admin/governance-set hash of the current risk-disclosure text via setRiskTermsVersion (§9). The gate stamps THIS into the per-user version maps; the setters REQUIRE the caller's signed consentVersion == this (reject stale, Codex r9 P2 L635) before stamping; bumping it flags every prior unlock/stamp as stale. Single source of "currentTermsVersion".
 uint32 riskAccessUnlockCooldownSec;                                        // TOP-LEVEL field, NOT in protocolCfg (see below); default 0
 ```
 
@@ -690,9 +731,20 @@ read-accessor mirror the existing bounded-knob pattern of
   `setVaultRiskTier`, `setIlliquidPairConsent`, **`setRiskStrictMode(bool)`**
   (the user-facing opt-IN to L1 strict mode — present iff `riskStrictMode`
   ships; without it the flag is permanently false and strict mode is dead,
-  Codex r4 P3 L527), **`setMidTierPairAck`** (the L1 soft-ack setter; writes the
-  `midTierPairAck` timestamp map, never `illiquidPairConsent` — Codex r3 P3
-  L499), the admin-only `setRiskAccessUnlockCooldown`, and views. All asset-pair
+  Codex r4 P3 L527; **the OFF direction is risk-INCREASING so it carries the
+  same EIP-712 signed envelope as the unlock setters — `setRiskStrictMode(bool
+  enabled, address user, bytes32 consentVersion, uint256 nonce, uint256
+  deadline, bytes sig)` — not a plain setter (Codex r9 P2 L692)**; turning
+  strict mode ON may stay a plain self-call), **`setMidTierPairAck`** (the L1
+  EXPLICIT strict-mode ack setter; writes `midTierExplicitAck` +
+  `midTierExplicitAckVersion`, NOT the passive `midTierPairAck` the gate
+  auto-stamps, and never `illiquidPairConsent` — Codex r3 P3 L499 + r9 P2 L695),
+  the **admin-only** `setRiskAccessUnlockCooldown`, **`setRiskTermsVersion(bytes32)`**
+  (admin/governance-only — bumps `currentRiskTermsVersion`, the single act that
+  invalidates every prior unlock/ack on a terms revision, Codex r9 P2 L673), and
+  **`addProtocolManagedVault(address)` / `removeProtocolManagedVault(address)`**
+  (admin-only — maintain the `protocolManagedVaults` allow-set the escape-hatch
+  setters check, Codex r9 P2 L595), and views. All asset-pair
   APIs take the **raw typed assets** — `(lendingAsset, lendingAssetType,
   tokenId, collateralAsset, collateralAssetType, collateralTokenId,
   prepayAsset)` — NOT two bare addresses (Codex r2 L498). **`prepayAsset` is
