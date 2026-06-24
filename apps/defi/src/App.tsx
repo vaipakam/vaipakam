@@ -14,6 +14,7 @@ import Refinance from './pages/Refinance';
 import ClaimCenter from './pages/ClaimCenter';
 import NftVerifier from './pages/NftVerifier';
 import KeeperSettings from './pages/KeeperSettings';
+import RiskAccessSettings from './pages/RiskAccessSettings';
 import Alerts from './pages/Alerts';
 import Allowances from './pages/Allowances';
 import VaultAssets from './pages/VaultAssets';
@@ -153,6 +154,7 @@ function pageRoutes(): ReactElement {
         <Route path="claims" element={<ClaimCenter />} />
         <Route path="activity" element={<Activity />} />
         <Route path="keepers" element={<KeeperSettings />} />
+        <Route path="risk-access" element={<RiskAccessSettings />} />
         <Route path="alerts" element={<Alerts />} />
         <Route path="allowances" element={<Allowances />} />
         <Route path="vault" element={<VaultAssets />} />

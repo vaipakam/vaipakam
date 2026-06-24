@@ -133,6 +133,12 @@ const ADVANCED_NAV = [
     labelKey: "appNav.keepers",
     end: false,
   },
+  {
+    to: "/risk-access",
+    icon: <Sliders size={20} />,
+    labelKey: "appNav.riskAccess",
+    end: false,
+  },
 ];
 
 export default function AppLayout() {

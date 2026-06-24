@@ -4,6 +4,7 @@ import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
+import { useRiskAccessPreflight } from '../hooks/useRiskAccessPreflight';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -1877,6 +1878,10 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offers skip the check (no DEX swap path applies). */}
         <AcceptLiquidityPreflight offer={offer} />
 
+        {/* #671 (#728 PR-2e) — progressive-risk gate preflight: surfaces a
+            tier / consent / strict-ack requirement before the user signs. */}
+        <AcceptRiskPreflight offer={offer} />
+
         {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
             was removed: an accept now binds an EIP-712-signed `AcceptTerms`, and
             `_verifyAndBindAccept` rejects any unsigned/placeholder accept before
@@ -2000,6 +2005,35 @@ function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
     workerOrigin: PREFLIGHT_WORKER_ORIGIN_OB,
   });
   return <LiquidityPreflightBanner result={result} compact />;
+}
+
+/**
+ * #671 progressive risk access (#728 PR-2e) — accept-time risk preflight.
+ * Asks the read-only `previewOfferAcceptBlock` whether the connected wallet
+ * would be blocked by the progressive-risk gate, and surfaces the reason + a
+ * pointer to Risk Access settings. No-op when the gate is off (the view returns
+ * OK) or unsupported. The on-chain gate at loan-init is the real boundary; this
+ * just avoids an opaque revert.
+ */
+function AcceptRiskPreflight({ offer }: { offer: OfferData }) {
+  const { blocked, reason } = useRiskAccessPreflight(offer.id);
+  if (!blocked) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        margin: '0.5rem 0',
+        padding: '0.55rem 0.75rem',
+        borderRadius: 8,
+        fontSize: '0.85rem',
+        background: 'rgba(220,160,30,0.12)',
+        border: '1px solid rgba(220,160,30,0.4)',
+      }}
+    >
+      {reason}{' '}
+      <Link to="/risk-access">Open Risk Access settings</Link>
+    </div>
+  );
 }
 
 function Pagination({ page, totalPages, onPage }: PaginationProps) {

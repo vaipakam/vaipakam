@@ -1,0 +1,234 @@
+import { useState } from "react";
+import { useWallet } from "../context/WalletContext";
+import { useDiamondContract } from "../contracts/useDiamond";
+import { beginStep } from "../lib/journeyLog";
+import { ErrorAlert } from "../components/app/ErrorAlert";
+import {
+  useRiskAccess,
+  RISK_TIER,
+  RISK_TIER_LABEL,
+  type RiskTier,
+} from "../hooks/useRiskAccess";
+
+/**
+ * #671 progressive risk access — self-sovereign settings (#728 PR-2e).
+ *
+ * Every vault starts at the safest tier (Blue-chip only). From here a user opts
+ * UP to riskier tiers — and only with explicit consent — exactly as the
+ * contract requires. Lowering a tier is immediate; raising one may be subject to
+ * an opt-up cooldown, and a governance risk-terms bump re-locks a held tier
+ * until it is re-affirmed (both reflected in the on-chain *effective* tier).
+ *
+ * Per-pair illiquid consent and the strict-mode mid-tier acknowledgement are
+ * pair-specific, so they are collected contextually at accept time (the accept
+ * flow's risk preflight points back here). This page owns the two GLOBAL,
+ * always-relevant controls: the vault's risk tier and the strict-mode opt-in.
+ */
+
+const TIER_OPTIONS: Array<{ level: RiskTier; hint: string }> = [
+  {
+    level: RISK_TIER.BlueChipOnly,
+    hint: "Safest. Only blue-chip pairs (the protocol's numeraire basket or deepest-liquidity assets).",
+  },
+  {
+    level: RISK_TIER.BroadLiquid,
+    hint: "Adds mid-tier liquid assets. Still backed by the quantitative LTV / health-factor checks.",
+  },
+  {
+    level: RISK_TIER.IlliquidCustom,
+    hint: "Allows illiquid / unpriced assets and NFTs. Each illiquid pair also needs a one-time per-pair consent.",
+  },
+];
+
+export default function RiskAccessSettings() {
+  const { address } = useWallet();
+  const diamondRw = useDiamondContract();
+  const risk = useRiskAccess();
+
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const rw = diamondRw as unknown as {
+    setVaultRiskTier: (
+      level: number,
+    ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+    setRiskStrictMode: (
+      enabled: boolean,
+    ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+  };
+
+  async function chooseTier(level: RiskTier) {
+    if (level === risk.rawTier) return;
+    const step = beginStep({
+      area: "profile",
+      flow: "setVaultRiskTier",
+      step: "submit",
+      wallet: address ?? undefined,
+    });
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      const tx = await rw.setVaultRiskTier(level);
+      await tx.wait();
+      step.success();
+      setNotice(
+        level > risk.effectiveTier
+          ? "Tier raised. If an opt-up cooldown is configured it becomes effective once the cooldown elapses."
+          : "Tier updated.",
+      );
+      await risk.refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+      step.failure(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleStrictMode() {
+    const next = !risk.strictMode;
+    const step = beginStep({
+      area: "profile",
+      flow: "setRiskStrictMode",
+      step: "submit",
+      wallet: address ?? undefined,
+    });
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      const tx = await rw.setRiskStrictMode(next);
+      await tx.wait();
+      step.success();
+      setNotice(
+        next
+          ? "Strict mode on. Mid-tier pairs now also need an explicit per-pair acknowledgement."
+          : "Strict mode off.",
+      );
+      await risk.refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+      step.failure(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!address) {
+    return (
+      <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+        <h1>Risk Access</h1>
+        <p>Connect a wallet to view and manage your vault's risk-access tier.</p>
+      </div>
+    );
+  }
+
+  if (!risk.supported) {
+    return (
+      <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+        <h1>Risk Access</h1>
+        <ErrorAlert message="Progressive risk access isn't available on this deployment yet." />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+      <h1>Risk Access</h1>
+      <p>
+        Choose how risky the assets your offers may involve can be. Your vault
+        starts at the safest tier and opts up only with your explicit consent.
+      </p>
+
+      {err && <ErrorAlert message={err} onDismiss={() => setErr(null)} />}
+      {notice && (
+        <div
+          role="status"
+          style={{
+            margin: "0.75rem 0",
+            padding: "0.6rem 0.8rem",
+            borderRadius: 8,
+            background: "rgba(40,160,90,0.12)",
+            border: "1px solid rgba(40,160,90,0.35)",
+          }}
+        >
+          {notice}
+        </div>
+      )}
+
+      <section style={{ margin: "1rem 0", fontSize: "0.9rem", opacity: 0.85 }}>
+        <div>
+          Effective tier: <strong>{RISK_TIER_LABEL[risk.effectiveTier]}</strong>
+          {risk.rawTier !== risk.effectiveTier && (
+            <>
+              {" "}
+              (opted in to <strong>{RISK_TIER_LABEL[risk.rawTier]}</strong>,
+              re-locked pending cooldown / terms re-affirmation)
+            </>
+          )}
+        </div>
+        <div>
+          Enforcement:{" "}
+          <strong>{risk.gateEnabled ? "on" : "off (not yet enforced)"}</strong>
+        </div>
+      </section>
+
+      <h2 style={{ fontSize: "1.05rem" }}>Vault risk tier</h2>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+        {TIER_OPTIONS.map((opt) => {
+          const selected = risk.rawTier === opt.level;
+          return (
+            <button
+              key={opt.level}
+              type="button"
+              disabled={busy || selected}
+              onClick={() => chooseTier(opt.level)}
+              style={{
+                textAlign: "left",
+                padding: "0.7rem 0.9rem",
+                borderRadius: 10,
+                border: selected
+                  ? "2px solid var(--accent, #4a7dff)"
+                  : "1px solid rgba(255,255,255,0.18)",
+                background: selected ? "rgba(74,125,255,0.10)" : "transparent",
+                cursor: busy || selected ? "default" : "pointer",
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>
+                {RISK_TIER_LABEL[opt.level]} {selected && "✓"}
+              </div>
+              <div style={{ fontSize: "0.82rem", opacity: 0.8 }}>{opt.hint}</div>
+            </button>
+          );
+        })}
+      </div>
+      <p style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: "0.5rem" }}>
+        Lowering your tier takes effect immediately. Raising it may be subject to
+        an opt-up cooldown before it becomes effective.
+      </p>
+
+      <h2 style={{ fontSize: "1.05rem", marginTop: "1.5rem" }}>Strict mode</h2>
+      <label
+        style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}
+      >
+        <input
+          type="checkbox"
+          checked={risk.strictMode}
+          disabled={busy}
+          onChange={toggleStrictMode}
+        />
+        <span>
+          Require an explicit per-pair acknowledgement for mid-tier pairs too —
+          not just illiquid ones.
+        </span>
+      </label>
+      <p style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: "0.4rem" }}>
+        Off by default. Turning it off again is immediate unless an opt-up
+        cooldown is configured, in which case the requirement lingers for that
+        window.
+      </p>
+    </div>
+  );
+}
