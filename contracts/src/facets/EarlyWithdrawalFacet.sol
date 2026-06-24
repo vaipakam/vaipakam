@@ -7,6 +7,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibCompliance} from "../libraries/LibCompliance.sol";
+import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibLoan} from "../libraries/LibLoan.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -106,6 +107,33 @@ contract EarlyWithdrawalFacet is
     error SaleNotLinked();
     error SaleOfferNotAccepted();
 
+    /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
+    ///      for the direct Option-1 loan sale. Kept in its own frame so the
+    ///      PairId locals + classification chain do not add to the already-deep
+    ///      `sellLoanViaBuyOffer` stack (viaIR stack ceiling). Standing-consent
+    ///      semantics — the buy offer carries no #662 acknowledgement for this
+    ///      loan's assets. Behind the off-by-default master switch.
+    function _assertBuyerRiskAccess(
+        LibVaipakam.Storage storage s,
+        LibVaipakam.Loan storage loan,
+        address buyer
+    ) private view {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibRiskAccess.assertActorMayTransact(
+            s,
+            buyer,
+            LibRiskAccess.PairId({
+                lendAsset: loan.principalAsset,
+                lendType: loan.assetType,
+                lendTokenId: loan.tokenId,
+                collAsset: loan.collateralAsset,
+                collType: loan.collateralAssetType,
+                collTokenId: loan.collateralTokenId,
+                prepayAsset: loan.prepayAsset
+            })
+        );
+    }
+
     /**
      * @notice Allows original lender to sell an active loan by accepting a new Lender Offer.
      * @dev Option 1: liam accepts Noah's Lender Offer. Transfers principal, forfeits accrued to treasury,
@@ -195,6 +223,16 @@ contract EarlyWithdrawalFacet is
             loan.collateralAsset,
             loan.collateralAmount
         );
+
+        // #671 phase 2 (Codex #729 r4) — re-gate the BUYER against the loan's
+        // asset pair. This direct Option-1 sale bypasses acceptOffer /
+        // initiateLoan, so the accept-time progressive-risk gate in LoanFacet
+        // never runs; without this re-check a buy offer authored before the gate
+        // was enabled (or whose creator has since down-tiered, revoked the pair
+        // consent, or gone stale after a terms bump) could still step into an
+        // illiquid- or mid-tier-backed live loan. Extracted to a helper so the
+        // PairId locals do not add to this function's (already deep) stack frame.
+        _assertBuyerRiskAccess(s, loan, buyOffer.creator);
 
         // Snapshot pre-existing heldForLender before any new shortfall deposits.
         uint256 priorHeld = s.heldForLender[loanId];

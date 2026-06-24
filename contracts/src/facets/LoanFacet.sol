@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -498,7 +499,90 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                 revert IlliquidAssetNotAcknowledged(offer.collateralAsset);
             }
         }
-        if (ctx.isLenderSaleVehicle) return;
+        if (ctx.isLenderSaleVehicle) {
+            // #671 phase 2 (Codex #729 r3) — gate the loan-sale BUYER. The
+            // seller (exiting lender) stays exempt, but the buyer newly acquires
+            // the live lender position and its risk exposure, so the buyer must
+            // satisfy the gate against the LINKED loan's asset pair. The buyer is
+            // the incoming lender on this sale-vehicle loan (sale offers mimic a
+            // borrower offer, so the acceptor becomes the lender). Standing
+            // consent only: the sale AcceptTerms ack names the sale vehicle's
+            // assets, not the linked loan's, so it cannot substitute here.
+            if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
+                LibVaipakam.Loan storage soldLoan =
+                    s.loans[s.saleOfferToLoanId[ctx.offerId]];
+                LibRiskAccess.assertActorMayTransact(
+                    s,
+                    s.loans[ctx.loanId].lender,
+                    LibRiskAccess.PairId({
+                        lendAsset: soldLoan.principalAsset,
+                        lendType: soldLoan.assetType,
+                        lendTokenId: soldLoan.tokenId,
+                        collAsset: soldLoan.collateralAsset,
+                        collType: soldLoan.collateralAssetType,
+                        collTokenId: soldLoan.collateralTokenId,
+                        prepayAsset: soldLoan.prepayAsset
+                    })
+                );
+            }
+            return;
+        }
+        // #671 phase 2 (#728) — ACCEPTOR-side progressive-risk gate. The create
+        // chokepoint (OfferCreateFacet) already gated the offer CREATOR; here we
+        // gate the party NEWLY entering the pair — the loan participant that is
+        // NOT the creator (the offer's counterparty). We derive it from the loan
+        // rather than `ctx.acceptor`, whose value is the funds-mover and for a
+        // lender offer coincides with the creator (which would wrongly re-gate the
+        // already-gated creator). The #662 acks (`s.acceptAck*`) are the
+        // accepting caller's, so they line up with this same party. Behind the
+        // off-by-default `riskAccessGateEnabled` kill-switch, scoped to the
+        // direct-accept path (`acceptAckActive`). For an illiquid pair the
+        // per-pair consent is satisfied by a standing consent OR — the #662⇄#671
+        // unification — by the acceptor's signed #662 illiquid acknowledgement,
+        // but only when that ack names EXACTLY the gate's illiquid legs and risk
+        // terms are fresh (Codex #729 r1; a rental's illiquid prepay leg, which
+        // the #662 ack doesn't name, then falls back to a standing consent). The
+        // keeper-match path (`acceptAckActive == false`) re-asserts each offer's
+        // own creator at the matcher (#728 PR-2b).
+        if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
+            LibRiskAccess.PairId memory pair = LibRiskAccess.PairId({
+                lendAsset: offer.lendingAsset,
+                lendType: offer.assetType,
+                lendTokenId: offer.tokenId,
+                collAsset: offer.collateralAsset,
+                collType: offer.collateralAssetType,
+                collTokenId: offer.collateralTokenId,
+                prepayAsset: offer.prepayAsset
+            });
+            // (Codex #729 r3) Re-gate the offer CREATOR against the LIVE
+            // tier/consent state. The create-time chokepoint gated the creator
+            // when the offer was authored, but that snapshot goes stale: the gate
+            // may have flipped on after create, or the creator may since have
+            // down-tiered, revoked the pair consent, or gone stale after a terms
+            // bump. Re-asserting here closes that window before the loan is
+            // admitted. Standing consent only — the creator signs no #662 accept
+            // ack, so there is nothing to substitute.
+            LibRiskAccess.assertActorMayTransact(s, offer.creator, pair);
+            LibVaipakam.Loan storage gateLoan = s.loans[ctx.loanId];
+            address acceptingParty = offer.creator == gateLoan.lender
+                ? gateLoan.borrower
+                : gateLoan.lender;
+            // The trailing `*AckVerified` flags say whether the #662 check above
+            // ACTUALLY validated each leg's ack (i.e. saw it `Illiquid` via
+            // `checkLiquidity`). Only a verified ack may substitute for a standing
+            // illiquid-pair consent (Codex #729 r3) — a leg the gate deems
+            // illiquid for another reason (derived tier 0, rental prepay) was
+            // never validated and must fall back to standing consent.
+            LibRiskAccess.assertAcceptorMayTransact(
+                s,
+                acceptingParty,
+                pair,
+                s.acceptAckIlliquidLend,
+                s.acceptAckIlliquidColl,
+                ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Illiquid,
+                ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid
+            );
+        }
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
             ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
         bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&

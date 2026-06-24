@@ -222,6 +222,68 @@ contract RiskAccessFacet is DiamondAccessControl {
         );
     }
 
+    /// @notice Non-reverting mirror of the accept-time risk gate for
+    ///         `OfferAcceptFacet.previewAccept`'s dry-run (Codex #729 r3 finding
+    ///         C; sale-offer handling r4): returns the FIRST failing block code.
+    /// @return 0 = OK (or gate off), 1 = tier too low,
+    ///         2 = illiquid pair needs standing consent.
+    /// @dev    The WHOLE decision lives HERE, not in OfferAcceptFacet: that facet
+    ///         sits at the EIP-170 ceiling, and the classification chain
+    ///         (`previewActorBlock` → `_pairRequiredLevel` → `_isBlueChip` …) is
+    ///         already linked into RiskAccessFacet. It even folds in the master-
+    ///         switch so OfferAcceptFacet pays for a single staticcall and a
+    ///         two-way branch. Builds the PairId the SAME way the matching accept
+    ///         gate does so the preview and the gate classify identically.
+    ///         Standing-consent semantics (a preview has no #662 ack to
+    ///         substitute) — see `LibRiskAccess.previewActorBlock`.
+    ///
+    ///         Two shapes (mirroring `LoanFacet._maybeRunInitialRiskGates`):
+    ///          - **lender-sale vehicle** (`saleOfferToLoanId[offerId] != 0`): the
+    ///            accept gates only the BUYER (the `acceptor`) against the LINKED
+    ///            loan's pair — the exiting seller is exempt — so the preview does
+    ///            the same (Codex #729 r4: NOT a blanket `return 0`, which would
+    ///            quote an under-tiered sale buyer as OK);
+    ///          - **normal offer**: the creator (re-gated at accept) then the
+    ///            acceptor against the offer's own pair.
+    function previewOfferAcceptBlock(uint256 offerId, address acceptor)
+        external
+        view
+        returns (uint8)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
+        uint256 saleLoanId = s.saleOfferToLoanId[offerId];
+        if (saleLoanId != 0) {
+            LibVaipakam.Loan storage sold = s.loans[saleLoanId];
+            return LibRiskAccess.previewActorBlock(
+                s,
+                acceptor, // the buyer = incoming lender on the sale vehicle
+                LibRiskAccess.PairId({
+                    lendAsset: sold.principalAsset,
+                    lendType: sold.assetType,
+                    lendTokenId: sold.tokenId,
+                    collAsset: sold.collateralAsset,
+                    collType: sold.collateralAssetType,
+                    collTokenId: sold.collateralTokenId,
+                    prepayAsset: sold.prepayAsset
+                })
+            );
+        }
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        LibRiskAccess.PairId memory pair = LibRiskAccess.PairId({
+            lendAsset: o.lendingAsset,
+            lendType: o.assetType,
+            lendTokenId: o.tokenId,
+            collAsset: o.collateralAsset,
+            collType: o.collateralAssetType,
+            collTokenId: o.collateralTokenId,
+            prepayAsset: o.prepayAsset
+        });
+        uint8 creatorBlock = LibRiskAccess.previewActorBlock(s, o.creator, pair);
+        if (creatorBlock != 0) return creatorBlock;
+        return LibRiskAccess.previewActorBlock(s, acceptor, pair);
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     function _applyTier(address vault, uint8 level) private {

@@ -22,6 +22,9 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
@@ -189,8 +192,23 @@ contract EarlyWithdrawalFacetTest is Test {
         accessControlFacet = new AccessControlFacet();
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
+        // #671 phase 2 (Codex #729 r4) — ConfigFacet (gate master switch) +
+        // RiskAccessFacet (tier/consent setters + previewOfferAcceptBlock) are
+        // needed by the buyer-side risk-gate tests for the direct sale path.
+        ConfigFacet configFacet = new ConfigFacet();
+        RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(configFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConfigFacetSelectors()
+        });
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(riskAccessFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -2382,6 +2400,115 @@ contract EarlyWithdrawalFacetTest is Test {
             TestMutatorFacet(address(diamond)).getEncumberedRaw(newLender, mockERC20, 0),
             held,
             "held-for-lender reservation re-keyed to the new lender"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // #671 phase 2 (Codex #729 r4) — the BUYER-side risk gate also covers the
+    // DIRECT buy-offer loan-sale path + its preview.
+    // ════════════════════════════════════════════════════════════════════════
+
+    uint8 constant _BLUECHIP = uint8(LibVaipakam.RiskAccessLevel.BlueChipOnly);
+    uint8 constant _ILLIQUID = uint8(LibVaipakam.RiskAccessLevel.IlliquidCustom);
+
+    /// @dev Force `getEffectiveLiquidityTier(asset) == tier` for the gate's
+    ///      classification (read via `address(this)` inside LibRiskAccess).
+    function _mockTier(address asset, uint8 tier) internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, asset
+            ),
+            abi.encode(tier)
+        );
+    }
+
+    /// @dev The loan's asset pair exactly as the gate / preview builds it.
+    function _loanPair() internal view returns (LibRiskAccess.PairId memory) {
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        return LibRiskAccess.PairId({
+            lendAsset: l.principalAsset,
+            lendType: l.assetType,
+            lendTokenId: l.tokenId,
+            collAsset: l.collateralAsset,
+            collType: l.collateralAssetType,
+            collTokenId: l.collateralTokenId,
+            prepayAsset: l.prepayAsset
+        });
+    }
+
+    // r4 finding 2 — the direct buy-offer sale path (sellLoanViaBuyOffer) bypasses
+    // acceptOffer/initiateLoan, so its own gate must refuse an under-tiered buyer.
+    function test_sellLoanViaBuyOffer_gatesUnderTieredBuyer() public {
+        // Loan pair -> IlliquidCustom: principal blue-chip, collateral tier 0.
+        _mockTier(mockERC20, 3);
+        _mockTier(mockCollateralERC20, 0);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // newLender (the buy-offer creator / incoming lender) is BlueChipOnly
+        // (default) => refused before the lender position migrates. The revert
+        // fires after the country/KYC check and before any settlement, so no
+        // cross-facet mocks are needed.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.RiskTierTooLow.selector,
+                newLender,
+                _ILLIQUID,
+                _BLUECHIP
+            )
+        );
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+    }
+
+    // r4 finding 1 — previewOfferAcceptBlock models the sale-vehicle buyer against
+    // the LINKED loan's pair (not a blanket 0), so a frontend dry-run won't quote
+    // an under-tiered sale buyer as OK.
+    function test_previewOfferAcceptBlock_modelsSaleBuyerAgainstLinkedLoan()
+        public
+    {
+        _mockTier(mockERC20, 3);
+        _mockTier(mockCollateralERC20, 0); // linked loan pair -> IlliquidCustom
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Link a sale offer id to the active loan directly (the real
+        // createLoanSaleOffer trips the unit harness's diamond reentrancy guard;
+        // the preview's sale branch reads ONLY this mapping + the linked loan).
+        uint256 saleOfferId = 4242;
+        TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(
+            saleOfferId, activeLoanId
+        );
+
+        // Fresh (BlueChipOnly) buyer => classified against the LINKED loan's
+        // IlliquidCustom pair: code 1 (tier too low), NOT 0.
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewOfferAcceptBlock(
+                saleOfferId, newLender
+            ),
+            1,
+            "sale-offer preview classifies the linked loan's pair"
+        );
+
+        // Arm the buyer (tier + standing consent on the linked pair) => 0.
+        // Resolve _loanPair() into a local FIRST: it makes a getLoanDetails view
+        // call that would otherwise consume the vm.prank meant for the consent
+        // setter (the prank footgun), recording the consent for the wrong sender.
+        LibRiskAccess.PairId memory pair = _loanPair();
+        vm.prank(newLender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(_ILLIQUID);
+        vm.prank(newLender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(pair, true);
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewOfferAcceptBlock(
+                saleOfferId, newLender
+            ),
+            0,
+            "armed buyer clears the sale-offer preview"
         );
     }
 }
