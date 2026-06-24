@@ -19,6 +19,24 @@
   },
   {
     "type": "function",
+    "name": "assertObligationTransferAllowed",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "bumpRiskTermsVersion",
     "inputs": [],
     "outputs": [
