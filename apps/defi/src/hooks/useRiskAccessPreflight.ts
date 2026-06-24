@@ -31,6 +31,15 @@ export type RiskPreflightStatus =
   | "needs-midtier-ack"
   | "error";
 
+const isMissingFacet = (e: unknown): boolean => {
+  const msg = String(
+    (e as { data?: string; message?: string })?.data ??
+      (e as Error)?.message ??
+      "",
+  );
+  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
+};
+
 const CODE_TO_STATUS: Record<number, RiskPreflightStatus> = {
   0: "ok",
   1: "tier-too-low",
@@ -92,12 +101,15 @@ export function useRiskAccessPreflight(
         if (cancelled) return;
         setStatus(CODE_TO_STATUS[Number(code)] ?? "ok");
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return;
-        // A Diamond that predates RiskAccessFacet (or any read failure) must
-        // NOT block the accept — fall back to "ok" so the contract-layer gate
-        // stays the only boundary. Surface nothing in the UI.
-        setStatus("ok");
+        // A Diamond that predates RiskAccessFacet is silently "ok" (the feature
+        // isn't there). But a REAL read failure (transient RPC / chain error) on
+        // a deployment where the gate IS live must NOT be silently swallowed —
+        // surface "error" so the modal doesn't imply the accept is clear when it
+        // wasn't actually checked (Codex #734 P2). Either way it doesn't BLOCK —
+        // the on-chain gate stays the boundary.
+        setStatus(isMissingFacet(e) ? "ok" : "error");
       });
     return () => {
       cancelled = true;

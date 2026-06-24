@@ -2022,7 +2022,11 @@ function AcceptRiskPreflight({ offer }: { offer: OfferData }) {
   // the accept signature before the warning appears. This stays informational
   // (it does not gate the Confirm button — matching `AcceptLiquidityPreflight`);
   // the on-chain gate at loan-init is the real boundary.
-  if (status === 'loading') {
+  if (status === 'loading' || status === 'error') {
+    // Surface the in-flight check AND a failed check (Codex #734 P2) — a silent
+    // failure would let the user assume "no warning = clear" when the gate was
+    // never actually checked. Informational only; the on-chain gate is the
+    // boundary.
     return (
       <div style={{ margin: '0.5rem 0', fontSize: '0.8rem', opacity: 0.7 }}>
         {reason}

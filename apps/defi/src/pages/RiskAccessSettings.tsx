@@ -53,9 +53,6 @@ export default function RiskAccessSettings() {
     setVaultRiskTier: (
       level: number,
     ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
-    setRiskStrictMode: (
-      enabled: boolean,
-    ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
   };
 
   async function chooseTier(level: RiskTier) {
@@ -91,40 +88,24 @@ export default function RiskAccessSettings() {
     }
   }
 
-  async function toggleStrictMode() {
-    const next = !risk.strictMode;
-    const step = beginStep({
-      area: "profile",
-      flow: "setRiskStrictMode",
-      step: "submit",
-      wallet: address ?? undefined,
-    });
-    setBusy(true);
-    setErr(null);
-    setNotice(null);
-    try {
-      const tx = await rw.setRiskStrictMode(next);
-      await tx.wait();
-      step.success();
-      setNotice(
-        next
-          ? "Strict mode on. Mid-tier pairs now also need an explicit per-pair acknowledgement."
-          : "Strict mode off.",
-      );
-      await risk.refresh();
-    } catch (e) {
-      setErr((e as Error).message);
-      step.failure(e);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   if (!address) {
     return (
       <div style={{ padding: "1.5rem", maxWidth: 720 }}>
         <h1>Risk Access</h1>
         <p>Connect a wallet to view and manage your vault's risk-access tier.</p>
+      </div>
+    );
+  }
+
+  // The reads are wallet-specific; on a chain without a deployed Diamond they'd
+  // show another chain's / a default state while writes can't settle, so don't
+  // render the controls (Codex #734 P2).
+  if (risk.wrongChain) {
+    return (
+      <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+        <h1>Risk Access</h1>
+        <ErrorAlert message="Switch to a supported network to view and manage your vault's risk-access tier." />
       </div>
     );
   }
@@ -246,26 +227,13 @@ export default function RiskAccessSettings() {
         an opt-up cooldown before it becomes effective.
       </p>
 
-      <h2 style={{ fontSize: "1.05rem", marginTop: "1.5rem" }}>Strict mode</h2>
-      <label
-        style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}
-      >
-        <input
-          type="checkbox"
-          checked={risk.strictMode}
-          disabled={busy}
-          onChange={toggleStrictMode}
-        />
-        <span>
-          Require an explicit per-pair acknowledgement for mid-tier pairs too —
-          not just illiquid ones.
-        </span>
-      </label>
-      <p style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: "0.4rem" }}>
-        Off by default. Turning it off again is immediate unless an opt-up
-        cooldown is configured, in which case the requirement lingers for that
-        window.
-      </p>
+      {/* Strict mode (the per-pair mid-tier acknowledgement opt-in) is
+          deliberately not exposed here yet: enabling it requires a
+          `setMidTierPairAck` path per pair, which lands together with the
+          per-pair consent collection in a follow-up (it needs the offer's
+          prepay token threaded through the offer cache to rebuild the exact
+          pair). Exposing the toggle without that path would let a vault brick
+          its own mid-tier accepts (Codex #734). */}
     </div>
   );
 }
