@@ -13,19 +13,26 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 
 /**
  * @title RiskAccessMatchGateTest
- * @notice #671 phase-2 / PR-2b — the KEEPER-MATCH dual-creator re-assertion in
- *         `OfferMatchFacet._executeMatch` (`_assertMatchCreatorsRiskAccess`).
+ * @notice #671 phase-2 / PR-2b — the KEEPER-MATCH risk re-assertion in
+ *         `OfferMatchFacet._executeMatch`, delegated to
+ *         `RiskAccessFacet.assertMatchAllowed` (cross-facet).
  *
  *         The acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is
  *         scoped to the DIRECT-ACCEPT path (`s.acceptAckActive == true`) and is
  *         SKIPPED on the keeper-match path (a match authors no accept-ack — both
  *         sides are self-authored offers, design §5). So on a match NEITHER
- *         creator is re-validated downstream. PR-2b re-asserts each paired
- *         offer's OWN creator at the matcher, against the LIVE tier/consent
- *         state, before any state mutation — mirroring the create-time
- *         chokepoint but catching a creator who down-tiered, revoked their
+ *         party is re-validated downstream. PR-2b re-asserts the match's risk
+ *         access at the matcher, against the LIVE tier/consent state, before any
+ *         state mutation — catching a party who down-tiered, revoked their
  *         illiquid-pair consent, went stale after a terms bump, OR was never
- *         gated at create because the kill-switch was off then.
+ *         gated at create because the kill-switch was off then. A normal match
+ *         gates BOTH creators against the BORROWER offer's pair (the resulting
+ *         loan copies its token-ids / prepay from that offer, so the lender must
+ *         consent to the pair it joins, not its own offer's). The classifier +
+ *         pair resolution live in `RiskAccessFacet.assertMatchAllowed`, with a
+ *         non-reverting companion `previewMatchRiskBlock` for bots; the
+ *         `RiskTierTooLow` / `IlliquidPairNotConsented` revert bubbles through
+ *         the cross-call.
  *
  *         Isolating the matcher gate from the create-time gate: every test
  *         CREATES BOTH OFFERS FIRST (gate OFF, the default) and only THEN flips
@@ -277,5 +284,58 @@ contract RiskAccessMatchGateTest is SetupTest {
             )
         );
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 6 — P3: the companion preview `RiskAccessFacet.previewMatchRiskBlock`
+    //     reports the block BEFORE submission, so a bot doesn't burn gas on a
+    //     `matchOffers` the gate would revert. Returns 1 (tier too low) for a
+    //     default-tier pair, 0 once both creators are armed, and 0 when the gate
+    //     is off — agreeing with what `matchOffers` would do.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_previewMatchRiskBlock_surfacesRiskAccessGate() public {
+        _mockBothLegs(1);
+        uint256 lenderOfferId = _lenderOffer();
+        uint256 borrowerOfferId = _borrowerOffer();
+
+        // Gate OFF → preview is a no-op 0 even though both creators are default.
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+                lenderOfferId, borrowerOfferId
+            ),
+            0,
+            "preview is 0 while the gate is off"
+        );
+
+        _enableGate();
+
+        // Gate ON, default-tier creators, BroadLiquid pair → 1 (tier too low).
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+                lenderOfferId, borrowerOfferId
+            ),
+            1,
+            "preview reports tier-too-low for an under-tiered pair"
+        );
+
+        // Arm both creators → preview clears to 0, matching what matchOffers does.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewMatchRiskBlock(
+                lenderOfferId, borrowerOfferId
+            ),
+            0,
+            "preview clears once both creators are armed"
+        );
+
+        // And the real match now settles — preview agrees with execution.
+        OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, borrowerOfferId);
+        LibVaipakam.Offer memory B =
+            OfferCancelFacet(address(diamond)).getOffer(borrowerOfferId);
+        assertEq(B.amountFilled, 5_000 ether, "match settles when preview says 0");
     }
 }

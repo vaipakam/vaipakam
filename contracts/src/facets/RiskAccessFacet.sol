@@ -284,7 +284,123 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
 
+    /// @notice #671 phase 2 (#728 PR-2b) — assert a keeper match's risk-access.
+    ///         Reverts `RiskTierTooLow` / `IlliquidPairNotConsented` when a gated
+    ///         party's live tier / standing consent doesn't cover the resulting
+    ///         loan's pair; no-op when the gate is off. Standing consent only —
+    ///         a keeper match authors no #662 acknowledgement to substitute.
+    /// @dev    Cross-facet entrypoint consumed by `OfferMatchFacet._executeMatch`
+    ///         (which is near the EIP-170 ceiling, so the classifier lives here).
+    ///         The gated parties + pair come from {_resolveMatchActors}: a normal
+    ///         match gates BOTH creators against the borrower offer's pair; a
+    ///         lender-sale vehicle exempts the exiting seller and gates only the
+    ///         buyer against the linked loan's pair.
+    function assertMatchAllowed(uint256 lenderOfferId, uint256 borrowerOfferId)
+        external
+        view
+    {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (
+            address actorA,
+            address actorB,
+            LibRiskAccess.PairId memory pair
+        ) = _resolveMatchActors(s, lenderOfferId, borrowerOfferId);
+        LibRiskAccess.assertActorMayTransact(s, actorA, pair);
+        if (actorB != address(0)) {
+            LibRiskAccess.assertActorMayTransact(s, actorB, pair);
+        }
+    }
+
+    /// @notice #671 phase 2 (#728 PR-2b) — NON-reverting risk preview for a
+    ///         candidate keeper match, so a bot can filter a pair the gate would
+    ///         reject instead of burning gas on a reverting `matchOffers`.
+    ///         Returns 0 = OK, 1 = a gated party's tier is too low, 2 = an
+    ///         illiquid pair lacks standing consent (same codes as
+    ///         {previewOfferAcceptBlock}). 0 when the gate is off. The block of
+    ///         the FIRST failing gated party (buyer/lender side first) is
+    ///         reported.
+    function previewMatchRiskBlock(uint256 lenderOfferId, uint256 borrowerOfferId)
+        external
+        view
+        returns (uint8)
+    {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        (
+            address actorA,
+            address actorB,
+            LibRiskAccess.PairId memory pair
+        ) = _resolveMatchActors(s, lenderOfferId, borrowerOfferId);
+        uint8 a = LibRiskAccess.previewActorBlock(s, actorA, pair);
+        if (a != 0) return a;
+        if (actorB != address(0)) {
+            return LibRiskAccess.previewActorBlock(s, actorB, pair);
+        }
+        return 0;
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
+
+    /// @dev Resolve the gated parties + the pair they are gated against for a
+    ///      keeper match — the single source of truth shared by the enforcing
+    ///      {assertMatchAllowed} and the non-reverting {previewMatchRiskBlock}.
+    ///      `actorA` is always gated; `actorB` is gated only when non-zero.
+    ///
+    ///      NORMAL match: `_executeMatch` calls `acceptOfferInternal(borrowerOfferId)`,
+    ///      so the resulting loan copies its `tokenId` / `collateralTokenId` /
+    ///      `prepayAsset` from the BORROWER offer (the match-time asset check pins
+    ///      only the asset contracts + types, not those ids). Both creators are
+    ///      therefore gated against the BORROWER offer's pair — the actual loan —
+    ///      so the lender consents to the pair it joins, not its own offer's
+    ///      possibly-different one. actorA = lender-offer creator, actorB =
+    ///      borrower-offer creator.
+    ///
+    ///      LENDER-SALE vehicle (borrower offer linked via `saleOfferToLoanId`):
+    ///      the exiting seller (borrower-offer creator) is EXEMPT — that risk was
+    ///      accepted at the original loan — and only the BUYER (the lender-offer
+    ///      creator, who acquires the sold lender position) is gated, against the
+    ///      LINKED loan's pair. Mirrors `LoanFacet._maybeRunInitialRiskGates`'s
+    ///      sale-vehicle branch + the PR-2a sale-buyer treatment. actorA = buyer,
+    ///      actorB = address(0).
+    function _resolveMatchActors(
+        LibVaipakam.Storage storage s,
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId
+    )
+        private
+        view
+        returns (address actorA, address actorB, LibRiskAccess.PairId memory pair)
+    {
+        uint256 soldLoanId = s.saleOfferToLoanId[borrowerOfferId];
+        if (soldLoanId != 0) {
+            LibVaipakam.Loan storage sold = s.loans[soldLoanId];
+            actorA = s.offers[lenderOfferId].creator; // buyer (incoming lender)
+            actorB = address(0); // seller exempt
+            pair = LibRiskAccess.PairId({
+                lendAsset: sold.principalAsset,
+                lendType: sold.assetType,
+                lendTokenId: sold.tokenId,
+                collAsset: sold.collateralAsset,
+                collType: sold.collateralAssetType,
+                collTokenId: sold.collateralTokenId,
+                prepayAsset: sold.prepayAsset
+            });
+            return (actorA, actorB, pair);
+        }
+        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
+        actorA = s.offers[lenderOfferId].creator;
+        actorB = bo.creator;
+        pair = LibRiskAccess.PairId({
+            lendAsset: bo.lendingAsset,
+            lendType: bo.assetType,
+            lendTokenId: bo.tokenId,
+            collAsset: bo.collateralAsset,
+            collType: bo.collateralAssetType,
+            collTokenId: bo.collateralTokenId,
+            prepayAsset: bo.prepayAsset
+        });
+    }
 
     function _applyTier(address vault, uint8 level) private {
         if (level > uint8(LibVaipakam.RiskAccessLevel.IlliquidCustom)) {

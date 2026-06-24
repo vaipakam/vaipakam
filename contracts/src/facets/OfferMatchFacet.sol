@@ -19,7 +19,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
-import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -677,46 +677,29 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     }
 
     /// @dev #671 phase 2 (#728 PR-2b) — re-assert the progressive-risk gate for
-    ///      BOTH paired offers' creators at the matcher. Each creator is gated
-    ///      against its OWN offer's declared pair, exactly mirroring the
-    ///      create-time chokepoint (`OfferCreateFacet`) but re-validated against
-    ///      the LIVE tier/consent state at match time. The riskier of the two
-    ///      legs governs and NFT rentals tier off the prepay token — see
-    ///      `LibRiskAccess`. No-op unless `riskAccessGateEnabled`. Extracted to a
-    ///      helper to keep `_executeMatch` under the viaIR stack ceiling.
+    ///      BOTH paired offers' creators at the matcher, against the LIVE
+    ///      tier/consent state, mirroring the create-time chokepoint
+    ///      (`OfferCreateFacet`). The classification + PairId resolution
+    ///      (including the borrower-offer-pair surface and the sale-vehicle
+    ///      seller-exempt / buyer-gated split) lives in
+    ///      `RiskAccessFacet.assertMatchAllowed` — delegated via a cross-facet
+    ///      call so the heavy classifier doesn't inline into this facet (which is
+    ///      near the EIP-170 ceiling). The inner `RiskTierTooLow` /
+    ///      `IlliquidPairNotConsented` revert bubbles. No-op unless
+    ///      `riskAccessGateEnabled` (guarded so a gate-off match pays no
+    ///      cross-call).
     function _assertMatchCreatorsRiskAccess(
-        LibVaipakam.Storage storage s,
         uint256 lenderOfferId,
         uint256 borrowerOfferId
-    ) private view {
+    ) private {
         if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
-        LibVaipakam.Offer storage lo = s.offers[lenderOfferId];
-        LibRiskAccess.assertActorMayTransact(
-            s,
-            lo.creator,
-            LibRiskAccess.PairId({
-                lendAsset: lo.lendingAsset,
-                lendType: lo.assetType,
-                lendTokenId: lo.tokenId,
-                collAsset: lo.collateralAsset,
-                collType: lo.collateralAssetType,
-                collTokenId: lo.collateralTokenId,
-                prepayAsset: lo.prepayAsset
-            })
-        );
-        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
-        LibRiskAccess.assertActorMayTransact(
-            s,
-            bo.creator,
-            LibRiskAccess.PairId({
-                lendAsset: bo.lendingAsset,
-                lendType: bo.assetType,
-                lendTokenId: bo.tokenId,
-                collAsset: bo.collateralAsset,
-                collType: bo.collateralAssetType,
-                collTokenId: bo.collateralTokenId,
-                prepayAsset: bo.prepayAsset
-            })
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                RiskAccessFacet.assertMatchAllowed.selector,
+                lenderOfferId,
+                borrowerOfferId
+            ),
+            bytes4(0)
         );
     }
 
@@ -875,19 +858,23 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             revert InvalidOfferType();
         }
 
-        // #671 phase 2 (#728 PR-2b) — keeper-match dual-creator re-assertion.
-        // The acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is
-        // scoped to the direct-accept path (`acceptAckActive == true`) and is
-        // SKIPPED on the keeper-match path (a match sets no accept-ack — both
-        // sides are self-authored offers, design §5). So neither creator is
-        // re-validated downstream. Re-assert each offer's OWN creator against
-        // the LIVE tier/consent state HERE — before any state mutation — so a
-        // creator who down-tiered, revoked their illiquid-pair consent, or went
-        // stale after a terms bump (or a gate that flipped on after create) is
-        // caught at the matcher, exactly as the direct-accept creator re-check
-        // is. Standing consent only: neither creator signs a #662 accept ack,
-        // so there is nothing to substitute. No-op unless the kill-switch is on.
-        _assertMatchCreatorsRiskAccess(s, lenderOfferId, borrowerOfferId);
+        // #671 phase 2 (#728 PR-2b) — keeper-match risk re-assertion. The
+        // acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is scoped
+        // to the direct-accept path (`acceptAckActive == true`) and is SKIPPED on
+        // the keeper-match path (a match sets no accept-ack — both sides are
+        // self-authored offers, design §5), so neither party is re-validated
+        // downstream. Re-assert HERE — before any state mutation. The gated
+        // parties + the pair they are gated against are resolved in
+        // `RiskAccessFacet.assertMatchAllowed`: a normal match gates BOTH
+        // creators against the BORROWER offer's pair (the resulting loan copies
+        // its token ids / prepay from that offer, so the lender must consent to
+        // the pair it actually joins, not its own offer's possibly-different
+        // pair); a lender-sale-vehicle borrower offer instead exempts the exiting
+        // seller and gates only the buyer (the lender-offer creator acquiring the
+        // sold position) against the LINKED loan's pair — mirroring the
+        // sale-vehicle accept semantics (PR-2a). Standing consent only (no #662
+        // ack on this path). No-op unless the kill-switch is on.
+        _assertMatchCreatorsRiskAccess(lenderOfferId, borrowerOfferId);
 
         // ── State mutation: install the match override. See the
         // matching docstring on `OfferFacet._acceptOffer` for the
