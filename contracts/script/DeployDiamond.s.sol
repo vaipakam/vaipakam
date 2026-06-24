@@ -1461,26 +1461,23 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](19);
+        s = new bytes4[](16);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
-        s[2] = RiskAccessFacet.setMidTierPairAck.selector;
-        s[3] = RiskAccessFacet.setVaultRiskTierBySig.selector;
-        s[4] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
-        s[5] = RiskAccessFacet.setMidTierPairAckBySig.selector;
-        s[6] = RiskAccessFacet.bumpRiskTermsVersion.selector;
-        s[7] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
-        s[8] = RiskAccessFacet.setProtocolManagedVault.selector;
-        s[9] = RiskAccessFacet.getVaultRiskTier.selector;
-        s[10] = RiskAccessFacet.getEffectiveRiskTier.selector;
-        s[11] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
-        s[12] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
-        s[13] = RiskAccessFacet.getRiskTierUnlockAt.selector;
-        s[14] = RiskAccessFacet.isProtocolManagedVault.selector;
-        s[15] = RiskAccessFacet.riskAccessNonceUsed.selector;
-        s[16] = RiskAccessFacet.hasIlliquidPairConsent.selector;
-        s[17] = RiskAccessFacet.hasMidTierPairAck.selector;
-        s[18] = RiskAccessFacet.pairRequiredRiskLevel.selector;
+        s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
+        s[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
+        s[4] = RiskAccessFacet.bumpRiskTermsVersion.selector;
+        s[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
+        s[6] = RiskAccessFacet.setProtocolManagedVault.selector;
+        s[7] = RiskAccessFacet.getVaultRiskTier.selector;
+        s[8] = RiskAccessFacet.getEffectiveRiskTier.selector;
+        s[9] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
+        s[10] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
+        s[11] = RiskAccessFacet.getRiskTierUnlockAt.selector;
+        s[12] = RiskAccessFacet.isProtocolManagedVault.selector;
+        s[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
+        s[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
+        s[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
     }
 
     function _getAggregatorAdapterFactorySelectors()

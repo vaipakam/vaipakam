@@ -107,44 +107,32 @@ library LibRiskAccess {
         return LibVaipakam.RiskAccessLevel.IlliquidCustom;
     }
 
-    /// @notice The LENDING leg's classification asset — substitutes the
-    ///         value-bearing `prepayAsset` for an NFT *rental* (the NFT is the
-    ///         LENT asset and the renter streams `prepayAsset`).
-    /// @dev    #671: an NFT rental's risk is the prepayment token, NOT the rented
-    ///         ERC721/1155. The substitution is confined to the LENDING leg
-    ///         (Codex #727 r1 P1): an NFT used as COLLATERAL is genuine illiquid
-    ///         collateral and must never be masked by an attacker-chosen
-    ///         `prepayAsset` (which the create path neither pulls nor escrows on
-    ///         an NFT-collateral loan). An outright NFT loan (no prepay) keeps the
-    ///         NFT leg and so requires `IlliquidCustom`.
-    function _lendingClassAsset(
-        address lendAsset,
-        LibVaipakam.AssetType lendType,
-        address prepayAsset
-    ) private pure returns (address) {
-        if (
-            (lendType == LibVaipakam.AssetType.ERC721
-                || lendType == LibVaipakam.AssetType.ERC1155)
-                && prepayAsset != address(0)
-        ) {
-            return prepayAsset;
-        }
-        return lendAsset;
-    }
-
-    /// @notice The riskier of the two legs governs the pair's required tier. The
-    ///         collateral leg is classified as-is (an NFT collateral stays
-    ///         illiquid); only the lending leg gets the rental prepay
-    ///         substitution.
+    /// @notice The riskier of the two legs governs the pair's required tier.
+    /// @dev    Each leg is classified by `_legRequiredLevel`, which forces any
+    ///         NFT-typed leg to `IlliquidCustom` by AssetType BEFORE consulting
+    ///         ERC-20 liquidity (Codex #727 r4 P2) — except a rental's NFT
+    ///         LENDING leg, whose risk is the substituted prepay token. So a
+    ///         contract that is both ERC-721 and "ERC-20-like enough" to have a
+    ///         configured deep route can never be promoted out of IlliquidCustom.
     function _pairRequiredLevel(LibVaipakam.Storage storage s, PairId memory p)
         internal
         view
         returns (LibVaipakam.RiskAccessLevel)
     {
-        LibVaipakam.RiskAccessLevel lend = _assetRequiredLevel(
-            s, _lendingClassAsset(p.lendAsset, p.lendType, p.prepayAsset)
-        );
-        LibVaipakam.RiskAccessLevel coll = _assetRequiredLevel(s, p.collAsset);
+        // Lending leg: an NFT rental (NFT lent + prepay set) is classified by the
+        // value-bearing prepay token; any other NFT lending leg is IlliquidCustom.
+        LibVaipakam.RiskAccessLevel lend;
+        if (_isNft(p.lendType)) {
+            lend = p.prepayAsset != address(0)
+                ? _assetRequiredLevel(s, p.prepayAsset) // rental → prepay token
+                : LibVaipakam.RiskAccessLevel.IlliquidCustom; // bare NFT loan
+        } else {
+            lend = _assetRequiredLevel(s, p.lendAsset);
+        }
+        // Collateral leg: an NFT collateral is always genuine illiquid collateral.
+        LibVaipakam.RiskAccessLevel coll = _isNft(p.collType)
+            ? LibVaipakam.RiskAccessLevel.IlliquidCustom
+            : _assetRequiredLevel(s, p.collAsset);
         return uint8(lend) >= uint8(coll) ? lend : coll;
     }
 
@@ -188,10 +176,17 @@ library LibRiskAccess {
     // Effective (read-time re-locked) tier + consent
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @notice The actor's currently-effective tier: the opted-in tier ONLY while
-    ///         its version anchor is fresh and its cooldown has elapsed; otherwise
-    ///         the safest tier. A protocol-managed vault (sale vehicle / backstop)
-    ///         reports its raw opted-in tier with no freshness/cooldown gate.
+    /// @notice The actor's currently-effective tier.
+    /// @dev    A protocol-managed vault (sale vehicle / backstop) reports its raw
+    ///         opted-in tier with no freshness/cooldown gate. Otherwise:
+    ///          - if the version anchor is STALE (a terms bump re-locked it), the
+    ///            tier falls all the way to `BlueChipOnly` — the user must
+    ///            re-affirm the new terms (Codex #727 r1);
+    ///          - else if the higher tier's cooldown has NOT elapsed, the
+    ///            previously-SETTLED tier stays effective (so raising
+    ///            Broad->Illiquid never transiently drops the vault below the
+    ///            BroadLiquid access it already held — Codex #727 r4 P2);
+    ///          - else the held tier is effective.
     function effectiveTier(LibVaipakam.Storage storage s, address actor)
         internal
         view
@@ -200,11 +195,13 @@ library LibRiskAccess {
         LibVaipakam.RiskAccessLevel held = s.userRiskAccess[actor];
         if (held == LibVaipakam.RiskAccessLevel.BlueChipOnly) return held;
         if (s.protocolManagedVault[actor]) return held;
-        bool fresh = s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion;
-        bool cooled = block.timestamp >= s.riskTierUnlockAt[actor];
-        return (fresh && cooled)
-            ? held
-            : LibVaipakam.RiskAccessLevel.BlueChipOnly;
+        if (s.riskTierVersionAt[actor] < s.currentRiskTermsVersion) {
+            return LibVaipakam.RiskAccessLevel.BlueChipOnly; // stale terms
+        }
+        if (block.timestamp < s.riskTierUnlockAt[actor]) {
+            return s.riskTierSettled[actor]; // higher tier still cooling down
+        }
+        return held;
     }
 
     /// @dev A pair grant is effective only while (a) it is set, (b) its version
@@ -220,29 +217,24 @@ library LibRiskAccess {
             && block.timestamp >= s.pairConsentUnlockAt[actor][pk];
     }
 
-    function _midTierAckEffective(
-        LibVaipakam.Storage storage s,
-        address actor,
-        bytes32 pk
-    ) private view returns (bool) {
-        return s.midTierPairAck[actor][pk]
-            && s.midTierVersionAt[actor][pk] >= s.currentRiskTermsVersion
-            && block.timestamp >= s.pairConsentUnlockAt[actor][pk];
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     // The gate
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @notice Assert `actor`'s effective tier covers this pair, with the
-    ///         per-pair acknowledgement / consent the boundary tier requires.
+    /// @notice Assert `actor`'s effective tier covers this pair, plus the
+    ///         per-pair consent the `IlliquidCustom` boundary requires.
     /// @dev    This function does NOT self-guard: it always evaluates the gate.
     ///         The CALLER is responsible for the master kill-switch
     ///         (`cfgRiskAccessGateEnabled()`) and the `saleVehicleCreate`
     ///         exemption — see `OfferCreateFacet`, which skips this call when the
     ///         gate is off or a protocol sale vehicle is mid-create. Reverts
-    ///         `RiskTierTooLow` / `IlliquidPairNotConsented` /
-    ///         `MidTierPairNotAcknowledged` when the actor is under-qualified.
+    ///         `RiskTierTooLow` / `IlliquidPairNotConsented` when the actor is
+    ///         under-qualified.
+    ///
+    ///         BroadLiquid (liquid-but-not-blue-chip) pairs are NOT per-pair
+    ///         gated: the BroadLiquid tier opt-up is itself the consent, and the
+    ///         quantitative LTV/HF check still applies (design RD-1; Codex #727
+    ///         r4). Only `IlliquidCustom` needs blocking per-pair consent.
     function assertActorMayTransact(
         LibVaipakam.Storage storage s,
         address actor,
@@ -253,16 +245,11 @@ library LibRiskAccess {
         if (uint8(actorTier) < uint8(required)) {
             revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
         }
-        if (required == LibVaipakam.RiskAccessLevel.BlueChipOnly) return;
-        bytes32 pk = pairKey(p);
+        // Only the illiquid boundary carries a blocking per-pair consent.
         if (required == LibVaipakam.RiskAccessLevel.IlliquidCustom) {
+            bytes32 pk = pairKey(p);
             if (!_illiquidConsentEffective(s, actor, pk)) {
                 revert IlliquidPairNotConsented(actor, pk);
-            }
-        } else {
-            // BroadLiquid boundary — one-time mid-tier ack.
-            if (!_midTierAckEffective(s, actor, pk)) {
-                revert MidTierPairNotAcknowledged(actor, pk);
             }
         }
     }
@@ -270,7 +257,6 @@ library LibRiskAccess {
     /// @notice Risk-gate revert reasons (carried in the facet ABI).
     error RiskTierTooLow(address actor, uint8 requiredTier, uint8 actorTier);
     error IlliquidPairNotConsented(address actor, bytes32 pairKey);
-    error MidTierPairNotAcknowledged(address actor, bytes32 pairKey);
 
     // ─────────────────────────────────────────────────────────────────────────
     // EIP-712 self-submit setters
@@ -311,30 +297,11 @@ library LibRiskAccess {
         uint256 deadline;
     }
 
-    /// @notice Record (or revoke) the one-time mid-tier acknowledgement for a pair.
-    struct SetMidTierPairAck {
-        address vault;
-        address lendAsset;
-        uint8 lendAssetType;
-        uint256 lendTokenId;
-        address collAsset;
-        uint8 collAssetType;
-        uint256 collTokenId;
-        address prepayAsset;
-        bool ack;
-        uint64 termsVersion;
-        uint256 nonce;
-        uint256 deadline;
-    }
-
     bytes32 internal constant SET_VAULT_RISK_TIER_TYPEHASH = keccak256(
         "SetVaultRiskTier(address vault,uint8 level,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_ILLIQUID_PAIR_CONSENT_TYPEHASH = keccak256(
         "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,uint64 termsVersion,uint256 nonce,uint256 deadline)"
-    );
-    bytes32 internal constant SET_MID_TIER_PAIR_ACK_TYPEHASH = keccak256(
-        "SetMidTierPairAck(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool ack,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -402,32 +369,6 @@ library LibRiskAccess {
                         m.collTokenId,
                         m.prepayAsset,
                         m.consent
-                    ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
-                )
-            )
-        );
-    }
-
-    function digest(SetMidTierPairAck memory m)
-        internal
-        view
-        returns (bytes32)
-    {
-        return _digest(
-            keccak256(
-                bytes.concat(
-                    abi.encode(
-                        SET_MID_TIER_PAIR_ACK_TYPEHASH,
-                        m.vault,
-                        m.lendAsset,
-                        m.lendAssetType,
-                        m.lendTokenId,
-                        m.collAsset,
-                        m.collAssetType,
-                        m.collTokenId,
-                        m.prepayAsset,
-                        m.ack
                     ),
                     abi.encode(m.termsVersion, m.nonce, m.deadline)
                 )

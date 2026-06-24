@@ -190,33 +190,6 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
-    function _midTierDigest(LibRiskAccess.SetMidTierPairAck memory m)
-        internal
-        view
-        returns (bytes32)
-    {
-        // Same chunking as the illiquid-consent digest; chunk 1 ends on `ack`.
-        return _digest(
-            keccak256(
-                bytes.concat(
-                    abi.encode(
-                        LibRiskAccess.SET_MID_TIER_PAIR_ACK_TYPEHASH,
-                        m.vault,
-                        m.lendAsset,
-                        m.lendAssetType,
-                        m.lendTokenId,
-                        m.collAsset,
-                        m.collAssetType,
-                        m.collTokenId,
-                        m.prepayAsset,
-                        m.ack
-                    ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
-                )
-            )
-        );
-    }
-
     function _sign(uint256 pk, bytes32 digest)
         internal
         pure
@@ -278,23 +251,6 @@ contract RiskAccessFacetTest is SetupTest {
         assertFalse(
             RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
             "consent revoked"
-        );
-    }
-
-    function test_directMidTierAck_grantThenRevoke() public {
-        LibRiskAccess.PairId memory p =
-            _erc20Pair(mockERC20, mockCollateralERC20);
-        vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, true);
-        assertTrue(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
-            "ack granted"
-        );
-        vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, false);
-        assertFalse(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
-            "ack revoked"
         );
     }
 
@@ -484,36 +440,6 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
-    function test_signedMidTierAck_freshVersionApplies() public {
-        // Positive path for the chunked mid-tier-ack digest.
-        LibRiskAccess.SetMidTierPairAck memory m = LibRiskAccess
-            .SetMidTierPairAck({
-            vault: lender,
-            lendAsset: mockERC20,
-            lendAssetType: T_ERC20,
-            lendTokenId: 0,
-            collAsset: mockCollateralERC20,
-            collAssetType: T_ERC20,
-            collTokenId: 0,
-            prepayAsset: address(0),
-            ack: true,
-            termsVersion: _currentVersion(),
-            nonce: 14,
-            deadline: block.timestamp + 1 hours
-        });
-        bytes memory sig = _sign(lenderPk, _midTierDigest(m));
-
-        vm.prank(relayer);
-        RiskAccessFacet(address(diamond)).setMidTierPairAckBySig(m, sig);
-
-        assertTrue(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(
-                lender, _erc20Pair(mockERC20, mockCollateralERC20)
-            ),
-            "signed ack effective"
-        );
-    }
-
     // ════════════════════════════════════════════════════════════════════════
     // CLASSIFICATION (pairRequiredRiskLevel)
     // ════════════════════════════════════════════════════════════════════════
@@ -609,6 +535,37 @@ contract RiskAccessFacetTest is SetupTest {
             )
         );
         assertEq(required, ILLIQUID, "bare NFT lend leg => IlliquidCustom");
+    }
+
+    function test_classify_nftLegForcedIlliquidEvenIfMockedDeep() public {
+        // F3 (Codex #727 r4 P2): `_pairRequiredLevel` forces any NFT-typed leg
+        // to IlliquidCustom by AssetType BEFORE consulting the oracle (except a
+        // rental's NFT lending leg, which uses the prepay token). Even if the NFT
+        // contract is mocked to return a deep tier 3, the AssetType wins.
+        _mockTier(mockNft721, 3); // pretend the NFT contract reports a deep tier
+        _mockTier(mockERC20, 3); // ERC-20 blue-chip lend leg
+
+        // NFT as COLLATERAL (ERC-20 blue-chip lend) => IlliquidCustom.
+        uint8 asCollateral = RiskAccessFacet(address(diamond))
+            .pairRequiredRiskLevel(
+            _pair(mockERC20, T_ERC20, 0, mockNft721, T_ERC721, 1, address(0))
+        );
+        assertEq(
+            asCollateral,
+            ILLIQUID,
+            "NFT collateral forced IlliquidCustom despite deep mock"
+        );
+
+        // SAME NFT as a BARE lending leg (no prepay) => IlliquidCustom.
+        uint8 asBareLend = RiskAccessFacet(address(diamond))
+            .pairRequiredRiskLevel(
+            _pair(mockNft721, T_ERC721, 1, mockERC20, T_ERC20, 0, address(0))
+        );
+        assertEq(
+            asBareLend,
+            ILLIQUID,
+            "bare NFT lend leg forced IlliquidCustom despite deep mock"
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -751,7 +708,8 @@ contract RiskAccessFacetTest is SetupTest {
 
         vm.prank(lender);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
-        // Within the cooldown window => not yet effective.
+        // A FRESH BlueChip -> IlliquidCustom raise: the prior settled tier is
+        // BlueChipOnly, so during the cooldown the effective tier stays at 0.
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             BLUECHIP,
@@ -765,6 +723,47 @@ contract RiskAccessFacetTest is SetupTest {
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             ILLIQUID,
             "effective once cooled"
+        );
+    }
+
+    function test_cooldown_raiseKeepsPriorTierDuringCooldown() public {
+        // F1 (Codex #727 r4 P2): raising Broad -> Illiquid must NOT transiently
+        // drop the vault below the BroadLiquid access it already held — during
+        // the new cooldown `effectiveTier` reports the PRIOR settled tier
+        // (BroadLiquid), not BlueChipOnly.
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
+            uint64(1 days)
+        );
+
+        // Opt up to BroadLiquid and warp past its cooldown so it is settled.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        vm.warp(RiskAccessFacet(address(diamond)).getRiskTierUnlockAt(lender));
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            BROAD,
+            "BroadLiquid settled"
+        );
+
+        // Opt UP to IlliquidCustom — raises risk, so a new cooldown arms.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        // Immediately: the prior BroadLiquid is preserved (NOT BlueChipOnly).
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            BROAD,
+            "prior BroadLiquid preserved during new cooldown"
+        );
+        uint64 unlockAt =
+            RiskAccessFacet(address(diamond)).getRiskTierUnlockAt(lender);
+        assertGt(unlockAt, block.timestamp, "new unlock in the future");
+
+        // Once the new cooldown elapses, the raised IlliquidCustom is effective.
+        vm.warp(unlockAt);
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            ILLIQUID,
+            "IlliquidCustom effective after cooldown"
         );
     }
 
@@ -864,7 +863,7 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // F4 — per-pair consent / ack also gated by the arming cooldown
+    // F4 — per-pair illiquid consent also gated by the arming cooldown
     // ════════════════════════════════════════════════════════════════════════
 
     function test_cooldown_illiquidConsentDelayedThenEffective() public {
@@ -888,29 +887,6 @@ contract RiskAccessFacetTest is SetupTest {
         assertTrue(
             RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
             "consent effective once cooled"
-        );
-    }
-
-    function test_cooldown_midTierAckDelayedThenEffective() public {
-        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
-            uint64(1 days)
-        );
-        LibRiskAccess.PairId memory p =
-            _erc20Pair(mockERC20, mockCollateralERC20);
-
-        uint64 grantTime = uint64(block.timestamp);
-        vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, true);
-
-        assertFalse(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
-            "ack not yet cooled"
-        );
-
-        vm.warp(grantTime + uint64(1 days));
-        assertTrue(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
-            "ack effective once cooled"
         );
     }
 
@@ -1123,6 +1099,38 @@ contract RiskAccessFacetTest is SetupTest {
         uint256 offerId =
             _createLenderOffer(mockERC20, mockCollateralERC20);
         assertGt(offerId, 0, "offer created after opt-up + consent");
+    }
+
+    function test_createGate_broadLiquidPassesOnTierAlone() public {
+        // A BroadLiquid-required pair (both legs liquid tier-1, neither
+        // blue-chip) is NOT per-pair gated (Codex #727 r4): the BroadLiquid tier
+        // opt-up is itself the consent. A BlueChipOnly creator is rejected; after
+        // opting UP to BroadLiquid the create SUCCEEDS with no per-pair step.
+        _mockTier(mockERC20, 1); // lend leg liquid, non-blue-chip => BroadLiquid
+        _mockTier(mockCollateralERC20, 1); // coll leg liquid => BroadLiquid
+
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // BlueChipOnly (default) creator is under-tiered for a BroadLiquid pair.
+        // (No outer `vm.prank` here — `_createLenderOffer` pranks `lender`
+        // itself; a second overlapping prank would revert at cheatcode depth.)
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.RiskTierTooLow.selector,
+                lender,
+                BROAD,
+                BLUECHIP
+            )
+        );
+        _createLenderOffer(mockERC20, mockCollateralERC20);
+
+        // Opt UP to BroadLiquid (cooldown 0 => immediate) — NO per-pair consent.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+
+        uint256 offerId =
+            _createLenderOffer(mockERC20, mockCollateralERC20);
+        assertGt(offerId, 0, "BroadLiquid pair passes on tier alone");
     }
 
     // NOTE: sale-vehicle exemption covered separately (needs an active loan).

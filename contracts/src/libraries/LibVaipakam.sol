@@ -4367,12 +4367,12 @@ library LibVaipakam {
         // self-submit setter in `RiskAccessFacet`.
         mapping(address => RiskAccessLevel) userRiskAccess;
         // Per-(user, pairKey) explicit consent to a specific ILLIQUID asset pair,
-        // required for an `IlliquidCustom` vault to transact that pair.
-        // pairKey == `LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset)`.
+        // required for an `IlliquidCustom` vault to transact that pair. This is
+        // the ONLY per-pair gate: liquid (BroadLiquid) pairs are NOT per-pair
+        // gated — the BroadLiquid tier opt-up itself is the consent, and the
+        // quantitative LTV/HF check still applies (design RD-1; Codex #727 r4).
+        // pairKey == `LibRiskAccess.pairKey(PairId)`.
         mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;
-        // Per-(user, pairKey) one-time mid-tier acknowledgement, required for a
-        // `BroadLiquid` vault to transact a non-blue-chip-but-liquid pair.
-        mapping(address => mapping(bytes32 => bool)) midTierPairAck;
         // Monotonic terms-version ledger. A self-submit setter stamps the user's
         // anchor to `currentRiskTermsVersion` at unlock; a governance bump of
         // `currentRiskTermsVersion` re-locks every level whose anchor is now stale
@@ -4381,13 +4381,19 @@ library LibVaipakam {
         uint64 currentRiskTermsVersion;
         mapping(address => uint64) riskTierVersionAt;
         mapping(address => mapping(bytes32 => uint64)) illiquidPairVersionAt;
-        mapping(address => mapping(bytes32 => uint64)) midTierVersionAt;
         // Per-vault unlock cooldown anchor: an opt-up takes effect only at/after
         // `riskTierUnlockAt[user]` (= now + `riskAccessUnlockCooldown` at set time).
         // Anti-grief so a phished signature can't both raise the tier AND
         // immediately transact a malicious pair in one atomic bundle.
         uint64 riskAccessUnlockCooldown;
         mapping(address => uint64) riskTierUnlockAt;
+        // The tier that stays EFFECTIVE while a higher tier is cooling down
+        // (Codex #727 r4 P2): raising Broad->Illiquid must not transiently drop
+        // the vault below the BroadLiquid access it already held. On a raise this
+        // is set to the prior effective tier; on a tighten/refresh it tracks the
+        // new level. Read by `LibRiskAccess.effectiveTier` during the cooldown
+        // window.
+        mapping(address => RiskAccessLevel) riskTierSettled;
         // Opt-in self-imposed strict mode: when true, the user's offers re-assert
         // their tier at accept/match time too (not only at create), so a tier the
         // user later tightened can't be exploited via a pre-signed stale fill.

@@ -42,10 +42,6 @@ contract RiskAccessFacet is DiamondAccessControl {
     event IlliquidPairConsentSet(
         address indexed vault, bytes32 indexed pairKey, bool consent
     );
-    /// @custom:event-category state-change/risk-access
-    event MidTierPairAckSet(
-        address indexed vault, bytes32 indexed pairKey, bool ack
-    );
     /// @custom:event-category informational/config
     event RiskTermsVersionBumped(uint64 newVersion);
     /// @custom:event-category informational/config
@@ -82,14 +78,6 @@ contract RiskAccessFacet is DiamondAccessControl {
         _applyIlliquidConsent(msg.sender, p, consent);
     }
 
-    /// @notice Grant or revoke the caller's one-time mid-tier acknowledgement
-    ///         for a specific pair (required for a `BroadLiquid` vault).
-    function setMidTierPairAck(LibRiskAccess.PairId calldata p, bool ack)
-        external
-    {
-        _applyMidTierAck(msg.sender, p, ack);
-    }
-
     // ─── User-facing setters: gasless EIP-712 self-submit (relayed) ──────────
 
     /// @notice Relayer-submittable tier change. `m.vault` is bound into the
@@ -116,18 +104,6 @@ contract RiskAccessFacet is DiamondAccessControl {
             LibRiskAccess.digest(m), sig
         );
         _applyIlliquidConsent(m.vault, _pairIdOf(m), m.consent);
-    }
-
-    /// @notice Relayer-submittable mid-tier acknowledgement.
-    function setMidTierPairAckBySig(
-        LibRiskAccess.SetMidTierPairAck calldata m,
-        bytes calldata sig
-    ) external {
-        _consumeSig(
-            m.vault, m.termsVersion, m.nonce, m.deadline,
-            LibRiskAccess.digest(m), sig
-        );
-        _applyMidTierAck(m.vault, _pairIdOf(m), m.ack);
     }
 
     // ─── Admin levers (ADMIN_ROLE → Timelock post-handover) ──────────────────
@@ -233,18 +209,6 @@ contract RiskAccessFacet is DiamondAccessControl {
             && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
     }
 
-    /// @notice Whether `vault` holds an EFFECTIVE mid-tier acknowledgement.
-    function hasMidTierPairAck(
-        address vault,
-        LibRiskAccess.PairId calldata p
-    ) external view returns (bool) {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk = LibRiskAccess.pairKey(p);
-        return s.midTierPairAck[vault][pk]
-            && s.midTierVersionAt[vault][pk] >= s.currentRiskTermsVersion
-            && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
-    }
-
     /// @notice The minimum tier a vault must hold to transact this pair (the
     ///         riskier of the two legs governs; NFT rentals tier off the
     ///         prepay token). Surfaced so the frontend can pre-flight the gate.
@@ -276,10 +240,18 @@ contract RiskAccessFacet is DiamondAccessControl {
         s.userRiskAccess[vault] = newLevel;
         // Re-stamp the version anchor to the live terms so the new tier is fresh.
         s.riskTierVersionAt[vault] = s.currentRiskTermsVersion;
-        // Cooldown applies only to RAISING effective risk; tightening is immediate.
-        s.riskTierUnlockAt[vault] = uint8(newLevel) > uint8(effCur)
-            ? uint64(block.timestamp) + s.riskAccessUnlockCooldown
-            : uint64(block.timestamp);
+        if (uint8(newLevel) > uint8(effCur)) {
+            // RAISING risk: arm the cooldown, and keep the PRIOR effective tier
+            // available meanwhile so the vault never transiently drops below the
+            // access it already held (Codex #727 r4 P2).
+            s.riskTierSettled[vault] = effCur;
+            s.riskTierUnlockAt[vault] =
+                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
+        } else {
+            // Tightening / same: immediate, and the settled floor tracks it.
+            s.riskTierSettled[vault] = newLevel;
+            s.riskTierUnlockAt[vault] = uint64(block.timestamp);
+        }
         emit VaultRiskTierSet(vault, level);
     }
 
@@ -301,41 +273,8 @@ contract RiskAccessFacet is DiamondAccessControl {
         emit IlliquidPairConsentSet(vault, pk, consent);
     }
 
-    function _applyMidTierAck(
-        address vault,
-        LibRiskAccess.PairId memory p,
-        bool ack
-    ) private {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk = LibRiskAccess.pairKey(p);
-        s.midTierPairAck[vault][pk] = ack;
-        if (ack) {
-            s.midTierVersionAt[vault][pk] = s.currentRiskTermsVersion;
-            s.pairConsentUnlockAt[vault][pk] =
-                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
-        }
-        emit MidTierPairAckSet(vault, pk, ack);
-    }
-
     /// @dev Map a signed illiquid-consent message onto the canonical `PairId`.
     function _pairIdOf(LibRiskAccess.SetIlliquidPairConsent calldata m)
-        private
-        pure
-        returns (LibRiskAccess.PairId memory)
-    {
-        return LibRiskAccess.PairId({
-            lendAsset: m.lendAsset,
-            lendType: LibVaipakam.AssetType(m.lendAssetType),
-            lendTokenId: m.lendTokenId,
-            collAsset: m.collAsset,
-            collType: LibVaipakam.AssetType(m.collAssetType),
-            collTokenId: m.collTokenId,
-            prepayAsset: m.prepayAsset
-        });
-    }
-
-    /// @dev Map a signed mid-tier-ack message onto the canonical `PairId`.
-    function _pairIdOf(LibRiskAccess.SetMidTierPairAck calldata m)
         private
         pure
         returns (LibRiskAccess.PairId memory)
