@@ -26,6 +26,9 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../src/facets/AddCollateralFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {LibRiskAccess} from "../src/libraries/LibRiskAccess.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "./HelperTest.sol";
@@ -160,7 +163,7 @@ contract PrecloseFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),          action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -196,6 +199,20 @@ contract PrecloseFacetTest is Test {
             facetAddress: address(new ConsolidationFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
+        });
+        // #671 phase 2 (#728 PR-2c) — ConfigFacet (risk-access kill-switch) +
+        // RiskAccessFacet (the cross-facet `assertObligationTransferAllowed`
+        // entrypoint the obligation-transfer gate calls) so the gate tests can
+        // enable the switch, arm tiers, and exercise the real assertion path.
+        cuts[20] = IDiamondCut.FacetCut({
+            facetAddress: address(new ConfigFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getConfigFacetSelectors()
+        });
+        cuts[21] = IDiamondCut.FacetCut({
+            facetAddress: address(new RiskAccessFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskAccessFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -623,6 +640,145 @@ contract PrecloseFacetTest is Test {
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
         assertEq(loan.borrower, newBorrower);
+        vm.clearMockedCalls();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // #671 phase 2 (#728 PR-2c) — progressive-risk gate on the INCOMING
+    // borrower of an obligation transfer. transferObligationViaOffer makes
+    // `newBorrower` (the offer creator) the borrower of the live loan WITHOUT
+    // routing through the accept→loan-init chokepoint, so the PR-2a acceptor
+    // gate never sees him. The gate here re-asserts him against the LOAN's pair
+    // at the live tier/consent state, via RiskAccessFacet.
+    // assertObligationTransferAllowed. Behind the off-by-default kill-switch.
+    //
+    // Every test creates ben's offer with the gate OFF (so the create-time gate
+    // never runs) and only THEN enables it — isolating the transfer-time gate.
+    // ═══════════════════════════════════════════════════════════════════════
+
+    uint8 constant BLUECHIP = uint8(LibVaipakam.RiskAccessLevel.BlueChipOnly);
+    uint8 constant BROAD = uint8(LibVaipakam.RiskAccessLevel.BroadLiquid);
+
+    /// @dev Force `getEffectiveLiquidityTier(asset) == tier` for the gate's
+    ///      classification path (read via `address(this)` inside LibRiskAccess).
+    function _mockTier(address asset, uint8 tier) internal {
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getEffectiveLiquidityTier.selector, asset
+            ),
+            abi.encode(tier)
+        );
+    }
+
+    /// @dev ben (`newBorrower`) posts a valid single-value Borrower Offer that
+    ///      matches the live loan exactly — same shape as `testTransferObligation
+    ///      Success`'s `validOffer`. Created while the gate is OFF.
+    function _benOffer() internal returns (uint256 offerId) {
+        vm.prank(newBorrower);
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
+    /// @dev The cross-facet stubs the transfer's later steps need (vault / NFT /
+    ///      HF). The risk-access assertion is deliberately NOT stubbed — it runs
+    ///      for real against the cut RiskAccessFacet.
+    function _mockTransferCrossCalls() internal {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector), abi.encode(2e18));
+    }
+
+    /// @notice Gate OFF (default) — a default-tier incoming borrower transfers
+    ///         fine even though the loan's pair would require BroadLiquid.
+    function test_transferGate_offNoOpAllowsDefaultTierBorrower() public {
+        uint256 validOffer = _benOffer();
+        _mockTier(mockERC20, 1);
+        _mockTier(mockCollateralERC20, 1);
+        _mockTransferCrossCalls();
+
+        // Gate stays OFF; ben is the default BlueChipOnly tier.
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        LibVaipakam.Loan memory loanA = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loanA.borrower, newBorrower, "transfer settles with gate off");
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Gate ON, BroadLiquid pair, incoming borrower under-tiered
+    ///         (default BlueChipOnly) → the obligation-transfer gate reverts
+    ///         RiskTierTooLow against the LOAN's pair. Proves ben is re-checked
+    ///         even though the accept→loan-init gate never sees this path.
+    function test_transferGate_revertsWhenIncomingBorrowerUnderTiered() public {
+        uint256 validOffer = _benOffer();
+        _mockTier(mockERC20, 1);
+        _mockTier(mockCollateralERC20, 1);
+        _mockTransferCrossCalls();
+
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.RiskTierTooLow.selector, newBorrower, BROAD, BLUECHIP
+            )
+        );
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+        vm.clearMockedCalls();
+    }
+
+    /// @notice Gate ON, BroadLiquid pair, incoming borrower armed to BroadLiquid
+    ///         → the transfer settles. The armed path is the gate passing on the
+    ///         incoming borrower's live tier.
+    function test_transferGate_passesWhenIncomingBorrowerArmed() public {
+        uint256 validOffer = _benOffer();
+        _mockTier(mockERC20, 1);
+        _mockTier(mockCollateralERC20, 1);
+        _mockTransferCrossCalls();
+
+        // Arm ben (immediate; default zero cooldown), then enable the gate.
+        vm.prank(newBorrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        vm.prank(borrower);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, validOffer);
+
+        LibVaipakam.Loan memory loanB = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loanB.borrower, newBorrower, "transfer settles with incoming borrower armed");
         vm.clearMockedCalls();
     }
 

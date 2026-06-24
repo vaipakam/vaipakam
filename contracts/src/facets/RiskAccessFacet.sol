@@ -284,6 +284,55 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
 
+    /// @notice #671 phase 2 (#728 PR-2c) — assert the INCOMING borrower of a
+    ///         Preclose Option-2 obligation transfer may take on the resulting
+    ///         loan's pair. Reverts `RiskTierTooLow` / `IlliquidPairNotConsented`
+    ///         (from `LibRiskAccess`) when the incoming borrower's live vault tier
+    ///         or standing illiquid-pair consent does not cover the position he
+    ///         is assuming; no-op when the gate is off. Standing consent only —
+    ///         this is not an accept flow, so there is no #662 acknowledgement to
+    ///         substitute.
+    /// @dev    A cross-facet entrypoint consumed by `PrecloseFacet.
+    ///         transferObligationViaOffer`. PrecloseFacet sits at the EIP-170
+    ///         ceiling, so the PairId construction lives here rather than inline
+    ///         in that facet. The gated party is the offer's creator (the new
+    ///         borrower the transfer installs). The pair is the POST-TRANSFER
+    ///         loan: the lend leg stays the loan's principal, but the collateral
+    ///         leg is taken from the BORROWER OFFER — `transferObligationViaOffer`
+    ///         reassigns `loan.collateralTokenId = offer.collateralTokenId`, and
+    ///         `assertAssetContinuity` pins the collateral asset/type/prepay but
+    ///         NOT the token id, so an NFT-collateral transfer can install a
+    ///         DIFFERENT token id than the loan currently holds. Classifying off
+    ///         the offer's collateral id keeps the illiquid-pair consent key bound
+    ///         to the collateral the new borrower actually backs. Reads-only +
+    ///         reverts; safe to call via the diamond fallback from the
+    ///         (non-reentrant) transfer flow.
+    /// @param loanId The loan whose obligation is being transferred.
+    /// @param borrowerOfferId The borrower offer being consumed; its creator is
+    ///        the incoming borrower and its collateral leg is what backs the loan.
+    function assertObligationTransferAllowed(
+        uint256 loanId,
+        uint256 borrowerOfferId
+    ) external view {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibVaipakam.Offer storage offer = s.offers[borrowerOfferId];
+        LibRiskAccess.assertActorMayTransact(
+            s,
+            offer.creator,
+            LibRiskAccess.PairId({
+                lendAsset: loan.principalAsset,
+                lendType: loan.assetType,
+                lendTokenId: loan.tokenId,
+                collAsset: offer.collateralAsset,
+                collType: offer.collateralAssetType,
+                collTokenId: offer.collateralTokenId,
+                prepayAsset: offer.prepayAsset
+            })
+        );
+    }
+
     /// @notice #671 phase 2 (#728 PR-2b) — assert a keeper match's risk-access.
     ///         Reverts `RiskTierTooLow` / `IlliquidPairNotConsented` when a gated
     ///         party's live tier / standing consent doesn't cover the resulting
