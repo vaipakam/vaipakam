@@ -801,6 +801,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
         // #393 v1 — LenderIntentVault standing-terms surface.
         Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
+        // #671 — progressive risk-access facet (per-vault tiers + consent).
+        Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -860,6 +862,7 @@ contract DeployDiamond is Script {
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
+        console.log("RiskAccessFacet:      ", address(riskAccessFacet));
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
         console.log("");

@@ -658,8 +658,9 @@ library LibVaipakam {
      *        - `BlueChipOnly`  — only blue-chip assets: the numeraire basket
      *          (WETH + the configured PAA quote assets) OR an asset that earns
      *          `getEffectiveLiquidityTier == 3` (the O6 numeraire-basket union).
-     *        - `BroadLiquid`   — any liquid (tier ≥ 1) asset, with a one-time
-     *          per-pair mid-tier acknowledgement.
+     *        - `BroadLiquid`   — any liquid (tier ≥ 1) asset. No per-pair step:
+     *          the tier opt-up itself is the consent and the quantitative
+     *          LTV/HF check still applies (design RD-1).
      *        - `IlliquidCustom`— illiquid / unpriced assets, with explicit
      *          per-pair consent.
      */
