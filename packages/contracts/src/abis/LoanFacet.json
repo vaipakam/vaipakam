@@ -1144,6 +1144,27 @@
   },
   {
     "type": "error",
+    "name": "RiskTierTooLow",
+    "inputs": [
+      {
+        "name": "actor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "requiredTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "actorTier",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SafeCastOverflowedUintDowncast",
     "inputs": [
       {

@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -499,6 +500,32 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             }
         }
         if (ctx.isLenderSaleVehicle) return;
+        // #671 phase 2 (#728) — ACCEPTOR-side progressive-risk gate. The create
+        // chokepoint (OfferCreateFacet) already gated the offer CREATOR; here we
+        // gate the ACCEPTOR (`ctx.acceptor`) entering the same pair. Behind the
+        // off-by-default `riskAccessGateEnabled` kill-switch. Scoped to the
+        // direct-accept path (`acceptAckActive`): there the #662 ack check above
+        // has proven the acceptor signed-acknowledged every illiquid leg, so the
+        // per-pair illiquid CONSENT is already satisfied and only the acceptor's
+        // TIER needs checking (the #662⇄#671 unification — see
+        // `LibRiskAccess.assertActorTier`). The keeper-match path
+        // (`acceptAckActive == false`) re-asserts each offer's own creator at the
+        // matcher instead (#728 PR-2b), so it's intentionally not gated here.
+        if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
+            LibRiskAccess.assertActorTier(
+                s,
+                ctx.acceptor,
+                LibRiskAccess.PairId({
+                    lendAsset: offer.lendingAsset,
+                    lendType: offer.assetType,
+                    lendTokenId: offer.tokenId,
+                    collAsset: offer.collateralAsset,
+                    collType: offer.collateralAssetType,
+                    collTokenId: offer.collateralTokenId,
+                    prepayAsset: offer.prepayAsset
+                })
+            );
+        }
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
             ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
         bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&

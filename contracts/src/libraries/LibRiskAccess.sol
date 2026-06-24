@@ -254,6 +254,29 @@ library LibRiskAccess {
         }
     }
 
+    /// @notice TIER-ONLY gate (no per-pair consent check) — used at the
+    ///         direct-accept loan-init site (#671 phase 2 / #728).
+    /// @dev    On the accept path the #662 acceptance-term binding has ALREADY
+    ///         verified, against the gate's own liquidity reads, that the
+    ///         acceptor signed-acknowledged every illiquid leg of this exact
+    ///         offer (see `LoanFacet._maybeRunInitialRiskGates`). That signed
+    ///         per-acceptance acknowledgement is a stronger, more specific
+    ///         consent than the standing per-pair `illiquidPairConsent`, so it
+    ///         SATISFIES the #671 illiquid-consent requirement for the acceptor —
+    ///         the acceptor never double-signs (the #662⇄#671 unification). Only
+    ///         the acceptor's vault TIER still has to cover the pair here.
+    function assertActorTier(
+        LibVaipakam.Storage storage s,
+        address actor,
+        PairId memory p
+    ) internal view {
+        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
+        LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
+        if (uint8(actorTier) < uint8(required)) {
+            revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
+        }
+    }
+
     /// @notice Risk-gate revert reasons (carried in the facet ABI).
     error RiskTierTooLow(address actor, uint8 requiredTier, uint8 actorTier);
     error IlliquidPairNotConsented(address actor, bytes32 pairKey);
