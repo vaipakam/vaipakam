@@ -236,10 +236,13 @@ library LibRiskAccess {
 
     /// @notice Assert `actor`'s effective tier covers this pair, with the
     ///         per-pair acknowledgement / consent the boundary tier requires.
-    /// @dev    No-op when the kill-switch is off OR the sale-vehicle transient is
-    ///         set — callers should still wrap with `cfgRiskAccessGateEnabled()`
-    ///         to avoid the diamond view hop, but the internal guards here make
-    ///         the function safe to call unconditionally.
+    /// @dev    This function does NOT self-guard: it always evaluates the gate.
+    ///         The CALLER is responsible for the master kill-switch
+    ///         (`cfgRiskAccessGateEnabled()`) and the `saleVehicleCreate`
+    ///         exemption — see `OfferCreateFacet`, which skips this call when the
+    ///         gate is off or a protocol sale vehicle is mid-create. Reverts
+    ///         `RiskTierTooLow` / `IlliquidPairNotConsented` /
+    ///         `MidTierPairNotAcknowledged` when the actor is under-qualified.
     function assertActorMayTransact(
         LibVaipakam.Storage storage s,
         address actor,

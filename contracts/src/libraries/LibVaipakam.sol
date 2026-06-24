@@ -647,9 +647,11 @@ library LibVaipakam {
      * @dev Default-init `0 == BlueChipOnly`, so every fresh vault starts at
      *      the safest tier with NO migration (zero-init storage = the strictest
      *      gate). A user opts UP — never down by accident — only via the
-     *      EIP-712 self-submit setter in `RiskAccessFacet`. The gate uses
-     *      `min(tier(lendLeg), tier(collateral))` (lower ordinal = stricter),
-     *      so the riskier of the two legs governs.
+     *      EIP-712 self-submit setter in `RiskAccessFacet`. An offer's required
+     *      level is the MAX (riskier) of its two legs' required levels — a
+     *      blue-chip leg needs `BlueChipOnly` (0), an illiquid leg needs
+     *      `IlliquidCustom` (2) — so the riskier leg governs and a vault must
+     *      hold at least that level to transact the pair.
      *
      *      The tiers map to liquidity bands derived on-chain (NO governance
      *      allow-list — see `docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md`):

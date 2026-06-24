@@ -23,9 +23,10 @@ per-vault version anchor is still current.
 
 The gate is enforced at the **offer-creation chokepoint** that every create
 path shares, so an under-tiered creator's offer is refused before it is posted.
-Protocol-authored offers — the lender-sale-vehicle and offset/obligation-transfer
-flows — are exempt, since their risk belongs to the exiting party and was
-already gated at the original loan. The entire feature is behind an off-by-default
+The protocol-authored lender-sale-vehicle offer is exempt, since its risk belongs
+to the exiting lender and was already gated at the original loan. An
+offset/obligation-transfer offer is NOT exempt — it forms a new position for the
+initiating user, so it is gated on that user's tier like any other create. The entire feature is behind an off-by-default
 master kill-switch (`setRiskAccessGateEnabled`), exactly like the depth-tiered-LTV
 rollout: a fresh deploy behaves identically to before, and each chain flips the
 gate on only after its own liquidity census.
