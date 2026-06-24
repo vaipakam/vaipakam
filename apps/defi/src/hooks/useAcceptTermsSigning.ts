@@ -108,9 +108,6 @@ export interface AcceptTermsSignInput {
   offerId: bigint;
   /** The single mandatory risk-and-terms consent (the §233 checkbox). */
   consent: boolean;
-  /** Auto-linked sale/offset target loan id; 0 for a normal offer (the only
-   *  case the offer book surfaces). */
-  linkedLoanId?: bigint;
 }
 
 const ASSET_TYPE_ERC20 = 0; // LibVaipakam.AssetType.ERC20
@@ -140,6 +137,17 @@ export function useAcceptTermsSigning() {
         functionName: 'getOffer',
         args: [input.offerId],
       })) as Record<string, unknown>;
+
+      // #725 — the auto-linked sale/offset target loan id. The contract binds
+      // `linkedLoanId == saleOfferToLoanId[offerId]` (else offsetOfferToLoanId);
+      // 0 for a normal offer. Read it from chain so a lender-sale-vehicle /
+      // preclose-offset offer signs the right value (else `OfferTermsMismatch`).
+      const linkedLoanId = (await publicClient.readContract({
+        address: diamondAddr,
+        abi: DIAMOND_ABI,
+        functionName: 'getOfferLinkedLoanId',
+        args: [input.offerId],
+      })) as bigint;
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
       const isLender = Number(o.offerType) === OFFER_TYPE_LENDER;
@@ -188,7 +196,7 @@ export function useAcceptTermsSigning() {
         allowsPrepayListing: Boolean(o.allowsPrepayListing),
         allowsParallelSale: Boolean(o.allowsParallelSale),
         refinanceTargetLoanId: o.refinanceTargetLoanId as bigint,
-        linkedLoanId: input.linkedLoanId ?? 0n,
+        linkedLoanId,
         parallelSaleOrderHash: o.parallelSaleOrderHash as Hex,
         periodicInterestCadence: Number(o.periodicInterestCadence),
         riskAndTermsConsent: input.consent,

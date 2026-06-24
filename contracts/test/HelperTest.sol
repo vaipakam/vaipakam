@@ -337,11 +337,13 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](4);
+        selectors = new bytes4[](5);
         selectors[0] = OfferCancelFacet.cancelOffer.selector;
         selectors[1] = OfferCancelFacet.getCompatibleOffers.selector;
         selectors[2] = OfferCancelFacet.getOffer.selector;
         selectors[3] = OfferCancelFacet.getOfferDetails.selector;
+        // #662/#725 — linked-loan getter for the AcceptTerms.linkedLoanId field.
+        selectors[4] = OfferCancelFacet.getOfferLinkedLoanId.selector;
         return selectors;
     }
 
