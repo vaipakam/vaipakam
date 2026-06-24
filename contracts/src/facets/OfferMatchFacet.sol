@@ -19,6 +19,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
+import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 
 /**
  * @title OfferMatchFacet
@@ -675,6 +676,33 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         sliceOfferId = abi.decode(res, (uint256));
     }
 
+    /// @dev #671 phase 2 (#728 PR-2b) — re-assert the progressive-risk gate for
+    ///      BOTH paired offers' creators at the matcher, against the LIVE
+    ///      tier/consent state, mirroring the create-time chokepoint
+    ///      (`OfferCreateFacet`). The classification + PairId resolution
+    ///      (including the borrower-offer-pair surface and the sale-vehicle
+    ///      seller-exempt / buyer-gated split) lives in
+    ///      `RiskAccessFacet.assertMatchAllowed` — delegated via a cross-facet
+    ///      call so the heavy classifier doesn't inline into this facet (which is
+    ///      near the EIP-170 ceiling). The inner `RiskTierTooLow` /
+    ///      `IlliquidPairNotConsented` revert bubbles. No-op unless
+    ///      `riskAccessGateEnabled` (guarded so a gate-off match pays no
+    ///      cross-call).
+    function _assertMatchCreatorsRiskAccess(
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId
+    ) private {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                RiskAccessFacet.assertMatchAllowed.selector,
+                lenderOfferId,
+                borrowerOfferId
+            ),
+            bytes4(0)
+        );
+    }
+
     /// @notice Shared match-execution core for `matchOffers` and the v0.6
     ///         `matchSignedOffer`. `msg.sender` (the matcher / LIF recipient)
     ///         is preserved because this is an internal call from both
@@ -829,6 +857,24 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             }
             revert InvalidOfferType();
         }
+
+        // #671 phase 2 (#728 PR-2b) — keeper-match risk re-assertion. The
+        // acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is scoped
+        // to the direct-accept path (`acceptAckActive == true`) and is SKIPPED on
+        // the keeper-match path (a match sets no accept-ack — both sides are
+        // self-authored offers, design §5), so neither party is re-validated
+        // downstream. Re-assert HERE — before any state mutation. The gated
+        // parties + the pair they are gated against are resolved in
+        // `RiskAccessFacet.assertMatchAllowed`: a normal match gates BOTH
+        // creators against the BORROWER offer's pair (the resulting loan copies
+        // its token ids / prepay from that offer, so the lender must consent to
+        // the pair it actually joins, not its own offer's possibly-different
+        // pair); a lender-sale-vehicle borrower offer instead exempts the exiting
+        // seller and gates only the buyer (the lender-offer creator acquiring the
+        // sold position) against the LINKED loan's pair — mirroring the
+        // sale-vehicle accept semantics (PR-2a). Standing consent only (no #662
+        // ack on this path). No-op unless the kill-switch is on.
+        _assertMatchCreatorsRiskAccess(lenderOfferId, borrowerOfferId);
 
         // ── State mutation: install the match override. See the
         // matching docstring on `OfferFacet._acceptOffer` for the
