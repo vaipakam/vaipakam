@@ -14,7 +14,8 @@ liquidity-depth machinery the LTV/health-factor system already uses — there is
 no governance list of "approved assets". An asset is treated as blue-chip if it
 is the numeraire basket (WETH or one of the configured quote assets) or if it
 independently earns the deepest on-chain liquidity tier; a merely-liquid asset
-needs a one-time mid-tier acknowledgement; an illiquid or unpriced asset needs
+just needs the vault opted up to BroadLiquid (no per-pair step — the quantitative
+LTV/health-factor check still applies); an illiquid or unpriced asset needs
 explicit per-pair consent. The riskier of an offer's two legs governs, and an
 NFT rental is classified off the value-bearing prepayment token rather than the
 rented NFT. The whole surface re-locks itself with zero writes when governance
