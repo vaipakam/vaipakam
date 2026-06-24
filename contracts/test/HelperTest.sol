@@ -782,7 +782,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](20);
+        selectors = new bytes4[](27);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         selectors[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -803,6 +803,13 @@ contract HelperTest {
         selectors[17] = RiskAccessFacet.assertMatchAllowed.selector;
         selectors[18] = RiskAccessFacet.previewMatchRiskBlock.selector;
         selectors[19] = RiskAccessFacet.assertObligationTransferAllowed.selector;
+        selectors[20] = RiskAccessFacet.setRiskStrictMode.selector;
+        selectors[21] = RiskAccessFacet.setRiskStrictModeBySig.selector;
+        selectors[22] = RiskAccessFacet.setMidTierPairAck.selector;
+        selectors[23] = RiskAccessFacet.setMidTierPairAckBySig.selector;
+        selectors[24] = RiskAccessFacet.getRiskStrictMode.selector;
+        selectors[25] = RiskAccessFacet.getStrictModeDisabledAt.selector;
+        selectors[26] = RiskAccessFacet.midTierStrictBlocked.selector;
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()

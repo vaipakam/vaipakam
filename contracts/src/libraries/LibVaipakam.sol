@@ -4418,6 +4418,21 @@ library LibVaipakam {
         // sign-and-use window — a phished pair grant can't both land AND select
         // a malicious pair in the same tx once a cooldown is configured.
         mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockAt;
+        // #671 phase 2 RD-1 (#728 PR-2d) — opt-in STRICT MODE per-pair acks for
+        // MID-TIER (BroadLiquid) pairs. `midTierExplicitAck[user][pairKey]` is the
+        // EXPLICIT, setter-only ack timestamp (written ONLY by `setMidTierPairAck`,
+        // never auto-stamped by the gate — so a strict-mode user must DELIBERATELY
+        // ack each mid-tier pair). `midTierExplicitAckVersion` anchors it to the
+        // risk-terms version at ack-time; the gate requires `>= currentRiskTermsVersion`
+        // (a fresh ack), so a terms bump re-locks it just like the unlock anchors.
+        mapping(address => mapping(bytes32 => uint64)) midTierExplicitAck;
+        mapping(address => mapping(bytes32 => uint64)) midTierExplicitAckVersion;
+        // Disable-cooldown anchor: stamped when a vault turns strict mode OFF (a
+        // risk-increasing change). While `now < strictModeDisabledAt + riskAccessUnlockCooldown`
+        // the gate still treats the vault as strict (mid-tier pairs still need a
+        // fresh explicit ack), closing the disable→exploit window. Zero (never
+        // disabled, or re-enabled) ⇒ no lingering requirement.
+        mapping(address => uint64) strictModeDisabledAt;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

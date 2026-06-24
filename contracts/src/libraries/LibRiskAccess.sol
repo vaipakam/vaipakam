@@ -234,6 +234,55 @@ library LibRiskAccess {
             && block.timestamp >= s.pairConsentUnlockAt[actor][pk];
     }
 
+    /// @dev #671 phase 2 RD-1 (#728 PR-2d) — is `actor` subject to the strict-mode
+    ///      mid-tier per-pair ack requirement RIGHT NOW? True when the flag is on,
+    ///      OR (Codex-hardening) when it was recently turned OFF and the disable-
+    ///      cooldown has not yet elapsed — so a strict-mode user can't dodge the
+    ///      mid-tier ack by disabling strict mode and originating in the same
+    ///      cooldown window. With the default zero cooldown, a disable takes effect
+    ///      immediately (no lingering requirement).
+    function _strictModeEffective(LibVaipakam.Storage storage s, address actor)
+        private
+        view
+        returns (bool)
+    {
+        if (s.riskStrictMode[actor]) return true;
+        uint64 disabledAt = s.strictModeDisabledAt[actor];
+        return disabledAt != 0
+            && block.timestamp < disabledAt + s.riskAccessUnlockCooldown;
+    }
+
+    /// @dev True iff `actor` holds a FRESH explicit mid-tier ack for `pk`. "Fresh"
+    ///      = set AND its version anchor still current (a terms bump re-locks it,
+    ///      same read-time re-lock as the tier/consent anchors). Reads the EXPLICIT
+    ///      (setter-only) map, never a passive auto-stamp — so strict mode can't be
+    ///      satisfied accidentally.
+    function _midTierAckEffective(
+        LibVaipakam.Storage storage s,
+        address actor,
+        bytes32 pk
+    ) private view returns (bool) {
+        return s.midTierExplicitAck[actor][pk] != 0
+            && s.midTierExplicitAckVersion[actor][pk] >= s.currentRiskTermsVersion;
+    }
+
+    /// @notice Read-only view of the strict-mode mid-tier requirement for a pair —
+    ///         used by `RiskAccessFacet` view surfaces and the frontend. True iff
+    ///         the actor is (effectively) in strict mode for a BroadLiquid pair and
+    ///         lacks a fresh explicit ack — i.e. the gate WOULD block this mid-tier
+    ///         origination. Returns false for non-mid-tier pairs.
+    function midTierStrictBlock(
+        LibVaipakam.Storage storage s,
+        address actor,
+        PairId memory p
+    ) internal view returns (bool) {
+        if (_pairRequiredLevel(s, p) != LibVaipakam.RiskAccessLevel.BroadLiquid) {
+            return false;
+        }
+        return _strictModeEffective(s, actor)
+            && !_midTierAckEffective(s, actor, pairKey(p));
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // The gate
     // ─────────────────────────────────────────────────────────────────────────
@@ -267,6 +316,15 @@ library LibRiskAccess {
             bytes32 pk = pairKey(p);
             if (!_illiquidConsentEffective(s, actor, pk)) {
                 revert IlliquidPairNotConsented(actor, pk);
+            }
+        } else if (required == LibVaipakam.RiskAccessLevel.BroadLiquid) {
+            // RD-1 strict mode (#728 PR-2d): a mid-tier pair is NOT per-pair gated
+            // by default (the tier opt-up is the consent), but a vault that opted
+            // INTO strict mode must hold a fresh EXPLICIT ack for the mid-tier pair
+            // too — this is what makes `setRiskStrictMode` enforce anything. No-op
+            // for the vast majority (strict mode default-off).
+            if (midTierStrictBlock(s, actor, p)) {
+                revert MidTierPairNotAcknowledged(actor, pairKey(p));
             }
         }
     }
@@ -305,7 +363,17 @@ library LibRiskAccess {
         if (uint8(actorTier) < uint8(required)) {
             revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
         }
-        if (required != LibVaipakam.RiskAccessLevel.IlliquidCustom) return;
+        if (required != LibVaipakam.RiskAccessLevel.IlliquidCustom) {
+            // RD-1 strict mode (#728 PR-2d): a strict-mode acceptor must hold a
+            // fresh EXPLICIT ack for a mid-tier pair too — and the #662 acceptance
+            // acknowledgement does NOT substitute (that ack is illiquid-asset
+            // identity, not the deliberate per-pair mid-tier attestation strict
+            // mode requires). No-op when the acceptor isn't in strict mode.
+            if (midTierStrictBlock(s, actor, p)) {
+                revert MidTierPairNotAcknowledged(actor, pairKey(p));
+            }
+            return;
+        }
         bytes32 pk = pairKey(p);
         if (_illiquidConsentEffective(s, actor, pk)) return; // standing fresh consent
         // #662 ack-substitution — only with FRESH risk terms (a governance terms
@@ -367,7 +435,8 @@ library LibRiskAccess {
 
     /// @notice Non-reverting mirror of `assertActorMayTransact` for dry-run
     ///         surfaces (`OfferAcceptFacet.previewAccept`, Codex #729 r3).
-    /// @return 0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent.
+    /// @return 0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent,
+    ///         3 = strict-mode mid-tier pair needs a fresh explicit ack (PR-2d).
     /// @dev    Standing-consent semantics: a preview has no #662 accept ack to
     ///         substitute, so an acceptor who WOULD clear the illiquid boundary by
     ///         acknowledging at sign-time still surfaces code 2 here. That is the
@@ -387,12 +456,19 @@ library LibRiskAccess {
         ) {
             return 2;
         }
+        // RD-1 strict mode (#728 PR-2d): a strict-mode mid-tier pair lacking a
+        // fresh explicit ack would be blocked at origination — surface it so the
+        // frontend collects the ack first instead of letting the tx revert.
+        if (midTierStrictBlock(s, actor, p)) return 3;
         return 0;
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).
     error RiskTierTooLow(address actor, uint8 requiredTier, uint8 actorTier);
     error IlliquidPairNotConsented(address actor, bytes32 pairKey);
+    /// @notice RD-1 strict mode (#728 PR-2d) — a vault in (effective) strict mode
+    ///         originated a MID-TIER pair without a fresh explicit ack.
+    error MidTierPairNotAcknowledged(address actor, bytes32 pairKey);
 
     // ─────────────────────────────────────────────────────────────────────────
     // EIP-712 self-submit setters
@@ -433,11 +509,47 @@ library LibRiskAccess {
         uint256 deadline;
     }
 
+    /// @notice RD-1 strict mode (#728 PR-2d) — relayed toggle of the per-vault
+    ///         strict-mode flag. Carries the full signed envelope because turning
+    ///         strict mode OFF is a risk-INCREASING privilege change.
+    struct SetRiskStrictMode {
+        address vault;
+        bool enabled;
+        uint64 termsVersion;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
+    /// @notice RD-1 strict mode (#728 PR-2d) — relayed EXPLICIT mid-tier pair ack.
+    ///         Same pair identity as `SetIlliquidPairConsent` (asset types + token
+    ///         ids), but records the deliberate mid-tier attestation strict mode
+    ///         requires. Always signed + replay-protected + terms-bound, regardless
+    ///         of the flag's current value.
+    struct SetMidTierPairAck {
+        address vault;
+        address lendAsset;
+        uint8 lendAssetType;
+        uint256 lendTokenId;
+        address collAsset;
+        uint8 collAssetType;
+        uint256 collTokenId;
+        address prepayAsset;
+        uint64 termsVersion;
+        uint256 nonce;
+        uint256 deadline;
+    }
+
     bytes32 internal constant SET_VAULT_RISK_TIER_TYPEHASH = keccak256(
         "SetVaultRiskTier(address vault,uint8 level,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_ILLIQUID_PAIR_CONSENT_TYPEHASH = keccak256(
         "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+    );
+    bytes32 internal constant SET_RISK_STRICT_MODE_TYPEHASH = keccak256(
+        "SetRiskStrictMode(address vault,bool enabled,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+    );
+    bytes32 internal constant SET_MID_TIER_PAIR_ACK_TYPEHASH = keccak256(
+        "SetMidTierPairAck(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -505,6 +617,48 @@ library LibRiskAccess {
                         m.collTokenId,
                         m.prepayAsset,
                         m.consent
+                    ),
+                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                )
+            )
+        );
+    }
+
+    function digest(SetRiskStrictMode memory m) internal view returns (bytes32) {
+        return _digest(
+            keccak256(
+                abi.encode(
+                    SET_RISK_STRICT_MODE_TYPEHASH,
+                    m.vault,
+                    m.enabled,
+                    m.termsVersion,
+                    m.nonce,
+                    m.deadline
+                )
+            )
+        );
+    }
+
+    function digest(SetMidTierPairAck memory m)
+        internal
+        view
+        returns (bytes32)
+    {
+        // Chunked ≤10-value encodes joined by `bytes.concat` (viaIR stack ceiling —
+        // same idiom as `SetIlliquidPairConsent`). All fields static EIP-712 types.
+        return _digest(
+            keccak256(
+                bytes.concat(
+                    abi.encode(
+                        SET_MID_TIER_PAIR_ACK_TYPEHASH,
+                        m.vault,
+                        m.lendAsset,
+                        m.lendAssetType,
+                        m.lendTokenId,
+                        m.collAsset,
+                        m.collAssetType,
+                        m.collTokenId,
+                        m.prepayAsset
                     ),
                     abi.encode(m.termsVersion, m.nonce, m.deadline)
                 )
