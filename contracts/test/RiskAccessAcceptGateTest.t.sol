@@ -133,6 +133,50 @@ contract RiskAccessAcceptGateTest is SetupTest {
         sig = LibAcceptTestSigner.sign(address(diamond), t, pk);
     }
 
+    /// @dev The PairId exactly as `LoanFacet._maybeRunInitialRiskGates` builds it
+    ///      from a `_lenderOffer(lendAsset, collAsset)` ERC-20 offer — both legs
+    ///      ERC-20, the offer's `prepayAsset == mockERC20` (canonicalized to 0 in
+    ///      `pairKey` for a non-NFT lend leg, so the value is immaterial to the
+    ///      consent key but kept faithful here).
+    function _offerPair(address lendAsset, address collAsset)
+        internal
+        view
+        returns (LibRiskAccess.PairId memory)
+    {
+        return LibRiskAccess.PairId({
+            lendAsset: lendAsset,
+            lendType: LibVaipakam.AssetType.ERC20,
+            lendTokenId: 0,
+            collAsset: collAsset,
+            collType: LibVaipakam.AssetType.ERC20,
+            collTokenId: 0,
+            prepayAsset: mockERC20
+        });
+    }
+
+    /// @dev Arm the offer CREATOR (the `lender`) to clear the accept-time creator
+    ///      RE-CHECK (Codex #729 r3 finding A) for an `IlliquidCustom` pair: opt
+    ///      the creator UP to IlliquidCustom AND record a standing per-pair consent
+    ///      on the EXACT pair the gate builds from the offer. The creator signs no
+    ///      #662 ack, so a standing consent is its only path. Without this the
+    ///      creator re-check (which runs first) would revert before the acceptor
+    ///      check — these helpers let the post-A tests isolate the acceptor leg.
+    function _armCreatorIlliquid(address lendAsset, address collAsset) internal {
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(lendAsset, collAsset), true
+        );
+    }
+
+    /// @dev Arm the creator's TIER only (BroadLiquid pairs carry no per-pair
+    ///      consent — the tier opt-up is itself the consent).
+    function _armCreatorTier(uint8 tier) internal {
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(tier);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // 1 — gate OFF (default) is a no-op: a BlueChipOnly acceptor accepts a pair
     //     that WOULD require IlliquidCustom and the loan initiates fine.
@@ -173,6 +217,9 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // flip the gate ON so only the accept-time acceptor check fires.
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the CREATOR so the accept-time creator re-check (Codex #729 r3
+        // finding A) passes — isolating the acceptor tier check under test.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
         // Borrower is BlueChipOnly (default); pair requires IlliquidCustom. The
         // #662 ack still passes (buildTerms names the illiquid collateral), so
@@ -203,6 +250,8 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the CREATOR so its accept-time re-check (finding A) passes.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
         // Acceptor opts UP to IlliquidCustom (cooldown 0 default => immediate).
         // Deliberately NO `setIlliquidPairConsent` call — the only #671 step the
@@ -242,6 +291,9 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         uint256 offerId = _lenderOffer(mockERC20, mockCollateralERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the CREATOR's tier so its accept-time re-check (finding A) passes
+        // (a BroadLiquid pair needs no per-pair consent — tier opt-up suffices).
+        _armCreatorTier(BROAD);
 
         // BlueChipOnly (default) acceptor is under-tiered for a BroadLiquid pair.
         (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) =
@@ -293,6 +345,9 @@ contract RiskAccessAcceptGateTest is SetupTest {
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
         uint256 offerId2 = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the CREATOR (tier + standing consent) so its accept-time re-check
+        // (finding A) passes for the pre-bump baseline accept.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
         // Acceptor opts UP to IlliquidCustom (cooldown 0 => immediate). As in
         // test 3, the #662 ack substitutes for a standing per-pair consent.
@@ -318,6 +373,11 @@ contract RiskAccessAcceptGateTest is SetupTest {
             BLUECHIP,
             "tier re-locked to BlueChipOnly after terms bump"
         );
+
+        // The bump also re-locked the CREATOR's tier + consent. Re-arm the
+        // creator (fresh anchors) so its accept-time re-check passes — isolating
+        // the borrower's stale-tier re-lock as the revert under test.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
         // Re-accepting the SAME illiquid pair now reverts RiskTierTooLow: the
         // stale anchor drops the effective tier to BlueChipOnly, so the tier
@@ -444,7 +504,246 @@ contract RiskAccessAcceptGateTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // 7 — keeper-match path is NOT gated by THIS accept-time site.
+    // 7 — RE-CHECK CREATOR (Codex #729 r3 finding A): an offer authored while the
+    //     gate was OFF (creator ungated at create) must STILL revert at accept
+    //     once the gate is ON and the stored creator is under-tiered for the pair.
+    //     The creator re-check runs BEFORE the acceptor check, so with the
+    //     acceptor fully armed the revert names the CREATOR.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_acceptGate_reChecksStaleCreatorAtAccept() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        // Offer created gate-off: the creator (lender, BlueChipOnly) is ungated.
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Fully arm the ACCEPTOR (tier; the #662 ack covers the illiquid coll
+        // leg) so the acceptor gate would pass — isolating the creator re-check.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // The stored creator is still BlueChipOnly => accept reverts on the
+        // CREATOR re-check (RiskTierTooLow names the LENDER, not the borrower).
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) =
+            _buildAndSign(borrower, borrowerPk, offerId);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.RiskTierTooLow.selector, lender, ILLIQUID, BLUECHIP
+            )
+        );
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+
+        // Arm the creator too => the stale-offer window is closed cleanly and the
+        // accept now succeeds.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower,
+            borrower,
+            "accept succeeds once the creator is re-armed"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 8 — VERIFIED-ACK-ONLY substitution (Codex #729 r3 finding B): a leg that is
+    //     `IlliquidCustom` by DERIVED tier (effective tier 0) but still
+    //     `checkLiquidity == Liquid` is NEVER validated by the #662 ack check, so
+    //     a FORGED ack naming it must NOT substitute for a standing consent. The
+    //     acceptor must hold a standing per-pair consent.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_acceptGate_forgedAckOnDerivedTier0NeedsStandingConsent() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        // Collateral: liquid by `checkLiquidity` (SetupTest default) but DEMOTED
+        // to effective tier 0 => IlliquidCustom per #671, yet NOT `Illiquid` to
+        // the #662 check — so its ack is never validated there.
+        _mockTier(mockCollateralERC20, 0);
+
+        uint256 offerId = _lenderOffer(mockERC20, mockCollateralERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Creator armed (tier + standing consent — no ack path). Acceptor armed
+        // to the TIER only; deliberately NO standing consent.
+        _armCreatorIlliquid(mockERC20, mockCollateralERC20);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // FORGE the acceptor's ack to name the demoted collateral even though
+        // `checkLiquidity` says Liquid (the honest `_ack` returns address(0)).
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), borrower, offerId, true, 0
+        );
+        t.acknowledgedIlliquidCollateralAsset = mockCollateralERC20; // forged
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+
+        // The forged ack must NOT substitute (never #662-verified) => the
+        // IlliquidCustom pair requires a standing consent the acceptor lacks.
+        bytes32 pk =
+            LibRiskAccess.pairKey(_offerPair(mockERC20, mockCollateralERC20));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.IlliquidPairNotConsented.selector, borrower, pk
+            )
+        );
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+
+        // Grant a STANDING consent on the pair => the standing-consent branch
+        // returns before the ack check, so the same (still-forged) terms accept.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(mockERC20, mockCollateralERC20), true
+        );
+        vm.prank(borrower);
+        uint256 loanId =
+            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower,
+            borrower,
+            "accept succeeds once a standing consent is recorded"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 9 — PREVIEW the gate (Codex #729 r3 finding C): the dedicated, non-reverting
+    //     `RiskAccessFacet.previewOfferAcceptBlock(offerId, acceptor)` view surfaces
+    //     the risk-access block (0 = OK, 1 = tier too low, 2 = illiquid pair needs
+    //     standing consent) so the frontend never quotes an accept that loan-init
+    //     would revert. (OfferAcceptFacet is at the EIP-170 ceiling, so the gate is
+    //     exposed as this dedicated view rather than folded into `previewAccept`'s
+    //     `AcceptError` — the "expose a matching preview error" option.) Uses
+    //     STANDING-consent semantics (a preview has no #662 ack to substitute), so
+    //     a missing standing consent surfaces code 2 — the conservative UX hint the
+    //     frontend clears by collecting the acknowledgement (or a standing consent).
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_previewOfferAcceptBlock_surfacesRiskAccessGate() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+
+        // Gate OFF (default): the preview view short-circuits to 0 (OK).
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            0,
+            "gate off => 0 (OK)"
+        );
+
+        // Gate ON, creator (lender) still BlueChipOnly => the creator block
+        // surfaces first as code 1 (tier too low).
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            1,
+            "under-tiered party => 1 (tier too low)"
+        );
+
+        // Arm the creator + opt the acceptor UP to the tier (still no standing
+        // consent) => the only remaining block is the acceptor's missing
+        // illiquid-pair consent (code 2).
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            2,
+            "tier OK, no standing consent => 2 (pair consent required)"
+        );
+
+        // Record a standing consent for the acceptor => the view clears to 0.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(mockERC20, mockIlliquidERC20), true
+        );
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            0,
+            "standing consent => 0 (OK)"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 10 — SALE-BUYER gate (Codex #729 r3 finding E): a loan-sale BUYER is gated
+    //      against the LINKED loan's asset pair (the exiting seller stays exempt).
+    //
+    //      NOTE: the full sale-accept e2e is deferred for the SAME harness-
+    //      fragility reason as tests 6/11 — the path needs `createLoanSaleOffer`
+    //      + a fully-provisioned buyer + the `completeLoanSale` cross-facet mocks
+    //      (see Scenario7_LenderEarlyWithdrawal). We assert the gate-decision
+    //      pieces the LoanFacet wiring composes via the SAME unit-tested
+    //      `assertActorMayTransact`: (a) the linked loan's pair (ERC-20 principal
+    //      + illiquid collateral) requires IlliquidCustom, (b) a fresh buyer is
+    //      below the bar with no consent, and (c) a tier opt-up + standing consent
+    //      lifts the buyer over both gate legs.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_saleBuyerGate_linkedLoanPairClassificationAndConsent() public {
+        _mockTier(mockERC20, 3); // linked loan principal: blue-chip
+        _mockTier(mockIlliquidERC20, 0); // linked loan collateral: illiquid
+
+        // The PairId exactly as LoanFacet builds from the LINKED loan in the
+        // sale-vehicle branch (principalAsset, assetType, collateralAsset,
+        // collateralAssetType, token ids, prepayAsset).
+        LibRiskAccess.PairId memory linkedPair = LibRiskAccess.PairId({
+            lendAsset: mockERC20,
+            lendType: LibVaipakam.AssetType.ERC20,
+            lendTokenId: 0,
+            collAsset: mockIlliquidERC20,
+            collType: LibVaipakam.AssetType.ERC20,
+            collTokenId: 0,
+            prepayAsset: address(0)
+        });
+
+        // (a) the linked pair requires IlliquidCustom (illiquid collateral leg).
+        assertEq(
+            RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(linkedPair),
+            ILLIQUID,
+            "linked loan pair requires IlliquidCustom"
+        );
+
+        // (b) a fresh buyer is BlueChipOnly with no standing consent => below the
+        //     bar on BOTH gate legs (would revert RiskTierTooLow at accept).
+        address buyer = makeAddr("saleBuyer");
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(buyer),
+            BLUECHIP,
+            "fresh buyer is BlueChipOnly"
+        );
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                buyer, linkedPair
+            ),
+            "fresh buyer has no standing consent"
+        );
+
+        // (c) the buyer opts UP + records a standing consent => clears both legs.
+        vm.prank(buyer);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(buyer);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(linkedPair, true);
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(buyer),
+            ILLIQUID,
+            "buyer effective IlliquidCustom after opt-up"
+        );
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                buyer, linkedPair
+            ),
+            "buyer standing consent effective on the linked pair"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 11 — keeper-match path is NOT gated by THIS accept-time site.
     // ════════════════════════════════════════════════════════════════════════
 
     // NOTE: the keeper-match path (`acceptAckActive == false`, e.g. an

@@ -286,13 +286,19 @@ library LibRiskAccess {
     ///         token correctly falls back to requiring a standing per-pair consent.
     ///         `ackLend` / `ackColl` are the acceptor's signed
     ///         `acknowledgedIlliquid{Lending,Collateral}Asset` (already injected
-    ///         + verified at the call site).
+    ///         + verified at the call site). `lendAckVerified` / `collAckVerified`
+    ///         say whether the #662 check at the call site ACTUALLY validated that
+    ///         leg's ack against the live liquidity read — only a verified ack may
+    ///         substitute for standing consent (Codex #729 r3; see
+    ///         `_ackCoversIlliquidLegs`).
     function assertAcceptorMayTransact(
         LibVaipakam.Storage storage s,
         address actor,
         PairId memory p,
         address ackLend,
-        address ackColl
+        address ackColl,
+        bool lendAckVerified,
+        bool collAckVerified
     ) internal view {
         LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
         LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
@@ -307,7 +313,9 @@ library LibRiskAccess {
         // r1) AND an ack that covers exactly the gate's illiquid legs.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
-                && _ackCoversIlliquidLegs(s, p, ackLend, ackColl)
+                && _ackCoversIlliquidLegs(
+                    s, p, ackLend, ackColl, lendAckVerified, collAckVerified
+                )
         ) {
             return;
         }
@@ -315,22 +323,34 @@ library LibRiskAccess {
     }
 
     /// @dev True iff the acceptor's #662 acknowledgement names the classification
-    ///      asset of EVERY leg this gate deems `IlliquidCustom`. Reuses
+    ///      asset of EVERY leg this gate deems `IlliquidCustom` — AND that ack was
+    ///      actually VERIFIED by the call-site #662 check (`*AckVerified`). Reuses
     ///      `_lendLegLevel` / `_collLegLevel` (the single classification source),
     ///      so a rental's prepay-substituted lend leg (classAsset == prepay) is
     ///      NOT covered by the #662 ack (which names the rented NFT) — that case
     ///      falls through to requiring a standing consent.
+    ///
+    ///      The `*AckVerified` gate (Codex #729 r3) closes a substitution bypass:
+    ///      the #662 check only validates `ack == lendingAsset` for legs it sees
+    ///      as `Illiquid` via `checkLiquidity`. A leg that this gate deems
+    ///      `IlliquidCustom` for a DIFFERENT reason — a liquid-looking ERC-20
+    ///      demoted to effective tier 0, or a rental's illiquid `prepayAsset` — was
+    ///      never validated, so its `ack*` slot is attacker-chosen and must NOT be
+    ///      allowed to satisfy the equality. Those derived-tier / prepay cases are
+    ///      forced back to a standing `illiquidPairConsent`.
     function _ackCoversIlliquidLegs(
         LibVaipakam.Storage storage s,
         PairId memory p,
         address ackLend,
-        address ackColl
+        address ackColl,
+        bool lendAckVerified,
+        bool collAckVerified
     ) private view returns (bool) {
         (LibVaipakam.RiskAccessLevel lendLvl, address lendClass) =
             _lendLegLevel(s, p);
         if (
             lendLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
-                && ackLend != lendClass
+                && !(lendAckVerified && ackLend == lendClass)
         ) {
             return false;
         }
@@ -338,11 +358,36 @@ library LibRiskAccess {
             _collLegLevel(s, p);
         if (
             collLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
-                && ackColl != collClass
+                && !(collAckVerified && ackColl == collClass)
         ) {
             return false;
         }
         return true;
+    }
+
+    /// @notice Non-reverting mirror of `assertActorMayTransact` for dry-run
+    ///         surfaces (`OfferAcceptFacet.previewAccept`, Codex #729 r3).
+    /// @return 0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent.
+    /// @dev    Standing-consent semantics: a preview has no #662 accept ack to
+    ///         substitute, so an acceptor who WOULD clear the illiquid boundary by
+    ///         acknowledging at sign-time still surfaces code 2 here. That is the
+    ///         correct conservative UX hint — the frontend then collects the
+    ///         matching acknowledgement (or a standing consent) before enabling
+    ///         Accept, rather than the dry-run silently reporting success.
+    function previewActorBlock(
+        LibVaipakam.Storage storage s,
+        address actor,
+        PairId memory p
+    ) internal view returns (uint8) {
+        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
+        if (uint8(effectiveTier(s, actor)) < uint8(required)) return 1;
+        if (
+            required == LibVaipakam.RiskAccessLevel.IlliquidCustom
+                && !_illiquidConsentEffective(s, actor, pairKey(p))
+        ) {
+            return 2;
+        }
+        return 0;
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).

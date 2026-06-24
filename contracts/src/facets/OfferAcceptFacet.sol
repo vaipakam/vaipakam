@@ -1879,6 +1879,18 @@ contract OfferAcceptFacet is
             }
         }
 
+        // #671 phase 2 (Codex #729 r3 finding C) — the risk-access gate is NOT
+        // mirrored inline in this classifier. OfferAcceptFacet sits ~56 bytes
+        // under the EIP-170 runtime-size limit, and even a single delegated
+        // classification call overflows it; folding the gate into this
+        // `AcceptError` chain would need a larger `previewAccept`-to-own-facet
+        // split. Instead the gate is surfaced as the dedicated, non-reverting
+        // `RiskAccessFacet.previewOfferAcceptBlock(offerId, acceptor)` view
+        // (0 = OK, 1 = tier too low, 2 = illiquid pair needs standing consent) —
+        // the "expose a matching preview error" option from the finding — which
+        // the frontend consults alongside this preview so a risk-blocked accept
+        // is never quoted as acceptable.
+
         // Happy path: errorCode stays `None`.
     }
 
