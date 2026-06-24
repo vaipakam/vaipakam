@@ -60,6 +60,7 @@ contract RiskAccessFacet is DiamondAccessControl {
     error RiskNonceUsed(address vault, uint256 nonce);
     error RiskBadSignature(address vault);
     error RiskCooldownTooLong(uint64 requested, uint64 maxAllowed);
+    error RiskTermsVersionStale(uint64 signed, uint64 current);
 
     // ─── User-facing setters: direct (msg.sender == vault) ───────────────────
 
@@ -71,27 +72,22 @@ contract RiskAccessFacet is DiamondAccessControl {
     }
 
     /// @notice Grant or revoke the caller's explicit consent to a specific
-    ///         illiquid pair (required for an `IlliquidCustom` vault).
+    ///         illiquid pair (required for an `IlliquidCustom` vault). The pair
+    ///         identity includes asset types + token ids, so a consent binds to
+    ///         the exact NFT, not the whole collection.
     function setIlliquidPairConsent(
-        address lendAsset,
-        address collAsset,
-        address prepayAsset,
+        LibRiskAccess.PairId calldata p,
         bool consent
     ) external {
-        _applyIlliquidConsent(
-            msg.sender, lendAsset, collAsset, prepayAsset, consent
-        );
+        _applyIlliquidConsent(msg.sender, p, consent);
     }
 
     /// @notice Grant or revoke the caller's one-time mid-tier acknowledgement
     ///         for a specific pair (required for a `BroadLiquid` vault).
-    function setMidTierPairAck(
-        address lendAsset,
-        address collAsset,
-        address prepayAsset,
-        bool ack
-    ) external {
-        _applyMidTierAck(msg.sender, lendAsset, collAsset, prepayAsset, ack);
+    function setMidTierPairAck(LibRiskAccess.PairId calldata p, bool ack)
+        external
+    {
+        _applyMidTierAck(msg.sender, p, ack);
     }
 
     // ─── User-facing setters: gasless EIP-712 self-submit (relayed) ──────────
@@ -103,7 +99,10 @@ contract RiskAccessFacet is DiamondAccessControl {
         LibRiskAccess.SetVaultRiskTier calldata m,
         bytes calldata sig
     ) external {
-        _consumeSig(m.vault, m.nonce, m.deadline, LibRiskAccess.digest(m), sig);
+        _consumeSig(
+            m.vault, m.termsVersion, m.nonce, m.deadline,
+            LibRiskAccess.digest(m), sig
+        );
         _applyTier(m.vault, m.level);
     }
 
@@ -112,10 +111,11 @@ contract RiskAccessFacet is DiamondAccessControl {
         LibRiskAccess.SetIlliquidPairConsent calldata m,
         bytes calldata sig
     ) external {
-        _consumeSig(m.vault, m.nonce, m.deadline, LibRiskAccess.digest(m), sig);
-        _applyIlliquidConsent(
-            m.vault, m.lendAsset, m.collAsset, m.prepayAsset, m.consent
+        _consumeSig(
+            m.vault, m.termsVersion, m.nonce, m.deadline,
+            LibRiskAccess.digest(m), sig
         );
+        _applyIlliquidConsent(m.vault, _pairIdOf(m), m.consent);
     }
 
     /// @notice Relayer-submittable mid-tier acknowledgement.
@@ -123,10 +123,11 @@ contract RiskAccessFacet is DiamondAccessControl {
         LibRiskAccess.SetMidTierPairAck calldata m,
         bytes calldata sig
     ) external {
-        _consumeSig(m.vault, m.nonce, m.deadline, LibRiskAccess.digest(m), sig);
-        _applyMidTierAck(
-            m.vault, m.lendAsset, m.collAsset, m.prepayAsset, m.ack
+        _consumeSig(
+            m.vault, m.termsVersion, m.nonce, m.deadline,
+            LibRiskAccess.digest(m), sig
         );
+        _applyMidTierAck(m.vault, _pairIdOf(m), m.ack);
     }
 
     // ─── Admin levers (ADMIN_ROLE → Timelock post-handover) ──────────────────
@@ -219,53 +220,41 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().riskAccessNonceUsed[vault][nonce];
     }
 
-    /// @notice Whether `vault` holds a (version-fresh) illiquid-pair consent.
+    /// @notice Whether `vault` holds an EFFECTIVE illiquid-pair consent
+    ///         (set + version-fresh + arming cooldown elapsed).
     function hasIlliquidPairConsent(
         address vault,
-        address lendAsset,
-        address collAsset,
-        address prepayAsset
+        LibRiskAccess.PairId calldata p
     ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk =
-            LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset);
+        bytes32 pk = LibRiskAccess.pairKey(p);
         return s.illiquidPairConsent[vault][pk]
-            && s.illiquidPairVersionAt[vault][pk] >= s.currentRiskTermsVersion;
+            && s.illiquidPairVersionAt[vault][pk] >= s.currentRiskTermsVersion
+            && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
     }
 
-    /// @notice Whether `vault` holds a (version-fresh) mid-tier acknowledgement.
+    /// @notice Whether `vault` holds an EFFECTIVE mid-tier acknowledgement.
     function hasMidTierPairAck(
         address vault,
-        address lendAsset,
-        address collAsset,
-        address prepayAsset
+        LibRiskAccess.PairId calldata p
     ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk =
-            LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset);
+        bytes32 pk = LibRiskAccess.pairKey(p);
         return s.midTierPairAck[vault][pk]
-            && s.midTierVersionAt[vault][pk] >= s.currentRiskTermsVersion;
+            && s.midTierVersionAt[vault][pk] >= s.currentRiskTermsVersion
+            && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
     }
 
     /// @notice The minimum tier a vault must hold to transact this pair (the
     ///         riskier of the two legs governs; NFT rentals tier off the
     ///         prepay token). Surfaced so the frontend can pre-flight the gate.
-    function pairRequiredRiskLevel(
-        address lendAsset,
-        uint8 lendType,
-        address collAsset,
-        uint8 collType,
-        address prepayAsset
-    ) external view returns (uint8) {
+    function pairRequiredRiskLevel(LibRiskAccess.PairId calldata p)
+        external
+        view
+        returns (uint8)
+    {
         return uint8(
-            LibRiskAccess._pairRequiredLevel(
-                LibVaipakam.storageSlot(),
-                lendAsset,
-                LibVaipakam.AssetType(lendType),
-                collAsset,
-                LibVaipakam.AssetType(collType),
-                prepayAsset
-            )
+            LibRiskAccess._pairRequiredLevel(LibVaipakam.storageSlot(), p)
         );
     }
 
@@ -278,13 +267,17 @@ contract RiskAccessFacet is DiamondAccessControl {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.RiskAccessLevel newLevel =
             LibVaipakam.RiskAccessLevel(level);
-        LibVaipakam.RiskAccessLevel current = s.userRiskAccess[vault];
+        // Compare against the currently EFFECTIVE tier, NOT the raw stored one
+        // (Codex #727 r1 P1): re-submitting an already-stored-but-locked high
+        // tier (during its cooldown, or after a terms bump re-locked it) would
+        // otherwise clear the cooldown via the "same level" branch.
+        LibVaipakam.RiskAccessLevel effCur =
+            LibRiskAccess.effectiveTier(s, vault);
         s.userRiskAccess[vault] = newLevel;
-        // Always re-stamp the version anchor to the live terms so the new tier
-        // is fresh.
+        // Re-stamp the version anchor to the live terms so the new tier is fresh.
         s.riskTierVersionAt[vault] = s.currentRiskTermsVersion;
-        // Cooldown applies only to RAISING risk; tightening is immediate.
-        s.riskTierUnlockAt[vault] = uint8(newLevel) > uint8(current)
+        // Cooldown applies only to RAISING effective risk; tightening is immediate.
+        s.riskTierUnlockAt[vault] = uint8(newLevel) > uint8(effCur)
             ? uint64(block.timestamp) + s.riskAccessUnlockCooldown
             : uint64(block.timestamp);
         emit VaultRiskTierSet(vault, level);
@@ -292,42 +285,75 @@ contract RiskAccessFacet is DiamondAccessControl {
 
     function _applyIlliquidConsent(
         address vault,
-        address lendAsset,
-        address collAsset,
-        address prepayAsset,
+        LibRiskAccess.PairId memory p,
         bool consent
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk =
-            LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset);
+        bytes32 pk = LibRiskAccess.pairKey(p);
         s.illiquidPairConsent[vault][pk] = consent;
-        // Stamp the live version on a grant; a revoke needs no fresh stamp (it
-        // only ever tightens — exempt from the stale-check per the design).
+        // Stamp the live version + arm the cooldown on a GRANT; a revoke needs no
+        // fresh stamp (it only ever tightens — exempt from the stale-check).
         if (consent) {
             s.illiquidPairVersionAt[vault][pk] = s.currentRiskTermsVersion;
+            s.pairConsentUnlockAt[vault][pk] =
+                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
         }
         emit IlliquidPairConsentSet(vault, pk, consent);
     }
 
     function _applyMidTierAck(
         address vault,
-        address lendAsset,
-        address collAsset,
-        address prepayAsset,
+        LibRiskAccess.PairId memory p,
         bool ack
     ) private {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 pk =
-            LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset);
+        bytes32 pk = LibRiskAccess.pairKey(p);
         s.midTierPairAck[vault][pk] = ack;
         if (ack) {
             s.midTierVersionAt[vault][pk] = s.currentRiskTermsVersion;
+            s.pairConsentUnlockAt[vault][pk] =
+                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
         }
         emit MidTierPairAckSet(vault, pk, ack);
     }
 
+    /// @dev Map a signed illiquid-consent message onto the canonical `PairId`.
+    function _pairIdOf(LibRiskAccess.SetIlliquidPairConsent calldata m)
+        private
+        pure
+        returns (LibRiskAccess.PairId memory)
+    {
+        return LibRiskAccess.PairId({
+            lendAsset: m.lendAsset,
+            lendType: LibVaipakam.AssetType(m.lendAssetType),
+            lendTokenId: m.lendTokenId,
+            collAsset: m.collAsset,
+            collType: LibVaipakam.AssetType(m.collAssetType),
+            collTokenId: m.collTokenId,
+            prepayAsset: m.prepayAsset
+        });
+    }
+
+    /// @dev Map a signed mid-tier-ack message onto the canonical `PairId`.
+    function _pairIdOf(LibRiskAccess.SetMidTierPairAck calldata m)
+        private
+        pure
+        returns (LibRiskAccess.PairId memory)
+    {
+        return LibRiskAccess.PairId({
+            lendAsset: m.lendAsset,
+            lendType: LibVaipakam.AssetType(m.lendAssetType),
+            lendTokenId: m.lendTokenId,
+            collAsset: m.collAsset,
+            collType: LibVaipakam.AssetType(m.collAssetType),
+            collTokenId: m.collTokenId,
+            prepayAsset: m.prepayAsset
+        });
+    }
+
     function _consumeSig(
         address vault,
+        uint64 termsVersion,
         uint256 nonce,
         uint256 deadline,
         bytes32 digest,
@@ -335,6 +361,11 @@ contract RiskAccessFacet is DiamondAccessControl {
     ) private {
         if (block.timestamp > deadline) revert RiskSigExpired(deadline);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Bind the grant to the terms version the signer agreed to (Codex #727
+        // r1 P1): a stale signature can't be relayed after a terms bump.
+        if (termsVersion != s.currentRiskTermsVersion) {
+            revert RiskTermsVersionStale(termsVersion, s.currentRiskTermsVersion);
+        }
         if (s.riskAccessNonceUsed[vault][nonce]) {
             revert RiskNonceUsed(vault, nonce);
         }

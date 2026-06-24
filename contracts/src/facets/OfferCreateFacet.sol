@@ -882,11 +882,15 @@ contract OfferCreateFacet is
             LibRiskAccess.assertActorMayTransact(
                 s,
                 creator,
-                params.lendingAsset,
-                params.assetType,
-                params.collateralAsset,
-                params.collateralAssetType,
-                params.prepayAsset
+                LibRiskAccess.PairId({
+                    lendAsset: params.lendingAsset,
+                    lendType: params.assetType,
+                    lendTokenId: params.tokenId,
+                    collAsset: params.collateralAsset,
+                    collType: params.collateralAssetType,
+                    collTokenId: params.collateralTokenId,
+                    prepayAsset: params.prepayAsset
+                })
             );
         }
 

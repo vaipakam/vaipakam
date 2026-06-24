@@ -4403,6 +4403,12 @@ library LibVaipakam {
         // `RiskAccessFacet` (see `LibRiskAccess`). Separate from the #662
         // `acceptNonceUsed` ledger so the two signature surfaces never collide.
         mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;
+        // #671 (Codex #727 r1 P1) — per-(vault, pairKey) arming anchor for a
+        // pair consent/ack: the grant is effective only at/after this time
+        // (= now + riskAccessUnlockCooldown at grant). Closes the atomic
+        // sign-and-use window — a phished pair grant can't both land AND select
+        // a malicious pair in the same tx once a cooldown is configured.
+        mapping(address => mapping(bytes32 => uint64)) pairConsentUnlockAt;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

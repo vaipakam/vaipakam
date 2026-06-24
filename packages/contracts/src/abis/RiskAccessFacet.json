@@ -105,19 +105,46 @@
         "internalType": "address"
       },
       {
-        "name": "lendAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -139,19 +166,46 @@
         "internalType": "address"
       },
       {
-        "name": "lendAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -187,29 +241,46 @@
     "name": "pairRequiredRiskLevel",
     "inputs": [
       {
-        "name": "lendAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "lendType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "collAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collType",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       }
     ],
     "outputs": [
@@ -250,19 +321,46 @@
     "name": "setIlliquidPairConsent",
     "inputs": [
       {
-        "name": "lendAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       },
       {
         "name": "consent",
@@ -293,9 +391,29 @@
             "internalType": "address"
           },
           {
+            "name": "lendAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "collAsset",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "collAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "prepayAsset",
@@ -306,6 +424,11 @@
             "name": "consent",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "termsVersion",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "nonce",
@@ -333,19 +456,46 @@
     "name": "setMidTierPairAck",
     "inputs": [
       {
-        "name": "lendAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "collAsset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "prepayAsset",
-        "type": "address",
-        "internalType": "address"
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
       },
       {
         "name": "ack",
@@ -376,9 +526,29 @@
             "internalType": "address"
           },
           {
+            "name": "lendAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
             "name": "collAsset",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "collAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
           },
           {
             "name": "prepayAsset",
@@ -389,6 +559,11 @@
             "name": "ack",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "termsVersion",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "nonce",
@@ -473,6 +648,11 @@
             "name": "level",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "termsVersion",
+            "type": "uint64",
+            "internalType": "uint64"
           },
           {
             "name": "nonce",
@@ -687,6 +867,22 @@
         "name": "deadline",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RiskTermsVersionStale",
+    "inputs": [
+      {
+        "name": "signed",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "current",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   }

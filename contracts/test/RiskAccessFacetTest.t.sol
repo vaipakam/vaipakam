@@ -29,6 +29,11 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
  *         Levels (LibVaipakam.RiskAccessLevel): 0 = BlueChipOnly (default),
  *         1 = BroadLiquid, 2 = IlliquidCustom. Asset types
  *         (LibVaipakam.AssetType): 0 = ERC20, 1 = ERC721, 2 = ERC1155.
+ *
+ *         Codex #727 r1 update: the facet's pair API now takes a single
+ *         `LibRiskAccess.PairId` (carries asset TYPES + TOKEN IDS so a consent
+ *         binds to the exact NFT, not the whole collection), and every signed
+ *         struct carries a `termsVersion` field bound into the EIP-712 digest.
  */
 contract RiskAccessFacetTest is SetupTest {
     // Convenience tier ordinals for readability in assertions / calls.
@@ -76,6 +81,39 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    // ─── PairId construction helpers (reduce duplication) ─────────────────────
+
+    /// @dev Full PairId constructor.
+    function _pair(
+        address lendAsset,
+        uint8 lendType,
+        uint256 lendTokenId,
+        address collAsset,
+        uint8 collType,
+        uint256 collTokenId,
+        address prepayAsset
+    ) internal pure returns (LibRiskAccess.PairId memory) {
+        return LibRiskAccess.PairId({
+            lendAsset: lendAsset,
+            lendType: LibVaipakam.AssetType(lendType),
+            lendTokenId: lendTokenId,
+            collAsset: collAsset,
+            collType: LibVaipakam.AssetType(collType),
+            collTokenId: collTokenId,
+            prepayAsset: prepayAsset
+        });
+    }
+
+    /// @dev Common case: an ERC-20 lend / ERC-20 collateral pair, no prepay.
+    function _erc20Pair(address lendAsset, address collAsset)
+        internal
+        pure
+        returns (LibRiskAccess.PairId memory)
+    {
+        return
+            _pair(lendAsset, T_ERC20, 0, collAsset, T_ERC20, 0, address(0));
+    }
+
     // ─── EIP-712 digest builders (replicate LibRiskAccess field order) ────────
 
     bytes32 constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -105,14 +143,75 @@ contract RiskAccessFacetTest is SetupTest {
         view
         returns (bytes32)
     {
+        // SetVaultRiskTier digest — single abi.encode in struct order
+        // (typehash, vault, level, termsVersion, nonce, deadline).
         return _digest(
             keccak256(
                 abi.encode(
                     LibRiskAccess.SET_VAULT_RISK_TIER_TYPEHASH,
                     m.vault,
                     m.level,
+                    m.termsVersion,
                     m.nonce,
                     m.deadline
+                )
+            )
+        );
+    }
+
+    function _illiquidDigest(LibRiskAccess.SetIlliquidPairConsent memory m)
+        internal
+        view
+        returns (bytes32)
+    {
+        // Chunked into two abi.encode()s joined by bytes.concat to mirror
+        // LibRiskAccess.digest (viaIR ≤10-value-per-encode idiom). Chunk 1 =
+        // typehash + 9 struct fields up to `consent` (10 values); chunk 2 =
+        // termsVersion, nonce, deadline. All fields are static EIP-712 types,
+        // so the concat is byte-identical to a single 13-value encode.
+        return _digest(
+            keccak256(
+                bytes.concat(
+                    abi.encode(
+                        LibRiskAccess.SET_ILLIQUID_PAIR_CONSENT_TYPEHASH,
+                        m.vault,
+                        m.lendAsset,
+                        m.lendAssetType,
+                        m.lendTokenId,
+                        m.collAsset,
+                        m.collAssetType,
+                        m.collTokenId,
+                        m.prepayAsset,
+                        m.consent
+                    ),
+                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                )
+            )
+        );
+    }
+
+    function _midTierDigest(LibRiskAccess.SetMidTierPairAck memory m)
+        internal
+        view
+        returns (bytes32)
+    {
+        // Same chunking as the illiquid-consent digest; chunk 1 ends on `ack`.
+        return _digest(
+            keccak256(
+                bytes.concat(
+                    abi.encode(
+                        LibRiskAccess.SET_MID_TIER_PAIR_ACK_TYPEHASH,
+                        m.vault,
+                        m.lendAsset,
+                        m.lendAssetType,
+                        m.lendTokenId,
+                        m.collAsset,
+                        m.collAssetType,
+                        m.collTokenId,
+                        m.prepayAsset,
+                        m.ack
+                    ),
+                    abi.encode(m.termsVersion, m.nonce, m.deadline)
                 )
             )
         );
@@ -125,6 +224,11 @@ contract RiskAccessFacetTest is SetupTest {
     {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev The live risk-terms version a fresh signature must bind to.
+    function _currentVersion() internal view returns (uint64) {
+        return RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion();
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -159,49 +263,37 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     function test_directIlliquidConsent_grantThenRevoke() public {
+        LibRiskAccess.PairId memory p =
+            _erc20Pair(mockERC20, mockCollateralERC20);
         // Grant.
         vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
-            mockERC20, mockCollateralERC20, address(0), true
-        );
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, true);
         assertTrue(
-            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
-                lender, mockERC20, mockCollateralERC20, address(0)
-            ),
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
             "consent granted"
         );
         // Revoke.
         vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
-            mockERC20, mockCollateralERC20, address(0), false
-        );
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, false);
         assertFalse(
-            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
-                lender, mockERC20, mockCollateralERC20, address(0)
-            ),
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
             "consent revoked"
         );
     }
 
     function test_directMidTierAck_grantThenRevoke() public {
+        LibRiskAccess.PairId memory p =
+            _erc20Pair(mockERC20, mockCollateralERC20);
         vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setMidTierPairAck(
-            mockERC20, mockCollateralERC20, address(0), true
-        );
+        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, true);
         assertTrue(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(
-                lender, mockERC20, mockCollateralERC20, address(0)
-            ),
+            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
             "ack granted"
         );
         vm.prank(lender);
-        RiskAccessFacet(address(diamond)).setMidTierPairAck(
-            mockERC20, mockCollateralERC20, address(0), false
-        );
+        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, false);
         assertFalse(
-            RiskAccessFacet(address(diamond)).hasMidTierPairAck(
-                lender, mockERC20, mockCollateralERC20, address(0)
-            ),
+            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
             "ack revoked"
         );
     }
@@ -214,6 +306,7 @@ contract RiskAccessFacetTest is SetupTest {
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
+            termsVersion: _currentVersion(),
             nonce: 1,
             deadline: block.timestamp + 1 hours
         });
@@ -238,6 +331,7 @@ contract RiskAccessFacetTest is SetupTest {
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
+            termsVersion: _currentVersion(),
             nonce: 7,
             deadline: block.timestamp + 1 hours
         });
@@ -261,6 +355,7 @@ contract RiskAccessFacetTest is SetupTest {
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
+            termsVersion: _currentVersion(),
             nonce: 2,
             deadline: deadline
         });
@@ -280,6 +375,7 @@ contract RiskAccessFacetTest is SetupTest {
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
+            termsVersion: _currentVersion(),
             nonce: 3,
             deadline: block.timestamp + 1 hours
         });
@@ -297,6 +393,128 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // F1 — termsVersion binding (a stale-version signature is rejected)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_signedSetTier_staleTermsVersionReverts() public {
+        // Sign over termsVersion = 0 (the current version), then governance
+        // bumps the terms version before the relayer submits — the bound
+        // version no longer matches the live one => RiskTermsVersionStale.
+        LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
+            vault: lender,
+            level: BROAD,
+            termsVersion: _currentVersion(), // 0
+            nonce: 11,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes memory sig = _sign(lenderPk, _tierDigest(m));
+
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+
+        vm.prank(relayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTermsVersionStale.selector,
+                uint64(0),
+                uint64(1)
+            )
+        );
+        RiskAccessFacet(address(diamond)).setVaultRiskTierBySig(m, sig);
+    }
+
+    function test_signedIlliquidConsent_staleTermsVersionReverts() public {
+        LibRiskAccess.SetIlliquidPairConsent memory m = LibRiskAccess
+            .SetIlliquidPairConsent({
+            vault: lender,
+            lendAsset: mockERC20,
+            lendAssetType: T_ERC20,
+            lendTokenId: 0,
+            collAsset: mockCollateralERC20,
+            collAssetType: T_ERC20,
+            collTokenId: 0,
+            prepayAsset: address(0),
+            consent: true,
+            termsVersion: _currentVersion(), // 0
+            nonce: 12,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes memory sig = _sign(lenderPk, _illiquidDigest(m));
+
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+
+        vm.prank(relayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTermsVersionStale.selector,
+                uint64(0),
+                uint64(1)
+            )
+        );
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsentBySig(m, sig);
+    }
+
+    function test_signedIlliquidConsent_freshVersionApplies() public {
+        // Positive path for the chunked illiquid-consent digest: a fresh-version
+        // signature relays and the consent becomes effective (cooldown 0).
+        LibRiskAccess.SetIlliquidPairConsent memory m = LibRiskAccess
+            .SetIlliquidPairConsent({
+            vault: lender,
+            lendAsset: mockERC20,
+            lendAssetType: T_ERC20,
+            lendTokenId: 0,
+            collAsset: mockCollateralERC20,
+            collAssetType: T_ERC20,
+            collTokenId: 0,
+            prepayAsset: address(0),
+            consent: true,
+            termsVersion: _currentVersion(),
+            nonce: 13,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes memory sig = _sign(lenderPk, _illiquidDigest(m));
+
+        vm.prank(relayer);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsentBySig(m, sig);
+
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                lender, _erc20Pair(mockERC20, mockCollateralERC20)
+            ),
+            "signed consent effective"
+        );
+    }
+
+    function test_signedMidTierAck_freshVersionApplies() public {
+        // Positive path for the chunked mid-tier-ack digest.
+        LibRiskAccess.SetMidTierPairAck memory m = LibRiskAccess
+            .SetMidTierPairAck({
+            vault: lender,
+            lendAsset: mockERC20,
+            lendAssetType: T_ERC20,
+            lendTokenId: 0,
+            collAsset: mockCollateralERC20,
+            collAssetType: T_ERC20,
+            collTokenId: 0,
+            prepayAsset: address(0),
+            ack: true,
+            termsVersion: _currentVersion(),
+            nonce: 14,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes memory sig = _sign(lenderPk, _midTierDigest(m));
+
+        vm.prank(relayer);
+        RiskAccessFacet(address(diamond)).setMidTierPairAckBySig(m, sig);
+
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasMidTierPairAck(
+                lender, _erc20Pair(mockERC20, mockCollateralERC20)
+            ),
+            "signed ack effective"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // CLASSIFICATION (pairRequiredRiskLevel)
     // ════════════════════════════════════════════════════════════════════════
 
@@ -309,7 +527,7 @@ contract RiskAccessFacetTest is SetupTest {
         _mockTier(weth, 0); // tier 0, yet still blue-chip by the WETH clause
 
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            weth, T_ERC20, weth, T_ERC20, address(0)
+            _erc20Pair(weth, weth)
         );
         assertEq(required, BLUECHIP, "WETH/WETH => BlueChipOnly");
     }
@@ -324,7 +542,7 @@ contract RiskAccessFacetTest is SetupTest {
         _mockTier(blueChipPaa, 0); // tier 0, blue-chip purely via the PAA clause
 
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            blueChipPaa, T_ERC20, blueChipPaa, T_ERC20, address(0)
+            _erc20Pair(blueChipPaa, blueChipPaa)
         );
         assertEq(required, BLUECHIP, "PAA asset => BlueChipOnly");
     }
@@ -332,7 +550,7 @@ contract RiskAccessFacetTest is SetupTest {
     function test_classify_tier3IsBlueChip() public {
         _mockTier(tier3Asset, 3);
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier3Asset, T_ERC20, tier3Asset, T_ERC20, address(0)
+            _erc20Pair(tier3Asset, tier3Asset)
         );
         assertEq(required, BLUECHIP, "effective tier 3 => BlueChipOnly");
     }
@@ -340,7 +558,7 @@ contract RiskAccessFacetTest is SetupTest {
     function test_classify_tier1RequiresBroadLiquid() public {
         _mockTier(tier1Asset, 1);
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier1Asset, T_ERC20, tier1Asset, T_ERC20, address(0)
+            _erc20Pair(tier1Asset, tier1Asset)
         );
         assertEq(required, BROAD, "tier 1 => BroadLiquid");
     }
@@ -348,7 +566,7 @@ contract RiskAccessFacetTest is SetupTest {
     function test_classify_tier0NonNumeraireRequiresIlliquidCustom() public {
         _mockTier(tier0Asset, 0); // tier 0, not WETH, not PAA => illiquid
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier0Asset, T_ERC20, tier0Asset, T_ERC20, address(0)
+            _erc20Pair(tier0Asset, tier0Asset)
         );
         assertEq(required, ILLIQUID, "tier 0 non-numeraire => IlliquidCustom");
     }
@@ -359,34 +577,93 @@ contract RiskAccessFacetTest is SetupTest {
         _mockTier(tier3Asset, 3);
         _mockTier(tier0Asset, 0);
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier3Asset, T_ERC20, tier0Asset, T_ERC20, address(0)
+            _erc20Pair(tier3Asset, tier0Asset)
         );
         assertEq(required, ILLIQUID, "riskier leg governs");
     }
 
     function test_classify_nftRentalLegTiersOffPrepayToken() public {
-        // An ERC721 leg WITH a non-zero prepayAsset classifies off the prepay
-        // token, NOT the NFT. Force the prepay token to tier 1 => the NFT leg
-        // contributes BroadLiquid (not IlliquidCustom as a bare NFT would).
+        // An ERC721 LEND leg WITH a non-zero prepayAsset classifies off the
+        // prepay token, NOT the NFT. Force the prepay token to tier 1 => the NFT
+        // lend leg contributes BroadLiquid (not IlliquidCustom as a bare NFT
+        // would). Pair it against a blue-chip collateral leg so the
+        // prepay-substituted lend leg is the governing one.
         _mockTier(prepayTok, 1);
-        // Pair the NFT (as the collateral leg) against a blue-chip lend leg so
-        // the prepay-substituted NFT leg is the governing one.
         _mockTier(tier3Asset, 3);
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier3Asset, T_ERC20, mockNft721, T_ERC721, prepayTok
+            _pair(
+                mockNft721, T_ERC721, 1, tier3Asset, T_ERC20, 0, prepayTok
+            )
         );
-        assertEq(required, BROAD, "NFT-rental leg classifies off prepay token");
+        assertEq(required, BROAD, "NFT-rental lend leg classifies off prepay");
     }
 
     function test_classify_bareNftLegRequiresIlliquidCustom() public {
-        // An ERC721 leg with ZERO prepayAsset keeps the NFT leg => tier 0 =>
-        // IlliquidCustom (sanity counterpart to the prepay-substitution case).
+        // An ERC721 LEND leg with ZERO prepayAsset keeps the NFT leg => tier 0
+        // => IlliquidCustom (sanity counterpart to the prepay-substitution case).
         _mockTier(mockNft721, 0);
         _mockTier(tier3Asset, 3);
         uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
-            tier3Asset, T_ERC20, mockNft721, T_ERC721, address(0)
+            _pair(
+                mockNft721, T_ERC721, 1, tier3Asset, T_ERC20, 0, address(0)
+            )
         );
-        assertEq(required, ILLIQUID, "bare NFT leg => IlliquidCustom");
+        assertEq(required, ILLIQUID, "bare NFT lend leg => IlliquidCustom");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // F5 — prepayAsset must NOT mask an NFT COLLATERAL leg
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_classify_prepayDoesNotMaskNftCollateral() public {
+        // An ERC20-lent / ERC721-COLLATERAL pair with `prepayAsset` set to a
+        // blue-chip token must STILL classify as IlliquidCustom: the prepay
+        // substitution is confined to the LEND leg (Codex #727 r1 P1) — an NFT
+        // used as collateral is genuine illiquid collateral and cannot be
+        // masked by an attacker-chosen prepay.
+        _mockTier(tier1Asset, 1); // liquid ERC20 lend leg
+        _mockTier(mockNft721, 0); // NFT collateral => illiquid
+        _mockTier(prepayTok, 3); // attacker-chosen blue-chip prepay (ignored)
+        uint8 required = RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(
+            _pair(
+                tier1Asset, T_ERC20, 0, mockNft721, T_ERC721, 1, prepayTok
+            )
+        );
+        assertEq(
+            required, ILLIQUID, "prepay cannot mask NFT collateral leg"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // F6 — NFT identity is part of the consent key (token id matters)
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_consentKey_nftTokenIdScoped() public {
+        // Grant consent for collateral NFT tokenId 1, then confirm the SAME
+        // collection's tokenId 2 is NOT covered — the pair key folds in the
+        // token id so a consent to one concrete NFT can't be reused.
+        LibRiskAccess.PairId memory pid1 = _pair(
+            mockERC20, T_ERC20, 0, mockNft721, T_ERC721, 1, address(0)
+        );
+        LibRiskAccess.PairId memory pid2 = _pair(
+            mockERC20, T_ERC20, 0, mockNft721, T_ERC721, 2, address(0)
+        );
+
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(pid1, true);
+
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                lender, pid1
+            ),
+            "tokenId 1 consented"
+        );
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                lender, pid2
+            ),
+            "tokenId 2 NOT covered by tokenId 1 consent"
+        );
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -495,6 +772,115 @@ contract RiskAccessFacetTest is SetupTest {
         );
         RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
             uint64(31 days)
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // F2 — re-submitting a LOCKED tier RE-ARMS the cooldown
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_cooldown_lockedResubmitReArmsAgainstEffectiveTier() public {
+        // _applyTier compares the new level against the EFFECTIVE tier, not the
+        // raw stored one. A vault that holds IlliquidCustom but is currently
+        // LOCKED (effective == BlueChipOnly after a terms bump) and re-submits
+        // IlliquidCustom is RAISING effective risk, so the cooldown MUST re-arm.
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
+            uint64(1 days)
+        );
+
+        // Opt up to IlliquidCustom and warp past its cooldown so it's effective.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.warp(RiskAccessFacet(address(diamond)).getRiskTierUnlockAt(lender));
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            ILLIQUID,
+            "effective before bump"
+        );
+
+        // Governance bump re-locks the held tier => effective falls to 0.
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            BLUECHIP,
+            "locked after bump"
+        );
+
+        // Re-submit the SAME IlliquidCustom level. Because the EFFECTIVE tier is
+        // currently 0 (locked), this is an opt-UP => the cooldown re-arms and
+        // the tier stays locked until the new cooldown elapses.
+        uint64 reSubmitTime = uint64(block.timestamp);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        uint64 unlockAt =
+            RiskAccessFacet(address(diamond)).getRiskTierUnlockAt(lender);
+        assertEq(
+            unlockAt, reSubmitTime + uint64(1 days), "cooldown re-armed"
+        );
+        // Still locked (effective 0) until the re-armed cooldown elapses.
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            BLUECHIP,
+            "still locked immediately after re-submit"
+        );
+        // Effective once the re-armed cooldown passes.
+        vm.warp(unlockAt);
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
+            ILLIQUID,
+            "effective after re-armed cooldown"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // F4 — per-pair consent / ack also gated by the arming cooldown
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_cooldown_illiquidConsentDelayedThenEffective() public {
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
+            uint64(1 days)
+        );
+        LibRiskAccess.PairId memory p =
+            _erc20Pair(mockERC20, mockCollateralERC20);
+
+        uint64 grantTime = uint64(block.timestamp);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(p, true);
+
+        // Within the arming window => consent not yet effective.
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
+            "consent not yet cooled"
+        );
+
+        vm.warp(grantTime + uint64(1 days));
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(lender, p),
+            "consent effective once cooled"
+        );
+    }
+
+    function test_cooldown_midTierAckDelayedThenEffective() public {
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(
+            uint64(1 days)
+        );
+        LibRiskAccess.PairId memory p =
+            _erc20Pair(mockERC20, mockCollateralERC20);
+
+        uint64 grantTime = uint64(block.timestamp);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setMidTierPairAck(p, true);
+
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
+            "ack not yet cooled"
+        );
+
+        vm.warp(grantTime + uint64(1 days));
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasMidTierPairAck(lender, p),
+            "ack effective once cooled"
         );
     }
 
@@ -690,13 +1076,18 @@ contract RiskAccessFacetTest is SetupTest {
 
         // Creator opts UP to IlliquidCustom (cooldown 0 => immediate) AND records
         // the per-pair illiquid consent the boundary tier requires. The
-        // consent's pairKey is (lendAsset, collAsset, prepayAsset) — the create
-        // path passes `params.prepayAsset` (= mockERC20 in `_createLenderOffer`).
+        // consent's pair identity is (lendAsset, lendType, lendTokenId,
+        // collAsset, collType, collTokenId, prepayAsset) — the create path
+        // passes ERC20 legs (tokenId 0) and `params.prepayAsset` (= mockERC20
+        // in `_createLenderOffer`).
         vm.prank(lender);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
         vm.prank(lender);
         RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
-            mockERC20, mockCollateralERC20, mockERC20, true
+            _pair(
+                mockERC20, T_ERC20, 0, mockCollateralERC20, T_ERC20, 0, mockERC20
+            ),
+            true
         );
 
         uint256 offerId =
@@ -705,4 +1096,8 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     // NOTE: sale-vehicle exemption covered separately (needs an active loan).
+    // NOTE: offset-create gating (F3 — Codex r1 P1) is covered by the
+    //       PrecloseFacet offset integration in phase 2 — it needs an active
+    //       loan to exercise the offset-create path, out of scope for this
+    //       unit suite, so it is deliberately not stubbed here.
 }

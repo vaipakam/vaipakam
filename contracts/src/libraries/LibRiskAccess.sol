@@ -52,6 +52,20 @@ interface IRiskAccessOracle {
 library LibRiskAccess {
     using LibVaipakam for LibVaipakam.Storage;
 
+    /// @notice Full identity of an offer's asset pair for classification +
+    ///         consent keying. Carries asset TYPES and TOKEN IDS (Codex #727 r1
+    ///         P2) so a per-pair consent is bound to the exact NFT the user
+    ///         reviewed, not the whole collection. ERC-20 legs carry tokenId 0.
+    struct PairId {
+        address lendAsset;
+        LibVaipakam.AssetType lendType;
+        uint256 lendTokenId;
+        address collAsset;
+        LibVaipakam.AssetType collType;
+        uint256 collTokenId;
+        address prepayAsset;
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Classification
     // ─────────────────────────────────────────────────────────────────────────
@@ -93,56 +107,66 @@ library LibRiskAccess {
         return LibVaipakam.RiskAccessLevel.IlliquidCustom;
     }
 
-    /// @notice The classification leg for a position side — substitutes the
-    ///         value-bearing `prepayAsset` for an NFT leg of a rental.
-    /// @dev    #671: an NFT rental's risk is the prepayment token the renter
-    ///         streams, NOT the rented ERC721/1155 (which never leaves custody
-    ///         on a clean close). So an ERC721/ERC1155 leg with a non-zero
-    ///         `prepayAsset` is classified by that prepay token; an outright NFT
-    ///         loan (no prepay) keeps the NFT leg and so requires `IlliquidCustom`.
-    function _legAsset(
-        address asset,
-        LibVaipakam.AssetType assetType,
+    /// @notice The LENDING leg's classification asset — substitutes the
+    ///         value-bearing `prepayAsset` for an NFT *rental* (the NFT is the
+    ///         LENT asset and the renter streams `prepayAsset`).
+    /// @dev    #671: an NFT rental's risk is the prepayment token, NOT the rented
+    ///         ERC721/1155. The substitution is confined to the LENDING leg
+    ///         (Codex #727 r1 P1): an NFT used as COLLATERAL is genuine illiquid
+    ///         collateral and must never be masked by an attacker-chosen
+    ///         `prepayAsset` (which the create path neither pulls nor escrows on
+    ///         an NFT-collateral loan). An outright NFT loan (no prepay) keeps the
+    ///         NFT leg and so requires `IlliquidCustom`.
+    function _lendingClassAsset(
+        address lendAsset,
+        LibVaipakam.AssetType lendType,
         address prepayAsset
     ) private pure returns (address) {
         if (
-            (assetType == LibVaipakam.AssetType.ERC721
-                || assetType == LibVaipakam.AssetType.ERC1155)
+            (lendType == LibVaipakam.AssetType.ERC721
+                || lendType == LibVaipakam.AssetType.ERC1155)
                 && prepayAsset != address(0)
         ) {
             return prepayAsset;
         }
-        return asset;
+        return lendAsset;
     }
 
-    /// @notice The riskier of the two legs governs the pair's required tier.
-    function _pairRequiredLevel(
-        LibVaipakam.Storage storage s,
-        address lendAsset,
-        LibVaipakam.AssetType lendType,
-        address collAsset,
-        LibVaipakam.AssetType collType,
-        address prepayAsset
-    ) internal view returns (LibVaipakam.RiskAccessLevel) {
+    /// @notice The riskier of the two legs governs the pair's required tier. The
+    ///         collateral leg is classified as-is (an NFT collateral stays
+    ///         illiquid); only the lending leg gets the rental prepay
+    ///         substitution.
+    function _pairRequiredLevel(LibVaipakam.Storage storage s, PairId memory p)
+        internal
+        view
+        returns (LibVaipakam.RiskAccessLevel)
+    {
         LibVaipakam.RiskAccessLevel lend = _assetRequiredLevel(
-            s, _legAsset(lendAsset, lendType, prepayAsset)
+            s, _lendingClassAsset(p.lendAsset, p.lendType, p.prepayAsset)
         );
-        LibVaipakam.RiskAccessLevel coll = _assetRequiredLevel(
-            s, _legAsset(collAsset, collType, prepayAsset)
-        );
+        LibVaipakam.RiskAccessLevel coll = _assetRequiredLevel(s, p.collAsset);
         return uint8(lend) >= uint8(coll) ? lend : coll;
     }
 
-    /// @notice Stable per-(user-agnostic) identity of an asset pair, used to key
-    ///         the per-pair ack / consent maps. Order-sensitive (lend vs coll are
-    ///         distinct roles) and folds in `prepayAsset` so a rental and a loan
-    ///         on the same NFT are distinct consents.
-    function pairKey(address lendAsset, address collAsset, address prepayAsset)
-        internal
-        pure
-        returns (bytes32)
-    {
-        return keccak256(abi.encode(lendAsset, collAsset, prepayAsset));
+    /// @notice Stable identity of an asset pair, keying the per-pair ack /
+    ///         consent maps. Order-sensitive (lend vs coll are distinct roles)
+    ///         and folds in the asset TYPES + TOKEN IDS (Codex #727 r1 P2) so a
+    ///         consent to one concrete NFT can't be reused for a different token
+    ///         id in the same collection, plus `prepayAsset` so a rental and a
+    ///         loan on the same NFT are distinct consents. ERC-20 legs carry
+    ///         tokenId 0, so the key is uniform across asset classes.
+    function pairKey(PairId memory p) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                p.lendAsset,
+                uint8(p.lendType),
+                p.lendTokenId,
+                p.collAsset,
+                uint8(p.collType),
+                p.collTokenId,
+                p.prepayAsset
+            )
+        );
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -168,13 +192,17 @@ library LibRiskAccess {
             : LibVaipakam.RiskAccessLevel.BlueChipOnly;
     }
 
+    /// @dev A pair grant is effective only while (a) it is set, (b) its version
+    ///      anchor is still current (read-time re-lock), AND (c) its arming
+    ///      cooldown has elapsed (Codex #727 r1 P1 — no atomic sign-and-use).
     function _illiquidConsentEffective(
         LibVaipakam.Storage storage s,
         address actor,
         bytes32 pk
     ) private view returns (bool) {
         return s.illiquidPairConsent[actor][pk]
-            && s.illiquidPairVersionAt[actor][pk] >= s.currentRiskTermsVersion;
+            && s.illiquidPairVersionAt[actor][pk] >= s.currentRiskTermsVersion
+            && block.timestamp >= s.pairConsentUnlockAt[actor][pk];
     }
 
     function _midTierAckEffective(
@@ -183,7 +211,8 @@ library LibRiskAccess {
         bytes32 pk
     ) private view returns (bool) {
         return s.midTierPairAck[actor][pk]
-            && s.midTierVersionAt[actor][pk] >= s.currentRiskTermsVersion;
+            && s.midTierVersionAt[actor][pk] >= s.currentRiskTermsVersion
+            && block.timestamp >= s.pairConsentUnlockAt[actor][pk];
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -199,21 +228,15 @@ library LibRiskAccess {
     function assertActorMayTransact(
         LibVaipakam.Storage storage s,
         address actor,
-        address lendAsset,
-        LibVaipakam.AssetType lendType,
-        address collAsset,
-        LibVaipakam.AssetType collType,
-        address prepayAsset
+        PairId memory p
     ) internal view {
-        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(
-            s, lendAsset, lendType, collAsset, collType, prepayAsset
-        );
+        LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
         LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
         if (uint8(actorTier) < uint8(required)) {
             revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
         }
         if (required == LibVaipakam.RiskAccessLevel.BlueChipOnly) return;
-        bytes32 pk = pairKey(lendAsset, collAsset, prepayAsset);
+        bytes32 pk = pairKey(p);
         if (required == LibVaipakam.RiskAccessLevel.IlliquidCustom) {
             if (!_illiquidConsentEffective(s, actor, pk)) {
                 revert IlliquidPairNotConsented(actor, pk);
@@ -238,20 +261,34 @@ library LibRiskAccess {
     /// @notice Opt a vault UP to a tier (or tighten it). Tightening (a lower
     ///         ordinal than currently held) is exempt from the cooldown — a user
     ///         may always reduce their own exposure immediately.
+    /// @dev    `termsVersion` binds the grant to the risk-terms version the
+    ///         signer agreed to (Codex #727 r1 P1): a `*BySig` submit rejects a
+    ///         signature whose `termsVersion` != the live `currentRiskTermsVersion`,
+    ///         so an old long-deadline signature can't be relayed after a
+    ///         `bumpRiskTermsVersion()` to silently re-establish freshness.
     struct SetVaultRiskTier {
         address vault; // == recovered / 1271 signer
         uint8 level; // target RiskAccessLevel
+        uint64 termsVersion; // must == currentRiskTermsVersion at submit
         uint256 nonce; // per-vault replay nonce
         uint256 deadline; // unix-seconds
     }
 
     /// @notice Record (or revoke) explicit consent to a specific ILLIQUID pair.
+    ///         Carries the full pair identity (asset types + token ids) so the
+    ///         consent is bound to the exact NFT the signer reviewed, not the
+    ///         whole collection (Codex #727 r1 P2).
     struct SetIlliquidPairConsent {
         address vault;
         address lendAsset;
+        uint8 lendAssetType;
+        uint256 lendTokenId;
         address collAsset;
+        uint8 collAssetType;
+        uint256 collTokenId;
         address prepayAsset;
         bool consent; // true = grant, false = revoke
+        uint64 termsVersion;
         uint256 nonce;
         uint256 deadline;
     }
@@ -260,21 +297,26 @@ library LibRiskAccess {
     struct SetMidTierPairAck {
         address vault;
         address lendAsset;
+        uint8 lendAssetType;
+        uint256 lendTokenId;
         address collAsset;
+        uint8 collAssetType;
+        uint256 collTokenId;
         address prepayAsset;
         bool ack;
+        uint64 termsVersion;
         uint256 nonce;
         uint256 deadline;
     }
 
     bytes32 internal constant SET_VAULT_RISK_TIER_TYPEHASH = keccak256(
-        "SetVaultRiskTier(address vault,uint8 level,uint256 nonce,uint256 deadline)"
+        "SetVaultRiskTier(address vault,uint8 level,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_ILLIQUID_PAIR_CONSENT_TYPEHASH = keccak256(
-        "SetIlliquidPairConsent(address vault,address lendAsset,address collAsset,address prepayAsset,bool consent,uint256 nonce,uint256 deadline)"
+        "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_MID_TIER_PAIR_ACK_TYPEHASH = keccak256(
-        "SetMidTierPairAck(address vault,address lendAsset,address collAsset,address prepayAsset,bool ack,uint256 nonce,uint256 deadline)"
+        "SetMidTierPairAck(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool ack,uint64 termsVersion,uint256 nonce,uint256 deadline)"
     );
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -311,6 +353,7 @@ library LibRiskAccess {
                     SET_VAULT_RISK_TIER_TYPEHASH,
                     m.vault,
                     m.level,
+                    m.termsVersion,
                     m.nonce,
                     m.deadline
                 )
@@ -323,17 +366,26 @@ library LibRiskAccess {
         view
         returns (bytes32)
     {
+        // Chunked into ≤10-value `abi.encode`s joined by `bytes.concat` (viaIR
+        // whole-unit stack ceiling — same idiom as LibAcceptTerms.hashStruct).
+        // All fields are static EIP-712 types, so the concat is byte-identical
+        // to a single 13-value encode.
         return _digest(
             keccak256(
-                abi.encode(
-                    SET_ILLIQUID_PAIR_CONSENT_TYPEHASH,
-                    m.vault,
-                    m.lendAsset,
-                    m.collAsset,
-                    m.prepayAsset,
-                    m.consent,
-                    m.nonce,
-                    m.deadline
+                bytes.concat(
+                    abi.encode(
+                        SET_ILLIQUID_PAIR_CONSENT_TYPEHASH,
+                        m.vault,
+                        m.lendAsset,
+                        m.lendAssetType,
+                        m.lendTokenId,
+                        m.collAsset,
+                        m.collAssetType,
+                        m.collTokenId,
+                        m.prepayAsset,
+                        m.consent
+                    ),
+                    abi.encode(m.termsVersion, m.nonce, m.deadline)
                 )
             )
         );
@@ -346,15 +398,20 @@ library LibRiskAccess {
     {
         return _digest(
             keccak256(
-                abi.encode(
-                    SET_MID_TIER_PAIR_ACK_TYPEHASH,
-                    m.vault,
-                    m.lendAsset,
-                    m.collAsset,
-                    m.prepayAsset,
-                    m.ack,
-                    m.nonce,
-                    m.deadline
+                bytes.concat(
+                    abi.encode(
+                        SET_MID_TIER_PAIR_ACK_TYPEHASH,
+                        m.vault,
+                        m.lendAsset,
+                        m.lendAssetType,
+                        m.lendTokenId,
+                        m.collAsset,
+                        m.collAssetType,
+                        m.collTokenId,
+                        m.prepayAsset,
+                        m.ack
+                    ),
+                    abi.encode(m.termsVersion, m.nonce, m.deadline)
                 )
             )
         );
