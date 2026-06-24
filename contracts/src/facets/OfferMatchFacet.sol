@@ -19,6 +19,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
+import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 
 /**
  * @title OfferMatchFacet
@@ -675,6 +676,50 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         sliceOfferId = abi.decode(res, (uint256));
     }
 
+    /// @dev #671 phase 2 (#728 PR-2b) — re-assert the progressive-risk gate for
+    ///      BOTH paired offers' creators at the matcher. Each creator is gated
+    ///      against its OWN offer's declared pair, exactly mirroring the
+    ///      create-time chokepoint (`OfferCreateFacet`) but re-validated against
+    ///      the LIVE tier/consent state at match time. The riskier of the two
+    ///      legs governs and NFT rentals tier off the prepay token — see
+    ///      `LibRiskAccess`. No-op unless `riskAccessGateEnabled`. Extracted to a
+    ///      helper to keep `_executeMatch` under the viaIR stack ceiling.
+    function _assertMatchCreatorsRiskAccess(
+        LibVaipakam.Storage storage s,
+        uint256 lenderOfferId,
+        uint256 borrowerOfferId
+    ) private view {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibVaipakam.Offer storage lo = s.offers[lenderOfferId];
+        LibRiskAccess.assertActorMayTransact(
+            s,
+            lo.creator,
+            LibRiskAccess.PairId({
+                lendAsset: lo.lendingAsset,
+                lendType: lo.assetType,
+                lendTokenId: lo.tokenId,
+                collAsset: lo.collateralAsset,
+                collType: lo.collateralAssetType,
+                collTokenId: lo.collateralTokenId,
+                prepayAsset: lo.prepayAsset
+            })
+        );
+        LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
+        LibRiskAccess.assertActorMayTransact(
+            s,
+            bo.creator,
+            LibRiskAccess.PairId({
+                lendAsset: bo.lendingAsset,
+                lendType: bo.assetType,
+                lendTokenId: bo.tokenId,
+                collAsset: bo.collateralAsset,
+                collType: bo.collateralAssetType,
+                collTokenId: bo.collateralTokenId,
+                prepayAsset: bo.prepayAsset
+            })
+        );
+    }
+
     /// @notice Shared match-execution core for `matchOffers` and the v0.6
     ///         `matchSignedOffer`. `msg.sender` (the matcher / LIF recipient)
     ///         is preserved because this is an internal call from both
@@ -829,6 +874,20 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             }
             revert InvalidOfferType();
         }
+
+        // #671 phase 2 (#728 PR-2b) — keeper-match dual-creator re-assertion.
+        // The acceptor-side gate in `LoanFacet._maybeRunInitialRiskGates` is
+        // scoped to the direct-accept path (`acceptAckActive == true`) and is
+        // SKIPPED on the keeper-match path (a match sets no accept-ack — both
+        // sides are self-authored offers, design §5). So neither creator is
+        // re-validated downstream. Re-assert each offer's OWN creator against
+        // the LIVE tier/consent state HERE — before any state mutation — so a
+        // creator who down-tiered, revoked their illiquid-pair consent, or went
+        // stale after a terms bump (or a gate that flipped on after create) is
+        // caught at the matcher, exactly as the direct-accept creator re-check
+        // is. Standing consent only: neither creator signs a #662 accept ack,
+        // so there is nothing to substitute. No-op unless the kill-switch is on.
+        _assertMatchCreatorsRiskAccess(s, lenderOfferId, borrowerOfferId);
 
         // ── State mutation: install the match override. See the
         // matching docstring on `OfferFacet._acceptOffer` for the
