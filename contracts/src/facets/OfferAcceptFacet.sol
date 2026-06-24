@@ -1472,9 +1472,13 @@ contract OfferAcceptFacet is
         );
         // #662 — clear the acked-illiquid injection set in _verifyAndBindAccept.
         // It was already read + enforced at LoanFacet's bypass during
-        // initiateLoan above; clearing the `active` flag is sufficient (the gate
-        // checks it first, so the stale addresses are never read at rest). A
-        // revert anywhere above auto-rolls-back the set. The match path never
+        // initiateLoan above. Clearing the `active` flag is the load-bearing
+        // reset: the gate reads `acceptAckActive` FIRST and never touches the
+        // address slots when it's false, so a stale address at rest is inert.
+        // Clearing the two address slots too would be tidier (Codex #724 r2 P3)
+        // but costs ~85 B (high struct-offset SSTOREs) the facet doesn't have
+        // under EIP-170 — the flag-only reset is correct and sufficient. A
+        // revert anywhere above auto-rolls-back the set; the match path never
         // set it.
         s.acceptAckActive = false;
     }

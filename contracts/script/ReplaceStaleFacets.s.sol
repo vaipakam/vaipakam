@@ -157,13 +157,17 @@ contract ReplaceStaleFacets is Script {
     ///      #662: `hashAcceptTerms` (EIP-712 digest view) + `verifyAndBindAccept`
     ///      (the gated cross-facet hop SignedOfferFacet uses) — both brand-new.
     ///
-    ///      NOTE (#662 selector change): `acceptOffer`'s signature changed from
+    ///      NOTE (#662 selector changes): `acceptOffer`'s signature changed from
     ///      `(uint256,bool)` to `(uint256,AcceptTerms,bytes)`, a DIFFERENT 4-byte
-    ///      selector. A true live refresh would Remove the old selector + Add the
-    ///      new one. Pre-live (no production diamond — see CLAUDE.md) the canonical
-    ///      path is a fresh `DeployDiamond` (whose 7-selector list is already
-    ///      correct), so the `_offerAcceptSelectors` Replace entry resolves to the
-    ///      NEW selector and this script is regenerated at the first real deploy.
+    ///      selector — and likewise `SignedOfferFacet.acceptSignedOffer` /
+    ///      `acceptSignedOfferWithPermit` (now carrying `(AcceptTerms,bytes)`).
+    ///      A true live refresh would Remove each old selector + Add the new one
+    ///      (and SignedOfferFacet is not even scoped by this script — a
+    ///      pre-existing gap, it predates #662). Pre-live (no production diamond
+    ///      — see CLAUDE.md) the canonical path is a fresh `DeployDiamond` (whose
+    ///      `_getOfferAcceptSelectors` + `_getSignedOfferSelectors` use `.selector`
+    ///      and so already route the NEW selectors), and this refresh script is
+    ///      regenerated at the first real deploy (Codex #724 r2 P2).
     function _offerAcceptMissingSelectors()
         internal
         pure

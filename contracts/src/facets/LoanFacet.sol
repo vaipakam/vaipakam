@@ -472,39 +472,38 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *      the caller's stack frame doesn't carry these locals.
      */
     function _maybeRunInitialRiskGates(InitCtx memory ctx) private view {
-        if (ctx.isLenderSaleVehicle) return;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[ctx.offerId];
+        // #662 (Codex #724 r1 P1 + r2 P2) — enforce the acceptor's signed
+        // acknowledged-illiquid identities for EVERY acceptor-path loan, against
+        // the SAME liquidity reads (`ctx.*Liquidity`) the gate uses. Placed
+        // ABOVE the sale-vehicle early-return so a lender-sale-vehicle accept of
+        // an illiquid leg can't skip the ack (r2 P2); checking the gate's own
+        // reads (not an entry-time read) closes the TOCTOU where a hostile
+        // ERC-20 transfer hook flips a leg's liquidity mid-accept (r1 P1). A
+        // liquid leg's ack is `address(0)` and never trips. The entry injected
+        // the signed acks into `s.acceptAck*`; the keeper match path leaves
+        // `acceptAckActive` false (self-authored offers, exempt — design §5).
+        if (s.acceptAckActive) {
+            if (
+                ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
+                s.acceptAckIlliquidLend != offer.lendingAsset
+            ) {
+                revert IlliquidAssetNotAcknowledged(offer.lendingAsset);
+            }
+            if (
+                ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
+                s.acceptAckIlliquidColl != offer.collateralAsset
+            ) {
+                revert IlliquidAssetNotAcknowledged(offer.collateralAsset);
+            }
+        }
+        if (ctx.isLenderSaleVehicle) return;
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
             ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
         bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&
             offer.creatorRiskAndTermsConsent;
-        if (!bothLiquid && mutualIlliquidConsent) {
-            // #662 (Codex #724 P1) — the illiquid LTV/HF bypass is authorised
-            // only if the acceptor's signed `AcceptTerms` named the exact
-            // illiquid asset(s). Checked HERE, against the SAME liquidity reads
-            // (`ctx.*Liquidity`) that authorise the bypass — so a hostile ERC-20
-            // transfer hook cannot flip a leg's classification between an
-            // entry-time read and this gate (the entry-time check was a TOCTOU).
-            // The acceptor entry injected the signed acked identities into
-            // `s.acceptAck*`; the keeper match path leaves `acceptAckActive`
-            // false (two self-authored offers, exempt — design §5).
-            if (s.acceptAckActive) {
-                if (
-                    ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
-                    s.acceptAckIlliquidLend != offer.lendingAsset
-                ) {
-                    revert IlliquidAssetNotAcknowledged(offer.lendingAsset);
-                }
-                if (
-                    ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
-                    s.acceptAckIlliquidColl != offer.collateralAsset
-                ) {
-                    revert IlliquidAssetNotAcknowledged(offer.collateralAsset);
-                }
-            }
-            return;
-        }
+        if (!bothLiquid && mutualIlliquidConsent) return;
         address collateralAsset = LibVaipakam
             .storageSlot()
             .loans[ctx.loanId]
