@@ -284,7 +284,14 @@ contract RiskAccessAcceptGateTest is SetupTest {
         _mockTier(mockERC20, 3); // lend leg blue-chip
         _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
 
+        // Create BOTH offers up front, while the gate is still OFF, so the
+        // lender's (creator) create-time gate never fires (the lender is
+        // BlueChipOnly and the pair is IlliquidCustom — a create-gate revert here
+        // would be the phase-1 creator check, not the accept-time check we're
+        // exercising). offerId is the pre-bump baseline; offerId2 re-exercises the
+        // gate after the bump.
         uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        uint256 offerId2 = _lenderOffer(mockERC20, mockIlliquidERC20);
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
 
         // Acceptor opts UP to IlliquidCustom (cooldown 0 => immediate). As in
@@ -300,9 +307,6 @@ contract RiskAccessAcceptGateTest is SetupTest {
             borrower,
             "ack-substitution accept succeeds pre-bump"
         );
-
-        // A SECOND identical offer (the first is consumed) to re-exercise the gate.
-        uint256 offerId2 = _lenderOffer(mockERC20, mockIlliquidERC20);
 
         // Admin bumps the global risk-terms version. The test contract holds
         // ADMIN_ROLE (mirrors RiskAccessFacetTest — no prank), so the call is
