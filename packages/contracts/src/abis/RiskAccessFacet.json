@@ -1,10 +1,10 @@
 [
   {
     "type": "function",
-    "name": "assertObligationTransferAllowed",
+    "name": "assertMatchAllowed",
     "inputs": [
       {
-        "name": "loanId",
+        "name": "lenderOfferId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -238,6 +238,30 @@
             "internalType": "address"
           }
         ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewMatchRiskBlock",
+    "inputs": [
+      {
+        "name": "lenderOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
