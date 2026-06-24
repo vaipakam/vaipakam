@@ -502,19 +502,29 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         if (ctx.isLenderSaleVehicle) return;
         // #671 phase 2 (#728) — ACCEPTOR-side progressive-risk gate. The create
         // chokepoint (OfferCreateFacet) already gated the offer CREATOR; here we
-        // gate the ACCEPTOR (`ctx.acceptor`) entering the same pair. Behind the
-        // off-by-default `riskAccessGateEnabled` kill-switch. Scoped to the
-        // direct-accept path (`acceptAckActive`): there the #662 ack check above
-        // has proven the acceptor signed-acknowledged every illiquid leg, so the
-        // per-pair illiquid CONSENT is already satisfied and only the acceptor's
-        // TIER needs checking (the #662⇄#671 unification — see
-        // `LibRiskAccess.assertActorTier`). The keeper-match path
-        // (`acceptAckActive == false`) re-asserts each offer's own creator at the
-        // matcher instead (#728 PR-2b), so it's intentionally not gated here.
+        // gate the party NEWLY entering the pair — the loan participant that is
+        // NOT the creator (the offer's counterparty). We derive it from the loan
+        // rather than `ctx.acceptor`, whose value is the funds-mover and for a
+        // lender offer coincides with the creator (which would wrongly re-gate the
+        // already-gated creator). The #662 acks (`s.acceptAck*`) are the
+        // accepting caller's, so they line up with this same party. Behind the
+        // off-by-default `riskAccessGateEnabled` kill-switch, scoped to the
+        // direct-accept path (`acceptAckActive`). For an illiquid pair the
+        // per-pair consent is satisfied by a standing consent OR — the #662⇄#671
+        // unification — by the acceptor's signed #662 illiquid acknowledgement,
+        // but only when that ack names EXACTLY the gate's illiquid legs and risk
+        // terms are fresh (Codex #729 r1; a rental's illiquid prepay leg, which
+        // the #662 ack doesn't name, then falls back to a standing consent). The
+        // keeper-match path (`acceptAckActive == false`) re-asserts each offer's
+        // own creator at the matcher (#728 PR-2b).
         if (s.acceptAckActive && LibVaipakam.cfgRiskAccessGateEnabled()) {
-            LibRiskAccess.assertActorTier(
+            LibVaipakam.Loan storage gateLoan = s.loans[ctx.loanId];
+            address acceptingParty = offer.creator == gateLoan.lender
+                ? gateLoan.borrower
+                : gateLoan.lender;
+            LibRiskAccess.assertAcceptorMayTransact(
                 s,
-                ctx.acceptor,
+                acceptingParty,
                 LibRiskAccess.PairId({
                     lendAsset: offer.lendingAsset,
                     lendType: offer.assetType,
@@ -523,7 +533,9 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
                     collType: offer.collateralAssetType,
                     collTokenId: offer.collateralTokenId,
                     prepayAsset: offer.prepayAsset
-                })
+                }),
+                s.acceptAckIlliquidLend,
+                s.acceptAckIlliquidColl
             );
         }
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&

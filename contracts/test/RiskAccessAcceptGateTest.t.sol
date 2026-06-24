@@ -20,18 +20,28 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
  *         path (`s.acceptAckActive == true`) and only when
  *         `cfgRiskAccessGateEnabled()` is ON, the protocol asserts the ACCEPTOR's
  *         vault tier covers the offer's pair via
- *         `LibRiskAccess.assertActorTier(s, ctx.acceptor, pairFromOffer)` — the
- *         riskier leg governs (tiers 0=BlueChipOnly, 1=BroadLiquid,
- *         2=IlliquidCustom). It reverts `RiskTierTooLow` when the acceptor is
- *         under-tiered.
+ *         `LibRiskAccess.assertAcceptorMayTransact(s, ctx.acceptor, pairFromOffer,
+ *         s.acceptAckIlliquidLend, s.acceptAckIlliquidColl)` — the riskier leg
+ *         governs (tiers 0=BlueChipOnly, 1=BroadLiquid, 2=IlliquidCustom). It
+ *         reverts `RiskTierTooLow` when the acceptor is under-tiered, and
+ *         `IlliquidPairNotConsented` when an `IlliquidCustom` pair lacks both a
+ *         standing per-pair consent AND a covering #662 ack.
  *
- *         THE UNIFICATION proven here: on this accept path the acceptor needs NO
- *         separate `setIlliquidPairConsent`. The #662 acceptance-term binding
- *         (an EIP-712 `AcceptTerms` that names every illiquid leg) already covers
- *         the per-pair consent, so an acceptor with the right TIER can accept an
- *         illiquid pair WITHOUT ever calling `setIlliquidPairConsent`. Only the
- *         TIER gates them (this is why the site calls `assertActorTier`, the
- *         tier-only variant, not `assertActorMayTransact`).
+ *         THE UNIFICATION proven here (Codex #729 r1 — strengthened from the
+ *         original tier-only `assertActorTier`): on this accept path an
+ *         `IlliquidCustom` pair's per-pair consent is satisfied by EITHER a
+ *         standing fresh `illiquidPairConsent` OR the #662 acceptance-term binding
+ *         — but the #662 ack only substitutes when (a) the acceptor's risk terms
+ *         are fresh (`riskTierVersionAt[actor] >= currentRiskTermsVersion`) AND
+ *         (b) the signed ack names EXACTLY the gate's illiquid legs
+ *         (`_ackCoversIlliquidLegs`, reusing the same per-leg classification). So
+ *         for a NON-rental illiquid pair the #662 ack covers it and the acceptor
+ *         needs only the right TIER (tests 2-4). But for an NFT RENTAL with an
+ *         ILLIQUID prepay token the gate classifies the lend leg off `prepayAsset`
+ *         while the #662 ack names the rented NFT — the ack does NOT cover it, so
+ *         the acceptor must hold a STANDING per-pair consent (test 6). A
+ *         governance `bumpRiskTermsVersion` re-locks the ack-substitution by
+ *         making the tier anchor stale (test 5).
  *
  *         Isolating the acceptor gate from the CREATOR gate: the create-time gate
  *         in `OfferCreateFacet` fires only if `cfgRiskAccessGateEnabled()` was ON
@@ -262,7 +272,175 @@ contract RiskAccessAcceptGateTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // 5 — keeper-match path is NOT gated by THIS accept-time site.
+    // 5 — RE-LOCK: a risk-terms version bump invalidates the #662 ack-substitution
+    //     that let an IlliquidCustom pair through on tier alone (Codex #729 r1
+    //     finding 2). After the bump the acceptor's tier anchor is stale, so the
+    //     effective tier collapses to BlueChipOnly and the SAME accept reverts
+    //     RiskTierTooLow — the tier check trips before the consent branch. The
+    //     acceptor must re-affirm their tier (fresh anchor) to transact again.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_acceptGate_versionBumpRelocksAckSubstitution() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Acceptor opts UP to IlliquidCustom (cooldown 0 => immediate). As in
+        // test 3, the #662 ack substitutes for a standing per-pair consent.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // Sanity: the ack-substitution path lets the FIRST accept of an offer on
+        // this illiquid pair succeed (proves the baseline before the bump).
+        uint256 firstLoanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(firstLoanId).borrower,
+            borrower,
+            "ack-substitution accept succeeds pre-bump"
+        );
+
+        // A SECOND identical offer (the first is consumed) to re-exercise the gate.
+        uint256 offerId2 = _lenderOffer(mockERC20, mockIlliquidERC20);
+
+        // Admin bumps the global risk-terms version. The test contract holds
+        // ADMIN_ROLE (mirrors RiskAccessFacetTest — no prank), so the call is
+        // direct. This re-locks the acceptor's now-stale tier anchor with ZERO
+        // per-user writes (read-time re-lock).
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(borrower),
+            BLUECHIP,
+            "tier re-locked to BlueChipOnly after terms bump"
+        );
+
+        // Re-accepting the SAME illiquid pair now reverts RiskTierTooLow: the
+        // stale anchor drops the effective tier to BlueChipOnly, so the tier
+        // check trips first (correct re-lock behavior — the ack-substitution is
+        // moot once the tier itself is stale).
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig) =
+            _buildAndSign(borrower, borrowerPk, offerId2);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibRiskAccess.RiskTierTooLow.selector,
+                borrower,
+                ILLIQUID,
+                BLUECHIP
+            )
+        );
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId2, t, sig);
+
+        // Re-affirm the tier against the live terms (fresh anchor) — the accept
+        // succeeds once more, confirming the re-lock is recoverable.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(borrower),
+            ILLIQUID,
+            "tier fresh again after re-affirm"
+        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId2);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower,
+            borrower,
+            "accept succeeds again after re-affirm"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 6 — NFT RENTAL with an ILLIQUID PREPAY token: the #662 ack does NOT cover
+    //     the illiquid prepay leg (Codex #729 r1 findings 1+3). The gate keys the
+    //     LEND leg off `prepayAsset` (the rental's economic risk), while the #662
+    //     ack names the rented NFT — the two classifications diverge, so the ack
+    //     cannot substitute. The acceptor must hold a STANDING per-pair consent.
+    //
+    //     NOTE: full NFT-rental accept e2e deferred; covered at the gate-logic
+    //     layer (this harness has no shared rental-accept helper, and a hand-rolled
+    //     ERC4907/prepay accept would be a fragile test). We assert the two pieces
+    //     the gate actually depends on: (a) `pairRequiredRiskLevel == IlliquidCustom`
+    //     for an NFT-rental-with-illiquid-prepay pair (proving the lend leg is
+    //     classified off the illiquid prepay token, not the NFT), and (b) a
+    //     standing `setIlliquidPairConsent` on the EXACT PairId — built the way
+    //     LoanFacet builds it from the offer — flips `hasIlliquidPairConsent` on.
+    //     Together these are the accept-path's consent gate for this case.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_acceptGate_nftRentalIlliquidPrepayNeedsStandingConsent() public {
+        // The rented NFT is illiquid by AssetType (forced to IlliquidCustom in
+        // `_collLegLevel`/`_lendLegLevel`), but a RENTAL lend leg is classified by
+        // its `prepayAsset` instead — here an illiquid ERC-20 (tier 0). The
+        // collateral is a liquid ERC-20 (tier 1 => BroadLiquid), so the riskier
+        // lend leg governs and the pair requires IlliquidCustom.
+        _mockTier(mockIlliquidERC20, 0); // illiquid prepay token => IlliquidCustom
+        _mockTier(mockCollateralERC20, 1); // liquid collateral => BroadLiquid
+
+        // The PairId exactly as LoanFacet._maybeRunInitialRiskGates builds it from
+        // a rental lender offer: NFT lend leg (ERC721, the rented tokenId), liquid
+        // ERC-20 collateral, and a non-zero illiquid `prepayAsset`.
+        LibRiskAccess.PairId memory rentalPair = LibRiskAccess.PairId({
+            lendAsset: mockNft721,
+            lendType: LibVaipakam.AssetType.ERC721,
+            lendTokenId: 1,
+            collAsset: mockCollateralERC20,
+            collType: LibVaipakam.AssetType.ERC20,
+            collTokenId: 0,
+            prepayAsset: mockIlliquidERC20
+        });
+
+        // (a) Classification: the rental lend leg ties to the illiquid prepay
+        //     token, so the pair requires IlliquidCustom (level 2).
+        assertEq(
+            RiskAccessFacet(address(diamond)).pairRequiredRiskLevel(rentalPair),
+            ILLIQUID,
+            "NFT-rental-with-illiquid-prepay pair requires IlliquidCustom"
+        );
+
+        // The #662 ack for this pair would name the rented NFT (`mockNft721`,
+        // illiquid), NOT the prepay token — so it cannot cover the gate's lend leg
+        // (classAsset == prepay). Hence the standing consent is the only path.
+        // Acceptor (borrower) starts WITHOUT a consent on the pair.
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                borrower, rentalPair
+            ),
+            "no standing consent before grant"
+        );
+
+        // (b) The acceptor records a standing consent on the EXACT pair (cooldown
+        //     0 => effective immediately). `hasIlliquidPairConsent` flips on.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(rentalPair, true);
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                borrower, rentalPair
+            ),
+            "standing consent effective after grant"
+        );
+
+        // A consent recorded on a DIFFERENT pair (e.g. the same NFT as plain
+        // collateral, no prepay) must NOT satisfy this rental pair — the pairKey
+        // folds in `prepayAsset` so the two are distinct consents.
+        LibRiskAccess.PairId memory otherPair = LibRiskAccess.PairId({
+            lendAsset: mockNft721,
+            lendType: LibVaipakam.AssetType.ERC721,
+            lendTokenId: 1,
+            collAsset: mockCollateralERC20,
+            collType: LibVaipakam.AssetType.ERC20,
+            collTokenId: 0,
+            prepayAsset: address(0)
+        });
+        assertFalse(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                borrower, otherPair
+            ),
+            "consent does not leak across distinct prepay-keyed pairs"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 7 — keeper-match path is NOT gated by THIS accept-time site.
     // ════════════════════════════════════════════════════════════════════════
 
     // NOTE: the keeper-match path (`acceptAckActive == false`, e.g. an

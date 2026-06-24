@@ -107,32 +107,49 @@ library LibRiskAccess {
         return LibVaipakam.RiskAccessLevel.IlliquidCustom;
     }
 
+    /// @notice Per-leg classification — the SINGLE source of truth reused by the
+    ///         gate AND the accept-time #662-ack coverage check (Codex #729 r1),
+    ///         so the two can never diverge. Returns the required level + the
+    ///         CLASSIFICATION ASSET that level was derived from.
+    /// @dev    Forces any NFT-typed leg to `IlliquidCustom` by AssetType BEFORE
+    ///         consulting ERC-20 liquidity (#727 r4) — except a rental's NFT
+    ///         LENDING leg, whose risk is the substituted `prepayAsset` (so the
+    ///         classification asset for a rental lend leg is the prepay token,
+    ///         NOT the rented NFT).
+    function _lendLegLevel(LibVaipakam.Storage storage s, PairId memory p)
+        private
+        view
+        returns (LibVaipakam.RiskAccessLevel level, address classAsset)
+    {
+        if (_isNft(p.lendType)) {
+            if (p.prepayAsset != address(0)) {
+                return (_assetRequiredLevel(s, p.prepayAsset), p.prepayAsset); // rental
+            }
+            return (LibVaipakam.RiskAccessLevel.IlliquidCustom, p.lendAsset); // bare NFT loan
+        }
+        return (_assetRequiredLevel(s, p.lendAsset), p.lendAsset);
+    }
+
+    function _collLegLevel(LibVaipakam.Storage storage s, PairId memory p)
+        private
+        view
+        returns (LibVaipakam.RiskAccessLevel level, address classAsset)
+    {
+        // An NFT collateral is always genuine illiquid collateral.
+        if (_isNft(p.collType)) {
+            return (LibVaipakam.RiskAccessLevel.IlliquidCustom, p.collAsset);
+        }
+        return (_assetRequiredLevel(s, p.collAsset), p.collAsset);
+    }
+
     /// @notice The riskier of the two legs governs the pair's required tier.
-    /// @dev    Each leg is classified by `_legRequiredLevel`, which forces any
-    ///         NFT-typed leg to `IlliquidCustom` by AssetType BEFORE consulting
-    ///         ERC-20 liquidity (Codex #727 r4 P2) — except a rental's NFT
-    ///         LENDING leg, whose risk is the substituted prepay token. So a
-    ///         contract that is both ERC-721 and "ERC-20-like enough" to have a
-    ///         configured deep route can never be promoted out of IlliquidCustom.
     function _pairRequiredLevel(LibVaipakam.Storage storage s, PairId memory p)
         internal
         view
         returns (LibVaipakam.RiskAccessLevel)
     {
-        // Lending leg: an NFT rental (NFT lent + prepay set) is classified by the
-        // value-bearing prepay token; any other NFT lending leg is IlliquidCustom.
-        LibVaipakam.RiskAccessLevel lend;
-        if (_isNft(p.lendType)) {
-            lend = p.prepayAsset != address(0)
-                ? _assetRequiredLevel(s, p.prepayAsset) // rental → prepay token
-                : LibVaipakam.RiskAccessLevel.IlliquidCustom; // bare NFT loan
-        } else {
-            lend = _assetRequiredLevel(s, p.lendAsset);
-        }
-        // Collateral leg: an NFT collateral is always genuine illiquid collateral.
-        LibVaipakam.RiskAccessLevel coll = _isNft(p.collType)
-            ? LibVaipakam.RiskAccessLevel.IlliquidCustom
-            : _assetRequiredLevel(s, p.collAsset);
+        (LibVaipakam.RiskAccessLevel lend,) = _lendLegLevel(s, p);
+        (LibVaipakam.RiskAccessLevel coll,) = _collLegLevel(s, p);
         return uint8(lend) >= uint8(coll) ? lend : coll;
     }
 
@@ -254,27 +271,78 @@ library LibRiskAccess {
         }
     }
 
-    /// @notice TIER-ONLY gate (no per-pair consent check) — used at the
-    ///         direct-accept loan-init site (#671 phase 2 / #728).
-    /// @dev    On the accept path the #662 acceptance-term binding has ALREADY
-    ///         verified, against the gate's own liquidity reads, that the
-    ///         acceptor signed-acknowledged every illiquid leg of this exact
-    ///         offer (see `LoanFacet._maybeRunInitialRiskGates`). That signed
-    ///         per-acceptance acknowledgement is a stronger, more specific
-    ///         consent than the standing per-pair `illiquidPairConsent`, so it
-    ///         SATISFIES the #671 illiquid-consent requirement for the acceptor —
-    ///         the acceptor never double-signs (the #662⇄#671 unification). Only
-    ///         the acceptor's vault TIER still has to cover the pair here.
-    function assertActorTier(
+    /// @notice Accept-path gate (#671 phase 2 / #728) — the acceptor's tier must
+    ///         cover the pair, and for an `IlliquidCustom` pair the acceptor must
+    ///         have consented to it.
+    /// @dev    The #662⇄#671 UNIFICATION (Codex #729 r1): the illiquid consent is
+    ///         satisfied by EITHER a standing fresh per-pair `illiquidPairConsent`
+    ///         OR the acceptor's #662 acceptance acknowledgement — but ONLY when
+    ///         that ack names EXACTLY the assets this gate classifies illiquid for
+    ///         the pair (`_ackCoversIlliquidLegs`, reusing the SAME per-leg
+    ///         classification so #662 and #671 can't diverge) AND the acceptor's
+    ///         risk terms are still fresh. The two classifications differ for an
+    ///         NFT RENTAL (this gate keys the lend leg off `prepayAsset`, while the
+    ///         #662 ack names the rented NFT), so a rental with an illiquid prepay
+    ///         token correctly falls back to requiring a standing per-pair consent.
+    ///         `ackLend` / `ackColl` are the acceptor's signed
+    ///         `acknowledgedIlliquid{Lending,Collateral}Asset` (already injected
+    ///         + verified at the call site).
+    function assertAcceptorMayTransact(
         LibVaipakam.Storage storage s,
         address actor,
-        PairId memory p
+        PairId memory p,
+        address ackLend,
+        address ackColl
     ) internal view {
         LibVaipakam.RiskAccessLevel required = _pairRequiredLevel(s, p);
         LibVaipakam.RiskAccessLevel actorTier = effectiveTier(s, actor);
         if (uint8(actorTier) < uint8(required)) {
             revert RiskTierTooLow(actor, uint8(required), uint8(actorTier));
         }
+        if (required != LibVaipakam.RiskAccessLevel.IlliquidCustom) return;
+        bytes32 pk = pairKey(p);
+        if (_illiquidConsentEffective(s, actor, pk)) return; // standing fresh consent
+        // #662 ack-substitution — only with FRESH risk terms (a governance terms
+        // bump re-locks the substitution just like a standing consent; Codex #729
+        // r1) AND an ack that covers exactly the gate's illiquid legs.
+        if (
+            s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
+                && _ackCoversIlliquidLegs(s, p, ackLend, ackColl)
+        ) {
+            return;
+        }
+        revert IlliquidPairNotConsented(actor, pk);
+    }
+
+    /// @dev True iff the acceptor's #662 acknowledgement names the classification
+    ///      asset of EVERY leg this gate deems `IlliquidCustom`. Reuses
+    ///      `_lendLegLevel` / `_collLegLevel` (the single classification source),
+    ///      so a rental's prepay-substituted lend leg (classAsset == prepay) is
+    ///      NOT covered by the #662 ack (which names the rented NFT) — that case
+    ///      falls through to requiring a standing consent.
+    function _ackCoversIlliquidLegs(
+        LibVaipakam.Storage storage s,
+        PairId memory p,
+        address ackLend,
+        address ackColl
+    ) private view returns (bool) {
+        (LibVaipakam.RiskAccessLevel lendLvl, address lendClass) =
+            _lendLegLevel(s, p);
+        if (
+            lendLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
+                && ackLend != lendClass
+        ) {
+            return false;
+        }
+        (LibVaipakam.RiskAccessLevel collLvl, address collClass) =
+            _collLegLevel(s, p);
+        if (
+            collLvl == LibVaipakam.RiskAccessLevel.IlliquidCustom
+                && ackColl != collClass
+        ) {
+            return false;
+        }
+        return true;
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).
