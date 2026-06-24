@@ -284,6 +284,43 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibRiskAccess.previewActorBlock(s, acceptor, pair);
     }
 
+    /// @notice #671 phase 2 (#728 PR-2c) — assert the INCOMING borrower of a
+    ///         Preclose Option-2 obligation transfer may take on the loan's pair.
+    ///         Reverts `RiskTierTooLow` / `IlliquidPairNotConsented` (from
+    ///         `LibRiskAccess`) when the incoming borrower's live vault tier or
+    ///         standing illiquid-pair consent does not cover the loan being
+    ///         transferred; no-op when the gate is off. Standing consent only —
+    ///         this is not an accept flow, so there is no #662 acknowledgement to
+    ///         substitute.
+    /// @dev    A cross-facet entrypoint consumed by `PrecloseFacet.
+    ///         transferObligationViaOffer`. PrecloseFacet sits at the EIP-170
+    ///         ceiling, so the loan→PairId construction lives here rather than
+    ///         inline in that facet. Reads-only + reverts; safe to call via the
+    ///         diamond fallback from the (non-reentrant) transfer flow.
+    /// @param loanId The loan whose obligation is being transferred.
+    /// @param incomingBorrower The offer creator becoming the new borrower.
+    function assertObligationTransferAllowed(
+        uint256 loanId,
+        address incomingBorrower
+    ) external view {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Loan storage loan = s.loans[loanId];
+        LibRiskAccess.assertActorMayTransact(
+            s,
+            incomingBorrower,
+            LibRiskAccess.PairId({
+                lendAsset: loan.principalAsset,
+                lendType: loan.assetType,
+                lendTokenId: loan.tokenId,
+                collAsset: loan.collateralAsset,
+                collType: loan.collateralAssetType,
+                collTokenId: loan.collateralTokenId,
+                prepayAsset: loan.prepayAsset
+            })
+        );
+    }
+
     // ─── Internals ───────────────────────────────────────────────────────────
 
     function _applyTier(address vault, uint8 level) private {

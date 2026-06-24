@@ -28,6 +28,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "./OfferCreateFacet.sol";
 import {VPFIDiscountFacet} from "./VPFIDiscountFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
+import {RiskAccessFacet} from "./RiskAccessFacet.sol";
 
 /**
  * @title PrecloseFacet
@@ -558,6 +559,36 @@ contract PrecloseFacet is
             loan.collateralAsset,
             loan.collateralAmount
         );
+
+        // #671 phase 2 (#728 PR-2c) — progressive-risk gate on the INCOMING
+        // borrower. This path makes `newBorrower` (ben) the borrower of an
+        // existing loan by consuming his standing Borrower Offer, WITHOUT routing
+        // through the accept→loan-init chokepoint, so the PR-2a acceptor gate
+        // never re-validates him here. ben newly assumes this loan's borrower-
+        // side exposure, so he is gated against the LOAN's asset pair (the risk
+        // he is taking on, not the sale-vehicle surface) against the LIVE
+        // tier/consent state — exactly the sale-buyer treatment (PR-2a). ben's
+        // Borrower Offer may have been authored while the gate was off, or his
+        // tier/consent may since have dropped or gone stale after a terms bump;
+        // re-asserting here closes that window. Standing consent only — ben signs
+        // no #662 acknowledgement for this transfer, so nothing substitutes. The
+        // EXITING borrower (`msg.sender`, alice) stays exempt: that risk was
+        // already accepted at the original loan. The assertion is delegated to
+        // `RiskAccessFacet` via a cross-facet call (PrecloseFacet sits at the
+        // EIP-170 ceiling, so the PairId build can't live inline here); the inner
+        // `RiskTierTooLow` / `IlliquidPairNotConsented` revert bubbles. No-op
+        // unless the kill-switch is on (guarded here so a gate-off transfer pays
+        // no cross-call).
+        if (LibVaipakam.cfgRiskAccessGateEnabled()) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    RiskAccessFacet.assertObligationTransferAllowed.selector,
+                    loanId,
+                    newBorrower
+                ),
+                bytes4(0)
+            );
+        }
 
         // ── 1. Calculate what alice owes ────────────────────────────────────
         // Seconds-based math across accrued, original-remaining, and
