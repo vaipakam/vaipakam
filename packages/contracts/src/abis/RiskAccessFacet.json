@@ -9,9 +9,9 @@
         "internalType": "uint256"
       },
       {
-        "name": "incomingBorrower",
-        "type": "address",
-        "internalType": "address"
+        "name": "borrowerOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],

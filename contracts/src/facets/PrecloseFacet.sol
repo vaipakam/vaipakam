@@ -575,16 +575,18 @@ contract PrecloseFacet is
         // EXITING borrower (`msg.sender`, alice) stays exempt: that risk was
         // already accepted at the original loan. The assertion is delegated to
         // `RiskAccessFacet` via a cross-facet call (PrecloseFacet sits at the
-        // EIP-170 ceiling, so the PairId build can't live inline here); the inner
-        // `RiskTierTooLow` / `IlliquidPairNotConsented` revert bubbles. No-op
-        // unless the kill-switch is on (guarded here so a gate-off transfer pays
-        // no cross-call).
+        // EIP-170 ceiling, so the PairId build can't live inline here); it gates
+        // `offer.creator` (= `newBorrower`) against the POST-TRANSFER pair (the
+        // loan's lend leg + this offer's collateral leg, since the transfer
+        // installs the offer's collateral token id). The inner `RiskTierTooLow` /
+        // `IlliquidPairNotConsented` revert bubbles. No-op unless the kill-switch
+        // is on (guarded here so a gate-off transfer pays no cross-call).
         if (LibVaipakam.cfgRiskAccessGateEnabled()) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     RiskAccessFacet.assertObligationTransferAllowed.selector,
                     loanId,
-                    newBorrower
+                    borrowerOfferId
                 ),
                 bytes4(0)
             );
