@@ -14,6 +14,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -40,6 +41,7 @@ contract PartialWithdrawalFacetTest is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address mockERC20;
     address mockCollateralERC20;
     address mockZeroExProxy;
@@ -78,7 +80,7 @@ contract PartialWithdrawalFacetTest is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
@@ -212,8 +214,7 @@ contract PartialWithdrawalFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
     }
 
     // ─── partialWithdrawCollateral reverts ───────────────────────────────────

@@ -426,11 +426,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         _facet().setVPFIDiscountConsent(true);
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
-        );
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Lender vault is drained by exactly the full principal — no fee
         // skimmed before delivery.
@@ -489,8 +485,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Fee = 0.1% of principal flows into treasury in the lending
         // asset, MINUS the 1% Range Orders Phase 1 matcher kickback
@@ -538,8 +533,7 @@ contract VPFIDiscountFacetTest is SetupTest {
 
         uint256 treasuryVpfiBefore = vpfiToken.balanceOf(treasuryRecipient);
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // No VPFI moved — discount path skipped entirely.
         assertEq(
@@ -697,8 +691,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
 
     // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -742,8 +735,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Phase 5 custody: the Diamond holds the full LIF in VPFI.
         (uint256 rebateAtInit, uint256 heldAtInit) = ClaimFacet(address(diamond))
@@ -836,8 +828,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Immediately unstake the lot — stamp-refresh fix should set the
         // post-withdraw stamp at tier 0, so the whole loan period accrues
@@ -900,8 +891,7 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         IERC20(mockCollateralERC20).approve(address(diamond), principal);
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Skip past grace period so time-based default fires.
         vm.warp(block.timestamp + 60 days);

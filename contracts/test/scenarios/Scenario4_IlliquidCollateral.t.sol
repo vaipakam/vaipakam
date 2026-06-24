@@ -29,6 +29,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title Scenario4_IlliquidCollateral
@@ -41,6 +42,7 @@ contract Scenario4_IlliquidCollateral is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address mockUsdc;     // Lending asset (Liquid)
     address mockIlliquid; // Collateral asset (Illiquid)
 
@@ -78,7 +80,7 @@ contract Scenario4_IlliquidCollateral is Test {
     function setUp() public {
         owner    = address(this);
         lender   = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy two ERC20 tokens
         mockUsdc     = address(new ERC20Mock("MockUSDC", "USDC", 18));
@@ -233,8 +235,7 @@ contract Scenario4_IlliquidCollateral is Test {
         );
 
         // Step 2: Borrower accepts with illiquid consent = true
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Verify loan is Active with riskAndTermsConsentFromBoth
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);

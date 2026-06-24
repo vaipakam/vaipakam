@@ -221,9 +221,7 @@ contract AcceptRangedOfferTest is SetupTest {
         );
 
         // Borrower accepts.
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Role-aware read assertions — the load-bearing claim.
         LibVaipakam.Loan memory loan =
@@ -308,9 +306,7 @@ contract AcceptRangedOfferTest is SetupTest {
             collateralAmountMax: 500
         });
 
-        vm.prank(lender);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(lender, lenderPk, offerId);
 
         // Role-aware read assertions.
         LibVaipakam.Loan memory loan =
@@ -390,9 +386,7 @@ contract AcceptRangedOfferTest is SetupTest {
             "post-create: borrower collateral wallet down by collateralAmountMax"
         );
 
-        vm.prank(lender);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(lender, lenderPk, offerId);
 
         // The loan only locks `collateralAmount` (500); the unused
         // `collateralAmountMax - collateralAmount = 4_500` was refunded
@@ -440,8 +434,7 @@ contract AcceptRangedOfferTest is SetupTest {
             "post-create: borrower collateral wallet down by 500"
         );
 
-        vm.prank(lender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(lender, lenderPk, offerId);
 
         // No residual refund — borrower wallet stays at -500.
         assertEq(
@@ -471,8 +464,7 @@ contract AcceptRangedOfferTest is SetupTest {
             collateralRequired: 500
         });
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Lender attempts cancel; offer is in the accepted terminal
         // state — must revert.
@@ -507,9 +499,7 @@ contract AcceptRangedOfferTest is SetupTest {
             collateralRequired: 500
         });
 
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);

@@ -88,8 +88,7 @@ contract VolatilityLTVTest is SetupTest, IVaipakamErrors {
             })
         );
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         return 1;
     }
 

@@ -152,16 +152,31 @@ contract ReplaceStaleFacets is Script {
         s[3] = OfferAcceptFacet.previewAccept.selector;
     }
 
-    /// @dev #627 — OfferAccept selectors introduced after the live diamond was
-    ///      cut, so they need an Add (not a Replace). Currently just the public
-    ///      KYC-value view the aggregator adapter calls.
+    /// @dev OfferAccept selectors introduced after the live diamond was cut, so
+    ///      they need an Add (not a Replace). #627: the public KYC-value view.
+    ///      #662: `hashAcceptTerms` (EIP-712 digest view) + `verifyAndBindAccept`
+    ///      (the gated cross-facet hop SignedOfferFacet uses) — both brand-new.
+    ///
+    ///      NOTE (#662 selector changes): `acceptOffer`'s signature changed from
+    ///      `(uint256,bool)` to `(uint256,AcceptTerms,bytes)`, a DIFFERENT 4-byte
+    ///      selector — and likewise `SignedOfferFacet.acceptSignedOffer` /
+    ///      `acceptSignedOfferWithPermit` (now carrying `(AcceptTerms,bytes)`).
+    ///      A true live refresh would Remove each old selector + Add the new one
+    ///      (and SignedOfferFacet is not even scoped by this script — a
+    ///      pre-existing gap, it predates #662). Pre-live (no production diamond
+    ///      — see CLAUDE.md) the canonical path is a fresh `DeployDiamond` (whose
+    ///      `_getOfferAcceptSelectors` + `_getSignedOfferSelectors` use `.selector`
+    ///      and so already route the NEW selectors), and this refresh script is
+    ///      regenerated at the first real deploy (Codex #724 r2 P2).
     function _offerAcceptMissingSelectors()
         internal
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](1);
+        s = new bytes4[](3);
         s[0] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
+        s[1] = OfferAcceptFacet.hashAcceptTerms.selector;
+        s[2] = OfferAcceptFacet.verifyAndBindAccept.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {

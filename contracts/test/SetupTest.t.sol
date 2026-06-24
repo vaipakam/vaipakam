@@ -61,6 +61,8 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -159,6 +161,12 @@ contract SetupTest is Test {
     address owner;
     address lender; // User1
     address borrower; // User2
+    // #662 — EIP-712 AcceptTerms signing keys for the two core actors. Seeded
+    // via `makeAddrAndKey` (SAME deterministic address as `makeAddr`, plus the
+    // private key) so every existing address-based assertion is unchanged while
+    // `_signAndAcceptOffer` (HelperTest) can sign the acceptor's typed terms.
+    uint256 lenderPk;
+    uint256 borrowerPk;
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg — distinct from lending leg)
     address mockIlliquidERC20; // Illiquid asset
@@ -294,8 +302,8 @@ contract SetupTest is Test {
 
     function setupHelper() public {
         owner = address(this);
-        lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (lender, lenderPk) = makeAddrAndKey("lender");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
@@ -1090,6 +1098,43 @@ contract SetupTest is Test {
         ERC20Mock(token).mint(actor, walletAmount);
         vm.prank(actor);
         ERC20(token).approve(address(diamond), type(uint256).max);
+    }
+
+    // ───────────────────────────────────────────────────────────────────────
+    // #662 — EIP-712 AcceptTerms signing (convenience wrappers)
+    //
+    // The accept entries now require an acceptor-signed `AcceptTerms` bound to
+    // every loan-affecting offer field (anti-phishing, OfferAcceptTermBindingDesign.md
+    // §8b). The real impl lives in `LibAcceptTestSigner` (a library, so `is Test`
+    // files like OfferFacetTest can use it too); these are thin wrappers for
+    // SetupTest-based tests: `vm.prank(a); acceptOffer(id, true)` becomes
+    // `_signAndAcceptOffer(a, aPk, id)`. Acceptors MUST have a key (use
+    // `makeAddrAndKey`; core `lender`/`borrower` are seeded `lenderPk`/`borrowerPk`).
+    // For an `expectRevert` test, call `LibAcceptTestSigner.buildTerms` + `.sign`
+    // FIRST, then `vm.expectRevert` + `vm.prank` + the typed `acceptOffer(id,t,sig)`.
+    // ───────────────────────────────────────────────────────────────────────
+
+    /// @notice Sign + accept `offerId` as `acceptor` (consent=true, no link).
+    function _signAndAcceptOffer(address acceptor, uint256 pk, uint256 offerId)
+        internal
+        returns (uint256)
+    {
+        return
+            LibAcceptTestSigner.signAndAccept(address(diamond), acceptor, pk, offerId);
+    }
+
+    /// @notice Sign + accept with explicit consent + linked-loan target (sale /
+    ///         offset vehicles), or a deliberately-false consent.
+    function _signAndAcceptOffer(
+        address acceptor,
+        uint256 pk,
+        uint256 offerId,
+        bool consent,
+        uint256 linkedLoanId
+    ) internal returns (uint256) {
+        return LibAcceptTestSigner.signAndAccept(
+            address(diamond), acceptor, pk, offerId, consent, linkedLoanId
+        );
     }
 
     /**

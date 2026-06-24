@@ -13,6 +13,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -41,6 +42,7 @@ contract EarlyWithdrawalFacetTest is Test {
     address lender;
     address newLender;
     address borrower;
+    uint256 borrowerPk;
     address mockERC20;
     address mockCollateralERC20;
     address mockZeroExProxy;
@@ -154,7 +156,7 @@ contract EarlyWithdrawalFacetTest is Test {
         owner = address(this);
         lender    = makeAddr("lender");
         newLender = makeAddr("newLender");
-        borrower  = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
@@ -299,8 +301,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // New lender creates a buy offer (Lender-type, not yet accepted)
         vm.prank(newLender);

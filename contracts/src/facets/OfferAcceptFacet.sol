@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {RefinanceFacet} from "./RefinanceFacet.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
@@ -195,6 +196,41 @@ contract OfferAcceptFacet is
     ///         which consumes its remaining capacity and owns the lien
     ///         decrement (see {OfferMatchFacet.matchOffers}).
     error OfferPartiallyFilled(uint256 offerId, uint256 amountFilled);
+    // ── #662 — offer-accept term binding (anti-phishing) ───────────────
+    /// @notice A field of the signed `AcceptTerms` did not equal the stored
+    ///         offer's value (or its role-correct endpoint). `field` is a 1-based
+    ///         index identifying the first diverging field, so the frontend can
+    ///         point the acceptor at exactly what drifted between what they
+    ///         signed and what the chain holds. A `uint8` (not a `bytes32` tag)
+    ///         to keep the facet under the EIP-170 size limit. Legend:
+    ///         1 offerKey · 2 offerCreator · 3 offerType · 4 lendingAsset ·
+    ///         5 collateralAsset · 6 amount · 7 collateralAmount ·
+    ///         8 interestRateBps · 9 durationDays · 10 tokenId ·
+    ///         11 collateralTokenId · 12 quantity · 13 collateralQuantity ·
+    ///         14 assetType · 15 collateralAssetType · 16 prepayAsset ·
+    ///         17 useFullTermInterest · 18 allowsPartialRepay ·
+    ///         19 allowsPrepayListing · 20 allowsParallelSale ·
+    ///         21 refinanceTargetLoanId · 22 parallelSaleOrderHash ·
+    ///         23 periodicInterestCadence · 24 linkedLoanId.
+    error OfferTermsMismatch(uint8 field);
+    // `IlliquidAssetNotAcknowledged(address)` is inherited from IVaipakamErrors
+    // (shared with LoanFacet, which enforces it at the bypass site — Codex
+    // #724 P1; see _verifyAndBindAccept's note).
+    /// @notice The EIP-712 `AcceptTerms` signature did not verify for
+    ///         `terms.acceptor` (ECDSA or ERC-1271).
+    error AcceptSignatureInvalid();
+    /// @notice `terms.acceptor` was not the account whose funds move on this
+    ///         accept (the direct caller, or the resolved signed-offer
+    ///         acceptor) — the digest is bound to one account by design.
+    ///         Parameterless to keep the facet under EIP-170 (the caller holds
+    ///         both addresses); same rationale for the two below.
+    error AcceptorMismatch();
+    /// @notice `block.timestamp` is past `terms.deadline` — the signing window
+    ///         for this acceptance has closed.
+    error AcceptDeadlineExpired();
+    /// @notice `terms.nonce` was already consumed by `terms.acceptor` — a
+    ///         captured acceptance signature cannot be replayed.
+    error AcceptNonceUsed();
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -230,23 +266,32 @@ contract OfferAcceptFacet is
      *      VaultWithdrawFailed, NFTRenterUpdateFailed, LoanInitiationFailed,
      *      OfferAcceptFailed. Emits OfferAccepted.
      * @param offerId The offer ID to accept.
-     * @param acceptorRiskAndTermsConsent Acceptor's mandatory consent to the
-     *        combined abnormal-market + illiquid-assets fallback terms
-     *        (docs/WebsiteReadme.md §"Offer and acceptance risk warnings",
-     *        README.md §"Liquidity & Asset Classification"). Required on
-     *        every accept regardless of leg liquidity; combined with
-     *        offer.creatorRiskAndTermsConsent and latched into the resulting
-     *        loan via {Loan.riskAndTermsConsentFromBoth}.
+     * @param terms The acceptor's EIP-712-signed `AcceptTerms` (#662). Carries
+     *        the single mandatory risk-and-terms consent (`riskAndTermsConsent`
+     *        — combined abnormal-market + illiquid-assets fallback terms, latched
+     *        into the loan via {Loan.riskAndTermsConsentFromBoth}) AND every
+     *        loan-affecting offer field, each bound by equality against the
+     *        stored offer before any value moves. A phishing clone cannot
+     *        hardcode an opaque `true` because the wallet renders these typed
+     *        terms and the contract enforces the match.
+     * @param signature ECDSA / ERC-1271 signature over `terms`'s EIP-712 digest;
+     *        must recover to `terms.acceptor == msg.sender`.
      * @return loanId The ID of the initiated loan.
      */
     function acceptOffer(
         uint256 offerId,
-        bool acceptorRiskAndTermsConsent
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata signature
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
+        // #662 — anti-phishing term binding. Verify the acceptor's EIP-712
+        // signature, consume its nonce, and bind EVERY loan-affecting field
+        // (plus the acknowledged-illiquid asset identities) against the stored
+        // offer BEFORE any value moves. The acceptor here is the direct caller.
+        _verifyAndBindAccept(offerId, _directOfferKey(offerId), terms, signature, msg.sender);
         return
             _acceptOffer(
                 offerId,
-                acceptorRiskAndTermsConsent,
+                terms.riskAndTermsConsent,
                 /*usePermit=*/ false,
                 _emptyPermit(),
                 ""
@@ -314,16 +359,21 @@ contract OfferAcceptFacet is
      *      no acceptor ERC-20 pull applies.
      *
      * @param offerId                 The offer to accept.
-     * @param acceptorRiskAndTermsConsent Mandatory fallback-terms consent.
+     * @param terms                   The acceptor's EIP-712-signed `AcceptTerms`
+     *                                (#662) — carries the single risk-and-terms
+     *                                consent + every loan-affecting field bound
+     *                                against the stored offer.
+     * @param acceptSignature         ECDSA / ERC-1271 signature over `terms`.
      * @param permit                  Signed Permit2 `PermitTransferFrom`.
-     * @param signature               65-byte ECDSA signature.
+     * @param permitSignature         65-byte Permit2 ECDSA signature.
      * @return loanId                 The initiated loan's id.
      */
     function acceptOfferWithPermit(
         uint256 offerId,
-        bool acceptorRiskAndTermsConsent,
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata acceptSignature,
         ISignatureTransfer.PermitTransferFrom calldata permit,
-        bytes calldata signature
+        bytes calldata permitSignature
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         // Permit2 only covers ERC-20 acceptor pulls. Pre-validate the
         // offer shape so the caller can't sign a payload that never
@@ -342,14 +392,165 @@ contract OfferAcceptFacet is
             }
         }
         // else: NFT rental — prepayAsset is ERC-20 by design, valid target.
+        // #662 — bind the signed terms before the Permit2 pull / loan init.
+        _verifyAndBindAccept(offerId, _directOfferKey(offerId), terms, acceptSignature, msg.sender);
         return
             _acceptOffer(
                 offerId,
-                acceptorRiskAndTermsConsent,
+                terms.riskAndTermsConsent,
                 /*usePermit=*/ true,
                 permit,
-                signature
+                permitSignature
             );
+    }
+
+    /// @notice Diamond-internal: verify + bind an EIP-712 `AcceptTerms` for the
+    ///         signed-offer fill path (`SignedOfferFacet.acceptSignedOffer*`),
+    ///         where the offer is materialized in the same tx and the acceptor
+    ///         is the injected `signedOfferAcceptor`, not `msg.sender`.
+    /// @dev    Gated `msg.sender == address(this)` so only a same-tx cross-facet
+    ///         call reaches it. Keeps the field-binding logic in ONE place
+    ///         (this facet) rather than duplicating it into SignedOfferFacet.
+    /// @param offerId   The materialized offer id.
+    /// @param offerKey  The signed-offer EIP-712 digest (NOT keccak(offerId) —
+    ///                  no offerId existed at sign time on this path).
+    /// @param terms     The acceptor's signed `AcceptTerms`.
+    /// @param signature ECDSA / ERC-1271 signature over `terms`.
+    /// @param acceptor  The resolved signed-offer acceptor (the funds-mover).
+    function verifyAndBindAccept(
+        uint256 offerId,
+        bytes32 offerKey,
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata signature,
+        address acceptor
+    ) external {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        _verifyAndBindAccept(offerId, offerKey, terms, signature, acceptor);
+    }
+
+    /// @notice The EIP-712 digest an acceptor signs for `terms` (#662). Mirrors
+    ///         {SignedOfferFacet.hashSignedOffer}: the frontend renders the
+    ///         typed `AcceptTerms` for the wallet, and tests recover the digest
+    ///         here to produce the `signature` the accept entries verify. Bound
+    ///         to this chain + Diamond via the acceptance-specific EIP-712
+    ///         domain (`"Vaipakam AcceptOffer"`).
+    /// @param terms The acceptance terms to hash.
+    /// @return The `\x19\x01`-prefixed EIP-712 digest.
+    function hashAcceptTerms(LibAcceptTerms.AcceptTerms calldata terms)
+        external
+        view
+        returns (bytes32)
+    {
+        return LibAcceptTerms.digest(terms);
+    }
+
+    /// @dev The `AcceptTerms.offerKey` an acceptor signs on the DIRECT accept
+    ///      paths — `keccak256(abi.encode(offerId))`. This is a pure client-side
+    ///      computation (the frontend / test signer derive it locally — there's
+    ///      no on-chain view, to keep the facet under EIP-170). The signed-offer
+    ///      fill path instead binds the signed-offer order hash, passed
+    ///      explicitly to {verifyAndBindAccept}.
+    function _directOfferKey(uint256 offerId) private pure returns (bytes32) {
+        return keccak256(abi.encode(offerId));
+    }
+
+    /// @dev #662 — the single anti-phishing chokepoint. Verifies the acceptor's
+    ///      EIP-712 `AcceptTerms` signature, consumes its replay nonce, then
+    ///      binds every loan-affecting field by EQUALITY against the stored
+    ///      offer (role-correct endpoints for ERC-20 lender/borrower; `amount`
+    ///      for NFT) and validates the acknowledged-illiquid asset identities
+    ///      against the on-chain liquidity classification. Reverts before any
+    ///      value moves. Pure function of (stored offer, signed terms) — see
+    ///      `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md` §8b.
+    function _verifyAndBindAccept(
+        uint256 offerId,
+        bytes32 offerKey,
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata signature,
+        address acceptor
+    ) private {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // 1 — signing window.
+        if (block.timestamp > terms.deadline) {
+            revert AcceptDeadlineExpired();
+        }
+        // 2 — bind the digest to the funds-mover (no cross-ERC-1271 replay).
+        if (terms.acceptor != acceptor) {
+            revert AcceptorMismatch();
+        }
+        // 3 — single-use nonce (replay protection).
+        if (s.acceptNonceUsed[terms.acceptor][terms.nonce]) {
+            revert AcceptNonceUsed();
+        }
+        s.acceptNonceUsed[terms.acceptor][terms.nonce] = true;
+        // 4 — EIP-712 signature (ECDSA or ERC-1271 via OZ SignatureChecker).
+        if (!LibAcceptTerms.verify(terms, signature)) {
+            revert AcceptSignatureInvalid();
+        }
+        // 5 — field-by-field equality against the stored offer (pure; no
+        //     liquidity read, so no TOCTOU).
+        _bindTermsToOffer(offerId, offerKey, terms, s);
+        // 6 — forward the signed acknowledged-illiquid identities to the LTV/HF
+        //     bypass site, which ENFORCES them against the same liquidity reads
+        //     that authorise the bypass (Codex #724 P1 — a hostile ERC-20 could
+        //     otherwise flip a leg's liquidity between an entry-time check and
+        //     the gate). `_acceptOffer` clears this injection. The match path
+        //     never sets it (exempt).
+        s.acceptAckIlliquidLend = terms.acknowledgedIlliquidLendingAsset;
+        s.acceptAckIlliquidColl = terms.acknowledgedIlliquidCollateralAsset;
+        s.acceptAckActive = true;
+    }
+
+    /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the
+    ///      stored offer. `amount` / `interestRateBps` bind against the
+    ///      ROLE-CORRECT endpoint (ERC-20 lender ⇒ `amountMax` /
+    ///      `interestRateBps`; ERC-20 borrower ⇒ `amount` / `interestRateBpsMax`;
+    ///      NFT ⇒ `amount` / `interestRateBps` for both — mirrors
+    ///      `LoanFacet._bookLoanTerms`). A diverging field reverts
+    ///      `OfferTermsMismatch(<tag>)` so the frontend can pinpoint the drift.
+    function _bindTermsToOffer(
+        uint256 offerId,
+        bytes32 offerKey,
+        LibAcceptTerms.AcceptTerms calldata t,
+        LibVaipakam.Storage storage s
+    ) private view {
+        LibVaipakam.Offer storage o = s.offers[offerId];
+        bool isERC20 = o.assetType == LibVaipakam.AssetType.ERC20;
+        bool isLender = o.offerType == LibVaipakam.OfferType.Lender;
+        uint256 roleAmount = isERC20 ? (isLender ? o.amountMax : o.amount) : o.amount;
+        uint256 roleRate = isERC20
+            ? (isLender ? o.interestRateBps : o.interestRateBpsMax)
+            : o.interestRateBps;
+
+        // Field indices match the legend on {OfferTermsMismatch}.
+        if (t.offerKey != offerKey) revert OfferTermsMismatch(1);
+        if (t.offerCreator != o.creator) revert OfferTermsMismatch(2);
+        if (t.offerType != uint8(o.offerType)) revert OfferTermsMismatch(3);
+        if (t.lendingAsset != o.lendingAsset) revert OfferTermsMismatch(4);
+        if (t.collateralAsset != o.collateralAsset) revert OfferTermsMismatch(5);
+        if (t.amount != roleAmount) revert OfferTermsMismatch(6);
+        if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
+        if (t.interestRateBps != roleRate) revert OfferTermsMismatch(8);
+        if (t.durationDays != o.durationDays) revert OfferTermsMismatch(9);
+        if (t.tokenId != o.tokenId) revert OfferTermsMismatch(10);
+        if (t.collateralTokenId != o.collateralTokenId) revert OfferTermsMismatch(11);
+        if (t.quantity != o.quantity) revert OfferTermsMismatch(12);
+        if (t.collateralQuantity != o.collateralQuantity) revert OfferTermsMismatch(13);
+        if (t.assetType != uint8(o.assetType)) revert OfferTermsMismatch(14);
+        if (t.collateralAssetType != uint8(o.collateralAssetType)) revert OfferTermsMismatch(15);
+        if (t.prepayAsset != o.prepayAsset) revert OfferTermsMismatch(16);
+        if (t.useFullTermInterest != o.useFullTermInterest) revert OfferTermsMismatch(17);
+        if (t.allowsPartialRepay != o.allowsPartialRepay) revert OfferTermsMismatch(18);
+        if (t.allowsPrepayListing != o.allowsPrepayListing) revert OfferTermsMismatch(19);
+        if (t.allowsParallelSale != o.allowsParallelSale) revert OfferTermsMismatch(20);
+        if (t.refinanceTargetLoanId != o.refinanceTargetLoanId) revert OfferTermsMismatch(21);
+        if (t.parallelSaleOrderHash != o.parallelSaleOrderHash) revert OfferTermsMismatch(22);
+        if (t.periodicInterestCadence != uint8(o.periodicInterestCadence)) revert OfferTermsMismatch(23);
+        // linkedLoanId — the auto-linked sale/offset target (0 for a normal
+        // offer). saleOfferToLoanId takes precedence; both 0 ⇒ must bind 0.
+        uint256 linked = s.saleOfferToLoanId[offerId];
+        if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
+        if (t.linkedLoanId != linked) revert OfferTermsMismatch(24);
     }
 
     /// @dev Zero-valued `PermitTransferFrom` for the classic accept
@@ -1269,6 +1470,17 @@ contract OfferAcceptFacet is
             effFilled,
             offer.accepted
         );
+        // #662 — clear the acked-illiquid injection set in _verifyAndBindAccept.
+        // It was already read + enforced at LoanFacet's bypass during
+        // initiateLoan above. Clearing the `active` flag is the load-bearing
+        // reset: the gate reads `acceptAckActive` FIRST and never touches the
+        // address slots when it's false, so a stale address at rest is inert.
+        // Clearing the two address slots too would be tidier (Codex #724 r2 P3)
+        // but costs ~85 B (high struct-offset SSTOREs) the facet doesn't have
+        // under EIP-170 — the flag-only reset is correct and sufficient. A
+        // revert anywhere above auto-rolls-back the set; the match path never
+        // set it.
+        s.acceptAckActive = false;
     }
 
 

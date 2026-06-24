@@ -302,11 +302,11 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](5);
-        // Single `acceptOffer(uint256,bool)` signature — the VPFI discount
-        // path is governed by the platform-level consent flag set via
-        // VPFIDiscountFacet.setVPFIDiscountConsent, not a per-call boolean.
-        selectors[0] = bytes4(keccak256("acceptOffer(uint256,bool)"));
+        selectors = new bytes4[](7);
+        // #662 — `acceptOffer(uint256,AcceptTerms,bytes)` now binds the
+        // acceptor's EIP-712-signed terms to every loan-affecting offer field
+        // (anti-phishing; OfferAcceptTermBindingDesign.md).
+        selectors[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         selectors[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
@@ -318,6 +318,13 @@ contract HelperTest {
         selectors[3] = OfferAcceptFacet.previewAccept.selector;
         // #627 — public KYC-value view (aggregator adapter principal screen).
         selectors[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
+        // #662 — the EIP-712 digest view the AcceptTerms test signer (and the
+        // frontend / keeper) read through the diamond to hash the typed message.
+        selectors[5] = OfferAcceptFacet.hashAcceptTerms.selector;
+        // #662 — gated cross-facet hop SignedOfferFacet uses to share the one
+        // binding impl (`address(this)`-only). Must be cut so signed-offer
+        // fills route to it.
+        selectors[6] = OfferAcceptFacet.verifyAndBindAccept.selector;
         return selectors;
     }
 

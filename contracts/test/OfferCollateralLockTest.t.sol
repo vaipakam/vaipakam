@@ -160,8 +160,7 @@ contract OfferCollateralLockTest is SetupTest {
         assertEq(_collateralLock(), 5000 ether, "locked at ceiling pre-accept");
         uint256 walletBefore = ERC20Mock(mockCollateralERC20).balanceOf(borrower);
 
-        vm.prank(lender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        _signAndAcceptOffer(lender, lenderPk, id);
 
         assertEq(_collateralLock(), 3000 ether, "aggregate == loan lien after hand-off");
         assertEq(

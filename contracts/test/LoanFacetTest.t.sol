@@ -57,12 +57,16 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 
 contract LoanFacetTest is Test {
     VaipakamDiamond diamond;
     address owner;
     address lender; // User1
+    uint256 lenderPk; // #662 — acceptor key (lender accepts Borrower offers)
     address borrower; // User2
+    uint256 borrowerPk; // #662 — acceptor key (borrower accepts Lender offers)
     address mockERC20; // Liquid asset
     address mockCollateralERC20; // Second liquid asset (collateral leg)
     address mockIlliquidERC20; // Illiquid asset
@@ -118,8 +122,8 @@ contract LoanFacetTest is Test {
 
     function setUp() public {
         owner = address(this);
-        lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (lender, lenderPk) = makeAddrAndKey("lender");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
@@ -485,7 +489,11 @@ contract LoanFacetTest is Test {
         // mockOracleLiquidity(mockNft721, LibVaipakam.LiquidityStatus.Illiquid);
         // mockOraclePrice(mockERC20, 1e8, 8); // $1 price, 8 decimals
 
-        vm.prank(borrower);
+        // #662 — build + sign the typed AcceptTerms BEFORE expectEmit so the
+        // helper's diamond view-calls don't get matched against the emit.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectEmit(true, true, true, true);
         // Enriched event carries principal + collateralAmount so indexers
         // can render a loan card without a follow-up getLoanDetails read.
@@ -497,9 +505,11 @@ contract LoanFacetTest is Test {
             1000 ether,
             1500 ether
         );
+        vm.prank(borrower);
         uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
             offerId,
-            true
+            _t,
+            _sig
         );
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
@@ -530,9 +540,12 @@ contract LoanFacetTest is Test {
             0
         );
 
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(); // IVaipakamErrors.HealthFactorTooLow.selector
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     function testInitiateLoanRevertsHighLTV() public {
@@ -554,9 +567,12 @@ contract LoanFacetTest is Test {
             0
         );
 
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(); // IVaipakamErrors.LTVExceeded.selector
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     function testInitiateLoanRevertsIlliquidAssetAndNoConsent() public {
@@ -571,9 +587,12 @@ contract LoanFacetTest is Test {
             0
         );
 
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, false, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, false);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     function testInitiateLoanForNFT() public {
@@ -590,8 +609,7 @@ contract LoanFacetTest is Test {
 
         // Mock HF/LTV for NFT (illiquid collateral $0, but per specs allow with consent; assume revert or adjust)
         // For NFT lending, collateral is ERC20 (liquid), lending is NFT (illiquid ok)
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             1
@@ -614,8 +632,7 @@ contract LoanFacetTest is Test {
             0
         );
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(
             1
@@ -626,9 +643,14 @@ contract LoanFacetTest is Test {
     }
 
     function testInitiateLoanRevertsInvalidOffer() public {
-        vm.prank(borrower);
+        // REVIEW: offerId 999 doesn't exist — buildTerms reads a zeroed offer,
+        // the contract still reverts InvalidOffer before any binding check.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, 999, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(999, true); // Non-existent
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(999, _t, _sig); // Non-existent
     }
 
     /// @dev Covers line 61 TRUE: direct call (not via diamond cross-facet) → CrossFacetCallFailed("Unauthorized")
@@ -651,8 +673,7 @@ contract LoanFacetTest is Test {
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
             1000 ether, 1500 ether, 30, 0, 0
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true); // marks offer.accepted = true
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId); // marks offer.accepted = true
 
         // Now call initiateLoan directly for the already-accepted offer
         vm.prank(address(diamond));
@@ -780,8 +801,7 @@ contract LoanFacetTest is Test {
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
             1000 ether, 1500 ether, 30, 0, 0
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         bool consent = LoanFacet(address(diamond)).getLoanConsents(loanId);
         assertTrue(consent); // Both gave illiquidConsent = true
@@ -840,8 +860,7 @@ contract LoanFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(lender);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), lender, lenderPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(loan.lender, lender);
@@ -883,8 +902,7 @@ contract LoanFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertTrue(loan.riskAndTermsConsentFromBoth);
@@ -938,8 +956,7 @@ contract LoanFacetTest is Test {
         );
 
         // Lender accepts the Borrower offer
-        vm.prank(lender);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), lender, lenderPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.lender, lender);
@@ -976,8 +993,7 @@ contract LoanFacetTest is Test {
         );
 
         // Create a real active loan first (the linked loan must be Active)
-        vm.prank(borrower);
-        uint256 existingLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 existingLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Create another offer that will be the sale vehicle
         uint256 saleOfferId = createOffer(
@@ -1016,8 +1032,7 @@ contract LoanFacetTest is Test {
             0
         );
 
-        vm.prank(borrower);
-        uint256 existingLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 existingLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Create another offer
         uint256 saleOfferId = createOffer(
@@ -1082,9 +1097,12 @@ contract LoanFacetTest is Test {
         );
 
         // acceptor does NOT consent → NonLiquidAsset revert
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, false, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, false);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Illiquid + both consents skips HF/LTV checks entirely
@@ -1123,8 +1141,7 @@ contract LoanFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
         assertTrue(loan.riskAndTermsConsentFromBoth);
@@ -1186,8 +1203,7 @@ contract LoanFacetTest is Test {
             true
         );
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         assertTrue(
             ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeper),
@@ -1240,7 +1256,9 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
@@ -1248,7 +1266,8 @@ contract LoanFacetTest is Test {
                 uint256(5000)
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Same setup as the revert test but LTV inside the Tier-1
@@ -1280,8 +1299,7 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Active)
@@ -1323,8 +1341,7 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Active)
@@ -1366,9 +1383,12 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Switch on, Tier 0 (untierable) ⇒ cap is `min(loanInitMaxLtvBps, 0) = 0`
@@ -1400,7 +1420,9 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
@@ -1408,7 +1430,8 @@ contract LoanFacetTest is Test {
                 uint256(0)
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Switch on, Tier 2 (cap 62% per library defaults), LTV at
@@ -1441,7 +1464,9 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
@@ -1449,7 +1474,8 @@ contract LoanFacetTest is Test {
                 uint256(6200)
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Switch on, Tier 3 (cap 73% per library defaults), LTV
@@ -1485,7 +1511,9 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
@@ -1493,7 +1521,8 @@ contract LoanFacetTest is Test {
                 uint256(7300)
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Switch OFF: even with Tier-3 mocked at the keeper level,
@@ -1534,8 +1563,7 @@ contract LoanFacetTest is Test {
             0,
             0
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Active),
@@ -1626,14 +1654,18 @@ contract LoanFacetTest is Test {
 
         // Raise the floor above the loan's HF → admission blocked.
         RiskFacet(address(diamond)).setMinHealthFactor(180 * 1e16); // 1.8e18
-        vm.prank(borrower);
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(IVaipakamErrors.HealthFactorTooLow.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
-
-        // Lower it back below the HF → the SAME offer now admits.
-        RiskFacet(address(diamond)).setMinHealthFactor(150 * 1e16); // 1.5e18
         vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
+
+        // Lower it back below the HF → the SAME offer now admits. The reverted
+        // accept above rolled back its nonce mark, so a fresh sign on the same
+        // offerId (nonce) succeeds.
+        RiskFacet(address(diamond)).setMinHealthFactor(150 * 1e16); // 1.5e18
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         assertEq(
             uint8(LoanFacet(address(diamond)).getLoanDetails(loanId).status),
             uint8(LibVaipakam.LoanStatus.Active),

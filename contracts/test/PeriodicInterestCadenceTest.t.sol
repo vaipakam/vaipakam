@@ -286,8 +286,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
         mockOraclePrice(mockERC20, 1_000 * 1e8, 8);
         uint256 offerId = _create(_baseLenderParams(1000 ether, 60, MONTHLY));
         uint256 startTs = block.timestamp;
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(1);
@@ -300,8 +299,7 @@ contract PeriodicInterestCadenceTest is SetupTest {
 
     function testNoneCadence_LoanSnapshotIsNone() public {
         uint256 offerId = _create(_baseLenderParams(1000 ether, 30, NONE_C));
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory l =
             LoanFacet(address(diamond)).getLoanDetails(1);
         assertEq(uint8(l.periodicInterestCadence), uint8(NONE_C));

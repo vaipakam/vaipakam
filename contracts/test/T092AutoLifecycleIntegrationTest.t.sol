@@ -253,8 +253,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
     }
 
     /// @dev Build a refinance-tagged Borrower offer template.
@@ -459,9 +458,7 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond))
-            .acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // The gate skipped the populate — caps stay default-empty.
         LibVaipakam.AutoRefinanceCaps memory caps =
@@ -589,10 +586,12 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         // (Mirrors the dapp's consent-time approval set in #520.)
         _grantStandingApprovalToDiamond(borrower, mockERC20);
 
-        // Step 6: SINGLE TX — accept fires the chain.
-        vm.prank(newLender);
-        uint256 newLoanId = OfferAcceptFacet(address(diamond))
-            .acceptOffer(refinanceOfferId, true);
+        // Step 6: SINGLE TX — accept fires the chain. `makeAddrAndKey` yields
+        // the SAME address `_provisionFundedActorWithVault` derived via
+        // `makeAddr`, so this just recovers the key for the typed-terms sign.
+        (, uint256 newLenderPk) = makeAddrAndKey("atomicNewLender");
+        uint256 newLoanId =
+            _signAndAcceptOffer(newLender, newLenderPk, refinanceOfferId);
 
         // Step 7: assert both loans transitioned atomically.
         LibVaipakam.Loan memory oldLoan = LoanFacet(address(diamond))
@@ -645,9 +644,11 @@ contract T092AutoLifecycleIntegrationTest is SetupTest {
         );
 
         // SINGLE TX — accept fires the atomic accept-and-refinance chain.
-        vm.prank(newLender);
-        uint256 newLoanId = OfferAcceptFacet(address(diamond))
-            .acceptOffer(refinanceOfferId, true);
+        // Recover the funded actor's key (same address as the `makeAddr` it
+        // was provisioned with) for the typed-terms sign.
+        (, uint256 newLenderPk) = makeAddrAndKey("carryoverNewLender");
+        uint256 newLoanId =
+            _signAndAcceptOffer(newLender, newLenderPk, refinanceOfferId);
 
         // #576 — the lien RETAGGED old→new: still exactly one lock (NOT
         // doubled by a fresh pledge), the old lien released, the new lien

@@ -29,6 +29,7 @@ import {HelperTest} from "../HelperTest.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title Scenario8_BorrowerPreclose
@@ -41,6 +42,7 @@ contract Scenario8_BorrowerPreclose is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address newBorrower;
     address mockERC20;
     address mockCollateralERC20;
@@ -89,7 +91,7 @@ contract Scenario8_BorrowerPreclose is Test {
     function setUp() public {
         owner = address(this);
         lender      = makeAddr("lender");
-        borrower    = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
         newBorrower = makeAddr("newBorrower");
 
         mockERC20 = address(new ERC20Mock("Token", "TKN", 18));
@@ -247,8 +249,7 @@ contract Scenario8_BorrowerPreclose is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        activeLoanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        activeLoanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Give diamond some ERC20 for internal transfers (treasury fee etc.)
         ERC20Mock(mockERC20).mint(address(diamond), 100000 ether);

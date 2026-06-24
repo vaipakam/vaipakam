@@ -31,6 +31,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
@@ -46,6 +47,8 @@ contract AddCollateralFacetTest is Test {
     address owner;
     address lender;
     address borrower;
+    // #662 — borrower accepts offers, so it needs a key to sign AcceptTerms.
+    uint256 borrowerPk;
     address mockERC20;
     address mockCollateralERC20;
     address mockIlliquidERC20;
@@ -93,7 +96,7 @@ contract AddCollateralFacetTest is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         mockERC20 = address(new ERC20Mock("MockLiquid", "MLQ", 18));
         mockCollateralERC20 = address(new ERC20Mock("MockCollateral", "MCK", 18));
@@ -281,8 +284,9 @@ contract AddCollateralFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
         loanId = 1;
     }
 
@@ -319,8 +323,9 @@ contract AddCollateralFacetTest is Test {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, offerId
+        );
         loanId = 1;
     }
 

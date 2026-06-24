@@ -12,6 +12,8 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 /// @title  OfferPrincipalLockTest
 /// @notice T-407-C (#566) — end-to-end lifecycle coverage for the
@@ -166,8 +168,7 @@ contract OfferPrincipalLockTest is SetupTest {
         uint256 id = _createLenderOffer(1000 ether, 1000 ether);
         assertEq(_lock(), 1000 ether, "locked pre-accept");
 
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        _signAndAcceptOffer(borrower, borrowerPk, id);
 
         // Principal was disbursed into the loan; the lock is gone so the
         // aggregate no longer encumbers the (now-empty) lender slot.
@@ -271,7 +272,12 @@ contract OfferPrincipalLockTest is SetupTest {
         o.amountFilled = 300 ether;
         TestMutatorFacet(address(diamond)).setOffer(id, o);
 
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the partial-fill guard then fires.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, id, true, 0);
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 OfferAcceptFacet.OfferPartiallyFilled.selector,
@@ -279,7 +285,8 @@ contract OfferPrincipalLockTest is SetupTest {
                 uint256(300 ether)
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(id, _t, _sig);
     }
 
     /// @notice `previewAccept` must mirror the direct-accept partial-fill

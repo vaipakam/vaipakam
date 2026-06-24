@@ -8,6 +8,8 @@ import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 
 /**
@@ -205,8 +207,15 @@ contract PauseHandler is Test {
 
         bool anyPausedBefore = usdcPaused || wethPaused;
 
+        // #662 — accept now requires an acceptor-signed AcceptTerms. Build +
+        // sign as the borrower (view-only) before the pranked external call so
+        // the try/catch still measures the protocol-level accept outcome.
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(diamond, borrower, offerId, true, 0);
+        bytes memory sig =
+            LibAcceptTestSigner.sign(diamond, t, base.borrowerPkAt(borrowerSeed));
         vm.prank(borrower);
-        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig) returns (uint256 loanId) {
             loanIds.push(loanId);
             _popAt(lenderOfferIds, idx);
             if (anyPausedBefore) violations++;
@@ -228,8 +237,14 @@ contract PauseHandler is Test {
 
         bool anyPausedBefore = usdcPaused || wethPaused;
 
+        // #662 — accept now requires an acceptor-signed AcceptTerms. Build +
+        // sign as the lender (view-only) before the pranked external call.
+        LibAcceptTerms.AcceptTerms memory t =
+            LibAcceptTestSigner.buildTerms(diamond, lender, offerId, true, 0);
+        bytes memory sig =
+            LibAcceptTestSigner.sign(diamond, t, base.lenderPkAt(lenderSeed));
         vm.prank(lender);
-        try OfferAcceptFacet(diamond).acceptOffer(offerId, true) returns (uint256 loanId) {
+        try OfferAcceptFacet(diamond).acceptOffer(offerId, t, sig) returns (uint256 loanId) {
             loanIds.push(loanId);
             _popAt(borrowerOfferIds, idx);
             if (anyPausedBefore) violations++;

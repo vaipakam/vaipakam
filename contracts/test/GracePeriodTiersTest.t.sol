@@ -74,8 +74,7 @@ contract GracePeriodTiersTest is SetupTest {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
         return 1;
     }
 

@@ -9,9 +9,166 @@
         "internalType": "uint256"
       },
       {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct LibAcceptTerms.AcceptTerms",
+        "components": [
+          {
+            "name": "acceptor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerCreator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "offerType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "linkedLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "riskAndTermsConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acknowledgedIlliquidLendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "acknowledgedIlliquidCollateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -57,9 +214,166 @@
         "internalType": "uint256"
       },
       {
-        "name": "acceptorRiskAndTermsConsent",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct LibAcceptTerms.AcceptTerms",
+        "components": [
+          {
+            "name": "acceptor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerCreator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "offerType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "linkedLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "riskAndTermsConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acknowledgedIlliquidLendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "acknowledgedIlliquidCollateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "acceptSignature",
+        "type": "bytes",
+        "internalType": "bytes"
       },
       {
         "name": "permit",
@@ -96,7 +410,7 @@
         ]
       },
       {
-        "name": "signature",
+        "name": "permitSignature",
         "type": "bytes",
         "internalType": "bytes"
       }
@@ -130,6 +444,177 @@
         "name": "valueNumeraire",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "hashAcceptTerms",
+    "inputs": [
+      {
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct LibAcceptTerms.AcceptTerms",
+        "components": [
+          {
+            "name": "acceptor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerCreator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "offerType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "linkedLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "riskAndTermsConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acknowledgedIlliquidLendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "acknowledgedIlliquidCollateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -191,6 +676,191 @@
     "stateMutability": "view"
   },
   {
+    "type": "function",
+    "name": "verifyAndBindAccept",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "offerKey",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "terms",
+        "type": "tuple",
+        "internalType": "struct LibAcceptTerms.AcceptTerms",
+        "components": [
+          {
+            "name": "acceptor",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerCreator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "offerKey",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "offerType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "interestRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "durationDays",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "tokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "quantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collateralQuantity",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "assetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "collateralAssetType",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "useFullTermInterest",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPartialRepay",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsPrepayListing",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "allowsParallelSale",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "refinanceTargetLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "linkedLoanId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "parallelSaleOrderHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "periodicInterestCadence",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "riskAndTermsConsent",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "acknowledgedIlliquidLendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "acknowledgedIlliquidCollateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "nonce",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "signature",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "acceptor",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "OfferAccepted",
     "inputs": [
@@ -232,6 +902,26 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "AcceptDeadlineExpired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AcceptNonceUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AcceptSignatureInvalid",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "AcceptorMismatch",
+    "inputs": []
   },
   {
     "type": "error",
@@ -394,6 +1084,17 @@
     "type": "error",
     "name": "IlliquidAsset",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IlliquidAssetNotAcknowledged",
+    "inputs": [
+      {
+        "name": "leg",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
@@ -683,6 +1384,17 @@
         "name": "amountFilled",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "OfferTermsMismatch",
+    "inputs": [
+      {
+        "name": "field",
+        "type": "uint8",
+        "internalType": "uint8"
       }
     ]
   },

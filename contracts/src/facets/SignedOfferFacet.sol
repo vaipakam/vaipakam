@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
+import {LibAcceptTerms} from "../libraries/LibAcceptTerms.sol";
 import {LibPermit2, ISignatureTransfer} from "../libraries/LibPermit2.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -72,14 +73,19 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
 
     /// @notice Fill a **vault-backed** signed offer. `msg.sender` is the
     ///         counterparty providing the other leg.
-    /// @param o               The signed offer terms.
-    /// @param sig             The signer's EIP-712 signature (EOA or ERC-1271).
-    /// @param acceptorConsent The caller's mandatory fallback-terms consent.
-    /// @return loanId         The initiated loan id.
+    /// @param o         The signed offer terms.
+    /// @param sig       The signer's EIP-712 signature (EOA or ERC-1271).
+    /// @param terms     The acceptor's EIP-712-signed `AcceptTerms` (#662) —
+    ///                  carries the acceptor's single fallback-terms consent +
+    ///                  every loan-affecting field, bound against the
+    ///                  materialized offer before any value moves.
+    /// @param acceptSig ECDSA / ERC-1271 signature over `terms`.
+    /// @return loanId   The initiated loan id.
     function acceptSignedOffer(
         LibSignedOffer.SignedOffer calldata o,
         bytes calldata sig,
-        bool acceptorConsent
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata acceptSig
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         bytes32 orderHash = _vetSignedOffer(o);
         (bool ok, ) = LibSignedOffer.verify(o, sig);
@@ -87,23 +93,33 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         // Consume BEFORE any external interaction (CEI).
         LibVaipakam.storageSlot().signedOfferFilled[orderHash] = _ceiling(o);
         uint256 offerId = _materializeVault(o);
-        loanId = _routeAccept(offerId, acceptorConsent);
+        // #662 — bind the acceptor's signed terms against the materialized
+        // offer. `offerKey` is the signed-offer order hash (no offerId existed
+        // at sign time); the acceptor is `msg.sender`, the filling counterparty.
+        OfferAcceptFacet(address(this)).verifyAndBindAccept(
+            offerId, orderHash, terms, acceptSig, msg.sender
+        );
+        loanId = _routeAccept(offerId, terms.riskAndTermsConsent);
         emit SignedOfferFilled(orderHash, o.signer, msg.sender, offerId, loanId);
     }
 
     /// @notice Fill a **wallet-backed** signed offer — the stake is pulled
     ///         from the signer's wallet via Permit2, the offer hash bound as
     ///         the witness (one signature binds pull + terms). AON-only.
-    /// @param o               The signed offer terms.
-    /// @param permit          The Permit2 `PermitTransferFrom` the signer signed.
-    /// @param permitSig       The Permit2 witness signature.
-    /// @param acceptorConsent The caller's mandatory fallback-terms consent.
-    /// @return loanId         The initiated loan id.
+    /// @param o         The signed offer terms.
+    /// @param permit    The Permit2 `PermitTransferFrom` the signer signed.
+    /// @param permitSig The Permit2 witness signature.
+    /// @param terms     The acceptor's EIP-712-signed `AcceptTerms` (#662) —
+    ///                  acceptor consent + every loan-affecting field, bound
+    ///                  against the materialized offer before any value moves.
+    /// @param acceptSig ECDSA / ERC-1271 signature over `terms`.
+    /// @return loanId   The initiated loan id.
     function acceptSignedOfferWithPermit(
         LibSignedOffer.SignedOffer calldata o,
         ISignatureTransfer.PermitTransferFrom calldata permit,
         bytes calldata permitSig,
-        bool acceptorConsent
+        LibAcceptTerms.AcceptTerms calldata terms,
+        bytes calldata acceptSig
     ) external nonReentrant whenNotPaused returns (uint256 loanId) {
         if (LibVaipakam.FillMode(o.fillMode) != LibVaipakam.FillMode.Aon) {
             revert WalletBackedMustBeAon();
@@ -113,7 +129,11 @@ contract SignedOfferFacet is DiamondReentrancyGuard, DiamondPausable {
         bytes32 orderHash = _vetSignedOffer(o);
         LibVaipakam.storageSlot().signedOfferFilled[orderHash] = _ceiling(o);
         uint256 offerId = _materializeWallet(o, permit, orderHash, permitSig);
-        loanId = _routeAccept(offerId, acceptorConsent);
+        // #662 — bind the acceptor's signed terms against the materialized offer.
+        OfferAcceptFacet(address(this)).verifyAndBindAccept(
+            offerId, orderHash, terms, acceptSig, msg.sender
+        );
+        loanId = _routeAccept(offerId, terms.riskAndTermsConsent);
         emit SignedOfferFilled(orderHash, o.signer, msg.sender, offerId, loanId);
     }
 

@@ -11,6 +11,7 @@ import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../../src/facets/ClaimFacet.sol";
 import {AddCollateralFacet} from "../../src/facets/AddCollateralFacet.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title ScenarioFallbackClaimRace
@@ -88,12 +89,11 @@ contract ScenarioFallbackClaimRaceTest is Test {
         offerId = OfferCreateFacet(diamond).createOffer(p);
     }
 
-    function _acceptAsBorrower(address borrower, uint256 offerId)
+    function _acceptAsBorrower(address borrower, uint256 borrowerPk, uint256 offerId)
         internal
         returns (uint256 loanId)
     {
-        vm.prank(borrower);
-        loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        loanId = LibAcceptTestSigner.signAndAccept(diamond, borrower, borrowerPk, offerId);
     }
 
     // ── Scenario A ─────────────────────────────────────────────────────
@@ -101,9 +101,10 @@ contract ScenarioFallbackClaimRaceTest is Test {
     function test_ScenarioA_BorrowerRepaysBeforeLenderClaim() public {
         address lender = base.lenderAt(0);
         address borrower = base.borrowerAt(0);
+        uint256 borrowerPk = base.borrowerPkAt(0);
 
         uint256 offerId = _createLenderOffer(lender, 1_000 ether, 10 ether, 30, 500);
-        uint256 loanId = _acceptAsBorrower(borrower, offerId);
+        uint256 loanId = _acceptAsBorrower(borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory L = LoanFacet(diamond).getLoanDetails(loanId);
         assertEq(uint256(L.status), uint256(LibVaipakam.LoanStatus.Active), "not Active");
@@ -136,9 +137,10 @@ contract ScenarioFallbackClaimRaceTest is Test {
     function test_ScenarioB_BorrowerAddsCollateralBeforeDefault() public {
         address lender = base.lenderAt(1);
         address borrower = base.borrowerAt(1);
+        uint256 borrowerPk = base.borrowerPkAt(1);
 
         uint256 offerId = _createLenderOffer(lender, 500 ether, 5 ether, 10, 800);
-        uint256 loanId = _acceptAsBorrower(borrower, offerId);
+        uint256 loanId = _acceptAsBorrower(borrower, borrowerPk, offerId);
 
         // Borrower tops up collateral
         vm.prank(borrower);
@@ -172,9 +174,10 @@ contract ScenarioFallbackClaimRaceTest is Test {
     function test_ScenarioC_PartialThenFullRepay() public {
         address lender = base.lenderAt(2);
         address borrower = base.borrowerAt(2);
+        uint256 borrowerPk = base.borrowerPkAt(2);
 
         uint256 offerId = _createLenderOffer(lender, 2_000 ether, 20 ether, 60, 1000);
-        uint256 loanId = _acceptAsBorrower(borrower, offerId);
+        uint256 loanId = _acceptAsBorrower(borrower, borrowerPk, offerId);
 
         vm.prank(borrower);
         RepayFacet(diamond).repayPartial(loanId, 500 ether);

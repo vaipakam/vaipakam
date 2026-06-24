@@ -8,6 +8,8 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {ERC4907Mock} from "../test/mocks/ERC4907Mock.sol";
 import {ERC1155RentableMock} from "../test/mocks/ERC1155RentableMock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -274,9 +276,11 @@ contract SepoliaPositiveFlows is Script {
         // chokepoint, so the legacy direct-transfer-to-vault workaround
         // is no longer needed (and would underflow the
         // `protocolTrackedVaultBalance` counter).
+        LibAcceptTerms.AcceptTerms memory _t3 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(lenderKey), offerId3, true, 0);
+        bytes memory _sig3 = LibAcceptTestSigner.sign(diamond, _t3, lenderKey);
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId3 = OfferAcceptFacet(diamond).acceptOffer(offerId3, true);
+        uint256 loanId3 = OfferAcceptFacet(diamond).acceptOffer(offerId3, _t3, _sig3);
         vm.stopBroadcast();
         console.log("Lender accepted, loanId:", loanId3);
 
@@ -535,9 +539,11 @@ contract SepoliaPositiveFlows is Script {
         console.log("Lender offer created:", offerId9);
 
         // Borrower accepts with illiquid consent
+        LibAcceptTerms.AcceptTerms memory _t9 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId9, true, 0);
+        bytes memory _sig9 = LibAcceptTestSigner.sign(diamond, _t9, borrowerKey);
         vm.startBroadcast(borrowerKey);
         illiquidToken.approve(diamond, 200e18);
-        uint256 loanId9 = OfferAcceptFacet(diamond).acceptOffer(offerId9, true);
+        uint256 loanId9 = OfferAcceptFacet(diamond).acceptOffer(offerId9, _t9, _sig9);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId9);
 
@@ -595,9 +601,11 @@ contract SepoliaPositiveFlows is Script {
 
         // Lender accepts. Post-Option-A `_acceptOffer` pulls the
         // principal inline via the chokepoint, so an approve is enough.
+        LibAcceptTerms.AcceptTerms memory _t10 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(lenderKey), offerId10, true, 0);
+        bytes memory _sig10 = LibAcceptTestSigner.sign(diamond, _t10, lenderKey);
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId10 = OfferAcceptFacet(diamond).acceptOffer(offerId10, true);
+        uint256 loanId10 = OfferAcceptFacet(diamond).acceptOffer(offerId10, _t10, _sig10);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId10);
 
@@ -655,9 +663,11 @@ contract SepoliaPositiveFlows is Script {
 
         // Lender accepts. Post-Option-A `_acceptOffer` pulls the
         // principal inline via the chokepoint.
+        LibAcceptTerms.AcceptTerms memory _t11 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(lenderKey), offerId11, true, 0);
+        bytes memory _sig11 = LibAcceptTestSigner.sign(diamond, _t11, lenderKey);
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        uint256 loanId11 = OfferAcceptFacet(diamond).acceptOffer(offerId11, true);
+        uint256 loanId11 = OfferAcceptFacet(diamond).acceptOffer(offerId11, _t11, _sig11);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId11);
 
@@ -720,9 +730,11 @@ contract SepoliaPositiveFlows is Script {
             // Borrower accepts: prepay = DAILY_FEE * 7 days + 5% buffer
             // prepay = 10e6 * 7 = 70e6, buffer = 70e6 * 5% = 3.5e6, total = 73.5e6
             uint256 totalPrepay12 = DAILY_FEE * 7 + (DAILY_FEE * 7 * 500) / 10000;
+            LibAcceptTerms.AcceptTerms memory _t12 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId12, true, 0);
+            bytes memory _sig12 = LibAcceptTestSigner.sign(diamond, _t12, newBorrowerKey);
             vm.startBroadcast(newBorrowerKey);
             usdc.approve(diamond, totalPrepay12);
-            uint256 loanId12 = OfferAcceptFacet(diamond).acceptOffer(offerId12, true);
+            uint256 loanId12 = OfferAcceptFacet(diamond).acceptOffer(offerId12, _t12, _sig12);
             vm.stopBroadcast();
             console.log("Rental loan initiated, loanId:", loanId12);
 
@@ -792,9 +804,11 @@ contract SepoliaPositiveFlows is Script {
 
             // Borrower accepts: prepay = 5e6 * 7 + 5% buffer
             uint256 totalPrepay13 = dailyFee1155 * 7 + (dailyFee1155 * 7 * 500) / 10000;
+            LibAcceptTerms.AcceptTerms memory _t13 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId13, true, 0);
+            bytes memory _sig13 = LibAcceptTestSigner.sign(diamond, _t13, newBorrowerKey);
             vm.startBroadcast(newBorrowerKey);
             usdc.approve(diamond, totalPrepay13);
-            uint256 loanId13 = OfferAcceptFacet(diamond).acceptOffer(offerId13, true);
+            uint256 loanId13 = OfferAcceptFacet(diamond).acceptOffer(offerId13, _t13, _sig13);
             vm.stopBroadcast();
             console.log("Rental loan initiated, loanId:", loanId13);
 
@@ -862,9 +876,11 @@ contract SepoliaPositiveFlows is Script {
         console.log("Lender offer (both illiquid):", offerId14);
 
         // Borrower accepts with illiquid consent
+        LibAcceptTerms.AcceptTerms memory _t14 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId14, true, 0);
+        bytes memory _sig14 = LibAcceptTestSigner.sign(diamond, _t14, borrowerKey);
         vm.startBroadcast(borrowerKey);
         illiquidToken.approve(diamond, 1000e18);
-        uint256 loanId14 = OfferAcceptFacet(diamond).acceptOffer(offerId14, true);
+        uint256 loanId14 = OfferAcceptFacet(diamond).acceptOffer(offerId14, _t14, _sig14);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId14);
 
@@ -920,9 +936,11 @@ contract SepoliaPositiveFlows is Script {
         console.log("Lender offer (illiquid lending, liquid collateral):", offerId15);
 
         // Borrower accepts with illiquid consent
+        LibAcceptTerms.AcceptTerms memory _t15 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId15, true, 0);
+        bytes memory _sig15 = LibAcceptTestSigner.sign(diamond, _t15, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId15 = OfferAcceptFacet(diamond).acceptOffer(offerId15, true);
+        uint256 loanId15 = OfferAcceptFacet(diamond).acceptOffer(offerId15, _t15, _sig15);
         vm.stopBroadcast();
         console.log("Loan initiated, loanId:", loanId15);
 
@@ -1059,9 +1077,11 @@ contract SepoliaPositiveFlows is Script {
     }
 
     function _acceptOffer(uint256 key, address acct, uint256 offerId) internal returns (uint256 loanId) {
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(diamond, acct, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(diamond, _t, key);
         vm.startBroadcast(key);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t, _sig);
         vm.stopBroadcast();
     }
 

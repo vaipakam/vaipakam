@@ -107,6 +107,12 @@ interface IVaipakamErrors {
     ///         a Tier-0 (illiquid / untierable) collateral makes the cap
     ///         `0`, so any positive LTV reverts this.
     error InitLtvAboveTier(uint256 ltv, uint256 tierCapBps);
+    /// @notice #662 — the illiquid LTV/HF bypass was reached for a leg the
+    ///         acceptor's signed `AcceptTerms` did not name as that exact
+    ///         illiquid asset. Enforced at the bypass site
+    ///         (`LoanFacet._maybeRunInitialRiskGates`) against the same
+    ///         liquidity classification that authorises the bypass.
+    error IlliquidAssetNotAcknowledged(address leg);
     error IlliquidAsset();
     error NonLiquidAsset();
     /// @notice Risk-math (LTV / HF / volatility-collapse check) called on a

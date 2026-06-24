@@ -8,6 +8,7 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -70,8 +71,12 @@ contract PauseGatingTest is SetupTest {
     }
 
     function test_pause_acceptOffer() public {
+        // #662 — the typed-accept signature now carries an AcceptTerms + sig,
+        // but the pause modifier runs before any term decode/validation, so an
+        // empty struct + empty signature still trips the pause guard first.
+        LibAcceptTerms.AcceptTerms memory t;
         vm.expectRevert(LibPausable.EnforcedPause.selector);
-        OfferAcceptFacet(address(diamond)).acceptOffer(0, false);
+        OfferAcceptFacet(address(diamond)).acceptOffer(0, t, "");
     }
 
     function test_pause_cancelOffer() public {

@@ -56,6 +56,8 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 contract OfferFacetTest is Test {
     VaipakamDiamond diamond;
@@ -63,6 +65,12 @@ contract OfferFacetTest is Test {
     address user1; // Lender/Borrower
     address user2; // Acceptor
     address user3;
+    // #662 anti-phishing accept binding — acceptors must sign the typed
+    // `AcceptTerms`, so every acceptor needs a private key. makeAddrAndKey
+    // yields the SAME address as makeAddr, leaving existing assertions intact.
+    uint256 user1Pk;
+    uint256 user2Pk;
+    uint256 user3Pk;
     address mockERC20; // Lending/Collateral/Prepay asset
     address mockCollateralERC20; // Distinct liquid collateral asset (post SelfCollateralizedOffer invariant)
     address mockNft721; // Rentable NFT
@@ -99,9 +107,9 @@ contract OfferFacetTest is Test {
     function setUp() public {
         console.log("Entered setup function Function");
         owner = address(this);
-        user1 = makeAddr("user1");
-        user2 = makeAddr("user2");
-        user3 = makeAddr("user3");
+        (user1, user1Pk) = makeAddrAndKey("user1");
+        (user2, user2Pk) = makeAddrAndKey("user2");
+        (user3, user3Pk) = makeAddrAndKey("user3");
 
         // Deploy mocks
         mockERC20 = address(new ERC20Mock("MockToken", "MTK", 18));
@@ -283,10 +291,14 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
-        // Single `acceptOffer(uint256,bool)` — VPFI discount path is gated
-        // by the platform-level consent flag, not a per-call boolean.
-        selectors[0] = bytes4(keccak256("acceptOffer(uint256,bool)"));
+        selectors = new bytes4[](2);
+        // #662 anti-phishing accept binding — the public entry now takes the
+        // EIP-712-signed `AcceptTerms` struct + signature. Cut the new 3-arg
+        // selector so the typed accept calls route through the diamond, plus the
+        // `hashAcceptTerms` view the test signer reads to digest the terms. (The
+        // direct-path offerKey is computed client-side — no on-chain view.)
+        selectors[0] = OfferAcceptFacet.acceptOffer.selector;
+        selectors[1] = OfferAcceptFacet.hashAcceptTerms.selector;
         return selectors;
     }
 
@@ -595,9 +607,11 @@ contract OfferFacetTest is Test {
         );
 
         // No KYC (Tier0 by default) → revert because $3000 > Tier0 threshold ($1000)
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
         vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
 
         // Grant Tier1 KYC (sufficient for $1k–$10k range)
         vm.prank(owner);
@@ -611,11 +625,7 @@ contract OfferFacetTest is Test {
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
             abi.encode(1) // Mock loanId
         );
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
-        );
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
     }
 
@@ -664,9 +674,11 @@ contract OfferFacetTest is Test {
             })
         );
 
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user3, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user3Pk);
         vm.expectRevert(IVaipakamErrors.CountriesNotCompatible.selector);
         vm.prank(user3);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     function testAcceptNFTRentalLocksPrepayAndSetsUser() public {
@@ -717,11 +729,7 @@ contract OfferFacetTest is Test {
         uint256 buffer = (expectedPrepay * 500) / 10000; // 5%
         deal(mockERC20, user2, expectedPrepay + buffer);
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
-        );
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
 
         // Assert setUser called (mock or check via Vault)
         address renter = VaultFactoryFacet(address(diamond))
@@ -938,9 +946,11 @@ contract OfferFacetTest is Test {
         );
 
         // No KYC (Tier0) → revert because $2010 > Tier0 threshold ($1000)
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(IVaipakamErrors.KYCRequired.selector);
         vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
 
         // Grant Tier1 KYC (amount=2010e18 * $1 = $2,010e18 needs Tier1)
         vm.prank(owner);
@@ -954,11 +964,7 @@ contract OfferFacetTest is Test {
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
             abi.encode(1) // Mock loanId
         );
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(
-            offerId,
-            true
-        );
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
     }
 
@@ -1222,10 +1228,9 @@ contract OfferFacetTest is Test {
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
             abi.encode(1)
         );
-        vm.startPrank(user2);
+        vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
-        vm.stopPrank();
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         // Keep mocks; cancelOffer checks offer.accepted BEFORE making any cross-facet calls
 
         vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
@@ -1236,9 +1241,14 @@ contract OfferFacetTest is Test {
 
     /// @dev Covers acceptOffer → InvalidOffer when offer creator is address(0)
     function testAcceptOfferRevertsInvalidOffer() public {
+        // Non-existent offer: getOffer returns a zero offer, so the built
+        // terms are all-zero and self-consistent — the binding passes and the
+        // call reverts InvalidOffer downstream exactly as before.
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, 9999, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
         vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(9999, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(9999, _t, _sig);
     }
 
     /// @dev Covers acceptOffer → OfferAlreadyAccepted revert (double accept)
@@ -1291,15 +1301,16 @@ contract OfferFacetTest is Test {
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
             abi.encode(1)
         );
-        vm.startPrank(user2);
+        vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
-        vm.stopPrank();
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         // Keep mocks active; the second acceptOffer should hit OfferAlreadyAccepted BEFORE any cross-facet call
 
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user3, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user3Pk);
         vm.expectRevert(OfferAcceptFacet.OfferAlreadyAccepted.selector);
         vm.prank(user3);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -1343,9 +1354,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, false, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(IVaipakamErrors.RiskAndTermsConsentRequired.selector);
         vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, false);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     /// @dev Covers cancelOffer for NFT ERC721 lender offer: withdraws ERC721 from vault
@@ -1594,8 +1607,7 @@ contract OfferFacetTest is Test {
             abi.encodeWithSelector(LoanFacet.initiateLoan.selector),
             abi.encode(2)
         );
-        vm.prank(user1);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
         assertEq(loanId, 2);
         vm.clearMockedCalls();
     }
@@ -2158,8 +2170,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         vm.clearMockedCalls();
     }
 
@@ -2432,9 +2443,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.prank(user2);
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(bytes("transfer fail"));
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(user2);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -2488,9 +2501,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(bytes("set renter fail"));
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(user2);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -2654,8 +2669,7 @@ contract OfferFacetTest is Test {
         // Mock LoanFacet.initiateLoan to return a loanId
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
-        vm.prank(user3);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user3, user3Pk, offerId);
         vm.clearMockedCalls();
     }
 
@@ -2704,8 +2718,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(2)));
 
-        vm.prank(user1);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
         vm.clearMockedCalls();
     }
 
@@ -2778,8 +2791,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
         // acceptorRiskAndTermsConsent = true; lendingAsset is illiquid ERC20, collateral is liquid
-        vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         vm.clearMockedCalls();
     }
 
@@ -2841,8 +2853,7 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
 
-        vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         vm.clearMockedCalls();
     }
 
@@ -2892,8 +2903,7 @@ contract OfferFacetTest is Test {
         ERC20(mockERC20).approve(address(diamond), type(uint256).max);
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
-        vm.prank(user2);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         vm.clearMockedCalls();
 
         // getCompatibleOffers iterates over the active-offer list; the accepted one is absent.
@@ -3016,8 +3026,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(5)));
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
 
         // NFT should be in borrower's vault
@@ -3077,8 +3086,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(6)));
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
 
         // ERC1155 should be in borrower's vault
@@ -3144,8 +3152,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(7)));
 
-        vm.prank(user1);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
         assertEq(loanId, 7);
 
         // ERC1155 should be in lender's vault
@@ -3268,8 +3275,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        // Auto-linked sale vehicle: terms must bind the saleOfferToLoanId (42).
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId, true, 42);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3331,9 +3338,12 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
+        // Auto-linked sale vehicle: terms must bind the saleOfferToLoanId (42).
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 42);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(bytes("sale fail"));
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(user2);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -3394,8 +3404,8 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        // Auto-linked offset vehicle: terms must bind the offsetOfferToLoanId (99).
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId, true, 99);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3457,9 +3467,12 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
+        // Auto-linked offset vehicle: terms must bind the offsetOfferToLoanId (99).
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 99);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(bytes("offset fail"));
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(user2);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -3528,8 +3541,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        // #662 — the offer's saleOfferToLoanId was spoofed to 77, so the bound
+        // AcceptTerms.linkedLoanId must equal 77 (the auto-linked sale target).
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), user2, user2Pk, offerId, true, 77
+        );
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3581,9 +3597,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        vm.prank(user2);
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(address(diamond), user2, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, user2Pk);
         vm.expectRevert(bytes("loan fail"));
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(user2);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
         vm.clearMockedCalls();
     }
 
@@ -3783,8 +3801,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
 
         // Verify NFT was transferred to borrower vault
@@ -3840,8 +3857,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }
@@ -3900,8 +3916,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(1)));
 
-        vm.prank(user1);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user1, user1Pk, offerId);
         assertGt(loanId, 0);
 
         // NFT should be in lender's vault
@@ -4114,8 +4129,7 @@ contract OfferFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector), abi.encode(true));
         vm.mockCall(address(diamond), abi.encodeWithSelector(LoanFacet.initiateLoan.selector), abi.encode(uint256(10)));
 
-        vm.prank(user2);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
         assertEq(loanId, 10);
         vm.clearMockedCalls();
     }

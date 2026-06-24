@@ -27,6 +27,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title PositiveFlowsGapFillers
@@ -65,6 +66,7 @@ contract PositiveFlowsGapFillers is Test {
     address internal owner;
     address internal lender;
     address internal borrower;
+    uint256 internal borrowerPk;
     address internal keeperEoa;
     address internal mockUsdc;
     address internal mockWeth;
@@ -81,7 +83,7 @@ contract PositiveFlowsGapFillers is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
         keeperEoa = makeAddr("keeperEOA");
 
         mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
@@ -128,8 +130,7 @@ contract PositiveFlowsGapFillers is Test {
         assertEq(ProfileFacet(address(diamond)).getUserCountry(borrower), "US");
 
         uint256 offerId = _createLenderOffer();
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory L =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -166,8 +167,7 @@ contract PositiveFlowsGapFillers is Test {
         uint256 treasuryBalBefore = IERC20(mockUsdc).balanceOf(address(diamond));
 
         uint256 offerId = _createLenderOffer();
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         uint256 expectedFee = (PRINCIPAL * LOAN_INITIATION_FEE_BPS) / BASIS_POINTS;
         // Range Orders Phase 1 — 1% LIF matcher kickback. The acceptor
@@ -217,8 +217,7 @@ contract PositiveFlowsGapFillers is Test {
     ///         closes the loan with zero dust. README §7 / RepayFacet spec.
     function test_Positive_PartialRepay_TwoStep_CompletesWithNoDust() public {
         uint256 offerId = _createLenderOffer();
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         LibVaipakam.Loan memory l0 =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -297,8 +296,7 @@ contract PositiveFlowsGapFillers is Test {
             true
         );
 
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         assertTrue(
             ProfileFacet(address(diamond)).isLoanKeeperEnabled(loanId, keeperEoa),

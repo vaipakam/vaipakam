@@ -6,6 +6,8 @@ import {Script} from "forge-std/Script.sol";
 import {console} from "forge-std/console.sol";
 import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "../test/helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -270,9 +272,11 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Lender offer with allowsPartialRepay=true:", offerId);
 
         // Borrower accepts.
+        LibAcceptTerms.AcceptTerms memory _t1 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig1 = LibAcceptTestSigner.sign(diamond, _t1, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t1, _sig1);
         vm.stopBroadcast();
         console.log("Loan initiated:", loanId);
 
@@ -335,9 +339,11 @@ contract AnvilNewPositiveFlows is Script {
         uint256 offerL1 = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t2 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerL1, true, 0);
+        bytes memory _sig2 = LibAcceptTestSigner.sign(diamond, _t2, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(offerL1, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(offerL1, _t2, _sig2);
         vm.stopBroadcast();
         console.log("L1 (original loan) initiated:", loanL1);
 
@@ -353,9 +359,11 @@ contract AnvilNewPositiveFlows is Script {
 
         // Lender B accepts — creates loan l2. alice receives l2's
         // principal in her wallet.
+        LibAcceptTerms.AcceptTerms memory _t3 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newLenderKey), refinanceOfferId, true, 0);
+        bytes memory _sig3 = LibAcceptTestSigner.sign(diamond, _t3, newLenderKey);
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT);
-        OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, true);
+        OfferAcceptFacet(diamond).acceptOffer(refinanceOfferId, _t3, _sig3);
         vm.stopBroadcast();
 
         // alice repays Lender A using l2's principal. refinanceLoan is
@@ -664,9 +672,11 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t4 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig4 = LibAcceptTestSigner.sign(diamond, _t4, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t4, _sig4);
         vm.stopBroadcast();
         console.log("Pre-flag loan initiated:", loanId);
 
@@ -758,9 +768,11 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t5 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), offerId, true, 0);
+        bytes memory _sig5 = LibAcceptTestSigner.sign(diamond, _t5, aliceKey);
         vm.startBroadcast(aliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t5, _sig5);
         vm.stopBroadcast();
         console.log("Loan initiated for keeper-auth scenario:", loanId);
 
@@ -1080,9 +1092,11 @@ contract AnvilNewPositiveFlows is Script {
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t6 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
+        bytes memory _sig6 = LibAcceptTestSigner.sign(diamond, _t6, aliceKey);
         vm.startBroadcast(aliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, _t6, _sig6);
         vm.stopBroadcast();
         console.log("L1 (Liam -> Alice) initiated:", loanL1);
 
@@ -1187,9 +1201,11 @@ contract AnvilNewPositiveFlows is Script {
         uint256 lenderOfferId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t7 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(aliceKey), lenderOfferId, true, 0);
+        bytes memory _sig7 = LibAcceptTestSigner.sign(diamond, _t7, aliceKey);
         vm.startBroadcast(aliceKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, true);
+        uint256 loanL1 = OfferAcceptFacet(diamond).acceptOffer(lenderOfferId, _t7, _sig7);
         vm.stopBroadcast();
         console.log("L1 (Liam -> Alice) initiated:", loanL1);
 
@@ -1220,9 +1236,11 @@ contract AnvilNewPositiveFlows is Script {
         // charlie accepts. The auto-link inside `_acceptOffer` fires
         // `PrecloseFacet.completeOffset(l1)` which closes l1 and
         // releases alice's collateral.
+        LibAcceptTerms.AcceptTerms memory _t8 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(charlieKey), offsetOfferId, true, loanL1);
+        bytes memory _sig8 = LibAcceptTestSigner.sign(diamond, _t8, charlieKey);
         vm.startBroadcast(charlieKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 newLoanId = OfferAcceptFacet(diamond).acceptOffer(offsetOfferId, true);
+        uint256 newLoanId = OfferAcceptFacet(diamond).acceptOffer(offsetOfferId, _t8, _sig8);
         vm.stopBroadcast();
         console.log("Charlie accepted -> new loanId:", newLoanId);
 
@@ -1338,9 +1356,11 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t9 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(borrowerKey), offerId, true, 0);
+        bytes memory _sig9 = LibAcceptTestSigner.sign(diamond, _t9, borrowerKey);
         vm.startBroadcast(borrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t9, _sig9);
         vm.stopBroadcast();
         console.log("Loan initiated under VPFI discount path:", loanId);
 
@@ -1564,9 +1584,11 @@ contract AnvilNewPositiveFlows is Script {
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
 
+        LibAcceptTerms.AcceptTerms memory _t10 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig10 = LibAcceptTestSigner.sign(diamond, _t10, newBorrowerKey);
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t10, _sig10);
         vm.stopBroadcast();
 
         vm.startBroadcast(newBorrowerKey);
@@ -1675,9 +1697,11 @@ contract AnvilNewPositiveFlows is Script {
         usdc.approve(diamond, LOAN_AMOUNT);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(_lenderOfferStandard());
         vm.stopBroadcast();
+        LibAcceptTerms.AcceptTerms memory _t11 = LibAcceptTestSigner.buildTerms(diamond, vm.addr(newBorrowerKey), offerId, true, 0);
+        bytes memory _sig11 = LibAcceptTestSigner.sign(diamond, _t11, newBorrowerKey);
         vm.startBroadcast(newBorrowerKey);
         weth.approve(diamond, COLLATERAL_AMOUNT);
-        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, true);
+        uint256 loanId = OfferAcceptFacet(diamond).acceptOffer(offerId, _t11, _sig11);
         vm.stopBroadcast();
         console.log("l1 (newLender -> newBorrower) initiated:", loanId);
 

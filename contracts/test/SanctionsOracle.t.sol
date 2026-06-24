@@ -15,6 +15,8 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 
 /**
@@ -142,14 +144,21 @@ contract SanctionsOracleTest is RiskFacetTest {
         MockSanctionsList m = _installSanctions();
         m.setFlagged(borrower, true);
 
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the sanctioned-acceptor gate then fires.
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(
+            address(diamond), borrower, offerId, true, 0
+        );
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 ProfileFacet.SanctionedAddress.selector,
                 borrower
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     function test_acceptOffer_RevertsWhenCreatorSanctionedAfterPosting() public {
@@ -164,14 +173,21 @@ contract SanctionsOracleTest is RiskFacetTest {
         MockSanctionsList m = _installSanctions();
         m.setFlagged(lender, true);
 
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the sanctioned-creator gate then fires.
+        LibAcceptTerms.AcceptTerms memory _t = LibAcceptTestSigner.buildTerms(
+            address(diamond), borrower, offerId, true, 0
+        );
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 ProfileFacet.SanctionedAddress.selector,
                 lender
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     // ─── Tier-1 enforcement at non-OfferFacet entry points ────────────────

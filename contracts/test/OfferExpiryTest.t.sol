@@ -9,6 +9,8 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 /// @title OfferExpiryTest
 /// @notice #195 — GTT (Good-Till-Time) offer-expiry coverage. The
@@ -204,7 +206,12 @@ contract OfferExpiryTest is SetupTest {
         // Travel past the deadline (one second beyond — strict).
         vm.warp(uint256(deadline) + 1);
 
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the offer-expiry guard then fires.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, id, true, 0);
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 OfferAcceptFacet.OfferExpired.selector,
@@ -212,7 +219,8 @@ contract OfferExpiryTest is SetupTest {
                 deadline
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(id, _t, _sig);
     }
 
     function testAcceptRevertsAtExactExpiryBoundary() public {
@@ -223,7 +231,12 @@ contract OfferExpiryTest is SetupTest {
 
         vm.warp(uint256(deadline));
 
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the boundary-expiry guard then fires.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, id, true, 0);
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 OfferAcceptFacet.OfferExpired.selector,
@@ -231,7 +244,8 @@ contract OfferExpiryTest is SetupTest {
                 deadline
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(id, _t, _sig);
     }
 
     function testAcceptSucceedsJustBeforeExpiry() public {
@@ -241,9 +255,7 @@ contract OfferExpiryTest is SetupTest {
         // One second before the deadline — still acceptable.
         vm.warp(uint256(deadline) - 1);
 
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, id);
         assertGt(loanId, 0, "loan minted just before expiry");
     }
 

@@ -9,6 +9,8 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
+import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title SelfTradePreventionTest
@@ -137,14 +139,19 @@ contract SelfTradePreventionTest is SetupTest {
 
     function test_directAccept_lenderOfferBySelf_revertsSelfTradeForbidden() public {
         uint256 offerId = _postLenderOffer(lender);
-        vm.prank(lender);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the self-trade gate fires after binding passes.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), lender, offerId, true, 0);
+        bytes memory _sig = LibAcceptTestSigner.sign(address(diamond), _t, lenderPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 OfferAcceptFacet.SelfTradeForbidden.selector,
                 lender
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(lender);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -153,14 +160,20 @@ contract SelfTradePreventionTest is SetupTest {
 
     function test_directAccept_borrowerOfferBySelf_revertsSelfTradeForbidden() public {
         uint256 offerId = _postBorrowerOffer(borrower);
-        vm.prank(borrower);
+        // Build + sign FIRST so the helper's diamond view-calls don't consume
+        // the expectRevert; the self-trade gate fires after binding passes.
+        LibAcceptTerms.AcceptTerms memory _t =
+            LibAcceptTestSigner.buildTerms(address(diamond), borrower, offerId, true, 0);
+        bytes memory _sig =
+            LibAcceptTestSigner.sign(address(diamond), _t, borrowerPk);
         vm.expectRevert(
             abi.encodeWithSelector(
                 OfferAcceptFacet.SelfTradeForbidden.selector,
                 borrower
             )
         );
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
     // ═════════════════════════════════════════════════════════════════
@@ -232,9 +245,7 @@ contract SelfTradePreventionTest is SetupTest {
     ///         and the self-trade gate does NOT fire.
     function test_directAccept_differentCreators_acceptsCleanly() public {
         uint256 offerId = _postLenderOffer(lender);
-        vm.prank(borrower);
-        uint256 loanId =
-            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
         LibVaipakam.Loan memory loan =
             LoanFacet(address(diamond)).getLoanDetails(loanId);
         assertEq(loan.lender, lender, "loan lender = lender (offer creator)");

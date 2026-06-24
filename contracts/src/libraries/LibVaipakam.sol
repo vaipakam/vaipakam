@@ -4302,6 +4302,29 @@ library LibVaipakam {
         ///      `ProtocolConfig`, which would shift every subsequent top-level
         ///      slot — see the note at the end of `ProtocolConfig`).
         uint8 backstopMinSecondaryOracleCoverage;
+        // #662 — offer-accept term binding (anti-phishing). APPENDED AT THE TRUE
+        // STORAGE TAIL (Codex #724 r2 P1) so applying this as a diamond upgrade
+        // can't shift any pre-existing slot. `acceptNonceUsed[acceptor][nonce]`
+        // is the per-acceptor EIP-712 replay ledger (see `LibAcceptTerms`); a
+        // captured acceptance signature can't be replayed. The FIELD-equality
+        // binding (signed terms == stored offer) is enforced at the public entry
+        // (pure function of offer+terms; no liquidity read → no TOCTOU). The
+        // acknowledged-illiquid ENFORCEMENT lives at the LTV/HF bypass site
+        // (`LoanFacet._maybeRunInitialRiskGates`), checked against the SAME
+        // liquidity classification that authorises the bypass — a hostile ERC-20
+        // transfer hook can't flip a leg's liquidity between an entry-time read
+        // and the gate (Codex #724 r1 P1). The entry forwards the signed acked
+        // identities via the transient `acceptAck*` injection (idiom of
+        // `matchOverride` / `signedOfferAcceptor`); `_acceptOffer` clears it. The
+        // keeper match path never sets it (`acceptAckActive == false`) and is
+        // exempt by construction (two self-authored offers — no phished acceptor;
+        // see `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md` §5/§8b).
+        mapping(address => mapping(uint256 => bool)) acceptNonceUsed;
+        // Transient acked-illiquid-asset injection. MUST be cleared in the same
+        // tx — a non-false `acceptAckActive` at rest is a bug.
+        address acceptAckIlliquidLend;
+        address acceptAckIlliquidColl;
+        bool acceptAckActive;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

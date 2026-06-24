@@ -29,6 +29,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 
 /**
  * @title Scenario1_ERC20LendingLifecycle
@@ -40,6 +41,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address mockUsdc;
     address mockWeth;
 
@@ -79,7 +81,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
     function setUp() public {
         owner   = address(this);
         lender  = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy two ERC20 tokens
         mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
@@ -239,8 +241,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         );
 
         // Step 2: Borrower accepts the offer (creates loan)
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Verify loan is Active
         LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
@@ -328,8 +329,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         );
 
         // Step 2: Borrower accepts with illiquid consent = true
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Restore liquidity mocks after loan creation (for other operations)
         mockLiquidity(mockUsdc, LibVaipakam.LiquidityStatus.Liquid);
@@ -420,8 +420,7 @@ contract Scenario1_ERC20LendingLifecycle is Test {
         );
 
         // Step 2: Borrower accepts the offer
-        vm.prank(borrower);
-        uint256 loanId = OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
 
         // Step 3: Warp 15 days
         vm.warp(block.timestamp + 15 days);

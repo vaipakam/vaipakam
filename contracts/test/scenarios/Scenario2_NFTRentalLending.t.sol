@@ -30,6 +30,7 @@ import {DiamondCutFacet} from "../../src/facets/DiamondCutFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
 import {HelperTest} from "../HelperTest.sol";
 import {defaultAdapterCalls} from "../helpers/AdapterCallHelpers.sol";
+import {LibAcceptTestSigner} from "../helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../../src/facets/AccessControlFacet.sol";
 import {EncumbranceMutateFacet} from "../../src/facets/EncumbranceMutateFacet.sol";
 import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
@@ -49,6 +50,7 @@ contract Scenario2_NFTRentalLending is Test {
     address owner;
     address lender;
     address borrower;
+    uint256 borrowerPk;
     address mockUsdc;
     address mockNft721;
     address mockZeroExProxy;
@@ -109,7 +111,7 @@ contract Scenario2_NFTRentalLending is Test {
     function setUp() public {
         owner = address(this);
         lender = makeAddr("lender");
-        borrower = makeAddr("borrower");
+        (borrower, borrowerPk) = makeAddrAndKey("borrower");
 
         // Deploy mocks
         mockUsdc = address(new ERC20Mock("MockUSDC", "USDC", 18));
@@ -298,8 +300,7 @@ contract Scenario2_NFTRentalLending is Test {
         );
 
         // Borrower accepts offer
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        LibAcceptTestSigner.signAndAccept(address(diamond), borrower, borrowerPk, offerId);
         loanId = 1; // First loan
     }
 

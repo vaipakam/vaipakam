@@ -236,8 +236,7 @@ contract OfferModificationTest is SetupTest {
         // Accept the lender offer once so subsequent mutation must
         // revert OfferAlreadyAccepted.
         uint256 id = _createLender();
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(id, true);
+        _signAndAcceptOffer(borrower, borrowerPk, id);
 
         vm.prank(lender);
         vm.expectRevert(OfferMutateFacet.OfferAlreadyAccepted.selector);

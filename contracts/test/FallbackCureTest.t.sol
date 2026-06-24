@@ -91,8 +91,7 @@ contract FallbackCureTest is SetupTest, IVaipakamErrors {
                 useFullTermInterest: false
             })
         );
-        vm.prank(borrower);
-        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, true);
+        _signAndAcceptOffer(borrower, borrowerPk, offerId);
 
         // Past grace.
         vm.warp(block.timestamp + DURATION_DAYS * 1 days + 3 days + 1);
