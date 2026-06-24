@@ -546,4 +546,21 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
     ) external view returns (LibVaipakam.Offer memory) {
         return LibVaipakam.storageSlot().offers[offerId];
     }
+
+    /// @notice The loan a lender-sale-vehicle (`createLoanSaleOffer`) or
+    ///         preclose-offset offer is linked to — the position an accept of
+    ///         this offer auto-buys/closes. 0 for a normal offer.
+    /// @dev    #662/#725 — the `acceptOffer` AcceptTerms binding requires the
+    ///         acceptor to sign `linkedLoanId == saleOfferToLoanId[offerId]`
+    ///         (else `offsetOfferToLoanId[offerId]`), checked in
+    ///         `OfferAcceptFacet._bindTermsToOffer`. The frontend/keeper read
+    ///         this view to fill that field correctly for linked offers; there
+    ///         was no on-chain getter for those mappings before. Mirrors the
+    ///         precedence in `_bindTermsToOffer` (sale takes precedence).
+    function getOfferLinkedLoanId(uint256 offerId) external view returns (uint256) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 linked = s.saleOfferToLoanId[offerId];
+        if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
+        return linked;
+    }
 }
