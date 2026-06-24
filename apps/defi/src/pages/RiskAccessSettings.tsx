@@ -59,7 +59,11 @@ export default function RiskAccessSettings() {
   };
 
   async function chooseTier(level: RiskTier) {
-    if (level === risk.rawTier) return;
+    // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a
+    // risk-terms bump the raw tier stays but the effective tier drops to
+    // BlueChipOnly until re-stamped, so re-selecting the same level must go
+    // through. Only no-op when the level is already the effective, current tier.
+    if (level === risk.rawTier && risk.effectiveTier === risk.rawTier) return;
     const step = beginStep({
       area: "profile",
       flow: "setVaultRiskTier",
@@ -74,7 +78,7 @@ export default function RiskAccessSettings() {
       await tx.wait();
       step.success();
       setNotice(
-        level > risk.effectiveTier
+        level > risk.rawTier
           ? "Tier raised. If an opt-up cooldown is configured it becomes effective once the cooldown elapses."
           : "Tier updated.",
       );
@@ -134,6 +138,17 @@ export default function RiskAccessSettings() {
     );
   }
 
+  // Avoid flashing default values (Blue-chip / gate off) before the first read
+  // resolves on a slow RPC (Claude review #734 P3).
+  if (risk.loading) {
+    return (
+      <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+        <h1>Risk Access</h1>
+        <p>Loading…</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: "1.5rem", maxWidth: 720 }}>
       <h1>Risk Access</h1>
@@ -142,6 +157,11 @@ export default function RiskAccessSettings() {
         starts at the safest tier and opts up only with your explicit consent.
       </p>
 
+      {risk.error && (
+        <ErrorAlert
+          message={`Couldn't read your current risk-access state, so the values below may be incomplete: ${risk.error}`}
+        />
+      )}
       {err && <ErrorAlert message={err} onDismiss={() => setErr(null)} />}
       {notice && (
         <div
@@ -175,15 +195,26 @@ export default function RiskAccessSettings() {
         </div>
       </section>
 
-      <h2 style={{ fontSize: "1.05rem" }}>Vault risk tier</h2>
-      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+      <h2 id="risk-tier-label" style={{ fontSize: "1.05rem" }}>
+        Vault risk tier
+      </h2>
+      <div
+        role="radiogroup"
+        aria-labelledby="risk-tier-label"
+        style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}
+      >
         {TIER_OPTIONS.map((opt) => {
           const selected = risk.rawTier === opt.level;
+          // A selected tier that isn't currently effective (stale after a terms
+          // bump, or cooling down) can be re-affirmed — keep its button enabled.
+          const current = selected && risk.effectiveTier === risk.rawTier;
           return (
             <button
               key={opt.level}
               type="button"
-              disabled={busy || selected}
+              role="radio"
+              aria-checked={selected}
+              disabled={busy || current}
               onClick={() => chooseTier(opt.level)}
               style={{
                 textAlign: "left",
@@ -193,11 +224,17 @@ export default function RiskAccessSettings() {
                   ? "2px solid var(--accent, #4a7dff)"
                   : "1px solid rgba(255,255,255,0.18)",
                 background: selected ? "rgba(74,125,255,0.10)" : "transparent",
-                cursor: busy || selected ? "default" : "pointer",
+                cursor: busy || current ? "default" : "pointer",
               }}
             >
               <div style={{ fontWeight: 600 }}>
-                {RISK_TIER_LABEL[opt.level]} {selected && "✓"}
+                {RISK_TIER_LABEL[opt.level]} {current && "✓"}
+                {selected && !current && (
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {" "}
+                    — selected but not effective; click to re-affirm
+                  </span>
+                )}
               </div>
               <div style={{ fontSize: "0.82rem", opacity: 0.8 }}>{opt.hint}</div>
             </button>

@@ -2016,7 +2016,19 @@ function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
  * just avoids an opaque revert.
  */
 function AcceptRiskPreflight({ offer }: { offer: OfferData }) {
-  const { blocked, reason } = useRiskAccessPreflight(offer.id);
+  const { status, blocked, reason } = useRiskAccessPreflight(offer.id);
+  // Surface the in-flight check too (Codex #734 P2): on a slow RPC the banner
+  // would otherwise be absent while the preview resolves, letting a user start
+  // the accept signature before the warning appears. This stays informational
+  // (it does not gate the Confirm button — matching `AcceptLiquidityPreflight`);
+  // the on-chain gate at loan-init is the real boundary.
+  if (status === 'loading') {
+    return (
+      <div style={{ margin: '0.5rem 0', fontSize: '0.8rem', opacity: 0.7 }}>
+        {reason}
+      </div>
+    );
+  }
   if (!blocked) return null;
   return (
     <div

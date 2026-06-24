@@ -16,6 +16,7 @@ import {
   HandCoins,
   Coins,
   ShieldCheck,
+  Gauge,
   Activity,
   Sun,
   Moon,
@@ -135,7 +136,7 @@ const ADVANCED_NAV = [
   },
   {
     to: "/risk-access",
-    icon: <Sliders size={20} />,
+    icon: <Gauge size={20} />,
     labelKey: "appNav.riskAccess",
     end: false,
   },

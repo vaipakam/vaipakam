@@ -73,7 +73,10 @@ export function useRiskAccess(): RiskAccessState {
   const [gateEnabled, setGateEnabled] = useState(false);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
   const [supported, setSupported] = useState(true);
-  const [loading, setLoading] = useState(false);
+  // Start loading whenever there's an address to read for, so the settings page
+  // shows a spinner from first paint instead of flashing default values
+  // (Claude review #734 P3).
+  const [loading, setLoading] = useState(() => !!address);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -88,6 +91,9 @@ export function useRiskAccess(): RiskAccessState {
       getCurrentRiskTermsVersion: () => Promise<bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
     };
+    // The first read doubles as the "does this Diamond cut RiskAccessFacet?"
+    // probe — keep it sequential so a missing-selector revert switches to the
+    // unsupported state before the others run.
     try {
       setEffectiveTier(Number(await ro.getEffectiveRiskTier(address)) as RiskTier);
     } catch (e) {
@@ -95,26 +101,25 @@ export function useRiskAccess(): RiskAccessState {
       else setError((e as Error).message);
     }
     if (!missing) {
-      try {
-        setRawTier(Number(await ro.getVaultRiskTier(address)) as RiskTier);
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      try {
-        setStrictMode(Boolean(await ro.getRiskStrictMode(address)));
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      try {
-        setTermsVersion(BigInt(await ro.getCurrentRiskTermsVersion()));
-      } catch {
-        /* non-fatal — informational only */
-      }
-      try {
-        setGateEnabled(Boolean(await ro.getRiskAccessGateEnabled()));
-      } catch {
-        /* non-fatal — treat as off */
-      }
+      // The remaining four reads are independent — batch them (Claude review
+      // #734 P2). Each keeps its own fallback so one failure doesn't blank the
+      // rest; tier/strict surface an error, version/gate are informational.
+      const [rawT, strict, version, gateOn] = await Promise.all([
+        ro.getVaultRiskTier(address).catch((e) => {
+          setError((e as Error).message);
+          return 0;
+        }),
+        ro.getRiskStrictMode(address).catch((e) => {
+          setError((e as Error).message);
+          return false;
+        }),
+        ro.getCurrentRiskTermsVersion().catch(() => 0n),
+        ro.getRiskAccessGateEnabled().catch(() => false),
+      ]);
+      setRawTier(Number(rawT) as RiskTier);
+      setStrictMode(Boolean(strict));
+      setTermsVersion(BigInt(version));
+      setGateEnabled(Boolean(gateOn));
     }
     setSupported(!missing);
     setLoading(false);

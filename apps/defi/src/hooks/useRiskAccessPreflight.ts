@@ -38,17 +38,25 @@ const CODE_TO_STATUS: Record<number, RiskPreflightStatus> = {
   3: "needs-midtier-ack",
 };
 
+// Copy is intentionally NEUTRAL about WHICH party is blocked: the on-chain
+// preview checks the offer creator BEFORE the acceptor (Codex #734 P2), so a
+// block can mean the creator lost tier / consent after posting — telling the
+// connected acceptor to "raise your tier" would be wrong in that case. It is
+// also #662-aware: a direct accept signs an acknowledgement that already
+// satisfies the acceptor's illiquid-pair consent for most assets, so the
+// illiquid case is framed as "usually handled by your acceptance" rather than a
+// hard, separate step (Codex #734 P2).
 export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   idle: "",
-  loading: "Checking risk-access requirements…",
+  loading: "Checking the progressive-risk gate for this offer…",
   ok: "",
   "tier-too-low":
-    "Your vault's risk tier doesn't cover this offer's assets. Raise your tier in Risk Access settings before accepting.",
+    "This offer's asset pair needs a higher risk tier than is currently set. If it's your vault, raise your tier in Risk Access settings; otherwise the offer can't be filled right now.",
   "needs-illiquid-consent":
-    "This pair includes an illiquid asset, which needs a one-time per-pair consent signature before you can accept it.",
+    "This pair includes an illiquid asset. Your acceptance signature acknowledges it for most assets — if the accept still fails, record a standing per-pair consent in Risk Access settings.",
   "needs-midtier-ack":
-    "Your vault is in strict mode, so this mid-tier pair needs a one-time explicit acknowledgement before you can accept it.",
-  error: "Couldn't check risk-access requirements right now.",
+    "This pair needs a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover. If it's your vault, acknowledge the pair in Risk Access settings before accepting.",
+  error: "Couldn't check the risk-access requirements right now.",
 };
 
 export interface RiskPreflight {
