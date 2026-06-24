@@ -366,4 +366,73 @@ contract RiskStrictModeTest is SetupTest {
 
         assertGt(_createOffer(), 0, "relayed strict toggle + ack unblock the create");
     }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 7 — Codex #733 P1: a mid-tier ack is ARMED on a cooldown — with a non-zero
+    //     `riskAccessUnlockCooldown` it is NOT effective until the cooldown
+    //     elapses (no atomic sign-and-use), mirroring the illiquid consent.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_strictOn_midTierAckArmingCooldown() public {
+        _mockTier(mockERC20, 1);
+        _mockTier(mockCollateralERC20, 1);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        // Arm the tier under zero cooldown (immediate), then set the cooldown so
+        // only the ACK arming is exercised — single warp (harness note in test 5).
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        vm.prank(owner);
+        RiskAccessFacet(address(diamond)).setRiskAccessUnlockCooldown(1 days);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setRiskStrictMode(true);
+
+        // Ack the pair — but it is armed only after the cooldown, so it does NOT
+        // satisfy the gate yet.
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setMidTierPairAck(_pair());
+        assertTrue(
+            RiskAccessFacet(address(diamond)).midTierStrictBlocked(lender, _pair()),
+            "fresh ack is not yet armed (cooldown not elapsed)"
+        );
+
+        // After the arming cooldown, the ack is effective.
+        vm.warp(block.timestamp + 1 days + 1);
+        assertFalse(
+            RiskAccessFacet(address(diamond)).midTierStrictBlocked(lender, _pair()),
+            "ack effective once its arming cooldown elapses"
+        );
+        assertGt(_createOffer(), 0, "create succeeds once the ack is armed");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 8 — Codex #733 P3: the strict-block view honors the master gate — it
+    //     reports no block when `riskAccessGateEnabled` is off (the gate isn't
+    //     enforced then), so the frontend doesn't show a phantom requirement.
+    // ════════════════════════════════════════════════════════════════════════
+
+    function test_midTierStrictBlocked_falseWhenGateOff() public {
+        _mockTier(mockERC20, 1);
+        _mockTier(mockCollateralERC20, 1);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(BROAD);
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setRiskStrictMode(true);
+
+        // Gate ON, strict, no ack → blocked.
+        assertTrue(
+            RiskAccessFacet(address(diamond)).midTierStrictBlocked(lender, _pair()),
+            "blocked while the master gate is on"
+        );
+
+        // Flip the master gate off → the view reports no block (gate not enforced).
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(false);
+        assertFalse(
+            RiskAccessFacet(address(diamond)).midTierStrictBlocked(lender, _pair()),
+            "no phantom block when the master gate is off"
+        );
+    }
 }

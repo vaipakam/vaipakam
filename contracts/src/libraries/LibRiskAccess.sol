@@ -247,14 +247,18 @@ library LibRiskAccess {
         returns (bool)
     {
         if (s.riskStrictMode[actor]) return true;
-        uint64 disabledAt = s.strictModeDisabledAt[actor];
-        return disabledAt != 0
-            && block.timestamp < disabledAt + s.riskAccessUnlockCooldown;
+        // Disable-cooldown linger: the resolved expiry was frozen at disable-time
+        // (Codex #733 P2), so a later `riskAccessUnlockCooldown` change can't
+        // retroactively lengthen or shorten the window.
+        return block.timestamp < s.strictModeStrictUntil[actor];
     }
 
-    /// @dev True iff `actor` holds a FRESH explicit mid-tier ack for `pk`. "Fresh"
-    ///      = set AND its version anchor still current (a terms bump re-locks it,
-    ///      same read-time re-lock as the tier/consent anchors). Reads the EXPLICIT
+    /// @dev True iff `actor` holds a FRESH, ARMED explicit mid-tier ack for `pk`.
+    ///      "Fresh" = set AND its version anchor still current (a terms bump
+    ///      re-locks it, same read-time re-lock as the tier/consent anchors).
+    ///      "Armed" = its arming cooldown has elapsed (`block.timestamp >=
+    ///      midTierAckUnlockAt`), closing the atomic sign-and-use window exactly
+    ///      like the illiquid consent (Codex #733 P1). Reads the EXPLICIT
     ///      (setter-only) map, never a passive auto-stamp — so strict mode can't be
     ///      satisfied accidentally.
     function _midTierAckEffective(
@@ -263,7 +267,8 @@ library LibRiskAccess {
         bytes32 pk
     ) private view returns (bool) {
         return s.midTierExplicitAck[actor][pk] != 0
-            && s.midTierExplicitAckVersion[actor][pk] >= s.currentRiskTermsVersion;
+            && s.midTierExplicitAckVersion[actor][pk] >= s.currentRiskTermsVersion
+            && block.timestamp >= s.midTierAckUnlockAt[actor][pk];
     }
 
     /// @notice Read-only view of the strict-mode mid-tier requirement for a pair —

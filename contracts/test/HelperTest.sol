@@ -808,7 +808,7 @@ contract HelperTest {
         selectors[22] = RiskAccessFacet.setMidTierPairAck.selector;
         selectors[23] = RiskAccessFacet.setMidTierPairAckBySig.selector;
         selectors[24] = RiskAccessFacet.getRiskStrictMode.selector;
-        selectors[25] = RiskAccessFacet.getStrictModeDisabledAt.selector;
+        selectors[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
         selectors[26] = RiskAccessFacet.midTierStrictBlocked.selector;
     }
 

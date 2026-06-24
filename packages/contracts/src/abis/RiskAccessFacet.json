@@ -133,7 +133,7 @@
   },
   {
     "type": "function",
-    "name": "getStrictModeDisabledAt",
+    "name": "getStrictModeStrictUntil",
     "inputs": [
       {
         "name": "vault",

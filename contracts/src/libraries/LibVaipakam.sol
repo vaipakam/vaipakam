@@ -4425,14 +4425,22 @@ library LibVaipakam {
         // ack each mid-tier pair). `midTierExplicitAckVersion` anchors it to the
         // risk-terms version at ack-time; the gate requires `>= currentRiskTermsVersion`
         // (a fresh ack), so a terms bump re-locks it just like the unlock anchors.
+        // `midTierAckUnlockAt` is the per-(user,pair) ARMING anchor (= now +
+        // riskAccessUnlockCooldown at ack-time): the ack is effective only at/after
+        // it, closing the atomic sign-and-use window exactly like
+        // `pairConsentUnlockAt` does for the illiquid consent (Codex #733 P1).
         mapping(address => mapping(bytes32 => uint64)) midTierExplicitAck;
         mapping(address => mapping(bytes32 => uint64)) midTierExplicitAckVersion;
-        // Disable-cooldown anchor: stamped when a vault turns strict mode OFF (a
-        // risk-increasing change). While `now < strictModeDisabledAt + riskAccessUnlockCooldown`
-        // the gate still treats the vault as strict (mid-tier pairs still need a
-        // fresh explicit ack), closing the disable→exploit window. Zero (never
-        // disabled, or re-enabled) ⇒ no lingering requirement.
-        mapping(address => uint64) strictModeDisabledAt;
+        mapping(address => mapping(bytes32 => uint64)) midTierAckUnlockAt;
+        // Strict-mode disable EXPIRY: when a vault turns strict mode OFF (a risk-
+        // increasing change) this is set to `now + riskAccessUnlockCooldown` — the
+        // ABSOLUTE timestamp until which the gate still treats the vault as strict
+        // (mid-tier pairs still need a fresh explicit ack), closing the
+        // disable→exploit window. Storing the resolved expiry (not the disable
+        // instant) freezes the window against a later governance cooldown change
+        // (Codex #733 P2). Zero (never disabled, or re-enabled) ⇒ no lingering
+        // requirement.
+        mapping(address => uint64) strictModeStrictUntil;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

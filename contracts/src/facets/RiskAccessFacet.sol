@@ -254,25 +254,28 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().riskStrictMode[vault];
     }
 
-    /// @notice The disable-cooldown anchor (`block.timestamp` at the last OFF
-    ///         toggle; 0 if never disabled / re-enabled). The vault is still
-    ///         treated as strict until this + `riskAccessUnlockCooldown`.
-    function getStrictModeDisabledAt(address vault)
+    /// @notice The strict-mode disable-linger EXPIRY (absolute timestamp the
+    ///         vault stops being treated as strict after a disable; 0 if never
+    ///         disabled / re-enabled). Frozen at disable-time.
+    function getStrictModeStrictUntil(address vault)
         external
         view
         returns (uint64)
     {
-        return LibVaipakam.storageSlot().strictModeDisabledAt[vault];
+        return LibVaipakam.storageSlot().strictModeStrictUntil[vault];
     }
 
     /// @notice Whether a strict-mode mid-tier origination of `p` by `vault` WOULD
-    ///         be blocked right now (effective strict mode + no fresh explicit
-    ///         ack). False for non-mid-tier pairs. Lets the frontend collect the
-    ///         ack before submitting.
+    ///         be blocked right now (effective strict mode + no fresh, armed
+    ///         explicit ack). False for non-mid-tier pairs, and false when the
+    ///         master gate is off (Codex #733 P3 — the gate isn't enforced then,
+    ///         so the view must not report a phantom block). Lets the frontend
+    ///         collect the ack before submitting.
     function midTierStrictBlocked(
         address vault,
         LibRiskAccess.PairId calldata p
     ) external view returns (bool) {
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return false;
         return LibRiskAccess.midTierStrictBlock(
             LibVaipakam.storageSlot(), vault, p
         );
@@ -308,7 +311,8 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         `OfferAcceptFacet.previewAccept`'s dry-run (Codex #729 r3 finding
     ///         C; sale-offer handling r4): returns the FIRST failing block code.
     /// @return 0 = OK (or gate off), 1 = tier too low,
-    ///         2 = illiquid pair needs standing consent.
+    ///         2 = illiquid pair needs standing consent,
+    ///         3 = strict-mode mid-tier pair needs a fresh explicit ack (PR-2d).
     /// @dev    The WHOLE decision lives HERE, not in OfferAcceptFacet: that facet
     ///         sits at the EIP-170 ceiling, and the classification chain
     ///         (`previewActorBlock` → `_pairRequiredLevel` → `_isBlueChip` …) is
@@ -447,7 +451,8 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         candidate keeper match, so a bot can filter a pair the gate would
     ///         reject instead of burning gas on a reverting `matchOffers`.
     ///         Returns 0 = OK, 1 = a gated party's tier is too low, 2 = an
-    ///         illiquid pair lacks standing consent (same codes as
+    ///         illiquid pair lacks standing consent, 3 = a strict-mode mid-tier
+    ///         pair needs a fresh explicit ack (same codes as
     ///         {previewOfferAcceptBlock}). 0 when the gate is off. The block of
     ///         the FIRST failing gated party (buyer/lender side first) is
     ///         reported.
@@ -608,14 +613,19 @@ contract RiskAccessFacet is DiamondAccessControl {
         bool was = s.riskStrictMode[vault];
         s.riskStrictMode[vault] = enabled;
         if (enabled) {
-            s.strictModeDisabledAt[vault] = 0; // re-enable clears any cooldown
+            s.strictModeStrictUntil[vault] = 0; // re-enable clears any linger
         } else if (was) {
-            s.strictModeDisabledAt[vault] = uint64(block.timestamp);
+            // Freeze the linger EXPIRY now (Codex #733 P2) so a later cooldown
+            // change can't move it. Zero cooldown ⇒ expiry == now ⇒ immediate.
+            s.strictModeStrictUntil[vault] =
+                uint64(block.timestamp) + s.riskAccessUnlockCooldown;
         }
         emit RiskStrictModeSet(vault, enabled);
     }
 
-    /// @dev Record an EXPLICIT mid-tier pair ack at the live terms version.
+    /// @dev Record an EXPLICIT mid-tier pair ack at the live terms version, and arm
+    ///      it for `riskAccessUnlockCooldown` (Codex #733 P1 — no atomic
+    ///      sign-and-use), mirroring the illiquid-consent arming anchor.
     function _applyMidTierAck(address vault, LibRiskAccess.PairId memory p)
         private
     {
@@ -623,6 +633,8 @@ contract RiskAccessFacet is DiamondAccessControl {
         bytes32 pk = LibRiskAccess.pairKey(p);
         s.midTierExplicitAck[vault][pk] = uint64(block.timestamp);
         s.midTierExplicitAckVersion[vault][pk] = s.currentRiskTermsVersion;
+        s.midTierAckUnlockAt[vault][pk] =
+            uint64(block.timestamp) + s.riskAccessUnlockCooldown;
         emit MidTierPairAckSet(vault, pk);
     }
 

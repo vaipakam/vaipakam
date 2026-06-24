@@ -1490,7 +1490,7 @@ contract DeployDiamond is Script {
         s[22] = RiskAccessFacet.setMidTierPairAck.selector;
         s[23] = RiskAccessFacet.setMidTierPairAckBySig.selector;
         s[24] = RiskAccessFacet.getRiskStrictMode.selector;
-        s[25] = RiskAccessFacet.getStrictModeDisabledAt.selector;
+        s[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
         s[26] = RiskAccessFacet.midTierStrictBlocked.selector;
     }
 
