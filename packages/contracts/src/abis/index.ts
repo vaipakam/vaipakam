@@ -10,6 +10,8 @@ import AggregatorAdapterFactoryFacetABI from './AggregatorAdapterFactoryFacet.js
 import AggregatorAdapterImplementationABI from './AggregatorAdapterImplementation.json';
 import BackstopFacetABI from './BackstopFacet.json';
 import ConsolidationFacetABI from './ConsolidationFacet.json';
+// #671 — self-sovereign progressive risk-access facet.
+import RiskAccessFacetABI from './RiskAccessFacet.json';
 import BackstopVaultImplementationABI from './BackstopVaultImplementation.json';
 import OfferAcceptFacetABI from './OfferAcceptFacet.json';
 import OfferCancelFacetABI from './OfferCancelFacet.json';
@@ -109,6 +111,7 @@ export {
   BackstopFacetABI,
   BackstopVaultImplementationABI,
   ConsolidationFacetABI,
+  RiskAccessFacetABI,
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
@@ -185,6 +188,8 @@ export const DIAMOND_ABI = [
   ...BackstopFacetABI,
   // #594 — ConsolidationFacet IS a Diamond facet -> spread.
   ...ConsolidationFacetABI,
+  // #671 — RiskAccessFacet IS a Diamond facet -> spread.
+  ...RiskAccessFacetABI,
   ...OfferAcceptFacetABI,
   ...OfferCancelFacetABI,
   ...OfferMatchFacetABI,

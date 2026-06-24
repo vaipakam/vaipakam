@@ -92,6 +92,7 @@ import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFact
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
@@ -259,6 +260,8 @@ contract SetupTest is Test {
     // #594 — consolidation primitive: Diamond NFT receiver + standalone entries.
     ReceiverFacet receiverFacet;
     ConsolidationFacet consolidationFacet;
+    // #671 — self-sovereign progressive risk-access facet.
+    RiskAccessFacet riskAccessFacet;
     IntentConfigFacet intentConfigFacet;
     AdminFacet adminFacet;
     ClaimFacet claimFacet;
@@ -362,6 +365,7 @@ contract SetupTest is Test {
         backstopFacet = new BackstopFacet();
         receiverFacet = new ReceiverFacet();
         consolidationFacet = new ConsolidationFacet();
+        riskAccessFacet = new RiskAccessFacet();
         intentConfigFacet = new IntentConfigFacet();
         adminFacet = new AdminFacet();
         claimFacet = new ClaimFacet();
@@ -425,7 +429,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -791,6 +795,12 @@ contract SetupTest is Test {
             facetAddress: address(receiverFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getReceiverFacetSelectors()
+        });
+        // #671 — self-sovereign progressive risk-access facet.
+        cuts[61] = IDiamondCut.FacetCut({
+            facetAddress: address(riskAccessFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRiskAccessFacetSelectors()
         });
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 33 (see the #687-B note above).

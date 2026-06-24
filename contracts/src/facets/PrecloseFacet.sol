@@ -1144,6 +1144,14 @@ contract PrecloseFacet is
         // `msg.sender == diamond` inside createOfferInternal,
         // corrupting `offer.creator` and the asset-pull allowance
         // check.
+        // #671 — exempt this protocol-authored offset-offer create from the
+        // risk-access gate; the offset is gated on the INCOMING obligee at
+        // accept time (a later #671 phase), not on this protocol-mediated
+        // create. The transient is shared storage so it survives the
+        // cross-facet hop; cleared right after the call (before the success
+        // check) so a non-false value can never persist past this tx.
+        LibVaipakam.Storage storage s671 = LibVaipakam.storageSlot();
+        s671.saleVehicleCreate = true;
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createOfferInternal.selector,
@@ -1151,6 +1159,7 @@ contract PrecloseFacet is
                 params
             )
         );
+        s671.saleVehicleCreate = false;
         if (!success) revert OfferCreationFailed();
         newOfferId = abi.decode(result, (uint256));
     }

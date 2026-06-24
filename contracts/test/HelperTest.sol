@@ -33,6 +33,7 @@ import {AutoLifecycleFacet} from "../src/facets/AutoLifecycleFacet.sol";
 import {EncumbranceMutateFacet} from "../src/facets/EncumbranceMutateFacet.sol";
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFactoryFacet.sol";
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
@@ -776,6 +777,33 @@ contract HelperTest {
         selectors[10] = LenderIntentFacet.rollIntentLoan.selector;
     }
 
+    function getRiskAccessFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](19);
+        selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
+        selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
+        selectors[2] = RiskAccessFacet.setMidTierPairAck.selector;
+        selectors[3] = RiskAccessFacet.setVaultRiskTierBySig.selector;
+        selectors[4] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
+        selectors[5] = RiskAccessFacet.setMidTierPairAckBySig.selector;
+        selectors[6] = RiskAccessFacet.bumpRiskTermsVersion.selector;
+        selectors[7] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
+        selectors[8] = RiskAccessFacet.setProtocolManagedVault.selector;
+        selectors[9] = RiskAccessFacet.getVaultRiskTier.selector;
+        selectors[10] = RiskAccessFacet.getEffectiveRiskTier.selector;
+        selectors[11] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
+        selectors[12] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
+        selectors[13] = RiskAccessFacet.getRiskTierUnlockAt.selector;
+        selectors[14] = RiskAccessFacet.isProtocolManagedVault.selector;
+        selectors[15] = RiskAccessFacet.riskAccessNonceUsed.selector;
+        selectors[16] = RiskAccessFacet.hasIlliquidPairConsent.selector;
+        selectors[17] = RiskAccessFacet.hasMidTierPairAck.selector;
+        selectors[18] = RiskAccessFacet.pairRequiredRiskLevel.selector;
+    }
+
     function getAggregatorAdapterFactoryFacetSelectors()
         public
         pure
@@ -1358,7 +1386,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](71);
+        selectors = new bytes4[](73);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1479,6 +1507,12 @@ contract HelperTest {
         selectors[70] = ConfigFacet.setTwaRecentWeight.selector;
         // #687-B: former [71] setTwaMinStakedDays + [72] setMirrorTierMaxAgeSec
         // relocated into the slots freed by the removed staking selectors.
+        // #671 — progressive risk-access gate master kill-switch + view, so
+        // the test diamond routes `setRiskAccessGateEnabled` /
+        // `getRiskAccessGateEnabled` (the create-gate integration + admin-only
+        // access-control tests in RiskAccessFacetTest exercise these).
+        selectors[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
+        selectors[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
         return selectors;
     }
 

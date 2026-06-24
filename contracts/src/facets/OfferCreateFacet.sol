@@ -24,6 +24,7 @@ import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
 import {LibAutoRefinanceCheck} from "../libraries/LibAutoRefinanceCheck.sol";
+import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibSignedOffer} from "../libraries/LibSignedOffer.sol";
 
@@ -870,6 +871,24 @@ contract OfferCreateFacet is
         offer.collateralLiquidity = collateralLiq;
 
         if (!params.creatorRiskAndTermsConsent) revert RiskAndTermsConsentRequired();
+
+        // #671 — progressive risk-access gate at the create chokepoint (shared by
+        // every create path). No-op unless the kill-switch is on; protocol-
+        // authored lender-sale-vehicle creates are exempt via the `saleVehicleCreate`
+        // transient (their risk is the EXITING lender's, already gated at the
+        // original loan). The riskier of the two legs governs and NFT rentals
+        // tier off the value-bearing prepay token — see `LibRiskAccess`.
+        if (LibVaipakam.cfgRiskAccessGateEnabled() && !s.saleVehicleCreate) {
+            LibRiskAccess.assertActorMayTransact(
+                s,
+                creator,
+                params.lendingAsset,
+                params.assetType,
+                params.collateralAsset,
+                params.collateralAssetType,
+                params.prepayAsset
+            );
+        }
 
         // ── Range Orders Phase 1 — system-derived bound enforcement ────
         // Active ONLY when the master `rangeAmountEnabled` flag is on

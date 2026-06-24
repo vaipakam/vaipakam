@@ -446,12 +446,19 @@ contract EarlyWithdrawalFacet is
         // not a real borrower posting collateral.  alice's collateral on the
         // live loan continues to back it after the lender transfer.  Setting 0
         // avoids requiring liam to post fresh capital he shouldn't need.
+        // #671 — exempt this protocol-authored sale-vehicle create from the
+        // risk-access gate: the offer's risk is the EXITING lender's, already
+        // gated at the original loan. The transient is shared storage so it
+        // survives the cross-facet `createOfferInternal` hop, and is cleared
+        // immediately after (a non-false value at rest is a bug).
+        s.saleVehicleCreate = true;
         uint256 saleOfferId = _submitSaleOffer(
             loan,
             remainingDays,
             interestRateBps,
             creatorRiskAndTermsConsent
         );
+        s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
 

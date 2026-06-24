@@ -643,6 +643,31 @@ library LibVaipakam {
     }
 
     /**
+     * @notice #671 — per-vault progressive risk-access tier.
+     * @dev Default-init `0 == BlueChipOnly`, so every fresh vault starts at
+     *      the safest tier with NO migration (zero-init storage = the strictest
+     *      gate). A user opts UP — never down by accident — only via the
+     *      EIP-712 self-submit setter in `RiskAccessFacet`. The gate uses
+     *      `min(tier(lendLeg), tier(collateral))` (lower ordinal = stricter),
+     *      so the riskier of the two legs governs.
+     *
+     *      The tiers map to liquidity bands derived on-chain (NO governance
+     *      allow-list — see `docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md`):
+     *        - `BlueChipOnly`  — only blue-chip assets: the numeraire basket
+     *          (WETH + the configured PAA quote assets) OR an asset that earns
+     *          `getEffectiveLiquidityTier == 3` (the O6 numeraire-basket union).
+     *        - `BroadLiquid`   — any liquid (tier ≥ 1) asset, with a one-time
+     *          per-pair mid-tier acknowledgement.
+     *        - `IlliquidCustom`— illiquid / unpriced assets, with explicit
+     *          per-pair consent.
+     */
+    enum RiskAccessLevel {
+        BlueChipOnly,
+        BroadLiquid,
+        IlliquidCustom
+    }
+
+    /**
      * @notice Enum for offer types.
      * @dev Lender offers to lend, Borrower requests to borrow.
      */
@@ -4325,6 +4350,59 @@ library LibVaipakam {
         address acceptAckIlliquidLend;
         address acceptAckIlliquidColl;
         bool acceptAckActive;
+        // #671 — progressive risk access (blue-chip default / mid-tier ack /
+        // illiquid-custom consent). APPENDED AT THE TRUE STORAGE TAIL (same
+        // append-only discipline as the #662 / #638 blocks above) so applying
+        // this as a diamond upgrade can't shift any pre-existing slot. The whole
+        // surface is gated by `riskAccessGateEnabled` (default `false` ⇒ every
+        // gate site no-ops — the exact `depthTieredLtvEnabled` kill-switch idiom),
+        // so a fresh deploy behaves identically until governance flips it on after
+        // that chain's liquidity census. See
+        // docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md.
+        bool riskAccessGateEnabled;
+        // Per-vault risk tier (`RiskAccessLevel`). Zero-init `0 == BlueChipOnly`
+        // is the default for every vault; opted up only via the EIP-712
+        // self-submit setter in `RiskAccessFacet`.
+        mapping(address => RiskAccessLevel) userRiskAccess;
+        // Per-(user, pairKey) explicit consent to a specific ILLIQUID asset pair,
+        // required for an `IlliquidCustom` vault to transact that pair.
+        // pairKey == `LibRiskAccess.pairKey(lendAsset, collAsset, prepayAsset)`.
+        mapping(address => mapping(bytes32 => bool)) illiquidPairConsent;
+        // Per-(user, pairKey) one-time mid-tier acknowledgement, required for a
+        // `BroadLiquid` vault to transact a non-blue-chip-but-liquid pair.
+        mapping(address => mapping(bytes32 => bool)) midTierPairAck;
+        // Monotonic terms-version ledger. A self-submit setter stamps the user's
+        // anchor to `currentRiskTermsVersion` at unlock; a governance bump of
+        // `currentRiskTermsVersion` re-locks every level whose anchor is now stale
+        // (reject-stale + refresh-all-held). Revocations are exempt from the
+        // stale-check (a user may always tighten).
+        uint64 currentRiskTermsVersion;
+        mapping(address => uint64) riskTierVersionAt;
+        mapping(address => mapping(bytes32 => uint64)) illiquidPairVersionAt;
+        mapping(address => mapping(bytes32 => uint64)) midTierVersionAt;
+        // Per-vault unlock cooldown anchor: an opt-up takes effect only at/after
+        // `riskTierUnlockAt[user]` (= now + `riskAccessUnlockCooldown` at set time).
+        // Anti-grief so a phished signature can't both raise the tier AND
+        // immediately transact a malicious pair in one atomic bundle.
+        uint64 riskAccessUnlockCooldown;
+        mapping(address => uint64) riskTierUnlockAt;
+        // Opt-in self-imposed strict mode: when true, the user's offers re-assert
+        // their tier at accept/match time too (not only at create), so a tier the
+        // user later tightened can't be exploited via a pre-signed stale fill.
+        mapping(address => bool) riskStrictMode;
+        // Transient: set immediately before a protocol-authored lender-sale-vehicle
+        // `createOffer` so the create gate exempts that offer (the sale vehicle's
+        // tier is the EXITING lender's concern, already gated at the original loan).
+        // Cleared in the same tx — a non-false value at rest is a bug (mirrors
+        // `acceptAckActive`).
+        bool saleVehicleCreate;
+        // Allow-set of protocol-managed vaults (sale vehicles / backstop) that are
+        // exempt from the self-submit signature requirement for tier opt-up.
+        mapping(address => bool) protocolManagedVault;
+        // Per-vault EIP-712 replay nonce for the gasless self-submit setters in
+        // `RiskAccessFacet` (see `LibRiskAccess`). Separate from the #662
+        // `acceptNonceUsed` ledger so the two signature surfaces never collide.
+        mapping(address => mapping(uint256 => bool)) riskAccessNonceUsed;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
@@ -4978,6 +5056,38 @@ library LibVaipakam {
     ///      after that chain's slippage census + audit.
     function cfgDepthTieredLtvEnabled() internal view returns (bool) {
         return storageSlot().protocolCfg.depthTieredLtvEnabled;
+    }
+
+    /// @dev #671 — master kill-switch for the progressive risk-access gate.
+    ///      Default `false` ⇒ every gate site (create / accept / match /
+    ///      refinance / obligation-transfer) no-ops, so a fresh deploy is
+    ///      unchanged. Flipped on per chain by
+    ///      `ConfigFacet.setRiskAccessGateEnabled` after that chain's liquidity
+    ///      census, mirroring the `depthTieredLtvEnabled` rollout. Lives at the
+    ///      `Storage` tail (NOT in `ProtocolConfig`, which would shift every
+    ///      subsequent top-level slot — same reason as
+    ///      `backstopMinSecondaryOracleCoverage`).
+    function cfgRiskAccessGateEnabled() internal view returns (bool) {
+        return storageSlot().riskAccessGateEnabled;
+    }
+
+    /// @dev #671 (O6) — membership test for the configured PAA quote-asset
+    ///      basket (the numeraire set the depth oracle measures every other
+    ///      asset against). A member is blue-chip BY CONSTRUCTION — you cannot
+    ///      use a non-deep asset as the measuring stick — so the risk gate
+    ///      treats the basket as tier-3-equivalent even though a numeraire
+    ///      can't route-quote against itself. WETH is handled separately in
+    ///      `LibRiskAccess._isBlueChip` (it is the implicit single-element PAA
+    ///      fallback when `paaAssets` is empty), so this checks only the
+    ///      explicitly-configured array.
+    function isPaaAsset(address asset) internal view returns (bool) {
+        if (asset == address(0)) return false;
+        address[] storage paa = storageSlot().paaAssets;
+        uint256 n = paa.length;
+        for (uint256 i; i < n; ++i) {
+            if (paa[i] == asset) return true;
+        }
+        return false;
     }
 
     /// @dev Slippage bound (bps) a simulated fixed-size swap must clear
