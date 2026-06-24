@@ -55,12 +55,22 @@ export default function RiskAccessSettings() {
     ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
   };
 
+  // A raised tier is "cooling down" until its unlock time; re-submitting the
+  // same level during the cooldown re-arms it, so the re-affirm path is gated on
+  // this (Codex #734 r3).
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const cooling = risk.tierUnlockAt > nowSec;
+
   async function chooseTier(level: RiskTier) {
     // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a
     // risk-terms bump the raw tier stays but the effective tier drops to
     // BlueChipOnly until re-stamped, so re-selecting the same level must go
-    // through. Only no-op when the level is already the effective, current tier.
-    if (level === risk.rawTier && risk.effectiveTier === risk.rawTier) return;
+    // through to re-affirm it. But do NOT re-submit while the tier is merely
+    // COOLING DOWN from a recent raise (Codex #734 r3): re-submitting then
+    // re-arms a fresh cooldown and delays access. So only re-affirm when the
+    // held tier is stale (not effective) AND its cooldown has already elapsed.
+    if (level === risk.rawTier && (risk.effectiveTier === risk.rawTier || cooling))
+      return;
     const step = beginStep({
       area: "profile",
       flow: "setVaultRiskTier",
@@ -172,7 +182,13 @@ export default function RiskAccessSettings() {
         </div>
         <div>
           Enforcement:{" "}
-          <strong>{risk.gateEnabled ? "on" : "off (not yet enforced)"}</strong>
+          <strong>
+            {!risk.gateEnabledKnown
+              ? "unknown (couldn't read the master switch)"
+              : risk.gateEnabled
+                ? "on"
+                : "off (not yet enforced)"}
+          </strong>
         </div>
       </section>
 
@@ -186,16 +202,20 @@ export default function RiskAccessSettings() {
       >
         {TIER_OPTIONS.map((opt) => {
           const selected = risk.rawTier === opt.level;
-          // A selected tier that isn't currently effective (stale after a terms
-          // bump, or cooling down) can be re-affirmed — keep its button enabled.
           const current = selected && risk.effectiveTier === risk.rawTier;
+          // Selected, raised, and still cooling down — disabled (re-clicking
+          // would restart the cooldown). Selected but stale (cooldown elapsed,
+          // yet not effective ⇒ a terms bump) — enabled to re-affirm.
+          const coolingThis = selected && !current && cooling;
+          const reaffirmable = selected && !current && !cooling;
+          const locked = busy || current || coolingThis;
           return (
             <button
               key={opt.level}
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={busy || current}
+              disabled={locked}
               onClick={() => chooseTier(opt.level)}
               style={{
                 textAlign: "left",
@@ -205,12 +225,18 @@ export default function RiskAccessSettings() {
                   ? "2px solid var(--accent, #4a7dff)"
                   : "1px solid rgba(255,255,255,0.18)",
                 background: selected ? "rgba(74,125,255,0.10)" : "transparent",
-                cursor: busy || current ? "default" : "pointer",
+                cursor: locked ? "default" : "pointer",
               }}
             >
               <div style={{ fontWeight: 600 }}>
                 {RISK_TIER_LABEL[opt.level]} {current && "✓"}
-                {selected && !current && (
+                {coolingThis && (
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {" "}
+                    — selected; effective once the opt-up cooldown elapses
+                  </span>
+                )}
+                {reaffirmable && (
                   <span style={{ fontWeight: 400, opacity: 0.8 }}>
                     {" "}
                     — selected but not effective; click to re-affirm

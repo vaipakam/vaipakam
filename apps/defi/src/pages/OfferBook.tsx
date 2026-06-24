@@ -2016,7 +2016,9 @@ function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
  * just avoids an opaque revert.
  */
 function AcceptRiskPreflight({ offer }: { offer: OfferData }) {
-  const { status, blocked, reason } = useRiskAccessPreflight(offer.id);
+  const { status, blocked, settingsActionable, reason } = useRiskAccessPreflight(
+    offer.id,
+  );
   // Surface the in-flight check too (Codex #734 P2): on a slow RPC the banner
   // would otherwise be absent while the preview resolves, letting a user start
   // the accept signature before the warning appears. This stays informational
@@ -2046,8 +2048,13 @@ function AcceptRiskPreflight({ offer }: { offer: OfferData }) {
         border: '1px solid rgba(220,160,30,0.4)',
       }}
     >
-      {reason}{' '}
-      <Link to="/risk-access">Open Risk Access settings</Link>
+      {reason}
+      {settingsActionable && (
+        <>
+          {' '}
+          <Link to="/risk-access">Open Risk Access settings</Link>
+        </>
+      )}
     </div>
   );
 }

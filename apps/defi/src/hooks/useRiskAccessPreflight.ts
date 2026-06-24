@@ -72,6 +72,9 @@ export interface RiskPreflight {
   status: RiskPreflightStatus;
   /** True only when the gate would actively block the accept. */
   blocked: boolean;
+  /** True when the block is fixable from the Risk Access settings page (tier
+   *  only today — per-pair consent / ack paths are deferred). */
+  settingsActionable: boolean;
   /** Human-readable reason + fix (empty for ok/idle). */
   reason: string;
 }
@@ -79,13 +82,17 @@ export interface RiskPreflight {
 export function useRiskAccessPreflight(
   offerId: bigint | null | undefined,
 ): RiskPreflight {
-  const { address } = useWallet();
+  const { address, isCorrectChain } = useWallet();
   const diamondRo = useDiamondRead();
   const [status, setStatus] = useState<RiskPreflightStatus>("idle");
 
   useEffect(() => {
     let cancelled = false;
-    if (!address || offerId == null) {
+    // Idle unless there's a connected wallet on a chain with a deployed Diamond
+    // (Codex #734 r3): otherwise `useDiamondRead` resolves to the default / a
+    // zero-address deployment and the modal could show a different chain's
+    // verdict for an accept that can't settle here.
+    if (!address || offerId == null || !isCorrectChain) {
       setStatus("idle");
       return;
     }
@@ -114,12 +121,22 @@ export function useRiskAccessPreflight(
     return () => {
       cancelled = true;
     };
-  }, [address, offerId, diamondRo]);
+  }, [address, offerId, isCorrectChain, diamondRo]);
 
   const blocked =
     status === "tier-too-low" ||
     status === "needs-illiquid-consent" ||
     status === "needs-midtier-ack";
 
-  return { status, blocked, reason: RISK_PREFLIGHT_REASON[status] };
+  // Only the tier block is fixable from the Risk Access settings page today;
+  // the per-pair consent / strict-mode ack paths are deferred, so linking those
+  // statuses there would be a dead end (Codex #734 r3).
+  const settingsActionable = status === "tier-too-low";
+
+  return {
+    status,
+    blocked,
+    settingsActionable,
+    reason: RISK_PREFLIGHT_REASON[status],
+  };
 }

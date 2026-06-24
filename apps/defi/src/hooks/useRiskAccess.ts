@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondRead } from "../contracts/useDiamond";
 
@@ -7,8 +7,8 @@ import { useDiamondRead } from "../contracts/useDiamond";
  *
  * Reads the connected vault's self-sovereign risk-access state from the Diamond:
  * the effective tier (read-time re-locked — a stale terms anchor or a pending
- * cooldown drops it back to BlueChipOnly on-chain), the raw opted-in tier, and
- * the global gate / terms-version context.
+ * cooldown drops it back to BlueChipOnly on-chain), the raw opted-in tier, the
+ * raise-cooldown unlock time, and the global gate / terms-version context.
  *
  * The progressive-risk gate is governed by an off-by-default master switch
  * (`riskAccessGateEnabled`). Per the product direction the controls are surfaced
@@ -17,12 +17,13 @@ import { useDiamondRead } from "../contracts/useDiamond";
  * whether those choices are actually ENFORCED at origination yet.
  *
  * Wallet-specific: the reads are gated on the wallet being on a chain with a
- * deployed Diamond (`isCorrectChain`, Codex #734 P2) so the page never shows
- * another chain's / a sentinel-address default for the connected address while
- * writes can't settle. Older Diamonds that predate `RiskAccessFacet` revert
- * `FunctionDoesNotExist`; that is detected and surfaced as `supported = false`
- * (mirrors `KeeperSettings`). Strict mode is deliberately NOT read here yet — its
- * dapp control ships with the per-pair acknowledgement path in a follow-up.
+ * deployed Diamond (`isCorrectChain`) so the page never shows another chain's /
+ * a sentinel-address default for the connected address while writes can't settle.
+ * In-flight reads are sequence-guarded so a wallet/network switch can't let a
+ * stale result overwrite the current one. Older Diamonds that predate
+ * `RiskAccessFacet` revert `FunctionDoesNotExist` ⇒ `supported = false`. Strict
+ * mode is deliberately NOT read here yet — its dapp control ships with the
+ * per-pair acknowledgement path in a follow-up.
  */
 
 export const RISK_TIER = {
@@ -45,8 +46,14 @@ export interface RiskAccessState {
   /** The raw opted-in tier (may exceed `effectiveTier` while cooling down /
    *  stale after a terms bump). */
   rawTier: RiskTier;
+  /** Unix seconds the current raise-cooldown elapses (0 if none pending). While
+   *  `now < tierUnlockAt` a raised tier is still cooling down. */
+  tierUnlockAt: bigint;
   /** Whether the master progressive-risk gate is enforced on this deployment. */
   gateEnabled: boolean;
+  /** False when the gate-enabled read failed — `gateEnabled` is then unknown,
+   *  not authoritative. */
+  gateEnabledKnown: boolean;
   /** Global risk-terms version (a bump re-locks every held tier / consent). */
   termsVersion: bigint;
   /** False on a Diamond that predates `RiskAccessFacet`. */
@@ -74,61 +81,72 @@ export function useRiskAccess(): RiskAccessState {
 
   const [effectiveTier, setEffectiveTier] = useState<RiskTier>(0);
   const [rawTier, setRawTier] = useState<RiskTier>(0);
+  const [tierUnlockAt, setTierUnlockAt] = useState<bigint>(0n);
   const [gateEnabled, setGateEnabled] = useState(false);
+  const [gateEnabledKnown, setGateEnabledKnown] = useState(true);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
   const [supported, setSupported] = useState(true);
-  // Start loading whenever there's a connected vault on a deployed Diamond to
-  // read for, so the page shows a spinner from first paint instead of flashing
-  // default values (Claude review #734 P3).
   const [loading, setLoading] = useState(() => !!address && isCorrectChain);
   const [error, setError] = useState<string | null>(null);
 
+  // Monotonic request token: a refresh only applies its results while it is the
+  // latest one, so a wallet/network switch mid-flight can't let an older read
+  // overwrite the current vault's state (Codex #734 r3).
+  const reqRef = useRef(0);
+
   const refresh = useCallback(async () => {
-    // Only read for a connected wallet on a chain with a deployed Diamond — never
-    // fall back to another chain's / the sentinel-address state (Codex #734 P2).
     if (!address || !isCorrectChain) {
       setLoading(false);
       return;
     }
-    // Set synchronously before the first await so a wallet that connects after
-    // mount immediately shows the loading guard, not the default values
-    // (Codex #734 P2 — the once-only useState initializer can't do this).
+    const myReq = ++reqRef.current;
+    const live = () => myReq === reqRef.current;
     setLoading(true);
     setError(null);
     let missing = false;
     const ro = diamondRo as unknown as {
       getEffectiveRiskTier: (a: string) => Promise<number | bigint>;
       getVaultRiskTier: (a: string) => Promise<number | bigint>;
+      getRiskTierUnlockAt: (a: string) => Promise<number | bigint>;
       getCurrentRiskTermsVersion: () => Promise<bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
     };
-    // The first read doubles as the "does this Diamond cut RiskAccessFacet?"
-    // probe — keep it sequential so a missing-selector revert switches to the
-    // unsupported state before the others run.
+    // First read doubles as the "does this Diamond cut RiskAccessFacet?" probe.
     try {
-      setEffectiveTier(Number(await ro.getEffectiveRiskTier(address)) as RiskTier);
+      const eff = Number(await ro.getEffectiveRiskTier(address)) as RiskTier;
+      if (live()) setEffectiveTier(eff);
     } catch (e) {
       if (isMissingSelector(e)) missing = true;
-      else setError((e as Error).message);
+      else if (live()) setError((e as Error).message);
     }
     if (!missing) {
-      // The remaining three reads are independent — batch them (Claude review
-      // #734 P2). Each keeps its own fallback so one failure doesn't blank the
-      // rest; the tier read surfaces an error, version/gate are informational.
-      const [rawT, version, gateOn] = await Promise.all([
+      const [rawT, unlockAt, version, gateRes] = await Promise.all([
         ro.getVaultRiskTier(address).catch((e) => {
-          setError((e as Error).message);
+          if (live()) setError((e as Error).message);
           return 0;
         }),
+        ro.getRiskTierUnlockAt(address).catch(() => 0),
         ro.getCurrentRiskTermsVersion().catch(() => 0n),
-        ro.getRiskAccessGateEnabled().catch(() => false),
+        // Distinguish a real read failure from "off": a failure leaves
+        // enforcement UNKNOWN rather than silently reporting it off
+        // (Codex #734 r3).
+        ro
+          .getRiskAccessGateEnabled()
+          .then((v) => ({ ok: true, v: Boolean(v) }))
+          .catch(() => ({ ok: false, v: false })),
       ]);
-      setRawTier(Number(rawT) as RiskTier);
-      setTermsVersion(BigInt(version));
-      setGateEnabled(Boolean(gateOn));
+      if (live()) {
+        setRawTier(Number(rawT) as RiskTier);
+        setTierUnlockAt(BigInt(unlockAt));
+        setTermsVersion(BigInt(version));
+        setGateEnabled(gateRes.v);
+        setGateEnabledKnown(gateRes.ok);
+      }
     }
-    setSupported(!missing);
-    setLoading(false);
+    if (live()) {
+      setSupported(!missing);
+      setLoading(false);
+    }
   }, [address, isCorrectChain, diamondRo]);
 
   useEffect(() => {
@@ -138,7 +156,9 @@ export function useRiskAccess(): RiskAccessState {
   return {
     effectiveTier,
     rawTier,
+    tierUnlockAt,
     gateEnabled,
+    gateEnabledKnown,
     termsVersion,
     supported,
     wrongChain: !!address && !isCorrectChain,
