@@ -2,12 +2,11 @@ import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } fro
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
-import { encodeFunctionData } from 'viem';
-import { SimulationPreview } from '../components/app/SimulationPreview';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
+import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
 import { useWallet } from '../context/WalletContext';
 import { useWalletClient } from 'wagmi';
 import { useDiamondContract, useDiamondRead, useDiamondPublicClient, useReadChain } from '../contracts/useDiamond';
@@ -330,6 +329,8 @@ export default function OfferBook() {
   const diamondRead = useDiamondRead();
   const { data: walletClient } = useWalletClient();
   const { sign: permit2Sign, canSign: permit2CanSign } = usePermit2Signing();
+  // #662 — every accept path now requires an acceptor-signed `AcceptTerms`.
+  const { sign: signAcceptTerms } = useAcceptTermsSigning();
   // The wallet's active chain (or DEFAULT_CHAIN fallback when disconnected).
   // Used to target multicalls and build explorer links at the Diamond the
   // user's reads are actually hitting, instead of hard-coding DEFAULT_CHAIN.
@@ -826,6 +827,22 @@ export default function OfferBook() {
     setTxHash(null);
     const step = beginStep({ area: 'offer-accept', flow: 'acceptOffer', step: 'submit-tx', wallet: address, chainId, offerId });
 
+    // #662 — sign the AcceptTerms first (binds the exact offer terms +
+    // acknowledged-illiquid identities; the contract reverts any accept whose
+    // signed terms don't match the stored offer). Shared by both the Permit2
+    // and classic paths below. A separate signature from the Permit2 one.
+    let acceptTerms: Awaited<ReturnType<typeof signAcceptTerms>>;
+    try {
+      acceptTerms = await signAcceptTerms({ offerId, consent: acceptorConsent });
+    } catch (sigErr) {
+      const msg = sigErr instanceof Error ? sigErr.message : String(sigErr);
+      setError(msg);
+      step.failure({ errorType: 'signature', errorMessage: msg });
+      setAcceptingId(null);
+      return;
+    }
+    const { terms, signature: acceptSig } = acceptTerms;
+
     // Phase 8b.1 — attempt the Permit2 path for borrower-side ERC-20
     // accepts of lender offers. Saves the user the separate `approve`
     // tx when they already have Permit2 pre-approved (common on
@@ -854,12 +871,13 @@ export default function OfferBook() {
           diamond as unknown as {
             acceptOfferWithPermit: (
               id: bigint,
-              consent: boolean,
+              terms: unknown,
+              acceptSig: Hex,
               permit: unknown,
-              signature: Hex,
+              permitSignature: Hex,
             ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
           }
-        ).acceptOfferWithPermit(offerId, acceptorConsent, permit, signature);
+        ).acceptOfferWithPermit(offerId, terms, acceptSig, permit, signature);
         setTxHash(tx.hash);
         await tx.wait();
         setOffers((prev) => prev.filter((o) => o.id !== offerId));
@@ -906,7 +924,15 @@ export default function OfferBook() {
         await ensureAllowance(tokenToApprove, amountToApprove);
       }
 
-      const tx = await diamond.acceptOffer(offerId, acceptorConsent);
+      const tx = await (
+        diamond as unknown as {
+          acceptOffer: (
+            id: bigint,
+            terms: unknown,
+            acceptSig: Hex,
+          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+        }
+      ).acceptOffer(offerId, terms, acceptSig);
       setTxHash(tx.hash);
       await tx.wait();
       // Drop the accepted row locally; the log index will catch up on reload.
@@ -1566,15 +1592,6 @@ export default function OfferBook() {
           onCancel={cancelAccept}
           discountPreview={discountPreview}
           protocolConfig={protocolConfig}
-          permit2Eligible={
-            // Mirror the predicate used inside `submitAccept` so the
-            // preview encodes the same path the wallet will sign.
-            // Borrower-side ERC-20 accept of a lender ERC-20 offer
-            // takes the Permit2 path when the wallet supports it.
-            pendingOffer.offerType === 0 &&
-            pendingOffer.assetType === 0 &&
-            !!permit2CanSign
-          }
         />
       )}
     </div>
@@ -1591,13 +1608,9 @@ interface AcceptReviewModalProps {
   onCancel: () => void;
   discountPreview: DiscountPreview | null;
   protocolConfig: ProtocolConfig | null;
-  /** True when {submitAccept} will pick the Permit2 single-sig path
-   *  for this offer. Drives the inline transaction-scan preview so
-   *  the scanned calldata matches what the user is about to sign. */
-  permit2Eligible: boolean;
 }
 
-function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig, permit2Eligible }: AcceptReviewModalProps) {
+function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig }: AcceptReviewModalProps) {
   const { t } = useTranslation();
   const { address: viewerAddress } = useWallet();
   const principalIlliquid = offer.principalLiquidity === 1;
@@ -1864,15 +1877,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offers skip the check (no DEX swap path applies). */}
         <AcceptLiquidityPreflight offer={offer} />
 
-        {/* ET-001 — pre-sign eth_call preflight. Encodes the SAME
-            calldata the confirmation flow will submit
-            (`acceptOfferWithPermit` on the Permit2 path, classic
-            `acceptOffer` otherwise) so the preflight reflects the
-            on-chain action 1:1. */}
-        <AcceptSimulationPreview
-          offer={offer}
-          permit2Eligible={permit2Eligible}
-        />
+        {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
+            was removed: an accept now binds an EIP-712-signed `AcceptTerms`, and
+            `_verifyAndBindAccept` rejects any unsigned/placeholder accept before
+            reaching the checks the preview cared about (KYC / balances) — so a
+            pre-sign simulation can only ever revert at the signature gate. The
+            real safety net is the post-sign tx-receipt verification +
+            error-decoding in `submitAccept`. (Liquidity preflight above still
+            applies — it reads, it doesn't simulate the accept call.) */}
 
         {/* T-034 — when the offer carries a Periodic Interest Payment
             cadence other than None, surface a callout above the consent
@@ -1947,78 +1959,12 @@ interface PaginationProps {
   onPage: (p: number) => void;
 }
 
-/**
- * Phase 8b.2 — encodes the pending accept call and hands it to the
- * shared SimulationPreview component.
- *
- * #00013 fix: when the parent has decided to take the Permit2
- * single-sig path (mirroring the predicate inside `submitAccept`),
- * encode `acceptOfferWithPermit(offerId, true, permit, signature)`
- * with placeholder permit fields so the preflight sees the SAME
- * Diamond entry point the wallet will sign. The signature isn't
- * cryptographically valid yet — so the `eth_call` reverts at the
- * Permit2 signature check; `useTxSimulation` recognises a
- * signature-revert as a preview artefact and downgrades it to
- * "preview unavailable" rather than a false "would revert" alarm.
- *
- * On the classic path we keep encoding `acceptOffer(offerId, true)`.
- */
-function AcceptSimulationPreview({
-  offer,
-  permit2Eligible,
-}: {
-  offer: OfferData;
-  permit2Eligible: boolean;
-}) {
-  const chain = useReadChain();
-  const diamondAddress = (chain.diamondAddress ?? DEFAULT_CHAIN.diamondAddress) as Address;
-
-  const data: Hex = permit2Eligible
-    ? (encodeFunctionData({
-        abi: DIAMOND_ABI,
-        functionName: 'acceptOfferWithPermit',
-        args: [
-          offer.id,
-          true,
-          // Placeholder permit — token / amount match the real pull;
-          // nonce + deadline use safe defaults. Permit2 will reject
-          // this signature on-chain (zeroed); the eth_call preflight
-          // reverts at the Permit2 check, which useTxSimulation maps
-          // to "preview unavailable" (not a false revert alarm).
-          {
-            permitted: {
-              token: offer.collateralAsset as Address,
-              amount: offer.collateralAmount,
-            },
-            nonce: 0n,
-            deadline: BigInt(Math.floor(Date.now() / 1000) + 1800),
-          },
-          // 65-byte zero signature (r=0, s=0, v=0). Same shape Permit2
-          // expects; the scanner sees a Permit2 pull was requested.
-          ('0x' + '00'.repeat(65)) as Hex,
-        ],
-      }) as Hex)
-    : (encodeFunctionData({
-        abi: DIAMOND_ABI,
-        functionName: 'acceptOffer',
-        args: [offer.id, true],
-      }) as Hex);
-
-  return (
-    <SimulationPreview
-      tx={{
-        to: diamondAddress,
-        data,
-        value: 0n,
-        // Permit2 path encodes a placeholder (zeroed) signature, so
-        // the eth_call reverts at the signature check — an artefact,
-        // not a real failure. Tell the preflight to treat that one
-        // revert class as "unavailable" rather than "would revert".
-        allowSignatureRevert: permit2Eligible,
-      }}
-    />
-  );
-}
+// #662 — `AcceptSimulationPreview` (the Phase 8b.2 pre-sign eth_call preflight)
+// was removed: an accept now binds an EIP-712-signed `AcceptTerms` and
+// `_verifyAndBindAccept` reverts at the signature gate before any of the checks
+// the preview surfaced (KYC / balance / sanctions), so a pre-sign simulation can
+// only ever report "preview unavailable". The post-sign tx-receipt verification
+// in `submitAccept` is the real safety net.
 
 const PREFLIGHT_WORKER_ORIGIN_OB =
   (import.meta as unknown as { env: Record<string, string | undefined> }).env
