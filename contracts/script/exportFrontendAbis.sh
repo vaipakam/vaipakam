@@ -107,6 +107,10 @@ FACETS=(
   # ConsolidationNotAllowed error. ReceiverFacet is internal plumbing (no
   # frontend/keeper consumer), so it is intentionally NOT exported.
   "ConsolidationFacet"
+  # #671 — self-sovereign progressive risk-access setters + EIP-712
+  # self-submit + views (the frontend pre-flights the gate + drives the
+  # tier opt-up / per-pair consent flows from this surface).
+  "RiskAccessFacet"
   "OfferAcceptFacet"
   "OfferMatchFacet"
   "OfferMutateFacet"

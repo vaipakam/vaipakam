@@ -1144,6 +1144,14 @@ contract PrecloseFacet is
         // `msg.sender == diamond` inside createOfferInternal,
         // corrupting `offer.creator` and the asset-pull allowance
         // check.
+        // #671 (Codex #727 r1 P1) — this offset path creates a NEW lender offer
+        // for `msg.sender` (a real user, not a protocol sale vehicle), so it is
+        // NOT exempt from the create-time risk-access gate: an under-tiered
+        // borrower must not be able to offset an illiquid / tier-1 loan into a
+        // fresh ungated offer. The gate runs inside `createOfferInternal` on the
+        // offer creator. (Only the lender-sale vehicle in `EarlyWithdrawalFacet`
+        // sets `saleVehicleCreate`, because there the risk is the exiting
+        // lender's and was already gated at the original loan.)
         (bool success, bytes memory result) = address(this).call(
             abi.encodeWithSelector(
                 OfferCreateFacet.createOfferInternal.selector,

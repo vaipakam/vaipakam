@@ -36,6 +36,7 @@ import {AggregatorAdapterFactoryFacet} from "../src/facets/AggregatorAdapterFact
 import {BackstopFacet} from "../src/facets/BackstopFacet.sol";
 import {ReceiverFacet} from "../src/facets/ReceiverFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {IntentConfigFacet} from "../src/facets/IntentConfigFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
@@ -179,6 +180,8 @@ contract DeployDiamond is Script {
         BackstopFacet backstopFacet = new BackstopFacet();
         ReceiverFacet receiverFacet = new ReceiverFacet();
         ConsolidationFacet consolidationFacet = new ConsolidationFacet();
+        // #671 — self-sovereign progressive risk-access facet.
+        RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
         // T-090 v1.1 (#389) — intent-based swap-to-repay config knobs.
         // Carved off `ConfigFacet` after the round-2 PR #420 CI block
         // pushed it past EIP-170.
@@ -247,7 +250,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](60);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -459,6 +462,14 @@ contract DeployDiamond is Script {
         cuts[59] = _buildCut(
             address(receiverFacet),
             _getReceiverFacetSelectors()
+        );
+        // #671 — self-sovereign progressive risk-access. Per-vault tier opt-up
+        // (direct + EIP-712 self-submit) + per-pair consent / ack setters + the
+        // admin levers (terms-version bump, opt-up cooldown, protocol-managed-
+        // vault exemptions) + views. See `RiskAccessFacet.sol` natspec.
+        cuts[60] = _buildCut(
+            address(riskAccessFacet),
+            _getRiskAccessFacetSelectors()
         );
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
@@ -790,6 +801,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("encumbranceMutateFacet",  address(encumbranceMutateFacet));
         // #393 v1 — LenderIntentVault standing-terms surface.
         Deployments.writeFacet("lenderIntentFacet",       address(lenderIntentFacet));
+        // #671 — progressive risk-access facet (per-vault tiers + consent).
+        Deployments.writeFacet("riskAccessFacet",         address(riskAccessFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -849,6 +862,7 @@ contract DeployDiamond is Script {
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
+        console.log("RiskAccessFacet:      ", address(riskAccessFacet));
         console.log("Admin:                ", admin);
         console.log("Treasury:             ", treasury);
         console.log("");
@@ -1449,6 +1463,26 @@ contract DeployDiamond is Script {
         s[10] = LenderIntentFacet.rollIntentLoan.selector;
     }
 
+    function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](16);
+        s[0] = RiskAccessFacet.setVaultRiskTier.selector;
+        s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
+        s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
+        s[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
+        s[4] = RiskAccessFacet.bumpRiskTermsVersion.selector;
+        s[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
+        s[6] = RiskAccessFacet.setProtocolManagedVault.selector;
+        s[7] = RiskAccessFacet.getVaultRiskTier.selector;
+        s[8] = RiskAccessFacet.getEffectiveRiskTier.selector;
+        s[9] = RiskAccessFacet.getCurrentRiskTermsVersion.selector;
+        s[10] = RiskAccessFacet.getRiskAccessUnlockCooldown.selector;
+        s[11] = RiskAccessFacet.getRiskTierUnlockAt.selector;
+        s[12] = RiskAccessFacet.isProtocolManagedVault.selector;
+        s[13] = RiskAccessFacet.riskAccessNonceUsed.selector;
+        s[14] = RiskAccessFacet.hasIlliquidPairConsent.selector;
+        s[15] = RiskAccessFacet.pairRequiredRiskLevel.selector;
+    }
+
     function _getAggregatorAdapterFactorySelectors()
         internal
         pure
@@ -1965,7 +1999,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](71);
+        s = new bytes4[](73);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2123,6 +2157,9 @@ contract DeployDiamond is Script {
         s[70] = ConfigFacet.setTwaRecentWeight.selector;
         // #687-B: former s[71] setTwaMinStakedDays + s[72] setMirrorTierMaxAgeSec
         // were relocated into the slots freed by the removed staking selectors.
+        // #671 — progressive risk-access gate master kill-switch + getter.
+        s[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
+        s[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

@@ -41,8 +41,12 @@ abstract contract DiamondFacetNames {
     ///      HF liquidator carved out of `RiskFacet` for EIP-170 headroom);
     ///      58 → 59 in #394 with `NumeraireConfigFacet` (numeraire / PAD /
     ///      periodic-interest config carved out of `ConfigFacet` for
-    ///      EIP-170 headroom, Codex #647).)
-    function cutFacetNames() internal pure returns (string[60] memory) {
+    ///      EIP-170 headroom, Codex #647);
+    ///      59 → 60 in #671 with `RiskAccessFacet` (self-sovereign
+    ///      progressive risk-access setters + EIP-712 self-submit +
+    ///      views; dedicated facet keeps the verify path off
+    ///      ProfileFacet and within EIP-170).)
+    function cutFacetNames() internal pure returns (string[61] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -187,7 +191,13 @@ abstract contract DiamondFacetNames {
             "ReceiverFacet",
             // #594 — standalone holder-only entry points to consolidate a
             // transferred loan position into the current NFT holder's vault.
-            "ConsolidationFacet"
+            "ConsolidationFacet",
+            // #671 — self-sovereign progressive risk-access. Per-vault tier
+            // opt-up (direct + EIP-712 self-submit) + per-pair consent / ack
+            // setters + the admin levers (terms-version bump, opt-up cooldown,
+            // protocol-managed-vault exemptions) + views. Dedicated facet keeps
+            // the EIP-712 verify path off ProfileFacet and within EIP-170.
+            "RiskAccessFacet"
         ];
     }
 }

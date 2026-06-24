@@ -1128,6 +1128,25 @@ contract ConfigFacet is DiamondAccessControl {
         emit DepthTieredLtvEnabledSet(enabled);
     }
 
+    /// @custom:event-category informational/config
+    event RiskAccessGateEnabledSet(bool enabled);
+
+    /// @notice Master kill-switch for the #671 progressive risk-access gate.
+    ///         Default `false` — every gate site (create / accept / match /
+    ///         refinance / obligation-transfer) no-ops, so the protocol behaves
+    ///         exactly as before. Flip on per chain ONLY after that chain's
+    ///         liquidity census, mirroring the {setDepthTieredLtvEnabled}
+    ///         rollout. The flag lives at the `Storage` tail (NOT in
+    ///         `protocolCfg`) so applying #671 as a diamond upgrade can't shift
+    ///         a pre-existing slot.
+    function setRiskAccessGateEnabled(bool enabled)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        LibVaipakam.storageSlot().riskAccessGateEnabled = enabled;
+        emit RiskAccessGateEnabledSet(enabled);
+    }
+
     /// ─── FlashLoanLiquidationPath.md — discount-path governance ──────
 
     /// @notice Emitted on every flip of the discount-path master flag.
@@ -1776,6 +1795,11 @@ contract ConfigFacet is DiamondAccessControl {
     ///         protocol-console knob schema.
     function getDepthTieredLtvEnabled() external view returns (bool) {
         return LibVaipakam.storageSlot().protocolCfg.depthTieredLtvEnabled;
+    }
+
+    /// @notice Single-field getter for the #671 risk-access gate master flag.
+    function getRiskAccessGateEnabled() external view returns (bool) {
+        return LibVaipakam.storageSlot().riskAccessGateEnabled;
     }
 
     /// @notice The PAA list — the per-chain quote tokens the depth-tier
