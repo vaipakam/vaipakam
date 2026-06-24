@@ -4092,16 +4092,25 @@ library LibVaipakam {
         // the EIP-712 `AcceptTerms` signature (see `LibAcceptTerms`). Each
         // acceptor consumes its nonce once when a public accept entry verifies
         // the typed signature, so a captured signature cannot be replayed.
-        // The binding itself (field-equality + acknowledged-illiquid asset) is
-        // enforced AT the public entry as a pure function of (stored offer,
-        // signed terms) BEFORE `_acceptOffer` runs — no transient "verified"
-        // flag is needed: every acceptor-facing entry (direct / Permit2 /
-        // signed-offer fill) performs the bind in line, while the keeper match
-        // path never routes through a public accept entry and so is exempt by
-        // construction (it pairs two self-authored offers — no phished
-        // acceptor; see `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md`
-        // §5).
+        // The FIELD-equality binding (signed terms == stored offer) is enforced
+        // at the public entry (pure function of offer+terms; no liquidity read,
+        // so no TOCTOU). The acknowledged-illiquid ENFORCEMENT, however, lives
+        // at the LTV/HF bypass site (`LoanFacet._maybeRunInitialRiskGates`) so
+        // it checks against the SAME liquidity classification that authorises
+        // the bypass — a hostile ERC-20 transfer hook can't flip a leg's
+        // liquidity between an entry-time read and the gate (Codex #724 P1).
+        // The entry forwards the signed acked-asset identities to the gate via
+        // this transient injection slot (same idiom as `matchOverride` /
+        // `signedOfferAcceptor`); `_acceptOffer` clears it. The keeper match
+        // path never sets it (`acceptAckActive == false`) and so is exempt by
+        // construction (two self-authored offers — no phished acceptor; see
+        // `docs/DesignsAndPlans/OfferAcceptTermBindingDesign.md` §5/§8b).
         mapping(address => mapping(uint256 => bool)) acceptNonceUsed;
+        // Transient acked-illiquid-asset injection (see above). MUST be cleared
+        // in the same tx — a non-false `acceptAckActive` at rest is a bug.
+        address acceptAckIlliquidLend;
+        address acceptAckIlliquidColl;
+        bool acceptAckActive;
         // #393 v1 — LenderIntentVault. APPEND-ONLY.
         // `lenderIntent[owner][lendingAsset][collateralAsset]` — the owner's
         // standing lending terms for that asset-pair (one per pair in v1).

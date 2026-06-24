@@ -7,6 +7,7 @@ import {LibAcceptTerms} from "../src/libraries/LibAcceptTerms.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -130,7 +131,7 @@ contract AcceptTermBindingTest is SetupTest {
         bytes memory sig = _sign(t);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferAcceptFacet.IlliquidAssetNotAcknowledged.selector, mockIlliquidERC20
+                IVaipakamErrors.IlliquidAssetNotAcknowledged.selector, mockIlliquidERC20
             )
         );
         _accept(offerId, t, sig);
@@ -151,7 +152,7 @@ contract AcceptTermBindingTest is SetupTest {
         bytes memory sig = _sign(t);
         vm.expectRevert(
             abi.encodeWithSelector(
-                OfferAcceptFacet.IlliquidAssetNotAcknowledged.selector, mockIlliquidERC20
+                IVaipakamErrors.IlliquidAssetNotAcknowledged.selector, mockIlliquidERC20
             )
         );
         _accept(offerId, t, sig);
@@ -174,7 +175,7 @@ contract AcceptTermBindingTest is SetupTest {
         bytes memory sig = _sign(t);
         // Submit as `lender` — msg.sender != terms.acceptor.
         vm.expectRevert(
-            abi.encodeWithSelector(OfferAcceptFacet.AcceptorMismatch.selector, borrower, lender)
+            OfferAcceptFacet.AcceptorMismatch.selector
         );
         vm.prank(lender);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
@@ -186,7 +187,7 @@ contract AcceptTermBindingTest is SetupTest {
         bytes memory sig = _sign(t);
         vm.warp(block.timestamp + 2 hours);
         vm.expectRevert(
-            abi.encodeWithSelector(OfferAcceptFacet.AcceptDeadlineExpired.selector, t.deadline)
+            OfferAcceptFacet.AcceptDeadlineExpired.selector
         );
         _accept(offerId, t, sig);
     }
@@ -205,7 +206,7 @@ contract AcceptTermBindingTest is SetupTest {
         t.nonce = o1; // reuse the already-consumed nonce
         bytes memory sig = _sign(t);
         vm.expectRevert(
-            abi.encodeWithSelector(OfferAcceptFacet.AcceptNonceUsed.selector, o1)
+            OfferAcceptFacet.AcceptNonceUsed.selector
         );
         _accept(o2, t, sig);
     }

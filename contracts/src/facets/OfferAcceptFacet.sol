@@ -213,24 +213,24 @@ contract OfferAcceptFacet is
     ///         21 refinanceTargetLoanId · 22 parallelSaleOrderHash ·
     ///         23 periodicInterestCadence · 24 linkedLoanId.
     error OfferTermsMismatch(uint8 field);
-    /// @notice An illiquid leg's acknowledged-asset identity in the signed
-    ///         `AcceptTerms` did not match the leg's actual asset (or a liquid
-    ///         leg named a non-zero acknowledged asset). Blocks a clone that
-    ///         hardcodes consent but cannot name the specific illiquid asset.
-    error IlliquidAssetNotAcknowledged(address leg);
+    // `IlliquidAssetNotAcknowledged(address)` is inherited from IVaipakamErrors
+    // (shared with LoanFacet, which enforces it at the bypass site — Codex
+    // #724 P1; see _verifyAndBindAccept's note).
     /// @notice The EIP-712 `AcceptTerms` signature did not verify for
     ///         `terms.acceptor` (ECDSA or ERC-1271).
     error AcceptSignatureInvalid();
     /// @notice `terms.acceptor` was not the account whose funds move on this
     ///         accept (the direct caller, or the resolved signed-offer
     ///         acceptor) — the digest is bound to one account by design.
-    error AcceptorMismatch(address signed, address actual);
+    ///         Parameterless to keep the facet under EIP-170 (the caller holds
+    ///         both addresses); same rationale for the two below.
+    error AcceptorMismatch();
     /// @notice `block.timestamp` is past `terms.deadline` — the signing window
     ///         for this acceptance has closed.
-    error AcceptDeadlineExpired(uint256 deadline);
+    error AcceptDeadlineExpired();
     /// @notice `terms.nonce` was already consumed by `terms.acceptor` — a
     ///         captured acceptance signature cannot be replayed.
-    error AcceptNonceUsed(uint256 nonce);
+    error AcceptNonceUsed();
     // NotOfferCreator inherited from IVaipakamErrors
     // Create-side errors (InvalidOfferType, OfferDurationExceedsCap, the
     // Range Orders Phase 1 errors, GetUserVaultFailed) live on
@@ -472,26 +472,33 @@ contract OfferAcceptFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // 1 — signing window.
         if (block.timestamp > terms.deadline) {
-            revert AcceptDeadlineExpired(terms.deadline);
+            revert AcceptDeadlineExpired();
         }
         // 2 — bind the digest to the funds-mover (no cross-ERC-1271 replay).
         if (terms.acceptor != acceptor) {
-            revert AcceptorMismatch(terms.acceptor, acceptor);
+            revert AcceptorMismatch();
         }
         // 3 — single-use nonce (replay protection).
         if (s.acceptNonceUsed[terms.acceptor][terms.nonce]) {
-            revert AcceptNonceUsed(terms.nonce);
+            revert AcceptNonceUsed();
         }
         s.acceptNonceUsed[terms.acceptor][terms.nonce] = true;
         // 4 — EIP-712 signature (ECDSA or ERC-1271 via OZ SignatureChecker).
         if (!LibAcceptTerms.verify(terms, signature)) {
             revert AcceptSignatureInvalid();
         }
-        // 5 — field-by-field equality against the stored offer.
+        // 5 — field-by-field equality against the stored offer (pure; no
+        //     liquidity read, so no TOCTOU).
         _bindTermsToOffer(offerId, offerKey, terms, s);
-        // 6 — acknowledged-illiquid asset identities per leg.
-        _assertAcknowledgedIlliquid(terms.lendingAsset, terms.acknowledgedIlliquidLendingAsset);
-        _assertAcknowledgedIlliquid(terms.collateralAsset, terms.acknowledgedIlliquidCollateralAsset);
+        // 6 — forward the signed acknowledged-illiquid identities to the LTV/HF
+        //     bypass site, which ENFORCES them against the same liquidity reads
+        //     that authorise the bypass (Codex #724 P1 — a hostile ERC-20 could
+        //     otherwise flip a leg's liquidity between an entry-time check and
+        //     the gate). `_acceptOffer` clears this injection. The match path
+        //     never sets it (exempt).
+        s.acceptAckIlliquidLend = terms.acknowledgedIlliquidLendingAsset;
+        s.acceptAckIlliquidColl = terms.acknowledgedIlliquidCollateralAsset;
+        s.acceptAckActive = true;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the
@@ -544,25 +551,6 @@ contract OfferAcceptFacet is
         uint256 linked = s.saleOfferToLoanId[offerId];
         if (linked == 0) linked = s.offsetOfferToLoanId[offerId];
         if (t.linkedLoanId != linked) revert OfferTermsMismatch(24);
-    }
-
-    /// @dev Validate one leg's acknowledged-illiquid asset identity: an illiquid
-    ///      leg MUST name its exact asset; a liquid (or zero) leg MUST name
-    ///      `address(0)`. Blocks a clone that hardcodes consent but cannot name
-    ///      the specific illiquid asset it is hiding. `address(0)` legs (e.g. no
-    ///      collateral on an NFT rental) are treated as "nothing to acknowledge".
-    function _assertAcknowledgedIlliquid(address leg, address acknowledged) private view {
-        if (leg == address(0)) {
-            if (acknowledged != address(0)) revert IlliquidAssetNotAcknowledged(leg);
-            return;
-        }
-        bool illiquid = OracleFacet(address(this)).checkLiquidity(leg) ==
-            LibVaipakam.LiquidityStatus.Illiquid;
-        if (illiquid) {
-            if (acknowledged != leg) revert IlliquidAssetNotAcknowledged(leg);
-        } else if (acknowledged != address(0)) {
-            revert IlliquidAssetNotAcknowledged(leg);
-        }
     }
 
     /// @dev Zero-valued `PermitTransferFrom` for the classic accept
@@ -1482,6 +1470,13 @@ contract OfferAcceptFacet is
             effFilled,
             offer.accepted
         );
+        // #662 — clear the acked-illiquid injection set in _verifyAndBindAccept.
+        // It was already read + enforced at LoanFacet's bypass during
+        // initiateLoan above; clearing the `active` flag is sufficient (the gate
+        // checks it first, so the stale addresses are never read at rest). A
+        // revert anywhere above auto-rolls-back the set. The match path never
+        // set it.
+        s.acceptAckActive = false;
     }
 
 

@@ -473,12 +473,38 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      */
     function _maybeRunInitialRiskGates(InitCtx memory ctx) private view {
         if (ctx.isLenderSaleVehicle) return;
-        LibVaipakam.Offer storage offer = LibVaipakam.storageSlot().offers[ctx.offerId];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        LibVaipakam.Offer storage offer = s.offers[ctx.offerId];
         bool bothLiquid = ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid &&
             ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Liquid;
         bool mutualIlliquidConsent = ctx.acceptorRiskAndTermsConsent &&
             offer.creatorRiskAndTermsConsent;
-        if (!bothLiquid && mutualIlliquidConsent) return;
+        if (!bothLiquid && mutualIlliquidConsent) {
+            // #662 (Codex #724 P1) — the illiquid LTV/HF bypass is authorised
+            // only if the acceptor's signed `AcceptTerms` named the exact
+            // illiquid asset(s). Checked HERE, against the SAME liquidity reads
+            // (`ctx.*Liquidity`) that authorise the bypass — so a hostile ERC-20
+            // transfer hook cannot flip a leg's classification between an
+            // entry-time read and this gate (the entry-time check was a TOCTOU).
+            // The acceptor entry injected the signed acked identities into
+            // `s.acceptAck*`; the keeper match path leaves `acceptAckActive`
+            // false (two self-authored offers, exempt — design §5).
+            if (s.acceptAckActive) {
+                if (
+                    ctx.lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
+                    s.acceptAckIlliquidLend != offer.lendingAsset
+                ) {
+                    revert IlliquidAssetNotAcknowledged(offer.lendingAsset);
+                }
+                if (
+                    ctx.collateralLiquidity == LibVaipakam.LiquidityStatus.Illiquid &&
+                    s.acceptAckIlliquidColl != offer.collateralAsset
+                ) {
+                    revert IlliquidAssetNotAcknowledged(offer.collateralAsset);
+                }
+            }
+            return;
+        }
         address collateralAsset = LibVaipakam
             .storageSlot()
             .loans[ctx.loanId]

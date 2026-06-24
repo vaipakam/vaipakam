@@ -906,24 +906,12 @@
   {
     "type": "error",
     "name": "AcceptDeadlineExpired",
-    "inputs": [
-      {
-        "name": "deadline",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "inputs": []
   },
   {
     "type": "error",
     "name": "AcceptNonceUsed",
-    "inputs": [
-      {
-        "name": "nonce",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
+    "inputs": []
   },
   {
     "type": "error",
@@ -933,18 +921,7 @@
   {
     "type": "error",
     "name": "AcceptorMismatch",
-    "inputs": [
-      {
-        "name": "signed",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "actual",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
+    "inputs": []
   },
   {
     "type": "error",

@@ -343,6 +343,17 @@
   },
   {
     "type": "error",
+    "name": "IlliquidAssetNotAcknowledged",
+    "inputs": [
+      {
+        "name": "leg",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IlliquidLoanNoRiskMath",
     "inputs": []
   },
