@@ -3541,7 +3541,11 @@ contract OfferFacetTest is Test {
         vm.prank(user2);
         ERC20(mockERC20).approve(VaultFactoryFacet(address(diamond)).getOrCreateUserVault(user2), type(uint256).max);
 
-        uint256 loanId = LibAcceptTestSigner.signAndAccept(address(diamond), user2, user2Pk, offerId);
+        // #662 — the offer's saleOfferToLoanId was spoofed to 77, so the bound
+        // AcceptTerms.linkedLoanId must equal 77 (the auto-linked sale target).
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), user2, user2Pk, offerId, true, 77
+        );
         assertGt(loanId, 0);
         vm.clearMockedCalls();
     }

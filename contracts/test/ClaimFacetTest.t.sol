@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
@@ -60,6 +61,7 @@ contract ClaimFacetTest is Test {
     // Facet instances
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
+    OfferCancelFacet offerCancelFacet; // #662 — getOffer view the accept signer reads
     OfferAcceptFacet offerAcceptFacet;
     ProfileFacet profileFacet;
     OracleFacet oracleFacet;
@@ -124,6 +126,7 @@ contract ClaimFacetTest is Test {
         cutFacet = new DiamondCutFacet();
         diamond = new VaipakamDiamond(owner, address(cutFacet));
         offerCreateFacet = new OfferCreateFacet();
+        offerCancelFacet = new OfferCancelFacet();
         offerAcceptFacet = new OfferAcceptFacet();
         profileFacet = new ProfileFacet();
         oracleFacet = new OracleFacet();
@@ -142,7 +145,7 @@ contract ClaimFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -176,6 +179,14 @@ contract ClaimFacetTest is Test {
             facetAddress: address(new ConsolidationFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
+        });
+        // #662 — OfferCancelFacet owns `getOffer`, which the AcceptTerms test
+        // signer (LibAcceptTestSigner.buildTerms) reads to construct the typed
+        // accept; this minimal fixture didn't previously cut it.
+        cuts[18] = IDiamondCut.FacetCut({
+            facetAddress: address(offerCancelFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferCancelFacetSelectors()
         });
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
