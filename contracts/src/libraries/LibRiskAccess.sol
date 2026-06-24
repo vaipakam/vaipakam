@@ -156,17 +156,32 @@ library LibRiskAccess {
     ///         loan on the same NFT are distinct consents. ERC-20 legs carry
     ///         tokenId 0, so the key is uniform across asset classes.
     function pairKey(PairId memory p) internal pure returns (bytes32) {
+        // Canonicalize fields that are meaningless for the leg's asset class
+        // (Codex #727 r2 P2) so a junk value can't fork the consent key:
+        //  - token ids are zeroed for non-NFT legs;
+        //  - `prepayAsset` is a value-bearing (rental) leg ONLY when the LENDING
+        //    asset is an NFT, so it's zeroed otherwise (an unused prepay on an
+        //    ERC-20 offer must not change the key the user consented to).
+        bool lendIsNft = _isNft(p.lendType);
+        uint256 lendTokenId = lendIsNft ? p.lendTokenId : 0;
+        uint256 collTokenId = _isNft(p.collType) ? p.collTokenId : 0;
+        address prepay = lendIsNft ? p.prepayAsset : address(0);
         return keccak256(
             abi.encode(
                 p.lendAsset,
                 uint8(p.lendType),
-                p.lendTokenId,
+                lendTokenId,
                 p.collAsset,
                 uint8(p.collType),
-                p.collTokenId,
-                p.prepayAsset
+                collTokenId,
+                prepay
             )
         );
+    }
+
+    function _isNft(LibVaipakam.AssetType t) private pure returns (bool) {
+        return t == LibVaipakam.AssetType.ERC721
+            || t == LibVaipakam.AssetType.ERC1155;
     }
 
     // ─────────────────────────────────────────────────────────────────────────

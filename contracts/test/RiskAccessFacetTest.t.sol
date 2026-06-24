@@ -666,6 +666,36 @@ contract RiskAccessFacetTest is SetupTest {
         );
     }
 
+    /// @dev Codex #727 r2 P2 — an unused `prepayAsset` on a non-rental (ERC-20
+    ///      lending) pair must be normalized OUT of the consent key, so a junk
+    ///      prepay can't fork the key away from what the user consented to.
+    function test_consentKey_normalizesUnusedPrepayOnNonRental() public {
+        // Consent granted with no prepay (the canonical form).
+        LibRiskAccess.PairId memory clean =
+            _pair(mockERC20, T_ERC20, 0, mockCollateralERC20, T_ERC20, 0, address(0));
+        // The SAME ERC-20 pair but with a junk prepay set — prepay is not a
+        // value-bearing leg here (lend leg is ERC-20, not an NFT rental).
+        LibRiskAccess.PairId memory withJunkPrepay =
+            _pair(mockERC20, T_ERC20, 0, mockCollateralERC20, T_ERC20, 0, mockNft721);
+
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(clean, true);
+
+        // Both forms resolve to the same key, so the consent covers both.
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                lender, clean
+            ),
+            "clean pair consented"
+        );
+        assertTrue(
+            RiskAccessFacet(address(diamond)).hasIlliquidPairConsent(
+                lender, withJunkPrepay
+            ),
+            "junk prepay normalized to the same key on a non-rental pair"
+        );
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // READ-TIME RE-LOCK (version bump invalidates a stale opt-up)
     // ════════════════════════════════════════════════════════════════════════
