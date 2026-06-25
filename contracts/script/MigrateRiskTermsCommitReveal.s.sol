@@ -6,8 +6,6 @@ import {console} from "forge-std/console.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
-import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
-import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
@@ -33,13 +31,21 @@ import {Deployments} from "./lib/Deployments.sol";
  *         The `Remove` is loupe-guarded to the selectors actually present, so the
  *         script is a safe no-op-Remove on a diamond that never had them.
  *
- *         Scope: this script performs the full security migration — kill the legacy
- *         bump, wire the new commit/reveal entrypoints, AND refresh the hash-aware
- *         accept path (`OfferAcceptFacet` injects `acceptAckTermsHash`; `LoanFacet`
- *         runs the inlined gate hash check) so the new anchor is actually enforced
- *         (Codex #736 r10). A bytecode `Replace` of the diamond's OTHER existing
- *         RiskAccess selectors (tier / consent setters + views) against the
- *         freshly-deployed facet is a separate operator refresh step.
+ *         Scope: this script is the load-bearing SECURITY migration for the
+ *         RiskAccess terms-bump surface — kill the legacy single-call bump and wire
+ *         the commit/reveal entrypoints. It does NOT migrate the rest of #730's
+ *         accept-surface ABI change: adding `AcceptTerms.riskTermsHash` changed the
+ *         4-byte selectors of `acceptOffer` / `acceptOfferWithPermit` /
+ *         `verifyAndBindAccept` and the `SignedOfferFacet` fill methods, and removed
+ *         `hashAcceptTerms` — a broad Remove(old)+Add(new) across two facets that a
+ *         surgical script can't safely hand-roll (Codex #736 r10/r11). That, plus a
+ *         bytecode `Replace` of `LoanFacet` (the inlined gate) and the other
+ *         RiskAccess selectors, is performed by the FULL facet re-cut regenerated at
+ *         the first real deploy — the established `ReplaceStaleFacets` /
+ *         `DeployDiamond` convention (this codebase is pre-live, so a fresh
+ *         `DeployDiamond` — which routes the correct new ABI + asserts the legacy
+ *         bump is unrouted — is the only path that exists today). Run this migration
+ *         as part of that re-cut, not instead of it.
  *
  * Env vars: DEPLOYER_PRIVATE_KEY (+ Deployments-resolved DIAMOND_ADDRESS).
  *
@@ -108,51 +114,11 @@ contract MigrateRiskTermsCommitReveal is Script {
         }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
-
-        // #736 r10 — the hash-aware accept path lives in OfferAcceptFacet (injects
-        // `acceptAckTermsHash`) and LoanFacet (runs the inlined
-        // `LibRiskAccess.assertAcceptorMayTransact` hash check). Upgrading only the
-        // RiskAccess selectors would leave the stale accept/loan bytecode in place,
-        // so the new anchor wouldn't be enforced (and updated frontends could hit a
-        // stale `acceptOffer`). Refresh both facets' bytecode in the same upgrade by
-        // Replacing every selector currently routed to their old addresses.
-        _refreshFacetBytecode(
-            diamond, loupe, OfferAcceptFacet.acceptOffer.selector,
-            address(new OfferAcceptFacet())
-        );
-        _refreshFacetBytecode(
-            diamond, loupe, LoanFacet.initiateLoan.selector,
-            address(new LoanFacet())
-        );
-
         vm.stopBroadcast();
 
         console.log("Legacy bump selectors removed:", nRemove);
         console.log("Commit/reveal selectors replaced:", nReplace);
         console.log("Commit/reveal selectors added:   ", nAdd);
-        console.log("Refreshed OfferAcceptFacet + LoanFacet bytecode");
-    }
-
-    /// @dev Replace every selector currently routed to the facet that owns `probe`
-    ///      with `newFacet`'s freshly-deployed bytecode (a generic facet-bytecode
-    ///      refresh). Reverts if `probe` isn't routed (the facet must be present to
-    ///      refresh).
-    function _refreshFacetBytecode(
-        address diamond,
-        IDiamondLoupe loupe,
-        bytes4 probe,
-        address newFacet
-    ) private {
-        address oldFacet = loupe.facetAddress(probe);
-        require(oldFacet != address(0), "migration: accept-path facet not routed");
-        bytes4[] memory sels = loupe.facetFunctionSelectors(oldFacet);
-        IDiamondCut.FacetCut[] memory c = new IDiamondCut.FacetCut[](1);
-        c[0] = IDiamondCut.FacetCut({
-            facetAddress: newFacet,
-            action: IDiamondCut.FacetCutAction.Replace,
-            functionSelectors: sels
-        });
-        IDiamondCut(diamond).diamondCut(c, address(0), "");
     }
 
     /// @dev Count selectors in `sels` whose routed-state matches `wantRouted`.
