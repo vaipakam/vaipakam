@@ -575,15 +575,19 @@ library LibRiskAccess {
     /// @notice Opt a vault UP to a tier (or tighten it). Tightening (a lower
     ///         ordinal than currently held) is exempt from the cooldown — a user
     ///         may always reduce their own exposure immediately.
-    /// @dev    `termsVersion` binds the grant to the risk-terms version the
-    ///         signer agreed to (Codex #727 r1 P1): a `*BySig` submit rejects a
-    ///         signature whose `termsVersion` != the live `currentRiskTermsVersion`,
-    ///         so an old long-deadline signature can't be relayed after a
-    ///         `bumpRiskTermsVersion()` to silently re-establish freshness.
+    /// @dev    `termsHash` binds the grant to the UNGUESSABLE risk-terms anchor the
+    ///         signer agreed to (#737, replacing the predictable `termsVersion` of
+    ///         Codex #727 r1 P1): a `*BySig` submit rejects a signature whose
+    ///         `termsHash` != the live `currentRiskTermsHash`, so an old long-deadline
+    ///         signature can't be relayed after a terms change to silently
+    ///         re-establish freshness. Because the next anchor is hidden behind the
+    ///         #730 commit-reveal until activation, a malicious relayer can no longer
+    ///         induce a user to PRE-SIGN a future-epoch grant (the numeric version is
+    ///         `current + 1` — guessable; the hash is not).
     struct SetVaultRiskTier {
         address vault; // == recovered / 1271 signer
         uint8 level; // target RiskAccessLevel
-        uint64 termsVersion; // must == currentRiskTermsVersion at submit
+        bytes32 termsHash; // must == currentRiskTermsHash at submit (#737)
         uint256 nonce; // per-vault replay nonce
         uint256 deadline; // unix-seconds
     }
@@ -602,7 +606,7 @@ library LibRiskAccess {
         uint256 collTokenId;
         address prepayAsset;
         bool consent; // true = grant, false = revoke
-        uint64 termsVersion;
+        bytes32 termsHash; // must == currentRiskTermsHash at submit (#737)
         uint256 nonce;
         uint256 deadline;
     }
@@ -613,7 +617,7 @@ library LibRiskAccess {
     struct SetRiskStrictMode {
         address vault;
         bool enabled;
-        uint64 termsVersion;
+        bytes32 termsHash; // must == currentRiskTermsHash at submit (#737)
         uint256 nonce;
         uint256 deadline;
     }
@@ -632,22 +636,22 @@ library LibRiskAccess {
         uint8 collAssetType;
         uint256 collTokenId;
         address prepayAsset;
-        uint64 termsVersion;
+        bytes32 termsHash; // must == currentRiskTermsHash at submit (#737)
         uint256 nonce;
         uint256 deadline;
     }
 
     bytes32 internal constant SET_VAULT_RISK_TIER_TYPEHASH = keccak256(
-        "SetVaultRiskTier(address vault,uint8 level,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+        "SetVaultRiskTier(address vault,uint8 level,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_ILLIQUID_PAIR_CONSENT_TYPEHASH = keccak256(
-        "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+        "SetIlliquidPairConsent(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bool consent,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_RISK_STRICT_MODE_TYPEHASH = keccak256(
-        "SetRiskStrictMode(address vault,bool enabled,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+        "SetRiskStrictMode(address vault,bool enabled,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
     bytes32 internal constant SET_MID_TIER_PAIR_ACK_TYPEHASH = keccak256(
-        "SetMidTierPairAck(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,uint64 termsVersion,uint256 nonce,uint256 deadline)"
+        "SetMidTierPairAck(address vault,address lendAsset,uint8 lendAssetType,uint256 lendTokenId,address collAsset,uint8 collAssetType,uint256 collTokenId,address prepayAsset,bytes32 termsHash,uint256 nonce,uint256 deadline)"
     );
 
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -684,7 +688,7 @@ library LibRiskAccess {
                     SET_VAULT_RISK_TIER_TYPEHASH,
                     m.vault,
                     m.level,
-                    m.termsVersion,
+                    m.termsHash,
                     m.nonce,
                     m.deadline
                 )
@@ -716,7 +720,7 @@ library LibRiskAccess {
                         m.prepayAsset,
                         m.consent
                     ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                    abi.encode(m.termsHash, m.nonce, m.deadline)
                 )
             )
         );
@@ -729,7 +733,7 @@ library LibRiskAccess {
                     SET_RISK_STRICT_MODE_TYPEHASH,
                     m.vault,
                     m.enabled,
-                    m.termsVersion,
+                    m.termsHash,
                     m.nonce,
                     m.deadline
                 )
@@ -758,7 +762,7 @@ library LibRiskAccess {
                         m.collTokenId,
                         m.prepayAsset
                     ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                    abi.encode(m.termsHash, m.nonce, m.deadline)
                 )
             )
         );

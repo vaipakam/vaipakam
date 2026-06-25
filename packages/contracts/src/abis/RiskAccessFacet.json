@@ -809,9 +809,9 @@
             "internalType": "bool"
           },
           {
-            "name": "termsVersion",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "termsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "nonce",
@@ -934,9 +934,9 @@
             "internalType": "address"
           },
           {
-            "name": "termsVersion",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "termsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "nonce",
@@ -1023,9 +1023,9 @@
             "internalType": "bool"
           },
           {
-            "name": "termsVersion",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "termsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "nonce",
@@ -1081,9 +1081,9 @@
             "internalType": "uint8"
           },
           {
-            "name": "termsVersion",
-            "type": "uint64",
-            "internalType": "uint64"
+            "name": "termsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           },
           {
             "name": "nonce",
@@ -1382,24 +1382,24 @@
   },
   {
     "type": "error",
-    "name": "RiskTermsRevealMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RiskTermsVersionStale",
+    "name": "RiskTermsHashStale",
     "inputs": [
       {
         "name": "signed",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes32",
+        "internalType": "bytes32"
       },
       {
         "name": "current",
-        "type": "uint64",
-        "internalType": "uint64"
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RiskTermsRevealMismatch",
+    "inputs": []
   },
   {
     "type": "error",

@@ -143,7 +143,7 @@ contract RiskStrictModeTest is SetupTest {
             keccak256(
                 abi.encode(
                     LibRiskAccess.SET_RISK_STRICT_MODE_TYPEHASH,
-                    m.vault, m.enabled, m.termsVersion, m.nonce, m.deadline
+                    m.vault, m.enabled, m.termsHash, m.nonce, m.deadline
                 )
             )
         );
@@ -162,7 +162,7 @@ contract RiskStrictModeTest is SetupTest {
                         m.vault, m.lendAsset, m.lendAssetType, m.lendTokenId,
                         m.collAsset, m.collAssetType, m.collTokenId, m.prepayAsset
                     ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                    abi.encode(m.termsHash, m.nonce, m.deadline)
                 )
             )
         );
@@ -321,13 +321,18 @@ contract RiskStrictModeTest is SetupTest {
     // ════════════════════════════════════════════════════════════════════════
 
     function test_strictMode_bySigPaths() public {
+        // #737 — relayed grants bind the UNGUESSABLE `currentRiskTermsHash`. Seed a
+        // live non-zero anchor BEFORE arming so the tier stamp is fresh against it
+        // (the gate rejects a zero-bound grant; a post-arm bump would re-lock the
+        // tier and block the create for the wrong reason).
+        _bumpRiskTerms(keccak256("rt-sm-bysig"));
         _armBroadLiquidGate();
-        uint64 ver =
-            RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion();
+        bytes32 termsHash =
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash();
 
         // Relayer enables strict mode on the lender's behalf.
         LibRiskAccess.SetRiskStrictMode memory sm = LibRiskAccess.SetRiskStrictMode({
-            vault: lender, enabled: true, termsVersion: ver, nonce: 1,
+            vault: lender, enabled: true, termsHash: termsHash, nonce: 1,
             deadline: block.timestamp + 1 hours
         });
         vm.prank(makeAddr("relayer"));
@@ -355,7 +360,7 @@ contract RiskStrictModeTest is SetupTest {
             collAssetType: uint8(LibVaipakam.AssetType.ERC20),
             collTokenId: 0,
             prepayAsset: mockERC20,
-            termsVersion: ver,
+            termsHash: termsHash,
             nonce: 2,
             deadline: block.timestamp + 1 hours
         });
