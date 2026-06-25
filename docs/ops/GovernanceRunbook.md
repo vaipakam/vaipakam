@@ -480,49 +480,47 @@ never parked in a public timelock queue. Steps:
    published hash is pre-stampable), and NEVER reuse one secret across
    chains (revealing on chain A leaks it for a still-pending chain B; the
    ledger is single-use per diamond). Keep it secret until step 4.
-2. **Schedule the three no-secret ADMIN actions up front, in one Timelock
-   pass.** None of them carries the secret, so their 48h delays run
-   concurrently and the reveal-sensitive window collapses to a single block
-   (steps 4–5). Through the Timelock (`ADMIN_ROLE`), schedule:
-   - `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))` — the hiding
-     commitment (the only call tied to the future anchor, and it reveals
-     nothing about it);
-   - `setRiskAccessUnlockCooldown(seconds)` — if you want a nonzero opt-up
-     cooldown (max 30 days; skip for immediate opt-ups). It MUST be live
-     before the reveal: the direct opt-up setters stamp each `unlockAt`
-     from whatever cooldown is current, so an opt-up armed while the
-     cooldown is still 0 is immediately effective and never retroactively
-     picks up a later value;
-   - `setRiskAccessGateEnabled(true)` — the gate flip (`ADMIN_ROLE`; carries
-     no secret). Schedule it as its OWN Timelock operation so step 5 can
-     execute it on its own, AFTER the reveal.
+2. **Schedule op A via the Timelock (`ADMIN_ROLE`): BATCH
+   `setRiskAccessUnlockCooldown(seconds)` + `commitRiskTermsBump(
+   keccak256(abi.encode(termsAnchor)))` into one operation.** Batching makes
+   the cooldown go live the instant the commit executes — before any reveal —
+   so the first opt-ups can't arm at cooldown 0 (the direct opt-up setters
+   stamp each `unlockAt` from whatever cooldown is current and never pick up a
+   later value). Set the cooldown **≥ the Timelock delay** (see step 5). The
+   commitment is the only call tied to the future anchor and reveals nothing.
+   Skip the cooldown call only if you want immediate opt-ups AND accept the
+   step-5 window. **If you supersede this commit** (the anchor leaked or was
+   wrong), explicitly `cancel` the old Timelock operation — the facet
+   overwrites `pendingRiskTermsCommitment` only when the NEW commit executes,
+   so an un-cancelled old one can execute later and clobber it (stalling the
+   reveal, or letting the `PAUSER` reveal an obsolete anchor).
+3. Wait out the 48h, then **execute op A.** Verify on-chain BEFORE revealing:
+   `getRiskAccessUnlockCooldown()` == your value, AND
+   `getPendingRiskTermsCommitment() == keccak256(abi.encode(termsAnchor))`
+   (the live pending commitment is yours, not a superseded one).
+4. **Reveal.** The `PAUSER_ROLE` guardian calls
+   `revealRiskTermsBump(termsAnchor)` directly (no Timelock delay — the reveal
+   IS the activation, atomic). It bumps `currentRiskTermsVersion` to 1 and
+   sets `currentRiskTermsHash`. The secret is exposed only in this tx's brief
+   mempool window. **Verify `currentRiskTermsHash != 0`** before proceeding.
+5. **Only AFTER the reveal is confirmed on-chain, schedule and (after its 48h)
+   execute op B: `setRiskAccessGateEnabled(true)`.** Scheduling the gate flip
+   *after* the reveal is deliberate: a flip pre-scheduled alongside op A
+   carries **no on-chain dependency on the reveal**, so once its delay elapses
+   it can be executed first (especially with a permissionless Timelock
+   executor) — turning the gate on while `currentRiskTermsHash` is still 0,
+   which bricks the relayed `*BySig` path (it reverts) and binds the accept
+   ack to the guessable zero. The cost of scheduling-after is the gate's own
+   48h delay following the reveal: during it the anchor is public and users
+   can arm opt-ups, which is exactly why step 2 sets the cooldown **≥ this
+   delay** — any window-armed opt-up stays locked until the gate is live.
+   (Advanced optimisation: to remove the window you MAY pre-schedule op B with
+   op A, but ONLY if your Timelock executor is trusted / non-permissionless,
+   so you can guarantee op B is executed after step 4 and never before.)
 
-   Wait out the 48h. **If you supersede a commit** (the anchor leaked or was
-   wrong), explicitly `cancel` the old `commitRiskTermsBump` Timelock
-   operation — the facet only overwrites `pendingRiskTermsCommitment` when
-   the NEW commit executes, so an un-cancelled old one can execute later and
-   clobber it (stalling the reveal, or letting the `PAUSER` reveal an
-   obsolete anchor).
-3. Execute the commit (and the cooldown, if you batched the two). Then
-   **verify `getPendingRiskTermsCommitment() == keccak256(abi.encode(
-   termsAnchor))`** — confirm the live pending commitment is yours and not a
-   superseded one before you reveal.
-4. The `PAUSER_ROLE` guardian calls `revealRiskTermsBump(termsAnchor)`
-   directly (no timelock delay — the reveal IS the activation, atomic). It
-   bumps `currentRiskTermsVersion` to 1 and sets `currentRiskTermsHash`.
-   The secret is exposed only in this tx's brief mempool window.
-5. **Immediately execute the pre-scheduled gate flip** (the
-   `setRiskAccessGateEnabled(true)` from step 2) right after the reveal.
-   Because its 48h already elapsed, the reveal→enable gap is a single block,
-   not a fresh Timelock window. (Scheduling the flip only AFTER the reveal
-   instead reopens a 48h window in which the now-public anchor lets users
-   arm opt-up grants; if the opt-up cooldown is shorter than that enable
-   delay, those grants are already unlocked when the gate turns on,
-   defeating the first-enable cooldown. Pre-schedule the flip; if you truly
-   cannot, set the cooldown longer than the enable delay.)
-
-**Changing the risk terms later** repeats the commit→reveal (steps 2–4)
-with a fresh secret:
+**Changing the risk terms later** repeats op A's `commitRiskTermsBump` + the
+`revealRiskTermsBump` (steps 2–4; the cooldown and gate flip are one-time
+enablement steps you skip) with a fresh secret:
 each reveal bumps the version, and every held tier / per-pair consent /
 mid-tier ack whose anchor is now stale **re-locks at read time** with zero
 per-user writes — users re-affirm against the new terms to regain access.
