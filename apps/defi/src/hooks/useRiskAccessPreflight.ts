@@ -62,7 +62,7 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   "tier-too-low":
     "This offer's asset pair needs a higher risk tier than is currently set. If it's your vault, raise your tier in Risk Access settings; otherwise the offer can't be filled right now.",
   "needs-illiquid-consent":
-    "This pair includes an illiquid asset. Accepting usually covers it via your acceptance signature; if it doesn't, a standing per-pair consent is required that this app can't record yet (it may also be the offer creator's consent that's missing).",
+    "This pair includes an illiquid asset that needs a standing per-pair consent the gate can't see right now — it may be the offer creator's consent that's missing or stale, or a consent this app can't record yet. The accept can't be completed until it's in place.",
   "needs-midtier-ack":
     "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover, and that this app can't record yet.",
   error: "Couldn't check the risk-access requirements right now.",
@@ -72,10 +72,12 @@ export interface RiskPreflight {
   status: RiskPreflightStatus;
   /** True only when the gate would actively block the accept (any reason). */
   blocked: boolean;
-  /** A DEFINITE on-chain block regardless of the acceptance signature — a tier
-   *  shortfall or a strict-mode mid-tier ack. (Illiquid consent is excluded: the
-   *  acceptance signature usually satisfies the acceptor's side, so it isn't a
-   *  hard block.) Used to disable the accept Confirm button. */
+  /** A DEFINITE on-chain block the upcoming accept signature cannot clear — used
+   *  to disable the accept Confirm button. Every non-OK preview code qualifies:
+   *  the preview checks the OFFER CREATOR before the acceptor, so any block can
+   *  originate from the creator's lost tier / stale consent (which the
+   *  acceptor's signature can't fix), and the loan-init gate would still revert.
+   *  Conservatively disabling Confirm for all of them prevents a doomed sign. */
   hardBlock: boolean;
   /** True while the check is still in flight — Confirm should stay disabled so a
    *  user can't sign before the (possibly blocking) verdict resolves. */
@@ -143,12 +145,16 @@ export function useRiskAccessPreflight(
     status === "needs-illiquid-consent" ||
     status === "needs-midtier-ack";
 
-  // Tier shortfall + strict-mode ack are DEFINITE on-chain blocks; the illiquid
-  // case usually clears via the acceptance signature, so it stays informational
-  // (Codex #734 r5). The reason copy is neutral about WHO must act (the preview
-  // checks the creator first), so no in-app "fix it here" action is offered.
-  const hardBlock =
-    status === "tier-too-low" || status === "needs-midtier-ack";
+  // Every non-OK preview code is a hard block. The preview evaluates the offer
+  // CREATOR before the acceptor (RiskAccessFacet checks creatorBlock first), and
+  // the lender-sale buyer path consults standing consent only — so a code-2
+  // illiquid block can come from the creator's revoked / terms-staled consent or
+  // a sale-vehicle buyer lacking standing consent, neither of which the upcoming
+  // acceptance signature can satisfy; the loan-init gate would still revert
+  // (Codex #734 r9). We can't tell the self-healable acceptor case apart from the
+  // bare code, so we conservatively disable Confirm for all blocks rather than
+  // let the user sign a doomed accept.
+  const hardBlock = blocked;
 
   return {
     status,

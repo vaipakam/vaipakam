@@ -7,14 +7,18 @@ risk-access gate would reject.
 A new **Risk Access** settings page lets a connected vault see and manage its
 risk posture: its currently-effective tier (which reflects the on-chain
 read-time re-lock — a raised tier still cooling down, or one made stale by a
-risk-terms-version bump, shows as the safer effective tier until it settles or is
-re-affirmed) and choose its tier (Blue-chip only / Broad liquid / Illiquid-custom),
-including re-affirming a held tier that has gone stale. The page makes the
-product posture explicit: every vault starts at the safest tier and opts up to
-riskier tiers only by its own choice — the same blue-chip-default,
-opt-in-with-consent model the contracts enforce. It also shows whether the gate
-is actually being enforced on the current deployment (the master switch), and is
-shown only when the wallet is on a network with a deployed contract.
+risk-terms-version bump, shows as the safer effective tier until it settles) and
+choose its tier (Blue-chip only / Broad liquid / Illiquid-custom). A held tier
+that is not yet effective is shown as informational only; re-affirming it in
+place is a deliberate follow-up (it needs a per-user terms-version read the dapp
+doesn't have yet), so in the meantime a user lowers then re-raises the tier to
+re-affirm. The page makes the product posture explicit: every vault starts at the
+safest tier and opts up to riskier tiers only by its own choice — the same
+blue-chip-default, opt-in-with-consent model the contracts enforce. It also shows
+whether the gate is actually being enforced on the current deployment (the master
+switch), and is shown only when the wallet is on a network with a deployed
+contract. The entry sits in the main navigation (not behind Advanced mode) so a
+retail user can always reach the opt-up controls.
 
 The accept flow gains a **risk preflight**: when a user reviews an offer, the
 dapp asks the read-only on-chain preview whether their wallet would be blocked by

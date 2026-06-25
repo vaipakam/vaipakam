@@ -120,6 +120,17 @@ const BASIC_NAV = [
     end: false,
   },
   {
+    // Risk Access lives in BASIC_NAV, not Advanced: every vault starts at the
+    // blue-chip-only default and the accept preflight can hard-block a
+    // tier-too-low accept, so a retail (Basic-mode) user must be able to reach
+    // the opt-up controls without first discovering Advanced mode or the URL
+    // (Codex #734 r9).
+    to: "/risk-access",
+    icon: <Gauge size={20} />,
+    labelKey: "appNav.riskAccess",
+    end: false,
+  },
+  {
     to: "/data-rights",
     icon: <Lock size={20} />,
     labelKey: "appNav.dataRights",
@@ -132,12 +143,6 @@ const ADVANCED_NAV = [
     to: "/keepers",
     icon: <ShieldCheck size={20} />,
     labelKey: "appNav.keepers",
-    end: false,
-  },
-  {
-    to: "/risk-access",
-    icon: <Gauge size={20} />,
-    labelKey: "appNav.riskAccess",
     end: false,
   },
 ];
