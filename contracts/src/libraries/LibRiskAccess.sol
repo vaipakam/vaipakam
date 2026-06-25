@@ -401,9 +401,10 @@ library LibRiskAccess {
         //    acceptor's value verbatim). A NUMERIC version is predictable, so even
         //    an exact `==` lets a UI pre-stamp `N+1` and have the stale ack activate
         //    on the next bump. So the ack binds the UNGUESSABLE `currentRiskTermsHash`
-        //    (re-derived from bump-time block entropy) and must match it EXACTLY —
-        //    a value a pre-signing UI cannot predict, proving the ack was signed
-        //    after the live terms were published.
+        //    (a commit-reveal random SECRET — `revealRiskTermsBump`, never the public
+        //    terms-doc hash) and must match it EXACTLY — a value a pre-signing UI
+        //    cannot predict, proving the ack was signed after the live terms were
+        //    published.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
                 && s.acceptAckTermsHash == s.currentRiskTermsHash

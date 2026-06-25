@@ -188,7 +188,15 @@ contract RiskAccessFacet is DiamondAccessControl {
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
-        if (commitment == bytes32(0)) revert InvalidRiskTermsHash();
+        // Reject both the zero commitment AND a commitment to the zero anchor
+        // (`keccak256(abi.encode(bytes32(0)))`) — the latter would only be caught
+        // at reveal (anchor != 0), wasting a governance commit; fail fast (#736 r13).
+        if (
+            commitment == bytes32(0)
+                || commitment == keccak256(abi.encode(bytes32(0)))
+        ) {
+            revert InvalidRiskTermsHash();
+        }
         LibVaipakam.storageSlot().pendingRiskTermsCommitment = commitment;
         emit RiskTermsBumpCommitted(commitment);
     }
@@ -217,6 +225,16 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         and never-before-used (single-use, #736 r6) so every change re-locks
     ///         and rolling A→B→A can't revive a stale ack. The numeric version stays
     ///         the anchor for the contract-written tier / consent freshness.
+    ///
+    ///         MULTI-CHAIN (Codex #736 r13): governance MUST use a fresh, INDEPENDENT
+    ///         secret per diamond/chain. The same secret cannot mix in a per-chain
+    ///         value on-chain (chainid / `address(this)` are public, so any
+    ///         derivation is computable), so reusing one anchor across chains and
+    ///         revealing at different times would leak it from the first chain's
+    ///         reveal and let it be pre-stamped on chains where it is still pending.
+    ///         (The accept ack is already domain-bound to one diamond+chainid, so a
+    ///         signed ack never cross-replays; this is purely about the SECRET's
+    ///         reuse.) An operational requirement on the terms-publisher.
     /// @param  termsAnchor The secret anchor preimage of the pending commitment.
     function revealRiskTermsBump(bytes32 termsAnchor)
         external

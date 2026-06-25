@@ -1025,12 +1025,13 @@ contract RiskAccessFacetTest is SetupTest {
         RiskAccessFacet(address(diamond)).revealRiskTermsBump(keccak256("wrong"));
     }
 
-    function test_reveal_revertsOnZeroAnchor() public {
+    function test_commit_revertsOnZeroAnchorCommitment() public {
+        // #736 r13 — committing to the zero anchor fails fast at commit, not only
+        // later at reveal (where `termsAnchor == 0` would trip InvalidRiskTermsHash).
+        vm.expectRevert(RiskAccessFacet.InvalidRiskTermsHash.selector);
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
             keccak256(abi.encode(bytes32(0)))
         );
-        vm.expectRevert(RiskAccessFacet.InvalidRiskTermsHash.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(bytes32(0));
     }
 
     /// @dev #736 r6 — anchors are SINGLE-USE: rolling A→B→A cannot re-publish A,
