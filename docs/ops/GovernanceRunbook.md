@@ -448,6 +448,63 @@ When `currentTosVersion == 0` (retail-launch state), step 1 ships
 without on-chain action. Future bumps from version 0 → version 1 are
 the moment the gate becomes active across all live wallets.
 
+### Enabling progressive risk access (#671)
+
+The progressive-risk gate (per-vault tiers + per-pair illiquid consent +
+optional strict mode) ships **off** behind `riskAccessGateEnabled`
+(`ConfigFacet`), default `false` — a fresh deployment behaves exactly as
+before. It is NOT part of the retail launch; this section applies only
+when a deployment deliberately turns it on. Two anchors back it:
+`currentRiskTermsVersion` (a numeric counter, the freshness anchor for
+contract-written tier/consent stamps) and `currentRiskTermsHash` (an
+**unguessable secret**, the anchor every signed grant binds — see
+[`AcceptAckFreshnessAnchorDesign.md`](../DesignsAndPlans/AcceptAckFreshnessAnchorDesign.md)).
+Both start at zero.
+
+**Hard precondition — reveal a real anchor BEFORE enabling the gate.**
+While `currentRiskTermsHash == 0`, every relayed `*BySig` self-sovereign
+grant reverts `RiskTermsHashStale` (#737) and the acceptance-ack anchor
+would bind the guessable zero value. Enabling the gate before the first
+reveal therefore bricks the relayed path and ships no freshness guarantee.
+Always run the commit–reveal first.
+
+The anchor is published via a two-step commit–reveal split across two
+roles ON PURPOSE: the hiding commit goes through the slow/timelock
+authority so its queued calldata never exposes the future secret, and the
+reveal-and-activate runs through the **off-timelock** `PAUSER_ROLE` (which
+`TransferAdminToTimelock` deliberately does NOT migrate) so the secret is
+never parked in a public timelock queue. Steps:
+
+1. **Mint a fresh random secret** `termsAnchor` (32 bytes) per
+   diamond/chain — NEVER the public ToS / risk-terms document hash (a
+   published hash is pre-stampable), and NEVER reuse one secret across
+   chains (revealing on chain A leaks it for a still-pending chain B; the
+   ledger is single-use per diamond). Keep it secret until step 3.
+2. Governance Safe schedules, through the Timelock (`ADMIN_ROLE`),
+   `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))`. The queued
+   calldata carries only the hiding commitment. Wait 48h, execute. A new
+   commit supersedes any un-revealed one (lets governance cancel/replace).
+3. The `PAUSER_ROLE` guardian calls `revealRiskTermsBump(termsAnchor)`
+   directly (no timelock delay — the reveal IS the activation, atomic). It
+   bumps `currentRiskTermsVersion` to 1 and sets `currentRiskTermsHash`.
+   The secret is exposed only in this tx's brief mempool window.
+4. (Optional) Set an opt-up cooldown via
+   `setRiskAccessUnlockCooldown(seconds)` (`ADMIN_ROLE`, max 30 days,
+   default 0 = opt-ups immediate) if a phished-unlock window is a concern.
+5. Only now: enable the gate with `setRiskAccessGateEnabled(true)`
+   (`ConfigFacet`, owner → Timelock post-handover).
+
+**Changing the risk terms later** repeats steps 1–3 with a fresh secret:
+each reveal bumps the version, and every held tier / per-pair consent /
+mid-tier ack whose anchor is now stale **re-locks at read time** with zero
+per-user writes — users re-affirm against the new terms to regain access.
+Each anchor is single-use for the protocol's lifetime, so rolling A→B→A
+can never revive a stale grant. Publish the human-readable terms document
++ its (separate, public) hash off-chain for users to review.
+
+**Disabling** is `setRiskAccessGateEnabled(false)` — a ratchet-down that
+makes the gate a no-op again without touching any per-vault state.
+
 ### Rotating the Timelock itself
 
 Deploy a fresh `TimelockController` with the Safe as proposer. From
