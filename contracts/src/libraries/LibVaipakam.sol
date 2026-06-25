@@ -4473,6 +4473,12 @@ library LibVaipakam {
         // salt, so a governance timelock's public queued calldata never exposes the
         // future hash. Zero when no change is pending.
         bytes32 pendingRiskTermsCommitment;
+        // #730 (Codex #736 r6) — every published terms hash is SINGLE-USE for the
+        // protocol's lifetime. Without this, rolling terms A→B→A (or re-publishing
+        // a hash) would let an ack stamped during the first A-period substitute
+        // again once A is re-published. `revealRiskTermsBump` rejects any hash
+        // already marked here.
+        mapping(bytes32 => bool) riskTermsHashUsed;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

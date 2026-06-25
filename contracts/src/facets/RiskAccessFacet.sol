@@ -72,6 +72,9 @@ contract RiskAccessFacet is DiamondAccessControl {
     /// @notice The revealed `(hash, salt)` did not match the pending commitment
     ///         (#730).
     error RiskTermsRevealMismatch();
+    /// @notice The revealed terms hash was already published once (#730) — each
+    ///         hash is single-use, so rolling terms A→B→A can't revive a stale ack.
+    error RiskTermsHashAlreadyUsed();
 
     // ─── User-facing setters: direct (msg.sender == vault) ───────────────────
 
@@ -218,10 +221,12 @@ contract RiskAccessFacet is DiamondAccessControl {
         if (keccak256(abi.encode(newTermsHash, salt)) != pending) {
             revert RiskTermsRevealMismatch();
         }
-        if (newTermsHash == bytes32(0) || newTermsHash == s.currentRiskTermsHash) {
-            revert InvalidRiskTermsHash();
-        }
+        if (newTermsHash == bytes32(0)) revert InvalidRiskTermsHash();
+        // Single-use across the protocol's lifetime (#736 r6): blocks re-publishing
+        // the live hash AND rolling terms A→B→A reviving a stale A-period ack.
+        if (s.riskTermsHashUsed[newTermsHash]) revert RiskTermsHashAlreadyUsed();
         delete s.pendingRiskTermsCommitment;
+        s.riskTermsHashUsed[newTermsHash] = true;
         newVersion = ++s.currentRiskTermsVersion;
         s.currentRiskTermsHash = newTermsHash;
         emit RiskTermsVersionBumped(newVersion, newTermsHash);

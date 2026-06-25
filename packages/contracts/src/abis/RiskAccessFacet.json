@@ -1166,6 +1166,11 @@
   },
   {
     "type": "error",
+    "name": "RiskTermsHashAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RiskTermsRevealMismatch",
     "inputs": []
   },

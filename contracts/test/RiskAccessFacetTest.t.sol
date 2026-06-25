@@ -1029,16 +1029,29 @@ contract RiskAccessFacetTest is SetupTest {
         RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, keccak256("wrong"));
     }
 
-    function test_reveal_revertsOnZeroOrUnchangedHash() public {
-        // A reveal of the same hash twice can't re-lock — the second is unchanged.
-        bytes32 hash = keccak256("rt-dup");
-        _bumpRiskTerms(hash); // version 1, currentHash = hash
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", hash));
+    function test_reveal_revertsOnZeroHash() public {
+        bytes32 salt = keccak256("z");
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(hash, salt))
+            keccak256(abi.encode(bytes32(0), salt))
         );
         vm.expectRevert(RiskAccessFacet.InvalidRiskTermsHash.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, salt);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(bytes32(0), salt);
+    }
+
+    /// @dev #736 r6 — terms hashes are SINGLE-USE: rolling A→B→A cannot re-publish
+    ///      A, so an ack stamped during the first A-period can never substitute
+    ///      again.
+    function test_reveal_revertsOnReusedHash_rollingABA() public {
+        bytes32 a = keccak256("rt-A");
+        bytes32 b = keccak256("rt-B");
+        _bumpRiskTerms(a); // version 1, hash A (A now used)
+        _bumpRiskTerms(b); // version 2, hash B
+        bytes32 salt = keccak256(abi.encode("risk-terms-salt", a));
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(a, salt))
+        );
+        vm.expectRevert(RiskAccessFacet.RiskTermsHashAlreadyUsed.selector);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(a, salt);
     }
 
     // ════════════════════════════════════════════════════════════════════════
