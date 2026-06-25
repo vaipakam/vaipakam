@@ -479,22 +479,30 @@ never parked in a public timelock queue. Steps:
    diamond/chain — NEVER the public ToS / risk-terms document hash (a
    published hash is pre-stampable), and NEVER reuse one secret across
    chains (revealing on chain A leaks it for a still-pending chain B; the
-   ledger is single-use per diamond). Keep it secret until step 3.
-2. Governance Safe schedules, through the Timelock (`ADMIN_ROLE`),
-   `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))`. The queued
-   calldata carries only the hiding commitment. Wait 48h, execute. A new
-   commit supersedes any un-revealed one (lets governance cancel/replace).
-3. The `PAUSER_ROLE` guardian calls `revealRiskTermsBump(termsAnchor)`
+   ledger is single-use per diamond). Keep it secret until step 4.
+2. **Set the opt-up cooldown FIRST, if you want one.**
+   `setRiskAccessUnlockCooldown(seconds)` (`ADMIN_ROLE`, max 30 days,
+   default 0 = opt-ups immediate). It must be live BEFORE the reveal: the
+   direct opt-up setters stamp each `unlockAt` from whatever cooldown is
+   current, so an opt-up armed while the cooldown is still 0 is immediately
+   effective and never retroactively picks up a later value — setting it
+   after the reveal leaves a window where the first opt-ups bypass the
+   delay. Schedule it in the SAME Timelock batch as the commit (step 3).
+   Skip only if you genuinely want immediate opt-ups.
+3. Governance Safe schedules, through the Timelock (`ADMIN_ROLE`),
+   `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))` (in the same
+   batch as the step-2 cooldown). The queued calldata carries only the
+   hiding commitment. Wait 48h, execute. A new commit supersedes any
+   un-revealed one (lets governance cancel/replace).
+4. The `PAUSER_ROLE` guardian calls `revealRiskTermsBump(termsAnchor)`
    directly (no timelock delay — the reveal IS the activation, atomic). It
    bumps `currentRiskTermsVersion` to 1 and sets `currentRiskTermsHash`.
    The secret is exposed only in this tx's brief mempool window.
-4. (Optional) Set an opt-up cooldown via
-   `setRiskAccessUnlockCooldown(seconds)` (`ADMIN_ROLE`, max 30 days,
-   default 0 = opt-ups immediate) if a phished-unlock window is a concern.
 5. Only now: enable the gate with `setRiskAccessGateEnabled(true)`
    (`ConfigFacet`, owner → Timelock post-handover).
 
-**Changing the risk terms later** repeats steps 1–3 with a fresh secret:
+**Changing the risk terms later** repeats the commit→reveal (steps 1, 3, 4)
+with a fresh secret:
 each reveal bumps the version, and every held tier / per-pair consent /
 mid-tier ack whose anchor is now stale **re-locks at read time** with zero
 per-user writes — users re-affirm against the new terms to regain access.
