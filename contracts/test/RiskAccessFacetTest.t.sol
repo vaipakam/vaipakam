@@ -931,16 +931,16 @@ contract RiskAccessFacetTest is SetupTest {
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(keccak256("rt-7"));
     }
 
-    function test_riskAdminOnly_revealRiskTermsBump() public {
-        // Commit as admin (the test contract), then a non-RISK_ADMIN reveal reverts.
-        bytes32 hash = keccak256("rt-7b");
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", hash));
+    function test_pauserOnly_revealRiskTermsBump() public {
+        // Commit as admin (the test contract), then a non-PAUSER reveal reverts —
+        // reveal is the OFF-TIMELOCK guardian (PAUSER) authority (#736 r7).
+        bytes32 anchor = keccak256("rt-7b");
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(hash, salt))
+            keccak256(abi.encode(anchor))
         );
         vm.prank(relayer);
         vm.expectRevert();
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, salt);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(anchor);
     }
 
     function test_adminOnly_setRiskAccessUnlockCooldown() public {
@@ -980,29 +980,28 @@ contract RiskAccessFacetTest is SetupTest {
     /// @dev A commit alone neither advances the version nor publishes the hash —
     ///      and crucially the future hash is NOT derivable from the commitment, so
     ///      the live anchor stays 0 (a pre-reveal ack can't match it).
-    function test_commit_hidesHashUntilReveal() public {
-        bytes32 hash = keccak256("rt-hide");
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", hash));
+    function test_commit_hidesAnchorUntilReveal() public {
+        bytes32 anchor = keccak256("rt-hide");
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(hash, salt))
+            keccak256(abi.encode(anchor))
         );
         assertEq(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash(),
             bytes32(0),
-            "hash not published by commit alone"
+            "anchor not published by commit alone"
         );
         assertEq(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(),
             0,
             "version not advanced by commit alone"
         );
-        // After reveal the hash is the committed one and the version advances.
-        uint64 v = RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, salt);
+        // After reveal the anchor is the committed secret and the version advances.
+        uint64 v = RiskAccessFacet(address(diamond)).revealRiskTermsBump(anchor);
         assertEq(v, 1, "reveal advances version");
         assertEq(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash(),
-            hash,
-            "reveal publishes the committed hash"
+            anchor,
+            "reveal publishes the committed anchor"
         );
         assertEq(
             RiskAccessFacet(address(diamond)).getPendingRiskTermsCommitment(),
@@ -1012,46 +1011,40 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     function test_reveal_revertsWithoutCommit() public {
-        bytes32 hash = keccak256("rt-nc");
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", hash));
         vm.expectRevert(RiskAccessFacet.NoPendingRiskTermsCommitment.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, salt);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(keccak256("rt-nc"));
     }
 
     function test_reveal_revertsOnMismatch() public {
-        bytes32 hash = keccak256("rt-mm");
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", hash));
+        bytes32 anchor = keccak256("rt-mm");
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(hash, salt))
+            keccak256(abi.encode(anchor))
         );
-        // Wrong salt (or wrong hash) cannot satisfy the hiding commitment.
+        // A different preimage cannot satisfy the hiding commitment.
         vm.expectRevert(RiskAccessFacet.RiskTermsRevealMismatch.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(hash, keccak256("wrong"));
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(keccak256("wrong"));
     }
 
-    function test_reveal_revertsOnZeroHash() public {
-        bytes32 salt = keccak256("z");
+    function test_reveal_revertsOnZeroAnchor() public {
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(bytes32(0), salt))
+            keccak256(abi.encode(bytes32(0)))
         );
         vm.expectRevert(RiskAccessFacet.InvalidRiskTermsHash.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(bytes32(0), salt);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(bytes32(0));
     }
 
-    /// @dev #736 r6 — terms hashes are SINGLE-USE: rolling A→B→A cannot re-publish
-    ///      A, so an ack stamped during the first A-period can never substitute
-    ///      again.
-    function test_reveal_revertsOnReusedHash_rollingABA() public {
+    /// @dev #736 r6 — anchors are SINGLE-USE: rolling A→B→A cannot re-publish A,
+    ///      so an ack stamped during the first A-period can never substitute again.
+    function test_reveal_revertsOnReusedAnchor_rollingABA() public {
         bytes32 a = keccak256("rt-A");
         bytes32 b = keccak256("rt-B");
-        _bumpRiskTerms(a); // version 1, hash A (A now used)
-        _bumpRiskTerms(b); // version 2, hash B
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", a));
+        _bumpRiskTerms(a); // version 1, anchor A (A now used)
+        _bumpRiskTerms(b); // version 2, anchor B
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(a, salt))
+            keccak256(abi.encode(a))
         );
         vm.expectRevert(RiskAccessFacet.RiskTermsHashAlreadyUsed.selector);
-        RiskAccessFacet(address(diamond)).revealRiskTermsBump(a, salt);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(a);
     }
 
     // ════════════════════════════════════════════════════════════════════════

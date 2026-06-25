@@ -205,6 +205,32 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
         }
     }
 
+    /// @notice #730 r7 — the legacy single-call terms-bump selectors must NOT be
+    ///         routed. Risk-terms changes are now a two-step commit-reveal; a
+    ///         routed `bumpRiskTermsVersion()` / `(bytes32)` (re-introduced, or
+    ///         left behind by an upgrade that didn't Remove it) would let
+    ///         governance advance the version WITHOUT changing the anchor, reviving
+    ///         a stale acceptance ack once a user re-affirms only their tier. This
+    ///         automated guard makes the legacy path provably unreachable on every
+    ///         built diamond (the concrete equivalent of a Remove migration).
+    function test_DeployedDiamond_LegacyTermsBumpSelectorsUnrouted() public {
+        (address diamond,,) = _deploy(true);
+        assertEq(
+            DiamondLoupeFacet(diamond).facetAddress(
+                bytes4(keccak256("bumpRiskTermsVersion()"))
+            ),
+            address(0),
+            "legacy bumpRiskTermsVersion() must not be routed"
+        );
+        assertEq(
+            DiamondLoupeFacet(diamond).facetAddress(
+                bytes4(keccak256("bumpRiskTermsVersion(bytes32)"))
+            ),
+            address(0),
+            "legacy bumpRiskTermsVersion(bytes32) must not be routed"
+        );
+    }
+
     // ─── 3. Selector routing — derived from the LIVE diamond ──────────
 
     /// @notice Every selector the live diamond actually routes resolves

@@ -178,3 +178,35 @@ Design review (Codex) → implement on PR #736 (supersede its single-call
 governance hash) → contract + tests + ABI + frontend (mostly already in #736) →
 Codex code review → merge. The selector-removal (R6) lands with the
 implementation. None of this blocks any live deployment (gate is OFF, pre-live).
+
+## 8. Resolution (as implemented — Codex #736 r5–r7)
+
+- **Q1 (reveal role):** `revealRiskTermsBump` is gated on **`PAUSER_ROLE`** — the
+  existing off-timelock guardian role that `TransferAdminToTimelock` deliberately
+  does NOT migrate to the 48h timelock (unlike `ADMIN/ORACLE/RISK/VAULT_ADMIN`).
+  `RISK_ADMIN_ROLE` could not be used: it IS migrated to the timelock, so a reveal
+  queued through it would expose the secret for the delay (r7). The publisher's
+  power is bounded — it can only reveal what `ADMIN` already committed, never
+  choose the anchor — so reusing the guardian role is low-blast-radius and needs
+  no new ops-role wiring.
+- **Anchor is a SECRET, not the doc hash (r7):** `currentRiskTermsHash` is a fresh
+  RANDOM secret (`termsAnchor`), committed as `keccak256(abi.encode(termsAnchor))`
+  and revealed at activation. The terms *document* and its hash are published
+  separately — a doc hash is public during governance review, so binding to it
+  would be pre-stampable. (The salt-and-doc-hash two-value scheme from §5 is
+  superseded: a single high-entropy secret is its own hiding preimage.)
+- **Single-use anchors (r6):** a `riskTermsHashUsed` ledger makes every anchor
+  single-use for the protocol's lifetime, so rolling terms A→B→A can't revive a
+  stale A-period ack. The reveal also seeds the OUTGOING live anchor into the
+  ledger (r7), covering an upgrade whose live anchor predates the ledger.
+- **Q2 (legacy bump):** no one-shot `bumpRiskTermsVersion` is kept — commit/reveal
+  is the only path. The legacy selectors are provably unrouted on every built
+  diamond, enforced by `DeployDiamondIntegrationTest.
+  test_DeployedDiamond_LegacyTermsBumpSelectorsUnrouted` (the concrete equivalent
+  of a Remove migration; pre-live, no deployed diamond carries the selector).
+- **Q3 (mempool residual):** accepted — the reveal exposes the secret only in its
+  brief mempool window (vs. a multi-day timelock queue), and the reveal IS the
+  activation. Private-mempool reveal is an optional operational hardening, not a
+  contract requirement.
+- **Q4 (commit expiry):** not added — a new commit supersedes an un-revealed one,
+  and a lingering commitment is inert (it publishes nothing until revealed).

@@ -445,12 +445,7 @@
     "name": "revealRiskTermsBump",
     "inputs": [
       {
-        "name": "newTermsHash",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "salt",
+        "name": "termsAnchor",
         "type": "bytes32",
         "internalType": "bytes32"
       }

@@ -15,15 +15,18 @@ tier afterward, could still submit the old acknowledgement as if it were fresh.
 
 The acceptance message now carries the live risk-terms anchor it was signed
 against, and the gate requires that anchor to be current for the acknowledgement
-to stand in for a consent. Crucially the anchor is an **unguessable** value
-published with each terms change (the hash of the new terms document) and
-unavailable before the change is enacted — not the predictable version counter —
-so a malicious interface cannot induce a user to pre-sign an acknowledgement for
-the *next* terms version and have it activate on the next change. To keep the
-anchor secret even when governance is a transparent on-chain timelock, a terms
-change is published via a **commit–reveal**: the governance decision records only
-a hiding commitment (the timelock's public queued calldata exposes nothing), and
-a separate fast operational step reveals-and-activates the new hash atomically.
+to stand in for a consent. Crucially the anchor is an **unguessable secret**
+published with each terms change and unavailable before the change is enacted —
+neither the predictable version counter nor the (public) terms-document hash — so
+a malicious interface cannot induce a user to pre-sign an acknowledgement for the
+*next* terms version and have it activate on the next change. To keep the anchor
+secret even when governance is a transparent on-chain timelock, a terms change is
+published via a **commit–reveal**: the governance decision (slow/timelocked)
+records only a hiding commitment (the queued calldata exposes nothing), and a
+separate fast off-timelock operational authority reveals-and-activates the secret
+atomically. Each anchor is single-use for the protocol's lifetime, so
+re-publishing terms can never revive a stale acknowledgement; the human-readable
+terms document and its hash are published separately for review.
 A governance terms change therefore re-locks a pre-change acknowledgement exactly
 as it re-locks a standing consent: the stale acceptance is rejected, and the user
 simply re-signs against the new terms to proceed. Liquid offers and deployments

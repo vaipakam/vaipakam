@@ -1217,15 +1217,13 @@ contract SetupTest is Test {
 
     /// @dev #730 — drive a risk-terms change through the commit-reveal flow
     ///      (`commitRiskTermsBump` is ADMIN_ROLE, `revealRiskTermsBump` is
-    ///      RISK_ADMIN_ROLE; the test contract = `owner` holds both). Returns the
-    ///      new version. The salt is derived deterministically from the hash so the
-    ///      helper is self-contained; production governance uses a SECRET salt.
-    function _bumpRiskTerms(bytes32 newTermsHash) internal returns (uint64) {
-        bytes32 salt = keccak256(abi.encode("risk-terms-salt", newTermsHash));
+    ///      PAUSER_ROLE; the test contract = `owner` holds both). `termsAnchor` is
+    ///      the secret preimage; production governance uses a fresh RANDOM secret.
+    ///      Returns the new version.
+    function _bumpRiskTerms(bytes32 termsAnchor) internal returns (uint64) {
         RiskAccessFacet(address(diamond)).commitRiskTermsBump(
-            keccak256(abi.encode(newTermsHash, salt))
+            keccak256(abi.encode(termsAnchor))
         );
-        return
-            RiskAccessFacet(address(diamond)).revealRiskTermsBump(newTermsHash, salt);
+        return RiskAccessFacet(address(diamond)).revealRiskTermsBump(termsAnchor);
     }
 }
