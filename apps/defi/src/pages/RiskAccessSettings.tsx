@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondContract } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
@@ -60,8 +60,17 @@ export default function RiskAccessSettings() {
   // this (Codex #734 r3). If the unlock read failed it's UNKNOWN — treat as
   // cooling so a failed read can't enable a re-affirm that restarts the
   // cooldown (Codex #734 r4).
+  const [, forceTick] = useState(0);
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const cooling = !risk.tierUnlockKnown || risk.tierUnlockAt > nowSec;
+  // While a tier is cooling down, re-render periodically so the button flips to
+  // re-affirmable the moment the cooldown elapses, even if the page stays open
+  // across the boundary (Claude review #734 P4).
+  useEffect(() => {
+    if (!cooling) return;
+    const id = setInterval(() => forceTick((n) => n + 1), 15_000);
+    return () => clearInterval(id);
+  }, [cooling]);
 
   async function chooseTier(level: RiskTier) {
     // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a

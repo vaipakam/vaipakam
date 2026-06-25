@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useWallet } from "../context/WalletContext";
-import { useDiamondRead } from "../contracts/useDiamond";
+import { useDiamondRead, useReadChain } from "../contracts/useDiamond";
 
 /**
  * #671 progressive risk access — accept-time preflight (#728 PR-2e).
@@ -77,6 +77,9 @@ export interface RiskPreflight {
    *  acceptance signature usually satisfies the acceptor's side, so it isn't a
    *  hard block.) Used to disable the accept Confirm button. */
   hardBlock: boolean;
+  /** True while the check is still in flight — Confirm should stay disabled so a
+   *  user can't sign before the (possibly blocking) verdict resolves. */
+  pending: boolean;
   /** Human-readable reason + fix (empty for ok/idle). */
   reason: string;
 }
@@ -84,17 +87,27 @@ export interface RiskPreflight {
 export function useRiskAccessPreflight(
   offerId: bigint | null | undefined,
 ): RiskPreflight {
-  const { address, isCorrectChain } = useWallet();
+  const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
+  const readChain = useReadChain();
   const [status, setStatus] = useState<RiskPreflightStatus>("idle");
+  // Require an actual DEPLOYED Diamond on the wallet's chain, not just a
+  // registered chain (`isCorrectChain` is true even for a supported-but-
+  // undeployed chain, where the read would hit the zero-address sentinel —
+  // Claude review #734 r2), AND that the read target is the wallet's chain (not
+  // a public-dashboard view override — Codex #734 r6).
+  const onDeployedChain =
+    isCorrectChain &&
+    !!activeChain?.diamondAddress &&
+    readChain.chainId === activeChain.chainId;
 
   useEffect(() => {
     let cancelled = false;
-    // Idle unless there's a connected wallet on a chain with a deployed Diamond
-    // (Codex #734 r3): otherwise `useDiamondRead` resolves to the default / a
-    // zero-address deployment and the modal could show a different chain's
-    // verdict for an accept that can't settle here.
-    if (!address || offerId == null || !isCorrectChain) {
+    // Idle unless there's a connected wallet on a chain with a deployed Diamond:
+    // otherwise `useDiamondRead` resolves to the default / a zero-address
+    // deployment and the modal could show a different chain's verdict for an
+    // accept that can't settle here.
+    if (!address || offerId == null || !onDeployedChain) {
       setStatus("idle");
       return;
     }
@@ -123,7 +136,7 @@ export function useRiskAccessPreflight(
     return () => {
       cancelled = true;
     };
-  }, [address, offerId, isCorrectChain, diamondRo]);
+  }, [address, offerId, onDeployedChain, diamondRo]);
 
   const blocked =
     status === "tier-too-low" ||
@@ -141,6 +154,7 @@ export function useRiskAccessPreflight(
     status,
     blocked,
     hardBlock,
+    pending: status === "loading",
     reason: RISK_PREFLIGHT_REASON[status],
   };
 }

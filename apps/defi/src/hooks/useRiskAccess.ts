@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "../context/WalletContext";
-import { useDiamondRead } from "../contracts/useDiamond";
+import { useDiamondRead, useReadChain } from "../contracts/useDiamond";
 
 /**
  * #671 progressive risk access — frontend read hook (#728 PR-2e).
@@ -81,11 +81,19 @@ const isMissingSelector = (e: unknown): boolean => {
 export function useRiskAccess(): RiskAccessState {
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
+  const readChain = useReadChain();
   // `isCorrectChain` only means the wallet is on a REGISTERED chain — a
   // supported chain with no Diamond deployed still passes it, and the reads
   // would then target the zero-address sentinel and writes a dead proxy
   // (Codex #734 r4). Require an actual deployed Diamond on the wallet's chain.
-  const canRead = isCorrectChain && !!activeChain?.diamondAddress;
+  // ALSO require that the read target IS the wallet's chain: `useDiamondRead`
+  // follows the public-dashboard `viewChainId` override, so without this a view
+  // override could show another chain's tier for this wallet while writes are
+  // bound read-only (Codex #734 r6).
+  const canRead =
+    isCorrectChain &&
+    !!activeChain?.diamondAddress &&
+    readChain.chainId === activeChain.chainId;
 
   const [effectiveTier, setEffectiveTier] = useState<RiskTier>(0);
   const [rawTier, setRawTier] = useState<RiskTier>(0);

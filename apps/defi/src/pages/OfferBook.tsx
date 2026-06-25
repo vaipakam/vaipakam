@@ -1949,13 +1949,20 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           <button
             className="btn btn-primary btn-sm"
             onClick={onConfirm}
-            disabled={submitting || !consent || riskPreflight.hardBlock}
+            disabled={
+              submitting ||
+              !consent ||
+              riskPreflight.hardBlock ||
+              riskPreflight.pending
+            }
             data-tooltip={
               !submitting && riskPreflight.hardBlock
                 ? riskPreflight.reason
-                : !submitting && !consent
-                  ? t('riskDisclosures.consentRequiredHint')
-                  : undefined
+                : !submitting && riskPreflight.pending
+                  ? 'Checking the progressive-risk gate…'
+                  : !submitting && !consent
+                    ? t('riskDisclosures.consentRequiredHint')
+                    : undefined
             }
           >
             {submitting ? t('offerTable.acceptingDots') : t('offerTable.confirmAndAccept')}
