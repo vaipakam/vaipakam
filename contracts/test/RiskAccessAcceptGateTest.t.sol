@@ -752,8 +752,11 @@ contract RiskAccessAcceptGateTest is SetupTest {
     ///      a long-deadline illiquid `AcceptTerms` at version N, then re-affirmed
     ///      merely their TIER after a governance bump to N+1, could still submit
     ///      the stale (version-N) ack as fresh per-pair consent. Stamping
-    ///      `AcceptTerms.riskTermsVersion` and requiring it `>=`
-    ///      `currentRiskTermsVersion` at the gate re-locks it: the stale ack now
+    ///      `AcceptTerms.riskTermsVersion` and requiring it to EQUAL
+    ///      `currentRiskTermsVersion` exactly at the gate re-locks it (exact match,
+    ///      not `>=` — the version is signer-controlled, so `>=` would let a
+    ///      future-stamped ack bypass it; see
+    ///      `test_acceptGate_futureStampedAckDoesNotSubstitute`). The stale ack now
     ///      reverts `IlliquidPairNotConsented`, while a freshly re-signed ack
     ///      substitutes again (recoverable, like a standing consent).
     function test_acceptGate_staleAckDoesNotSubstituteAfterBump() public {

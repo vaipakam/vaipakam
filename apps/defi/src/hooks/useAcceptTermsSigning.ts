@@ -155,9 +155,13 @@ export function useAcceptTermsSigning() {
       })) as bigint;
 
       // #730 — stamp the live risk-terms version so the gate's #662⇄#671 illiquid
-      // ack-substitution sees a FRESH acknowledgement. A Diamond predating
-      // RiskAccessFacet has no such view (and no gate) — default to 0, which is a
-      // fresh anchor there (`0 >= 0`).
+      // ack-substitution sees a FRESH acknowledgement. The gate requires the
+      // SIGNED version to EQUAL the live one exactly, so this read must FAIL
+      // CLOSED: only a Diamond predating RiskAccessFacet (selector absent) is
+      // safely version 0 (no gate there). A transient RPC/ABI failure on a gated
+      // Diamond must NOT silently sign `riskTermsVersion = 0` — the exact-version
+      // gate would reject that ack and waste the user's gas (Codex #736 r2). So we
+      // swallow ONLY the missing-selector case and re-throw anything else.
       let riskTermsVersion = 0n;
       try {
         riskTermsVersion = (await publicClient.readContract({
@@ -165,7 +169,8 @@ export function useAcceptTermsSigning() {
           abi: DIAMOND_ABI,
           functionName: 'getCurrentRiskTermsVersion',
         })) as bigint;
-      } catch {
+      } catch (e) {
+        if (!isMissingSelectorError(e)) throw e;
         riskTermsVersion = 0n;
       }
 
@@ -256,6 +261,19 @@ export function useAcceptTermsSigning() {
   const canSign = Boolean(walletClient) && Boolean(address);
 
   return { sign, canSign };
+}
+
+// True when a contract read failed because the Diamond doesn't cut the selector
+// (an older deployment predating RiskAccessFacet) — as opposed to a transient
+// RPC/ABI error. Mirrors the probe in `useRiskAccess`. `0xa9ad62f8` is the
+// `FunctionNotFound`/`FunctionDoesNotExist` Diamond selector.
+function isMissingSelectorError(e: unknown): boolean {
+  const msg = String(
+    (e as { data?: string; message?: string })?.data ??
+      (e as Error)?.message ??
+      '',
+  );
+  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
 }
 
 function randomNonce(): bigint {
