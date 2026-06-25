@@ -5,7 +5,7 @@ import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
-import { useMidTierAckGate, useAcceptMidTierPair, type RiskPairId } from '../hooks/useMidTierAckGate';
+import { useMidTierAckGate, useAcceptMidTierPair } from '../hooks/useMidTierAckGate';
 import { OwnOfferMidTierAck } from '../components/app/OwnOfferMidTierAck';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
@@ -2131,21 +2131,10 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
 function MidTierAckRecorder({ offer }: { offer: OfferData }) {
   // Resolve the EXACT pair the accept gates against ON-CHAIN: a lender-sale
   // vehicle gates the buyer against the SOLD LOAN's pair, not the offer's own
-  // surface, and the dapp can't construct that itself (Codex #740 r5). Feeding a
-  // guessed offer-pair would record the wrong pair / show a misleading message.
-  // The offer-surface pair is passed as a FALLBACK used only when the diamond
-  // predates the resolver selector (version skew) — correct for normal offers
-  // (Codex #740 r6).
-  const fallbackPair: RiskPairId = {
-    lendAsset: offer.lendingAsset,
-    lendType: offer.assetType,
-    lendTokenId: offer.tokenId,
-    collAsset: offer.collateralAsset,
-    collType: offer.collateralAssetType ?? 0,
-    collTokenId: offer.collateralTokenId ?? 0n,
-    prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
-  };
-  const resolvedPair = useAcceptMidTierPair(offer.id, fallbackPair);
+  // surface, and the dapp can't construct that itself (Codex #740 r5/r8). On a
+  // missing/failed resolver read it returns 'unknown' (never a guessed
+  // offer-pair, which would be wrong for a sale vehicle).
+  const resolvedPair = useAcceptMidTierPair(offer.id);
   const gate = useMidTierAckGate(
     resolvedPair === 'unknown' ? null : resolvedPair,
   );

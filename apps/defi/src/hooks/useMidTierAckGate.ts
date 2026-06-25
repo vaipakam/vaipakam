@@ -76,19 +76,18 @@ const isMissingFacet = (e: unknown): boolean => {
  * public getter) — so the resolution happens on-chain and the dapp feeds the
  * result into {useMidTierAckGate}.
  *
- * `fallbackPair` is the OFFER-surface pair the caller can build locally. It is
- * used ONLY when the diamond has the strict-mode gate but predates the
- * `acceptMidTierAckPair` selector (a staggered / version-skewed rollout): rather
- * than hiding the recorder entirely, fall back to the offer-surface pair, which
- * is correct for normal offers — sale vehicles (undetectable client-side) are the
- * sole imperfect case and don't exist on a diamond predating this view (Codex
- * #740 r6). A REAL read failure returns `'unknown'` so the caller doesn't act on a
- * bad pair. Until the read for the CURRENT `offerId` resolves, returns null
- * synchronously (never a previous offer's pair).
+ * If the diamond has the strict-mode gate but predates the `acceptMidTierAckPair`
+ * selector (a staggered / version-skewed rollout) the read fails as a missing
+ * selector — we return `'unknown'` rather than guessing the offer-surface pair,
+ * because a lender-sale vehicle (undetectable client-side) gates against the SOLD
+ * loan's pair and an offer-surface guess would record the WRONG pair (Codex #740
+ * r8). A REAL read failure likewise returns `'unknown'`. The caller surfaces a
+ * neutral "couldn't determine the pair" note rather than offering a bad record.
+ * Until the read for the CURRENT (offerId, chain) resolves, returns null
+ * synchronously (never a previous read's pair).
  */
 export function useAcceptMidTierPair(
   offerId: bigint | null | undefined,
-  fallbackPair: RiskPairId | null,
 ): RiskPairId | null | "unknown" {
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
@@ -99,9 +98,6 @@ export function useAcceptMidTierPair(
   // chain change (same offer ids exist across deployments / sale vehicles) never
   // reuses the previous read's pair before the new one lands (Codex #740 r6/r7).
   const resolvedForRef = useRef<string | null>(null);
-  // Read the fallback via a ref so its object identity doesn't re-fire the effect.
-  const fallbackRef = useRef<RiskPairId | null>(fallbackPair);
-  fallbackRef.current = fallbackPair;
 
   const onDeployedChain =
     isCorrectChain &&
@@ -144,13 +140,14 @@ export function useAcceptMidTierPair(
           prepayAsset: p.prepayAsset,
         });
       })
-      .catch((e) => {
+      .catch(() => {
         if (cancelled) return;
         resolvedForRef.current = readIdentity;
-        // Missing resolver selector (gate present, view not yet cut) ⇒ fall back
-        // to the offer-surface pair (correct for normal offers). Real failure ⇒
-        // 'unknown' so the caller doesn't act on a bad pair.
-        setPair(isMissingFacet(e) ? (fallbackRef.current ?? null) : "unknown");
+        // Missing resolver selector (version skew) OR a real read failure ⇒
+        // 'unknown'. We deliberately do NOT guess the offer-surface pair: a sale
+        // vehicle gates against the sold loan's pair, and a guess would record the
+        // wrong pair (Codex #740 r8). The caller shows a neutral note instead.
+        setPair("unknown");
       });
     return () => {
       cancelled = true;

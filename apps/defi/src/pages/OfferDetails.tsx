@@ -36,7 +36,7 @@ const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 /** T-086 Round-8 §19.7e — `consumed_by_sale` is the parallel-sale
  *  Scenario A terminal (buyer fills the offer's NFT collateral before
  *  any lender accepts). Routed here by the MyOffersTable "Sold" row
- *  link via `Link to /app/offers/{offerId}` per Codex round-14 P2. */
+ *  link via `Link to /offers/{offerId}` per Codex round-14 P2. */
 type OfferStatus =
   | 'active'
   | 'accepted'

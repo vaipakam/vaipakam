@@ -574,7 +574,7 @@ export default function Activity() {
                       )}
                       {offerId && (
                         <Link
-                          to={`/app/offers/${offerId}`}
+                          to={`/offers/${offerId}`}
                           className="activity-pill activity-pill--link"
                           aria-label={t('activity.viewOffer', {
                             id: offerId,

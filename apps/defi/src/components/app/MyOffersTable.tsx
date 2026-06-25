@@ -212,7 +212,7 @@ export function MyOffersTable({
                         key={offer.id.toString()}
                         style={{ opacity: 0.7 }}
                       >
-                        <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
+                        <td><Link to={`/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                         <td>
                           <span
                             className={`status-badge ${
@@ -251,7 +251,7 @@ export function MyOffersTable({
                       key={offer.id.toString()}
                       style={{ opacity: 0.65 }}
                     >
-                      <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
+                      <td><Link to={`/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                       <td>
                         <span
                           className={`status-badge ${
@@ -335,7 +335,7 @@ export function MyOffersTable({
                         style={{ opacity: 0.85 }}
                       >
                         <td>
-                          <Link to={`/app/offers/${offer.id.toString()}`}>
+                          <Link to={`/offers/${offer.id.toString()}`}>
                             #{offer.id.toString()}
                           </Link>
                         </td>
@@ -370,7 +370,7 @@ export function MyOffersTable({
                   return (
                     <tr key={offer.id.toString()} style={{ opacity: 0.85 }}>
                       <td>
-                        <Link to={`/app/offers/${offer.id.toString()}`}>
+                        <Link to={`/offers/${offer.id.toString()}`}>
                           #{offer.id.toString()}
                         </Link>
                       </td>
@@ -516,7 +516,7 @@ export function MyOffersTable({
 
                 return (
                   <tr key={offer.id.toString()}>
-                    <td><Link to={`/app/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
+                    <td><Link to={`/offers/${offer.id.toString()}`}>#{offer.id.toString()}</Link></td>
                     <td>
                       <span
                         className={`status-badge ${

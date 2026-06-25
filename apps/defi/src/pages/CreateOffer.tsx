@@ -492,6 +492,31 @@ export default function CreateOffer() {
       return;
     }
 
+    // #735 item 3 — re-check the progressive-risk create gate HERE, not only on the
+    // disabled button: an Enter keypress or a programmatic submit can fire
+    // `onSubmit` while the verdict is loading or blocked, which would otherwise
+    // send approvals + a createOffer the gate reverts (Codex #740 r8). Mirror the
+    // button's `riskBlocked` exactly.
+    const riskUnknown =
+      createPair !== null &&
+      (!midTierGate.tierKnown || !midTierGate.known);
+    if (midTierGate.tierTooLow || midTierGate.blocked || riskUnknown) {
+      const msg = midTierGate.tierTooLow
+        ? "Raise your vault's risk tier to cover this pair first (Risk Access settings)."
+        : midTierGate.blocked
+          ? "Record the strict-mode mid-tier acknowledgement for this pair first."
+          : "Checking the progressive-risk requirements — try again in a moment.";
+      setError(msg);
+      emit({
+        ...ctx,
+        step: "validate-form",
+        status: "failure",
+        errorType: "validation",
+        errorMessage: msg,
+      });
+      return;
+    }
+
     const submit = beginStep({ ...ctx, step: "submit" });
     try {
       // Resolve on-chain decimals for both assets so "100" in the form maps
