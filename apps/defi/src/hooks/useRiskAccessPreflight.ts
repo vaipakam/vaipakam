@@ -17,9 +17,13 @@ import { useDiamondRead, useReadChain } from "../contracts/useDiamond";
  * where the gate isn't enforced. It is also idle when there is no connected
  * wallet or no offer selected.
  *
- * Block codes (mirror `LibRiskAccess.previewActorBlock`):
+ * Block codes (mirror `RiskAccessFacet.previewOfferAcceptBlock`):
  *   0 = OK · 1 = tier too low · 2 = illiquid pair needs standing consent ·
- *   3 = strict-mode mid-tier pair needs a fresh explicit ack.
+ *   3 = strict-mode mid-tier pair needs a fresh explicit ack ·
+ *   4 = #735 — illiquid pair, but the ACCEPTOR's standard #662 acknowledgement
+ *       (always produced by the accept-signing flow) WILL clear it at sign-time.
+ *       A SOFT, non-blocking warning: the user is taking on illiquid risk their
+ *       acceptance signature acknowledges, NOT a block to resolve.
  */
 
 export type RiskPreflightStatus =
@@ -28,6 +32,7 @@ export type RiskPreflightStatus =
   | "ok"
   | "tier-too-low"
   | "needs-illiquid-consent"
+  | "illiquid-ack-covered"
   | "needs-midtier-ack"
   | "error";
 
@@ -45,16 +50,18 @@ const CODE_TO_STATUS: Record<number, RiskPreflightStatus> = {
   1: "tier-too-low",
   2: "needs-illiquid-consent",
   3: "needs-midtier-ack",
+  4: "illiquid-ack-covered",
 };
 
 // Copy is intentionally NEUTRAL about WHICH party is blocked: the on-chain
 // preview checks the offer creator BEFORE the acceptor (Codex #734 P2), so a
-// block can mean the creator lost tier / consent after posting — telling the
+// HARD block can mean the creator lost tier / consent after posting — telling the
 // connected acceptor to "raise your tier" would be wrong in that case. The
-// illiquid copy does NOT promise the acceptance signature will clear it: the
-// #662 ack only substitutes for the acceptor's consent when it covers the gate's
-// exact illiquid legs, which the client can't prove here, so the case is framed
-// as a block to resolve rather than a step the signature handles (Codex #734 r10).
+// illiquid HARD copy (`needs-illiquid-consent`) does NOT promise the acceptance
+// signature will clear it: that case is precisely the one the ack-aware preview
+// (#735) now reports separately as the SOFT `illiquid-ack-covered` (code 4), so a
+// remaining code 2 is a genuine block the signature can't heal (creator-side, a
+// rental-prepay / depth-collapsed leg, or a stale anchor).
 export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   idle: "",
   loading: "Checking the progressive-risk gate for this offer…",
@@ -63,6 +70,8 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
     "This offer's asset pair needs a higher risk tier than is currently set. If it's your vault, raise your tier in Risk Access settings; otherwise the offer can't be filled right now.",
   "needs-illiquid-consent":
     "This pair includes an illiquid asset that needs a per-pair consent the gate can't see right now — it may be the offer creator's consent that's missing or stale, or a standing consent this app can't record yet. The accept can't be completed until it's in place.",
+  "illiquid-ack-covered":
+    "This pair includes an illiquid asset. Your acceptance signature explicitly acknowledges it, so you can proceed — just be aware you're taking on an illiquid position that can't be priced or auto-liquidated.",
   "needs-midtier-ack":
     "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover, and that this app can't record yet.",
   error: "Couldn't check the risk-access requirements right now.",
@@ -73,19 +82,19 @@ export interface RiskPreflight {
   /** True only when the gate would actively block the accept (any reason). */
   blocked: boolean;
   /** A DEFINITE on-chain block the upcoming accept signature cannot be assumed to
-   *  clear — used to disable the accept Confirm button. EVERY non-OK preview code
-   *  qualifies (tier shortfall, illiquid-consent, strict-mode mid-tier ack):
+   *  clear — used to disable the accept Confirm button. The HARD codes qualify
+   *  (tier shortfall, illiquid standing-consent gap, strict-mode mid-tier ack):
    *  - tier / mid-tier ack: the #662 acceptance ack substitutes for neither.
-   *  - illiquid (code 2): the preview is standing-consent-only and checks the
-   *    offer CREATOR before the acceptor, so a block can be the creator's (no ack
-   *    to substitute), a lender-SALE buyer's (the sale path is standing-consent-
-   *    only too), OR an acceptor whose #662 ack does NOT cover the gate's exact
-   *    illiquid legs (illiquid prepay on a rental, a depth-collapsed ERC-20 tier).
-   *  None of those self-heal, and the client can't prove the one case that does
-   *  (normal accept + ack covers the exact legs) from the preview alone, so we
-   *  conservatively disable Confirm for all blocks (Codex #734 r10). A precise
-   *  soft warning needs an ack-aware on-chain preview — a deliberate follow-up. */
+   *  - illiquid (code 2): now a TRUE block — the ack-aware preview (#735) split out
+   *    the self-healing case as the soft code 4, so a remaining code 2 is a gap the
+   *    signature can't heal (creator-side, a rental-prepay / depth-collapsed leg,
+   *    or a stale tier anchor). The on-chain gate remains the real boundary. */
   hardBlock: boolean;
+  /** #735 — a SOFT, non-blocking warning (code 4): the pair is illiquid but the
+   *  acceptor's standard #662 acknowledgement (produced by the accept-signing
+   *  flow) clears the gate at sign-time. Confirm stays ENABLED; the UI shows the
+   *  reason so the user knows they're taking on acknowledged illiquid risk. */
+  softWarn: boolean;
   /** True while the check is still in flight — Confirm should stay disabled so a
    *  user can't sign before the (possibly blocking) verdict resolves. */
   pending: boolean;
@@ -147,25 +156,21 @@ export function useRiskAccessPreflight(
     };
   }, [address, offerId, onDeployedChain, diamondRo]);
 
-  const blocked =
+  // The HARD codes block the accept; the soft `illiquid-ack-covered` (code 4) does
+  // NOT — the accept-signing flow's #662 ack clears it at sign-time (#735).
+  const hardBlock =
     status === "tier-too-low" ||
     status === "needs-illiquid-consent" ||
     status === "needs-midtier-ack";
-
-  // Every non-OK preview code disables Confirm. The preview is standing-consent-
-  // only and checks the offer CREATOR before the acceptor, and the #662 ack only
-  // substitutes for the acceptor's illiquid consent when it covers the gate's
-  // EXACT illiquid legs (not illiquid prepay, not a depth-collapsed ERC-20 tier,
-  // not a lender-sale buyer). The client can't prove that one self-healing case
-  // from the bare preview, so it conservatively treats every block as hard rather
-  // than risk enabling Confirm on an accept the loan-init gate will reject
-  // (Codex #734 r10). The on-chain gate remains the real boundary.
-  const hardBlock = blocked;
+  const softWarn = status === "illiquid-ack-covered";
 
   return {
     status,
-    blocked,
+    // `blocked` tracks the gate actively blocking the accept — the hard codes
+    // only (code 4 self-heals, so it isn't a block).
+    blocked: hardBlock,
     hardBlock,
+    softWarn,
     pending: status === "loading",
     reason: RISK_PREFLIGHT_REASON[status],
   };
