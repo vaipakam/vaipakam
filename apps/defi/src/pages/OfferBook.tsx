@@ -5,7 +5,7 @@ import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
-import { useMidTierAckGate, type RiskPairId } from '../hooks/useMidTierAckGate';
+import { useMidTierAckGate, useAcceptMidTierPair } from '../hooks/useMidTierAckGate';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -2128,18 +2128,25 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
  * re-opens the offer to accept once it's active.
  */
 function MidTierAckRecorder({ offer }: { offer: OfferData }) {
-  const pair: RiskPairId = {
-    lendAsset: offer.lendingAsset,
-    lendType: offer.assetType,
-    lendTokenId: offer.tokenId,
-    collAsset: offer.collateralAsset,
-    // Optional NFT-shape fields default to the ERC-20 sentinel; the contract
-    // canonicalises token ids / prepay for non-NFT legs anyway.
-    collType: offer.collateralAssetType ?? 0,
-    collTokenId: offer.collateralTokenId ?? 0n,
-    prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
-  };
-  const gate = useMidTierAckGate(pair);
+  // Resolve the EXACT pair the accept gates against ON-CHAIN: a lender-sale
+  // vehicle gates the buyer against the SOLD LOAN's pair, not the offer's own
+  // surface, and the dapp can't construct that itself (Codex #740 r5). Feeding a
+  // guessed offer-pair would record the wrong pair / show a misleading message.
+  const resolvedPair = useAcceptMidTierPair(offer.id);
+  const gate = useMidTierAckGate(
+    resolvedPair === 'unknown' ? null : resolvedPair,
+  );
+
+  // A real read failure (couldn't determine the gated pair) — don't offer a
+  // record action over an unknown pair.
+  if (resolvedPair === 'unknown') {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Couldn't determine this offer's risk pair right now — reload before
+        recording the acknowledgement.
+      </div>
+    );
+  }
 
   if (gate.recorded) {
     return (

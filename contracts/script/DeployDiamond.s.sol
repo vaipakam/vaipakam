@@ -1465,7 +1465,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1503,6 +1503,7 @@ contract DeployDiamond is Script {
         s[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
         s[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
         s[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
+        s[31] = RiskAccessFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
     }
 
     function _getAggregatorAdapterFactorySelectors()

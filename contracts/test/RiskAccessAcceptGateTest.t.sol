@@ -758,6 +758,29 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
     }
 
+    // #735 item 3 — `acceptMidTierAckPair` resolves the EXACT pair an accept gates
+    // against, so the dapp records a strict-mode mid-tier acknowledgement for the
+    // right pair. For a NORMAL offer that is the offer's own pair. (The sale-vehicle
+    // branch — where it must return the SOLD LOAN's pair, not the offer's surface —
+    // is asserted in EarlyWithdrawalFacetTest alongside the sale-buyer preview test,
+    // which already has the linked-loan harness.)
+    function test_acceptMidTierAckPair_normalOfferReturnsOfferPair() public {
+        _mockTier(mockERC20, 3);
+        _mockTier(mockIlliquidERC20, 0);
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+
+        LibRiskAccess.PairId memory got =
+            RiskAccessFacet(address(diamond)).acceptMidTierAckPair(offerId);
+        LibRiskAccess.PairId memory want = _offerPair(mockERC20, mockIlliquidERC20);
+        assertEq(got.lendAsset, want.lendAsset, "lendAsset");
+        assertEq(uint8(got.lendType), uint8(want.lendType), "lendType");
+        assertEq(got.lendTokenId, want.lendTokenId, "lendTokenId");
+        assertEq(got.collAsset, want.collAsset, "collAsset");
+        assertEq(uint8(got.collType), uint8(want.collType), "collType");
+        assertEq(got.collTokenId, want.collTokenId, "collTokenId");
+        assertEq(got.prepayAsset, want.prepayAsset, "prepayAsset");
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // 10 — SALE-BUYER gate (Codex #729 r3 finding E): a loan-sale BUYER is gated
     //      against the LINKED loan's asset pair (the exiting seller stays exempt).

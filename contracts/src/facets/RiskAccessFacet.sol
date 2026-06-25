@@ -473,25 +473,63 @@ contract RiskAccessFacet is DiamondAccessControl {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
+        LibRiskAccess.PairId memory pair = _acceptGatePair(s, offerId);
+        if (s.saleOfferToLoanId[offerId] != 0) {
+            // Sale vehicle: only the BUYER (`acceptor`) is gated, against the sold
+            // loan's pair (the exiting seller is exempt — Codex #729 r4).
+            return LibRiskAccess.previewActorBlock(s, acceptor, pair);
+        }
+        // Normal offer: the creator is re-gated against the LIVE state, then the
+        // acceptor — ack-aware (#735 item 1): an accept always carries the
+        // acceptor's #662 ack, so an illiquid pair the ack self-heals reports code
+        // 4 (soft) instead of code 2 (hard).
+        uint8 creatorBlock =
+            LibRiskAccess.previewActorBlock(s, s.offers[offerId].creator, pair);
+        if (creatorBlock != 0) return creatorBlock;
+        return LibRiskAccess.previewAcceptorBlockAckAware(s, acceptor, pair);
+    }
+
+    /// @notice #735 item 3 — the exact risk-access `PairId` that an ACCEPT of
+    ///         `offerId` is gated against, so the dapp can record a strict-mode
+    ///         mid-tier acknowledgement (`setMidTierPairAck`) for the RIGHT pair.
+    /// @dev    A lender-sale vehicle gates the buyer against the SOLD LOAN's pair,
+    ///         NOT the sale offer's own asset surface — the dapp can't read the
+    ///         internal `saleOfferToLoanId` mapping, so this resolves it on-chain
+    ///         via the SAME {_acceptGatePair} the accept preview uses (they can't
+    ///         disagree). For a normal offer it returns the offer's own pair.
+    function acceptMidTierAckPair(uint256 offerId)
+        external
+        view
+        returns (LibRiskAccess.PairId memory)
+    {
+        return _acceptGatePair(LibVaipakam.storageSlot(), offerId);
+    }
+
+    /// @dev The asset pair an ACCEPT of `offerId` gates against — the single source
+    ///      shared by {previewOfferAcceptBlock} and {acceptMidTierAckPair}. A
+    ///      lender-sale vehicle (`saleOfferToLoanId[offerId] != 0`) gates against
+    ///      the LINKED loan's pair (the position the buyer joins); a normal offer
+    ///      against its own surface.
+    function _acceptGatePair(LibVaipakam.Storage storage s, uint256 offerId)
+        private
+        view
+        returns (LibRiskAccess.PairId memory)
+    {
         uint256 saleLoanId = s.saleOfferToLoanId[offerId];
         if (saleLoanId != 0) {
             LibVaipakam.Loan storage sold = s.loans[saleLoanId];
-            return LibRiskAccess.previewActorBlock(
-                s,
-                acceptor, // the buyer = incoming lender on the sale vehicle
-                LibRiskAccess.PairId({
-                    lendAsset: sold.principalAsset,
-                    lendType: sold.assetType,
-                    lendTokenId: sold.tokenId,
-                    collAsset: sold.collateralAsset,
-                    collType: sold.collateralAssetType,
-                    collTokenId: sold.collateralTokenId,
-                    prepayAsset: sold.prepayAsset
-                })
-            );
+            return LibRiskAccess.PairId({
+                lendAsset: sold.principalAsset,
+                lendType: sold.assetType,
+                lendTokenId: sold.tokenId,
+                collAsset: sold.collateralAsset,
+                collType: sold.collateralAssetType,
+                collTokenId: sold.collateralTokenId,
+                prepayAsset: sold.prepayAsset
+            });
         }
         LibVaipakam.Offer storage o = s.offers[offerId];
-        LibRiskAccess.PairId memory pair = LibRiskAccess.PairId({
+        return LibRiskAccess.PairId({
             lendAsset: o.lendingAsset,
             lendType: o.assetType,
             lendTokenId: o.tokenId,
@@ -500,12 +538,6 @@ contract RiskAccessFacet is DiamondAccessControl {
             collTokenId: o.collateralTokenId,
             prepayAsset: o.prepayAsset
         });
-        uint8 creatorBlock = LibRiskAccess.previewActorBlock(s, o.creator, pair);
-        if (creatorBlock != 0) return creatorBlock;
-        // #735 item 1 — the acceptor leg is ack-aware: an accept always carries
-        // the acceptor's #662 ack, so an illiquid pair the ack self-heals reports
-        // code 4 (soft) instead of code 2 (hard).
-        return LibRiskAccess.previewAcceptorBlockAckAware(s, acceptor, pair);
     }
 
     /// @notice #671 phase 2 (#728 PR-2c) — assert the INCOMING borrower of a

@@ -68,6 +68,72 @@ const isMissingFacet = (e: unknown): boolean => {
   return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
 };
 
+/**
+ * #735 item 3 — resolve the EXACT pair an accept of `offerId` is gated against,
+ * reading the contract's `acceptMidTierAckPair(offerId)`. A lender-sale vehicle
+ * gates the buyer against the SOLD LOAN's pair (not the sale offer's own surface),
+ * which the dapp can't construct itself (the `saleOfferToLoanId` mapping isn't a
+ * public getter) — so the resolution happens on-chain and the dapp feeds the
+ * result into {useMidTierAckGate}. Returns null while loading / when unsupported,
+ * or `'unknown'` on a real read failure so callers can avoid acting on a bad pair.
+ */
+export function useAcceptMidTierPair(
+  offerId: bigint | null | undefined,
+): RiskPairId | null | "unknown" {
+  const { address, isCorrectChain, activeChain } = useWallet();
+  const diamondRo = useDiamondRead();
+  const readChain = useReadChain();
+  const [pair, setPair] = useState<RiskPairId | null | "unknown">(null);
+
+  const onDeployedChain =
+    isCorrectChain &&
+    !!activeChain?.diamondAddress &&
+    readChain.chainId === activeChain.chainId;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (offerId == null || !address || !onDeployedChain) {
+      setPair(null);
+      return;
+    }
+    const ro = diamondRo as unknown as {
+      acceptMidTierAckPair: (offerId: bigint) => Promise<{
+        lendAsset: string;
+        lendType: number | bigint;
+        lendTokenId: bigint;
+        collAsset: string;
+        collType: number | bigint;
+        collTokenId: bigint;
+        prepayAsset: string;
+      }>;
+    };
+    ro.acceptMidTierAckPair(offerId)
+      .then((p) => {
+        if (cancelled) return;
+        setPair({
+          lendAsset: p.lendAsset,
+          lendType: Number(p.lendType),
+          lendTokenId: BigInt(p.lendTokenId),
+          collAsset: p.collAsset,
+          collType: Number(p.collType),
+          collTokenId: BigInt(p.collTokenId),
+          prepayAsset: p.prepayAsset,
+        });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        // A Diamond predating the view ⇒ no gate to satisfy ⇒ null (no recorder).
+        // A real read failure ⇒ 'unknown' so the caller doesn't act on a bad pair.
+        setPair(isMissingFacet(e) ? null : "unknown");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [offerId, address, onDeployedChain, diamondRo]);
+
+  return pair;
+}
+
 export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
@@ -117,6 +183,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       midTierStrictBlocked: (vault: string, p: RiskPairId) => Promise<boolean>;
       pairRequiredRiskLevel: (p: RiskPairId) => Promise<number | bigint>;
       getEffectiveRiskTier: (vault: string) => Promise<number | bigint>;
+      getRiskAccessGateEnabled: () => Promise<boolean>;
     };
     // Mid-tier ack verdict.
     ro.midTierStrictBlocked(address, pair)
@@ -140,14 +207,19 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // Tier-vs-pair-requirement verdict (Codex #740 r4): the create gate checks the
     // creator's tier BEFORE the mid-tier ack, so recording the ack alone can't
     // unblock a still-under-tiered wallet. Compare the pair's required level with
-    // the wallet's EFFECTIVE tier (read-time re-locked).
+    // the wallet's EFFECTIVE tier (read-time re-locked) — BUT only when the master
+    // switch is ON. With the gate off, `OfferCreateFacet` skips the risk assert
+    // entirely, so a non-blue-chip pair on a default-tier vault creates fine and
+    // must NOT be reported tier-too-low (Codex #740 r5 P1 — otherwise the gate-off
+    // retail deploy can't create any non-blue-chip offer).
     Promise.all([
       ro.pairRequiredRiskLevel(pair),
       ro.getEffectiveRiskTier(address),
+      ro.getRiskAccessGateEnabled(),
     ])
-      .then(([req, eff]) => {
+      .then(([req, eff, gateOn]) => {
         if (cancelled) return;
-        setTierTooLow(Number(eff) < Number(req));
+        setTierTooLow(Boolean(gateOn) && Number(eff) < Number(req));
         setTierKnown(true);
       })
       .catch((e) => {
@@ -178,6 +250,10 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   useEffect(() => {
     setRecorded(false);
     setError(null);
+    // Also clear the in-flight flag for the NEW context: an old, still-pending
+    // record tx belongs to the previous identity and can no longer apply here, so
+    // the new context's recorder must not stay disabled behind it (Codex #740 r5).
+    setRecording(false);
   }, [identity]);
 
   const identityRef = useRef<string>(identity);
@@ -219,7 +295,10 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       if (!stillSameContext()) return;
       setError((e as Error).message);
     } finally {
-      setRecording(false);
+      // Only clear the busy flag if the context is unchanged. If it changed, the
+      // identity-reset effect already cleared it for the new context (and a fresh
+      // record there may have set it true again — don't stomp that).
+      if (stillSameContext()) setRecording(false);
     }
   }, [pair, identity, address, diamondRw]);
 

@@ -2510,5 +2510,15 @@ contract EarlyWithdrawalFacetTest is Test {
             0,
             "armed buyer clears the sale-offer preview"
         );
+
+        // #735 item 3 — `acceptMidTierAckPair` must resolve the SOLD LOAN's pair
+        // for a sale vehicle (so the dapp records a mid-tier ack for the right
+        // pair), NOT the sale offer's own surface.
+        LibRiskAccess.PairId memory ackPair =
+            RiskAccessFacet(address(diamond)).acceptMidTierAckPair(saleOfferId);
+        assertEq(ackPair.lendAsset, pair.lendAsset, "ackPair lendAsset = loan");
+        assertEq(ackPair.collAsset, pair.collAsset, "ackPair collAsset = loan");
+        assertEq(uint8(ackPair.collType), uint8(pair.collType), "ackPair collType");
+        assertEq(ackPair.collTokenId, pair.collTokenId, "ackPair collTokenId");
     }
 }

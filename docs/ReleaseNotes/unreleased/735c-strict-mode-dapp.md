@@ -33,7 +33,13 @@ deployment may configure up to 30 days), so the copy never promises a quick
 unblock; the user re-opens the offer (or waits out the create gate) once it's
 active.
 
-No contract change — every setter and view this uses already shipped with #728, so
-there is no ABI or diamond-cut churn. This closes the last open item under the
-#735 umbrella (the strict-mode toggle was the deferred piece called out in the
-Risk Access page since #728 PR-2d).
+The accept flow records the acknowledgement for the EXACT pair the gate checks,
+resolved on-chain: a lender-sale vehicle gates the buyer against the sold loan's
+pair (not the sale offer's own surface), which the dapp can't reconstruct itself,
+so a small read-only view (`acceptMidTierAckPair`) returns it. That is the only
+contract addition — every setter/predicate the rest of this uses already shipped
+with #728. The create form additionally checks the creator's tier prerequisite
+before presenting the acknowledgement as the fix (the gate checks tier first), and
+all the strict-mode/ack reads degrade safely when the master gate is off or a read
+fails. This closes the last open item under the #735 umbrella (the strict-mode
+toggle was the deferred piece called out in the Risk Access page since #728 PR-2d).
