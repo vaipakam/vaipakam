@@ -4456,15 +4456,17 @@ library LibVaipakam {
         // direct-accept illiquid-substitution path (the keeper-match path leaves
         // `acceptAckActive == false`).
         bytes32 acceptAckTermsHash;
-        // #730 (Codex #736 r3+r4) — the live risk-terms HASH, paired with
-        // `currentRiskTermsVersion`. `bumpRiskTermsVersion(bytes32)` sets it to the
-        // GOVERNANCE-SUPPLIED hash of the newly-published terms document — a value
-        // unknowable before the bump is enacted, so a signer cannot pre-stamp the
-        // next version's anchor (an earlier block-entropy derivation was predictable
-        // when the bump timing was observable). The numeric version stays the anchor
+        // #730 (Codex #736 r3–r7) — the live risk-terms ANCHOR, paired with
+        // `currentRiskTermsVersion`. Set by `revealRiskTermsBump` to a fresh RANDOM
+        // SECRET (`termsAnchor`) published via commit-reveal: the slow/timelock
+        // `commitRiskTermsBump` stores only a hiding `keccak256(abi.encode(anchor))`
+        // (queued calldata exposes nothing) and the fast off-timelock reveal
+        // activates it atomically — so the anchor is unknowable before activation
+        // and a signer can't pre-stamp the next one (it is NOT the public terms-doc
+        // hash, which is published separately). The numeric version stays the anchor
         // for the CONTRACT-written tier / illiquid-consent freshness checks (those
         // can't be pre-stamped); only the signer-controlled accept ack binds this
-        // hash. Zero before the first bump (matches a zero-stamped ack, which is
+        // value. Zero before the first reveal (matches a zero-stamped ack, which is
         // correct pre-bump).
         bytes32 currentRiskTermsHash;
         // #730 (Codex #736 r5/r7) — the pending HIDING commitment to the next terms
