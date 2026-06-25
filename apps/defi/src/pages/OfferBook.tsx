@@ -2193,6 +2193,17 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
   }
   if (!gate.tierKnown) return null; // tier verdict still resolving
 
+  // Hold the write until the cooldown reads settle — otherwise a still-cooling ack
+  // would read as not-pending for a render and a repeat write could restamp it
+  // (Codex #740 r12).
+  if (!gate.pendingKnown) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Checking your acknowledgement status…
+      </div>
+    );
+  }
+
   // An ack is already recorded and cooling down — re-recording would restamp the
   // cooldown (Codex #740 r10).
   if (gate.midTierAckPending) {

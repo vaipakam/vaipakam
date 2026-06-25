@@ -421,18 +421,23 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         down (PENDING) — the dapp suppresses a repeat `setIlliquidPairConsent`
     ///         then, since re-recording restamps the cooldown and can push the
     ///         effective time out (Codex #740 r10). 0 / past = nothing pending.
-    /// @dev    Returns 0 when the recorded consent's VERSION anchor is stale (a
-    ///         risk-terms bump happened since it was recorded): that record can
-    ///         never become effective without re-recording, so it is NOT pending —
-    ///         the dapp must offer a fresh consent rather than tell the user to wait
-    ///         out a dead cooldown (Codex #740 r11).
+    /// @dev    Returns 0 unless a consent is actually SET and version-current. A
+    ///         risk-terms bump (stale version) OR a REVOKE (`setIlliquidPairConsent
+    ///         (.., false)` clears the flag but leaves the unlock timestamp in
+    ///         place) both make the cooldown obsolete — that record can never
+    ///         become effective, so it is NOT pending and the dapp must offer a
+    ///         fresh consent rather than wait out a dead cooldown (Codex #740
+    ///         r11/r12).
     function getPairConsentUnlockAt(
         address vault,
         LibRiskAccess.PairId calldata p
     ) external view returns (uint64) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32 pk = LibRiskAccess.pairKey(p);
-        if (s.illiquidPairVersionAt[vault][pk] < s.currentRiskTermsVersion) {
+        if (
+            !s.illiquidPairConsent[vault][pk]
+                || s.illiquidPairVersionAt[vault][pk] < s.currentRiskTermsVersion
+        ) {
             return 0;
         }
         return s.pairConsentUnlockAt[vault][pk];

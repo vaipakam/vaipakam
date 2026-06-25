@@ -98,6 +98,10 @@ export function OwnOfferMidTierAck({ offerId }: OwnOfferMidTierAckProps) {
         </div>
       );
     }
+    // Hold the write until the cooldown reads settle (Codex r12).
+    if (!gate.pendingKnown) {
+      return <div role="status" style={noteStyle}>Checking consent status…</div>;
+    }
     return (
       <div style={{ marginTop: "0.35rem" }}>
         <div style={{ fontSize: "0.75rem", opacity: 0.85, marginBottom: "0.25rem" }}>
@@ -125,6 +129,10 @@ export function OwnOfferMidTierAck({ offerId }: OwnOfferMidTierAckProps) {
         effective once the cooldown elapses; no need to record it again.
       </div>
     );
+  }
+  // Hold the write until the cooldown reads settle (Codex r12).
+  if (!gate.pendingKnown) {
+    return <div role="status" style={noteStyle}>Checking acknowledgement status…</div>;
   }
   return (
     <div style={{ marginTop: "0.35rem" }}>

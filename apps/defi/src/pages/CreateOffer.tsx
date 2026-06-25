@@ -1932,7 +1932,15 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
       </div>
     );
   }
-  // Offer the contextual consent write right here.
+  // Offer the contextual consent write right here — but hold it until the cooldown
+  // reads settle so a repeat can't restamp a still-cooling consent (Codex r12).
+  if (gate.illiquidConsentNeeded && !gate.pendingKnown) {
+    return (
+      <div role="status" style={{ margin: "0.75rem 0", fontSize: "0.85rem", opacity: 0.85 }}>
+        Checking the per-pair consent status…
+      </div>
+    );
+  }
   if (gate.illiquidConsentNeeded) {
     return (
       <div
@@ -2010,8 +2018,18 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
       </div>
     );
   }
-  // Nothing to surface unless the creator is actually blocked, or just recorded.
-  if (!gate.blocked && !gate.recorded) return null;
+  // Once the gate clears (e.g. a zero-cooldown record made the ack effective), the
+  // submit button enables, so don't keep telling the user creating is blocked
+  // (Codex #740 r12). Only surface while still blocked.
+  if (!gate.blocked) return null;
+  // Hold the ack write until the cooldown reads settle (Codex r12).
+  if (!gate.recorded && !gate.pendingKnown) {
+    return (
+      <div role="status" style={{ margin: "0.75rem 0", fontSize: "0.85rem", opacity: 0.85 }}>
+        Checking your acknowledgement status…
+      </div>
+    );
+  }
   return (
     <div
       role="status"

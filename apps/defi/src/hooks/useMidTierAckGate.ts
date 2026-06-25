@@ -62,6 +62,10 @@ export interface MidTierAckGate {
   /** #735 r10 — an illiquid consent was already submitted and is still cooling
    *  down (`pairConsentUnlockAt > now`). Suppress repeat writes. */
   consentPending: boolean;
+  /** #735 r12 — false until the unlock-timestamp reads settle. A recorder must NOT
+   *  offer a write while this is false: the pending flags read false during that
+   *  window, and offering the write could restamp a still-cooling record. */
+  pendingKnown: boolean;
   recording: boolean;
   recorded: boolean;
   error: string | null;
@@ -249,6 +253,11 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   // PENDING = recorded but still cooling down (Codex #740 r10) — suppress repeats.
   const [midTierAckPending, setMidTierAckPending] = useState(false);
   const [consentPending, setConsentPending] = useState(false);
+  // The pending reads resolve SEPARATELY from the tier/block reads, so the verdict
+  // can look "clear" before they land. `pendingKnown` is false until they settle,
+  // and the recorders hold the write until then so a repeat can't slip in and
+  // restamp a cooling record (Codex #740 r12).
+  const [pendingKnown, setPendingKnown] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recorded, setRecorded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -279,6 +288,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   // synchronously UNKNOWN on any pair/wallet/chain change until the read re-lands.
   const blockResolvedForRef = useRef<string | null>(null);
   const tierResolvedForRef = useRef<string | null>(null);
+  const pendingResolvedForRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,6 +296,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     if (!address || !pair || !onDeployedChain) {
       blockResolvedForRef.current = readIdentity;
       tierResolvedForRef.current = readIdentity;
+      pendingResolvedForRef.current = readIdentity;
       setBlocked(false);
       setKnown(false);
       setTierTooLow(false);
@@ -293,6 +304,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       setIlliquidConsentNeeded(false);
       setMidTierAckPending(false);
       setConsentPending(false);
+      setPendingKnown(false);
       return;
     }
     // Reset every verdict to UNKNOWN before the new reads resolve. Otherwise a
@@ -307,6 +319,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     setIlliquidConsentNeeded(false);
     setMidTierAckPending(false);
     setConsentPending(false);
+    setPendingKnown(false);
     const ro = diamondRo as unknown as {
       midTierStrictBlocked: (vault: string, p: RiskPairId) => Promise<boolean>;
       pairRequiredRiskLevel: (p: RiskPairId) => Promise<number | bigint>;
@@ -398,14 +411,22 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     ])
       .then(([consentUnlock, ackUnlock]) => {
         if (cancelled) return;
+        pendingResolvedForRef.current = readIdentity;
         const nowSec = BigInt(Math.floor(Date.now() / 1000));
         setConsentPending(BigInt(consentUnlock) > nowSec);
         setMidTierAckPending(BigInt(ackUnlock) > nowSec);
+        setPendingKnown(true);
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return;
+        pendingResolvedForRef.current = readIdentity;
         setConsentPending(false);
         setMidTierAckPending(false);
+        // Missing getter (version skew) ⇒ there's no pending record to restamp, so
+        // it's safe to consider the pending verdict KNOWN (offer the write). A real
+        // read failure leaves it UNKNOWN so the recorder holds the write until it
+        // can confirm there's nothing cooling down (Codex #740 r12).
+        setPendingKnown(isMissingFacet(e));
       });
     return () => {
       cancelled = true;
@@ -521,14 +542,16 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   // stale "clear" verdict enable a doomed action for one render.
   const blockFresh = blockResolvedForRef.current === identity;
   const tierFresh = tierResolvedForRef.current === identity;
+  const pendingFresh = pendingResolvedForRef.current === identity;
   return {
     blocked: blockFresh ? blocked : false,
     known: blockFresh ? known : false,
     tierTooLow: tierFresh ? tierTooLow : false,
     tierKnown: tierFresh ? tierKnown : false,
     illiquidConsentNeeded: tierFresh ? illiquidConsentNeeded : false,
-    midTierAckPending: tierFresh ? midTierAckPending : false,
-    consentPending: tierFresh ? consentPending : false,
+    midTierAckPending: pendingFresh ? midTierAckPending : false,
+    consentPending: pendingFresh ? consentPending : false,
+    pendingKnown: pendingFresh ? pendingKnown : false,
     recording,
     recorded,
     error,
