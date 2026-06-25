@@ -184,6 +184,15 @@ contract LenderIntentMatchTest is SetupTest {
         // #393 v1-d — the fill drew its slice from the intent-capital lien:
         // funded PRINCIPAL, lent PRINCIPAL ⇒ 0 un-lent capital remains.
         assertEq(_intentCapital(), 0, "intent capital drawn down by the fill");
+        // #625 WI-3 — pin the passive-lender protection: an intent-filled loan is
+        // ALWAYS full-term + no-partial. The matchIntent guards reject a pro-rata
+        // (`LenderIntentFullTermRequired`) or partial-enabled
+        // (`LenderIntentPartialRepayNotAllowed`) borrower offer, and the loan
+        // inherits the borrower offer's flags. Asserting on the resulting LOAN (not
+        // just the guard reverts) locks the guarantee against a future regression in
+        // either the guard or the inheritance copy.
+        assertTrue(loan.useFullTermInterest, "intent loan is full-term");
+        assertFalse(loan.allowsPartialRepay, "intent loan disallows partial repay");
     }
 
     // ─── 2. Exposure cap across simultaneous fills ──────────────────────────
