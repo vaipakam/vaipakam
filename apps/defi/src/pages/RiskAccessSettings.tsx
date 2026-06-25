@@ -60,17 +60,21 @@ export default function RiskAccessSettings() {
   // this (Codex #734 r3). If the unlock read failed it's UNKNOWN — treat as
   // cooling so a failed read can't enable a re-affirm that restarts the
   // cooldown (Codex #734 r4).
-  const [, forceTick] = useState(0);
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
   const cooling = !risk.tierUnlockKnown || risk.tierUnlockAt > nowSec;
-  // While a tier is cooling down, re-render periodically so the button flips to
-  // re-affirmable the moment the cooldown elapses, even if the page stays open
-  // across the boundary (Claude review #734 P4).
+  // When a cooling-down tier reaches its unlock time, RE-READ (not just
+  // re-render): the on-chain effective tier flips to the raised level on its own
+  // once the cooldown passes, so the page must refetch to reflect it rather than
+  // keep showing the old "not effective" tier + a redundant re-affirm button
+  // (Claude #734 P4 + Codex #734 r7).
+  const { refresh } = risk;
   useEffect(() => {
-    if (!cooling) return;
-    const id = setInterval(() => forceTick((n) => n + 1), 15_000);
-    return () => clearInterval(id);
-  }, [cooling]);
+    if (!risk.tierUnlockKnown || risk.tierUnlockAt === 0n) return;
+    const ms = Number(risk.tierUnlockAt) * 1000 - Date.now();
+    if (ms < 0) return;
+    const id = setTimeout(() => void refresh(), ms + 1000);
+    return () => clearTimeout(id);
+  }, [risk.tierUnlockAt, risk.tierUnlockKnown, refresh]);
 
   async function chooseTier(level: RiskTier) {
     // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a
@@ -147,6 +151,27 @@ export default function RiskAccessSettings() {
       <div style={{ padding: "1.5rem", maxWidth: 720 }}>
         <h1>Risk Access</h1>
         <p>Loading…</p>
+      </div>
+    );
+  }
+
+  // A critical tier read failed — don't render controls over an untrustworthy
+  // (default) tier, which could drive a wrong / cooldown-restarting write
+  // (Codex #734 r7).
+  if (risk.criticalReadFailed) {
+    return (
+      <div style={{ padding: "1.5rem", maxWidth: 720 }}>
+        <h1>Risk Access</h1>
+        <ErrorAlert
+          message={`Couldn't read your current risk-access tier${risk.error ? `: ${risk.error}` : ""}. Reload to try again before changing it.`}
+        />
+        <button
+          type="button"
+          onClick={() => void risk.refresh()}
+          style={{ marginTop: "0.75rem" }}
+        >
+          Retry
+        </button>
       </div>
     );
   }

@@ -61,6 +61,9 @@ export interface RiskAccessState {
   termsVersion: bigint;
   /** False on a Diamond that predates `RiskAccessFacet`. */
   supported: boolean;
+  /** True when a critical tier read (effective or raw) failed — the displayed
+   *  tier is NOT trustworthy and the controls should be disabled. */
+  criticalReadFailed: boolean;
   /** True when the wallet is on a chain without a deployed Diamond — the reads
    *  are skipped and the displayed state is NOT trustworthy. */
   wrongChain: boolean;
@@ -103,6 +106,7 @@ export function useRiskAccess(): RiskAccessState {
   const [gateEnabledKnown, setGateEnabledKnown] = useState(true);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
   const [supported, setSupported] = useState(true);
+  const [criticalReadFailed, setCriticalReadFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // The key (vault + chain) the displayed state was loaded for. `loading` is
@@ -131,17 +135,26 @@ export function useRiskAccess(): RiskAccessState {
       getCurrentRiskTermsVersion: () => Promise<bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
     };
+    // A failed effective/raw TIER read must NOT leave the page showing a
+    // trustworthy-looking default (BlueChip) with enabled controls — a stale /
+    // wrong tier could then drive a redundant cooldown-restarting write (Codex
+    // #734 r7). Track it and surface an error state instead.
+    let critical = false;
     // First read doubles as the "does this Diamond cut RiskAccessFacet?" probe.
     try {
       const eff = Number(await ro.getEffectiveRiskTier(address)) as RiskTier;
       if (live()) setEffectiveTier(eff);
     } catch (e) {
       if (isMissingSelector(e)) missing = true;
-      else if (live()) setError((e as Error).message);
+      else {
+        critical = true;
+        if (live()) setError((e as Error).message);
+      }
     }
     if (!missing) {
       const [rawT, unlockRes, version, gateRes] = await Promise.all([
         ro.getVaultRiskTier(address).catch((e) => {
+          critical = true;
           if (live()) setError((e as Error).message);
           return 0;
         }),
@@ -171,6 +184,7 @@ export function useRiskAccess(): RiskAccessState {
       }
     }
     if (live()) {
+      setCriticalReadFailed(critical);
       setSupported(!missing);
       setLoadedKey(loadKey);
     }
@@ -189,6 +203,7 @@ export function useRiskAccess(): RiskAccessState {
     gateEnabledKnown,
     termsVersion,
     supported,
+    criticalReadFailed,
     wrongChain: !!address && !canRead,
     loading,
     error,
