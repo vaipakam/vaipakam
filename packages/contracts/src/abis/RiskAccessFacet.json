@@ -197,6 +197,25 @@
   },
   {
     "type": "function",
+    "name": "getVaultRiskTierVersion",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "hasIlliquidPairConsent",
     "inputs": [
       {

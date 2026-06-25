@@ -55,17 +55,15 @@ export default function RiskAccessSettings() {
     ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
   };
 
-  // A held-but-not-effective tier (raw > effective) is either cooling down from
-  // a recent raise OR stale after a terms-version bump. Re-affirming it IN PLACE
-  // is intentionally NOT offered from this page: distinguishing cooling from
-  // stale reliably needs an on-chain per-user version read the facet doesn't
-  // expose yet, and every local-clock / timer heuristic for it proved fragile
-  // (Codex #734 r3–r8). The selected tier's button stays disabled with an
-  // explanatory note; to re-affirm a stale tier the user lowers then re-raises
-  // (a follow-up can add a robust in-place re-affirm once a version getter
-  // exists).
-  async function chooseTier(level: RiskTier) {
-    if (level === risk.rawTier) return;
+  // Submit a `setVaultRiskTier(level)` write. Shared by choosing a new tier and
+  // by re-affirming the current one in place (#735) — re-affirm re-stamps the tier
+  // anchor to the live risk-terms version, which is how a tier made STALE by a
+  // governance terms bump is restored without forcing a lower-then-raise. (A
+  // merely-cooling tier is left informational — re-clicking would restart the
+  // cooldown.) `risk.tierStaleAfterBump` distinguishes the two from an on-chain
+  // per-user version read (`getVaultRiskTierVersion`), replacing the fragile
+  // local-clock heuristics that were removed in #734 r8.
+  async function submitTier(level: RiskTier, notice: string) {
     const step = beginStep({
       area: "profile",
       flow: "setVaultRiskTier",
@@ -79,11 +77,7 @@ export default function RiskAccessSettings() {
       const tx = await rw.setVaultRiskTier(level);
       await tx.wait();
       step.success();
-      setNotice(
-        level > risk.rawTier
-          ? "Tier raised. If an opt-up cooldown is configured it becomes effective once the cooldown elapses."
-          : "Tier updated.",
-      );
+      setNotice(notice);
       await risk.refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -91,6 +85,25 @@ export default function RiskAccessSettings() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function chooseTier(level: RiskTier) {
+    if (level === risk.rawTier) return;
+    await submitTier(
+      level,
+      level > risk.rawTier
+        ? "Tier raised. If an opt-up cooldown is configured it becomes effective once the cooldown elapses."
+        : "Tier updated.",
+    );
+  }
+
+  // #735 — re-affirm the currently-held tier against the latest risk-terms
+  // version, restoring a tier that a governance terms bump made stale.
+  async function reaffirmTier() {
+    await submitTier(
+      risk.rawTier,
+      "Tier re-affirmed against the latest risk terms — it's effective again.",
+    );
   }
 
 
@@ -219,10 +232,13 @@ export default function RiskAccessSettings() {
         {TIER_OPTIONS.map((opt) => {
           const selected = risk.rawTier === opt.level;
           const current = selected && risk.effectiveTier === risk.rawTier;
-          // Held but not yet effective (cooling down, or stale after a terms
-          // bump). The button is disabled either way; re-affirming in place is a
-          // follow-up (see the chooseTier note above).
+          // Held but not yet effective — either cooling down from a recent raise
+          // OR stale after a governance terms bump. `tierStaleAfterBump` tells the
+          // two apart (#735): stale offers an in-place re-affirm; cooling stays
+          // informational (re-clicking would restart the cooldown).
           const heldNotEffective = selected && !current;
+          const staleHere = heldNotEffective && risk.tierStaleAfterBump;
+          const coolingHere = heldNotEffective && !risk.tierStaleAfterBump;
           const locked = busy || selected;
           return (
             <button
@@ -245,12 +261,17 @@ export default function RiskAccessSettings() {
             >
               <div style={{ fontWeight: 600 }}>
                 {RISK_TIER_LABEL[opt.level]} {current && "✓"}
-                {heldNotEffective && (
+                {coolingHere && (
                   <span style={{ fontWeight: 400, opacity: 0.8 }}>
                     {" "}
-                    — selected, not yet effective (pending an opt-up cooldown, or
-                    a terms-version re-affirmation; lower then re-raise to
-                    re-affirm)
+                    — selected; effective once the opt-up cooldown elapses
+                  </span>
+                )}
+                {staleHere && (
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {" "}
+                    — not effective: the risk terms changed since you set this.
+                    Re-affirm to restore it.
                   </span>
                 )}
               </div>
@@ -259,6 +280,16 @@ export default function RiskAccessSettings() {
           );
         })}
       </div>
+      {risk.tierStaleAfterBump && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void reaffirmTier()}
+          style={{ marginTop: "0.6rem" }}
+        >
+          {busy ? "Re-affirming…" : "Re-affirm current tier"}
+        </button>
+      )}
       <p style={{ fontSize: "0.8rem", opacity: 0.7, marginTop: "0.5rem" }}>
         Lowering your tier takes effect immediately. Raising it may be subject to
         an opt-up cooldown before it becomes effective.

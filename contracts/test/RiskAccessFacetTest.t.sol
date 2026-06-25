@@ -1048,6 +1048,39 @@ contract RiskAccessFacetTest is SetupTest {
         RiskAccessFacet(address(diamond)).revealRiskTermsBump(a);
     }
 
+    /// @dev #735 — `getVaultRiskTierVersion` exposes the per-vault tier anchor so
+    ///      the dapp can tell a STALE-after-bump tier (anchor < current) from a
+    ///      merely COOLING one, and offer in-place re-affirmation.
+    function test_getVaultRiskTierVersion_tracksAnchorAcrossBump() public {
+        RiskAccessFacet rf = RiskAccessFacet(address(diamond));
+        uint8 broad = uint8(LibVaipakam.RiskAccessLevel.BroadLiquid);
+        // Fresh vault: anchor 0, current 0 — fresh.
+        assertEq(rf.getVaultRiskTierVersion(borrower), 0, "fresh anchor 0");
+        // Opt up -> anchor stamped to the live version.
+        vm.prank(borrower);
+        rf.setVaultRiskTier(broad);
+        assertEq(
+            rf.getVaultRiskTierVersion(borrower),
+            rf.getCurrentRiskTermsVersion(),
+            "anchor stamped to live version on opt-up"
+        );
+        // Governance bump -> anchor now STALE (< current).
+        _bumpRiskTerms(keccak256("rt-reaffirm"));
+        assertLt(
+            rf.getVaultRiskTierVersion(borrower),
+            rf.getCurrentRiskTermsVersion(),
+            "anchor stale after terms bump"
+        );
+        // Re-affirm the same tier -> anchor refreshes to the live version.
+        vm.prank(borrower);
+        rf.setVaultRiskTier(broad);
+        assertEq(
+            rf.getVaultRiskTierVersion(borrower),
+            rf.getCurrentRiskTermsVersion(),
+            "re-affirm refreshes the anchor"
+        );
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // CREATE-GATE INTEGRATION (mirrors AcceptTermBindingTest's create path)
     // ════════════════════════════════════════════════════════════════════════

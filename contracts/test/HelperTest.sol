@@ -781,7 +781,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](30);
+        selectors = new bytes4[](31);
         selectors[0] = RiskAccessFacet.setVaultRiskTier.selector;
         selectors[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         selectors[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -812,6 +812,7 @@ contract HelperTest {
         selectors[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
         selectors[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5
         selectors[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
+        selectors[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()

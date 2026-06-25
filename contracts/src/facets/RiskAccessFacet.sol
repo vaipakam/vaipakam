@@ -336,6 +336,22 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibVaipakam.storageSlot().riskTierUnlockAt[vault];
     }
 
+    /// @notice The risk-terms version a vault's TIER opt-in was last anchored to
+    ///         (#735). The gate honours the opted-in tier only while this is fresh
+    ///         (`>= currentRiskTermsVersion`); a governance terms bump leaves it
+    ///         stale until the vault re-affirms its tier. The dapp reads this
+    ///         alongside `getCurrentRiskTermsVersion` + `getRiskTierUnlockAt` to tell
+    ///         a tier that is merely COOLING DOWN (raise cooldown not yet elapsed)
+    ///         from one made STALE by a terms bump — the latter offering an
+    ///         in-place "re-affirm" instead of forcing a lower-then-raise.
+    function getVaultRiskTierVersion(address vault)
+        external
+        view
+        returns (uint64)
+    {
+        return LibVaipakam.storageSlot().riskTierVersionAt[vault];
+    }
+
     function isProtocolManagedVault(address vault)
         external
         view
