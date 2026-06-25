@@ -4441,17 +4441,31 @@ library LibVaipakam {
         // (Codex #733 P2). Zero (never disabled, or re-enabled) ⇒ no lingering
         // requirement.
         mapping(address => uint64) strictModeStrictUntil;
-        // #730 — the `currentRiskTermsVersion` the acceptor's signed #662
-        // `AcceptTerms.riskTermsVersion` named, injected by
+        // #730 — the `currentRiskTermsHash` the acceptor's signed #662
+        // `AcceptTerms.riskTermsHash` named, injected by
         // `OfferAcceptFacet._verifyAndBindAccept` for the gate to read. Lets the
         // #662⇄#671 ack-substitution (`LibRiskAccess.assertAcceptorMayTransact`)
         // require the SIGNED acknowledgement — not just the vault's tier anchor —
         // to be fresh, so an ack signed before a governance `bumpRiskTermsVersion`
-        // can't be submitted afterward as fresh per-pair illiquid consent. Set on
-        // every accept entry and cleared alongside `acceptAckActive`; only read on
-        // the direct-accept illiquid-substitution path (the keeper-match path
-        // leaves `acceptAckActive == false`).
-        uint256 acceptAckTermsVersion;
+        // can't be submitted afterward as fresh per-pair illiquid consent. We bind
+        // the unguessable HASH, not the numeric version: the version counter is
+        // predictable, so a malicious UI could pre-stamp `N+1` and have it activate
+        // on the next bump (Codex #736 r3). `currentRiskTermsHash` is derived from
+        // bump-time block entropy a pre-signing UI can't predict. Set on every
+        // accept entry and cleared alongside `acceptAckActive`; only read on the
+        // direct-accept illiquid-substitution path (the keeper-match path leaves
+        // `acceptAckActive == false`).
+        bytes32 acceptAckTermsHash;
+        // #730 (Codex #736 r3) — the live risk-terms HASH, paired with
+        // `currentRiskTermsVersion`. `bumpRiskTermsVersion()` re-derives it from
+        // bump-time block entropy (`prevrandao` + the previous block hash), so it
+        // is unguessable BEFORE the bump that publishes it — a signer cannot
+        // pre-stamp the next version's anchor. The numeric version stays the
+        // anchor for the CONTRACT-written tier / illiquid-consent freshness checks
+        // (those can't be pre-stamped); only the signer-controlled accept ack binds
+        // this hash. Zero before the first bump (matches a zero-stamped ack, which
+        // is correct pre-bump).
+        bytes32 currentRiskTermsHash;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

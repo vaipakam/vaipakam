@@ -50,6 +50,19 @@
   },
   {
     "type": "function",
+    "name": "getCurrentRiskTermsHash",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getCurrentRiskTermsVersion",
     "inputs": [],
     "outputs": [
@@ -949,6 +962,12 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "newTermsHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false

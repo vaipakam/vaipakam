@@ -1465,7 +1465,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
+        s = new bytes4[](28);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1493,6 +1493,7 @@ contract DeployDiamond is Script {
         s[24] = RiskAccessFacet.getRiskStrictMode.selector;
         s[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
         s[26] = RiskAccessFacet.midTierStrictBlocked.selector;
+        s[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
     }
 
     function _getAggregatorAdapterFactorySelectors()

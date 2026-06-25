@@ -393,19 +393,20 @@ library LibRiskAccess {
         // fresh per-pair consent once the user refreshed merely their tier (the
         // signature itself was never re-bound to the new terms).
         //
-        // The two anchors use DIFFERENT comparisons ON PURPOSE (Codex #736 r1):
+        // The two anchors are DIFFERENT KINDS on purpose (Codex #736 r1+r3):
         //  - the tier anchor is CONTRACT-written (`setVaultRiskTier` stamps it to
         //    the live version), so it is monotonic and can never run ahead — `>=`
-        //    is safe and matches the read-time re-lock elsewhere.
-        //  - `acceptAckTermsVersion` is SIGNER-controlled (`_verifyAndBindAccept`
-        //    copies `terms.riskTermsVersion` verbatim), so `>=` would let a relayer
-        //    pre-sign a long-deadline ack with `riskTermsVersion = type(uint256).max`
-        //    that stays "fresh" across every future bump. It must equal the live
-        //    version EXACTLY — the acceptor acknowledged the terms in force now,
-        //    not some arbitrary future terms.
+        //    on the numeric version is safe and matches the read-time re-lock.
+        //  - the ack anchor is SIGNER-controlled (`_verifyAndBindAccept` copies the
+        //    acceptor's value verbatim). A NUMERIC version is predictable, so even
+        //    an exact `==` lets a UI pre-stamp `N+1` and have the stale ack activate
+        //    on the next bump. So the ack binds the UNGUESSABLE `currentRiskTermsHash`
+        //    (re-derived from bump-time block entropy) and must match it EXACTLY —
+        //    a value a pre-signing UI cannot predict, proving the ack was signed
+        //    after the live terms were published.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
-                && s.acceptAckTermsVersion == s.currentRiskTermsVersion
+                && s.acceptAckTermsHash == s.currentRiskTermsHash
                 && _ackCoversIlliquidLegs(
                     s, p, ackLend, ackColl, lendAckVerified, collAckVerified
                 )

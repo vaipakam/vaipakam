@@ -43,7 +43,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         address indexed vault, bytes32 indexed pairKey, bool consent
     );
     /// @custom:event-category informational/config
-    event RiskTermsVersionBumped(uint64 newVersion);
+    event RiskTermsVersionBumped(uint64 newVersion, bytes32 newTermsHash);
     /// @custom:event-category informational/config
     event RiskAccessUnlockCooldownSet(uint64 cooldownSec);
     /// @custom:event-category informational/config
@@ -163,6 +163,16 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         held tier / consent whose anchor is now stale falls back to the
     ///         safest tier with ZERO per-user writes (see `LibRiskAccess`).
     ///         Used when the terms a user agreed to materially change.
+    /// @dev    Also re-derives `currentRiskTermsHash` (#730 / Codex #736 r3) — the
+    ///         UNGUESSABLE anchor the signer-controlled #662 accept ack binds.
+    ///         Derived from bump-time block entropy (`prevrandao` + the previous
+    ///         block hash, salted by the new version + this Diamond): a UI signing
+    ///         an `AcceptTerms` BEFORE the bump cannot predict this value, so it
+    ///         cannot pre-stamp the next version's anchor and have a stale ack
+    ///         activate on the bump. (The numeric version stays the anchor for the
+    ///         contract-written tier / consent freshness, which can't be pre-
+    ///         stamped.) `prevrandao` alone can be weak on some L2s, so the prior
+    ///         block hash — unknowable until that block exists — is mixed in too.
     function bumpRiskTermsVersion()
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
@@ -170,7 +180,22 @@ contract RiskAccessFacet is DiamondAccessControl {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         newVersion = ++s.currentRiskTermsVersion;
-        emit RiskTermsVersionBumped(newVersion);
+        s.currentRiskTermsHash = keccak256(
+            abi.encode(
+                newVersion,
+                block.prevrandao,
+                blockhash(block.number - 1),
+                address(this)
+            )
+        );
+        emit RiskTermsVersionBumped(newVersion, s.currentRiskTermsHash);
+    }
+
+    /// @notice The live risk-terms HASH the current #662 accept ack must bind
+    ///         (#730). Zero before the first `bumpRiskTermsVersion()`. The dapp
+    ///         reads this to stamp `AcceptTerms.riskTermsHash`.
+    function getCurrentRiskTermsHash() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().currentRiskTermsHash;
     }
 
     /// @notice Set the opt-up cooldown (seconds). Default 0 ⇒ opt-ups are

@@ -491,15 +491,16 @@ contract OfferAcceptFacet is
         s.acceptAckIlliquidLend = terms.acknowledgedIlliquidLendingAsset;
         s.acceptAckIlliquidColl = terms.acknowledgedIlliquidCollateralAsset;
         s.acceptAckActive = true;
-        // #730 — inject the signed risk-terms anchor so the #662⇄#671 ack-
+        // #730 — inject the signed risk-terms HASH so the #662⇄#671 ack-
         // substitution gate (`LibRiskAccess.assertAcceptorMayTransact`, which
         // runs in LoanFacet's separate call frame and so can't see this calldata)
         // can require the SIGNED ack to be fresh, not just the vault's tier
-        // anchor. Like the address slots above, this is NOT cleared on exit (the
-        // gate reads it only when `acceptAckActive` is true, and every accept
-        // re-injects it) — saving the high-offset SSTORE the facet can't spare
-        // under EIP-170.
-        s.acceptAckTermsVersion = terms.riskTermsVersion;
+        // anchor. Binding the unguessable hash (not the numeric version) stops a
+        // UI pre-stamping the next version (Codex #736 r3). Like the address slots
+        // above, this is NOT cleared on exit (the gate reads it only when
+        // `acceptAckActive` is true, and every accept re-injects it) — saving the
+        // high-offset SSTORE the facet can't spare under EIP-170.
+        s.acceptAckTermsHash = terms.riskTermsHash;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the

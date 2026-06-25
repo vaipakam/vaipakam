@@ -71,7 +71,7 @@ library LibAcceptTerms {
         address acknowledgedIlliquidCollateralAsset; // == collateralAsset iff illiquid, else 0
         uint256 nonce; // per-acceptor replay nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
-        uint256 riskTermsVersion; // #730 — the `currentRiskTermsVersion` this ack acknowledges; re-locks the #662⇄#671 illiquid ack-substitution on a governance terms bump
+        bytes32 riskTermsHash; // #730 — the live `currentRiskTermsHash` this ack acknowledges; an UNGUESSABLE per-bump anchor that re-locks the #662⇄#671 illiquid ack-substitution on a governance terms bump (a numeric version was pre-stampable — Codex #736 r3)
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -110,7 +110,7 @@ library LibAcceptTerms {
         "address acknowledgedIlliquidCollateralAsset,"
         "uint256 nonce,"
         "uint256 deadline,"
-        "uint256 riskTermsVersion"
+        "bytes32 riskTermsHash"
         ")"
     );
 
@@ -188,7 +188,7 @@ library LibAcceptTerms {
                     a.acknowledgedIlliquidLendingAsset,
                     a.acknowledgedIlliquidCollateralAsset
                 ),
-                abi.encode(a.nonce, a.deadline, a.riskTermsVersion)
+                abi.encode(a.nonce, a.deadline, a.riskTermsHash)
             )
         );
     }

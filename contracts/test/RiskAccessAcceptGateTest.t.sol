@@ -749,16 +749,16 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
     /// @dev The #730 replay vector. The ack-substitution freshness used to be
     ///      anchored ONLY to the vault's tier version, so an acceptor who signed
-    ///      a long-deadline illiquid `AcceptTerms` at version N, then re-affirmed
-    ///      merely their TIER after a governance bump to N+1, could still submit
-    ///      the stale (version-N) ack as fresh per-pair consent. Stamping
-    ///      `AcceptTerms.riskTermsVersion` and requiring it to EQUAL
-    ///      `currentRiskTermsVersion` exactly at the gate re-locks it (exact match,
-    ///      not `>=` — the version is signer-controlled, so `>=` would let a
-    ///      future-stamped ack bypass it; see
-    ///      `test_acceptGate_futureStampedAckDoesNotSubstitute`). The stale ack now
-    ///      reverts `IlliquidPairNotConsented`, while a freshly re-signed ack
-    ///      substitutes again (recoverable, like a standing consent).
+    ///      a long-deadline illiquid `AcceptTerms` before a governance bump, then
+    ///      re-affirmed merely their TIER afterward, could still submit the stale
+    ///      ack as fresh per-pair consent. The ack now binds the live
+    ///      `currentRiskTermsHash` and the gate requires it to MATCH exactly; a
+    ///      bump re-derives the hash, so the pre-bump ack (which named the old
+    ///      hash) reverts `IlliquidPairNotConsented`, while a freshly re-signed ack
+    ///      substitutes again (recoverable, like a standing consent). Binding the
+    ///      unguessable hash — not the predictable numeric version — also blocks a
+    ///      UI pre-stamping the NEXT version (see
+    ///      `test_acceptGate_guessedFutureHashDoesNotSubstitute`).
     function test_acceptGate_staleAckDoesNotSubstituteAfterBump() public {
         _mockTier(mockERC20, 3); // lend leg blue-chip
         _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
@@ -771,17 +771,21 @@ contract RiskAccessAcceptGateTest is SetupTest {
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
 
-        // Capture a signature NOW, at the current (version 0) terms — the
+        // Capture a signature NOW, at the current (pre-bump, hash 0) terms — the
         // "long-deadline ack signed before the bump."
         (LibAcceptTerms.AcceptTerms memory staleTerms, bytes memory staleSig) =
             _buildAndSign(borrower, borrowerPk, offerId);
-        assertEq(staleTerms.riskTermsVersion, 0, "ack stamped at pre-bump version 0");
+        assertEq(staleTerms.riskTermsHash, bytes32(0), "ack stamped at pre-bump hash 0");
 
-        // Governance bumps the terms version to 1.
+        // Governance bumps the terms version — this re-derives currentRiskTermsHash
+        // to a new (non-zero) value.
         RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        bytes32 liveHash =
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash();
+        assertTrue(liveHash != bytes32(0), "bump re-derives a non-zero terms hash");
 
-        // Acceptor re-affirms ONLY their tier (riskTierVersionAt -> 1, effective
-        // tier back to IlliquidCustom) — but NOT the ack (still version 0).
+        // Acceptor re-affirms ONLY their tier (riskTierVersionAt fresh, effective
+        // tier back to IlliquidCustom) — but NOT the ack (still names hash 0).
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
         assertEq(
@@ -794,18 +798,18 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // ack is the ONLY thing under test.
         _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
-        // The stale (version-0) ack no longer substitutes: the tier check passes
-        // (re-affirmed), but ack-substitution requires the SIGNED version to be
-        // fresh (0 >= 1 is false) and there is no standing consent.
+        // The stale ack no longer substitutes: the tier check passes (re-affirmed),
+        // but ack-substitution requires the SIGNED hash to equal the live one
+        // (0 != liveHash) and there is no standing consent.
         vm.expectPartialRevert(LibRiskAccess.IlliquidPairNotConsented.selector);
         vm.prank(borrower);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, staleTerms, staleSig);
 
-        // A FRESH ack (stamped at the live version) substitutes again — the
-        // re-lock is recoverable by re-signing, like the standing consent.
+        // A FRESH ack (stamped at the live hash) substitutes again — the re-lock is
+        // recoverable by re-signing, like the standing consent.
         (LibAcceptTerms.AcceptTerms memory freshTerms, bytes memory freshSig) =
             _buildAndSign(borrower, borrowerPk, offerId);
-        assertEq(freshTerms.riskTermsVersion, 1, "fresh ack stamped at post-bump version 1");
+        assertEq(freshTerms.riskTermsHash, liveHash, "fresh ack stamped at the live post-bump hash");
         vm.prank(borrower);
         uint256 loanId =
             OfferAcceptFacet(address(diamond)).acceptOffer(offerId, freshTerms, freshSig);
@@ -816,13 +820,13 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
     }
 
-    /// @dev #730 / Codex #736 r1 — a FUTURE-stamped ack must not substitute. The
-    ///      signed `riskTermsVersion` is signer-controlled (copied verbatim from
-    ///      the calldata), so a `>=` check would let a relayer pre-sign a
-    ///      long-deadline ack with `riskTermsVersion = type(uint256).max` that
-    ///      stays "fresh" across every future bump. Exact-version match rejects it:
-    ///      `max != currentRiskTermsVersion`, so the ack-substitution is denied.
-    function test_acceptGate_futureStampedAckDoesNotSubstitute() public {
+    /// @dev #730 / Codex #736 r1+r3 — a GUESSED / pre-stamped ack hash must not
+    ///      substitute. The numeric version was predictable, so even an exact `==`
+    ///      let a UI pre-stamp `N+1` and have the stale ack activate on the next
+    ///      bump. The ack now binds `currentRiskTermsHash`, re-derived at bump time
+    ///      from block entropy a pre-signing UI can't predict: an ack carrying any
+    ///      attacker-chosen hash fails to match the real post-bump hash.
+    function test_acceptGate_guessedFutureHashDoesNotSubstitute() public {
         _mockTier(mockERC20, 3); // lend leg blue-chip
         _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
 
@@ -830,22 +834,33 @@ contract RiskAccessAcceptGateTest is SetupTest {
         ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
         _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
 
-        // Acceptor opts UP to IlliquidCustom — the only thing missing is a fresh,
-        // correctly-versioned consent/ack.
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
 
-        // Build the terms, then OVERRIDE the version to a far-future value and
-        // re-sign — the relayer-captured-ack scenario. The signature is valid for
-        // the modified terms, but the version is not the live one.
+        // Pre-stamp a GUESS of what the next bump's terms hash might be, and sign
+        // it — the malicious-UI / relayer scenario where the user is induced to
+        // acknowledge a future terms version sight-unseen.
         LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
             address(diamond), borrower, offerId, true, 0
         );
-        t.riskTermsVersion = type(uint256).max;
+        t.riskTermsHash = keccak256("attacker-guess-of-next-terms-hash");
         bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
 
-        // Exact-version match denies the future-stamped ack (a `>=` check would
-        // have wrongly let it substitute).
+        // Governance bumps — the real hash is derived from block entropy and will
+        // not equal the attacker's guess.
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        assertTrue(
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash() != t.riskTermsHash,
+            "real post-bump hash is not the guessed value"
+        );
+
+        // Re-affirm the tier so only the guessed ack hash is under test.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+
+        // The guessed-hash ack is denied: it doesn't match the unguessable live
+        // hash, so it can't substitute for a standing consent.
         vm.expectPartialRevert(LibRiskAccess.IlliquidPairNotConsented.selector);
         vm.prank(borrower);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);

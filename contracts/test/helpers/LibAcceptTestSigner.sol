@@ -85,28 +85,28 @@ library LibAcceptTestSigner {
         t.acknowledgedIlliquidCollateralAsset = _ack(diamond, o.collateralAsset);
         t.nonce = offerId; // collision-free per acceptor (offer accepted once)
         t.deadline = block.timestamp + 1 hours;
-        // #730 — stamp the live risk-terms version so the #662⇄#671 illiquid
+        // #730 — stamp the live risk-terms HASH so the #662⇄#671 illiquid
         // ack-substitution gate sees a FRESH acknowledgement (a governance bump
-        // re-locks any ack signed against an older version).
-        t.riskTermsVersion = _currentRiskTermsVersion(diamond);
+        // re-derives the hash and re-locks any ack signed against the old one).
+        t.riskTermsHash = _currentRiskTermsHash(diamond);
     }
 
-    /// @dev The diamond's `currentRiskTermsVersion`, read DEFENSIVELY: minimal-cut
+    /// @dev The diamond's `currentRiskTermsHash`, read DEFENSIVELY: minimal-cut
     ///      tests (e.g. OfferFacetTest) may not route `RiskAccessFacet`, and such
     ///      a diamond can't enable the risk gate anyway, so a missing selector ⇒
-    ///      version 0 is correct. A `staticcall` (not a typed call) lets the read
+    ///      `bytes32(0)` is correct. A `staticcall` (not a typed call) lets the read
     ///      degrade to 0 instead of reverting the whole accept.
-    function _currentRiskTermsVersion(address diamond)
+    function _currentRiskTermsHash(address diamond)
         private
         view
-        returns (uint256)
+        returns (bytes32)
     {
         (bool ok, bytes memory ret) = diamond.staticcall(
             abi.encodeWithSelector(
-                RiskAccessFacet.getCurrentRiskTermsVersion.selector
+                RiskAccessFacet.getCurrentRiskTermsHash.selector
             )
         );
-        return (ok && ret.length >= 32) ? abi.decode(ret, (uint256)) : 0;
+        return (ok && ret.length >= 32) ? abi.decode(ret, (bytes32)) : bytes32(0);
     }
 
     /// @notice ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.

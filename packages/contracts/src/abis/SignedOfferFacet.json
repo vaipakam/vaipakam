@@ -311,9 +311,9 @@
             "internalType": "uint256"
           },
           {
-            "name": "riskTermsVersion",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "riskTermsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       },
@@ -678,9 +678,9 @@
             "internalType": "uint256"
           },
           {
-            "name": "riskTermsVersion",
-            "type": "uint256",
-            "internalType": "uint256"
+            "name": "riskTermsHash",
+            "type": "bytes32",
+            "internalType": "bytes32"
           }
         ]
       },

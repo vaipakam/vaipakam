@@ -63,10 +63,11 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'acknowledgedIlliquidCollateralAsset', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
-    // #730 — the risk-terms version this acknowledgement is bound to. The gate's
-    // #662⇄#671 illiquid ack-substitution requires it to be fresh, so a
-    // governance terms bump re-locks any ack signed against an older version.
-    { name: 'riskTermsVersion', type: 'uint256' },
+    // #730 — the live risk-terms HASH this acknowledgement is bound to. The gate's
+    // #662⇄#671 illiquid ack-substitution requires it to match the live hash, so a
+    // governance terms bump (which re-derives the hash) re-locks any older ack. A
+    // hash, not the numeric version, because the version is guessable/pre-stampable.
+    { name: 'riskTermsHash', type: 'bytes32' },
   ],
 } as const;
 
@@ -101,7 +102,7 @@ export interface AcceptTerms {
   acknowledgedIlliquidCollateralAsset: Address;
   nonce: bigint;
   deadline: bigint;
-  riskTermsVersion: bigint;
+  riskTermsHash: Hex;
 }
 
 export interface AcceptTermsPayload {
@@ -154,24 +155,24 @@ export function useAcceptTermsSigning() {
         args: [input.offerId],
       })) as bigint;
 
-      // #730 — stamp the live risk-terms version so the gate's #662⇄#671 illiquid
+      // #730 — stamp the live risk-terms HASH so the gate's #662⇄#671 illiquid
       // ack-substitution sees a FRESH acknowledgement. The gate requires the
-      // SIGNED version to EQUAL the live one exactly, so this read must FAIL
-      // CLOSED: only a Diamond predating RiskAccessFacet (selector absent) is
-      // safely version 0 (no gate there). A transient RPC/ABI failure on a gated
-      // Diamond must NOT silently sign `riskTermsVersion = 0` — the exact-version
-      // gate would reject that ack and waste the user's gas (Codex #736 r2). So we
-      // swallow ONLY the missing-selector case and re-throw anything else.
-      let riskTermsVersion = 0n;
+      // SIGNED hash to MATCH the live one exactly, so this read must FAIL CLOSED:
+      // only a Diamond predating RiskAccessFacet (selector absent) is safely the
+      // zero hash (no gate there). A transient RPC/ABI failure on a gated Diamond
+      // must NOT silently sign the zero hash — the gate would reject that ack and
+      // waste the user's gas (Codex #736 r2). So we swallow ONLY the
+      // missing-selector case and re-throw anything else.
+      let riskTermsHash =
+        '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
       try {
-        riskTermsVersion = (await publicClient.readContract({
+        riskTermsHash = (await publicClient.readContract({
           address: diamondAddr,
           abi: DIAMOND_ABI,
-          functionName: 'getCurrentRiskTermsVersion',
-        })) as bigint;
+          functionName: 'getCurrentRiskTermsHash',
+        })) as Hex;
       } catch (e) {
         if (!isMissingSelectorError(e)) throw e;
-        riskTermsVersion = 0n;
       }
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
@@ -237,7 +238,7 @@ export function useAcceptTermsSigning() {
         deadline:
           BigInt(Math.floor(Date.now() / 1000)) +
           BigInt(ACCEPT_DEADLINE_SECONDS),
-        riskTermsVersion,
+        riskTermsHash,
       };
 
       const signature = (await walletClient.signTypedData({

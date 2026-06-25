@@ -13,14 +13,17 @@ terms. That left a gap: someone who signed a long-lived acceptance for an
 illiquid offer **before** a risk-terms change, and then re-affirmed only their
 tier afterward, could still submit the old acknowledgement as if it were fresh.
 
-The acceptance message now carries the risk-terms version it was signed against,
-and the gate requires that version to be current for the acknowledgement to
-stand in for a consent. A governance terms change therefore re-locks a
-pre-change acknowledgement exactly as it re-locks a standing consent: the stale
-acceptance is rejected, and the user simply re-signs against the new terms to
-proceed. Liquid offers and deployments where the progressive-risk gate is off
-are unaffected. The dapp's accept flow stamps the live version automatically, so
-there is no extra step for users.
+The acceptance message now carries the live risk-terms anchor it was signed
+against, and the gate requires that anchor to be current for the acknowledgement
+to stand in for a consent. Crucially the anchor is an **unguessable** value the
+protocol re-derives at each terms change — not the predictable version counter —
+so a malicious interface cannot induce a user to pre-sign an acknowledgement for
+the *next* terms version and have it activate on the next change. A governance
+terms change therefore re-locks a pre-change acknowledgement exactly as it
+re-locks a standing consent: the stale acceptance is rejected, and the user
+simply re-signs against the new terms to proceed. Liquid offers and deployments
+where the progressive-risk gate is off are unaffected. The dapp's accept flow
+stamps the live anchor automatically, so there is no extra step for users.
 
 As part of the same change, the redundant on-chain digest-preview view for the
 acceptance message was removed (the digest is a pure client-side computation the

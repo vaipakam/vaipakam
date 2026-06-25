@@ -177,8 +177,8 @@ contract SignedOfferBookTest is SetupTest {
         t.acknowledgedIlliquidCollateralAsset = _ack(o.collateralAsset);
         t.nonce = uint256(orderHash); // unique per acceptor per signed offer
         t.deadline = block.timestamp + 1 hours;
-        t.riskTermsVersion =
-            RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(); // #730
+        t.riskTermsHash =
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash(); // #730
     }
 
     /// @dev ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.
