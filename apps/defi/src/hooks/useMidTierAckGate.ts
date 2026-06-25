@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondRead, useDiamondContract, useReadChain } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
@@ -91,6 +91,13 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       setKnown(false);
       return;
     }
+    // Reset the verdict to UNKNOWN before the new read resolves. Otherwise a
+    // transition from a previously-CLEAR pair (known=true, blocked=false) would
+    // briefly carry that verdict onto the NEW pair until the async read lands —
+    // and since `known=true && !blocked` enables the create submit, a create
+    // could slip through for an as-yet-unverified pair (Codex #740 r3).
+    setKnown(false);
+    setBlocked(false);
     const ro = diamondRo as unknown as {
       midTierStrictBlocked: (
         vault: string,
@@ -132,10 +139,19 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     setError(null);
   }, [pairKey, address]);
 
+  // Latest pair identity, so an in-flight record() can detect if the form moved on
+  // to a DIFFERENT pair before its tx settled and avoid stamping the new pair as
+  // recorded (Codex #740 r3). The submit button is disabled while `recording`, so
+  // only one record is ever in flight — `recording` itself resets unconditionally.
+  const pairKeyRef = useRef<string | null>(pairKey);
+  pairKeyRef.current = pairKey;
+
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
   const record = useCallback(async () => {
     if (!pair) return;
+    const startedKey = pairKey;
+    const stillSamePair = () => pairKeyRef.current === startedKey;
     const step = beginStep({
       area: "profile",
       flow: "setMidTierPairAck",
@@ -153,17 +169,21 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       const tx = await rw.setMidTierPairAck(pair);
       await tx.wait();
       step.success();
+      // The form may have moved to a different pair while the tx was mining —
+      // don't stamp that pair as recorded / trigger its re-read off this result.
+      if (!stillSamePair()) return;
       setRecorded(true);
       // Re-read: on a zero-cooldown deployment the block clears immediately; on a
       // cooldown deployment it stays blocked until the cooldown elapses.
       setNonce((n) => n + 1);
     } catch (e) {
-      setError((e as Error).message);
       step.failure(e);
+      if (!stillSamePair()) return;
+      setError((e as Error).message);
     } finally {
       setRecording(false);
     }
-  }, [pair, address, diamondRw]);
+  }, [pair, pairKey, address, diamondRw]);
 
   return { blocked, known, recording, recorded, error, record, refresh };
 }
