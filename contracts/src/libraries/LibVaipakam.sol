@@ -4456,15 +4456,16 @@ library LibVaipakam {
         // direct-accept illiquid-substitution path (the keeper-match path leaves
         // `acceptAckActive == false`).
         bytes32 acceptAckTermsHash;
-        // #730 (Codex #736 r3) — the live risk-terms HASH, paired with
-        // `currentRiskTermsVersion`. `bumpRiskTermsVersion()` re-derives it from
-        // bump-time block entropy (`prevrandao` + the previous block hash), so it
-        // is unguessable BEFORE the bump that publishes it — a signer cannot
-        // pre-stamp the next version's anchor. The numeric version stays the
-        // anchor for the CONTRACT-written tier / illiquid-consent freshness checks
-        // (those can't be pre-stamped); only the signer-controlled accept ack binds
-        // this hash. Zero before the first bump (matches a zero-stamped ack, which
-        // is correct pre-bump).
+        // #730 (Codex #736 r3+r4) — the live risk-terms HASH, paired with
+        // `currentRiskTermsVersion`. `bumpRiskTermsVersion(bytes32)` sets it to the
+        // GOVERNANCE-SUPPLIED hash of the newly-published terms document — a value
+        // unknowable before the bump is enacted, so a signer cannot pre-stamp the
+        // next version's anchor (an earlier block-entropy derivation was predictable
+        // when the bump timing was observable). The numeric version stays the anchor
+        // for the CONTRACT-written tier / illiquid-consent freshness checks (those
+        // can't be pre-stamped); only the signer-controlled accept ack binds this
+        // hash. Zero before the first bump (matches a zero-stamped ack, which is
+        // correct pre-bump).
         bytes32 currentRiskTermsHash;
     }
 

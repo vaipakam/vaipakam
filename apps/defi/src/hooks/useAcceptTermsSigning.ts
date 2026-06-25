@@ -173,6 +173,29 @@ export function useAcceptTermsSigning() {
         })) as Hex;
       } catch (e) {
         if (!isMissingSelectorError(e)) throw e;
+        // The hash getter is absent. Stamping the zero hash is ONLY safe when
+        // RiskAccessFacet is ENTIRELY absent (no gate). If the facet IS deployed
+        // but predates this getter (a partial #730 upgrade), the gate can be live
+        // with a non-zero hash and a zero-stamped ack would be rejected — so
+        // distinguish the two by probing a STABLE pre-#730 RiskAccess selector
+        // (`getCurrentRiskTermsVersion`) and fail closed on the skew (Codex #736 r4).
+        let riskFacetPresent = true;
+        try {
+          await publicClient.readContract({
+            address: diamondAddr,
+            abi: DIAMOND_ABI,
+            functionName: 'getCurrentRiskTermsVersion',
+          });
+        } catch (probe) {
+          if (isMissingSelectorError(probe)) riskFacetPresent = false;
+          else throw probe;
+        }
+        if (riskFacetPresent) {
+          throw new Error(
+            'RiskAccessFacet is deployed without getCurrentRiskTermsHash (#730 deploy skew) — refusing to sign with a zero risk-terms anchor. Upgrade RiskAccessFacet.',
+          );
+        }
+        // RiskAccessFacet entirely absent ⇒ no progressive-risk gate ⇒ zero is OK.
       }
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;

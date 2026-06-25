@@ -38,7 +38,13 @@
   {
     "type": "function",
     "name": "bumpRiskTermsVersion",
-    "inputs": [],
+    "inputs": [
+      {
+        "name": "newTermsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
     "outputs": [
       {
         "name": "newVersion",
@@ -1033,6 +1039,11 @@
         "internalType": "uint8"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidRiskTermsHash",
+    "inputs": []
   },
   {
     "type": "error",

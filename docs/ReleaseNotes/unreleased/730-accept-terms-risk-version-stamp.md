@@ -15,8 +15,9 @@ tier afterward, could still submit the old acknowledgement as if it were fresh.
 
 The acceptance message now carries the live risk-terms anchor it was signed
 against, and the gate requires that anchor to be current for the acknowledgement
-to stand in for a consent. Crucially the anchor is an **unguessable** value the
-protocol re-derives at each terms change — not the predictable version counter —
+to stand in for a consent. Crucially the anchor is an **unguessable** value
+published with each terms change (the hash of the new terms document) and
+unavailable before the change is enacted — not the predictable version counter —
 so a malicious interface cannot induce a user to pre-sign an acknowledgement for
 the *next* terms version and have it activate on the next change. A governance
 terms change therefore re-locks a pre-change acknowledgement exactly as it

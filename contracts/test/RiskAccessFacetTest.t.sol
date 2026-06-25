@@ -365,7 +365,7 @@ contract RiskAccessFacetTest is SetupTest {
         });
         bytes memory sig = _sign(lenderPk, _tierDigest(m));
 
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-2")); // now version 1
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -396,7 +396,7 @@ contract RiskAccessFacetTest is SetupTest {
         });
         bytes memory sig = _sign(lenderPk, _illiquidDigest(m));
 
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-3")); // now version 1
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -669,7 +669,7 @@ contract RiskAccessFacetTest is SetupTest {
 
         // Governance bumps the terms version — every held tier whose anchor is
         // now stale re-locks to BlueChipOnly with ZERO per-user writes.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-4"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             BLUECHIP,
@@ -828,7 +828,7 @@ contract RiskAccessFacetTest is SetupTest {
         );
 
         // Governance bump re-locks the held tier => effective falls to 0.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-5"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             BLUECHIP,
@@ -913,7 +913,7 @@ contract RiskAccessFacetTest is SetupTest {
 
         // A version bump would re-lock an ordinary vault — but a protocol-
         // managed vault reports its raw held tier unconditionally.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-6"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(newVault),
             ILLIQUID,
@@ -928,7 +928,7 @@ contract RiskAccessFacetTest is SetupTest {
     function test_adminOnly_bumpRiskTermsVersion() public {
         vm.prank(relayer);
         vm.expectRevert();
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-7"));
     }
 
     function test_adminOnly_setRiskAccessUnlockCooldown() public {
@@ -954,7 +954,7 @@ contract RiskAccessFacetTest is SetupTest {
     function test_bumpRiskTermsVersion_incrementsAndReturns() public {
         uint64 before = RiskAccessFacet(address(diamond))
             .getCurrentRiskTermsVersion();
-        uint64 next = RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        uint64 next = RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-8"));
         assertEq(next, before + 1, "returns incremented version");
         assertEq(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(),
