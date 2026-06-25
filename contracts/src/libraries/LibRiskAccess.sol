@@ -384,8 +384,30 @@ library LibRiskAccess {
         // #662 ack-substitution — only with FRESH risk terms (a governance terms
         // bump re-locks the substitution just like a standing consent; Codex #729
         // r1) AND an ack that covers exactly the gate's illiquid legs.
+        //
+        // TWO freshness anchors, both required (#730): the vault's TIER anchor
+        // (`riskTierVersionAt`, refreshed by re-affirming the tier) AND the
+        // version named INSIDE the signed acknowledgement (`acceptAckTermsVersion`,
+        // injected by `_verifyAndBindAccept`). Anchoring only on the tier let an
+        // ack signed before a `bumpRiskTermsVersion` be submitted afterward as
+        // fresh per-pair consent once the user refreshed merely their tier (the
+        // signature itself was never re-bound to the new terms).
+        //
+        // The two anchors are DIFFERENT KINDS on purpose (Codex #736 r1+r3):
+        //  - the tier anchor is CONTRACT-written (`setVaultRiskTier` stamps it to
+        //    the live version), so it is monotonic and can never run ahead — `>=`
+        //    on the numeric version is safe and matches the read-time re-lock.
+        //  - the ack anchor is SIGNER-controlled (`_verifyAndBindAccept` copies the
+        //    acceptor's value verbatim). A NUMERIC version is predictable, so even
+        //    an exact `==` lets a UI pre-stamp `N+1` and have the stale ack activate
+        //    on the next bump. So the ack binds the UNGUESSABLE `currentRiskTermsHash`
+        //    (a commit-reveal random SECRET — `revealRiskTermsBump`, never the public
+        //    terms-doc hash) and must match it EXACTLY — a value a pre-signing UI
+        //    cannot predict, proving the ack was signed after the live terms were
+        //    published.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
+                && s.acceptAckTermsHash == s.currentRiskTermsHash
                 && _ackCoversIlliquidLegs(
                     s, p, ackLend, ackColl, lendAckVerified, collAckVerified
                 )

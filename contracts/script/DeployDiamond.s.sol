@@ -1243,7 +1243,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1260,14 +1260,15 @@ contract DeployDiamond is Script {
         // #627 — public KYC-value view; the aggregator adapter calls it to
         // screen its real principal at the exact accept-path valuation.
         s[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
-        // #662 — anti-phishing accept-term binding surface. `hashAcceptTerms`
-        // is the EIP-712 digest view the frontend/tests sign; `verifyAndBindAccept`
+        // #662 — anti-phishing accept-term binding surface. `verifyAndBindAccept`
         // is the diamond-internal gated cross-facet hop SignedOfferFacet uses to
         // share the one binding implementation (`address(this)`-only, like
-        // `acceptOfferInternal`). The direct-path offerKey
-        // (`keccak256(abi.encode(offerId))`) is computed client-side — no view.
-        s[5] = OfferAcceptFacet.hashAcceptTerms.selector;
-        s[6] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // `acceptOfferInternal`). The EIP-712 digest is computed client-side
+        // (frontend `signTypedData`; tests `LibAcceptTerms.digestFor`) — there is
+        // no on-chain `hashAcceptTerms` view (removed for EIP-170 headroom, #730).
+        // The direct-path offerKey (`keccak256(abi.encode(offerId))`) is likewise
+        // client-side.
+        s[5] = OfferAcceptFacet.verifyAndBindAccept.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.
@@ -1464,12 +1465,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
+        s = new bytes4[](30);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
         s[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
-        s[4] = RiskAccessFacet.bumpRiskTermsVersion.selector;
+        // #730 r5 — terms changes are a commit-reveal (commit+reveal selectors),
+        // replacing the removed single-call `bumpRiskTermsVersion`. A fresh deploy
+        // routes only these. UPGRADE NOTE: any diamond upgraded from a build that
+        // routed `bumpRiskTermsVersion()`/`(bytes32)` MUST REMOVE that selector when
+        // adding these — else the legacy path could advance the version without the
+        // hash. See docs/DesignsAndPlans/AcceptAckFreshnessAnchorDesign.md §5.
+        s[4] = RiskAccessFacet.commitRiskTermsBump.selector;
         s[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
         s[6] = RiskAccessFacet.setProtocolManagedVault.selector;
         s[7] = RiskAccessFacet.getVaultRiskTier.selector;
@@ -1492,6 +1499,9 @@ contract DeployDiamond is Script {
         s[24] = RiskAccessFacet.getRiskStrictMode.selector;
         s[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
         s[26] = RiskAccessFacet.midTierStrictBlocked.selector;
+        s[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        s[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
+        s[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
     }
 
     function _getAggregatorAdapterFactorySelectors()

@@ -249,7 +249,7 @@ contract RiskStrictModeTest is SetupTest {
 
         // Governance bumps the terms version → the ack's anchor is now stale.
         vm.prank(owner);
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        _bumpRiskTerms(keccak256("rt-1"));
 
         // But the tier anchor is ALSO stale now, so re-arm the tier first to
         // isolate the ack staleness (otherwise it would revert RiskTierTooLow).

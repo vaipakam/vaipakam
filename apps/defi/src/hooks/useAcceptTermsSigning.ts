@@ -63,6 +63,11 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'acknowledgedIlliquidCollateralAsset', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
+    // #730 — the live risk-terms HASH this acknowledgement is bound to. The gate's
+    // #662⇄#671 illiquid ack-substitution requires it to match the live hash, so a
+    // governance terms bump (which re-derives the hash) re-locks any older ack. A
+    // hash, not the numeric version, because the version is guessable/pre-stampable.
+    { name: 'riskTermsHash', type: 'bytes32' },
   ],
 } as const;
 
@@ -97,6 +102,7 @@ export interface AcceptTerms {
   acknowledgedIlliquidCollateralAsset: Address;
   nonce: bigint;
   deadline: bigint;
+  riskTermsHash: Hex;
 }
 
 export interface AcceptTermsPayload {
@@ -148,6 +154,49 @@ export function useAcceptTermsSigning() {
         functionName: 'getOfferLinkedLoanId',
         args: [input.offerId],
       })) as bigint;
+
+      // #730 — stamp the live risk-terms HASH so the gate's #662⇄#671 illiquid
+      // ack-substitution sees a FRESH acknowledgement. The gate requires the
+      // SIGNED hash to MATCH the live one exactly, so this read must FAIL CLOSED:
+      // only a Diamond predating RiskAccessFacet (selector absent) is safely the
+      // zero hash (no gate there). A transient RPC/ABI failure on a gated Diamond
+      // must NOT silently sign the zero hash — the gate would reject that ack and
+      // waste the user's gas (Codex #736 r2). So we swallow ONLY the
+      // missing-selector case and re-throw anything else.
+      let riskTermsHash =
+        '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
+      try {
+        riskTermsHash = (await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI,
+          functionName: 'getCurrentRiskTermsHash',
+        })) as Hex;
+      } catch (e) {
+        if (!isMissingSelectorError(e)) throw e;
+        // The hash getter is absent. Stamping the zero hash is ONLY safe when
+        // RiskAccessFacet is ENTIRELY absent (no gate). If the facet IS deployed
+        // but predates this getter (a partial #730 upgrade), the gate can be live
+        // with a non-zero hash and a zero-stamped ack would be rejected — so
+        // distinguish the two by probing a STABLE pre-#730 RiskAccess selector
+        // (`getCurrentRiskTermsVersion`) and fail closed on the skew (Codex #736 r4).
+        let riskFacetPresent = true;
+        try {
+          await publicClient.readContract({
+            address: diamondAddr,
+            abi: DIAMOND_ABI,
+            functionName: 'getCurrentRiskTermsVersion',
+          });
+        } catch (probe) {
+          if (isMissingSelectorError(probe)) riskFacetPresent = false;
+          else throw probe;
+        }
+        if (riskFacetPresent) {
+          throw new Error(
+            'RiskAccessFacet is deployed without getCurrentRiskTermsHash (#730 deploy skew) — refusing to sign with a zero risk-terms anchor. Upgrade RiskAccessFacet.',
+          );
+        }
+        // RiskAccessFacet entirely absent ⇒ no progressive-risk gate ⇒ zero is OK.
+      }
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
       const isLender = Number(o.offerType) === OFFER_TYPE_LENDER;
@@ -212,6 +261,7 @@ export function useAcceptTermsSigning() {
         deadline:
           BigInt(Math.floor(Date.now() / 1000)) +
           BigInt(ACCEPT_DEADLINE_SECONDS),
+        riskTermsHash,
       };
 
       const signature = (await walletClient.signTypedData({
@@ -235,6 +285,19 @@ export function useAcceptTermsSigning() {
   const canSign = Boolean(walletClient) && Boolean(address);
 
   return { sign, canSign };
+}
+
+// True when a contract read failed because the Diamond doesn't cut the selector
+// (an older deployment predating RiskAccessFacet) — as opposed to a transient
+// RPC/ABI error. Mirrors the probe in `useRiskAccess`. `0xa9ad62f8` is the
+// `FunctionNotFound`/`FunctionDoesNotExist` Diamond selector.
+function isMissingSelectorError(e: unknown): boolean {
+  const msg = String(
+    (e as { data?: string; message?: string })?.data ??
+      (e as Error)?.message ??
+      '',
+  );
+  return /function does not exist|functionnotfound|0xa9ad62f8/i.test(msg);
 }
 
 function randomNonce(): bigint {

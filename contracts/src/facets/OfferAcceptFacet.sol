@@ -428,21 +428,13 @@ contract OfferAcceptFacet is
         _verifyAndBindAccept(offerId, offerKey, terms, signature, acceptor);
     }
 
-    /// @notice The EIP-712 digest an acceptor signs for `terms` (#662). Mirrors
-    ///         {SignedOfferFacet.hashSignedOffer}: the frontend renders the
-    ///         typed `AcceptTerms` for the wallet, and tests recover the digest
-    ///         here to produce the `signature` the accept entries verify. Bound
-    ///         to this chain + Diamond via the acceptance-specific EIP-712
-    ///         domain (`"Vaipakam AcceptOffer"`).
-    /// @param terms The acceptance terms to hash.
-    /// @return The `\x19\x01`-prefixed EIP-712 digest.
-    function hashAcceptTerms(LibAcceptTerms.AcceptTerms calldata terms)
-        external
-        view
-        returns (bytes32)
-    {
-        return LibAcceptTerms.digest(terms);
-    }
+    // NOTE: there is intentionally NO on-chain `hashAcceptTerms` digest view.
+    // EIP-712 digests are a pure client-side computation — the frontend signs via
+    // `signTypedData` (it never needed a view), and tests recover the digest with
+    // `LibAcceptTerms.digestFor(terms, diamond)`. Hosting the view here cost this
+    // facet bytecode it has no EIP-170 room for once #730 added
+    // `AcceptTerms.riskTermsVersion`, so it was removed in favour of the off-chain
+    // helper. The signed-offer fill path likewise binds its order hash off-chain.
 
     /// @dev The `AcceptTerms.offerKey` an acceptor signs on the DIRECT accept
     ///      paths — `keccak256(abi.encode(offerId))`. This is a pure client-side
@@ -499,6 +491,16 @@ contract OfferAcceptFacet is
         s.acceptAckIlliquidLend = terms.acknowledgedIlliquidLendingAsset;
         s.acceptAckIlliquidColl = terms.acknowledgedIlliquidCollateralAsset;
         s.acceptAckActive = true;
+        // #730 — inject the signed risk-terms HASH so the #662⇄#671 ack-
+        // substitution gate (`LibRiskAccess.assertAcceptorMayTransact`, which
+        // runs in LoanFacet's separate call frame and so can't see this calldata)
+        // can require the SIGNED ack to be fresh, not just the vault's tier
+        // anchor. Binding the unguessable hash (not the numeric version) stops a
+        // UI pre-stamping the next version (Codex #736 r3). Like the address slots
+        // above, this is NOT cleared on exit (the gate reads it only when
+        // `acceptAckActive` is true, and every accept re-injects it) — saving the
+        // high-offset SSTORE the facet can't spare under EIP-170.
+        s.acceptAckTermsHash = terms.riskTermsHash;
     }
 
     /// @dev Equality-bind every loan-affecting `AcceptTerms` field against the

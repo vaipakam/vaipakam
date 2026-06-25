@@ -4441,6 +4441,46 @@ library LibVaipakam {
         // (Codex #733 P2). Zero (never disabled, or re-enabled) ⇒ no lingering
         // requirement.
         mapping(address => uint64) strictModeStrictUntil;
+        // #730 — the `currentRiskTermsHash` the acceptor's signed #662
+        // `AcceptTerms.riskTermsHash` named, injected by
+        // `OfferAcceptFacet._verifyAndBindAccept` for the gate to read. Lets the
+        // #662⇄#671 ack-substitution (`LibRiskAccess.assertAcceptorMayTransact`)
+        // require the SIGNED acknowledgement — not just the vault's tier anchor —
+        // to be fresh, so an ack signed before a governance `bumpRiskTermsVersion`
+        // can't be submitted afterward as fresh per-pair illiquid consent. We bind
+        // the unguessable HASH, not the numeric version: the version counter is
+        // predictable, so a malicious UI could pre-stamp `N+1` and have it activate
+        // on the next bump (Codex #736 r3). `currentRiskTermsHash` is derived from
+        // bump-time block entropy a pre-signing UI can't predict. Set on every
+        // accept entry and cleared alongside `acceptAckActive`; only read on the
+        // direct-accept illiquid-substitution path (the keeper-match path leaves
+        // `acceptAckActive == false`).
+        bytes32 acceptAckTermsHash;
+        // #730 (Codex #736 r3–r7) — the live risk-terms ANCHOR, paired with
+        // `currentRiskTermsVersion`. Set by `revealRiskTermsBump` to a fresh RANDOM
+        // SECRET (`termsAnchor`) published via commit-reveal: the slow/timelock
+        // `commitRiskTermsBump` stores only a hiding `keccak256(abi.encode(anchor))`
+        // (queued calldata exposes nothing) and the fast off-timelock reveal
+        // activates it atomically — so the anchor is unknowable before activation
+        // and a signer can't pre-stamp the next one (it is NOT the public terms-doc
+        // hash, which is published separately). The numeric version stays the anchor
+        // for the CONTRACT-written tier / illiquid-consent freshness checks (those
+        // can't be pre-stamped); only the signer-controlled accept ack binds this
+        // value. Zero before the first reveal (matches a zero-stamped ack, which is
+        // correct pre-bump).
+        bytes32 currentRiskTermsHash;
+        // #730 (Codex #736 r5/r7) — the pending HIDING commitment to the next terms
+        // anchor, set by `commitRiskTermsBump` and consumed by `revealRiskTermsBump`
+        // (commit-reveal). `keccak256(abi.encode(termsAnchor))` where `termsAnchor`
+        // is a secret, so a governance timelock's public queued calldata never
+        // exposes the future anchor. Zero when no change is pending.
+        bytes32 pendingRiskTermsCommitment;
+        // #730 (Codex #736 r6) — every published terms hash is SINGLE-USE for the
+        // protocol's lifetime. Without this, rolling terms A→B→A (or re-publishing
+        // a hash) would let an ack stamped during the first A-period substitute
+        // again once A is re-published. `revealRiskTermsBump` rejects any hash
+        // already marked here.
+        mapping(bytes32 => bool) riskTermsHashUsed;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

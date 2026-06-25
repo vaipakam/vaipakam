@@ -291,14 +291,14 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
         // #662 anti-phishing accept binding — the public entry now takes the
         // EIP-712-signed `AcceptTerms` struct + signature. Cut the new 3-arg
-        // selector so the typed accept calls route through the diamond, plus the
-        // `hashAcceptTerms` view the test signer reads to digest the terms. (The
-        // direct-path offerKey is computed client-side — no on-chain view.)
+        // selector so the typed accept calls route through the diamond. The
+        // EIP-712 digest is computed off-chain (`LibAcceptTerms.digestFor`); the
+        // `hashAcceptTerms` view was removed for EIP-170 headroom (#730), and the
+        // direct-path offerKey is likewise client-side.
         selectors[0] = OfferAcceptFacet.acceptOffer.selector;
-        selectors[1] = OfferAcceptFacet.hashAcceptTerms.selector;
         return selectors;
     }
 

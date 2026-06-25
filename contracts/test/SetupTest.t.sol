@@ -1214,4 +1214,16 @@ contract SetupTest is Test {
         vm.prank(actor);
         ERC20(token).approve(address(diamond), type(uint256).max);
     }
+
+    /// @dev #730 — drive a risk-terms change through the commit-reveal flow
+    ///      (`commitRiskTermsBump` is ADMIN_ROLE, `revealRiskTermsBump` is
+    ///      PAUSER_ROLE; the test contract = `owner` holds both). `termsAnchor` is
+    ///      the secret preimage; production governance uses a fresh RANDOM secret.
+    ///      Returns the new version.
+    function _bumpRiskTerms(bytes32 termsAnchor) internal returns (uint64) {
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(termsAnchor))
+        );
+        return RiskAccessFacet(address(diamond)).revealRiskTermsBump(termsAnchor);
+    }
 }

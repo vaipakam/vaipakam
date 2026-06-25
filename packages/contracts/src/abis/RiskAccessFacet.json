@@ -37,16 +37,29 @@
   },
   {
     "type": "function",
-    "name": "bumpRiskTermsVersion",
+    "name": "commitRiskTermsBump",
+    "inputs": [
+      {
+        "name": "commitment",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getCurrentRiskTermsHash",
     "inputs": [],
     "outputs": [
       {
-        "name": "newVersion",
-        "type": "uint64",
-        "internalType": "uint64"
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -76,6 +89,19 @@
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingRiskTermsCommitment",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -413,6 +439,25 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revealRiskTermsBump",
+    "inputs": [
+      {
+        "name": "termsAnchor",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "newVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -942,6 +987,19 @@
   },
   {
     "type": "event",
+    "name": "RiskTermsBumpCommitted",
+    "inputs": [
+      {
+        "name": "commitment",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RiskTermsVersionBumped",
     "inputs": [
       {
@@ -949,6 +1007,12 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
+      },
+      {
+        "name": "newTermsHash",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
       }
     ],
     "anonymous": false
@@ -1017,6 +1081,11 @@
   },
   {
     "type": "error",
+    "name": "InvalidRiskTermsHash",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "MidTierPairNotAcknowledged",
     "inputs": [
       {
@@ -1030,6 +1099,11 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "NoPendingRiskTermsCommitment",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1084,6 +1158,16 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RiskTermsHashAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RiskTermsRevealMismatch",
+    "inputs": []
   },
   {
     "type": "error",

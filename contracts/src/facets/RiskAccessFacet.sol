@@ -43,7 +43,9 @@ contract RiskAccessFacet is DiamondAccessControl {
         address indexed vault, bytes32 indexed pairKey, bool consent
     );
     /// @custom:event-category informational/config
-    event RiskTermsVersionBumped(uint64 newVersion);
+    event RiskTermsVersionBumped(uint64 newVersion, bytes32 newTermsHash);
+    /// @custom:event-category informational/config
+    event RiskTermsBumpCommitted(bytes32 commitment);
     /// @custom:event-category informational/config
     event RiskAccessUnlockCooldownSet(uint64 cooldownSec);
     /// @custom:event-category informational/config
@@ -62,6 +64,17 @@ contract RiskAccessFacet is DiamondAccessControl {
     error RiskBadSignature(address vault);
     error RiskCooldownTooLong(uint64 requested, uint64 maxAllowed);
     error RiskTermsVersionStale(uint64 signed, uint64 current);
+    /// @notice The revealed terms hash was zero or unchanged from the live one
+    ///         (#730) — every change must publish a fresh, non-zero anchor.
+    error InvalidRiskTermsHash();
+    /// @notice `revealRiskTermsBump` was called with no pending commitment (#730).
+    error NoPendingRiskTermsCommitment();
+    /// @notice The revealed `(hash, salt)` did not match the pending commitment
+    ///         (#730).
+    error RiskTermsRevealMismatch();
+    /// @notice The revealed terms hash was already published once (#730) — each
+    ///         hash is single-use, so rolling terms A→B→A can't revive a stale ack.
+    error RiskTermsHashAlreadyUsed();
 
     // ─── User-facing setters: direct (msg.sender == vault) ───────────────────
 
@@ -159,18 +172,110 @@ contract RiskAccessFacet is DiamondAccessControl {
 
     // ─── Admin levers (ADMIN_ROLE → Timelock post-handover) ──────────────────
 
-    /// @notice Bump the global risk-terms version. Read-time re-lock: every
-    ///         held tier / consent whose anchor is now stale falls back to the
-    ///         safest tier with ZERO per-user writes (see `LibRiskAccess`).
-    ///         Used when the terms a user agreed to materially change.
-    function bumpRiskTermsVersion()
+    /// @notice STEP 1 of a risk-terms change (#730 commit-reveal — see
+    ///         `docs/DesignsAndPlans/AcceptAckFreshnessAnchorDesign.md`). Records a
+    ///         HIDING commitment to the next anchor; reveals nothing about it.
+    /// @dev    Held by `ADMIN_ROLE` (the slow / timelock-governed authority): the
+    ///         *decision* to change terms is reviewable, but `commitment =
+    ///         keccak256(abi.encode(termsAnchor))` is preimage-hiding, so the future
+    ///         anchor is NOT exposed in the timelock's public queued calldata —
+    ///         closing the pre-sign attack a cleartext anchor argument left open
+    ///         (Codex #736 r5). A new commit supersedes any un-revealed one (lets
+    ///         governance cancel/replace a queued change). The version + anchor only
+    ///         move at {revealRiskTermsBump}.
+    /// @param  commitment `keccak256(abi.encode(termsAnchor))`.
+    function commitRiskTermsBump(bytes32 commitment)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        // Reject both the zero commitment AND a commitment to the zero anchor
+        // (`keccak256(abi.encode(bytes32(0)))`) — the latter would only be caught
+        // at reveal (anchor != 0), wasting a governance commit; fail fast (#736 r13).
+        if (
+            commitment == bytes32(0)
+                || commitment == keccak256(abi.encode(bytes32(0)))
+        ) {
+            revert InvalidRiskTermsHash();
+        }
+        LibVaipakam.storageSlot().pendingRiskTermsCommitment = commitment;
+        emit RiskTermsBumpCommitted(commitment);
+    }
+
+    /// @notice STEP 2 of a risk-terms change (#730 commit-reveal). Reveals the
+    ///         committed anchor and atomically bumps the version + publishes it.
+    ///         Read-time re-lock: every held tier / consent whose anchor is now
+    ///         stale falls back to the safest tier with ZERO per-user writes (see
+    ///         `LibRiskAccess`).
+    /// @dev    Held by `PAUSER_ROLE` — the OFF-TIMELOCK operational guardian role,
+    ///         deliberately NOT one of the roles `TransferAdminToTimelock` migrates
+    ///         to the 48h timelock (`ADMIN/ORACLE/RISK/VAULT_ADMIN`). `RISK_ADMIN_ROLE`
+    ///         can't be used: it IS migrated to the timelock, so a reveal queued
+    ///         through it would expose the secret for the delay (Codex #736 r7). The
+    ///         publisher's power is BOUNDED — it can only reveal what `ADMIN` already
+    ///         committed, never choose the anchor — so reusing the guardian role is
+    ///         low-blast-radius. The secret `termsAnchor` is exposed only in this
+    ///         tx's brief mempool window, and the reveal IS the activation (atomic).
+    ///
+    ///         `termsAnchor` is a fresh RANDOM SECRET, NOT the published risk-terms
+    ///         document hash (Codex #736 r7): a doc hash is public once the document
+    ///         is published for review, so binding to it would be pre-stampable. The
+    ///         document hash is published SEPARATELY (off-chain); the on-chain anchor
+    ///         is this unguessable secret. It becomes `currentRiskTermsHash`, the
+    ///         value the signer-controlled #662 accept ack binds; required non-zero
+    ///         and never-before-used (single-use, #736 r6) so every change re-locks
+    ///         and rolling A→B→A can't revive a stale ack. The numeric version stays
+    ///         the anchor for the contract-written tier / consent freshness.
+    ///
+    ///         MULTI-CHAIN (Codex #736 r13): governance MUST use a fresh, INDEPENDENT
+    ///         secret per diamond/chain. The same secret cannot mix in a per-chain
+    ///         value on-chain (chainid / `address(this)` are public, so any
+    ///         derivation is computable), so reusing one anchor across chains and
+    ///         revealing at different times would leak it from the first chain's
+    ///         reveal and let it be pre-stamped on chains where it is still pending.
+    ///         (The accept ack is already domain-bound to one diamond+chainid, so a
+    ///         signed ack never cross-replays; this is purely about the SECRET's
+    ///         reuse.) An operational requirement on the terms-publisher.
+    /// @param  termsAnchor The secret anchor preimage of the pending commitment.
+    function revealRiskTermsBump(bytes32 termsAnchor)
+        external
+        onlyRole(LibAccessControl.PAUSER_ROLE)
         returns (uint64 newVersion)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 pending = s.pendingRiskTermsCommitment;
+        if (pending == bytes32(0)) revert NoPendingRiskTermsCommitment();
+        if (keccak256(abi.encode(termsAnchor)) != pending) {
+            revert RiskTermsRevealMismatch();
+        }
+        if (termsAnchor == bytes32(0)) revert InvalidRiskTermsHash();
+        // #736 r7+r8 — seed the OUTGOING live anchor into the single-use ledger
+        // FIRST, BEFORE the used-check, so re-publishing the live anchor is rejected
+        // every time — including the first reveal on a diamond upgraded from a
+        // pre-ledger #730 build whose live anchor predates `riskTermsHashUsed`
+        // (otherwise that reveal could re-publish the live hash, advancing the
+        // version without re-locking). Normally idempotent.
+        if (s.currentRiskTermsHash != bytes32(0)) {
+            s.riskTermsHashUsed[s.currentRiskTermsHash] = true;
+        }
+        if (s.riskTermsHashUsed[termsAnchor]) revert RiskTermsHashAlreadyUsed();
+        delete s.pendingRiskTermsCommitment;
+        s.riskTermsHashUsed[termsAnchor] = true;
         newVersion = ++s.currentRiskTermsVersion;
-        emit RiskTermsVersionBumped(newVersion);
+        s.currentRiskTermsHash = termsAnchor;
+        emit RiskTermsVersionBumped(newVersion, termsAnchor);
+    }
+
+    /// @notice The live risk-terms anchor the current #662 accept ack must bind
+    ///         (#730). Zero before the first reveal. The dapp reads this to stamp
+    ///         `AcceptTerms.riskTermsHash`.
+    function getCurrentRiskTermsHash() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().currentRiskTermsHash;
+    }
+
+    /// @notice The pending (un-revealed) risk-terms commitment, or zero if none.
+    ///         Ops visibility only — reveals nothing about the future hash.
+    function getPendingRiskTermsCommitment() external view returns (bytes32) {
+        return LibVaipakam.storageSlot().pendingRiskTermsCommitment;
     }
 
     /// @notice Set the opt-up cooldown (seconds). Default 0 ⇒ opt-ups are

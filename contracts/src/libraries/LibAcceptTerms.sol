@@ -71,6 +71,7 @@ library LibAcceptTerms {
         address acknowledgedIlliquidCollateralAsset; // == collateralAsset iff illiquid, else 0
         uint256 nonce; // per-acceptor replay nonce
         uint256 deadline; // signature validity deadline (unix-seconds)
+        bytes32 riskTermsHash; // #730 — the live `currentRiskTermsHash` this ack acknowledges; an UNGUESSABLE per-bump anchor that re-locks the #662⇄#671 illiquid ack-substitution on a governance terms bump (a numeric version was pre-stampable — Codex #736 r3)
     }
 
     /// @dev keccak256 of the canonical type string. The string MUST list the
@@ -108,7 +109,8 @@ library LibAcceptTerms {
         "address acknowledgedIlliquidLendingAsset,"
         "address acknowledgedIlliquidCollateralAsset,"
         "uint256 nonce,"
-        "uint256 deadline"
+        "uint256 deadline,"
+        "bytes32 riskTermsHash"
         ")"
     );
 
@@ -186,7 +188,7 @@ library LibAcceptTerms {
                     a.acknowledgedIlliquidLendingAsset,
                     a.acknowledgedIlliquidCollateralAsset
                 ),
-                abi.encode(a.nonce, a.deadline)
+                abi.encode(a.nonce, a.deadline, a.riskTermsHash)
             )
         );
     }
@@ -197,6 +199,33 @@ library LibAcceptTerms {
         return keccak256(
             abi.encodePacked("\x19\x01", domainSeparator(), hashStruct(a))
         );
+    }
+
+    /// @notice The EIP-712 digest for `a` against an EXPLICIT `verifyingContract`
+    ///         (the Diamond), letting off-chain signers — tests, tooling — recover
+    ///         the digest WITHOUT an on-chain view. The runtime accept path verifies
+    ///         via {verify}/{digest}, which bind `address(this)` (= the Diamond in
+    ///         the facet context); this reproduces the same separator for a known
+    ///         Diamond address. There is intentionally NO on-chain `hashAcceptTerms`
+    ///         view: EIP-712 digests are a pure client-side computation, and adding
+    ///         one would cost OfferAcceptFacet bytecode it has no EIP-170 room for
+    ///         (#730). Not called by any facet, so it adds zero deployed bytecode;
+    ///         the frontend computes the digest itself via `signTypedData`.
+    function digestFor(AcceptTerms memory a, address verifyingContract)
+        internal
+        view
+        returns (bytes32)
+    {
+        bytes32 ds = keccak256(
+            abi.encode(
+                EIP712_DOMAIN_TYPEHASH,
+                DOMAIN_NAME_HASH,
+                DOMAIN_VERSION_HASH,
+                block.chainid,
+                verifyingContract
+            )
+        );
+        return keccak256(abi.encodePacked("\x19\x01", ds, hashStruct(a)));
     }
 
     /// @notice Verify that `a.acceptor` produced `signature` over `a`'s digest.

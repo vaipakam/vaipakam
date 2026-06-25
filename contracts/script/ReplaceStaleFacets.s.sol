@@ -154,8 +154,9 @@ contract ReplaceStaleFacets is Script {
 
     /// @dev OfferAccept selectors introduced after the live diamond was cut, so
     ///      they need an Add (not a Replace). #627: the public KYC-value view.
-    ///      #662: `hashAcceptTerms` (EIP-712 digest view) + `verifyAndBindAccept`
-    ///      (the gated cross-facet hop SignedOfferFacet uses) — both brand-new.
+    ///      #662: `verifyAndBindAccept` (the gated cross-facet hop SignedOfferFacet
+    ///      uses) — brand-new. (The EIP-712 digest is computed off-chain; the
+    ///      `hashAcceptTerms` view was removed for EIP-170 headroom, #730.)
     ///
     ///      NOTE (#662 selector changes): `acceptOffer`'s signature changed from
     ///      `(uint256,bool)` to `(uint256,AcceptTerms,bytes)`, a DIFFERENT 4-byte
@@ -173,10 +174,9 @@ contract ReplaceStaleFacets is Script {
         pure
         returns (bytes4[] memory s)
     {
-        s = new bytes4[](3);
+        s = new bytes4[](2);
         s[0] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
-        s[1] = OfferAcceptFacet.hashAcceptTerms.selector;
-        s[2] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        s[1] = OfferAcceptFacet.verifyAndBindAccept.selector;
     }
 
     function _oracleSelectors() internal pure returns (bytes4[] memory s) {

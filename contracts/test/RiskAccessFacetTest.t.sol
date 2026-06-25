@@ -365,7 +365,7 @@ contract RiskAccessFacetTest is SetupTest {
         });
         bytes memory sig = _sign(lenderPk, _tierDigest(m));
 
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+        _bumpRiskTerms(keccak256("rt-2")); // now version 1
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -396,7 +396,7 @@ contract RiskAccessFacetTest is SetupTest {
         });
         bytes memory sig = _sign(lenderPk, _illiquidDigest(m));
 
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(); // now version 1
+        _bumpRiskTerms(keccak256("rt-3")); // now version 1
 
         vm.prank(relayer);
         vm.expectRevert(
@@ -669,7 +669,7 @@ contract RiskAccessFacetTest is SetupTest {
 
         // Governance bumps the terms version — every held tier whose anchor is
         // now stale re-locks to BlueChipOnly with ZERO per-user writes.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        _bumpRiskTerms(keccak256("rt-4"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             BLUECHIP,
@@ -828,7 +828,7 @@ contract RiskAccessFacetTest is SetupTest {
         );
 
         // Governance bump re-locks the held tier => effective falls to 0.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        _bumpRiskTerms(keccak256("rt-5"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(lender),
             BLUECHIP,
@@ -913,7 +913,7 @@ contract RiskAccessFacetTest is SetupTest {
 
         // A version bump would re-lock an ordinary vault — but a protocol-
         // managed vault reports its raw held tier unconditionally.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        _bumpRiskTerms(keccak256("rt-6"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(newVault),
             ILLIQUID,
@@ -925,10 +925,22 @@ contract RiskAccessFacetTest is SetupTest {
     // ADMIN ACCESS-CONTROL (non-admin reverts; gate setter is admin-only)
     // ════════════════════════════════════════════════════════════════════════
 
-    function test_adminOnly_bumpRiskTermsVersion() public {
+    function test_adminOnly_commitRiskTermsBump() public {
         vm.prank(relayer);
         vm.expectRevert();
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(keccak256("rt-7"));
+    }
+
+    function test_pauserOnly_revealRiskTermsBump() public {
+        // Commit as admin (the test contract), then a non-PAUSER reveal reverts —
+        // reveal is the OFF-TIMELOCK guardian (PAUSER) authority (#736 r7).
+        bytes32 anchor = keccak256("rt-7b");
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(anchor))
+        );
+        vm.prank(relayer);
+        vm.expectRevert();
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(anchor);
     }
 
     function test_adminOnly_setRiskAccessUnlockCooldown() public {
@@ -954,13 +966,86 @@ contract RiskAccessFacetTest is SetupTest {
     function test_bumpRiskTermsVersion_incrementsAndReturns() public {
         uint64 before = RiskAccessFacet(address(diamond))
             .getCurrentRiskTermsVersion();
-        uint64 next = RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+        uint64 next = _bumpRiskTerms(keccak256("rt-8"));
         assertEq(next, before + 1, "returns incremented version");
         assertEq(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(),
             before + 1,
             "view reflects bump"
         );
+    }
+
+    // ─── #730 commit-reveal mechanics ────────────────────────────────────────
+
+    /// @dev A commit alone neither advances the version nor publishes the hash —
+    ///      and crucially the future hash is NOT derivable from the commitment, so
+    ///      the live anchor stays 0 (a pre-reveal ack can't match it).
+    function test_commit_hidesAnchorUntilReveal() public {
+        bytes32 anchor = keccak256("rt-hide");
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(anchor))
+        );
+        assertEq(
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash(),
+            bytes32(0),
+            "anchor not published by commit alone"
+        );
+        assertEq(
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(),
+            0,
+            "version not advanced by commit alone"
+        );
+        // After reveal the anchor is the committed secret and the version advances.
+        uint64 v = RiskAccessFacet(address(diamond)).revealRiskTermsBump(anchor);
+        assertEq(v, 1, "reveal advances version");
+        assertEq(
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash(),
+            anchor,
+            "reveal publishes the committed anchor"
+        );
+        assertEq(
+            RiskAccessFacet(address(diamond)).getPendingRiskTermsCommitment(),
+            bytes32(0),
+            "commitment cleared on reveal"
+        );
+    }
+
+    function test_reveal_revertsWithoutCommit() public {
+        vm.expectRevert(RiskAccessFacet.NoPendingRiskTermsCommitment.selector);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(keccak256("rt-nc"));
+    }
+
+    function test_reveal_revertsOnMismatch() public {
+        bytes32 anchor = keccak256("rt-mm");
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(anchor))
+        );
+        // A different preimage cannot satisfy the hiding commitment.
+        vm.expectRevert(RiskAccessFacet.RiskTermsRevealMismatch.selector);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(keccak256("wrong"));
+    }
+
+    function test_commit_revertsOnZeroAnchorCommitment() public {
+        // #736 r13 — committing to the zero anchor fails fast at commit, not only
+        // later at reveal (where `termsAnchor == 0` would trip InvalidRiskTermsHash).
+        vm.expectRevert(RiskAccessFacet.InvalidRiskTermsHash.selector);
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(bytes32(0)))
+        );
+    }
+
+    /// @dev #736 r6 — anchors are SINGLE-USE: rolling A→B→A cannot re-publish A,
+    ///      so an ack stamped during the first A-period can never substitute again.
+    function test_reveal_revertsOnReusedAnchor_rollingABA() public {
+        bytes32 a = keccak256("rt-A");
+        bytes32 b = keccak256("rt-B");
+        _bumpRiskTerms(a); // version 1, anchor A (A now used)
+        _bumpRiskTerms(b); // version 2, anchor B
+        RiskAccessFacet(address(diamond)).commitRiskTermsBump(
+            keccak256(abi.encode(a))
+        );
+        vm.expectRevert(RiskAccessFacet.RiskTermsHashAlreadyUsed.selector);
+        RiskAccessFacet(address(diamond)).revealRiskTermsBump(a);
     }
 
     // ════════════════════════════════════════════════════════════════════════
