@@ -234,17 +234,18 @@ export default function RiskAccessSettings() {
           const current = selected && risk.effectiveTier === risk.rawTier;
           // Held but not yet effective — either cooling down from a recent raise
           // OR stale after a governance terms bump. `tierStaleAfterBump` (derived
-          // from the on-chain anchor read) tells them apart (#735); but if that
-          // anchor read is UNKNOWN (older diamond without the getter, or a failed
-          // read) we can't claim "cooling" — show a neutral note instead (Codex
-          // #738). Stale offers an in-place re-affirm; cooling stays informational
-          // (re-clicking would restart the cooldown).
+          // from the on-chain anchor + terms-version reads) tells them apart
+          // (#735); but if EITHER input read is UNKNOWN (older diamond without the
+          // getter, or a failed read) we can't tell stale from cooling — show a
+          // neutral note instead (Codex #738 r1/r2). Stale offers an in-place
+          // re-affirm; cooling stays informational (re-clicking restarts cooldown).
+          const anchorTrustworthy =
+            risk.tierAnchorKnown && risk.termsVersionKnown;
           const heldNotEffective = selected && !current;
           const staleHere = heldNotEffective && risk.tierStaleAfterBump;
           const coolingHere =
-            heldNotEffective && risk.tierAnchorKnown && !risk.tierStaleAfterBump;
-          const unknownHere =
-            heldNotEffective && !risk.tierAnchorKnown;
+            heldNotEffective && anchorTrustworthy && !risk.tierStaleAfterBump;
+          const unknownHere = heldNotEffective && !anchorTrustworthy;
           const locked = busy || selected;
           return (
             <button

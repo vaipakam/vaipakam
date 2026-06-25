@@ -59,6 +59,9 @@ export interface RiskAccessState {
   gateEnabledKnown: boolean;
   /** Global risk-terms version (a bump re-locks every held tier / consent). */
   termsVersion: bigint;
+  /** False when the terms-version read failed — `termsVersion` is then unknown,
+   *  so staleness can't be asserted (a coerced `0n` would read as "not stale"). */
+  termsVersionKnown: boolean;
   /** The version the vault's TIER opt-in is anchored to (`riskTierVersionAt`). The
    *  gate honours the raised tier only while this is `>= termsVersion`. */
   tierAnchorVersion: bigint;
@@ -115,6 +118,7 @@ export function useRiskAccess(): RiskAccessState {
   const [gateEnabled, setGateEnabled] = useState(false);
   const [gateEnabledKnown, setGateEnabledKnown] = useState(true);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
+  const [termsVersionKnown, setTermsVersionKnown] = useState(true);
   const [tierAnchorVersion, setTierAnchorVersion] = useState<bigint>(0n);
   const [tierAnchorKnown, setTierAnchorKnown] = useState(true);
   const [supported, setSupported] = useState(true);
@@ -173,7 +177,8 @@ export function useRiskAccess(): RiskAccessState {
       }
     }
     if (!missing) {
-      const [rawT, unlockRes, version, anchorRes, gateRes] = await Promise.all([
+      const [rawT, unlockRes, versionRes, anchorRes, gateRes] =
+        await Promise.all([
         ro.getVaultRiskTier(address).catch((e) => {
           critical = true;
           if (live()) setError((e as Error).message);
@@ -186,7 +191,14 @@ export function useRiskAccess(): RiskAccessState {
           .getRiskTierUnlockAt(address)
           .then((v) => ({ ok: true, v: BigInt(v) }))
           .catch(() => ({ ok: false, v: 0n })),
-        ro.getCurrentRiskTermsVersion().catch(() => 0n),
+        // A failed terms-version read must NOT coerce to 0 for staleness: that
+        // would make `tierAnchorVersion < termsVersion` false and wrongly label a
+        // genuinely-stale tier as cooling (hiding re-affirm). Track success so the
+        // stale predicate can require it (Codex #738 r2 P2).
+        ro
+          .getCurrentRiskTermsVersion()
+          .then((v) => ({ ok: true, v: BigInt(v) }))
+          .catch(() => ({ ok: false, v: 0n })),
         // #735 — the vault's tier anchor version. A failed read leaves staleness
         // UNKNOWN (don't wrongly offer re-affirm). A Diamond predating this getter
         // (#735 not yet deployed) also lands here ⇒ no re-affirm UI, correct.
@@ -206,7 +218,8 @@ export function useRiskAccess(): RiskAccessState {
         setRawTier(Number(rawT) as RiskTier);
         setTierUnlockAt(unlockRes.v);
         setTierUnlockKnown(unlockRes.ok);
-        setTermsVersion(BigInt(version));
+        setTermsVersion(versionRes.v);
+        setTermsVersionKnown(versionRes.ok);
         setTierAnchorVersion(anchorRes.v);
         setTierAnchorKnown(anchorRes.ok);
         setGateEnabled(gateRes.v);
@@ -226,11 +239,14 @@ export function useRiskAccess(): RiskAccessState {
 
   // #735 — a raised tier that is held-but-not-effective is STALE-after-bump (vs
   // merely cooling) iff its anchor version is behind the live terms version. Only
-  // assert it from trustworthy reads (anchor known) so a failed read never offers
-  // a doomed re-affirm.
+  // assert it from trustworthy reads — BOTH the anchor AND the terms version must
+  // have read successfully, else a coerced `0n` on either side flips the
+  // comparison and offers a doomed re-affirm (anchor) or hides a needed one
+  // (terms version, Codex #738 r2 P2).
   const tierStaleAfterBump =
     rawTier > effectiveTier &&
     tierAnchorKnown &&
+    termsVersionKnown &&
     tierAnchorVersion < termsVersion;
 
   return {
@@ -241,6 +257,7 @@ export function useRiskAccess(): RiskAccessState {
     gateEnabled,
     gateEnabledKnown,
     termsVersion,
+    termsVersionKnown,
     tierAnchorVersion,
     tierAnchorKnown,
     tierStaleAfterBump,

@@ -12,6 +12,8 @@ read-only view exposes the vault's tier-anchor version, so the page now
 distinguishes the two: a cooling tier stays informational (re-clicking would
 restart the cooldown), while a stale tier shows a clear "the risk terms changed —
 re-affirm to restore it" note and a one-click **Re-affirm current tier** button.
-The button re-submits the same tier, which re-anchors it to the latest terms and
-makes it effective again. Deployments where the progressive-risk gate is off, and
-older deployments without the new view, simply don't surface the button.
+The button re-submits the same tier, which re-anchors it to the latest terms; on
+deployments configured with an opt-up cooldown it becomes effective again once
+that cooldown elapses (re-affirm re-arms the cooldown, exactly like any raise).
+Older deployments without the new tier-anchor view can't tell stale from cooling,
+so they simply don't surface the button.
