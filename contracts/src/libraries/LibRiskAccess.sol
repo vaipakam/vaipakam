@@ -12,6 +12,15 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 ///      an asset is. A `staticcall` (view) — no state, no reentrancy surface.
 interface IRiskAccessOracle {
     function getEffectiveLiquidityTier(address asset) external view returns (uint8);
+    /// @dev The SAME liquidity classification the accept-time #662 check feeds to
+    ///      `_ackCoversIlliquidLegs` (`ctx.{lending,collateral}Liquidity ==
+    ///      Illiquid`, both from `OracleFacet.checkLiquidity`). The ack-aware
+    ///      accept preview (#735) reuses it so it models the gate's ack
+    ///      substitution with zero drift.
+    function checkLiquidity(address asset)
+        external
+        view
+        returns (LibVaipakam.LiquidityStatus);
 }
 
 /**
@@ -488,6 +497,68 @@ library LibRiskAccess {
         // frontend collects the ack first instead of letting the tx revert.
         if (midTierStrictBlock(s, actor, p)) return 3;
         return 0;
+    }
+
+    /// @notice Ack-AWARE variant of {previewActorBlock} for the ACCEPTOR leg of an
+    ///         accept preview (#735 item 1). An accept ALWAYS carries the
+    ///         acceptor's #662 acknowledgement, so — unlike the conservative
+    ///         standing-consent mirror — this models the ack substitution and
+    ///         REFINES an illiquid-pair code 2 to code 4 ("the acceptor's standard
+    ///         #662 ack, which the dapp's accept-signing flow always produces, WILL
+    ///         clear this boundary at sign-time") whenever BOTH hold:
+    ///           - the acceptor's TIER anchor is still fresh
+    ///             (`riskTierVersionAt >= currentRiskTermsVersion`) — a terms bump
+    ///             re-locks the substitution exactly as it re-locks a standing
+    ///             consent, so a stale anchor stays a hard code 2; AND
+    ///           - every illiquid leg is ACK-COVERABLE under the SAME
+    ///             `_ackCoversIlliquidLegs` predicate the gate enforces, fed the
+    ///             ack the dapp signs (`ackLend = lendAsset`, `ackColl = collAsset`)
+    ///             and the verified flags derived the SAME way the call site does
+    ///             (`checkLiquidity(leg) == Illiquid`). The derived-tier-0 and
+    ///             rental-prepay legs the gate forces to a standing consent are
+    ///             therefore NOT softened — they stay code 2.
+    /// @return Same codes as {previewActorBlock} plus 4 (illiquid, but the #662
+    ///         ack will cover it — a SOFT warning the dapp may proceed past).
+    /// @dev    Codes 1 (tier too low) and 3 (strict mid-tier) are returned
+    ///         unchanged — no #662 illiquid ack can heal those. The ack HASH anchor
+    ///         (`acceptAckTermsHash == currentRiskTermsHash`) is NOT modeled here:
+    ///         there is no signature yet, and the signing flow stamps the LIVE
+    ///         `currentRiskTermsHash` immediately before signing, so that anchor
+    ///         holds by construction at accept time.
+    function previewAcceptorBlockAckAware(
+        LibVaipakam.Storage storage s,
+        address actor,
+        PairId memory p
+    ) internal view returns (uint8) {
+        uint8 base = previewActorBlock(s, actor, p);
+        if (base != 2) return base; // only an illiquid-consent gap can self-heal
+        // A terms bump re-locks the ack substitution just like a standing consent
+        // (Codex #729 r1); a stale tier anchor can't be cleared by re-signing alone.
+        if (s.riskTierVersionAt[actor] < s.currentRiskTermsVersion) return 2;
+        if (
+            _ackCoversIlliquidLegs(
+                s,
+                p,
+                p.lendAsset, // the dapp acks the literal lending asset…
+                p.collAsset, // …and the literal collateral asset
+                _legReadsIlliquid(p.lendAsset),
+                _legReadsIlliquid(p.collAsset)
+            )
+        ) {
+            return 4;
+        }
+        return 2;
+    }
+
+    /// @dev Models the accept call site's per-leg `*AckVerified` flag: the #662
+    ///      check only validates a leg's ack when that leg reads `Illiquid` via
+    ///      `OracleFacet.checkLiquidity` (LoanFacet `_maybeRunInitialRiskGates`).
+    ///      A zero / non-ERC20 address can't be liquidity-classified, so it is
+    ///      treated as unverified (false) rather than reverting the preview.
+    function _legReadsIlliquid(address asset) private view returns (bool) {
+        if (asset == address(0)) return false;
+        return IRiskAccessOracle(address(this)).checkLiquidity(asset)
+            == LibVaipakam.LiquidityStatus.Illiquid;
     }
 
     /// @notice Risk-gate revert reasons (carried in the facet ABI).

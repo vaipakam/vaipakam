@@ -2029,17 +2029,42 @@ function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
  * duplicated). Surfaces the in-flight / failed / blocked state with NEUTRAL copy
  * — the preview checks the offer creator before the acceptor, so it never claims
  * an acceptor-only fix or links to a page that can't resolve it. The on-chain
- * gate at loan-init is the real boundary; a definite block also disables Confirm
- * in the parent.
+ * gate at loan-init is the real boundary; a definite (hard) block also disables
+ * Confirm in the parent.
+ *
+ * #735 item 1 — a SOFT warning (`softWarn`, code 4) is rendered as a NON-alert
+ * informational note and does NOT disable Confirm: the pair is illiquid but the
+ * acceptor's #662 acknowledgement (collected by the signing flow) clears the gate
+ * at sign-time. The user is told they're taking on acknowledged illiquid risk,
+ * but the accept may proceed.
  */
 function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
-  const { status, blocked, reason } = preflight;
+  const { status, blocked, softWarn, reason } = preflight;
   if (status === 'loading' || status === 'error') {
     // Surface the in-flight check AND a failed check (Codex #734 P2) — a silent
     // failure would let the user assume "no warning = clear" when the gate was
     // never actually checked.
     return (
       <div style={{ margin: '0.5rem 0', fontSize: '0.8rem', opacity: 0.7 }}>
+        {reason}
+      </div>
+    );
+  }
+  // Soft, non-blocking illiquid-risk acknowledgement (code 4): a neutral
+  // informational note (role="status", not "alert") — Confirm stays enabled.
+  if (softWarn) {
+    return (
+      <div
+        role="status"
+        style={{
+          margin: '0.5rem 0',
+          padding: '0.55rem 0.75rem',
+          borderRadius: 8,
+          fontSize: '0.85rem',
+          background: 'rgba(74,125,255,0.10)',
+          border: '1px solid rgba(74,125,255,0.35)',
+        }}
+      >
         {reason}
       </div>
     );

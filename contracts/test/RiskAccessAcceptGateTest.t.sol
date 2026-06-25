@@ -645,16 +645,18 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
 
         // Arm the creator + opt the acceptor UP to the tier (still no standing
-        // consent) => the only remaining block is the acceptor's missing
-        // illiquid-pair consent (code 2).
+        // consent). The acceptor leg is ack-AWARE (#735 item 1): the only illiquid
+        // leg (the collateral) is GENUINELY illiquid (`checkLiquidity == Illiquid`),
+        // so the acceptor's standard #662 ack WILL cover it at sign-time => the view
+        // reports the SOFT code 4, not the hard code 2.
         _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
         vm.prank(borrower);
         RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
         assertEq(
             RiskAccessFacet(address(diamond))
                 .previewOfferAcceptBlock(offerId, borrower),
-            2,
-            "tier OK, no standing consent => 2 (pair consent required)"
+            4,
+            "tier OK, no standing consent, #662 ack covers => 4 (soft)"
         );
 
         // Record a standing consent for the acceptor => the view clears to 0.
@@ -667,6 +669,92 @@ contract RiskAccessAcceptGateTest is SetupTest {
                 .previewOfferAcceptBlock(offerId, borrower),
             0,
             "standing consent => 0 (OK)"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // 9b — ACK-AWARE accept preview (#735 item 1): the ACCEPTOR leg models the
+    //      #662 ack substitution, so the preview distinguishes an illiquid pair
+    //      the acceptor's standard ack WILL clear (soft code 4) from one it
+    //      CANNOT (hard code 2). These guard the boundary that the soft path must
+    //      NOT swallow a genuinely-blocking case.
+    // ════════════════════════════════════════════════════════════════════════
+
+    // A DERIVED-tier-0 leg — the gate deems it `IlliquidCustom`
+    // (`getEffectiveLiquidityTier == 0`) but it reads `checkLiquidity == Liquid`
+    // (a liquid-looking ERC-20 demoted on depth) — is NOT covered by the #662 ack:
+    // the accept-time check only verifies an ack for a leg it sees `Illiquid`, so
+    // the substitution never applies and the preview must stay HARD code 2 (the
+    // `*AckVerified` boundary, Codex #729 r3). Softening it to 4 would quote an
+    // accept the gate would revert.
+    function test_previewOfferAcceptBlock_ackAware_derivedTier0StaysHard()
+        public
+    {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg gate-IlliquidCustom…
+        // …but it reads LIQUID (derived tier 0): the #662 ack can't verify it.
+        mockOracleLiquidity(mockIlliquidERC20, LibVaipakam.LiquidityStatus.Liquid);
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // Acceptor is tiered up with no standing consent, but the ack CANNOT cover
+        // the derived-tier-0 leg => the preview stays the hard code 2, not 4.
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            2,
+            "derived-tier-0 leg: #662 ack can't verify => stays hard 2"
+        );
+
+        // A standing consent is the only way past => clears to 0 (proves the hard
+        // code 2 was a real block, not a quirk).
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(mockERC20, mockIlliquidERC20), true
+        );
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            0,
+            "standing consent clears the derived-tier-0 block => 0"
+        );
+    }
+
+    // The acceptor's #662 ack is the ACCEPTOR's attestation — it can never heal a
+    // CREATOR-side illiquid gap. With the creator opted up to IlliquidCustom but
+    // holding NO standing consent (e.g. revoked / stale after a bump), the creator
+    // leg surfaces first as the hard code 2 and is NOT softened by the acceptor's
+    // ack-aware path (which only runs after a clean creator leg).
+    function test_previewOfferAcceptBlock_ackAware_creatorSideGapNotSoftened()
+        public
+    {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+
+        // Creator opts UP to IlliquidCustom but records NO standing consent — the
+        // creator's own illiquid-pair gap. (The acceptor is fully armed so only the
+        // creator leg can block.)
+        vm.prank(lender);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setIlliquidPairConsent(
+            _offerPair(mockERC20, mockIlliquidERC20), true
+        );
+
+        assertEq(
+            RiskAccessFacet(address(diamond))
+                .previewOfferAcceptBlock(offerId, borrower),
+            2,
+            "creator-side illiquid gap => hard 2 (acceptor ack can't heal it)"
         );
     }
 
