@@ -70,6 +70,24 @@ export function OwnOfferMidTierAck({ offerId }: OwnOfferMidTierAckProps) {
       </div>
     );
   }
+  // Code 2/3 need a CONCRETE pair for the recovery write — `useMidTierAckGate`'s
+  // callbacks no-op while `pair` is null. Don't render a dead button before the
+  // resolver lands / when it failed (Codex #740 r11); show a status note instead.
+  if (resolvedPair !== "unknown" && resolvedPair === null) {
+    return (
+      <div role="status" style={noteStyle}>
+        Checking this offer's risk requirement…
+      </div>
+    );
+  }
+  if (resolvedPair === "unknown") {
+    return (
+      <div role="status" style={noteStyle}>
+        Couldn't determine this offer's risk pair right now — reload before
+        recording.
+      </div>
+    );
+  }
   if (code === 2) {
     // Already recorded and cooling down — don't restamp the unlock (Codex r10).
     if (gate.consentPending) {

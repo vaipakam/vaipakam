@@ -33,13 +33,19 @@ deployment may configure up to 30 days), so the copy never promises a quick
 unblock; the user re-opens the offer (or waits out the create gate) once it's
 active.
 
-The accept flow records the acknowledgement for the EXACT pair the gate checks,
-resolved on-chain: a lender-sale vehicle gates the buyer against the sold loan's
-pair (not the sale offer's own surface), which the dapp can't reconstruct itself,
-so a small read-only view (`acceptMidTierAckPair`) returns it. That is the only
-contract addition — every setter/predicate the rest of this uses already shipped
-with #728. The create form additionally checks the creator's tier prerequisite
-before presenting the acknowledgement as the fix (the gate checks tier first), and
-all the strict-mode/ack reads degrade safely when the master gate is off or a read
-fails. This closes the last open item under the #735 umbrella (the strict-mode
-toggle was the deferred piece called out in the Risk Access page since #728 PR-2d).
+The recovery flows record the acknowledgement / consent for the EXACT pair the
+gate checks, resolved on-chain. This adds four read-only RiskAccess view selectors
+(all wired into the deploy selector arrays + the exported ABI, so they must be cut
+into the Diamond): `acceptMidTierAckPair` (a lender-sale vehicle gates the buyer
+against the sold loan's pair, which the dapp can't reconstruct itself),
+`previewCreatorBlock` (the authoritative creator-side verdict, folding in the
+seller exemption + tier-before-ack ordering), and `getPairConsentUnlockAt` /
+`getMidTierAckUnlockAt` (the arming-cooldown unlock timestamps, version-aware, so
+the dapp suppresses a repeat write that would restamp a still-cooling record but
+offers a fresh one once a terms bump has staled it). Every setter/predicate the
+rest of this uses already shipped with #728. The create form additionally checks
+the creator's tier and illiquid-consent prerequisites before presenting the
+acknowledgement as the fix (the gate checks tier first), and all the strict-mode /
+ack reads degrade safely when the master gate is off or a read fails. This closes
+the last open item under the #735 umbrella (the strict-mode toggle was the
+deferred piece called out in the Risk Access page since #728 PR-2d).

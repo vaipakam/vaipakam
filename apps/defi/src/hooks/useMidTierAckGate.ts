@@ -345,29 +345,25 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // entirely, so a non-blue-chip pair on a default-tier vault creates fine and
     // must NOT be reported tier-too-low (Codex #740 r5 P1 — otherwise the gate-off
     // retail deploy can't create any non-blue-chip offer).
+    // Tier + consent verdict. These selectors all shipped BEFORE the r10 pending
+    // getters, so they're present whenever the gate is enforced — keep them in
+    // their own batch so a MISSING r10 pending getter (staggered rollout) can't
+    // reject this and be misread as gate-off (which would enable a doomed create
+    // for an under-tiered / unconsented pair, Codex #740 r11).
     Promise.all([
       ro.pairRequiredRiskLevel(pair),
       ro.getEffectiveRiskTier(address),
       ro.getRiskAccessGateEnabled(),
       ro.hasIlliquidPairConsent(address, pair),
-      ro.getPairConsentUnlockAt(address, pair),
-      ro.getMidTierAckUnlockAt(address, pair),
     ])
-      .then(([req, eff, gateOn, hasConsent, consentUnlock, ackUnlock]) => {
+      .then(([req, eff, gateOn, hasConsent]) => {
         if (cancelled) return;
         tierResolvedForRef.current = readIdentity;
         const on = Boolean(gateOn);
-        const nowSec = BigInt(Math.floor(Date.now() / 1000));
-        // PENDING = a record/consent was submitted but its arming cooldown hasn't
-        // elapsed (unlock > now). Re-recording RESTAMPS the cooldown, pushing the
-        // effective time out, so the dapp suppresses the repeat write (Codex #740
-        // r10). The mid-tier-ack pending flag is gated on a mid-tier pair (req==1).
-        setConsentPending(BigInt(consentUnlock) > nowSec);
-        setMidTierAckPending(BigInt(ackUnlock) > nowSec);
         setTierTooLow(on && Number(eff) < Number(req));
         // IlliquidCustom (level 2) pair the wallet has the TIER for but lacks an
         // EFFECTIVE standing consent — the create gate (no #662 ack to substitute)
-        // reverts IlliquidPairNotConsented (Codex #740 r9). This stays true while a
+        // reverts IlliquidPairNotConsented (Codex #740 r9). Stays true while a
         // consent is cooling down (so submit stays blocked); the UI uses
         // `consentPending` to show a 'cooling' note instead of a repeat-write button
         // (Codex #740 r10). Only meaningful when the tier covers the pair.
@@ -383,16 +379,33 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
         if (isMissingFacet(e)) {
           setTierTooLow(false);
           setIlliquidConsentNeeded(false);
-          setConsentPending(false);
-          setMidTierAckPending(false);
           setTierKnown(true);
         } else {
           setTierTooLow(false);
           setIlliquidConsentNeeded(false);
-          setConsentPending(false);
-          setMidTierAckPending(false);
           setTierKnown(false);
         }
+      });
+    // PENDING flags (separate, tolerant): a record/consent submitted but its
+    // arming cooldown hasn't elapsed (unlock > now). Re-recording RESTAMPS the
+    // cooldown, so the dapp suppresses the repeat write (Codex #740 r10). The
+    // getters return 0 for a version-stale record (a terms bump since), so a dead
+    // record reads as NOT pending and the dapp offers a fresh one (Codex #740 r11).
+    // A missing getter (version skew) ⇒ pending=false (offer the write, harmless).
+    Promise.all([
+      ro.getPairConsentUnlockAt(address, pair),
+      ro.getMidTierAckUnlockAt(address, pair),
+    ])
+      .then(([consentUnlock, ackUnlock]) => {
+        if (cancelled) return;
+        const nowSec = BigInt(Math.floor(Date.now() / 1000));
+        setConsentPending(BigInt(consentUnlock) > nowSec);
+        setMidTierAckPending(BigInt(ackUnlock) > nowSec);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setConsentPending(false);
+        setMidTierAckPending(false);
       });
     return () => {
       cancelled = true;

@@ -421,25 +421,40 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///         down (PENDING) — the dapp suppresses a repeat `setIlliquidPairConsent`
     ///         then, since re-recording restamps the cooldown and can push the
     ///         effective time out (Codex #740 r10). 0 / past = nothing pending.
+    /// @dev    Returns 0 when the recorded consent's VERSION anchor is stale (a
+    ///         risk-terms bump happened since it was recorded): that record can
+    ///         never become effective without re-recording, so it is NOT pending —
+    ///         the dapp must offer a fresh consent rather than tell the user to wait
+    ///         out a dead cooldown (Codex #740 r11).
     function getPairConsentUnlockAt(
         address vault,
         LibRiskAccess.PairId calldata p
     ) external view returns (uint64) {
-        return LibVaipakam.storageSlot()
-            .pairConsentUnlockAt[vault][LibRiskAccess.pairKey(p)];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 pk = LibRiskAccess.pairKey(p);
+        if (s.illiquidPairVersionAt[vault][pk] < s.currentRiskTermsVersion) {
+            return 0;
+        }
+        return s.pairConsentUnlockAt[vault][pk];
     }
 
     /// @notice #735 item 3 — the arming-cooldown unlock timestamp for `vault`'s
     ///         strict-mode mid-tier acknowledgement (`midTierAckUnlockAt`). GREATER
     ///         than `block.timestamp` ⇒ an ack is recorded but still cooling
     ///         (PENDING); the dapp suppresses a repeat `setMidTierPairAck` to avoid
-    ///         restamping the cooldown (Codex #740 r10).
+    ///         restamping the cooldown (Codex #740 r10). Returns 0 when the ack's
+    ///         VERSION anchor is stale (a terms bump since it was recorded) — it
+    ///         can never clear the gate, so it is NOT pending (Codex #740 r11).
     function getMidTierAckUnlockAt(
         address vault,
         LibRiskAccess.PairId calldata p
     ) external view returns (uint64) {
-        return LibVaipakam.storageSlot()
-            .midTierAckUnlockAt[vault][LibRiskAccess.pairKey(p)];
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        bytes32 pk = LibRiskAccess.pairKey(p);
+        if (s.midTierExplicitAckVersion[vault][pk] < s.currentRiskTermsVersion) {
+            return 0;
+        }
+        return s.midTierAckUnlockAt[vault][pk];
     }
 
     /// @notice The minimum tier a vault must hold to transact this pair (the
