@@ -1615,11 +1615,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
   const { t } = useTranslation();
   const { address: viewerAddress } = useWallet();
   // #671 (#728 PR-2e) — progressive-risk preflight, computed once here and
-  // passed to the banner below. A DEFINITE block (tier / strict-mode ack)
-  // disables Confirm so the user can't sign an accept the gate will reject
-  // (Codex #734 r5); the illiquid case stays informational (the acceptance
-  // signature usually clears it).
-  const riskPreflight = useRiskAccessPreflight(offer.id);
+  // passed to the banner below. A DEFINITE block (tier / strict-mode ack, or a
+  // CREATOR-side illiquid block) disables Confirm so the user can't sign an
+  // accept the gate will reject (Codex #734 r5/r9); an acceptor-side illiquid
+  // block stays informational (the #662 acceptance signature clears it). The
+  // creator address is threaded so the hook can tell those two illiquid cases
+  // apart by re-previewing against the creator.
+  const riskPreflight = useRiskAccessPreflight(offer.id, offer.creator);
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;
   // Live `checkLiquidity` on the ERC-20 collateral (only when this is
