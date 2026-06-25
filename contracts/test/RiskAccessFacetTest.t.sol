@@ -33,7 +33,9 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
  *         Codex #727 r1 update: the facet's pair API now takes a single
  *         `LibRiskAccess.PairId` (carries asset TYPES + TOKEN IDS so a consent
  *         binds to the exact NFT, not the whole collection), and every signed
- *         struct carries a `termsVersion` field bound into the EIP-712 digest.
+ *         struct carries a `termsHash` field bound into the EIP-712 digest (#737 —
+ *         the UNGUESSABLE `currentRiskTermsHash`, superseding the predictable
+ *         numeric version, so a future-epoch grant can't be pre-signed).
  */
 contract RiskAccessFacetTest is SetupTest {
     // Convenience tier ordinals for readability in assertions / calls.
@@ -144,14 +146,14 @@ contract RiskAccessFacetTest is SetupTest {
         returns (bytes32)
     {
         // SetVaultRiskTier digest — single abi.encode in struct order
-        // (typehash, vault, level, termsVersion, nonce, deadline).
+        // (typehash, vault, level, termsHash, nonce, deadline).
         return _digest(
             keccak256(
                 abi.encode(
                     LibRiskAccess.SET_VAULT_RISK_TIER_TYPEHASH,
                     m.vault,
                     m.level,
-                    m.termsVersion,
+                    m.termsHash,
                     m.nonce,
                     m.deadline
                 )
@@ -167,7 +169,7 @@ contract RiskAccessFacetTest is SetupTest {
         // Chunked into two abi.encode()s joined by bytes.concat to mirror
         // LibRiskAccess.digest (viaIR ≤10-value-per-encode idiom). Chunk 1 =
         // typehash + 9 struct fields up to `consent` (10 values); chunk 2 =
-        // termsVersion, nonce, deadline. All fields are static EIP-712 types,
+        // termsHash, nonce, deadline. All fields are static EIP-712 types,
         // so the concat is byte-identical to a single 13-value encode.
         return _digest(
             keccak256(
@@ -184,7 +186,7 @@ contract RiskAccessFacetTest is SetupTest {
                         m.prepayAsset,
                         m.consent
                     ),
-                    abi.encode(m.termsVersion, m.nonce, m.deadline)
+                    abi.encode(m.termsHash, m.nonce, m.deadline)
                 )
             )
         );
@@ -199,9 +201,12 @@ contract RiskAccessFacetTest is SetupTest {
         return abi.encodePacked(r, s, v);
     }
 
-    /// @dev The live risk-terms version a fresh signature must bind to.
-    function _currentVersion() internal view returns (uint64) {
-        return RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion();
+    /// @dev The live UNGUESSABLE risk-terms anchor a fresh relayed grant must bind
+    ///      (#737). Zero before the first reveal — `_consumeSig` rejects a grant
+    ///      bound to zero, so the BySig tests seed a real anchor via `_bumpRiskTerms`
+    ///      first (the anchor passed IS the resulting `currentRiskTermsHash`).
+    function _currentHash() internal view returns (bytes32) {
+        return RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash();
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -259,10 +264,11 @@ contract RiskAccessFacetTest is SetupTest {
     // ════════════════════════════════════════════════════════════════════════
 
     function test_signedSetTier_relayerSubmitsAppliesToSigner() public {
+        _bumpRiskTerms(keccak256("rt-by-tier-1")); // live non-zero anchor (#737)
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
-            termsVersion: _currentVersion(),
+            termsHash: _currentHash(),
             nonce: 1,
             deadline: block.timestamp + 1 hours
         });
@@ -284,10 +290,11 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     function test_signedSetTier_replayRevertsNonceUsed() public {
+        _bumpRiskTerms(keccak256("rt-by-tier-2")); // live non-zero anchor (#737)
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
-            termsVersion: _currentVersion(),
+            termsHash: _currentHash(),
             nonce: 7,
             deadline: block.timestamp + 1 hours
         });
@@ -307,11 +314,12 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     function test_signedSetTier_pastDeadlineReverts() public {
+        _bumpRiskTerms(keccak256("rt-by-tier-3")); // live non-zero anchor (#737)
         uint256 deadline = block.timestamp + 1 hours;
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
-            termsVersion: _currentVersion(),
+            termsHash: _currentHash(),
             nonce: 2,
             deadline: deadline
         });
@@ -328,10 +336,13 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     function test_signedSetTier_wrongSignerReverts() public {
+        // Seed a live anchor so the termsHash check passes and execution reaches
+        // the signature check (the hash check precedes it in `_consumeSig`) (#737).
+        _bumpRiskTerms(keccak256("rt-by-tier-4"));
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
-            termsVersion: _currentVersion(),
+            termsHash: _currentHash(),
             nonce: 3,
             deadline: block.timestamp + 1 hours
         });
@@ -349,36 +360,44 @@ contract RiskAccessFacetTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
-    // F1 — termsVersion binding (a stale-version signature is rejected)
+    // F1 — termsHash binding (#737): a grant bound to a stale OR pre-signed-future
+    //      anchor is rejected; the zero (pre-reveal) anchor is rejected too.
     // ════════════════════════════════════════════════════════════════════════
 
-    function test_signedSetTier_staleTermsVersionReverts() public {
-        // Sign over termsVersion = 0 (the current version), then governance
-        // bumps the terms version before the relayer submits — the bound
-        // version no longer matches the live one => RiskTermsVersionStale.
+    function test_signedSetTier_staleTermsHashReverts() public {
+        // Sign over the LIVE anchor, then governance reveals the next anchor before
+        // the relayer submits — the bound hash no longer matches the live one =>
+        // RiskTermsHashStale. This same revert closes the PRE-SIGN-FUTURE vector:
+        // a grant binding the NEXT epoch's hash can't be crafted at all, because
+        // that hash is hidden behind the #730 commit-reveal until activation.
+        bytes32 signedAnchor = keccak256("rt-by-stale-tier-a");
+        _bumpRiskTerms(signedAnchor); // currentRiskTermsHash = signedAnchor
         LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
             vault: lender,
             level: BROAD,
-            termsVersion: _currentVersion(), // 0
+            termsHash: signedAnchor,
             nonce: 11,
             deadline: block.timestamp + 1 hours
         });
         bytes memory sig = _sign(lenderPk, _tierDigest(m));
 
-        _bumpRiskTerms(keccak256("rt-2")); // now version 1
+        bytes32 freshAnchor = keccak256("rt-by-stale-tier-b");
+        _bumpRiskTerms(freshAnchor); // live anchor rotates forward
 
         vm.prank(relayer);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskAccessFacet.RiskTermsVersionStale.selector,
-                uint64(0),
-                uint64(1)
+                RiskAccessFacet.RiskTermsHashStale.selector,
+                signedAnchor,
+                freshAnchor
             )
         );
         RiskAccessFacet(address(diamond)).setVaultRiskTierBySig(m, sig);
     }
 
-    function test_signedIlliquidConsent_staleTermsVersionReverts() public {
+    function test_signedIlliquidConsent_staleTermsHashReverts() public {
+        bytes32 signedAnchor = keccak256("rt-by-stale-ill-a");
+        _bumpRiskTerms(signedAnchor);
         LibRiskAccess.SetIlliquidPairConsent memory m = LibRiskAccess
             .SetIlliquidPairConsent({
             vault: lender,
@@ -390,28 +409,56 @@ contract RiskAccessFacetTest is SetupTest {
             collTokenId: 0,
             prepayAsset: address(0),
             consent: true,
-            termsVersion: _currentVersion(), // 0
+            termsHash: signedAnchor,
             nonce: 12,
             deadline: block.timestamp + 1 hours
         });
         bytes memory sig = _sign(lenderPk, _illiquidDigest(m));
 
-        _bumpRiskTerms(keccak256("rt-3")); // now version 1
+        bytes32 freshAnchor = keccak256("rt-by-stale-ill-b");
+        _bumpRiskTerms(freshAnchor);
 
         vm.prank(relayer);
         vm.expectRevert(
             abi.encodeWithSelector(
-                RiskAccessFacet.RiskTermsVersionStale.selector,
-                uint64(0),
-                uint64(1)
+                RiskAccessFacet.RiskTermsHashStale.selector,
+                signedAnchor,
+                freshAnchor
             )
         );
         RiskAccessFacet(address(diamond)).setIlliquidPairConsentBySig(m, sig);
     }
 
+    function test_signedSetTier_zeroTermsHashReverts() public {
+        // Pre-reveal genesis (no `_bumpRiskTerms`): `currentRiskTermsHash` is zero.
+        // A relayed grant binding zero is rejected — zero is guessable, so it
+        // carries no freshness guarantee, and the gate must not be enabled before a
+        // real anchor is revealed (#737 precondition). Belt-and-suspenders against a
+        // mis-ordered deploy that enables the gate before the first reveal.
+        LibRiskAccess.SetVaultRiskTier memory m = LibRiskAccess.SetVaultRiskTier({
+            vault: lender,
+            level: BROAD,
+            termsHash: bytes32(0),
+            nonce: 14,
+            deadline: block.timestamp + 1 hours
+        });
+        bytes memory sig = _sign(lenderPk, _tierDigest(m));
+
+        vm.prank(relayer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RiskAccessFacet.RiskTermsHashStale.selector,
+                bytes32(0),
+                bytes32(0)
+            )
+        );
+        RiskAccessFacet(address(diamond)).setVaultRiskTierBySig(m, sig);
+    }
+
     function test_signedIlliquidConsent_freshVersionApplies() public {
-        // Positive path for the chunked illiquid-consent digest: a fresh-version
+        // Positive path for the chunked illiquid-consent digest: a fresh-anchor
         // signature relays and the consent becomes effective (cooldown 0).
+        _bumpRiskTerms(keccak256("rt-by-ill-fresh")); // live non-zero anchor (#737)
         LibRiskAccess.SetIlliquidPairConsent memory m = LibRiskAccess
             .SetIlliquidPairConsent({
             vault: lender,
@@ -423,7 +470,7 @@ contract RiskAccessFacetTest is SetupTest {
             collTokenId: 0,
             prepayAsset: address(0),
             consent: true,
-            termsVersion: _currentVersion(),
+            termsHash: _currentHash(),
             nonce: 13,
             deadline: block.timestamp + 1 hours
         });

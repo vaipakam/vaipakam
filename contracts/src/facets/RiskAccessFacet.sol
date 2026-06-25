@@ -63,7 +63,10 @@ contract RiskAccessFacet is DiamondAccessControl {
     error RiskNonceUsed(address vault, uint256 nonce);
     error RiskBadSignature(address vault);
     error RiskCooldownTooLong(uint64 requested, uint64 maxAllowed);
-    error RiskTermsVersionStale(uint64 signed, uint64 current);
+    /// @notice A relayed `*BySig` grant bound a terms anchor (`termsHash`) that
+    ///         isn't the live `currentRiskTermsHash` — stale across a terms change,
+    ///         a pre-signed future-epoch grant, or zero (pre-first-reveal) (#737).
+    error RiskTermsHashStale(bytes32 signed, bytes32 current);
     /// @notice The revealed terms hash was zero or unchanged from the live one
     ///         (#730) — every change must publish a fresh, non-zero anchor.
     error InvalidRiskTermsHash();
@@ -106,7 +109,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         bytes calldata sig
     ) external {
         _consumeSig(
-            m.vault, m.termsVersion, m.nonce, m.deadline,
+            m.vault, m.termsHash, m.nonce, m.deadline,
             LibRiskAccess.digest(m), sig
         );
         _applyTier(m.vault, m.level);
@@ -118,7 +121,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         bytes calldata sig
     ) external {
         _consumeSig(
-            m.vault, m.termsVersion, m.nonce, m.deadline,
+            m.vault, m.termsHash, m.nonce, m.deadline,
             LibRiskAccess.digest(m), sig
         );
         _applyIlliquidConsent(m.vault, _pairIdOf(m), m.consent);
@@ -144,7 +147,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         bytes calldata sig
     ) external {
         _consumeSig(
-            m.vault, m.termsVersion, m.nonce, m.deadline,
+            m.vault, m.termsHash, m.nonce, m.deadline,
             LibRiskAccess.digest(m), sig
         );
         _applyStrictMode(m.vault, m.enabled);
@@ -164,7 +167,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         bytes calldata sig
     ) external {
         _consumeSig(
-            m.vault, m.termsVersion, m.nonce, m.deadline,
+            m.vault, m.termsHash, m.nonce, m.deadline,
             LibRiskAccess.digest(m), sig
         );
         _applyMidTierAck(m.vault, _midTierPairIdOf(m));
@@ -892,7 +895,7 @@ contract RiskAccessFacet is DiamondAccessControl {
 
     function _consumeSig(
         address vault,
-        uint64 termsVersion,
+        bytes32 termsHash,
         uint256 nonce,
         uint256 deadline,
         bytes32 digest,
@@ -900,10 +903,19 @@ contract RiskAccessFacet is DiamondAccessControl {
     ) private {
         if (block.timestamp > deadline) revert RiskSigExpired(deadline);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Bind the grant to the terms version the signer agreed to (Codex #727
-        // r1 P1): a stale signature can't be relayed after a terms bump.
-        if (termsVersion != s.currentRiskTermsVersion) {
-            revert RiskTermsVersionStale(termsVersion, s.currentRiskTermsVersion);
+        // Bind the relayed grant to the UNGUESSABLE live terms anchor (#737),
+        // superseding the predictable numeric `termsVersion` of Codex #727 r1 P1.
+        // The version is `current + 1`, so a malicious UI could induce a user to
+        // PRE-SIGN a future-epoch grant and relay it the instant governance bumped
+        // — silently re-establishing freshness and bypassing #730's ack re-lock via
+        // the standing-consent branch. `currentRiskTermsHash` is hidden behind the
+        // #730 commit-reveal until activation, so the future anchor is unknowable at
+        // sign-time. Reject the zero anchor too: before the first reveal there is no
+        // real terms epoch (zero is guessable), so a relayed grant carries no
+        // freshness meaning — the gate must not be enabled before a reveal anyway
+        // (the documented #737 precondition).
+        if (termsHash == bytes32(0) || termsHash != s.currentRiskTermsHash) {
+            revert RiskTermsHashStale(termsHash, s.currentRiskTermsHash);
         }
         if (s.riskAccessNonceUsed[vault][nonce]) {
             revert RiskNonceUsed(vault, nonce);
