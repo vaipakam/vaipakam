@@ -1243,7 +1243,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](7);
+        s = new bytes4[](6);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1260,14 +1260,15 @@ contract DeployDiamond is Script {
         // #627 — public KYC-value view; the aggregator adapter calls it to
         // screen its real principal at the exact accept-path valuation.
         s[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
-        // #662 — anti-phishing accept-term binding surface. `hashAcceptTerms`
-        // is the EIP-712 digest view the frontend/tests sign; `verifyAndBindAccept`
+        // #662 — anti-phishing accept-term binding surface. `verifyAndBindAccept`
         // is the diamond-internal gated cross-facet hop SignedOfferFacet uses to
         // share the one binding implementation (`address(this)`-only, like
-        // `acceptOfferInternal`). The direct-path offerKey
-        // (`keccak256(abi.encode(offerId))`) is computed client-side — no view.
-        s[5] = OfferAcceptFacet.hashAcceptTerms.selector;
-        s[6] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // `acceptOfferInternal`). The EIP-712 digest is computed client-side
+        // (frontend `signTypedData`; tests `LibAcceptTerms.digestFor`) — there is
+        // no on-chain `hashAcceptTerms` view (removed for EIP-170 headroom, #730).
+        // The direct-path offerKey (`keccak256(abi.encode(offerId))`) is likewise
+        // client-side.
+        s[5] = OfferAcceptFacet.verifyAndBindAccept.selector;
         // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
         // `getOfferDetails` live on `OfferCancelFacet` — see
         // `_getOfferCancelSelectors`.

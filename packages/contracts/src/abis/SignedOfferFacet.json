@@ -309,6 +309,11 @@
             "name": "deadline",
             "type": "uint256",
             "internalType": "uint256"
+          },
+          {
+            "name": "riskTermsVersion",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       },
@@ -669,6 +674,11 @@
           },
           {
             "name": "deadline",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "riskTermsVersion",
             "type": "uint256",
             "internalType": "uint256"
           }

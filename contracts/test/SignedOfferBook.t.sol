@@ -7,6 +7,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 import {SignedOfferFacet} from "../src/facets/SignedOfferFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -176,15 +177,19 @@ contract SignedOfferBookTest is SetupTest {
         t.acknowledgedIlliquidCollateralAsset = _ack(o.collateralAsset);
         t.nonce = uint256(orderHash); // unique per acceptor per signed offer
         t.deadline = block.timestamp + 1 hours;
+        t.riskTermsVersion =
+            RiskAccessFacet(address(diamond)).getCurrentRiskTermsVersion(); // #730
     }
 
     /// @dev ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.
+    /// @dev Off-chain digest recovery via {LibAcceptTerms.digestFor} (the on-chain
+    ///      `hashAcceptTerms` view was removed for EIP-170 headroom — #730).
     function _signAcceptTerms(LibAcceptTerms.AcceptTerms memory t, uint256 pk)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 d = OfferAcceptFacet(address(diamond)).hashAcceptTerms(t);
+        bytes32 d = LibAcceptTerms.digestFor(t, address(diamond));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
         return abi.encodePacked(r, s, v);
     }

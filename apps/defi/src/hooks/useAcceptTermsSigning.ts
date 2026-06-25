@@ -63,6 +63,10 @@ const ACCEPT_TERMS_TYPES = {
     { name: 'acknowledgedIlliquidCollateralAsset', type: 'address' },
     { name: 'nonce', type: 'uint256' },
     { name: 'deadline', type: 'uint256' },
+    // #730 — the risk-terms version this acknowledgement is bound to. The gate's
+    // #662⇄#671 illiquid ack-substitution requires it to be fresh, so a
+    // governance terms bump re-locks any ack signed against an older version.
+    { name: 'riskTermsVersion', type: 'uint256' },
   ],
 } as const;
 
@@ -97,6 +101,7 @@ export interface AcceptTerms {
   acknowledgedIlliquidCollateralAsset: Address;
   nonce: bigint;
   deadline: bigint;
+  riskTermsVersion: bigint;
 }
 
 export interface AcceptTermsPayload {
@@ -148,6 +153,21 @@ export function useAcceptTermsSigning() {
         functionName: 'getOfferLinkedLoanId',
         args: [input.offerId],
       })) as bigint;
+
+      // #730 — stamp the live risk-terms version so the gate's #662⇄#671 illiquid
+      // ack-substitution sees a FRESH acknowledgement. A Diamond predating
+      // RiskAccessFacet has no such view (and no gate) — default to 0, which is a
+      // fresh anchor there (`0 >= 0`).
+      let riskTermsVersion = 0n;
+      try {
+        riskTermsVersion = (await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI,
+          functionName: 'getCurrentRiskTermsVersion',
+        })) as bigint;
+      } catch {
+        riskTermsVersion = 0n;
+      }
 
       const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;
       const isLender = Number(o.offerType) === OFFER_TYPE_LENDER;
@@ -212,6 +232,7 @@ export function useAcceptTermsSigning() {
         deadline:
           BigInt(Math.floor(Date.now() / 1000)) +
           BigInt(ACCEPT_DEADLINE_SECONDS),
+        riskTermsVersion,
       };
 
       const signature = (await walletClient.signTypedData({

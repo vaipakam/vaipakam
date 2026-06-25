@@ -4441,6 +4441,17 @@ library LibVaipakam {
         // (Codex #733 P2). Zero (never disabled, or re-enabled) ⇒ no lingering
         // requirement.
         mapping(address => uint64) strictModeStrictUntil;
+        // #730 — the `currentRiskTermsVersion` the acceptor's signed #662
+        // `AcceptTerms.riskTermsVersion` named, injected by
+        // `OfferAcceptFacet._verifyAndBindAccept` for the gate to read. Lets the
+        // #662⇄#671 ack-substitution (`LibRiskAccess.assertAcceptorMayTransact`)
+        // require the SIGNED acknowledgement — not just the vault's tier anchor —
+        // to be fresh, so an ack signed before a governance `bumpRiskTermsVersion`
+        // can't be submitted afterward as fresh per-pair illiquid consent. Set on
+        // every accept entry and cleared alongside `acceptAckActive`; only read on
+        // the direct-accept illiquid-substitution path (the keeper-match path
+        // leaves `acceptAckActive == false`).
+        uint256 acceptAckTermsVersion;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

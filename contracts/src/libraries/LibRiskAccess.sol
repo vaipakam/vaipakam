@@ -384,8 +384,19 @@ library LibRiskAccess {
         // #662 ack-substitution — only with FRESH risk terms (a governance terms
         // bump re-locks the substitution just like a standing consent; Codex #729
         // r1) AND an ack that covers exactly the gate's illiquid legs.
+        //
+        // TWO freshness anchors, both required (#730): the vault's TIER anchor
+        // (`riskTierVersionAt`, refreshed by re-affirming the tier) AND the
+        // version named INSIDE the signed acknowledgement (`acceptAckTermsVersion`,
+        // injected by `_verifyAndBindAccept`). Anchoring only on the tier let an
+        // ack signed before a `bumpRiskTermsVersion` be submitted afterward as
+        // fresh per-pair consent once the user refreshed merely their tier (the
+        // signature itself was never re-bound to the new terms). Requiring the
+        // signed version too re-locks the substitution to the exact terms the
+        // acceptor acknowledged.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
+                && s.acceptAckTermsVersion >= s.currentRiskTermsVersion
                 && _ackCoversIlliquidLegs(
                     s, p, ackLend, ackColl, lendAckVerified, collAckVerified
                 )

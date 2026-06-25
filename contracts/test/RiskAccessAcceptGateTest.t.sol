@@ -743,6 +743,77 @@ contract RiskAccessAcceptGateTest is SetupTest {
     }
 
     // ════════════════════════════════════════════════════════════════════════
+    // 10b — #730: a #662 ack signed BEFORE a terms bump can't substitute after,
+    //       even when the acceptor re-affirms only their TIER (not the ack).
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// @dev The #730 replay vector. The ack-substitution freshness used to be
+    ///      anchored ONLY to the vault's tier version, so an acceptor who signed
+    ///      a long-deadline illiquid `AcceptTerms` at version N, then re-affirmed
+    ///      merely their TIER after a governance bump to N+1, could still submit
+    ///      the stale (version-N) ack as fresh per-pair consent. Stamping
+    ///      `AcceptTerms.riskTermsVersion` and requiring it `>=`
+    ///      `currentRiskTermsVersion` at the gate re-locks it: the stale ack now
+    ///      reverts `IlliquidPairNotConsented`, while a freshly re-signed ack
+    ///      substitutes again (recoverable, like a standing consent).
+    function test_acceptGate_staleAckDoesNotSubstituteAfterBump() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+
+        // Acceptor opts UP to IlliquidCustom (cooldown 0 => immediate).
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // Capture a signature NOW, at the current (version 0) terms — the
+        // "long-deadline ack signed before the bump."
+        (LibAcceptTerms.AcceptTerms memory staleTerms, bytes memory staleSig) =
+            _buildAndSign(borrower, borrowerPk, offerId);
+        assertEq(staleTerms.riskTermsVersion, 0, "ack stamped at pre-bump version 0");
+
+        // Governance bumps the terms version to 1.
+        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion();
+
+        // Acceptor re-affirms ONLY their tier (riskTierVersionAt -> 1, effective
+        // tier back to IlliquidCustom) — but NOT the ack (still version 0).
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+        assertEq(
+            RiskAccessFacet(address(diamond)).getEffectiveRiskTier(borrower),
+            ILLIQUID,
+            "tier re-affirmed fresh after bump"
+        );
+
+        // Re-arm the creator (the bump re-locked it too) so the borrower's stale
+        // ack is the ONLY thing under test.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+
+        // The stale (version-0) ack no longer substitutes: the tier check passes
+        // (re-affirmed), but ack-substitution requires the SIGNED version to be
+        // fresh (0 >= 1 is false) and there is no standing consent.
+        vm.expectPartialRevert(LibRiskAccess.IlliquidPairNotConsented.selector);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, staleTerms, staleSig);
+
+        // A FRESH ack (stamped at the live version) substitutes again — the
+        // re-lock is recoverable by re-signing, like the standing consent.
+        (LibAcceptTerms.AcceptTerms memory freshTerms, bytes memory freshSig) =
+            _buildAndSign(borrower, borrowerPk, offerId);
+        assertEq(freshTerms.riskTermsVersion, 1, "fresh ack stamped at post-bump version 1");
+        vm.prank(borrower);
+        uint256 loanId =
+            OfferAcceptFacet(address(diamond)).acceptOffer(offerId, freshTerms, freshSig);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).borrower,
+            borrower,
+            "fresh ack substitutes post-bump"
+        );
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
     // 11 — keeper-match path is NOT gated by THIS accept-time site.
     // ════════════════════════════════════════════════════════════════════════
 

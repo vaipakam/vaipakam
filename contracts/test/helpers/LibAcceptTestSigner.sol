@@ -7,6 +7,7 @@ import {LibAcceptTerms} from "../../src/libraries/LibAcceptTerms.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {OracleFacet} from "../../src/facets/OracleFacet.sol";
+import {RiskAccessFacet} from "../../src/facets/RiskAccessFacet.sol";
 
 /**
  * @title LibAcceptTestSigner
@@ -84,15 +85,41 @@ library LibAcceptTestSigner {
         t.acknowledgedIlliquidCollateralAsset = _ack(diamond, o.collateralAsset);
         t.nonce = offerId; // collision-free per acceptor (offer accepted once)
         t.deadline = block.timestamp + 1 hours;
+        // #730 — stamp the live risk-terms version so the #662⇄#671 illiquid
+        // ack-substitution gate sees a FRESH acknowledgement (a governance bump
+        // re-locks any ack signed against an older version).
+        t.riskTermsVersion = _currentRiskTermsVersion(diamond);
+    }
+
+    /// @dev The diamond's `currentRiskTermsVersion`, read DEFENSIVELY: minimal-cut
+    ///      tests (e.g. OfferFacetTest) may not route `RiskAccessFacet`, and such
+    ///      a diamond can't enable the risk gate anyway, so a missing selector ⇒
+    ///      version 0 is correct. A `staticcall` (not a typed call) lets the read
+    ///      degrade to 0 instead of reverting the whole accept.
+    function _currentRiskTermsVersion(address diamond)
+        private
+        view
+        returns (uint256)
+    {
+        (bool ok, bytes memory ret) = diamond.staticcall(
+            abi.encodeWithSelector(
+                RiskAccessFacet.getCurrentRiskTermsVersion.selector
+            )
+        );
+        return (ok && ret.length >= 32) ? abi.decode(ret, (uint256)) : 0;
     }
 
     /// @notice ECDSA-sign an `AcceptTerms` digest with `pk` → packed `(r,s,v)`.
+    /// @dev    Recovers the digest off-chain via {LibAcceptTerms.digestFor} (the
+    ///         on-chain `hashAcceptTerms` view was removed for EIP-170 headroom —
+    ///         #730); `digestFor` binds the same `verifyingContract` (= `diamond`)
+    ///         the runtime `verify` uses, so the recovered signature matches.
     function sign(address diamond, LibAcceptTerms.AcceptTerms memory t, uint256 pk)
         internal
         view
         returns (bytes memory)
     {
-        bytes32 d = OfferAcceptFacet(diamond).hashAcceptTerms(t);
+        bytes32 d = LibAcceptTerms.digestFor(t, diamond);
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, d);
         return abi.encodePacked(r, s, v);
     }
