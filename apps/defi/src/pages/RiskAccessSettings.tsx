@@ -102,7 +102,7 @@ export default function RiskAccessSettings() {
   async function reaffirmTier() {
     await submitTier(
       risk.rawTier,
-      "Tier re-affirmed against the latest risk terms — it's effective again.",
+      "Tier re-affirmed against the latest risk terms. If an opt-up cooldown is configured it becomes effective once the cooldown elapses.",
     );
   }
 
@@ -233,12 +233,18 @@ export default function RiskAccessSettings() {
           const selected = risk.rawTier === opt.level;
           const current = selected && risk.effectiveTier === risk.rawTier;
           // Held but not yet effective — either cooling down from a recent raise
-          // OR stale after a governance terms bump. `tierStaleAfterBump` tells the
-          // two apart (#735): stale offers an in-place re-affirm; cooling stays
-          // informational (re-clicking would restart the cooldown).
+          // OR stale after a governance terms bump. `tierStaleAfterBump` (derived
+          // from the on-chain anchor read) tells them apart (#735); but if that
+          // anchor read is UNKNOWN (older diamond without the getter, or a failed
+          // read) we can't claim "cooling" — show a neutral note instead (Codex
+          // #738). Stale offers an in-place re-affirm; cooling stays informational
+          // (re-clicking would restart the cooldown).
           const heldNotEffective = selected && !current;
           const staleHere = heldNotEffective && risk.tierStaleAfterBump;
-          const coolingHere = heldNotEffective && !risk.tierStaleAfterBump;
+          const coolingHere =
+            heldNotEffective && risk.tierAnchorKnown && !risk.tierStaleAfterBump;
+          const unknownHere =
+            heldNotEffective && !risk.tierAnchorKnown;
           const locked = busy || selected;
           return (
             <button
@@ -272,6 +278,13 @@ export default function RiskAccessSettings() {
                     {" "}
                     — not effective: the risk terms changed since you set this.
                     Re-affirm to restore it.
+                  </span>
+                )}
+                {unknownHere && (
+                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
+                    {" "}
+                    — selected, not yet effective (cooling down from a raise, or
+                    the risk terms changed; lower then re-raise to refresh it)
                   </span>
                 )}
               </div>
