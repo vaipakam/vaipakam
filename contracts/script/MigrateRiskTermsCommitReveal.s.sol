@@ -48,53 +48,118 @@ contract MigrateRiskTermsCommitReveal is Script {
         address diamond = Deployments.readDiamond();
         console.log("Diamond:", diamond);
 
-        // Which legacy bump selectors does the live diamond currently route?
+        IDiamondLoupe loupe = IDiamondLoupe(diamond);
+
+        // Legacy single-call bump selectors to REMOVE (those actually routed).
         bytes4[2] memory legacy = [
             bytes4(keccak256("bumpRiskTermsVersion()")),
             bytes4(keccak256("bumpRiskTermsVersion(bytes32)"))
         ];
-        IDiamondLoupe loupe = IDiamondLoupe(diamond);
-        uint256 nRemove;
-        for (uint256 i; i < legacy.length; i++) {
-            if (loupe.facetAddress(legacy[i]) != address(0)) nRemove++;
-        }
+        // The commit/reveal surface to wire. A prior interim build may ALREADY
+        // route some of these (e.g. `getCurrentRiskTermsHash` from the hash-based
+        // build), so each is REPLACEd if routed and ADDed otherwise — a blanket Add
+        // would revert when a selector already has a facet (Codex #736 r9).
+        bytes4[4] memory surface = [
+            RiskAccessFacet.commitRiskTermsBump.selector,
+            RiskAccessFacet.revealRiskTermsBump.selector,
+            RiskAccessFacet.getCurrentRiskTermsHash.selector,
+            RiskAccessFacet.getPendingRiskTermsCommitment.selector
+        ];
+
+        uint256 nRemove = _countRouted(loupe, legacy, true);
+        uint256 nReplace = _countRouted(loupe, surface, true);
+        uint256 nAdd = surface.length - nReplace;
 
         vm.startBroadcast(deployerKey);
 
         RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
         console.log("New RiskAccessFacet:", address(riskAccessFacet));
 
-        // [Remove legacy bump (if routed)] + [Add commit/reveal surface].
-        IDiamondCut.FacetCut[] memory cuts =
-            new IDiamondCut.FacetCut[](nRemove > 0 ? 2 : 1);
+        uint256 nCuts =
+            (nRemove > 0 ? 1 : 0) + (nReplace > 0 ? 1 : 0) + (nAdd > 0 ? 1 : 0);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](nCuts);
         uint256 ci;
+
         if (nRemove > 0) {
-            bytes4[] memory rem = new bytes4[](nRemove);
-            uint256 k;
-            for (uint256 i; i < legacy.length; i++) {
-                if (loupe.facetAddress(legacy[i]) != address(0)) rem[k++] = legacy[i];
-            }
             cuts[ci++] = IDiamondCut.FacetCut({
                 facetAddress: address(0), // Remove ⇒ zero facet address
                 action: IDiamondCut.FacetCutAction.Remove,
-                functionSelectors: rem
+                functionSelectors: _routedSubset(loupe, legacy, true, nRemove)
             });
         }
-        bytes4[] memory add = new bytes4[](4);
-        add[0] = RiskAccessFacet.commitRiskTermsBump.selector;
-        add[1] = RiskAccessFacet.revealRiskTermsBump.selector;
-        add[2] = RiskAccessFacet.getCurrentRiskTermsHash.selector;
-        add[3] = RiskAccessFacet.getPendingRiskTermsCommitment.selector;
-        cuts[ci] = IDiamondCut.FacetCut({
-            facetAddress: address(riskAccessFacet),
-            action: IDiamondCut.FacetCutAction.Add,
-            functionSelectors: add
-        });
+        if (nReplace > 0) {
+            cuts[ci++] = IDiamondCut.FacetCut({
+                facetAddress: address(riskAccessFacet),
+                action: IDiamondCut.FacetCutAction.Replace,
+                functionSelectors: _routedSubset(loupe, surface, true, nReplace)
+            });
+        }
+        if (nAdd > 0) {
+            cuts[ci] = IDiamondCut.FacetCut({
+                facetAddress: address(riskAccessFacet),
+                action: IDiamondCut.FacetCutAction.Add,
+                functionSelectors: _routedSubset(loupe, surface, false, nAdd)
+            });
+        }
 
         IDiamondCut(diamond).diamondCut(cuts, address(0), "");
         vm.stopBroadcast();
 
         console.log("Legacy bump selectors removed:", nRemove);
-        console.log("commit/reveal surface added: 4 selectors");
+        console.log("Commit/reveal selectors replaced:", nReplace);
+        console.log("Commit/reveal selectors added:   ", nAdd);
+    }
+
+    /// @dev Count selectors in `sels` whose routed-state matches `wantRouted`.
+    function _countRouted(
+        IDiamondLoupe loupe,
+        bytes4[2] memory sels,
+        bool wantRouted
+    ) private view returns (uint256 n) {
+        for (uint256 i; i < sels.length; i++) {
+            if ((loupe.facetAddress(sels[i]) != address(0)) == wantRouted) n++;
+        }
+    }
+
+    function _countRouted(
+        IDiamondLoupe loupe,
+        bytes4[4] memory sels,
+        bool wantRouted
+    ) private view returns (uint256 n) {
+        for (uint256 i; i < sels.length; i++) {
+            if ((loupe.facetAddress(sels[i]) != address(0)) == wantRouted) n++;
+        }
+    }
+
+    /// @dev The subset of `sels` whose routed-state matches `wantRouted`, of length
+    ///      `n` (caller passes the pre-counted size).
+    function _routedSubset(
+        IDiamondLoupe loupe,
+        bytes4[2] memory sels,
+        bool wantRouted,
+        uint256 n
+    ) private view returns (bytes4[] memory out) {
+        out = new bytes4[](n);
+        uint256 k;
+        for (uint256 i; i < sels.length; i++) {
+            if ((loupe.facetAddress(sels[i]) != address(0)) == wantRouted) {
+                out[k++] = sels[i];
+            }
+        }
+    }
+
+    function _routedSubset(
+        IDiamondLoupe loupe,
+        bytes4[4] memory sels,
+        bool wantRouted,
+        uint256 n
+    ) private view returns (bytes4[] memory out) {
+        out = new bytes4[](n);
+        uint256 k;
+        for (uint256 i; i < sels.length; i++) {
+            if ((loupe.facetAddress(sels[i]) != address(0)) == wantRouted) {
+                out[k++] = sels[i];
+            }
+        }
     }
 }
