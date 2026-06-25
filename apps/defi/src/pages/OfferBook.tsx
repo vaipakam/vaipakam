@@ -5,6 +5,7 @@ import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
+import { useMidTierAckGate, type RiskPairId } from '../hooks/useMidTierAckGate';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -2109,94 +2110,76 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
 /**
  * #735 item 3 — record a strict-mode mid-tier per-pair acknowledgement from the
  * accept flow. Rendered only when the preflight reports `needs-midtier-ack`
- * (code 3): a strict-mode acceptor must hold a fresh EXPLICIT acknowledgement for
- * a mid-tier pair, which an acceptance signature does NOT cover. This builds the
- * exact `PairId` from the offer (the prepay token is now threaded through the
- * offer cache, so an NFT-rental lend leg keys off the right asset) and calls
- * `setMidTierPairAck`.
+ * (code 3): a strict-mode vault must hold a fresh EXPLICIT acknowledgement for a
+ * mid-tier pair, which an acceptance signature does NOT cover.
+ *
+ * It builds the exact `PairId` from the offer (the prepay token is threaded
+ * through the offer cache, so an NFT-rental lend leg keys off the right asset)
+ * and reads the contract's own `midTierStrictBlocked(connectedWallet, pair)` via
+ * {@link useMidTierAckGate}. A code-3 accept block can be the OFFER CREATOR's
+ * missing ack (the preview reports the first failing party), which the acceptor
+ * CANNOT clear — so the record action is offered ONLY when the connected wallet
+ * is itself the blocked party; otherwise the user is told it's the creator's
+ * requirement instead of being invited to spend gas on an ack that won't help.
  *
  * The acknowledgement is deliberately NOT atomic sign-and-use (Codex #733 P1): on
- * a deployment with an opt-up cooldown it becomes effective only after that
- * cooldown elapses, so the copy never promises an immediate unblock — the user
- * re-opens the offer once it's active (re-opening re-runs the preflight). The
- * block may also be the offer CREATOR's (the preview reports the first failing
- * party), which the acceptor's acknowledgement cannot clear; that surfaces as a
- * persisting block on re-open rather than a false success here.
+ * a deployment with an opt-up cooldown it becomes effective only after that whole
+ * window (up to 30 days), so the copy never promises a quick unblock — the user
+ * re-opens the offer to accept once it's active.
  */
 function MidTierAckRecorder({ offer }: { offer: OfferData }) {
-  const { address } = useWallet();
-  const rw = useDiamondContract() as unknown as {
-    setMidTierPairAck: (p: {
-      lendAsset: string;
-      lendType: number;
-      lendTokenId: bigint;
-      collAsset: string;
-      collType: number;
-      collTokenId: bigint;
-      prepayAsset: string;
-    }) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+  const pair: RiskPairId = {
+    lendAsset: offer.lendingAsset,
+    lendType: offer.assetType,
+    lendTokenId: offer.tokenId,
+    collAsset: offer.collateralAsset,
+    // Optional NFT-shape fields default to the ERC-20 sentinel; the contract
+    // canonicalises token ids / prepay for non-NFT legs anyway.
+    collType: offer.collateralAssetType ?? 0,
+    collTokenId: offer.collateralTokenId ?? 0n,
+    prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
   };
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const gate = useMidTierAckGate(pair);
 
-  async function record() {
-    const step = beginStep({
-      area: 'offer-accept',
-      flow: 'setMidTierPairAck',
-      step: 'record',
-      wallet: address ?? undefined,
-      offerId: offer.id,
-    });
-    setBusy(true);
-    setErr(null);
-    try {
-      const tx = await rw.setMidTierPairAck({
-        lendAsset: offer.lendingAsset,
-        lendType: offer.assetType,
-        lendTokenId: offer.tokenId,
-        collAsset: offer.collateralAsset,
-        // Optional NFT-shape fields default to the ERC-20 sentinel; the contract
-        // canonicalises token ids / prepay for non-NFT legs anyway.
-        collType: offer.collateralAssetType ?? 0,
-        collTokenId: offer.collateralTokenId ?? 0n,
-        prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
-      });
-      await tx.wait();
-      step.success();
-      setDone(true);
-    } catch (e) {
-      setErr((e as Error).message);
-      step.failure(e);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  if (done) {
+  if (gate.recorded) {
     return (
       <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
         Acknowledgement recorded for this pair. If an opt-up cooldown is configured
-        it becomes effective once the cooldown elapses — re-open this offer to
-        accept once it's active. If the block persists, it may be the offer
-        creator's requirement, which your acknowledgement can't clear.
+        it becomes effective only after that window (which a deployment may set up
+        to 30 days) — re-open this offer to accept once it's active.
       </div>
     );
   }
+
+  // The connected wallet isn't the blocked party: a code-3 block here is the
+  // offer creator's missing mid-tier ack, which the acceptor can't clear.
+  if (gate.known && !gate.blocked) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        This mid-tier acknowledgement is the offer creator's requirement — it can't
+        be recorded from your wallet. The offer can't be accepted until the creator
+        records it.
+      </div>
+    );
+  }
+
+  // Read failed / still loading — don't offer a record action over an unknown
+  // verdict (it might spend gas on the wrong party's pair).
+  if (!gate.known) return null;
 
   return (
     <div style={{ margin: '0.5rem 0' }}>
       <button
         type="button"
         className="btn btn-secondary btn-sm"
-        disabled={busy}
-        onClick={() => void record()}
+        disabled={gate.recording}
+        onClick={() => void gate.record()}
       >
-        {busy ? 'Recording acknowledgement…' : 'Record mid-tier acknowledgement'}
+        {gate.recording ? 'Recording acknowledgement…' : 'Record mid-tier acknowledgement'}
       </button>
-      {err && (
+      {gate.error && (
         <div role="alert" style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: 'var(--danger, #d66)' }}>
-          {err}
+          {gate.error}
         </div>
       )}
     </div>

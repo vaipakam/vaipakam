@@ -32,6 +32,19 @@ import { SimulationPreview } from "../components/app/SimulationPreview";
 import { LiquidityPreflightBanner } from "../components/app/LiquidityPreflightBanner";
 import { OfferRiskPreview } from "../components/app/OfferRiskPreview";
 import { useLiquidityPreflight } from "../hooks/useLiquidityPreflight";
+import {
+  useMidTierAckGate,
+  type RiskPairId,
+  type MidTierAckGate,
+} from "../hooks/useMidTierAckGate";
+
+/** Map the form's asset-kind string to the contract's `AssetType` enum
+ *  (0 = ERC20, 1 = ERC721, 2 = ERC1155) for the risk-access PairId. */
+const ASSET_KIND_ENUM: Record<OfferAssetKind, number> = {
+  erc20: 0,
+  erc721: 1,
+  erc1155: 2,
+};
 import { useAssetLiquidity } from "../hooks/useAssetLiquidity";
 import { usePermit2Signing } from "../hooks/usePermit2Signing";
 import { DIAMOND_ABI_VIEM as DIAMOND_ABI } from "@vaipakam/contracts/abis";
@@ -197,6 +210,41 @@ export default function CreateOffer() {
     form.collateralAssetType === "erc20" ? form.collateralAsset || null : null,
   );
   const isRental = isNFTRental(form.assetType);
+
+  // #735 item 3 — the progressive-risk gate enforces a strict-mode mid-tier
+  // acknowledgement at CREATE too (`OfferCreateFacet`), not only at accept. Build
+  // the risk-access pair from the live form and ask the contract whether THIS
+  // creator must record a mid-tier ack for it before the create would succeed.
+  // The contract view returns false unless it's genuinely a strict-mode mid-tier
+  // block, so it's a no-op on every other deployment / pair (e.g. the gate off).
+  const createPair = useMemo<RiskPairId | null>(() => {
+    if (!form.lendingAsset || !form.collateralAsset) return null;
+    try {
+      return {
+        lendAsset: form.lendingAsset,
+        lendType: ASSET_KIND_ENUM[form.assetType],
+        lendTokenId: BigInt(form.tokenId || "0"),
+        collAsset: form.collateralAsset,
+        collType: ASSET_KIND_ENUM[form.collateralAssetType],
+        collTokenId: BigInt(form.collateralTokenId || "0"),
+        prepayAsset:
+          form.prepayAsset || "0x0000000000000000000000000000000000000000",
+      };
+    } catch {
+      // A token-id field mid-typing (non-numeric) would throw in BigInt — treat
+      // the pair as not-yet-buildable rather than crashing the form.
+      return null;
+    }
+  }, [
+    form.lendingAsset,
+    form.assetType,
+    form.tokenId,
+    form.collateralAsset,
+    form.collateralAssetType,
+    form.collateralTokenId,
+    form.prepayAsset,
+  ]);
+  const midTierGate = useMidTierAckGate(createPair);
 
   // Auto-detect asset standards (ERC-20/721/1155) whenever the user enters or
   // selects a contract address. Keeps the Asset Type toggles honest with what
@@ -1679,6 +1727,12 @@ export default function CreateOffer() {
           }
         />
 
+        {/* #735 item 3 — strict-mode mid-tier acknowledgement at CREATE. When the
+            creator is in strict mode and this pair is mid-tier without a fresh
+            ack, the create would revert; offer to record it here and block submit
+            until it's effective. */}
+        <CreateMidTierAckBanner gate={midTierGate} />
+
         <div className="form-actions">
           {/* Pre-flight validation runs the same `validateOfferForm` shape
               the submit handler uses. Disabling the button (with the
@@ -1689,14 +1743,22 @@ export default function CreateOffer() {
               clicking. */}
           {(() => {
             const validationError = validate();
+            // #735 item 3 — also block submit while a strict-mode mid-tier
+            // acknowledgement is outstanding for this pair (the create would
+            // revert `MidTierPairNotAcknowledged` otherwise).
+            const midTierBlocked = midTierGate.blocked;
             const tooltip = step === "form" && validationError
               ? formatValidationError(validationError)
-              : undefined;
+              : step === "form" && midTierBlocked
+                ? "Record the strict-mode mid-tier acknowledgement for this pair first."
+                : undefined;
             return (
               <button
                 type="submit"
                 className="btn btn-primary"
-                disabled={step !== "form" || validationError !== null}
+                disabled={
+                  step !== "form" || validationError !== null || midTierBlocked
+                }
                 data-tooltip={tooltip}
               >
                 {step === "approving"
@@ -1759,6 +1821,70 @@ const DETECTION_LABEL: Record<DetectedAssetType, string> = {
   erc1155: "ERC-1155",
   unknown: "unknown",
 };
+
+/**
+ * #735 item 3 — create-time strict-mode mid-tier acknowledgement.
+ *
+ * The progressive-risk gate enforces a strict-mode vault's per-pair mid-tier
+ * acknowledgement at offer CREATION too, so a strict-mode creator building a
+ * mid-tier (liquid-but-not-blue-chip) pair would otherwise hit an opaque revert.
+ * This banner reads the contract's own `midTierStrictBlocked(creator, pair)`
+ * (via {@link useMidTierAckGate}) and, when blocked, lets the creator record the
+ * acknowledgement in place. Because the acknowledgement is not atomic
+ * sign-and-use, on a deployment with an opt-up cooldown it becomes effective only
+ * after that window (up to 30 days) — so the copy never promises a quick unblock,
+ * and the submit button stays disabled while `blocked` holds.
+ */
+function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
+  // Nothing to surface unless the creator is actually blocked, or just recorded.
+  if (!gate.blocked && !gate.recorded) return null;
+  return (
+    <div
+      role="status"
+      style={{
+        margin: "0.75rem 0",
+        padding: "0.6rem 0.8rem",
+        borderRadius: 8,
+        fontSize: "0.85rem",
+        background: "rgba(220,160,30,0.10)",
+        border: "1px solid rgba(220,160,30,0.35)",
+      }}
+    >
+      {gate.recorded ? (
+        <span>
+          Mid-tier acknowledgement recorded for this pair. If an opt-up cooldown is
+          configured it becomes effective only after that window (which a
+          deployment may set up to 30 days); creating stays blocked until then.
+        </span>
+      ) : (
+        <>
+          <div style={{ marginBottom: "0.4rem" }}>
+            Strict mode is on for your vault, and this is a mid-tier pair, so it
+            needs a fresh explicit acknowledgement before you can create the offer.
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            disabled={gate.recording}
+            onClick={() => void gate.record()}
+          >
+            {gate.recording
+              ? "Recording acknowledgement…"
+              : "Record mid-tier acknowledgement"}
+          </button>
+          {gate.error && (
+            <div
+              role="alert"
+              style={{ marginTop: "0.4rem", fontSize: "0.8rem", color: "var(--danger, #d66)" }}
+            >
+              {gate.error}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
 
 function DetectionBadge({
   detection,

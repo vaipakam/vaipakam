@@ -391,24 +391,33 @@ export default function RiskAccessSettings() {
                 ? "Strict mode is ON — click to turn off"
                 : "Strict mode is OFF — click to turn on"}
           </button>
-          {/* Disable-linger: while the strict-until expiry is in the future, a
-              prior disable still keeps the mid-tier acknowledgement requirement
-              in force (so dropping strict mode can't immediately originate an
-              un-acknowledged mid-tier loan). */}
+          {/* Disable-linger. The contract's EFFECTIVE strict state is
+              `strictMode || now < strictModeStrictUntil`, so when the raw flag
+              reads OFF the linger still matters: while the expiry is in the
+              future a prior disable keeps the mid-tier acknowledgement requirement
+              in force. A FAILED linger read leaves that UNKNOWN — we must not
+              imply it's absent (Codex #740 P2), so we surface an explicit
+              "couldn't read" note instead of silently showing nothing. */}
           {!risk.strictMode &&
-            risk.strictModeUntilKnown &&
-            risk.strictModeUntil > BigInt(Math.floor(Date.now() / 1000)) && (
+            (risk.strictModeUntilKnown ? (
+              risk.strictModeUntil >
+              BigInt(Math.floor(Date.now() / 1000)) ? (
+                <p
+                  style={{ fontSize: "0.8rem", opacity: 0.75, marginTop: "0.4rem" }}
+                >
+                  A recent disable is still cooling down: the mid-tier
+                  acknowledgement requirement stays in force until the configured
+                  cooldown elapses.
+                </p>
+              ) : null
+            ) : (
               <p
-                style={{
-                  fontSize: "0.8rem",
-                  opacity: 0.75,
-                  marginTop: "0.4rem",
-                }}
+                style={{ fontSize: "0.8rem", opacity: 0.75, marginTop: "0.4rem" }}
               >
-                A recent disable is still cooling down: the mid-tier acknowledgement
-                requirement stays in force until the configured cooldown elapses.
+                Couldn't read the disable-cooldown state, so a recent disable may
+                still be keeping the mid-tier acknowledgement requirement in force.
               </p>
-            )}
+            ))}
         </>
       )}
     </div>

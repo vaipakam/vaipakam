@@ -73,7 +73,7 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   "illiquid-ack-covered":
     "This pair includes an illiquid asset. Your acceptance signature explicitly acknowledges it, so you can proceed — just be aware you're taking on an illiquid position that can't be priced or auto-liquidated.",
   "needs-midtier-ack":
-    "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover. Record it below; if an opt-up cooldown is configured it becomes effective shortly, then re-open this offer to accept.",
+    "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover. Record it below; if an opt-up cooldown is configured it becomes effective only after that window (which a deployment may set up to 30 days), then re-open this offer to accept.",
   error: "Couldn't check the risk-access requirements right now.",
 };
 
