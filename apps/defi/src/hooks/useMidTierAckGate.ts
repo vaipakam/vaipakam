@@ -402,9 +402,11 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // PENDING flags (separate, tolerant): a record/consent submitted but its
     // arming cooldown hasn't elapsed (unlock > now). Re-recording RESTAMPS the
     // cooldown, so the dapp suppresses the repeat write (Codex #740 r10). The
-    // getters return 0 for a version-stale record (a terms bump since), so a dead
-    // record reads as NOT pending and the dapp offers a fresh one (Codex #740 r11).
-    // A missing getter (version skew) ⇒ pending=false (offer the write, harmless).
+    // getters return false for a version-stale record (a terms bump since), so a
+    // dead record reads as NOT pending and the dapp offers a fresh one (#740 r11).
+    // A missing getter or any read failure ⇒ pendingKnown=false: we can't confirm
+    // nothing is cooling, so the recorder HOLDS the write rather than risk a
+    // restamp (the conservative r13 stance — see the catch block below).
     // The contract computes PENDING against its own `block.timestamp` (not the
     // dapp's wall clock, which can be skewed ahead and re-enable a restamp — Codex
     // #740 r13).
