@@ -210,3 +210,17 @@ implementation. None of this blocks any live deployment (gate is OFF, pre-live).
   contract requirement.
 - **Q4 (commit expiry):** not added — a new commit supersedes an un-revealed one,
   and a lingering commitment is inert (it publishes nothing until revealed).
+
+## 9. Scope boundary — relayed signed-grants (tracked separately, #737)
+
+#730 binds the unguessable anchor into the **acceptance acknowledgement** only.
+The #671/#727 **relayed signed-grant** path (`setVaultRiskTierBySig` /
+`setIlliquidPairConsentBySig` / `setMidTierPairAckBySig`) anchors freshness on the
+**predictable numeric** `currentRiskTermsVersion`, so a future-version grant can be
+pre-signed and activated post-bump — which bypasses this ack re-lock via the
+standing-consent branch (`_illiquidConsentEffective` returns before the hash
+check). That is the same root weakness on a foundation surface and is tracked as a
+dedicated security issue (**#737**): bind the unguessable hash into all three
+signed-grant EIP-712 structs. It is a hard pre-condition to enabling
+`riskAccessGateEnabled`; the gate is default-OFF and the platform pre-live, so it
+is not exploitable today.
