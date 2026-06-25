@@ -391,12 +391,21 @@ library LibRiskAccess {
         // injected by `_verifyAndBindAccept`). Anchoring only on the tier let an
         // ack signed before a `bumpRiskTermsVersion` be submitted afterward as
         // fresh per-pair consent once the user refreshed merely their tier (the
-        // signature itself was never re-bound to the new terms). Requiring the
-        // signed version too re-locks the substitution to the exact terms the
-        // acceptor acknowledged.
+        // signature itself was never re-bound to the new terms).
+        //
+        // The two anchors use DIFFERENT comparisons ON PURPOSE (Codex #736 r1):
+        //  - the tier anchor is CONTRACT-written (`setVaultRiskTier` stamps it to
+        //    the live version), so it is monotonic and can never run ahead — `>=`
+        //    is safe and matches the read-time re-lock elsewhere.
+        //  - `acceptAckTermsVersion` is SIGNER-controlled (`_verifyAndBindAccept`
+        //    copies `terms.riskTermsVersion` verbatim), so `>=` would let a relayer
+        //    pre-sign a long-deadline ack with `riskTermsVersion = type(uint256).max`
+        //    that stays "fresh" across every future bump. It must equal the live
+        //    version EXACTLY — the acceptor acknowledged the terms in force now,
+        //    not some arbitrary future terms.
         if (
             s.riskTierVersionAt[actor] >= s.currentRiskTermsVersion
-                && s.acceptAckTermsVersion >= s.currentRiskTermsVersion
+                && s.acceptAckTermsVersion == s.currentRiskTermsVersion
                 && _ackCoversIlliquidLegs(
                     s, p, ackLend, ackColl, lendAckVerified, collAckVerified
                 )

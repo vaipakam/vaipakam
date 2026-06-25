@@ -813,6 +813,41 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
     }
 
+    /// @dev #730 / Codex #736 r1 — a FUTURE-stamped ack must not substitute. The
+    ///      signed `riskTermsVersion` is signer-controlled (copied verbatim from
+    ///      the calldata), so a `>=` check would let a relayer pre-sign a
+    ///      long-deadline ack with `riskTermsVersion = type(uint256).max` that
+    ///      stays "fresh" across every future bump. Exact-version match rejects it:
+    ///      `max != currentRiskTermsVersion`, so the ack-substitution is denied.
+    function test_acceptGate_futureStampedAckDoesNotSubstitute() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+
+        // Acceptor opts UP to IlliquidCustom — the only thing missing is a fresh,
+        // correctly-versioned consent/ack.
+        vm.prank(borrower);
+        RiskAccessFacet(address(diamond)).setVaultRiskTier(ILLIQUID);
+
+        // Build the terms, then OVERRIDE the version to a far-future value and
+        // re-sign — the relayer-captured-ack scenario. The signature is valid for
+        // the modified terms, but the version is not the live one.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildTerms(
+            address(diamond), borrower, offerId, true, 0
+        );
+        t.riskTermsVersion = type(uint256).max;
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+
+        // Exact-version match denies the future-stamped ack (a `>=` check would
+        // have wrongly let it substitute).
+        vm.expectPartialRevert(LibRiskAccess.IlliquidPairNotConsented.selector);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(offerId, t, sig);
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // 11 — keeper-match path is NOT gated by THIS accept-time site.
     // ════════════════════════════════════════════════════════════════════════
