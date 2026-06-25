@@ -62,9 +62,9 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   "tier-too-low":
     "This offer's asset pair needs a higher risk tier than is currently set. If it's your vault, raise your tier in Risk Access settings; otherwise the offer can't be filled right now.",
   "needs-illiquid-consent":
-    "This pair includes an illiquid asset. Your acceptance signature acknowledges it for most assets — if the accept still fails, record a standing per-pair consent in Risk Access settings.",
+    "This pair includes an illiquid asset. Accepting usually covers it via your acceptance signature; if it doesn't, a standing per-pair consent is required that this app can't record yet (it may also be the offer creator's consent that's missing).",
   "needs-midtier-ack":
-    "This pair needs a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover. If it's your vault, acknowledge the pair in Risk Access settings before accepting.",
+    "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover, and that this app can't record yet.",
   error: "Couldn't check the risk-access requirements right now.",
 };
 

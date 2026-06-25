@@ -49,6 +49,9 @@ export interface RiskAccessState {
   /** Unix seconds the current raise-cooldown elapses (0 if none pending). While
    *  `now < tierUnlockAt` a raised tier is still cooling down. */
   tierUnlockAt: bigint;
+  /** False when the cooldown-unlock read failed — `tierUnlockAt` is then unknown
+   *  and callers must treat the tier as still cooling (don't re-affirm). */
+  tierUnlockKnown: boolean;
   /** Whether the master progressive-risk gate is enforced on this deployment. */
   gateEnabled: boolean;
   /** False when the gate-enabled read failed — `gateEnabled` is then unknown,
@@ -76,17 +79,23 @@ const isMissingSelector = (e: unknown): boolean => {
 };
 
 export function useRiskAccess(): RiskAccessState {
-  const { address, isCorrectChain } = useWallet();
+  const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
+  // `isCorrectChain` only means the wallet is on a REGISTERED chain — a
+  // supported chain with no Diamond deployed still passes it, and the reads
+  // would then target the zero-address sentinel and writes a dead proxy
+  // (Codex #734 r4). Require an actual deployed Diamond on the wallet's chain.
+  const canRead = isCorrectChain && !!activeChain?.diamondAddress;
 
   const [effectiveTier, setEffectiveTier] = useState<RiskTier>(0);
   const [rawTier, setRawTier] = useState<RiskTier>(0);
   const [tierUnlockAt, setTierUnlockAt] = useState<bigint>(0n);
+  const [tierUnlockKnown, setTierUnlockKnown] = useState(true);
   const [gateEnabled, setGateEnabled] = useState(false);
   const [gateEnabledKnown, setGateEnabledKnown] = useState(true);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
   const [supported, setSupported] = useState(true);
-  const [loading, setLoading] = useState(() => !!address && isCorrectChain);
+  const [loading, setLoading] = useState(() => !!address && canRead);
   const [error, setError] = useState<string | null>(null);
 
   // Monotonic request token: a refresh only applies its results while it is the
@@ -95,7 +104,7 @@ export function useRiskAccess(): RiskAccessState {
   const reqRef = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!address || !isCorrectChain) {
+    if (!address || !canRead) {
       setLoading(false);
       return;
     }
@@ -120,12 +129,18 @@ export function useRiskAccess(): RiskAccessState {
       else if (live()) setError((e as Error).message);
     }
     if (!missing) {
-      const [rawT, unlockAt, version, gateRes] = await Promise.all([
+      const [rawT, unlockRes, version, gateRes] = await Promise.all([
         ro.getVaultRiskTier(address).catch((e) => {
           if (live()) setError((e as Error).message);
           return 0;
         }),
-        ro.getRiskTierUnlockAt(address).catch(() => 0),
+        // A failed unlock read must NOT coerce to 0 — that would read as "not
+        // cooling" and wrongly enable a re-affirm that restarts the cooldown
+        // (Codex #734 r4). Keep it unknown so callers treat it as still cooling.
+        ro
+          .getRiskTierUnlockAt(address)
+          .then((v) => ({ ok: true, v: BigInt(v) }))
+          .catch(() => ({ ok: false, v: 0n })),
         ro.getCurrentRiskTermsVersion().catch(() => 0n),
         // Distinguish a real read failure from "off": a failure leaves
         // enforcement UNKNOWN rather than silently reporting it off
@@ -137,7 +152,8 @@ export function useRiskAccess(): RiskAccessState {
       ]);
       if (live()) {
         setRawTier(Number(rawT) as RiskTier);
-        setTierUnlockAt(BigInt(unlockAt));
+        setTierUnlockAt(unlockRes.v);
+        setTierUnlockKnown(unlockRes.ok);
         setTermsVersion(BigInt(version));
         setGateEnabled(gateRes.v);
         setGateEnabledKnown(gateRes.ok);
@@ -147,7 +163,7 @@ export function useRiskAccess(): RiskAccessState {
       setSupported(!missing);
       setLoading(false);
     }
-  }, [address, isCorrectChain, diamondRo]);
+  }, [address, canRead, diamondRo]);
 
   useEffect(() => {
     void refresh();
@@ -157,11 +173,12 @@ export function useRiskAccess(): RiskAccessState {
     effectiveTier,
     rawTier,
     tierUnlockAt,
+    tierUnlockKnown,
     gateEnabled,
     gateEnabledKnown,
     termsVersion,
     supported,
-    wrongChain: !!address && !isCorrectChain,
+    wrongChain: !!address && !canRead,
     loading,
     error,
     refresh,

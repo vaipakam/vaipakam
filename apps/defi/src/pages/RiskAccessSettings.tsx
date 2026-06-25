@@ -57,9 +57,11 @@ export default function RiskAccessSettings() {
 
   // A raised tier is "cooling down" until its unlock time; re-submitting the
   // same level during the cooldown re-arms it, so the re-affirm path is gated on
-  // this (Codex #734 r3).
+  // this (Codex #734 r3). If the unlock read failed it's UNKNOWN — treat as
+  // cooling so a failed read can't enable a re-affirm that restarts the
+  // cooldown (Codex #734 r4).
   const nowSec = BigInt(Math.floor(Date.now() / 1000));
-  const cooling = risk.tierUnlockAt > nowSec;
+  const cooling = !risk.tierUnlockKnown || risk.tierUnlockAt > nowSec;
 
   async function chooseTier(level: RiskTier) {
     // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a
