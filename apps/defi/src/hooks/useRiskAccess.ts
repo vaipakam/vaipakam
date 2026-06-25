@@ -123,7 +123,15 @@ export function useRiskAccess(): RiskAccessState {
   const reqRef = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!address || !canRead) return;
+    if (!address || !canRead) {
+      // The context became unreadable (disconnect / unsupported chain). Advance
+      // the request token to invalidate any in-flight read, and clear the loaded
+      // key so a later reconnect to the SAME context re-reads instead of
+      // committing the previous context's state (Codex #734 r8).
+      reqRef.current++;
+      setLoadedKey(null);
+      return;
+    }
     const myReq = ++reqRef.current;
     const live = () => myReq === reqRef.current;
     setError(null);

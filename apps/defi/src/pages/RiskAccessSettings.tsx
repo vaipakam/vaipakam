@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondContract } from "../contracts/useDiamond";
 import { beginStep } from "../lib/journeyLog";
@@ -55,37 +55,17 @@ export default function RiskAccessSettings() {
     ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
   };
 
-  // A raised tier is "cooling down" until its unlock time; re-submitting the
-  // same level during the cooldown re-arms it, so the re-affirm path is gated on
-  // this (Codex #734 r3). If the unlock read failed it's UNKNOWN — treat as
-  // cooling so a failed read can't enable a re-affirm that restarts the
-  // cooldown (Codex #734 r4).
-  const nowSec = BigInt(Math.floor(Date.now() / 1000));
-  const cooling = !risk.tierUnlockKnown || risk.tierUnlockAt > nowSec;
-  // When a cooling-down tier reaches its unlock time, RE-READ (not just
-  // re-render): the on-chain effective tier flips to the raised level on its own
-  // once the cooldown passes, so the page must refetch to reflect it rather than
-  // keep showing the old "not effective" tier + a redundant re-affirm button
-  // (Claude #734 P4 + Codex #734 r7).
-  const { refresh } = risk;
-  useEffect(() => {
-    if (!risk.tierUnlockKnown || risk.tierUnlockAt === 0n) return;
-    const ms = Number(risk.tierUnlockAt) * 1000 - Date.now();
-    if (ms < 0) return;
-    const id = setTimeout(() => void refresh(), ms + 1000);
-    return () => clearTimeout(id);
-  }, [risk.tierUnlockAt, risk.tierUnlockKnown, refresh]);
-
+  // A held-but-not-effective tier (raw > effective) is either cooling down from
+  // a recent raise OR stale after a terms-version bump. Re-affirming it IN PLACE
+  // is intentionally NOT offered from this page: distinguishing cooling from
+  // stale reliably needs an on-chain per-user version read the facet doesn't
+  // expose yet, and every local-clock / timer heuristic for it proved fragile
+  // (Codex #734 r3–r8). The selected tier's button stays disabled with an
+  // explanatory note; to re-affirm a stale tier the user lowers then re-raises
+  // (a follow-up can add a robust in-place re-affirm once a version getter
+  // exists).
   async function chooseTier(level: RiskTier) {
-    // Allow RE-AFFIRMING a held-but-not-effective tier (Codex #734 P2): after a
-    // risk-terms bump the raw tier stays but the effective tier drops to
-    // BlueChipOnly until re-stamped, so re-selecting the same level must go
-    // through to re-affirm it. But do NOT re-submit while the tier is merely
-    // COOLING DOWN from a recent raise (Codex #734 r3): re-submitting then
-    // re-arms a fresh cooldown and delays access. So only re-affirm when the
-    // held tier is stale (not effective) AND its cooldown has already elapsed.
-    if (level === risk.rawTier && (risk.effectiveTier === risk.rawTier || cooling))
-      return;
+    if (level === risk.rawTier) return;
     const step = beginStep({
       area: "profile",
       flow: "setVaultRiskTier",
@@ -239,12 +219,11 @@ export default function RiskAccessSettings() {
         {TIER_OPTIONS.map((opt) => {
           const selected = risk.rawTier === opt.level;
           const current = selected && risk.effectiveTier === risk.rawTier;
-          // Selected, raised, and still cooling down — disabled (re-clicking
-          // would restart the cooldown). Selected but stale (cooldown elapsed,
-          // yet not effective ⇒ a terms bump) — enabled to re-affirm.
-          const coolingThis = selected && !current && cooling;
-          const reaffirmable = selected && !current && !cooling;
-          const locked = busy || current || coolingThis;
+          // Held but not yet effective (cooling down, or stale after a terms
+          // bump). The button is disabled either way; re-affirming in place is a
+          // follow-up (see the chooseTier note above).
+          const heldNotEffective = selected && !current;
+          const locked = busy || selected;
           return (
             <button
               key={opt.level}
@@ -266,16 +245,12 @@ export default function RiskAccessSettings() {
             >
               <div style={{ fontWeight: 600 }}>
                 {RISK_TIER_LABEL[opt.level]} {current && "✓"}
-                {coolingThis && (
+                {heldNotEffective && (
                   <span style={{ fontWeight: 400, opacity: 0.8 }}>
                     {" "}
-                    — selected; effective once the opt-up cooldown elapses
-                  </span>
-                )}
-                {reaffirmable && (
-                  <span style={{ fontWeight: 400, opacity: 0.8 }}>
-                    {" "}
-                    — selected but not effective; click to re-affirm
+                    — selected, not yet effective (pending an opt-up cooldown, or
+                    a terms-version re-affirmation; lower then re-raise to
+                    re-affirm)
                   </span>
                 )}
               </div>
