@@ -5,7 +5,7 @@ import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
-import { useMidTierAckGate, useAcceptMidTierPair } from '../hooks/useMidTierAckGate';
+import { useMidTierAckGate, useAcceptMidTierPair, type RiskPairId } from '../hooks/useMidTierAckGate';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -2132,7 +2132,19 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
   // vehicle gates the buyer against the SOLD LOAN's pair, not the offer's own
   // surface, and the dapp can't construct that itself (Codex #740 r5). Feeding a
   // guessed offer-pair would record the wrong pair / show a misleading message.
-  const resolvedPair = useAcceptMidTierPair(offer.id);
+  // The offer-surface pair is passed as a FALLBACK used only when the diamond
+  // predates the resolver selector (version skew) — correct for normal offers
+  // (Codex #740 r6).
+  const fallbackPair: RiskPairId = {
+    lendAsset: offer.lendingAsset,
+    lendType: offer.assetType,
+    lendTokenId: offer.tokenId,
+    collAsset: offer.collateralAsset,
+    collType: offer.collateralAssetType ?? 0,
+    collTokenId: offer.collateralTokenId ?? 0n,
+    prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
+  };
+  const resolvedPair = useAcceptMidTierPair(offer.id, fallbackPair);
   const gate = useMidTierAckGate(
     resolvedPair === 'unknown' ? null : resolvedPair,
   );
@@ -2188,6 +2200,64 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
       </button>
       {gate.error && (
         <div role="alert" style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: 'var(--danger, #d66)' }}>
+          {gate.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * #735 item 3 — creator-side mid-tier acknowledgement for an OWN posted offer
+ * (Codex #740 r6). When strict mode is enabled (or a terms bump stales the prior
+ * ack) AFTER an offer was posted, the accept gate re-checks the creator FIRST, so
+ * acceptors stay blocked until the creator records the mid-tier ack for the pair —
+ * but the creator's own offers show a "Your Offer" badge, not an Accept modal, so
+ * there was no in-flow way to record it. This compact affordance renders on the
+ * creator's own open-offer rows ONLY when the contract reports the creator is
+ * mid-tier-blocked for that pair. The creator-side gate keys off the offer's own
+ * pair (sale-vehicle SELLERS are exempt, so a creator-side block is always a
+ * normal offer), so the pair is built locally — no sale-aware resolver needed.
+ */
+function OwnOfferMidTierAck({ offer }: { offer: OfferData }) {
+  const pair: RiskPairId = {
+    lendAsset: offer.lendingAsset,
+    lendType: offer.assetType,
+    lendTokenId: offer.tokenId,
+    collAsset: offer.collateralAsset,
+    collType: offer.collateralAssetType ?? 0,
+    collTokenId: offer.collateralTokenId ?? 0n,
+    prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
+  };
+  const gate = useMidTierAckGate(pair);
+
+  if (gate.recorded) {
+    return (
+      <div role="status" style={{ marginTop: '0.35rem', fontSize: '0.75rem', opacity: 0.85 }}>
+        Acknowledgement recorded — effective after any configured cooldown; until
+        then acceptors stay blocked on this offer.
+      </div>
+    );
+  }
+  // Only surface when the contract says THIS creator is mid-tier-blocked for the
+  // pair; otherwise (gate off, not mid-tier, fresh ack, or read pending) nothing.
+  if (!gate.known || !gate.blocked) return null;
+  return (
+    <div style={{ marginTop: '0.35rem' }}>
+      <div style={{ fontSize: '0.75rem', opacity: 0.85, marginBottom: '0.25rem' }}>
+        Strict mode now requires a mid-tier acknowledgement for this pair before it
+        can be accepted.
+      </div>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={gate.recording}
+        onClick={() => void gate.record()}
+      >
+        {gate.recording ? 'Recording…' : 'Record mid-tier acknowledgement'}
+      </button>
+      {gate.error && (
+        <div role="alert" style={{ marginTop: '0.3rem', fontSize: '0.75rem', color: 'var(--danger, #d66)' }}>
           {gate.error}
         </div>
       )}
@@ -2427,13 +2497,17 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                           );
                         })()
                       ) : isOwn ? (
-                        // Offer creator sees the Your-Offer badge only.
-                        // The per-offer keeper toggles live on the offer
-                        // details page (KeeperSettings card) — surfacing
-                        // a deep-link from the list row added clutter to
-                        // a column that scans far better as a single
-                        // vertical baseline of Accept buttons.
-                        <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
+                        // Offer creator sees the Your-Offer badge. The per-offer
+                        // keeper toggles live on the offer details page
+                        // (KeeperSettings card). #735 item 3 — but when strict
+                        // mode was enabled (or a terms bump staled the ack) AFTER
+                        // posting, the accept gate re-checks the CREATOR first, so
+                        // the creator needs an in-flow way to record the mid-tier
+                        // ack for their own posted offer (Codex #740 r6).
+                        <>
+                          <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
+                          <OwnOfferMidTierAck offer={offer} />
+                        </>
                       ) : address ? (
                         <button
                           className="btn btn-primary btn-sm"

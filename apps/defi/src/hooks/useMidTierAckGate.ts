@@ -74,16 +74,33 @@ const isMissingFacet = (e: unknown): boolean => {
  * gates the buyer against the SOLD LOAN's pair (not the sale offer's own surface),
  * which the dapp can't construct itself (the `saleOfferToLoanId` mapping isn't a
  * public getter) — so the resolution happens on-chain and the dapp feeds the
- * result into {useMidTierAckGate}. Returns null while loading / when unsupported,
- * or `'unknown'` on a real read failure so callers can avoid acting on a bad pair.
+ * result into {useMidTierAckGate}.
+ *
+ * `fallbackPair` is the OFFER-surface pair the caller can build locally. It is
+ * used ONLY when the diamond has the strict-mode gate but predates the
+ * `acceptMidTierAckPair` selector (a staggered / version-skewed rollout): rather
+ * than hiding the recorder entirely, fall back to the offer-surface pair, which
+ * is correct for normal offers — sale vehicles (undetectable client-side) are the
+ * sole imperfect case and don't exist on a diamond predating this view (Codex
+ * #740 r6). A REAL read failure returns `'unknown'` so the caller doesn't act on a
+ * bad pair. Until the read for the CURRENT `offerId` resolves, returns null
+ * synchronously (never a previous offer's pair).
  */
 export function useAcceptMidTierPair(
   offerId: bigint | null | undefined,
+  fallbackPair: RiskPairId | null,
 ): RiskPairId | null | "unknown" {
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
   const readChain = useReadChain();
   const [pair, setPair] = useState<RiskPairId | null | "unknown">(null);
+  // The offerId the current `pair` state was resolved for — render exposes `pair`
+  // only while it still matches, so a switch to another offer never reuses the
+  // previous offer's pair before its own read lands (Codex #740 r6).
+  const resolvedForRef = useRef<bigint | null>(null);
+  // Read the fallback via a ref so its object identity doesn't re-fire the effect.
+  const fallbackRef = useRef<RiskPairId | null>(fallbackPair);
+  fallbackRef.current = fallbackPair;
 
   const onDeployedChain =
     isCorrectChain &&
@@ -93,9 +110,11 @@ export function useAcceptMidTierPair(
   useEffect(() => {
     let cancelled = false;
     if (offerId == null || !address || !onDeployedChain) {
+      resolvedForRef.current = offerId ?? null;
       setPair(null);
       return;
     }
+    const readId = offerId;
     const ro = diamondRo as unknown as {
       acceptMidTierAckPair: (offerId: bigint) => Promise<{
         lendAsset: string;
@@ -110,6 +129,7 @@ export function useAcceptMidTierPair(
     ro.acceptMidTierAckPair(offerId)
       .then((p) => {
         if (cancelled) return;
+        resolvedForRef.current = readId;
         setPair({
           lendAsset: p.lendAsset,
           lendType: Number(p.lendType),
@@ -122,16 +142,20 @@ export function useAcceptMidTierPair(
       })
       .catch((e) => {
         if (cancelled) return;
-        // A Diamond predating the view ⇒ no gate to satisfy ⇒ null (no recorder).
-        // A real read failure ⇒ 'unknown' so the caller doesn't act on a bad pair.
-        setPair(isMissingFacet(e) ? null : "unknown");
+        resolvedForRef.current = readId;
+        // Missing resolver selector (gate present, view not yet cut) ⇒ fall back
+        // to the offer-surface pair (correct for normal offers). Real failure ⇒
+        // 'unknown' so the caller doesn't act on a bad pair.
+        setPair(isMissingFacet(e) ? (fallbackRef.current ?? null) : "unknown");
       });
     return () => {
       cancelled = true;
     };
   }, [offerId, address, onDeployedChain, diamondRo]);
 
-  return pair;
+  // Synchronous staleness: don't expose a previous offer's pair on the render
+  // immediately after `offerId` changes, before the effect re-resolves.
+  return resolvedForRef.current === (offerId ?? null) ? pair : null;
 }
 
 export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
@@ -160,10 +184,23 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   const pairKey = pair
     ? `${pair.lendAsset}:${pair.lendType}:${pair.lendTokenId}:${pair.collAsset}:${pair.collType}:${pair.collTokenId}:${pair.prepayAsset}`
     : null;
+  const identity = `${address ?? ""}:${readChain.chainId ?? ""}:${pairKey ?? ""}`;
+
+  // The identity each verdict was last RESOLVED for. The state setters run in an
+  // effect, so the render immediately after an identity change still holds the
+  // previous verdict; exposing it would briefly enable a create submit for a
+  // not-yet-verified pair (Codex #740 r6). The return overrides `known`/`tierKnown`
+  // to false whenever these don't match the current identity, making the verdict
+  // synchronously UNKNOWN on any pair/wallet/chain change until the read re-lands.
+  const blockResolvedForRef = useRef<string | null>(null);
+  const tierResolvedForRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
+    const readIdentity = identity;
     if (!address || !pair || !onDeployedChain) {
+      blockResolvedForRef.current = readIdentity;
+      tierResolvedForRef.current = readIdentity;
       setBlocked(false);
       setKnown(false);
       setTierTooLow(false);
@@ -189,11 +226,13 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     ro.midTierStrictBlocked(address, pair)
       .then((v) => {
         if (cancelled) return;
+        blockResolvedForRef.current = readIdentity;
         setBlocked(Boolean(v));
         setKnown(true);
       })
       .catch((e) => {
         if (cancelled) return;
+        blockResolvedForRef.current = readIdentity;
         // A Diamond predating RiskAccessFacet means the gate isn't there ⇒ not
         // blocked. A real read failure leaves it UNKNOWN (don't imply "clear").
         if (isMissingFacet(e)) {
@@ -219,11 +258,13 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     ])
       .then(([req, eff, gateOn]) => {
         if (cancelled) return;
+        tierResolvedForRef.current = readIdentity;
         setTierTooLow(Boolean(gateOn) && Number(eff) < Number(req));
         setTierKnown(true);
       })
       .catch((e) => {
         if (cancelled) return;
+        tierResolvedForRef.current = readIdentity;
         // Missing facet ⇒ no gate ⇒ tier can't be too low. Real failure ⇒ unknown.
         if (isMissingFacet(e)) {
           setTierTooLow(false);
@@ -240,13 +281,11 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, pairKey, onDeployedChain, diamondRo, nonce]);
 
-  // Full identity the recorded/in-flight state is bound to: the pair AND the
-  // connected wallet AND the chain. A change to ANY of them must reset the
-  // per-acknowledgement state (a recorded ack belongs to one vault on one chain
-  // for one pair) and invalidate an in-flight record's completion (Codex #740
-  // r2/r4 — e.g. switching accounts mid-mine must not stamp the new vault).
-  const identity = `${address ?? ""}:${readChain.chainId ?? ""}:${pairKey ?? ""}`;
-
+  // `identity` (computed above) is the pair + wallet + chain the recorded/in-flight
+  // state is bound to. A change to ANY of them must reset the per-acknowledgement
+  // state (a recorded ack belongs to one vault on one chain for one pair) and
+  // invalidate an in-flight record's completion (Codex #740 r2/r4 — e.g. switching
+  // accounts mid-mine must not stamp the new vault).
   useEffect(() => {
     setRecorded(false);
     setError(null);
@@ -302,11 +341,17 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     }
   }, [pair, identity, address, diamondRw]);
 
+  // Synchronous staleness guard (Codex #740 r6): if a verdict's resolved-for
+  // identity no longer matches the current one (a pair/wallet/chain change this
+  // render, before the effect re-runs), expose it as UNKNOWN rather than letting a
+  // stale "clear" verdict enable a doomed action for one render.
+  const blockFresh = blockResolvedForRef.current === identity;
+  const tierFresh = tierResolvedForRef.current === identity;
   return {
-    blocked,
-    known,
-    tierTooLow,
-    tierKnown,
+    blocked: blockFresh ? blocked : false,
+    known: blockFresh ? known : false,
+    tierTooLow: tierFresh ? tierTooLow : false,
+    tierKnown: tierFresh ? tierKnown : false,
     recording,
     recorded,
     error,
