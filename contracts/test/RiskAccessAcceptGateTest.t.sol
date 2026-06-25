@@ -367,7 +367,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
         // ADMIN_ROLE (mirrors RiskAccessFacetTest — no prank), so the call is
         // direct. This re-locks the acceptor's now-stale tier anchor with ZERO
         // per-user writes (read-time re-lock).
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-9"));
+        _bumpRiskTerms(keccak256("rt-9"));
         assertEq(
             RiskAccessFacet(address(diamond)).getEffectiveRiskTier(borrower),
             BLUECHIP,
@@ -779,7 +779,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         // Governance bumps the terms version — this re-derives currentRiskTermsHash
         // to a new (non-zero) value.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-10"));
+        _bumpRiskTerms(keccak256("rt-10"));
         bytes32 liveHash =
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash();
         assertTrue(liveHash != bytes32(0), "bump re-derives a non-zero terms hash");
@@ -848,7 +848,7 @@ contract RiskAccessAcceptGateTest is SetupTest {
 
         // Governance bumps — the real hash is derived from block entropy and will
         // not equal the attacker's guess.
-        RiskAccessFacet(address(diamond)).bumpRiskTermsVersion(keccak256("rt-11"));
+        _bumpRiskTerms(keccak256("rt-11"));
         assertTrue(
             RiskAccessFacet(address(diamond)).getCurrentRiskTermsHash() != t.riskTermsHash,
             "real post-bump hash is not the guessed value"

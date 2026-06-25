@@ -37,21 +37,15 @@
   },
   {
     "type": "function",
-    "name": "bumpRiskTermsVersion",
+    "name": "commitRiskTermsBump",
     "inputs": [
       {
-        "name": "newTermsHash",
+        "name": "commitment",
         "type": "bytes32",
         "internalType": "bytes32"
       }
     ],
-    "outputs": [
-      {
-        "name": "newVersion",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
+    "outputs": [],
     "stateMutability": "nonpayable"
   },
   {
@@ -95,6 +89,19 @@
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPendingRiskTermsCommitment",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
       }
     ],
     "stateMutability": "view"
@@ -432,6 +439,30 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revealRiskTermsBump",
+    "inputs": [
+      {
+        "name": "newTermsHash",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "newVersion",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -961,6 +992,19 @@
   },
   {
     "type": "event",
+    "name": "RiskTermsBumpCommitted",
+    "inputs": [
+      {
+        "name": "commitment",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "RiskTermsVersionBumped",
     "inputs": [
       {
@@ -1063,6 +1107,11 @@
   },
   {
     "type": "error",
+    "name": "NoPendingRiskTermsCommitment",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "RiskBadSignature",
     "inputs": [
       {
@@ -1114,6 +1163,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RiskTermsRevealMismatch",
+    "inputs": []
   },
   {
     "type": "error",

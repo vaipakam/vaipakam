@@ -4467,6 +4467,12 @@ library LibVaipakam {
         // hash. Zero before the first bump (matches a zero-stamped ack, which is
         // correct pre-bump).
         bytes32 currentRiskTermsHash;
+        // #730 (Codex #736 r5) — the pending HIDING commitment to the next terms
+        // hash, set by `commitRiskTermsBump` and consumed by `revealRiskTermsBump`
+        // (commit-reveal). `keccak256(abi.encode(newTermsHash, salt))` with a secret
+        // salt, so a governance timelock's public queued calldata never exposes the
+        // future hash. Zero when no change is pending.
+        bytes32 pendingRiskTermsCommitment;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

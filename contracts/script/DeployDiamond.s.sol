@@ -1465,12 +1465,18 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](28);
+        s = new bytes4[](30);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
         s[3] = RiskAccessFacet.setIlliquidPairConsentBySig.selector;
-        s[4] = RiskAccessFacet.bumpRiskTermsVersion.selector;
+        // #730 r5 — terms changes are a commit-reveal (commit+reveal selectors),
+        // replacing the removed single-call `bumpRiskTermsVersion`. A fresh deploy
+        // routes only these. UPGRADE NOTE: any diamond upgraded from a build that
+        // routed `bumpRiskTermsVersion()`/`(bytes32)` MUST REMOVE that selector when
+        // adding these — else the legacy path could advance the version without the
+        // hash. See docs/DesignsAndPlans/AcceptAckFreshnessAnchorDesign.md §5.
+        s[4] = RiskAccessFacet.commitRiskTermsBump.selector;
         s[5] = RiskAccessFacet.setRiskAccessUnlockCooldown.selector;
         s[6] = RiskAccessFacet.setProtocolManagedVault.selector;
         s[7] = RiskAccessFacet.getVaultRiskTier.selector;
@@ -1494,6 +1500,8 @@ contract DeployDiamond is Script {
         s[25] = RiskAccessFacet.getStrictModeStrictUntil.selector;
         s[26] = RiskAccessFacet.midTierStrictBlocked.selector;
         s[27] = RiskAccessFacet.getCurrentRiskTermsHash.selector; // #730 r3
+        s[28] = RiskAccessFacet.revealRiskTermsBump.selector; // #730 r5 commit-reveal
+        s[29] = RiskAccessFacet.getPendingRiskTermsCommitment.selector; // #730 r5
     }
 
     function _getAggregatorAdapterFactorySelectors()
