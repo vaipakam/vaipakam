@@ -95,8 +95,15 @@ export function useRiskAccess(): RiskAccessState {
   const [gateEnabledKnown, setGateEnabledKnown] = useState(true);
   const [termsVersion, setTermsVersion] = useState<bigint>(0n);
   const [supported, setSupported] = useState(true);
-  const [loading, setLoading] = useState(() => !!address && canRead);
   const [error, setError] = useState<string | null>(null);
+
+  // The key (vault + chain) the displayed state was loaded for. `loading` is
+  // DERIVED from it (not a separate state set inside an effect), so the very
+  // first render after a wallet connects already reads as loading instead of
+  // briefly showing default values + enabled controls (Codex #734 r5).
+  const loadKey = address && canRead ? `${address}:${activeChain?.chainId}` : null;
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const loading = loadKey !== null && loadedKey !== loadKey;
 
   // Monotonic request token: a refresh only applies its results while it is the
   // latest one, so a wallet/network switch mid-flight can't let an older read
@@ -104,13 +111,9 @@ export function useRiskAccess(): RiskAccessState {
   const reqRef = useRef(0);
 
   const refresh = useCallback(async () => {
-    if (!address || !canRead) {
-      setLoading(false);
-      return;
-    }
+    if (!address || !canRead) return;
     const myReq = ++reqRef.current;
     const live = () => myReq === reqRef.current;
-    setLoading(true);
     setError(null);
     let missing = false;
     const ro = diamondRo as unknown as {
@@ -161,9 +164,9 @@ export function useRiskAccess(): RiskAccessState {
     }
     if (live()) {
       setSupported(!missing);
-      setLoading(false);
+      setLoadedKey(loadKey);
     }
-  }, [address, canRead, diamondRo]);
+  }, [address, canRead, loadKey, diamondRo]);
 
   useEffect(() => {
     void refresh();

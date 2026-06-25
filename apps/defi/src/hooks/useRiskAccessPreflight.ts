@@ -70,11 +70,13 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
 
 export interface RiskPreflight {
   status: RiskPreflightStatus;
-  /** True only when the gate would actively block the accept. */
+  /** True only when the gate would actively block the accept (any reason). */
   blocked: boolean;
-  /** True when the block is fixable from the Risk Access settings page (tier
-   *  only today — per-pair consent / ack paths are deferred). */
-  settingsActionable: boolean;
+  /** A DEFINITE on-chain block regardless of the acceptance signature — a tier
+   *  shortfall or a strict-mode mid-tier ack. (Illiquid consent is excluded: the
+   *  acceptance signature usually satisfies the acceptor's side, so it isn't a
+   *  hard block.) Used to disable the accept Confirm button. */
+  hardBlock: boolean;
   /** Human-readable reason + fix (empty for ok/idle). */
   reason: string;
 }
@@ -128,15 +130,17 @@ export function useRiskAccessPreflight(
     status === "needs-illiquid-consent" ||
     status === "needs-midtier-ack";
 
-  // Only the tier block is fixable from the Risk Access settings page today;
-  // the per-pair consent / strict-mode ack paths are deferred, so linking those
-  // statuses there would be a dead end (Codex #734 r3).
-  const settingsActionable = status === "tier-too-low";
+  // Tier shortfall + strict-mode ack are DEFINITE on-chain blocks; the illiquid
+  // case usually clears via the acceptance signature, so it stays informational
+  // (Codex #734 r5). The reason copy is neutral about WHO must act (the preview
+  // checks the creator first), so no in-app "fix it here" action is offered.
+  const hardBlock =
+    status === "tier-too-low" || status === "needs-midtier-ack";
 
   return {
     status,
     blocked,
-    settingsActionable,
+    hardBlock,
     reason: RISK_PREFLIGHT_REASON[status],
   };
 }
