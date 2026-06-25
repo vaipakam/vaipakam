@@ -480,28 +480,48 @@ never parked in a public timelock queue. Steps:
    published hash is pre-stampable), and NEVER reuse one secret across
    chains (revealing on chain A leaks it for a still-pending chain B; the
    ledger is single-use per diamond). Keep it secret until step 4.
-2. **Set the opt-up cooldown FIRST, if you want one.**
-   `setRiskAccessUnlockCooldown(seconds)` (`ADMIN_ROLE`, max 30 days,
-   default 0 = opt-ups immediate). It must be live BEFORE the reveal: the
-   direct opt-up setters stamp each `unlockAt` from whatever cooldown is
-   current, so an opt-up armed while the cooldown is still 0 is immediately
-   effective and never retroactively picks up a later value — setting it
-   after the reveal leaves a window where the first opt-ups bypass the
-   delay. Schedule it in the SAME Timelock batch as the commit (step 3).
-   Skip only if you genuinely want immediate opt-ups.
-3. Governance Safe schedules, through the Timelock (`ADMIN_ROLE`),
-   `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))` (in the same
-   batch as the step-2 cooldown). The queued calldata carries only the
-   hiding commitment. Wait 48h, execute. A new commit supersedes any
-   un-revealed one (lets governance cancel/replace).
+2. **Schedule the three no-secret ADMIN actions up front, in one Timelock
+   pass.** None of them carries the secret, so their 48h delays run
+   concurrently and the reveal-sensitive window collapses to a single block
+   (steps 4–5). Through the Timelock (`ADMIN_ROLE`), schedule:
+   - `commitRiskTermsBump(keccak256(abi.encode(termsAnchor)))` — the hiding
+     commitment (the only call tied to the future anchor, and it reveals
+     nothing about it);
+   - `setRiskAccessUnlockCooldown(seconds)` — if you want a nonzero opt-up
+     cooldown (max 30 days; skip for immediate opt-ups). It MUST be live
+     before the reveal: the direct opt-up setters stamp each `unlockAt`
+     from whatever cooldown is current, so an opt-up armed while the
+     cooldown is still 0 is immediately effective and never retroactively
+     picks up a later value;
+   - `setRiskAccessGateEnabled(true)` — the gate flip (`ADMIN_ROLE`; carries
+     no secret). Schedule it as its OWN Timelock operation so step 5 can
+     execute it on its own, AFTER the reveal.
+
+   Wait out the 48h. **If you supersede a commit** (the anchor leaked or was
+   wrong), explicitly `cancel` the old `commitRiskTermsBump` Timelock
+   operation — the facet only overwrites `pendingRiskTermsCommitment` when
+   the NEW commit executes, so an un-cancelled old one can execute later and
+   clobber it (stalling the reveal, or letting the `PAUSER` reveal an
+   obsolete anchor).
+3. Execute the commit (and the cooldown, if you batched the two). Then
+   **verify `getPendingRiskTermsCommitment() == keccak256(abi.encode(
+   termsAnchor))`** — confirm the live pending commitment is yours and not a
+   superseded one before you reveal.
 4. The `PAUSER_ROLE` guardian calls `revealRiskTermsBump(termsAnchor)`
    directly (no timelock delay — the reveal IS the activation, atomic). It
    bumps `currentRiskTermsVersion` to 1 and sets `currentRiskTermsHash`.
    The secret is exposed only in this tx's brief mempool window.
-5. Only now: enable the gate with `setRiskAccessGateEnabled(true)`
-   (`ConfigFacet`, owner → Timelock post-handover).
+5. **Immediately execute the pre-scheduled gate flip** (the
+   `setRiskAccessGateEnabled(true)` from step 2) right after the reveal.
+   Because its 48h already elapsed, the reveal→enable gap is a single block,
+   not a fresh Timelock window. (Scheduling the flip only AFTER the reveal
+   instead reopens a 48h window in which the now-public anchor lets users
+   arm opt-up grants; if the opt-up cooldown is shorter than that enable
+   delay, those grants are already unlocked when the gate turns on,
+   defeating the first-enable cooldown. Pre-schedule the flip; if you truly
+   cannot, set the cooldown longer than the enable delay.)
 
-**Changing the risk terms later** repeats the commit→reveal (steps 1, 3, 4)
+**Changing the risk terms later** repeats the commit→reveal (steps 2–4)
 with a fresh secret:
 each reveal bumps the version, and every held tier / per-pair consent /
 mid-tier ack whose anchor is now stale **re-locks at read time** with zero
