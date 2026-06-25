@@ -415,6 +415,33 @@ contract RiskAccessFacet is DiamondAccessControl {
             && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
     }
 
+    /// @notice #735 item 3 — the arming-cooldown unlock timestamp for `vault`'s
+    ///         illiquid-pair consent (`pairConsentUnlockAt`). A value GREATER than
+    ///         `block.timestamp` means a consent was recorded but is still cooling
+    ///         down (PENDING) — the dapp suppresses a repeat `setIlliquidPairConsent`
+    ///         then, since re-recording restamps the cooldown and can push the
+    ///         effective time out (Codex #740 r10). 0 / past = nothing pending.
+    function getPairConsentUnlockAt(
+        address vault,
+        LibRiskAccess.PairId calldata p
+    ) external view returns (uint64) {
+        return LibVaipakam.storageSlot()
+            .pairConsentUnlockAt[vault][LibRiskAccess.pairKey(p)];
+    }
+
+    /// @notice #735 item 3 — the arming-cooldown unlock timestamp for `vault`'s
+    ///         strict-mode mid-tier acknowledgement (`midTierAckUnlockAt`). GREATER
+    ///         than `block.timestamp` ⇒ an ack is recorded but still cooling
+    ///         (PENDING); the dapp suppresses a repeat `setMidTierPairAck` to avoid
+    ///         restamping the cooldown (Codex #740 r10).
+    function getMidTierAckUnlockAt(
+        address vault,
+        LibRiskAccess.PairId calldata p
+    ) external view returns (uint64) {
+        return LibVaipakam.storageSlot()
+            .midTierAckUnlockAt[vault][LibRiskAccess.pairKey(p)];
+    }
+
     /// @notice The minimum tier a vault must hold to transact this pair (the
     ///         riskier of the two legs governs; NFT rentals tier off the
     ///         prepay token). Surfaced so the frontend can pre-flight the gate.

@@ -55,6 +55,13 @@ export interface MidTierAckGate {
    *  substitute) reverts `IlliquidPairNotConsented`, so the create flow must block
    *  on this and offer {recordConsent} (Codex #740 r9). Shares `tierKnown`. */
   illiquidConsentNeeded: boolean;
+  /** #735 r10 — a mid-tier ack was already submitted and is still cooling down
+   *  (`midTierAckUnlockAt > now`). The recorder must NOT offer a repeat write
+   *  (it would restamp the cooldown). */
+  midTierAckPending: boolean;
+  /** #735 r10 — an illiquid consent was already submitted and is still cooling
+   *  down (`pairConsentUnlockAt > now`). Suppress repeat writes. */
+  consentPending: boolean;
   recording: boolean;
   recorded: boolean;
   error: string | null;
@@ -239,6 +246,9 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   const [tierTooLow, setTierTooLow] = useState(false);
   const [tierKnown, setTierKnown] = useState(false);
   const [illiquidConsentNeeded, setIlliquidConsentNeeded] = useState(false);
+  // PENDING = recorded but still cooling down (Codex #740 r10) — suppress repeats.
+  const [midTierAckPending, setMidTierAckPending] = useState(false);
+  const [consentPending, setConsentPending] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recorded, setRecorded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -281,6 +291,8 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       setTierTooLow(false);
       setTierKnown(false);
       setIlliquidConsentNeeded(false);
+      setMidTierAckPending(false);
+      setConsentPending(false);
       return;
     }
     // Reset every verdict to UNKNOWN before the new reads resolve. Otherwise a
@@ -293,12 +305,16 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     setTierKnown(false);
     setTierTooLow(false);
     setIlliquidConsentNeeded(false);
+    setMidTierAckPending(false);
+    setConsentPending(false);
     const ro = diamondRo as unknown as {
       midTierStrictBlocked: (vault: string, p: RiskPairId) => Promise<boolean>;
       pairRequiredRiskLevel: (p: RiskPairId) => Promise<number | bigint>;
       getEffectiveRiskTier: (vault: string) => Promise<number | bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
       hasIlliquidPairConsent: (vault: string, p: RiskPairId) => Promise<boolean>;
+      getPairConsentUnlockAt: (vault: string, p: RiskPairId) => Promise<number | bigint>;
+      getMidTierAckUnlockAt: (vault: string, p: RiskPairId) => Promise<number | bigint>;
     };
     // Mid-tier ack verdict.
     ro.midTierStrictBlocked(address, pair)
@@ -334,16 +350,27 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       ro.getEffectiveRiskTier(address),
       ro.getRiskAccessGateEnabled(),
       ro.hasIlliquidPairConsent(address, pair),
+      ro.getPairConsentUnlockAt(address, pair),
+      ro.getMidTierAckUnlockAt(address, pair),
     ])
-      .then(([req, eff, gateOn, hasConsent]) => {
+      .then(([req, eff, gateOn, hasConsent, consentUnlock, ackUnlock]) => {
         if (cancelled) return;
         tierResolvedForRef.current = readIdentity;
         const on = Boolean(gateOn);
+        const nowSec = BigInt(Math.floor(Date.now() / 1000));
+        // PENDING = a record/consent was submitted but its arming cooldown hasn't
+        // elapsed (unlock > now). Re-recording RESTAMPS the cooldown, pushing the
+        // effective time out, so the dapp suppresses the repeat write (Codex #740
+        // r10). The mid-tier-ack pending flag is gated on a mid-tier pair (req==1).
+        setConsentPending(BigInt(consentUnlock) > nowSec);
+        setMidTierAckPending(BigInt(ackUnlock) > nowSec);
         setTierTooLow(on && Number(eff) < Number(req));
-        // IlliquidCustom (level 2) pair the wallet has the TIER for but lacks a
-        // fresh standing consent — the create gate (no #662 ack to substitute)
-        // reverts IlliquidPairNotConsented (Codex #740 r9). Only meaningful when
-        // the tier covers it (else tier-too-low is the prior blocker).
+        // IlliquidCustom (level 2) pair the wallet has the TIER for but lacks an
+        // EFFECTIVE standing consent — the create gate (no #662 ack to substitute)
+        // reverts IlliquidPairNotConsented (Codex #740 r9). This stays true while a
+        // consent is cooling down (so submit stays blocked); the UI uses
+        // `consentPending` to show a 'cooling' note instead of a repeat-write button
+        // (Codex #740 r10). Only meaningful when the tier covers the pair.
         setIlliquidConsentNeeded(
           on && Number(req) === 2 && Number(eff) >= 2 && !Boolean(hasConsent),
         );
@@ -356,10 +383,14 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
         if (isMissingFacet(e)) {
           setTierTooLow(false);
           setIlliquidConsentNeeded(false);
+          setConsentPending(false);
+          setMidTierAckPending(false);
           setTierKnown(true);
         } else {
           setTierTooLow(false);
           setIlliquidConsentNeeded(false);
+          setConsentPending(false);
+          setMidTierAckPending(false);
           setTierKnown(false);
         }
       });
@@ -483,6 +514,8 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     tierTooLow: tierFresh ? tierTooLow : false,
     tierKnown: tierFresh ? tierKnown : false,
     illiquidConsentNeeded: tierFresh ? illiquidConsentNeeded : false,
+    midTierAckPending: tierFresh ? midTierAckPending : false,
+    consentPending: tierFresh ? consentPending : false,
     recording,
     recorded,
     error,

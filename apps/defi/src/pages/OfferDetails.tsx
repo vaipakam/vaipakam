@@ -474,16 +474,7 @@ export default function OfferDetails() {
                 each row's link to this page (Codex #740 r7). */}
             {canCancel && offerForDisplay && (
               <div style={{ marginBottom: 12 }}>
-                <OwnOfferMidTierAck
-                  offerId={offerForDisplay.id}
-                  lendingAsset={offerForDisplay.lendingAsset}
-                  assetType={offerForDisplay.assetType}
-                  tokenId={offerForDisplay.tokenId}
-                  collateralAsset={offerForDisplay.collateralAsset}
-                  collateralAssetType={offerForDisplay.collateralAssetType}
-                  collateralTokenId={offerForDisplay.collateralTokenId}
-                  prepayAsset={offerForDisplay.prepayAsset}
-                />
+                <OwnOfferMidTierAck offerId={offerForDisplay.id} />
               </div>
             )}
 

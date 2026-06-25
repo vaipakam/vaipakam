@@ -2178,6 +2178,32 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
   // verdict (it might spend gas on the wrong party's pair).
   if (!gate.known) return null;
 
+  // The acceptor IS the mid-tier-blocked party, but `midTierStrictBlocked` ignores
+  // TIER — if the acceptor's effective tier doesn't cover the pair (stale / cooling
+  // / BlueChip), recording the ack can't make the accept succeed (the gate fails on
+  // tier first). Surface the tier prerequisite instead (Codex #740 r10).
+  if (gate.tierTooLow) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Your vault's tier doesn't cover this pair — raise (or re-affirm) it in Risk
+        Access settings first; the acknowledgement alone won't make the offer
+        acceptable.
+      </div>
+    );
+  }
+  if (!gate.tierKnown) return null; // tier verdict still resolving
+
+  // An ack is already recorded and cooling down — re-recording would restamp the
+  // cooldown (Codex #740 r10).
+  if (gate.midTierAckPending) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Your acknowledgement for this pair is recorded and cooling down — re-open to
+        accept once it's effective; no need to record it again.
+      </div>
+    );
+  }
+
   return (
     <div style={{ margin: '0.5rem 0' }}>
       <button
@@ -2438,16 +2464,7 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                         // ack for their own posted offer (Codex #740 r6).
                         <>
                           <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
-                          <OwnOfferMidTierAck
-                            offerId={offer.id}
-                            lendingAsset={offer.lendingAsset}
-                            assetType={offer.assetType}
-                            tokenId={offer.tokenId}
-                            collateralAsset={offer.collateralAsset}
-                            collateralAssetType={offer.collateralAssetType}
-                            collateralTokenId={offer.collateralTokenId}
-                            prepayAsset={offer.prepayAsset}
-                          />
+                          <OwnOfferMidTierAck offerId={offer.id} />
                         </>
                       ) : address ? (
                         <button

@@ -1,70 +1,40 @@
 import {
+  useAcceptMidTierPair,
   useCreatorBlock,
   useMidTierAckGate,
-  type RiskPairId,
 } from "../../hooks/useMidTierAckGate";
-
-const ZERO_ADDR = "0x0000000000000000000000000000000000000000";
 
 /**
  * #735 item 3 — creator-side risk recovery for an OWN posted offer (Codex #740
- * r6/r7/r9). When strict mode is enabled (or a terms bump stales the prior ack /
- * drops the tier / stales the consent) AFTER an offer was posted, the accept gate
- * re-checks the creator FIRST, so acceptors stay blocked until the creator acts —
- * but the creator's own offers show a "Your Offer" badge / a Cancel-only row, not
- * an Accept modal.
+ * r6/r7/r9/r10). When strict mode is enabled (or a terms bump stales the prior
+ * ack / drops the tier / stales the consent) AFTER an offer was posted, the accept
+ * gate re-checks the creator FIRST, so acceptors stay blocked until the creator
+ * acts — but the creator's own offers show a "Your Offer" badge / a Cancel-only
+ * row, not an Accept modal.
  *
- * The contract's `previewCreatorBlock` is the authoritative verdict: it folds in
- * the lender-sale SELLER exemption (→ 0, never prompt a seller) and the
- * tier→illiquid→mid-tier ordering. This renders the right affordance per code: a
- * record action for a mid-tier ack (3) or a stale per-pair illiquid consent (2),
- * a "fix your tier" note (1), and nothing for 0 (OK / gate-off / seller-exempt).
- * On a deployment that predates the `previewCreatorBlock` selector it gets
- * `'unknown'` and shows a neutral note rather than silently hiding the control.
- *
- * All record/consent state lives in {useMidTierAckGate}, keyed to the
- * pair+wallet+chain identity, so navigating between own offers can't carry one
- * offer's "recorded" state onto another (Codex #740 r9). Shared by the market
- * table (OfferBook) and the single-offer view (OfferDetails, reachable from the
- * Dashboard MyOffersTable row links).
+ * The contract's `previewCreatorBlock` is the authoritative verdict (folds in the
+ * lender-sale SELLER exemption → 0 and the tier→illiquid→mid-tier ordering); the
+ * EXACT pair the recovery writes target is resolved on-chain via
+ * `acceptMidTierAckPair` so a legacy/indexer-skew row that omits NFT-shape fields
+ * can't record under the wrong pairKey (Codex #740 r10). Records are suppressed
+ * while a prior ack/consent is still cooling down (`*Pending`). Shared by the
+ * market table (OfferBook) and the single-offer view (OfferDetails, reachable from
+ * the Dashboard MyOffersTable row links).
  */
 export interface OwnOfferMidTierAckProps {
   offerId: bigint;
-  lendingAsset: string;
-  /** 0 = ERC20, 1 = ERC721, 2 = ERC1155. */
-  assetType: number;
-  tokenId: bigint;
-  collateralAsset: string;
-  collateralAssetType?: number;
-  collateralTokenId?: bigint;
-  prepayAsset?: string;
 }
 
 const noteStyle = { marginTop: "0.35rem", fontSize: "0.75rem", opacity: 0.85 } as const;
+const dangerStyle = { marginTop: "0.3rem", fontSize: "0.75rem", color: "var(--danger, #d66)" } as const;
 
-export function OwnOfferMidTierAck({
-  offerId,
-  lendingAsset,
-  assetType,
-  tokenId,
-  collateralAsset,
-  collateralAssetType,
-  collateralTokenId,
-  prepayAsset,
-}: OwnOfferMidTierAckProps) {
+export function OwnOfferMidTierAck({ offerId }: OwnOfferMidTierAckProps) {
   const code = useCreatorBlock(offerId);
-  // A creator-side block is always a NORMAL offer (sale-vehicle sellers are
-  // exempt), so the gated pair is the offer's own surface.
-  const pair: RiskPairId = {
-    lendAsset: lendingAsset,
-    lendType: assetType,
-    lendTokenId: tokenId,
-    collAsset: collateralAsset,
-    collType: collateralAssetType ?? 0,
-    collTokenId: collateralTokenId ?? 0n,
-    prepayAsset: prepayAsset ?? ZERO_ADDR,
-  };
-  const gate = useMidTierAckGate(pair);
+  // Resolve the EXACT gated pair on-chain (no defaulting of NFT-shape fields).
+  const resolvedPair = useAcceptMidTierPair(offerId);
+  const gate = useMidTierAckGate(
+    resolvedPair === "unknown" ? null : resolvedPair,
+  );
 
   if (gate.recorded) {
     return (
@@ -101,6 +71,15 @@ export function OwnOfferMidTierAck({
     );
   }
   if (code === 2) {
+    // Already recorded and cooling down — don't restamp the unlock (Codex r10).
+    if (gate.consentPending) {
+      return (
+        <div role="status" style={noteStyle}>
+          Per-pair consent is recorded and cooling down — it becomes effective once
+          the cooldown elapses; no need to record it again.
+        </div>
+      );
+    }
     return (
       <div style={{ marginTop: "0.35rem" }}>
         <div style={{ fontSize: "0.75rem", opacity: 0.85, marginBottom: "0.25rem" }}>
@@ -115,14 +94,20 @@ export function OwnOfferMidTierAck({
           {gate.consentRecording ? "Recording consent…" : "Record per-pair consent"}
         </button>
         {gate.consentError && (
-          <div role="alert" style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "var(--danger, #d66)" }}>
-            {gate.consentError}
-          </div>
+          <div role="alert" style={dangerStyle}>{gate.consentError}</div>
         )}
       </div>
     );
   }
   // code === 3 — strict-mode mid-tier acknowledgement.
+  if (gate.midTierAckPending) {
+    return (
+      <div role="status" style={noteStyle}>
+        The mid-tier acknowledgement is recorded and cooling down — it becomes
+        effective once the cooldown elapses; no need to record it again.
+      </div>
+    );
+  }
   return (
     <div style={{ marginTop: "0.35rem" }}>
       <div style={{ fontSize: "0.75rem", opacity: 0.85, marginBottom: "0.25rem" }}>
@@ -137,11 +122,7 @@ export function OwnOfferMidTierAck({
       >
         {gate.recording ? "Recording…" : "Record mid-tier acknowledgement"}
       </button>
-      {gate.error && (
-        <div role="alert" style={{ marginTop: "0.3rem", fontSize: "0.75rem", color: "var(--danger, #d66)" }}>
-          {gate.error}
-        </div>
-      )}
+      {gate.error && <div role="alert" style={dangerStyle}>{gate.error}</div>}
     </div>
   );
 }

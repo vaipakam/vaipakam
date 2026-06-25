@@ -151,6 +151,128 @@
   },
   {
     "type": "function",
+    "name": "getMidTierAckUnlockAt",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPairConsentUnlockAt",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getPendingRiskTermsCommitment",
     "inputs": [],
     "outputs": [

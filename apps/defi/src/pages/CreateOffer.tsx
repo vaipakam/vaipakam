@@ -1913,6 +1913,25 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
   }
   // IlliquidCustom pair the vault has the tier for but lacks a fresh per-pair
   // consent — the create gate reverts IlliquidPairNotConsented (Codex #740 r9).
+  if (gate.illiquidConsentNeeded && gate.consentPending) {
+    // Already recorded and cooling down — don't restamp (Codex #740 r10).
+    return (
+      <div
+        role="status"
+        style={{
+          margin: "0.75rem 0",
+          padding: "0.6rem 0.8rem",
+          borderRadius: 8,
+          fontSize: "0.85rem",
+          background: "rgba(220,160,30,0.10)",
+          border: "1px solid rgba(220,160,30,0.35)",
+        }}
+      >
+        Per-pair consent is recorded and cooling down — it becomes effective once
+        the cooldown elapses; creating stays blocked until then.
+      </div>
+    );
+  }
   // Offer the contextual consent write right here.
   if (gate.illiquidConsentNeeded) {
     return (
@@ -1968,6 +1987,26 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
         This pair needs a higher risk tier than your vault currently holds. Raise
         your tier in Risk Access settings first; the strict-mode acknowledgement is
         collected here once your tier covers the pair.
+      </div>
+    );
+  }
+  // A mid-tier ack already recorded and cooling down — don't offer a repeat write
+  // (it would restamp the cooldown, Codex #740 r10).
+  if (gate.midTierAckPending && !gate.recorded) {
+    return (
+      <div
+        role="status"
+        style={{
+          margin: "0.75rem 0",
+          padding: "0.6rem 0.8rem",
+          borderRadius: 8,
+          fontSize: "0.85rem",
+          background: "rgba(220,160,30,0.10)",
+          border: "1px solid rgba(220,160,30,0.35)",
+        }}
+      >
+        Mid-tier acknowledgement is recorded and cooling down — it becomes effective
+        once the cooldown elapses; creating stays blocked until then.
       </div>
     );
   }
