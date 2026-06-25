@@ -6,172 +6,190 @@
 ([`LenderIntentVaultV1Design.md`](LenderIntentVaultV1Design.md), #393 L1 / #401
 Stage-4; v1-a…v1-d merged). This doc is the *product-wiring* layer on top of it.
 **Status:** design — for iteration before any code (architecture-iteration norm).
+Revised 2026-06-25 after an adversarial design review (Codex) corrected several
+intent-lifecycle assumptions — see §2/§3.
 
 ---
 
 ## 1. The decision (user-ratified 2026-06-25)
 
 **Auto-lend is the LenderIntent layer.** A passive lender who wants "deploy my idle
-capital automatically" registers a standing **LenderIntent**; keepers/solvers fill it
-into loans as matching borrowers appear, and it revolves as loans repay. We do **not**
-build a parallel auto-lend mechanism, and we do **not** add duration-range matching to
-the point-offer book — the intent's `maxDurationDays` *cap* already gives a passive
-lender "any duration up to N days," which is exactly the duration flexibility the
-request asked for.
+capital automatically" registers a standing **LenderIntent**, **funds it**, and keepers
+fill it into loans as matching borrowers appear. We do **not** build a parallel
+auto-lend mechanism, and we do **not** add duration-range to the point-offer book — the
+intent's `maxDurationDays` *cap* already gives a passive lender "any duration up to N
+days," which is the duration flexibility the request asked for.
 
 **Defaults stay protective: full-term interest, no partial repay.** The intent layer
-already enforces both (`matchIntent` reverts `LenderIntentFullTermRequired` and blocks
-partial-repay counterparties) — the right default for capital that isn't actively
-watched. We are **not** adding a pro-rata / partial-repay opt-in in this pass.
+already enforces both (`matchIntent` reverts `LenderIntentFullTermRequired` /
+`LenderIntentPartialRepayNotAllowed`), the right default for capital that isn't actively
+watched. We are **not** adding a pro-rata / partial opt-in in this pass.
 
-**Auto-borrow is out of scope** — it does not exist in the codebase, and the request
-was explicitly "leave it as is, concentrate on auto-lend."
+**Auto-borrow is out of scope** — it does not exist; left as-is per the request.
 
 ### What this resolves about the original ask
-The request was "for auto-lend make duration `any` + enable partial repay + pro-rata
-(full-term stays default)." A code scout reframed it:
+"For auto-lend make duration `any` + enable partial repay + pro-rata (full-term stays
+default)." A scout reframed it:
 - **Duration `any`** → already delivered by `LenderIntent.maxDurationDays` (a cap; the
-  borrower picks the concrete term, the lender accepts anything ≤ cap).
-- **Pro-rata vs full-term** → already a per-offer choice (`useFullTermInterest`,
-  default `true`); for auto-lend we keep full-term.
+  borrower picks the concrete term ≤ cap).
+- **Pro-rata vs full-term** → already a per-offer choice (`useFullTermInterest`, default
+  `true`); for auto-lend we keep full-term.
 - **Partial repay** → a per-offer **opt-in** flag (`Offer.allowsPartialRepay`, default
-  `false`; `RepayFacet.repayPartial` reverts `PartialRepayNotAllowed` otherwise — *not*
-  universal). For auto-lend the intent layer keeps it off.
+  `false`; `RepayFacet.repayPartial` reverts `PartialRepayNotAllowed` — *not* universal).
+  For auto-lend the intent layer keeps it off.
 
-So the only real work is **wiring + automation**, not new matching mechanics.
+So the work is **wiring + automation**, not new matching mechanics — but the intent
+layer's **capital lifecycle** (fund → lien → fill → roll) is more involved than a naive
+"register an offer" model, and the design must wire all of it.
 
 ---
 
-## 2. Current state
+## 2. Current state (corrected after review)
 
 | Piece | State | Where |
 | --- | --- | --- |
-| **LenderIntent registration** | LIVE | `LenderIntentFacet.setLenderIntent(lendingAsset, collateralAsset, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, requiresKeeperAuth, riskAndTermsConsent)` — captures a standing intent + the mandatory one-time risk/terms consent. (VPFI can't be the lending asset; self-collateralized rejected.) |
-| **Solver fill** | LIVE | `OfferMatchFacet.matchIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)` — materializes a temporary lender slice, routes through the shared `_executeMatch`. Enforces `duration ≤ maxDurationDays`, full-term, exposure ≤ `maxExposure`. Lender-of-record stays the user. |
-| **Revolving / auto-roll L1** | LIVE | exposure counter `lenderIntentLivePrincipal`; decremented at terminal close → the same intent is immediately re-fillable from returned principal. |
-| **Discovery events** | LIVE | `LenderIntentSet` / `LenderIntentCancelled` (+ `LenderIntentFunded` / `…CapitalWithdrawn`). |
-| **dapp auto-lend UX** | HALF-BUILT, WRONG TARGET | `autoLendConsent[user]` marker (`AutoLifecycleFacet`) + `AutoLifecycleSettingsCard.tsx`. The intended dapp behaviour is to post **fixed-duration** standing *offers* on deposit — the inferior mechanism. The actual posting logic isn't even implemented. |
-| **keeper intent auto-fill** | MISSING | `apps/keeper/src/matcher.ts` runs ONLY the legacy `matchOffers` loop (`getActiveOffersPaginated` → `previewMatch` → `matchOffers`). It never calls `matchIntent`, so registered intents sit unfilled until a solver acts manually. |
+| **Registration** | LIVE | `LenderIntentFacet.setLenderIntent(lendingAsset, collateralAsset, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, requiresKeeperAuth, riskAndTermsConsent)` — bounds + one-time risk/terms consent. Registration is always open (NOT gated by the fill kill-switch). |
+| **Funding (REQUIRED before fill)** | LIVE | `fundLenderIntent(lendingAsset, collateralAsset, amount)` pulls wallet→vault and **liens** the capital under the intent (`LibEncumbrance.lienIntentCapital`). `matchIntent` draws strictly from this `lenderIntentCapital` lien (`unlienIntentCapital`) and **reverts `IntentCapitalInsufficient`** if the intent is unfunded / depleted below `fillAmount`. So a registered-but-unfunded intent is NOT fillable. |
+| **Fill** | LIVE | `OfferMatchFacet.matchIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)` — materializes a temporary lender slice, routes through `_executeMatch`. Enforces `duration ≤ maxDurationDays`, full-term, no-partial, exposure ≤ `maxExposure`, capital ≥ `fillAmount`. Lender-of-record stays the user. |
+| **Fill kill-switch** | LIVE | `matchIntent` reverts `FunctionDisabled(4)` unless `protocolCfg.lenderIntentEnabled` is on (default **false**; set via `setLenderIntentEnabled`). **This** — not `cfgAutoLendEnabled` — is the switch that enables intent fills. (`cfgAutoLendEnabled` only gates `setAutoLendConsent`.) |
+| **Revolving (NOT automatic)** | LIVE but explicit | When an intent loan repays, proceeds land as the lender's **free balance + a Position-NFT claim** — they are NOT auto-re-lent. An explicit `LenderIntentFacet.rollIntentLoan(loanId)` (owner or authorized keeper) consumes the lender claim and re-liens the proceeds into `lenderIntentCapital`. Only then is the same intent re-fillable from the compounded capital. The normal `ClaimFacet` path just releases exposure + withdraws to the lender. |
+| **Keeper-pause** | CONDITIONAL | `matchIntent` reaches `LibAuth.requireKeeperForPrincipal` (which enforces `keepersPaused`) **only when `intent.requiresKeeperAuth == true`**. An intent with `requiresKeeperAuth == false` is openly fillable by anyone and the on-chain keeper pause does NOT apply to it. |
+| **Preview** | MISSING | `previewMatch(lenderOfferId, borrowerOfferId)` needs two already-materialized offers; an intent's slice is created *inside* the state-changing `matchIntent`, so there is **no** dry-run for an intent fill today. |
+| **Discovery** | event-only | `LenderIntentSet` / `LenderIntentCancelled` / `LenderIntentFunded` / `LenderIntentCapitalWithdrawn` events. No paginated registry view. |
+| **dapp auto-lend UX** | HALF-BUILT, WRONG TARGET | `autoLendConsent` marker + `AutoLifecycleSettingsCard.tsx` aimed at posting fixed-duration *offers* (inferior; not even implemented). |
 
-**Net:** the engine (register → fill → revolve, any-duration, full-term) is built and
-live. The gaps are (a) the dapp points its auto-lend UX at the wrong mechanism, and
-(b) the keeper doesn't auto-fill intents.
+**Net:** the engine exists but with a real **capital lifecycle** (fund + roll) and **no
+preview**. The gaps: the dapp points at the wrong mechanism and omits funding; the keeper
+doesn't fill or roll intents; and there's no `previewIntent` for a keeper to dry-run.
 
 ---
 
 ## 3. Work items
 
-### WI-1 — dapp auto-lend opt-in registers a `LenderIntent`
-Repoint the auto-lend surface (`AutoLifecycleSettingsCard`) so "turn on auto-lend" =
-configure + `setLenderIntent(...)`, and "turn off" = `cancelLenderIntent(...)`. The
-lender sets the bounds they care about (asset pair, `maxExposure`, `minRateBps`,
-`maxInitLtvBps`, `maxDurationDays`, `minFillAmount`, `requiresKeeperAuth`) and signs the
-one-time risk/terms consent. This makes auto-lend trustless by construction — the lender
-authorises once, the solver fills on-chain, and `loan.lender` stays the user. The
-registration UI surfaces the **market-rate widget** (already shipped) as the suggested
-`minRateBps` floor, so a passive lender doesn't underprice (O4).
+### WI-3 — pin the full-term + no-partial guarantee (already enforced; document + test)
+The guarantee is *already* enforced: `matchIntent` rejects a pro-rata / partial-enabled
+BORROWER offer, and `LoanFacet._copyPrincipalAssetFields` copies the loan's flags from
+the **accepted (borrower) offer** — not the lender slice. So setting the slice's
+`useFullTermInterest` (the original WI-3 idea) would be a **dead write**. WI-3 instead:
+(a) a clarifying comment in `_intentSliceParams`, and (b) a **positive regression
+assertion** on the filled LOAN (`test_matchIntent_fillsAndAttributesToLender`:
+`useFullTermInterest == true && allowsPartialRepay == false`). No source-behaviour
+change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 
-**`autoLendConsent` stays — it is the opt-in master switch (O1).** Auto-lend is strictly
-opt-in: `autoLendConsent` defaults `false`, and while it is off the lender lends
-**manually** (point offers via the normal flow) — that is the default experience.
-Removing the flag would make auto-lend implicitly "always available," which we do NOT
-want. When the lender flips it ON (in the dapp), the auto-lend flow registers + manages
-a `LenderIntent` on their behalf; when OFF, no intent is auto-managed. Retire only the
-**fixed-duration `autoLendConsent`→post-offer** logic that the old design implied (never
-fully built, inferior); the consent marker itself is kept and repurposed as this
-switch. The unrelated auto-extend / auto-refinance keeper paths on `AutoLifecycleFacet`
-are untouched.
+### WI-2 — keeper auto-fills (and rolls) intents, via two new views
+**Contract — add `getActiveLenderIntents` (paginated) + `previewIntent` (dry-run).**
+1. **`getActiveLenderIntents(offset, limit) → LenderIntentSummary[]`** — requires backing
+   storage the facet lacks today (intents are a non-enumerable `(owner, lend, coll)`
+   mapping), so add an **enumerable set of active intent keys** maintained on
+   `setLenderIntent` (add) / `cancelLenderIntent` (remove). The DTO is a **lean** summary
+   (owner + pair + bounds + `lenderIntentLivePrincipal` + **available capital**
+   `lenderIntentCapital`) — including available capital is REQUIRED: an intent can be
+   funded-but-depleted, and a keeper that filters only on exposure would submit a fill
+   that reverts `IntentCapitalInsufficient`.
+2. **`previewIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)
+   → MatchResult`** — a view that synthesizes the lender slice the way `matchIntent`
+   would and runs the `previewMatch` matrix against the counterparty, **plus** the intent
+   bounds (capital ≥ fillAmount, exposure room, duration ≤ cap, rate, LTV). Without this
+   the keeper can only fill blind and eat reverts.
+3. **EIP-170 watch:** if `LenderIntentFacet` lacks headroom for the view(s), place the
+   read views on the metrics facet that already hosts `getActiveOffersPaginated`, keeping
+   only the enumerable-set maintenance on `LenderIntentFacet`. Facet-addition / selector /
+   ABI-export checklist applies.
 
-### WI-2 — keeper auto-fills intents (via a new paginated view, O2)
-Two parts:
+**Keeper — `apps/keeper/src/matcher.ts` (or a sibling), each tick:**
+1. Page `getActiveLenderIntents`; skip intents with **zero available capital**.
+2. For each, find borrower offers that fit: **rate** — `intent.minRateBps ≤
+   borrowerOffer.interestRateBpsMax` (the borrower's CEILING, the rate they'll accept up
+   to — NOT `interestRateBps`, the floor); **duration** ≤ `maxDurationDays`; **init-LTV** ≤
+   `maxInitLtvBps`; **amount** in `[minFillAmount, min(maxExposure − live, availableCapital)]`.
+3. `previewIntent` → if Ok, submit `matchIntent(...)`. The keeper earns the 1% LIF.
+4. **Off-chain kill-switch checks:** the bot itself must honour `keepersPaused` and
+   `lenderIntentEnabled` before submitting — `matchIntent` enforces `lenderIntentEnabled`
+   on-chain, but `keepersPaused` is enforced on-chain ONLY for `requiresKeeperAuth == true`
+   intents, so for openly-fillable intents the official bot must self-gate off-chain
+   (otherwise it would keep matching during a keeper pause).
+5. **Auto-roll pass:** for the lender's own repaid intent loans, call
+   `rollIntentLoan(loanId)` so the proceeds re-lien into `lenderIntentCapital` and the
+   intent revolves. Without this pass, repaid capital sits idle as free balance and the
+   "revolving" property doesn't materialise. (Gate on `requiresKeeperAuth` / the lender's
+   keeper-delegation, same as the fill path.)
 
-**Contract — add a paginated `getActiveLenderIntents` view (O2).** The keeper discovers
-intents via an on-chain paginated view rather than event-indexing. This requires
-backing storage the facet doesn't have today: intents are keyed by `(owner,
-lendingAsset, collateralAsset)` in a non-enumerable mapping, so add an **enumerable set
-of active intent keys** maintained on `setLenderIntent` (add) / `cancelLenderIntent`
-(remove), plus `getActiveLenderIntents(offset, limit) → LenderIntentSummary[]` returning
-a **lean DTO** (owner + pair + the bounds + live exposure — NOT a 9-field struct array,
-per the viaIR lean-DTO rule). **EIP-170 watch:** if `LenderIntentFacet` lacks headroom,
-place the view on the metrics facet that already hosts `getActiveOffersPaginated` /
-`getActiveLoansPaginated` and keep only the enumerable-set maintenance on
-`LenderIntentFacet`. Facet-addition / selector-array / ABI-export checklist applies.
+### WI-1 — dapp auto-lend opt-in: register + **fund** a `LenderIntent`
+Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" = `setLenderIntent(...)`
+**followed by `fundLenderIntent(...)`** (a registered-but-unfunded intent never fills —
+the funding step is load-bearing, not optional), and "turn off" =
+`cancelLenderIntent(...)` (+ withdraw capital). The lender sets the bounds, signs the
+one-time risk/terms consent, and chooses how much capital to commit. The registration UI
+surfaces the **market-rate widget** (already shipped) as the suggested `minRateBps` floor
+so a passive lender doesn't underprice (O4).
 
-**Keeper — add an intent-fill pass to `apps/keeper/src/matcher.ts`** (or a sibling), each
-tick:
-1. Page `getActiveLenderIntents` for live intents.
-2. For each, find borrower offers that fit its bounds (rate ≥ `minRateBps`, duration ≤
-   `maxDurationDays`, init-LTV ≤ `maxInitLtvBps`, amount ≥ `minFillAmount`, exposure
-   room ≤ `maxExposure`), preview, and submit
-   `matchIntent(lender, lendingAsset, collateralAsset, borrowerOfferId, fillAmount)`.
-The keeper earns the standard 1% LIF on its own leg. Respect `requiresKeeperAuth` and
-the existing kill-switches (`keepersPaused`, `cfgAutoLendEnabled`).
+**`autoLendConsent` stays — the opt-in master switch (O1).** Default `false` ⇒ the lender
+lends **manually** (point offers) — the default experience. Removing it would make
+auto-lend implicitly always-available, which we do NOT want. When the lender flips it ON,
+the dapp runs the register+fund flow; when OFF, no intent is auto-managed. Retire only the
+**fixed-duration `autoLendConsent`→post-offer** logic the old design implied. The
+unrelated auto-extend / auto-refinance keeper paths on `AutoLifecycleFacet` are untouched.
 
-### WI-3 — contract hardening: set `useFullTermInterest` explicitly on the intent slice
-Today the intent path enforces full-term only *indirectly* — by reverting if the
-counterparty offer isn't full-term — and `OfferMatchFacet._intentSliceParams` doesn't
-set `useFullTermInterest` on the materialized slice (relies on it being structurally
-required). Make it **explicit** (`useFullTermInterest = true` in the slice params) so
-the guarantee is self-evident and not a structural side-effect. Small, low-risk,
-defense-in-depth. Targeted test in the intent-fill suite.
+**Note on the fill kill-switch:** `lenderIntentEnabled` (governance, default off) must be
+ON for any intent to fill — that's a deployment-level enablement, not a per-user dapp
+control. The dapp should reflect its state ("auto-lend fills are currently disabled by
+governance") rather than try to set it.
 
 ---
 
 ## 4. Trust model (why this satisfies #625's "fully on-chain / trustless")
-
-- The lender authorises **once** at registration (`riskAndTermsConsent`, same gate as
-  every offer-create path). No per-fill signature.
-- The solver/keeper fills on-chain via `matchIntent`; it can pay gas but cannot alter
-  the lender's bounds (they're stored, and the fill is checked against them).
-- `loan.lender` stays the **beneficial owner** (the user), not a vault contract — so
-  claims, keeper-auth, VPFI discount, and sanctions all key off the right identity
-  (the load-bearing v1 decision in `LenderIntentVaultV1Design.md §1`).
-- The pool stays **virtual** (capital in the user's own vault until a bilateral match) —
-  consistent with ethos E1 (no commingled share pool).
+- The lender authorises **once** at registration (`riskAndTermsConsent`) and commits
+  capital via `fundLenderIntent`. No per-fill signature.
+- The solver/keeper fills on-chain via `matchIntent`; it cannot alter the stored bounds.
+- `loan.lender` stays the **beneficial owner** (the user), not a vault contract
+  (`LenderIntentVaultV1Design.md §1`).
+- Capital stays the user's (vaulted + liened to their own intent) until a bilateral
+  match — the pool stays **virtual** (ethos E1).
 
 ---
 
-## 5. Resolved decisions (user, 2026-06-26)
+## 5. Resolved decisions (user, 2026-06-25)
+- **O1 — keep `autoLendConsent` as the opt-in master switch.** Default off ⇒ manual
+  lending is the default. See WI-1.
+- **O2 — add a paginated `getActiveLenderIntents` view** (not event-indexing), **plus a
+  `previewIntent` view** (the review surfaced that no intent dry-run exists). Enumerable
+  registry + EIP-170-aware placement. See WI-2.
+- **O3 — phase WI-3 → WI-2 → WI-1.** Land the test-pin, then the views + keeper fill/roll,
+  then the dapp. Until WI-1, a lender can register + fund an intent by hand and the keeper
+  fills/rolls it.
+- **O4 — market-rate widget as the suggested `minRateBps` floor** in the registration UI.
 
-- **O1 — keep `autoLendConsent` as the opt-in master switch.** Default `false` ⇒ manual
-  lending is the default; auto-lend never happens unless the lender turns it on. Do NOT
-  remove the flag (removal would make auto-lend implicitly always-on). See WI-1.
-- **O2 — add a paginated `getActiveLenderIntents` view** (not event-indexing). Requires
-  an enumerable intent-key set + EIP-170-aware placement. See WI-2.
-- **O3 — phase WI-3 + WI-2 first, then WI-1.** Land the hardening and the keeper
-  auto-fill (incl. the new view) so registered intents actually fill, THEN wire the dapp
-  toggle (the consumer). Until WI-1, a lender can still register an intent by hand and
-  the keeper will fill it.
-- **O4 — surface the market-rate widget as the suggested `minRateBps` floor** in the
-  registration UI so passive lenders don't underprice. Folded into WI-1.
-
-### Phasing
-1. **Phase 1 — WI-3** (explicit `useFullTermInterest` on the intent slice; small,
-   low-risk, independently shippable).
-2. **Phase 2 — WI-2** (the `getActiveLenderIntents` view + enumerable registry, then the
-   keeper intent-fill pass). After this, registered intents fill automatically.
-3. **Phase 3 — WI-1** (dapp auto-lend toggle → `setLenderIntent`/`cancelLenderIntent`,
-   gated by `autoLendConsent`, with the market-rate floor).
-Each phase is its own PR per the one-PR-per-design-step convention.
+### Phasing (one PR per phase)
+1. **Phase 1 — WI-3** (clarifying comment + positive regression test; no source-behaviour
+   change).
+2. **Phase 2 — WI-2** (enumerable registry + `getActiveLenderIntents` + `previewIntent`
+   views, then the keeper fill **and roll** passes with the corrected rate/capital/pause
+   logic). After this, funded intents fill + revolve automatically.
+3. **Phase 3 — WI-1** (dapp toggle → register **+ fund**, gated by `autoLendConsent`, with
+   the market-rate floor + the governance-switch reflection).
 
 ---
 
 ## 6. Out of scope (explicitly)
-
-- **Auto-borrow** — does not exist; left as-is per the request.
-- **Duration-range matching on the point-offer book** — unnecessary; the intent cap
-  already gives lenders duration flexibility. (A nicety for manual flexible-term
-  point lenders, not auto-lend; separate card if ever wanted.)
+- **Auto-borrow** — does not exist; left as-is.
+- **Duration-range matching on the point-offer book** — unnecessary; the intent cap gives
+  lenders duration flexibility. (Separate card if ever wanted for manual point lenders.)
 - **Pro-rata / partial-repay for auto-lend** — kept off (protective default). If ever
   desired, an explicit per-intent opt-in flag, never the silent default.
+- **Changing the `lenderIntentEnabled` governance switch** — that's an operator/governance
+  decision, not part of this product wiring.
 
 ---
 
 ## 7. Verification (when built)
-
-- WI-3: targeted intent-fill test asserting the materialized slice carries
-  `useFullTermInterest == true`; deploy-sanity unaffected (no selector change).
-- WI-2: keeper unit tests (bound-matching + previewIntent gate + dedupe + kill-switch),
-  mirroring the existing matcher test ask (#222).
-- WI-1: dapp `tsc` + the auto-lend flow registers/cancels an intent against a local
-  fork.
+- **WI-3:** the intent-fill happy-path test asserts the filled LOAN carries
+  `useFullTermInterest == true && allowsPartialRepay == false`. No selector/ABI change.
+- **WI-2 (contract):** `getActiveLenderIntents` pagination + DTO (incl. available capital)
+  tests; `previewIntent` agrees with a subsequent real `matchIntent` (Ok ⇒ fills;
+  not-Ok ⇒ reverts) incl. the underfunded / depleted-capital case; deploy-sanity
+  (selector/size/integration) for the new view(s).
+- **WI-2 (keeper):** unit tests for bound-matching (rate vs borrower CEILING, capital
+  floor, exposure room, duration), the off-chain pause self-gate, dedupe, and the roll
+  pass (mirroring #222).
+- **WI-1:** dapp `tsc` + the auto-lend flow registers **and funds** (then cancels +
+  withdraws) an intent against a local fork; reflects the `lenderIntentEnabled` state.
