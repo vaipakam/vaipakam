@@ -230,14 +230,16 @@ contract RiskAccessFacet is DiamondAccessControl {
             revert RiskTermsRevealMismatch();
         }
         if (termsAnchor == bytes32(0)) revert InvalidRiskTermsHash();
-        if (s.riskTermsHashUsed[termsAnchor]) revert RiskTermsHashAlreadyUsed();
-        // #736 r7 — seed the OUTGOING live anchor into the single-use ledger before
-        // switching. Normally idempotent (it was marked at its own reveal), but on a
-        // diamond upgraded from a pre-ledger #730 build whose live anchor predates
-        // `riskTermsHashUsed`, this records it so a later reveal can't re-publish it.
+        // #736 r7+r8 — seed the OUTGOING live anchor into the single-use ledger
+        // FIRST, BEFORE the used-check, so re-publishing the live anchor is rejected
+        // every time — including the first reveal on a diamond upgraded from a
+        // pre-ledger #730 build whose live anchor predates `riskTermsHashUsed`
+        // (otherwise that reveal could re-publish the live hash, advancing the
+        // version without re-locking). Normally idempotent.
         if (s.currentRiskTermsHash != bytes32(0)) {
             s.riskTermsHashUsed[s.currentRiskTermsHash] = true;
         }
+        if (s.riskTermsHashUsed[termsAnchor]) revert RiskTermsHashAlreadyUsed();
         delete s.pendingRiskTermsCommitment;
         s.riskTermsHashUsed[termsAnchor] = true;
         newVersion = ++s.currentRiskTermsVersion;
