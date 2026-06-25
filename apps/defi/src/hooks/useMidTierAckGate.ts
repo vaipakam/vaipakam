@@ -326,8 +326,8 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       getEffectiveRiskTier: (vault: string) => Promise<number | bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
       hasIlliquidPairConsent: (vault: string, p: RiskPairId) => Promise<boolean>;
-      getPairConsentUnlockAt: (vault: string, p: RiskPairId) => Promise<number | bigint>;
-      getMidTierAckUnlockAt: (vault: string, p: RiskPairId) => Promise<number | bigint>;
+      isPairConsentPending: (vault: string, p: RiskPairId) => Promise<boolean>;
+      isMidTierAckPending: (vault: string, p: RiskPairId) => Promise<boolean>;
     };
     // Mid-tier ack verdict.
     ro.midTierStrictBlocked(address, pair)
@@ -405,28 +405,30 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // getters return 0 for a version-stale record (a terms bump since), so a dead
     // record reads as NOT pending and the dapp offers a fresh one (Codex #740 r11).
     // A missing getter (version skew) ⇒ pending=false (offer the write, harmless).
+    // The contract computes PENDING against its own `block.timestamp` (not the
+    // dapp's wall clock, which can be skewed ahead and re-enable a restamp — Codex
+    // #740 r13).
     Promise.all([
-      ro.getPairConsentUnlockAt(address, pair),
-      ro.getMidTierAckUnlockAt(address, pair),
+      ro.isPairConsentPending(address, pair),
+      ro.isMidTierAckPending(address, pair),
     ])
-      .then(([consentUnlock, ackUnlock]) => {
+      .then(([consentPend, ackPend]) => {
         if (cancelled) return;
         pendingResolvedForRef.current = readIdentity;
-        const nowSec = BigInt(Math.floor(Date.now() / 1000));
-        setConsentPending(BigInt(consentUnlock) > nowSec);
-        setMidTierAckPending(BigInt(ackUnlock) > nowSec);
+        setConsentPending(Boolean(consentPend));
+        setMidTierAckPending(Boolean(ackPend));
         setPendingKnown(true);
       })
-      .catch((e) => {
+      .catch(() => {
         if (cancelled) return;
         pendingResolvedForRef.current = readIdentity;
         setConsentPending(false);
         setMidTierAckPending(false);
-        // Missing getter (version skew) ⇒ there's no pending record to restamp, so
-        // it's safe to consider the pending verdict KNOWN (offer the write). A real
-        // read failure leaves it UNKNOWN so the recorder holds the write until it
-        // can confirm there's nothing cooling down (Codex #740 r12).
-        setPendingKnown(isMissingFacet(e));
+        // ANY failure — including a missing selector on a staggered deploy that
+        // still has the SETTERS + a nonzero cooldown — leaves the pending verdict
+        // UNKNOWN. We can't confirm there's nothing cooling down, so the recorder
+        // holds the write rather than risk a restamp (Codex #740 r13).
+        setPendingKnown(false);
       });
     return () => {
       cancelled = true;

@@ -415,51 +415,45 @@ contract RiskAccessFacet is DiamondAccessControl {
             && block.timestamp >= s.pairConsentUnlockAt[vault][pk];
     }
 
-    /// @notice #735 item 3 — the arming-cooldown unlock timestamp for `vault`'s
-    ///         illiquid-pair consent (`pairConsentUnlockAt`). A value GREATER than
-    ///         `block.timestamp` means a consent was recorded but is still cooling
-    ///         down (PENDING) — the dapp suppresses a repeat `setIlliquidPairConsent`
-    ///         then, since re-recording restamps the cooldown and can push the
-    ///         effective time out (Codex #740 r10). 0 / past = nothing pending.
-    /// @dev    Returns 0 unless a consent is actually SET and version-current. A
-    ///         risk-terms bump (stale version) OR a REVOKE (`setIlliquidPairConsent
-    ///         (.., false)` clears the flag but leaves the unlock timestamp in
-    ///         place) both make the cooldown obsolete — that record can never
-    ///         become effective, so it is NOT pending and the dapp must offer a
-    ///         fresh consent rather than wait out a dead cooldown (Codex #740
-    ///         r11/r12).
-    function getPairConsentUnlockAt(
+    /// @notice #735 item 3 — whether `vault`'s illiquid-pair consent is PENDING:
+    ///         recorded + version-current but its arming cooldown has not yet
+    ///         elapsed. The dapp suppresses a repeat `setIlliquidPairConsent` while
+    ///         this is true, since re-recording restamps the cooldown and pushes
+    ///         the effective time out (Codex #740 r10).
+    /// @dev    Computed against `block.timestamp` ON-CHAIN — the dapp must not
+    ///         compare a raw unlock against its local wall clock, which can be
+    ///         skewed ahead and re-enable a restamp (Codex #740 r13). False unless
+    ///         the consent is SET and version-current: a REVOKE
+    ///         (`setIlliquidPairConsent(.., false)`) clears the flag but leaves the
+    ///         unlock, and a terms bump stales the version — both make the cooldown
+    ///         obsolete (not pending), so the dapp offers a fresh consent rather
+    ///         than wait out a dead cooldown (Codex #740 r11/r12).
+    function isPairConsentPending(
         address vault,
         LibRiskAccess.PairId calldata p
-    ) external view returns (uint64) {
+    ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32 pk = LibRiskAccess.pairKey(p);
-        if (
-            !s.illiquidPairConsent[vault][pk]
-                || s.illiquidPairVersionAt[vault][pk] < s.currentRiskTermsVersion
-        ) {
-            return 0;
-        }
-        return s.pairConsentUnlockAt[vault][pk];
+        return s.illiquidPairConsent[vault][pk]
+            && s.illiquidPairVersionAt[vault][pk] >= s.currentRiskTermsVersion
+            && s.pairConsentUnlockAt[vault][pk] > block.timestamp;
     }
 
-    /// @notice #735 item 3 — the arming-cooldown unlock timestamp for `vault`'s
-    ///         strict-mode mid-tier acknowledgement (`midTierAckUnlockAt`). GREATER
-    ///         than `block.timestamp` ⇒ an ack is recorded but still cooling
-    ///         (PENDING); the dapp suppresses a repeat `setMidTierPairAck` to avoid
-    ///         restamping the cooldown (Codex #740 r10). Returns 0 when the ack's
-    ///         VERSION anchor is stale (a terms bump since it was recorded) — it
-    ///         can never clear the gate, so it is NOT pending (Codex #740 r11).
-    function getMidTierAckUnlockAt(
+    /// @notice #735 item 3 — whether `vault`'s strict-mode mid-tier acknowledgement
+    ///         is PENDING: recorded + version-current but its arming cooldown has
+    ///         not elapsed. The dapp suppresses a repeat `setMidTierPairAck` while
+    ///         true to avoid restamping the cooldown (Codex #740 r10). Computed
+    ///         against `block.timestamp` on-chain (Codex #740 r13); false when the
+    ///         ack's version is stale (a terms bump since — it can never clear the
+    ///         gate, Codex #740 r11).
+    function isMidTierAckPending(
         address vault,
         LibRiskAccess.PairId calldata p
-    ) external view returns (uint64) {
+    ) external view returns (bool) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         bytes32 pk = LibRiskAccess.pairKey(p);
-        if (s.midTierExplicitAckVersion[vault][pk] < s.currentRiskTermsVersion) {
-            return 0;
-        }
-        return s.midTierAckUnlockAt[vault][pk];
+        return s.midTierExplicitAckVersion[vault][pk] >= s.currentRiskTermsVersion
+            && s.midTierAckUnlockAt[vault][pk] > block.timestamp;
     }
 
     /// @notice The minimum tier a vault must hold to transact this pair (the

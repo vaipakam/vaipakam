@@ -30,10 +30,14 @@ const dangerStyle = { marginTop: "0.3rem", fontSize: "0.75rem", color: "var(--da
 
 export function OwnOfferMidTierAck({ offerId }: OwnOfferMidTierAckProps) {
   const code = useCreatorBlock(offerId);
-  // Resolve the EXACT gated pair on-chain (no defaulting of NFT-shape fields).
-  const resolvedPair = useAcceptMidTierPair(offerId);
+  // Only the cheap verdict read (`previewCreatorBlock`) runs per row; the expensive
+  // pair-resolve + full gate reads are deferred until this offer actually needs
+  // recovery (code 2/3), so a wallet with many posted offers doesn't fan out
+  // hundreds of diamond reads just by opening the page (Codex #740 r13).
+  const needsRecovery = code === 2 || code === 3;
+  const resolvedPair = useAcceptMidTierPair(needsRecovery ? offerId : null);
   const gate = useMidTierAckGate(
-    resolvedPair === "unknown" ? null : resolvedPair,
+    needsRecovery && resolvedPair !== "unknown" ? resolvedPair : null,
   );
 
   if (gate.recorded) {

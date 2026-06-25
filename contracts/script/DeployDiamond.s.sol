@@ -1505,8 +1505,8 @@ contract DeployDiamond is Script {
         s[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735 in-place re-affirm
         s[31] = RiskAccessFacet.acceptMidTierAckPair.selector; // #735 item 3 sale-aware ack pair
         s[32] = RiskAccessFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
-        s[33] = RiskAccessFacet.getPairConsentUnlockAt.selector; // #735 item 3 pending-consent
-        s[34] = RiskAccessFacet.getMidTierAckUnlockAt.selector; // #735 item 3 pending-ack
+        s[33] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
+        s[34] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
     }
 
     function _getAggregatorAdapterFactorySelectors()

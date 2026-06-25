@@ -1907,7 +1907,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             Confirm stays disabled until the acknowledgement is effective (re-open
             after any cooldown). */}
         {riskPreflight.status === 'needs-midtier-ack' && (
-          <MidTierAckRecorder offer={offer} />
+          <MidTierAckRecorder offer={offer} onRecorded={riskPreflight.refresh} />
         )}
 
         {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
@@ -2128,7 +2128,7 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
  * window (up to 30 days), so the copy never promises a quick unblock — the user
  * re-opens the offer to accept once it's active.
  */
-function MidTierAckRecorder({ offer }: { offer: OfferData }) {
+function MidTierAckRecorder({ offer, onRecorded }: { offer: OfferData; onRecorded: () => void }) {
   // Resolve the EXACT pair the accept gates against ON-CHAIN: a lender-sale
   // vehicle gates the buyer against the SOLD LOAN's pair, not the offer's own
   // surface, and the dapp can't construct that itself (Codex #740 r5/r8). On a
@@ -2138,6 +2138,13 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
   const gate = useMidTierAckGate(
     resolvedPair === 'unknown' ? null : resolvedPair,
   );
+
+  // When the record settles and the child gate refreshes (on a zero-cooldown
+  // deploy the ack is effective at once), re-run the PARENT preflight so Confirm
+  // un-blocks without closing/reopening the modal (Codex #740 r13).
+  useEffect(() => {
+    if (gate.recorded) onRecorded();
+  }, [gate.recorded, onRecorded]);
 
   // A real read failure (couldn't determine the gated pair) — don't offer a
   // record action over an unknown pair.

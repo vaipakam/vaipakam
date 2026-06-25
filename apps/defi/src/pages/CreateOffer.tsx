@@ -1893,7 +1893,11 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
   // so when the tier is too low (Codex #740 r4) recording the ack alone can't
   // unblock — point at the tier prerequisite instead of presenting the ack as the
   // fix. (Submit is already blocked by the parent on `tierTooLow`.)
-  if (gate.consentRecorded) {
+  // Only show the consent-recorded 'stays blocked' copy while the consent is still
+  // needed (a nonzero cooldown). On a zero-cooldown deploy the record clears the
+  // gate immediately and the submit enables, so the copy would contradict it
+  // (Codex #740 r13).
+  if (gate.consentRecorded && gate.illiquidConsentNeeded) {
     return (
       <div
         role="status"

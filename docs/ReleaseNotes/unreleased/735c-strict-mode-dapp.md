@@ -39,10 +39,11 @@ gate checks, resolved on-chain. This adds four read-only RiskAccess view selecto
 into the Diamond): `acceptMidTierAckPair` (a lender-sale vehicle gates the buyer
 against the sold loan's pair, which the dapp can't reconstruct itself),
 `previewCreatorBlock` (the authoritative creator-side verdict, folding in the
-seller exemption + tier-before-ack ordering), and `getPairConsentUnlockAt` /
-`getMidTierAckUnlockAt` (the arming-cooldown unlock timestamps, version-aware, so
-the dapp suppresses a repeat write that would restamp a still-cooling record but
-offers a fresh one once a terms bump has staled it). Every setter/predicate the
+seller exemption + tier-before-ack ordering), and `isPairConsentPending` /
+`isMidTierAckPending` (whether a recorded consent/ack is still cooling down —
+computed on-chain against `block.timestamp` and gated on a current version + a set
+flag, so the dapp suppresses a repeat write that would restamp a still-cooling
+record but offers a fresh one once a terms bump or a revoke has invalidated it). Every setter/predicate the
 rest of this uses already shipped with #728. The create form additionally checks
 the creator's tier and illiquid-consent prerequisites before presenting the
 acknowledgement as the fix (the gate checks tier first), and all the strict-mode /

@@ -815,8 +815,8 @@ contract HelperTest {
         selectors[30] = RiskAccessFacet.getVaultRiskTierVersion.selector; // #735
         selectors[31] = RiskAccessFacet.acceptMidTierAckPair.selector; // #735 item 3
         selectors[32] = RiskAccessFacet.previewCreatorBlock.selector; // #735 item 3
-        selectors[33] = RiskAccessFacet.getPairConsentUnlockAt.selector; // #735 item 3
-        selectors[34] = RiskAccessFacet.getMidTierAckUnlockAt.selector; // #735 item 3
+        selectors[33] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3
+        selectors[34] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3
     }
 
     function getAggregatorAdapterFactoryFacetSelectors()
