@@ -2146,7 +2146,9 @@ function MidTierAckRecorder({ offer }: { offer: OfferData }) {
       <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
         Acknowledgement recorded for this pair. If an opt-up cooldown is configured
         it becomes effective only after that window (which a deployment may set up
-        to 30 days) — re-open this offer to accept once it's active.
+        to 30 days) — re-open this offer to accept once it's active. If the offer
+        is still blocked then, the offer creator may also need to record their own
+        acknowledgement, which only they can do.
       </div>
     );
   }

@@ -1743,32 +1743,35 @@ export default function CreateOffer() {
               clicking. */}
           {(() => {
             const validationError = validate();
-            // #735 item 3 — also block submit while a strict-mode mid-tier
-            // acknowledgement is outstanding for this pair (the create would
-            // revert `MidTierPairNotAcknowledged` otherwise). Codex #740 r2:
-            // ALSO block while the verdict is unknown — `useMidTierAckGate` leaves
-            // `blocked=false` while the read is still loading or after a real read
-            // failure, so without this a create could slip through before the read
-            // resolves and still hit the revert. The missing-facet case sets
-            // `known=true`, so older gate-less diamonds aren't affected.
+            // #735 item 3 — block submit on the progressive-risk create gate too.
+            // The gate checks the creator's TIER first, then the strict-mode
+            // mid-tier acknowledgement (Codex #740 r4), so surface both — and
+            // block while either verdict is still unknown (loading / failed read),
+            // since `useMidTierAckGate` leaves the flags false until they resolve
+            // and a create could otherwise slip through and revert. The
+            // missing-facet case sets *Known=true, so gate-less diamonds aren't
+            // affected.
+            const tierTooLow = midTierGate.tierTooLow;
+            const tierUnknown = createPair !== null && !midTierGate.tierKnown;
             const midTierBlocked = midTierGate.blocked;
             const midTierUnknown = createPair !== null && !midTierGate.known;
+            const riskBlocked =
+              tierTooLow || tierUnknown || midTierBlocked || midTierUnknown;
             const tooltip = step === "form" && validationError
               ? formatValidationError(validationError)
-              : step === "form" && midTierBlocked
-                ? "Record the strict-mode mid-tier acknowledgement for this pair first."
-                : step === "form" && midTierUnknown
-                  ? "Checking the strict-mode mid-tier requirement…"
-                  : undefined;
+              : step === "form" && tierTooLow
+                ? "Raise your vault's risk tier to cover this pair first (Risk Access settings)."
+                : step === "form" && midTierBlocked
+                  ? "Record the strict-mode mid-tier acknowledgement for this pair first."
+                  : step === "form" && (tierUnknown || midTierUnknown)
+                    ? "Checking the progressive-risk requirements…"
+                    : undefined;
             return (
               <button
                 type="submit"
                 className="btn btn-primary"
                 disabled={
-                  step !== "form" ||
-                  validationError !== null ||
-                  midTierBlocked ||
-                  midTierUnknown
+                  step !== "form" || validationError !== null || riskBlocked
                 }
                 data-tooltip={tooltip}
               >
@@ -1847,6 +1850,29 @@ const DETECTION_LABEL: Record<DetectedAssetType, string> = {
  * and the submit button stays disabled while `blocked` holds.
  */
 function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
+  // The create gate checks the creator's TIER before the mid-tier acknowledgement,
+  // so when the tier is too low (Codex #740 r4) recording the ack alone can't
+  // unblock — point at the tier prerequisite instead of presenting the ack as the
+  // fix. (Submit is already blocked by the parent on `tierTooLow`.)
+  if (gate.tierTooLow) {
+    return (
+      <div
+        role="status"
+        style={{
+          margin: "0.75rem 0",
+          padding: "0.6rem 0.8rem",
+          borderRadius: 8,
+          fontSize: "0.85rem",
+          background: "rgba(220,160,30,0.10)",
+          border: "1px solid rgba(220,160,30,0.35)",
+        }}
+      >
+        This pair needs a higher risk tier than your vault currently holds. Raise
+        your tier in Risk Access settings first; the strict-mode acknowledgement is
+        collected here once your tier covers the pair.
+      </div>
+    );
+  }
   // Nothing to surface unless the creator is actually blocked, or just recorded.
   if (!gate.blocked && !gate.recorded) return null;
   return (

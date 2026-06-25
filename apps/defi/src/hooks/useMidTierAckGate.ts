@@ -41,6 +41,15 @@ export interface MidTierAckGate {
   /** False while the read is in flight or after it failed — `blocked` is then not
    *  authoritative (don't imply "all clear" on a failed read). */
   known: boolean;
+  /** True when the connected wallet's effective tier does NOT cover this pair —
+   *  i.e. recording the mid-tier ack alone won't unblock, the tier must be raised
+   *  first. The create gate checks tier BEFORE the mid-tier ack, so the create
+   *  flow must surface this rather than presenting the ack as the fix (Codex #740
+   *  r4). The accept flow doesn't consume this (its preview already returns the
+   *  tier-too-low code ahead of the mid-tier code). */
+  tierTooLow: boolean;
+  /** False while the tier reads are in flight or failed — `tierTooLow` unknown. */
+  tierKnown: boolean;
   recording: boolean;
   recorded: boolean;
   error: string | null;
@@ -66,6 +75,8 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   const readChain = useReadChain();
   const [blocked, setBlocked] = useState(false);
   const [known, setKnown] = useState(false);
+  const [tierTooLow, setTierTooLow] = useState(false);
+  const [tierKnown, setTierKnown] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recorded, setRecorded] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,21 +100,25 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     if (!address || !pair || !onDeployedChain) {
       setBlocked(false);
       setKnown(false);
+      setTierTooLow(false);
+      setTierKnown(false);
       return;
     }
-    // Reset the verdict to UNKNOWN before the new read resolves. Otherwise a
+    // Reset every verdict to UNKNOWN before the new reads resolve. Otherwise a
     // transition from a previously-CLEAR pair (known=true, blocked=false) would
-    // briefly carry that verdict onto the NEW pair until the async read lands —
-    // and since `known=true && !blocked` enables the create submit, a create
-    // could slip through for an as-yet-unverified pair (Codex #740 r3).
+    // briefly carry that verdict onto the NEW pair until the async reads land —
+    // and since the create submit enables on a clear verdict, a create could slip
+    // through for an as-yet-unverified pair (Codex #740 r3/r4).
     setKnown(false);
     setBlocked(false);
+    setTierKnown(false);
+    setTierTooLow(false);
     const ro = diamondRo as unknown as {
-      midTierStrictBlocked: (
-        vault: string,
-        p: RiskPairId,
-      ) => Promise<boolean>;
+      midTierStrictBlocked: (vault: string, p: RiskPairId) => Promise<boolean>;
+      pairRequiredRiskLevel: (p: RiskPairId) => Promise<number | bigint>;
+      getEffectiveRiskTier: (vault: string) => Promise<number | bigint>;
     };
+    // Mid-tier ack verdict.
     ro.midTierStrictBlocked(address, pair)
       .then((v) => {
         if (cancelled) return;
@@ -122,6 +137,30 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
           setKnown(false);
         }
       });
+    // Tier-vs-pair-requirement verdict (Codex #740 r4): the create gate checks the
+    // creator's tier BEFORE the mid-tier ack, so recording the ack alone can't
+    // unblock a still-under-tiered wallet. Compare the pair's required level with
+    // the wallet's EFFECTIVE tier (read-time re-locked).
+    Promise.all([
+      ro.pairRequiredRiskLevel(pair),
+      ro.getEffectiveRiskTier(address),
+    ])
+      .then(([req, eff]) => {
+        if (cancelled) return;
+        setTierTooLow(Number(eff) < Number(req));
+        setTierKnown(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        // Missing facet ⇒ no gate ⇒ tier can't be too low. Real failure ⇒ unknown.
+        if (isMissingFacet(e)) {
+          setTierTooLow(false);
+          setTierKnown(true);
+        } else {
+          setTierTooLow(false);
+          setTierKnown(false);
+        }
+      });
     return () => {
       cancelled = true;
     };
@@ -129,29 +168,27 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, pairKey, onDeployedChain, diamondRo, nonce]);
 
-  // Reset the recorded/error state whenever the pair or wallet changes: `recorded`
-  // is per-acknowledgement, not per-hook, so in a long-lived create form a user who
-  // records an ack for one pair and then edits to a different (still-blocked) pair
-  // must see the recorder again rather than the stale "recorded" branch (Codex
-  // #740 r2). Keyed on `pairKey` (the pair's value identity) + `address`.
+  // Full identity the recorded/in-flight state is bound to: the pair AND the
+  // connected wallet AND the chain. A change to ANY of them must reset the
+  // per-acknowledgement state (a recorded ack belongs to one vault on one chain
+  // for one pair) and invalidate an in-flight record's completion (Codex #740
+  // r2/r4 — e.g. switching accounts mid-mine must not stamp the new vault).
+  const identity = `${address ?? ""}:${readChain.chainId ?? ""}:${pairKey ?? ""}`;
+
   useEffect(() => {
     setRecorded(false);
     setError(null);
-  }, [pairKey, address]);
+  }, [identity]);
 
-  // Latest pair identity, so an in-flight record() can detect if the form moved on
-  // to a DIFFERENT pair before its tx settled and avoid stamping the new pair as
-  // recorded (Codex #740 r3). The submit button is disabled while `recording`, so
-  // only one record is ever in flight — `recording` itself resets unconditionally.
-  const pairKeyRef = useRef<string | null>(pairKey);
-  pairKeyRef.current = pairKey;
+  const identityRef = useRef<string>(identity);
+  identityRef.current = identity;
 
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
   const record = useCallback(async () => {
     if (!pair) return;
-    const startedKey = pairKey;
-    const stillSamePair = () => pairKeyRef.current === startedKey;
+    const startedIdentity = identity;
+    const stillSameContext = () => identityRef.current === startedIdentity;
     const step = beginStep({
       area: "profile",
       flow: "setMidTierPairAck",
@@ -169,21 +206,32 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       const tx = await rw.setMidTierPairAck(pair);
       await tx.wait();
       step.success();
-      // The form may have moved to a different pair while the tx was mining —
-      // don't stamp that pair as recorded / trigger its re-read off this result.
-      if (!stillSamePair()) return;
+      // The form may have moved to a different pair — or the user may have
+      // switched wallet/chain — while the tx was mining; don't stamp that new
+      // context as recorded / trigger its re-read off this result.
+      if (!stillSameContext()) return;
       setRecorded(true);
       // Re-read: on a zero-cooldown deployment the block clears immediately; on a
       // cooldown deployment it stays blocked until the cooldown elapses.
       setNonce((n) => n + 1);
     } catch (e) {
       step.failure(e);
-      if (!stillSamePair()) return;
+      if (!stillSameContext()) return;
       setError((e as Error).message);
     } finally {
       setRecording(false);
     }
-  }, [pair, pairKey, address, diamondRw]);
+  }, [pair, identity, address, diamondRw]);
 
-  return { blocked, known, recording, recorded, error, record, refresh };
+  return {
+    blocked,
+    known,
+    tierTooLow,
+    tierKnown,
+    recording,
+    recorded,
+    error,
+    record,
+    refresh,
+  };
 }
