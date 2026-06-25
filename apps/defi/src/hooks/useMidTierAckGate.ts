@@ -94,10 +94,11 @@ export function useAcceptMidTierPair(
   const diamondRo = useDiamondRead();
   const readChain = useReadChain();
   const [pair, setPair] = useState<RiskPairId | null | "unknown">(null);
-  // The offerId the current `pair` state was resolved for — render exposes `pair`
-  // only while it still matches, so a switch to another offer never reuses the
-  // previous offer's pair before its own read lands (Codex #740 r6).
-  const resolvedForRef = useRef<bigint | null>(null);
+  // The (offerId, chain) the current `pair` state was resolved for — render
+  // exposes `pair` only while it still matches, so a switch to another offer OR a
+  // chain change (same offer ids exist across deployments / sale vehicles) never
+  // reuses the previous read's pair before the new one lands (Codex #740 r6/r7).
+  const resolvedForRef = useRef<string | null>(null);
   // Read the fallback via a ref so its object identity doesn't re-fire the effect.
   const fallbackRef = useRef<RiskPairId | null>(fallbackPair);
   fallbackRef.current = fallbackPair;
@@ -107,14 +108,17 @@ export function useAcceptMidTierPair(
     !!activeChain?.diamondAddress &&
     readChain.chainId === activeChain.chainId;
 
+  // Identity the resolved pair is keyed by — offer id + the read chain.
+  const resolveIdentity = `${offerId ?? ""}:${readChain.chainId ?? ""}`;
+
   useEffect(() => {
     let cancelled = false;
     if (offerId == null || !address || !onDeployedChain) {
-      resolvedForRef.current = offerId ?? null;
+      resolvedForRef.current = resolveIdentity;
       setPair(null);
       return;
     }
-    const readId = offerId;
+    const readIdentity = resolveIdentity;
     const ro = diamondRo as unknown as {
       acceptMidTierAckPair: (offerId: bigint) => Promise<{
         lendAsset: string;
@@ -129,7 +133,7 @@ export function useAcceptMidTierPair(
     ro.acceptMidTierAckPair(offerId)
       .then((p) => {
         if (cancelled) return;
-        resolvedForRef.current = readId;
+        resolvedForRef.current = readIdentity;
         setPair({
           lendAsset: p.lendAsset,
           lendType: Number(p.lendType),
@@ -142,7 +146,7 @@ export function useAcceptMidTierPair(
       })
       .catch((e) => {
         if (cancelled) return;
-        resolvedForRef.current = readId;
+        resolvedForRef.current = readIdentity;
         // Missing resolver selector (gate present, view not yet cut) ⇒ fall back
         // to the offer-surface pair (correct for normal offers). Real failure ⇒
         // 'unknown' so the caller doesn't act on a bad pair.
@@ -151,11 +155,67 @@ export function useAcceptMidTierPair(
     return () => {
       cancelled = true;
     };
-  }, [offerId, address, onDeployedChain, diamondRo]);
+  }, [offerId, address, onDeployedChain, diamondRo, resolveIdentity]);
 
-  // Synchronous staleness: don't expose a previous offer's pair on the render
-  // immediately after `offerId` changes, before the effect re-resolves.
-  return resolvedForRef.current === (offerId ?? null) ? pair : null;
+  // Synchronous staleness: don't expose a previous offer's (or previous chain's)
+  // pair on the render immediately after offerId/chain changes, before the effect
+  // re-resolves.
+  return resolvedForRef.current === resolveIdentity ? pair : null;
+}
+
+/**
+ * #735 item 3 — the risk-gate block CODE the OFFER CREATOR faces for their own
+ * posted `offerId`, read from the contract's `previewCreatorBlock`. Same codes as
+ * the accept preview (0 OK/gate-off, 1 tier too low, 2 illiquid consent needed,
+ * 3 strict-mode mid-tier ack). Crucially, the contract resolves the sale-vehicle
+ * exemption (seller exempt → 0) and the tier-before-ack ordering, so the dapp
+ * doesn't have to re-derive them (Codex #740 r7). Returns null while loading, on a
+ * real read failure, or on a diamond predating the view (no creator recorder).
+ * Synchronously null on `offerId`/chain change until the new read lands.
+ */
+export function useCreatorBlock(
+  offerId: bigint | null | undefined,
+): number | null {
+  const { address, isCorrectChain, activeChain } = useWallet();
+  const diamondRo = useDiamondRead();
+  const readChain = useReadChain();
+  const [code, setCode] = useState<number | null>(null);
+  const resolvedForRef = useRef<string | null>(null);
+
+  const onDeployedChain =
+    isCorrectChain &&
+    !!activeChain?.diamondAddress &&
+    readChain.chainId === activeChain.chainId;
+  const resolveIdentity = `${offerId ?? ""}:${readChain.chainId ?? ""}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (offerId == null || !address || !onDeployedChain) {
+      resolvedForRef.current = resolveIdentity;
+      setCode(null);
+      return;
+    }
+    const ro = diamondRo as unknown as {
+      previewCreatorBlock: (offerId: bigint) => Promise<number | bigint>;
+    };
+    ro.previewCreatorBlock(offerId)
+      .then((c) => {
+        if (cancelled) return;
+        resolvedForRef.current = resolveIdentity;
+        setCode(Number(c));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Loading failed / view absent (version skew) ⇒ no creator recorder.
+        resolvedForRef.current = resolveIdentity;
+        setCode(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [offerId, address, onDeployedChain, diamondRo, resolveIdentity]);
+
+  return resolvedForRef.current === resolveIdentity ? code : null;
 }
 
 export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {

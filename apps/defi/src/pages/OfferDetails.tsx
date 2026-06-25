@@ -21,6 +21,7 @@ import {
 } from './OfferBook';
 import { bpsToPercent, formatDate } from '../lib/format';
 import { AddressDisplay } from '../components/app/AddressDisplay';
+import { OwnOfferMidTierAck } from '../components/app/OwnOfferMidTierAck';
 import { AssetLink } from '../components/app/AssetLink';
 import { TokenAmount } from '../components/app/TokenAmount';
 import { TokenIcon } from '@vaipakam/ui/TokenIcon';
@@ -464,6 +465,25 @@ export default function OfferDetails() {
             {cancelError && (
               <div style={{ marginBottom: 12 }}>
                 <ErrorAlert message={cancelError} />
+              </div>
+            )}
+
+            {/* #735 item 3 — when strict mode / a terms bump blocks the creator's
+                OWN active offer (the accept gate re-checks the creator first), let
+                them resolve it here. Reachable from the Dashboard MyOffersTable via
+                each row's link to this page (Codex #740 r7). */}
+            {canCancel && offerForDisplay && (
+              <div style={{ marginBottom: 12 }}>
+                <OwnOfferMidTierAck
+                  offerId={offerForDisplay.id}
+                  lendingAsset={offerForDisplay.lendingAsset}
+                  assetType={offerForDisplay.assetType}
+                  tokenId={offerForDisplay.tokenId}
+                  collateralAsset={offerForDisplay.collateralAsset}
+                  collateralAssetType={offerForDisplay.collateralAssetType}
+                  collateralTokenId={offerForDisplay.collateralTokenId}
+                  prepayAsset={offerForDisplay.prepayAsset}
+                />
               </div>
             )}
 

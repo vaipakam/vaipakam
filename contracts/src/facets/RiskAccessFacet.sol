@@ -489,6 +489,30 @@ contract RiskAccessFacet is DiamondAccessControl {
         return LibRiskAccess.previewAcceptorBlockAckAware(s, acceptor, pair);
     }
 
+    /// @notice #735 item 3 — the risk-gate block code the OFFER CREATOR faces for
+    ///         their OWN posted `offerId`, so the dapp can offer an in-flow
+    ///         acknowledgement / tier prompt on the creator's own offers (the
+    ///         accept gate re-checks the creator first). Same codes as
+    ///         {previewOfferAcceptBlock} (0 = OK/gate-off, 1 = tier too low,
+    ///         2 = illiquid pair needs consent, 3 = strict-mode mid-tier ack).
+    /// @dev    A lender-sale vehicle's creator is the EXITING SELLER, who is exempt
+    ///         from the accept-time gate (only the buyer is checked), so this
+    ///         returns 0 for a sale vehicle — the dapp must not prompt a seller to
+    ///         record an acknowledgement acceptors never need (Codex #740 r7).
+    ///         Standing-consent semantics: the creator authors no accept ack.
+    function previewCreatorBlock(uint256 offerId)
+        external
+        view
+        returns (uint8)
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return 0;
+        if (s.saleOfferToLoanId[offerId] != 0) return 0; // exiting seller is exempt
+        return LibRiskAccess.previewActorBlock(
+            s, s.offers[offerId].creator, _acceptGatePair(s, offerId)
+        );
+    }
+
     /// @notice #735 item 3 — the exact risk-access `PairId` that an ACCEPT of
     ///         `offerId` is gated against, so the dapp can record a strict-mode
     ///         mid-tier acknowledgement (`setMidTierPairAck`) for the RIGHT pair.

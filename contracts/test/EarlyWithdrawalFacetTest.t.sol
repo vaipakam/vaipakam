@@ -2520,5 +2520,14 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(ackPair.collAsset, pair.collAsset, "ackPair collAsset = loan");
         assertEq(uint8(ackPair.collType), uint8(pair.collType), "ackPair collType");
         assertEq(ackPair.collTokenId, pair.collTokenId, "ackPair collTokenId");
+
+        // #735 item 3 — the sale-offer CREATOR (exiting seller) is exempt from the
+        // accept gate, so `previewCreatorBlock` returns 0 for a sale vehicle; the
+        // dapp must not prompt the seller to record an ack acceptors never need.
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewCreatorBlock(saleOfferId),
+            0,
+            "sale-offer creator (seller) is exempt => 0"
+        );
     }
 }
