@@ -16,6 +16,7 @@ import {
   HandCoins,
   Coins,
   ShieldCheck,
+  Gauge,
   Activity,
   Sun,
   Moon,
@@ -116,6 +117,17 @@ const BASIC_NAV = [
     to: "/vault",
     icon: <Vault size={20} />,
     labelKey: "appNav.vault",
+    end: false,
+  },
+  {
+    // Risk Access lives in BASIC_NAV, not Advanced: every vault starts at the
+    // blue-chip-only default and the accept preflight can hard-block a
+    // tier-too-low accept, so a retail (Basic-mode) user must be able to reach
+    // the opt-up controls without first discovering Advanced mode or the URL
+    // (Codex #734 r9).
+    to: "/risk-access",
+    icon: <Gauge size={20} />,
+    labelKey: "appNav.riskAccess",
     end: false,
   },
   {

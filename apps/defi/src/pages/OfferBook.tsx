@@ -4,6 +4,7 @@ import i18n from '../i18n';
 import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
+import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -1613,6 +1614,13 @@ interface AcceptReviewModalProps {
 function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitting, onConfirm, onCancel, discountPreview, protocolConfig }: AcceptReviewModalProps) {
   const { t } = useTranslation();
   const { address: viewerAddress } = useWallet();
+  // #671 (#728 PR-2e) — progressive-risk preflight, computed once here and
+  // passed to the banner below. EVERY gate block (tier shortfall, illiquid
+  // consent, strict-mode mid-tier ack) disables Confirm so the user can't sign
+  // an accept the loan-init gate will reject (Codex #734 r10) — the client can't
+  // prove the one self-healing illiquid case (#662 ack covers the exact legs) so
+  // it stays conservative; the on-chain gate is the real boundary.
+  const riskPreflight = useRiskAccessPreflight(offer.id);
   const principalIlliquid = offer.principalLiquidity === 1;
   const collateralIlliquid = offer.collateralLiquidity === 1;
   // Live `checkLiquidity` on the ERC-20 collateral (only when this is
@@ -1877,6 +1885,10 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offers skip the check (no DEX swap path applies). */}
         <AcceptLiquidityPreflight offer={offer} />
 
+        {/* #671 (#728 PR-2e) — progressive-risk gate preflight: surfaces a
+            tier / consent / strict-ack requirement before the user signs. */}
+        <AcceptRiskPreflight preflight={riskPreflight} />
+
         {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
             was removed: an accept now binds an EIP-712-signed `AcceptTerms`, and
             `_verifyAndBindAccept` rejects any unsigned/placeholder accept before
@@ -1938,11 +1950,20 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           <button
             className="btn btn-primary btn-sm"
             onClick={onConfirm}
-            disabled={submitting || !consent}
+            disabled={
+              submitting ||
+              !consent ||
+              riskPreflight.hardBlock ||
+              riskPreflight.pending
+            }
             data-tooltip={
-              !submitting && !consent
-                ? t('riskDisclosures.consentRequiredHint')
-                : undefined
+              !submitting && riskPreflight.hardBlock
+                ? riskPreflight.reason
+                : !submitting && riskPreflight.pending
+                  ? 'Checking the progressive-risk gate…'
+                  : !submitting && !consent
+                    ? t('riskDisclosures.consentRequiredHint')
+                    : undefined
             }
           >
             {submitting ? t('offerTable.acceptingDots') : t('offerTable.confirmAndAccept')}
@@ -2000,6 +2021,45 @@ function AcceptLiquidityPreflight({ offer }: { offer: OfferData }) {
     workerOrigin: PREFLIGHT_WORKER_ORIGIN_OB,
   });
   return <LiquidityPreflightBanner result={result} compact />;
+}
+
+/**
+ * #671 progressive risk access (#728 PR-2e) — accept-time risk preflight banner.
+ * Renders the result computed by the parent modal (passed in so the read isn't
+ * duplicated). Surfaces the in-flight / failed / blocked state with NEUTRAL copy
+ * — the preview checks the offer creator before the acceptor, so it never claims
+ * an acceptor-only fix or links to a page that can't resolve it. The on-chain
+ * gate at loan-init is the real boundary; a definite block also disables Confirm
+ * in the parent.
+ */
+function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
+  const { status, blocked, reason } = preflight;
+  if (status === 'loading' || status === 'error') {
+    // Surface the in-flight check AND a failed check (Codex #734 P2) — a silent
+    // failure would let the user assume "no warning = clear" when the gate was
+    // never actually checked.
+    return (
+      <div style={{ margin: '0.5rem 0', fontSize: '0.8rem', opacity: 0.7 }}>
+        {reason}
+      </div>
+    );
+  }
+  if (!blocked) return null;
+  return (
+    <div
+      role="alert"
+      style={{
+        margin: '0.5rem 0',
+        padding: '0.55rem 0.75rem',
+        borderRadius: 8,
+        fontSize: '0.85rem',
+        background: 'rgba(220,160,30,0.12)',
+        border: '1px solid rgba(220,160,30,0.4)',
+      }}
+    >
+      {reason}
+    </div>
+  );
 }
 
 function Pagination({ page, totalPages, onPage }: PaginationProps) {
