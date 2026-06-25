@@ -50,11 +50,22 @@ export interface MidTierAckGate {
   tierTooLow: boolean;
   /** False while the tier reads are in flight or failed — `tierTooLow` unknown. */
   tierKnown: boolean;
+  /** #735 — true when this is an IlliquidCustom pair the wallet has the tier for
+   *  but lacks a fresh standing per-pair consent. The CREATE gate (no #662 ack to
+   *  substitute) reverts `IlliquidPairNotConsented`, so the create flow must block
+   *  on this and offer {recordConsent} (Codex #740 r9). Shares `tierKnown`. */
+  illiquidConsentNeeded: boolean;
   recording: boolean;
   recorded: boolean;
   error: string | null;
   /** Record the acknowledgement (`setMidTierPairAck`) for this pair. */
   record: () => Promise<void>;
+  /** #735 — record a standing per-pair illiquid consent (`setIlliquidPairConsent`)
+   *  for this pair. Used for the create / creator-side illiquid (code 2) recovery. */
+  recordConsent: () => Promise<void>;
+  consentRecording: boolean;
+  consentRecorded: boolean;
+  consentError: string | null;
   /** Re-read the block predicate (e.g. after recording on a zero-cooldown chain). */
   refresh: () => void;
 }
@@ -172,11 +183,11 @@ export function useAcceptMidTierPair(
  */
 export function useCreatorBlock(
   offerId: bigint | null | undefined,
-): number | null {
+): number | null | "unknown" {
   const { address, isCorrectChain, activeChain } = useWallet();
   const diamondRo = useDiamondRead();
   const readChain = useReadChain();
-  const [code, setCode] = useState<number | null>(null);
+  const [code, setCode] = useState<number | null | "unknown">(null);
   const resolvedForRef = useRef<string | null>(null);
 
   const onDeployedChain =
@@ -201,11 +212,14 @@ export function useCreatorBlock(
         resolvedForRef.current = resolveIdentity;
         setCode(Number(c));
       })
-      .catch(() => {
+      .catch((e) => {
         if (cancelled) return;
-        // Loading failed / view absent (version skew) ⇒ no creator recorder.
         resolvedForRef.current = resolveIdentity;
-        setCode(null);
+        // View absent (staggered rollout: gate + setters present, this selector
+        // not yet cut) ⇒ 'unknown' so the creator sees a neutral note rather than
+        // a silently-hidden control (Codex #740 r9). A transient read failure ⇒
+        // null (nothing; it retries).
+        setCode(isMissingFacet(e) ? "unknown" : null);
       });
     return () => {
       cancelled = true;
@@ -224,9 +238,13 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
   const [known, setKnown] = useState(false);
   const [tierTooLow, setTierTooLow] = useState(false);
   const [tierKnown, setTierKnown] = useState(false);
+  const [illiquidConsentNeeded, setIlliquidConsentNeeded] = useState(false);
   const [recording, setRecording] = useState(false);
   const [recorded, setRecorded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [consentRecording, setConsentRecording] = useState(false);
+  const [consentRecorded, setConsentRecorded] = useState(false);
+  const [consentError, setConsentError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
   // Only read on a chain that actually has a deployed Diamond AND is the wallet's
@@ -262,6 +280,7 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       setKnown(false);
       setTierTooLow(false);
       setTierKnown(false);
+      setIlliquidConsentNeeded(false);
       return;
     }
     // Reset every verdict to UNKNOWN before the new reads resolve. Otherwise a
@@ -273,11 +292,13 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     setBlocked(false);
     setTierKnown(false);
     setTierTooLow(false);
+    setIlliquidConsentNeeded(false);
     const ro = diamondRo as unknown as {
       midTierStrictBlocked: (vault: string, p: RiskPairId) => Promise<boolean>;
       pairRequiredRiskLevel: (p: RiskPairId) => Promise<number | bigint>;
       getEffectiveRiskTier: (vault: string) => Promise<number | bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
+      hasIlliquidPairConsent: (vault: string, p: RiskPairId) => Promise<boolean>;
     };
     // Mid-tier ack verdict.
     ro.midTierStrictBlocked(address, pair)
@@ -312,22 +333,33 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
       ro.pairRequiredRiskLevel(pair),
       ro.getEffectiveRiskTier(address),
       ro.getRiskAccessGateEnabled(),
+      ro.hasIlliquidPairConsent(address, pair),
     ])
-      .then(([req, eff, gateOn]) => {
+      .then(([req, eff, gateOn, hasConsent]) => {
         if (cancelled) return;
         tierResolvedForRef.current = readIdentity;
-        setTierTooLow(Boolean(gateOn) && Number(eff) < Number(req));
+        const on = Boolean(gateOn);
+        setTierTooLow(on && Number(eff) < Number(req));
+        // IlliquidCustom (level 2) pair the wallet has the TIER for but lacks a
+        // fresh standing consent — the create gate (no #662 ack to substitute)
+        // reverts IlliquidPairNotConsented (Codex #740 r9). Only meaningful when
+        // the tier covers it (else tier-too-low is the prior blocker).
+        setIlliquidConsentNeeded(
+          on && Number(req) === 2 && Number(eff) >= 2 && !Boolean(hasConsent),
+        );
         setTierKnown(true);
       })
       .catch((e) => {
         if (cancelled) return;
         tierResolvedForRef.current = readIdentity;
-        // Missing facet ⇒ no gate ⇒ tier can't be too low. Real failure ⇒ unknown.
+        // Missing facet ⇒ no gate ⇒ nothing blocked. Real failure ⇒ unknown.
         if (isMissingFacet(e)) {
           setTierTooLow(false);
+          setIlliquidConsentNeeded(false);
           setTierKnown(true);
         } else {
           setTierTooLow(false);
+          setIlliquidConsentNeeded(false);
           setTierKnown(false);
         }
       });
@@ -350,6 +382,10 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // record tx belongs to the previous identity and can no longer apply here, so
     // the new context's recorder must not stay disabled behind it (Codex #740 r5).
     setRecording(false);
+    // The standing-consent recovery state is per-context too (Codex #740 r9).
+    setConsentRecorded(false);
+    setConsentError(null);
+    setConsentRecording(false);
   }, [identity]);
 
   const identityRef = useRef<string>(identity);
@@ -398,6 +434,43 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     }
   }, [pair, identity, address, diamondRw]);
 
+  // #735 — record a standing per-pair illiquid consent (code-2 recovery). Same
+  // per-context completion guard as record(), so an account/pair switch mid-mine
+  // can't stamp `consentRecorded` onto a different context (Codex #740 r9).
+  const recordConsent = useCallback(async () => {
+    if (!pair) return;
+    const startedIdentity = identity;
+    const stillSameContext = () => identityRef.current === startedIdentity;
+    const step = beginStep({
+      area: "profile",
+      flow: "setIlliquidPairConsent",
+      step: "record",
+      wallet: address ?? undefined,
+    });
+    setConsentRecording(true);
+    setConsentError(null);
+    try {
+      const rw = diamondRw as unknown as {
+        setIlliquidPairConsent: (
+          p: RiskPairId,
+          consent: boolean,
+        ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+      };
+      const tx = await rw.setIlliquidPairConsent(pair, true);
+      await tx.wait();
+      step.success();
+      if (!stillSameContext()) return;
+      setConsentRecorded(true);
+      setNonce((n) => n + 1);
+    } catch (e) {
+      step.failure(e);
+      if (!stillSameContext()) return;
+      setConsentError((e as Error).message);
+    } finally {
+      if (stillSameContext()) setConsentRecording(false);
+    }
+  }, [pair, identity, address, diamondRw]);
+
   // Synchronous staleness guard (Codex #740 r6): if a verdict's resolved-for
   // identity no longer matches the current one (a pair/wallet/chain change this
   // render, before the effect re-runs), expose it as UNKNOWN rather than letting a
@@ -409,10 +482,15 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     known: blockFresh ? known : false,
     tierTooLow: tierFresh ? tierTooLow : false,
     tierKnown: tierFresh ? tierKnown : false,
+    illiquidConsentNeeded: tierFresh ? illiquidConsentNeeded : false,
     recording,
     recorded,
     error,
     record,
+    recordConsent,
+    consentRecording,
+    consentRecorded,
+    consentError,
     refresh,
   };
 }

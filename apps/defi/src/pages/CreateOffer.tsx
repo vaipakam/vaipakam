@@ -500,12 +500,19 @@ export default function CreateOffer() {
     const riskUnknown =
       createPair !== null &&
       (!midTierGate.tierKnown || !midTierGate.known);
-    if (midTierGate.tierTooLow || midTierGate.blocked || riskUnknown) {
+    if (
+      midTierGate.tierTooLow ||
+      midTierGate.illiquidConsentNeeded ||
+      midTierGate.blocked ||
+      riskUnknown
+    ) {
       const msg = midTierGate.tierTooLow
         ? "Raise your vault's risk tier to cover this pair first (Risk Access settings)."
-        : midTierGate.blocked
-          ? "Record the strict-mode mid-tier acknowledgement for this pair first."
-          : "Checking the progressive-risk requirements — try again in a moment.";
+        : midTierGate.illiquidConsentNeeded
+          ? "Record the per-pair illiquid consent for this pair first."
+          : midTierGate.blocked
+            ? "Record the strict-mode mid-tier acknowledgement for this pair first."
+            : "Checking the progressive-risk requirements — try again in a moment.";
       setError(msg);
       emit({
         ...ctx,
@@ -1780,17 +1787,24 @@ export default function CreateOffer() {
             const tierUnknown = createPair !== null && !midTierGate.tierKnown;
             const midTierBlocked = midTierGate.blocked;
             const midTierUnknown = createPair !== null && !midTierGate.known;
+            const illiquidConsent = midTierGate.illiquidConsentNeeded;
             const riskBlocked =
-              tierTooLow || tierUnknown || midTierBlocked || midTierUnknown;
+              tierTooLow ||
+              tierUnknown ||
+              midTierBlocked ||
+              midTierUnknown ||
+              illiquidConsent;
             const tooltip = step === "form" && validationError
               ? formatValidationError(validationError)
               : step === "form" && tierTooLow
                 ? "Raise your vault's risk tier to cover this pair first (Risk Access settings)."
-                : step === "form" && midTierBlocked
-                  ? "Record the strict-mode mid-tier acknowledgement for this pair first."
-                  : step === "form" && (tierUnknown || midTierUnknown)
-                    ? "Checking the progressive-risk requirements…"
-                    : undefined;
+                : step === "form" && illiquidConsent
+                  ? "Record the per-pair illiquid consent for this pair first."
+                  : step === "form" && midTierBlocked
+                    ? "Record the strict-mode mid-tier acknowledgement for this pair first."
+                    : step === "form" && (tierUnknown || midTierUnknown)
+                      ? "Checking the progressive-risk requirements…"
+                      : undefined;
             return (
               <button
                 type="submit"
@@ -1879,6 +1893,65 @@ function CreateMidTierAckBanner({ gate }: { gate: MidTierAckGate }) {
   // so when the tier is too low (Codex #740 r4) recording the ack alone can't
   // unblock — point at the tier prerequisite instead of presenting the ack as the
   // fix. (Submit is already blocked by the parent on `tierTooLow`.)
+  if (gate.consentRecorded) {
+    return (
+      <div
+        role="status"
+        style={{
+          margin: "0.75rem 0",
+          padding: "0.6rem 0.8rem",
+          borderRadius: 8,
+          fontSize: "0.85rem",
+          background: "rgba(220,160,30,0.10)",
+          border: "1px solid rgba(220,160,30,0.35)",
+        }}
+      >
+        Per-pair consent recorded. If an opt-up cooldown is configured it becomes
+        effective only after that window; creating stays blocked until then.
+      </div>
+    );
+  }
+  // IlliquidCustom pair the vault has the tier for but lacks a fresh per-pair
+  // consent — the create gate reverts IlliquidPairNotConsented (Codex #740 r9).
+  // Offer the contextual consent write right here.
+  if (gate.illiquidConsentNeeded) {
+    return (
+      <div
+        role="status"
+        style={{
+          margin: "0.75rem 0",
+          padding: "0.6rem 0.8rem",
+          borderRadius: 8,
+          fontSize: "0.85rem",
+          background: "rgba(220,160,30,0.10)",
+          border: "1px solid rgba(220,160,30,0.35)",
+        }}
+      >
+        <div style={{ marginBottom: "0.4rem" }}>
+          This is an illiquid pair, so it needs a deliberate per-pair consent before
+          you can create the offer.
+        </div>
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={gate.consentRecording}
+          onClick={() => void gate.recordConsent()}
+        >
+          {gate.consentRecording
+            ? "Recording consent…"
+            : "Record per-pair consent"}
+        </button>
+        {gate.consentError && (
+          <div
+            role="alert"
+            style={{ marginTop: "0.4rem", fontSize: "0.8rem", color: "var(--danger, #d66)" }}
+          >
+            {gate.consentError}
+          </div>
+        )}
+      </div>
+    );
+  }
   if (gate.tierTooLow) {
     return (
       <div
