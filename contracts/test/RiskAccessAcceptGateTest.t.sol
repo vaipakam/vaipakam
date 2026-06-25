@@ -758,6 +758,64 @@ contract RiskAccessAcceptGateTest is SetupTest {
         );
     }
 
+    // #735 item 3 — `acceptMidTierAckPair` resolves the EXACT pair an accept gates
+    // against, so the dapp records a strict-mode mid-tier acknowledgement for the
+    // right pair. For a NORMAL offer that is the offer's own pair. (The sale-vehicle
+    // branch — where it must return the SOLD LOAN's pair, not the offer's surface —
+    // is asserted in EarlyWithdrawalFacetTest alongside the sale-buyer preview test,
+    // which already has the linked-loan harness.)
+    function test_acceptMidTierAckPair_normalOfferReturnsOfferPair() public {
+        _mockTier(mockERC20, 3);
+        _mockTier(mockIlliquidERC20, 0);
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+
+        LibRiskAccess.PairId memory got =
+            RiskAccessFacet(address(diamond)).acceptMidTierAckPair(offerId);
+        LibRiskAccess.PairId memory want = _offerPair(mockERC20, mockIlliquidERC20);
+        assertEq(got.lendAsset, want.lendAsset, "lendAsset");
+        assertEq(uint8(got.lendType), uint8(want.lendType), "lendType");
+        assertEq(got.lendTokenId, want.lendTokenId, "lendTokenId");
+        assertEq(got.collAsset, want.collAsset, "collAsset");
+        assertEq(uint8(got.collType), uint8(want.collType), "collType");
+        assertEq(got.collTokenId, want.collTokenId, "collTokenId");
+        assertEq(got.prepayAsset, want.prepayAsset, "prepayAsset");
+    }
+
+    // #735 item 3 — `previewCreatorBlock` surfaces the block code the OFFER CREATOR
+    // faces for their own posted offer (so the dapp can offer an in-flow ack / tier
+    // prompt). Same codes as the accept preview; gate-off and the sale-vehicle
+    // seller-exemption return 0 (the latter is asserted in EarlyWithdrawalFacetTest
+    // alongside the sale harness).
+    function test_previewCreatorBlock_surfacesCreatorGate() public {
+        _mockTier(mockERC20, 3); // lend leg blue-chip
+        _mockTier(mockIlliquidERC20, 0); // coll leg illiquid => IlliquidCustom
+        uint256 offerId = _lenderOffer(mockERC20, mockIlliquidERC20);
+
+        // Gate OFF (default) => 0.
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            0,
+            "gate off => 0"
+        );
+
+        // Gate ON, creator (lender) still BlueChipOnly, pair IlliquidCustom => the
+        // creator is under-tiered (code 1).
+        ConfigFacet(address(diamond)).setRiskAccessGateEnabled(true);
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            1,
+            "creator under-tiered => 1 (tier too low)"
+        );
+
+        // Arm the creator (tier + standing consent) => clears to 0.
+        _armCreatorIlliquid(mockERC20, mockIlliquidERC20);
+        assertEq(
+            RiskAccessFacet(address(diamond)).previewCreatorBlock(offerId),
+            0,
+            "armed creator => 0"
+        );
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // 10 — SALE-BUYER gate (Codex #729 r3 finding E): a loan-sale BUYER is gated
     //      against the LINKED loan's asset pair (the exiting seller stays exempt).

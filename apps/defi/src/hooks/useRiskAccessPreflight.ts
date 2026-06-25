@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useWallet } from "../context/WalletContext";
 import { useDiamondRead, useReadChain } from "../contracts/useDiamond";
 
@@ -73,7 +73,7 @@ export const RISK_PREFLIGHT_REASON: Record<RiskPreflightStatus, string> = {
   "illiquid-ack-covered":
     "This pair includes an illiquid asset. Your acceptance signature explicitly acknowledges it, so you can proceed — just be aware you're taking on an illiquid position that can't be priced or auto-liquidated.",
   "needs-midtier-ack":
-    "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover, and that this app can't record yet.",
+    "This pair requires a strict-mode mid-tier acknowledgement that an acceptance signature doesn't cover. If it's your vault's requirement you can record it below; otherwise it's the offer creator's to record. Either way it isn't immediate — on a deployment with an opt-up cooldown it becomes effective only after that window (which a deployment may set up to 30 days), then re-open this offer to accept.",
   error: "Couldn't check the risk-access requirements right now.",
 };
 
@@ -100,6 +100,10 @@ export interface RiskPreflight {
   pending: boolean;
   /** Human-readable reason + fix (empty for ok/idle). */
   reason: string;
+  /** #735 r13 — re-run the preview. Call after recording a mid-tier ack/consent so
+   *  a zero-cooldown clear lifts the hard block without closing/reopening the
+   *  modal. */
+  refresh: () => void;
 }
 
 export function useRiskAccessPreflight(
@@ -109,6 +113,8 @@ export function useRiskAccessPreflight(
   const diamondRo = useDiamondRead();
   const readChain = useReadChain();
   const [status, setStatus] = useState<RiskPreflightStatus>("idle");
+  const [nonce, setNonce] = useState(0);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
   // Require an actual DEPLOYED Diamond on the wallet's chain, not just a
   // registered chain (`isCorrectChain` is true even for a supported-but-
   // undeployed chain, where the read would hit the zero-address sentinel —
@@ -154,7 +160,7 @@ export function useRiskAccessPreflight(
     return () => {
       cancelled = true;
     };
-  }, [address, offerId, onDeployedChain, diamondRo]);
+  }, [address, offerId, onDeployedChain, diamondRo, nonce]);
 
   // The HARD codes block the accept; the soft `illiquid-ack-covered` (code 4) does
   // NOT — the accept-signing flow's #662 ack clears it at sign-time (#735).
@@ -173,5 +179,6 @@ export function useRiskAccessPreflight(
     softWarn,
     pending: status === "loading",
     reason: RISK_PREFLIGHT_REASON[status],
+    refresh,
   };
 }

@@ -706,7 +706,7 @@ function BurnedCard({
           <div className="data-row">
             <span className="data-label">{t("nftVerifier.origin")}</span>
             <span className="data-value">
-              <Link to={`/app/offers/${offerContext.offerId}`}>
+              <Link to={`/offers/${offerContext.offerId}`}>
                 Offer #{offerContext.offerId}
               </Link>
             </span>

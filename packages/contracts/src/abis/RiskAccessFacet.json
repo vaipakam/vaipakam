@@ -1,6 +1,62 @@
 [
   {
     "type": "function",
+    "name": "acceptMidTierAckPair",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "assertMatchAllowed",
     "inputs": [
       {
@@ -277,6 +333,128 @@
   },
   {
     "type": "function",
+    "name": "isMidTierAckPending",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isPairConsentPending",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LibRiskAccess.PairId",
+        "components": [
+          {
+            "name": "lendAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "lendTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "collAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collType",
+            "type": "uint8",
+            "internalType": "enum LibVaipakam.AssetType"
+          },
+          {
+            "name": "collTokenId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "prepayAsset",
+            "type": "address",
+            "internalType": "address"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isProtocolManagedVault",
     "inputs": [
       {
@@ -400,6 +578,25 @@
             "internalType": "address"
           }
         ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewCreatorBlock",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [

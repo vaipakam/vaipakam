@@ -5,6 +5,8 @@ import type { Address, Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
+import { useMidTierAckGate, useAcceptMidTierPair } from '../hooks/useMidTierAckGate';
+import { OwnOfferMidTierAck } from '../components/app/OwnOfferMidTierAck';
 import { useAssetLiquidity } from '../hooks/useAssetLiquidity';
 import { usePermit2Signing } from '../hooks/usePermit2Signing';
 import { useAcceptTermsSigning } from '../hooks/useAcceptTermsSigning';
@@ -176,6 +178,12 @@ export interface OfferData {
    *  collateral "number of copies". For ERC721 the cell ignores it
    *  (always 1). Optional same as the other NFT-shape fields. */
   collateralQuantity?: bigint;
+  /** #735 item 3 — the NFT-rental prepayment token (zero address for
+   *  non-rentals). Surfaced so the accept flow can rebuild the exact
+   *  risk-access PairId when recording a strict-mode mid-tier
+   *  acknowledgement (the gate keys an NFT-rental lend leg off this token,
+   *  not the rented NFT). Optional for legacy event-derived shapes. */
+  prepayAsset?: string;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -275,6 +283,9 @@ export type RawOffer = {
    *  collateral "number of copies". For ERC721 the cell ignores it
    *  (always 1). Optional same as the other NFT-shape fields. */
   collateralQuantity?: bigint;
+  /** #735 item 3 — NFT-rental prepayment token (zero address / undefined for
+   *  non-rentals); bubbled through `indexedToRawOffer`. */
+  prepayAsset?: string;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -320,6 +331,8 @@ export function toOfferData(r: RawOffer): OfferData {
     collateralTokenId: r.collateralTokenId,
     // Codex round-16 P2 #1 — ERC1155 collateral copy count.
     collateralQuantity: r.collateralQuantity,
+    // #735 item 3 — NFT-rental prepay token for the mid-tier-ack PairId rebuild.
+    prepayAsset: r.prepayAsset,
   };
 }
 
@@ -1889,6 +1902,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             tier / consent / strict-ack requirement before the user signs. */}
         <AcceptRiskPreflight preflight={riskPreflight} />
 
+        {/* #735 item 3 — when the block is a strict-mode mid-tier acknowledgement,
+            offer to record it in place (an acceptance signature doesn't cover it).
+            Confirm stays disabled until the acknowledgement is effective (re-open
+            after any cooldown). */}
+        {riskPreflight.status === 'needs-midtier-ack' && (
+          <MidTierAckRecorder offer={offer} onRecorded={riskPreflight.refresh} />
+        )}
+
         {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
             was removed: an accept now binds an EIP-712-signed `AcceptTerms`, and
             `_verifyAndBindAccept` rejects any unsigned/placeholder accept before
@@ -2083,6 +2104,139 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
       }}
     >
       {reason}
+    </div>
+  );
+}
+
+/**
+ * #735 item 3 — record a strict-mode mid-tier per-pair acknowledgement from the
+ * accept flow. Rendered only when the preflight reports `needs-midtier-ack`
+ * (code 3): a strict-mode vault must hold a fresh EXPLICIT acknowledgement for a
+ * mid-tier pair, which an acceptance signature does NOT cover.
+ *
+ * It builds the exact `PairId` from the offer (the prepay token is threaded
+ * through the offer cache, so an NFT-rental lend leg keys off the right asset)
+ * and reads the contract's own `midTierStrictBlocked(connectedWallet, pair)` via
+ * {@link useMidTierAckGate}. A code-3 accept block can be the OFFER CREATOR's
+ * missing ack (the preview reports the first failing party), which the acceptor
+ * CANNOT clear — so the record action is offered ONLY when the connected wallet
+ * is itself the blocked party; otherwise the user is told it's the creator's
+ * requirement instead of being invited to spend gas on an ack that won't help.
+ *
+ * The acknowledgement is deliberately NOT atomic sign-and-use (Codex #733 P1): on
+ * a deployment with an opt-up cooldown it becomes effective only after that whole
+ * window (up to 30 days), so the copy never promises a quick unblock — the user
+ * re-opens the offer to accept once it's active.
+ */
+function MidTierAckRecorder({ offer, onRecorded }: { offer: OfferData; onRecorded: () => void }) {
+  // Resolve the EXACT pair the accept gates against ON-CHAIN: a lender-sale
+  // vehicle gates the buyer against the SOLD LOAN's pair, not the offer's own
+  // surface, and the dapp can't construct that itself (Codex #740 r5/r8). On a
+  // missing/failed resolver read it returns 'unknown' (never a guessed
+  // offer-pair, which would be wrong for a sale vehicle).
+  const resolvedPair = useAcceptMidTierPair(offer.id);
+  const gate = useMidTierAckGate(
+    resolvedPair === 'unknown' ? null : resolvedPair,
+  );
+
+  // When the record settles and the child gate refreshes (on a zero-cooldown
+  // deploy the ack is effective at once), re-run the PARENT preflight so Confirm
+  // un-blocks without closing/reopening the modal (Codex #740 r13).
+  useEffect(() => {
+    if (gate.recorded) onRecorded();
+  }, [gate.recorded, onRecorded]);
+
+  // A real read failure (couldn't determine the gated pair) — don't offer a
+  // record action over an unknown pair.
+  if (resolvedPair === 'unknown') {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Couldn't determine this offer's risk pair right now — reload before
+        recording the acknowledgement.
+      </div>
+    );
+  }
+
+  if (gate.recorded) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Acknowledgement recorded for this pair. If an opt-up cooldown is configured
+        it becomes effective only after that window (which a deployment may set up
+        to 30 days) — re-open this offer to accept once it's active. If the offer
+        is still blocked then, the offer creator may also need to record their own
+        acknowledgement, which only they can do.
+      </div>
+    );
+  }
+
+  // The connected wallet isn't the blocked party: a code-3 block here is the
+  // offer creator's missing mid-tier ack, which the acceptor can't clear.
+  if (gate.known && !gate.blocked) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        This mid-tier acknowledgement is the offer creator's requirement — it can't
+        be recorded from your wallet. The offer can't be accepted until the creator
+        records it.
+      </div>
+    );
+  }
+
+  // Read failed / still loading — don't offer a record action over an unknown
+  // verdict (it might spend gas on the wrong party's pair).
+  if (!gate.known) return null;
+
+  // The acceptor IS the mid-tier-blocked party, but `midTierStrictBlocked` ignores
+  // TIER — if the acceptor's effective tier doesn't cover the pair (stale / cooling
+  // / BlueChip), recording the ack can't make the accept succeed (the gate fails on
+  // tier first). Surface the tier prerequisite instead (Codex #740 r10).
+  if (gate.tierTooLow) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Your vault's tier doesn't cover this pair — raise (or re-affirm) it in Risk
+        Access settings first; the acknowledgement alone won't make the offer
+        acceptable.
+      </div>
+    );
+  }
+  if (!gate.tierKnown) return null; // tier verdict still resolving
+
+  // Hold the write until the cooldown reads settle — otherwise a still-cooling ack
+  // would read as not-pending for a render and a repeat write could restamp it
+  // (Codex #740 r12).
+  if (!gate.pendingKnown) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Checking your acknowledgement status…
+      </div>
+    );
+  }
+
+  // An ack is already recorded and cooling down — re-recording would restamp the
+  // cooldown (Codex #740 r10).
+  if (gate.midTierAckPending) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Your acknowledgement for this pair is recorded and cooling down — re-open to
+        accept once it's effective; no need to record it again.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ margin: '0.5rem 0' }}>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={gate.recording}
+        onClick={() => void gate.record()}
+      >
+        {gate.recording ? 'Recording acknowledgement…' : 'Record mid-tier acknowledgement'}
+      </button>
+      {gate.error && (
+        <div role="alert" style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: 'var(--danger, #d66)' }}>
+          {gate.error}
+        </div>
+      )}
     </div>
   );
 }
@@ -2319,13 +2473,17 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                           );
                         })()
                       ) : isOwn ? (
-                        // Offer creator sees the Your-Offer badge only.
-                        // The per-offer keeper toggles live on the offer
-                        // details page (KeeperSettings card) — surfacing
-                        // a deep-link from the list row added clutter to
-                        // a column that scans far better as a single
-                        // vertical baseline of Accept buttons.
-                        <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
+                        // Offer creator sees the Your-Offer badge. The per-offer
+                        // keeper toggles live on the offer details page
+                        // (KeeperSettings card). #735 item 3 — but when strict
+                        // mode was enabled (or a terms bump staled the ack) AFTER
+                        // posting, the accept gate re-checks the CREATOR first, so
+                        // the creator needs an in-flow way to record the mid-tier
+                        // ack for their own posted offer (Codex #740 r6).
+                        <>
+                          <span className="status-badge settled">{t('offerTable.yourOffer')}</span>
+                          <OwnOfferMidTierAck offerId={offer.id} />
+                        </>
                       ) : address ? (
                         <button
                           className="btn btn-primary btn-sm"
