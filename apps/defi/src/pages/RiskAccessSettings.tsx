@@ -53,6 +53,9 @@ export default function RiskAccessSettings() {
     setVaultRiskTier: (
       level: number,
     ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+    setRiskStrictMode: (
+      enabled: boolean,
+    ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
   };
 
   // Submit a `setVaultRiskTier(level)` write. Shared by choosing a new tier and
@@ -104,6 +107,40 @@ export default function RiskAccessSettings() {
       risk.rawTier,
       "Tier re-affirmed against the latest risk terms. If an opt-up cooldown is configured it becomes effective once the cooldown elapses.",
     );
+  }
+
+  // #735 item 3 — toggle strict mode. ENABLING is risk-DECREASING (the vault now
+  // demands a fresh explicit acknowledgement for every mid-tier pair too) and is
+  // immediate. DISABLING is risk-INCREASING: on a deployment with an opt-up
+  // cooldown it leaves the mid-tier acknowledgement requirement in force for that
+  // window, so a vault can't drop strict mode and originate an un-acknowledged
+  // mid-tier loan in the same breath.
+  async function submitStrictMode(enable: boolean) {
+    const step = beginStep({
+      area: "profile",
+      flow: "setRiskStrictMode",
+      step: enable ? "enable" : "disable",
+      wallet: address ?? undefined,
+    });
+    setBusy(true);
+    setErr(null);
+    setNotice(null);
+    try {
+      const tx = await rw.setRiskStrictMode(enable);
+      await tx.wait();
+      step.success();
+      setNotice(
+        enable
+          ? "Strict mode enabled. Every mid-tier pair you originate now needs a fresh explicit per-pair acknowledgement (collected at accept time)."
+          : "Strict mode disabled. If an opt-up cooldown is configured, the mid-tier acknowledgement requirement stays in force until it elapses.",
+      );
+      await risk.refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+      step.failure(e);
+    } finally {
+      setBusy(false);
+    }
   }
 
 
@@ -309,13 +346,71 @@ export default function RiskAccessSettings() {
         an opt-up cooldown before it becomes effective.
       </p>
 
-      {/* Strict mode (the per-pair mid-tier acknowledgement opt-in) is
-          deliberately not exposed here yet: enabling it requires a
-          `setMidTierPairAck` path per pair, which lands together with the
-          per-pair consent collection in a follow-up (it needs the offer's
-          prepay token threaded through the offer cache to rebuild the exact
-          pair). Exposing the toggle without that path would let a vault brick
-          its own mid-tier accepts (Codex #734). */}
+      {/* #735 item 3 — strict mode. The per-pair mid-tier acknowledgement it
+          demands is now collected contextually in the accept flow (the offer's
+          prepay token is threaded through the offer cache so the exact pair can
+          be rebuilt), so the toggle is safe to expose: a strict-mode vault is no
+          longer able to brick its own mid-tier accepts (the earlier Codex #734
+          concern). */}
+      <h2 id="strict-mode-label" style={{ fontSize: "1.05rem", marginTop: "1.5rem" }}>
+        Strict mode
+      </h2>
+      <p style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "-0.2rem" }}>
+        Off by default. While on, every <em>mid-tier</em> (liquid-but-not-blue-chip)
+        pair you originate also needs a fresh, deliberate per-pair acknowledgement —
+        not just the tier opt-up. The acknowledgement is collected at accept time.
+      </p>
+      {!risk.strictModeKnown ? (
+        <p style={{ fontSize: "0.85rem", opacity: 0.7 }}>
+          Couldn't read the strict-mode state on this deployment.
+        </p>
+      ) : (
+        <>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={risk.strictMode}
+            aria-labelledby="strict-mode-label"
+            disabled={busy}
+            onClick={() => void submitStrictMode(!risk.strictMode)}
+            style={{
+              padding: "0.6rem 0.9rem",
+              borderRadius: 10,
+              border: risk.strictMode
+                ? "2px solid var(--accent, #4a7dff)"
+                : "1px solid rgba(255,255,255,0.18)",
+              background: risk.strictMode
+                ? "rgba(74,125,255,0.10)"
+                : "transparent",
+              cursor: busy ? "default" : "pointer",
+            }}
+          >
+            {busy
+              ? "Updating…"
+              : risk.strictMode
+                ? "Strict mode is ON — click to turn off"
+                : "Strict mode is OFF — click to turn on"}
+          </button>
+          {/* Disable-linger: while the strict-until expiry is in the future, a
+              prior disable still keeps the mid-tier acknowledgement requirement
+              in force (so dropping strict mode can't immediately originate an
+              un-acknowledged mid-tier loan). */}
+          {!risk.strictMode &&
+            risk.strictModeUntilKnown &&
+            risk.strictModeUntil > BigInt(Math.floor(Date.now() / 1000)) && (
+              <p
+                style={{
+                  fontSize: "0.8rem",
+                  opacity: 0.75,
+                  marginTop: "0.4rem",
+                }}
+              >
+                A recent disable is still cooling down: the mid-tier acknowledgement
+                requirement stays in force until the configured cooldown elapses.
+              </p>
+            )}
+        </>
+      )}
     </div>
   );
 }

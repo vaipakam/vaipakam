@@ -665,6 +665,11 @@ export function indexedToRawOffer(o: IndexedOffer): {
   // the cell instead of mis-reading `collateralAmount` (which is the
   // principal amount for ERC20 borrows).
   collateralQuantity: bigint;
+  // #735 item 3 — the NFT-rental prepayment token. Surfaced so the accept flow
+  // can rebuild the EXACT risk-access PairId (the gate keys an NFT-rental lend
+  // leg off the prepay token, not the rented NFT) when recording a strict-mode
+  // mid-tier acknowledgement. Zero address for non-rental offers.
+  prepayAsset: string;
 } {
   // Optional field narrowing for indexer/frontend version skew —
   // see the IndexedOffer doc-block. Each new-since-0014 field is
@@ -701,6 +706,9 @@ export function indexedToRawOffer(o: IndexedOffer): {
     collateralAssetType: o.collateralAssetType,
     collateralTokenId: BigInt(o.collateralTokenId ?? '0'),
     collateralQuantity: BigInt(o.collateralQuantity ?? '0'),
+    // #735 item 3 — default to the zero address for older indexer rows that
+    // predate the field, matching the contract's "no prepay" sentinel.
+    prepayAsset: o.prepayAsset ?? '0x0000000000000000000000000000000000000000',
   };
 }
 

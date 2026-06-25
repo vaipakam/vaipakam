@@ -176,6 +176,12 @@ export interface OfferData {
    *  collateral "number of copies". For ERC721 the cell ignores it
    *  (always 1). Optional same as the other NFT-shape fields. */
   collateralQuantity?: bigint;
+  /** #735 item 3 — the NFT-rental prepayment token (zero address for
+   *  non-rentals). Surfaced so the accept flow can rebuild the exact
+   *  risk-access PairId when recording a strict-mode mid-tier
+   *  acknowledgement (the gate keys an NFT-rental lend leg off this token,
+   *  not the rented NFT). Optional for legacy event-derived shapes. */
+  prepayAsset?: string;
 }
 
 type TabFilter = 'both' | 'lender' | 'borrower';
@@ -275,6 +281,9 @@ export type RawOffer = {
    *  collateral "number of copies". For ERC721 the cell ignores it
    *  (always 1). Optional same as the other NFT-shape fields. */
   collateralQuantity?: bigint;
+  /** #735 item 3 — NFT-rental prepayment token (zero address / undefined for
+   *  non-rentals); bubbled through `indexedToRawOffer`. */
+  prepayAsset?: string;
 };
 
 export function toOfferData(r: RawOffer): OfferData {
@@ -320,6 +329,8 @@ export function toOfferData(r: RawOffer): OfferData {
     collateralTokenId: r.collateralTokenId,
     // Codex round-16 P2 #1 — ERC1155 collateral copy count.
     collateralQuantity: r.collateralQuantity,
+    // #735 item 3 — NFT-rental prepay token for the mid-tier-ack PairId rebuild.
+    prepayAsset: r.prepayAsset,
   };
 }
 
@@ -1889,6 +1900,14 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             tier / consent / strict-ack requirement before the user signs. */}
         <AcceptRiskPreflight preflight={riskPreflight} />
 
+        {/* #735 item 3 — when the block is a strict-mode mid-tier acknowledgement,
+            offer to record it in place (an acceptance signature doesn't cover it).
+            Confirm stays disabled until the acknowledgement is effective (re-open
+            after any cooldown). */}
+        {riskPreflight.status === 'needs-midtier-ack' && (
+          <MidTierAckRecorder offer={offer} />
+        )}
+
         {/* ET-001 + #662 — the pre-sign eth_call preflight (AcceptSimulationPreview)
             was removed: an accept now binds an EIP-712-signed `AcceptTerms`, and
             `_verifyAndBindAccept` rejects any unsigned/placeholder accept before
@@ -2083,6 +2102,103 @@ function AcceptRiskPreflight({ preflight }: { preflight: RiskPreflight }) {
       }}
     >
       {reason}
+    </div>
+  );
+}
+
+/**
+ * #735 item 3 — record a strict-mode mid-tier per-pair acknowledgement from the
+ * accept flow. Rendered only when the preflight reports `needs-midtier-ack`
+ * (code 3): a strict-mode acceptor must hold a fresh EXPLICIT acknowledgement for
+ * a mid-tier pair, which an acceptance signature does NOT cover. This builds the
+ * exact `PairId` from the offer (the prepay token is now threaded through the
+ * offer cache, so an NFT-rental lend leg keys off the right asset) and calls
+ * `setMidTierPairAck`.
+ *
+ * The acknowledgement is deliberately NOT atomic sign-and-use (Codex #733 P1): on
+ * a deployment with an opt-up cooldown it becomes effective only after that
+ * cooldown elapses, so the copy never promises an immediate unblock — the user
+ * re-opens the offer once it's active (re-opening re-runs the preflight). The
+ * block may also be the offer CREATOR's (the preview reports the first failing
+ * party), which the acceptor's acknowledgement cannot clear; that surfaces as a
+ * persisting block on re-open rather than a false success here.
+ */
+function MidTierAckRecorder({ offer }: { offer: OfferData }) {
+  const { address } = useWallet();
+  const rw = useDiamondContract() as unknown as {
+    setMidTierPairAck: (p: {
+      lendAsset: string;
+      lendType: number;
+      lendTokenId: bigint;
+      collAsset: string;
+      collType: number;
+      collTokenId: bigint;
+      prepayAsset: string;
+    }) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
+  };
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  async function record() {
+    const step = beginStep({
+      area: 'offer-accept',
+      flow: 'setMidTierPairAck',
+      step: 'record',
+      wallet: address ?? undefined,
+      offerId: offer.id,
+    });
+    setBusy(true);
+    setErr(null);
+    try {
+      const tx = await rw.setMidTierPairAck({
+        lendAsset: offer.lendingAsset,
+        lendType: offer.assetType,
+        lendTokenId: offer.tokenId,
+        collAsset: offer.collateralAsset,
+        // Optional NFT-shape fields default to the ERC-20 sentinel; the contract
+        // canonicalises token ids / prepay for non-NFT legs anyway.
+        collType: offer.collateralAssetType ?? 0,
+        collTokenId: offer.collateralTokenId ?? 0n,
+        prepayAsset: offer.prepayAsset ?? ZERO_ADDR,
+      });
+      await tx.wait();
+      step.success();
+      setDone(true);
+    } catch (e) {
+      setErr((e as Error).message);
+      step.failure(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done) {
+    return (
+      <div role="status" style={{ margin: '0.5rem 0', fontSize: '0.82rem', opacity: 0.85 }}>
+        Acknowledgement recorded for this pair. If an opt-up cooldown is configured
+        it becomes effective once the cooldown elapses — re-open this offer to
+        accept once it's active. If the block persists, it may be the offer
+        creator's requirement, which your acknowledgement can't clear.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ margin: '0.5rem 0' }}>
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm"
+        disabled={busy}
+        onClick={() => void record()}
+      >
+        {busy ? 'Recording acknowledgement…' : 'Record mid-tier acknowledgement'}
+      </button>
+      {err && (
+        <div role="alert" style={{ marginTop: '0.4rem', fontSize: '0.8rem', color: 'var(--danger, #d66)' }}>
+          {err}
+        </div>
+      )}
     </div>
   );
 }

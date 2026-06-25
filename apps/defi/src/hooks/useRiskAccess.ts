@@ -57,6 +57,17 @@ export interface RiskAccessState {
   /** False when the gate-enabled read failed — `gateEnabled` is then unknown,
    *  not authoritative. */
   gateEnabledKnown: boolean;
+  /** #735 item 3 — whether the vault has opted INTO strict mode (a fresh explicit
+   *  per-pair acknowledgement is then required for every mid-tier pair too). */
+  strictMode: boolean;
+  /** False when the strict-mode read failed — `strictMode` is then unknown. */
+  strictModeKnown: boolean;
+  /** The disable-linger expiry (unix seconds): after turning strict mode OFF on a
+   *  deployment with a cooldown, the mid-tier ack requirement stays in force until
+   *  this timestamp. 0 = no pending linger. */
+  strictModeUntil: bigint;
+  /** False when the linger read failed — `strictModeUntil` is then unknown. */
+  strictModeUntilKnown: boolean;
   /** Global risk-terms version (a bump re-locks every held tier / consent). */
   termsVersion: bigint;
   /** False when the terms-version read failed — `termsVersion` is then unknown,
@@ -123,6 +134,11 @@ export function useRiskAccess(): RiskAccessState {
   const [tierAnchorKnown, setTierAnchorKnown] = useState(true);
   const [supported, setSupported] = useState(true);
   const [criticalReadFailed, setCriticalReadFailed] = useState(false);
+  // #735 item 3 — strict mode: the per-vault flag + the disable-linger expiry.
+  const [strictMode, setStrictMode] = useState(false);
+  const [strictModeKnown, setStrictModeKnown] = useState(true);
+  const [strictModeUntil, setStrictModeUntil] = useState<bigint>(0n);
+  const [strictModeUntilKnown, setStrictModeUntilKnown] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // The key (vault + chain) the displayed state was loaded for. `loading` is
@@ -159,6 +175,8 @@ export function useRiskAccess(): RiskAccessState {
       getCurrentRiskTermsVersion: () => Promise<bigint>;
       getVaultRiskTierVersion: (a: string) => Promise<number | bigint>;
       getRiskAccessGateEnabled: () => Promise<boolean>;
+      getRiskStrictMode: (a: string) => Promise<boolean>;
+      getStrictModeStrictUntil: (a: string) => Promise<number | bigint>;
     };
     // A failed effective/raw TIER read must NOT leave the page showing a
     // trustworthy-looking default (BlueChip) with enabled controls — a stale /
@@ -177,8 +195,15 @@ export function useRiskAccess(): RiskAccessState {
       }
     }
     if (!missing) {
-      const [rawT, unlockRes, versionRes, anchorRes, gateRes] =
-        await Promise.all([
+      const [
+        rawT,
+        unlockRes,
+        versionRes,
+        anchorRes,
+        gateRes,
+        strictRes,
+        strictUntilRes,
+      ] = await Promise.all([
         ro.getVaultRiskTier(address).catch((e) => {
           critical = true;
           if (live()) setError((e as Error).message);
@@ -213,11 +238,28 @@ export function useRiskAccess(): RiskAccessState {
           .getRiskAccessGateEnabled()
           .then((v) => ({ ok: true, v: Boolean(v) }))
           .catch(() => ({ ok: false, v: false })),
+        // #735 item 3 — strict mode flag. A failed read leaves it UNKNOWN (don't
+        // imply strict mode is off when it might be on); a Diamond predating the
+        // getter lands here too ⇒ no toggle reflected, correct.
+        ro
+          .getRiskStrictMode(address)
+          .then((v) => ({ ok: true, v: Boolean(v) }))
+          .catch(() => ({ ok: false, v: false })),
+        // The disable-linger expiry: while > now after a disable, the mid-tier ack
+        // requirement stays in force. A failed read leaves it UNKNOWN.
+        ro
+          .getStrictModeStrictUntil(address)
+          .then((v) => ({ ok: true, v: BigInt(v) }))
+          .catch(() => ({ ok: false, v: 0n })),
       ]);
       if (live()) {
         setRawTier(Number(rawT) as RiskTier);
         setTierUnlockAt(unlockRes.v);
         setTierUnlockKnown(unlockRes.ok);
+        setStrictMode(strictRes.v);
+        setStrictModeKnown(strictRes.ok);
+        setStrictModeUntil(strictUntilRes.v);
+        setStrictModeUntilKnown(strictUntilRes.ok);
         setTermsVersion(versionRes.v);
         setTermsVersionKnown(versionRes.ok);
         setTierAnchorVersion(anchorRes.v);
@@ -256,6 +298,10 @@ export function useRiskAccess(): RiskAccessState {
     tierUnlockKnown,
     gateEnabled,
     gateEnabledKnown,
+    strictMode,
+    strictModeKnown,
+    strictModeUntil,
+    strictModeUntilKnown,
     termsVersion,
     termsVersionKnown,
     tierAnchorVersion,
