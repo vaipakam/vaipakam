@@ -122,6 +122,16 @@ export function useMidTierAckGate(pair: RiskPairId | null): MidTierAckGate {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address, pairKey, onDeployedChain, diamondRo, nonce]);
 
+  // Reset the recorded/error state whenever the pair or wallet changes: `recorded`
+  // is per-acknowledgement, not per-hook, so in a long-lived create form a user who
+  // records an ack for one pair and then edits to a different (still-blocked) pair
+  // must see the recorder again rather than the stale "recorded" branch (Codex
+  // #740 r2). Keyed on `pairKey` (the pair's value identity) + `address`.
+  useEffect(() => {
+    setRecorded(false);
+    setError(null);
+  }, [pairKey, address]);
+
   const refresh = useCallback(() => setNonce((n) => n + 1), []);
 
   const record = useCallback(async () => {

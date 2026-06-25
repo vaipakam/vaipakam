@@ -1745,19 +1745,30 @@ export default function CreateOffer() {
             const validationError = validate();
             // #735 item 3 — also block submit while a strict-mode mid-tier
             // acknowledgement is outstanding for this pair (the create would
-            // revert `MidTierPairNotAcknowledged` otherwise).
+            // revert `MidTierPairNotAcknowledged` otherwise). Codex #740 r2:
+            // ALSO block while the verdict is unknown — `useMidTierAckGate` leaves
+            // `blocked=false` while the read is still loading or after a real read
+            // failure, so without this a create could slip through before the read
+            // resolves and still hit the revert. The missing-facet case sets
+            // `known=true`, so older gate-less diamonds aren't affected.
             const midTierBlocked = midTierGate.blocked;
+            const midTierUnknown = createPair !== null && !midTierGate.known;
             const tooltip = step === "form" && validationError
               ? formatValidationError(validationError)
               : step === "form" && midTierBlocked
                 ? "Record the strict-mode mid-tier acknowledgement for this pair first."
-                : undefined;
+                : step === "form" && midTierUnknown
+                  ? "Checking the strict-mode mid-tier requirement…"
+                  : undefined;
             return (
               <button
                 type="submit"
                 className="btn btn-primary"
                 disabled={
-                  step !== "form" || validationError !== null || midTierBlocked
+                  step !== "form" ||
+                  validationError !== null ||
+                  midTierBlocked ||
+                  midTierUnknown
                 }
                 data-tooltip={tooltip}
               >

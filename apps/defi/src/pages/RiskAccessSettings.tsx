@@ -131,7 +131,7 @@ export default function RiskAccessSettings() {
       step.success();
       setNotice(
         enable
-          ? "Strict mode enabled. Every mid-tier pair you originate now needs a fresh explicit per-pair acknowledgement (collected at accept time)."
+          ? "Strict mode enabled. Every mid-tier pair you originate now needs a fresh explicit per-pair acknowledgement, collected when you create a mid-tier offer or accept one."
           : "Strict mode disabled. If an opt-up cooldown is configured, the mid-tier acknowledgement requirement stays in force until it elapses.",
       );
       await risk.refresh();
@@ -358,7 +358,8 @@ export default function RiskAccessSettings() {
       <p style={{ fontSize: "0.85rem", opacity: 0.8, marginTop: "-0.2rem" }}>
         Off by default. While on, every <em>mid-tier</em> (liquid-but-not-blue-chip)
         pair you originate also needs a fresh, deliberate per-pair acknowledgement —
-        not just the tier opt-up. The acknowledgement is collected at accept time.
+        not just the tier opt-up. The acknowledgement is collected in the flow that
+        needs it: when you create a mid-tier offer, and when you accept one.
       </p>
       {!risk.strictModeKnown ? (
         <p style={{ fontSize: "0.85rem", opacity: 0.7 }}>
