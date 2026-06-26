@@ -53,6 +53,10 @@ import { CardInfo } from '../CardInfo';
  *      `setKeeperActions` granting AUTO_ROLL (+ SIGNED_FILL when the
  *      intent is keeper-gated) — BEFORE registration relists capital.
  *   3. `setLenderIntent(...)` — register / update (relist) the intent.
+ *      EXCEPTION: for an ALREADY-ACTIVE intent whose terms are being
+ *      tightened, step 3 runs BEFORE step 2 — the intent is already
+ *      fillable, so updating the terms first prevents the keeper from
+ *      filling under the old looser terms between txs (see step `2 & 3`).
  *   4. `fundLenderIntent(...)` LAST — pulls working capital into vault
  *      custody only after every authorisation is in place, so capital
  *      is never parked ahead of a fillable, properly-delegated intent.
@@ -264,7 +268,10 @@ export default function AutoLendIntentCard() {
   // effect; everything below is set post-await).
   const [loadedPairKey, setLoadedPairKey] = useState<string>('');
   // chain+wallet+pair the form was last prefilled from, so prefill runs once.
-  const [prefilledKey, setPrefilledKey] = useState<string>('');
+  // Wallet+pair the form was last prefilled from — a ref (not state) so
+  // it isn't a `reloadPair` dependency: stamping it must NOT recreate the
+  // callback and trigger a redundant re-fetch.
+  const prefilledKeyRef = useRef<string>('');
 
   // Identity all stamps are scoped to: a chain switch OR a wallet switch
   // invalidates every loaded read so none can drive a stale skip decision.
@@ -344,6 +351,9 @@ export default function AutoLendIntentCard() {
     const lendingAsset = form.lendingAsset;
     const collateralAsset = form.collateralAsset;
     if (!address || !diamondRo || !lendingAsset || !collateralAsset) return null;
+    // No ERC20 handle yet => can't read decimals; fail closed (leave the
+    // pair unloaded) rather than parse amounts at a default 18 decimals.
+    if (!lendingErc20) return null;
     const key = `${chainId ?? ''}:${address}:${lendingAsset}:${collateralAsset}`;
     try {
       const ro = diamondRo as unknown as {
@@ -359,21 +369,20 @@ export default function AutoLendIntentCard() {
           c: string,
         ) => Promise<bigint>;
       };
-      const decimalsP = lendingErc20
-        ? (lendingErc20 as unknown as { decimals: () => Promise<number> })
-            .decimals()
-            // A legitimate 0-decimals token must stay 0. A non-finite or
-            // reverting read must FAIL the whole pair load (throw, not
-            // default to 18) — otherwise a 6-dec token hit by a transient
-            // failure would parse amounts at 18 decimals and try to
-            // approve/fund 1e12x the intended size. The throw is caught
-            // below and leaves the pair unloaded (fail-closed).
-            .then((d) => {
-              const n = Number(d);
-              if (!Number.isFinite(n)) throw new Error('bad decimals');
-              return n;
-            })
-        : Promise.resolve(18);
+      // A legitimate 0-decimals token must stay 0. A non-finite or reverting
+      // read must FAIL the whole pair load (throw, not default to 18) —
+      // otherwise a 6-dec token hit by a transient failure would parse
+      // amounts at 18 decimals and try to approve/fund 1e12x the intended
+      // size. The throw is caught below and leaves the pair unloaded.
+      const decimalsP = (
+        lendingErc20 as unknown as { decimals: () => Promise<number> }
+      )
+        .decimals()
+        .then((d) => {
+          const n = Number(d);
+          if (!Number.isFinite(n)) throw new Error('bad decimals');
+          return n;
+        });
       const [iv, cap, live, dec] = await Promise.all([
         ro.getLenderIntent(address, lendingAsset, collateralAsset),
         ro.getLenderIntentCapital(address, lendingAsset, collateralAsset),
@@ -410,17 +419,28 @@ export default function AutoLendIntentCard() {
       // intent that still has reserved capital (a paused intent) so
       // "Enable to resume" keeps the prior bounds without manual re-entry.
       const hasStoredTerms = view.active || BigInt(cap) > 0n;
-      if (hasStoredTerms && prefilledKey !== key) {
-        setPrefilledKey(key);
-        setForm((f) => ({
-          ...f,
-          maxExposure: formatUnits(view.maxExposure, dec),
-          minFillAmount: formatUnits(view.minFillAmount, dec),
-          minRatePct: String(Number(view.minRateBps) / 100),
-          maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
-          maxDurationDays: String(Number(view.maxDurationDays)),
-          requiresKeeperAuth: view.requiresKeeperAuth,
-        }));
+      if (hasStoredTerms && prefilledKeyRef.current !== key) {
+        prefilledKeyRef.current = key;
+        setForm((f) => {
+          // Inner belt-and-suspenders guard: if the live form already moved
+          // to a different pair (the outer formRef guard can lag a render),
+          // don't overwrite the new pair's editable bounds.
+          if (
+            f.lendingAsset !== lendingAsset ||
+            f.collateralAsset !== collateralAsset
+          ) {
+            return f;
+          }
+          return {
+            ...f,
+            maxExposure: formatUnits(view.maxExposure, dec),
+            minFillAmount: formatUnits(view.minFillAmount, dec),
+            minRatePct: String(Number(view.minRateBps) / 100),
+            maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
+            maxDurationDays: String(Number(view.maxDurationDays)),
+            requiresKeeperAuth: view.requiresKeeperAuth,
+          };
+        });
       }
       return { view, capital: BigInt(cap), livePrincipal: BigInt(live), decimals: dec };
     } catch {
@@ -447,7 +467,6 @@ export default function AutoLendIntentCard() {
     form.lendingAsset,
     form.collateralAsset,
     lendingErc20,
-    prefilledKey,
   ]);
 
   useEffect(() => {

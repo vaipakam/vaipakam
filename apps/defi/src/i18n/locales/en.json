@@ -565,7 +565,7 @@
     "errLtv": "Max init LTV must be between 0% and 100%.",
     "errDuration": "Max term must be at least one day.",
     "errRateTooHigh": "Min rate can't exceed 100% APR.",
-    "errFundOverExposure": "Amount to fund can't exceed your max exposure.",
+    "errFundOverExposure": "Your total committed capital (idle + already lent + this top-up) would exceed your max exposure. Lower the top-up or raise max exposure.",
     "errKeeperOnlyNoKeeper": "No keeper is published on this chain, so a keeper-only intent could never be filled. Uncheck \"restrict fills to my delegated keeper\" to allow permissionless fills.",
     "errRiskConsent": "Please review and accept the risk disclosures before enabling auto-lend.",
     "errAckKeeperMaster": "Please acknowledge that enabling auto-lend turns on keeper access for your wallet.",
