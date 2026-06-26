@@ -518,7 +518,7 @@
     "body": "Register a standing lend intent on an asset pair and fund working capital. The protocol keeper fills matching borrower demand under your bounds and — once you delegate it — auto-rolls fully-repaid loans straight back into your capital, with no manual claim round-trip. You stay in control: pause, top up, or withdraw any time.",
     "fillPathOff": "Intent filling is paused by admin on this chain. You can register and fund now; the keeper starts filling automatically once it's re-enabled.",
     "activeSummary": "Active intent — {{capital}} working capital funded.",
-    "pausedTag": "paused",
+    "consentRevokedTag": "consent marker revoked (this intent is still active & fillable — use Withdraw & stop to fully stop it)",
     "grantMissingTag": "keeper not yet delegated",
     "lendingAssetLabel": "Lending asset (what you supply)",
     "collateralAssetLabel": "Collateral asset (what borrowers post)",

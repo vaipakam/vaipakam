@@ -3,7 +3,11 @@ import { Coins, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { parseUnits, formatUnits, isAddress, zeroAddress } from 'viem';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
-import { useDiamondContract, useDiamondRead } from '../../contracts/useDiamond';
+import {
+  useDiamondContract,
+  useDiamondRead,
+  useCanWrite,
+} from '../../contracts/useDiamond';
 import { useERC20 } from '../../contracts/useERC20';
 import { DEFAULT_CHAIN } from '../../contracts/config';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -119,6 +123,10 @@ export default function AutoLendIntentCard() {
   const { address, activeChain, isCorrectChain, chainId } = useWallet();
   const diamond = useDiamondContract();
   const diamondRo = useDiamondRead();
+  // True only when state-changing calls can actually settle (wallet
+  // connected, correct chain, AND no read-only view-chain override) —
+  // the documented guard for write surfaces, stronger than isCorrectChain.
+  const canWrite = useCanWrite();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   // Latest form, readable inside async resolves to guard against a
@@ -223,23 +231,29 @@ export default function AutoLendIntentCard() {
       const ro = diamondRo as unknown as {
         getAutoLendEnabled: () => Promise<boolean>;
         isLenderIntentEnabled: () => Promise<boolean>;
+        getPartialFillEnabled: () => Promise<boolean>;
         getAutoLendConsent: (u: string) => Promise<boolean>;
         getKeeperAccess: (u: string) => Promise<boolean>;
         getKeeperActions: (u: string, k: string) => Promise<bigint | number>;
         getApprovedKeepers: (u: string) => Promise<string[]>;
       };
-      const [adminLend, fillPath, c, kAccess, acts, keepers] = await Promise.all([
-        ro.getAutoLendEnabled(),
-        ro.isLenderIntentEnabled(),
-        ro.getAutoLendConsent(address),
-        ro.getKeeperAccess(address),
-        keeperAddress
-          ? ro.getKeeperActions(address, keeperAddress)
-          : Promise.resolve(null),
-        ro.getApprovedKeepers(address),
-      ]);
+      const [adminLend, intentEnabled, partialFill, c, kAccess, acts, keepers] =
+        await Promise.all([
+          ro.getAutoLendEnabled(),
+          ro.isLenderIntentEnabled(),
+          ro.getPartialFillEnabled(),
+          ro.getAutoLendConsent(address),
+          ro.getKeeperAccess(address),
+          keeperAddress
+            ? ro.getKeeperActions(address, keeperAddress)
+            : Promise.resolve(null),
+          ro.getApprovedKeepers(address),
+        ]);
       setAdminLendEnabled(Boolean(adminLend));
-      setFillPathEnabled(Boolean(fillPath));
+      // matchIntent rejects when EITHER the partial-fill gate OR the
+      // lender-intent gate is off (it checks partial-fill first), so
+      // fills are only really possible when BOTH are enabled.
+      setFillPathEnabled(Boolean(intentEnabled) && Boolean(partialFill));
       setConsent(Boolean(c));
       setKeeperAccess(Boolean(kAccess));
       setKeeperActions(acts === null ? null : Number(acts));
@@ -277,13 +291,17 @@ export default function AutoLendIntentCard() {
       const decimalsP = lendingErc20
         ? (lendingErc20 as unknown as { decimals: () => Promise<number> })
             .decimals()
-            // A legitimate 0-decimals token must stay 0 — only a non-finite
-            // read (revert / non-ERC20) falls back to 18.
+            // A legitimate 0-decimals token must stay 0. A non-finite or
+            // reverting read must FAIL the whole pair load (throw, not
+            // default to 18) — otherwise a 6-dec token hit by a transient
+            // failure would parse amounts at 18 decimals and try to
+            // approve/fund 1e12x the intended size. The throw is caught
+            // below and leaves the pair unloaded (fail-closed).
             .then((d) => {
               const n = Number(d);
-              return Number.isFinite(n) ? n : 18;
+              if (!Number.isFinite(n)) throw new Error('bad decimals');
+              return n;
             })
-            .catch(() => 18)
         : Promise.resolve(18);
       const [iv, cap, live, dec] = await Promise.all([
         ro.getLenderIntent(address, lendingAsset, collateralAsset),
@@ -334,14 +352,13 @@ export default function AutoLendIntentCard() {
         }));
       }
     } catch {
-      // Only stamp the failure if this read still owns the current pair.
-      const liveForm = formRef.current;
-      const liveFullKey = `${idKeyRef.current}:${liveForm.lendingAsset}:${liveForm.collateralAsset}`;
-      if (liveFullKey !== key) return;
-      setLoadedPairKey(key);
-      setIntent(null);
-      setCapital(null);
-      setLivePrincipal(null);
+      // FAIL CLOSED: do NOT stamp `loadedPairKey` on a read failure. If we
+      // did, `pairLoaded` would go true with capital / live-principal held
+      // as null (treated as 0), and the headroom check could approve an
+      // over-funding the data was meant to block. Leaving the key unstamped
+      // keeps `pairLoaded` false for this pair, disabling Enable until a
+      // successful read. (A prior successful load for the SAME pair keeps
+      // its last-good values; a first load or a new pair stays unloaded.)
     }
   }, [
     address,
@@ -551,6 +568,7 @@ export default function AutoLendIntentCard() {
     if (
       !address ||
       !diamond ||
+      !canWrite ||
       !parsed.ok ||
       !accountLoaded ||
       !decimalsReady ||
@@ -687,7 +705,7 @@ export default function AutoLendIntentCard() {
   // registry; the funded capital stays reserved (re-enable resumes with
   // no re-funding, or Withdraw retrieves it).
   const handlePause = async () => {
-    if (!address || !diamond) return;
+    if (!address || !diamond || !canWrite) return;
     const { lendingAsset, collateralAsset } = form;
     if (!lendingAsset || !collateralAsset) return;
     setError(null);
@@ -715,7 +733,7 @@ export default function AutoLendIntentCard() {
 
   // ── Withdraw all un-lent capital + cancel the intent ─────────────
   const handleWithdrawAndStop = async () => {
-    if (!address || !diamond) return;
+    if (!address || !diamond || !canWrite) return;
     const { lendingAsset, collateralAsset } = form;
     if (!lendingAsset || !collateralAsset) return;
     setError(null);
@@ -770,7 +788,7 @@ export default function AutoLendIntentCard() {
   // a user can always revoke their own consent. Does NOT touch any
   // intent or capital; the per-pair Stop handles those.
   const handleRevokeConsent = async () => {
-    if (!address || !diamond) return;
+    if (!address || !diamond || !canWrite) return;
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -839,7 +857,11 @@ export default function AutoLendIntentCard() {
                 {t('autoLend.activeSummary', {
                   capital: capitalStr ?? '0',
                 })}
-                {consent === false && ` — ${t('autoLend.pausedTag')}`}
+                {/* An ACTIVE intent is fillable regardless of the consent
+                    marker (matchIntent never checks it), so a revoked
+                    marker is NOT "paused" — say only the marker is off and
+                    point to Withdraw & stop for an actual stop. */}
+                {consent === false && ` — ${t('autoLend.consentRevokedTag')}`}
                 {keeperAddress && !grantSatisfied && ` — ${t('autoLend.grantMissingTag')}`}
               </div>
             </div>
@@ -1028,7 +1050,7 @@ export default function AutoLendIntentCard() {
               onClick={handleEnable}
               disabled={
                 busy ||
-                !isCorrectChain ||
+                !canWrite ||
                 validation != null ||
                 !accountLoaded ||
                 !decimalsReady ||
@@ -1045,7 +1067,7 @@ export default function AutoLendIntentCard() {
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handlePause}
-                disabled={busy}
+                disabled={busy || !canWrite}
               >
                 {t('autoLend.actionPause')}
               </button>
@@ -1054,7 +1076,7 @@ export default function AutoLendIntentCard() {
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleWithdrawAndStop}
-                disabled={busy}
+                disabled={busy || !canWrite}
               >
                 {t('autoLend.actionStop')}
               </button>
@@ -1066,7 +1088,7 @@ export default function AutoLendIntentCard() {
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={handleRevokeConsent}
-                disabled={busy || !isCorrectChain}
+                disabled={busy || !canWrite}
                 title={t('autoLend.revokeConsentHint')}
               >
                 {t('autoLend.actionRevokeConsent')}
