@@ -3,6 +3,7 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
+import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibAccessControl, DiamondAccessControl} from
     "../libraries/LibAccessControl.sol";
 
@@ -678,7 +679,7 @@ contract RiskAccessFacet is DiamondAccessControl {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, lenderOfferId, borrowerOfferId);
+        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
         LibRiskAccess.assertActorMayTransact(s, actorA, pair);
         if (actorB != address(0)) {
             LibRiskAccess.assertActorMayTransact(s, actorB, pair);
@@ -705,13 +706,72 @@ contract RiskAccessFacet is DiamondAccessControl {
             address actorA,
             address actorB,
             LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, lenderOfferId, borrowerOfferId);
+        ) = _resolveMatchActors(s, s.offers[lenderOfferId].creator, borrowerOfferId);
         uint8 a = LibRiskAccess.previewActorBlock(s, actorA, pair);
         if (a != 0) return a;
         if (actorB != address(0)) {
             return LibRiskAccess.previewActorBlock(s, actorB, pair);
         }
         return 0;
+    }
+
+    /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. A
+    ///         keeper calls this BEFORE submitting `matchIntent` to learn,
+    ///         off-chain and gas-free, whether the fill would succeed and — if
+    ///         not — the exact first reason it would revert. On success it also
+    ///         returns the principal / midpoint rate / required collateral the
+    ///         fill would lock, so a solver can size the call from one read.
+    /// @dev    The intent-level guards + the shared match-admission core run in
+    ///         {LibOfferMatch.previewIntent}; this wrapper layers the #671
+    ///         risk-access gate on top (it owns the actor resolver), exactly as
+    ///         `OfferMatchFacet._executeMatch` calls {assertMatchAllowed} after
+    ///         `previewMatch`. The binding guarantee that this preview agrees
+    ///         with the live fill is the `previewIntent` Ok ⟺ `matchIntent`
+    ///         succeeds agreement test (`LenderIntentPreview.t.sol`).
+    /// @param  solver  Prospective filler — `requiresKeeperAuth` is checked
+    ///         against THIS address, not this view's `msg.sender`, so a keeper
+    ///         can preview on behalf of the account that would submit.
+    /// @param  lender  Intent owner (slice creator).
+    /// @param  lendingAsset / collateralAsset  Intent key.
+    /// @param  counterpartyOfferId  The stored borrower offer to fill against.
+    /// @param  fillAmount  Principal the solver intends to lend this fill.
+    function previewIntent(
+        address solver,
+        address lender,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 counterpartyOfferId,
+        uint256 fillAmount
+    ) external view returns (LibOfferMatch.IntentPreviewResult memory res) {
+        res = LibOfferMatch.previewIntent(
+            solver,
+            lender,
+            lendingAsset,
+            collateralAsset,
+            counterpartyOfferId,
+            fillAmount
+        );
+        // An intent-guard or match-core failure is the binding reason; the
+        // risk-access gate is moot, so leave `riskBlock == 0` and return.
+        if (!res.ok) return res;
+        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return res;
+
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // Mirror `_executeMatch`'s `assertMatchAllowed(slice, counterparty)`:
+        // resolve the gated parties via the slice's CREATOR (= `lender`; the
+        // slice has no offer id) and the borrower offer. Handles the
+        // lender-sale-vehicle branch identically to the enforcing path.
+        (
+            address actorA,
+            address actorB,
+            LibRiskAccess.PairId memory pair
+        ) = _resolveMatchActors(s, lender, counterpartyOfferId);
+        uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, pair);
+        if (rb == 0 && actorB != address(0)) {
+            rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
+        }
+        res.riskBlock = rb;
+        if (rb != 0) res.ok = false;
     }
 
     // ─── Internals ───────────────────────────────────────────────────────────
@@ -737,9 +797,14 @@ contract RiskAccessFacet is DiamondAccessControl {
     ///      LINKED loan's pair. Mirrors `LoanFacet._maybeRunInitialRiskGates`'s
     ///      sale-vehicle branch + the PR-2a sale-buyer treatment. actorA = buyer,
     ///      actorB = address(0).
+    /// @dev The lender leg is passed as a CREATOR ADDRESS (not an offer id) so
+    ///      this same resolver serves a #625 auto-lend intent slice, which is
+    ///      never stored as an offer and so has no id to look up — only its
+    ///      `creator` (the intent owner) is needed here. The id-based callers
+    ///      pass `s.offers[lenderOfferId].creator`.
     function _resolveMatchActors(
         LibVaipakam.Storage storage s,
-        uint256 lenderOfferId,
+        address lenderCreator,
         uint256 borrowerOfferId
     )
         private
@@ -749,7 +814,7 @@ contract RiskAccessFacet is DiamondAccessControl {
         uint256 soldLoanId = s.saleOfferToLoanId[borrowerOfferId];
         if (soldLoanId != 0) {
             LibVaipakam.Loan storage sold = s.loans[soldLoanId];
-            actorA = s.offers[lenderOfferId].creator; // buyer (incoming lender)
+            actorA = lenderCreator; // buyer (incoming lender)
             actorB = address(0); // seller exempt
             pair = LibRiskAccess.PairId({
                 lendAsset: sold.principalAsset,
@@ -763,7 +828,7 @@ contract RiskAccessFacet is DiamondAccessControl {
             return (actorA, actorB, pair);
         }
         LibVaipakam.Offer storage bo = s.offers[borrowerOfferId];
-        actorA = s.offers[lenderOfferId].creator;
+        actorA = lenderCreator;
         actorB = bo.creator;
         pair = LibRiskAccess.PairId({
             lendAsset: bo.lendingAsset,

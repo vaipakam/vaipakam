@@ -129,17 +129,34 @@ library LibAuth {
         internal
         view
     {
-        if (msg.sender == address(this)) return; // diamond-internal
-        if (msg.sender == principal) return; // self
-        // #633 — global delegated-keeper pause (principal can still self-act).
-        if (LibVaipakam.cfgKeepersPaused()) {
+        if (!isKeeperForPrincipal(msg.sender, action, principal)) {
             revert IVaipakamErrors.KeeperAccessRequired();
         }
+    }
+
+    /// @notice Non-reverting twin of {requireKeeperForPrincipal}: reports
+    ///         whether `solver` is authorized to act for `principal` on
+    ///         `action`, applying the IDENTICAL rules (diamond-internal / self
+    ///         exempt, global keeper-pause, per-principal enable + action mask).
+    /// @dev    #625 WI-2b — `RiskAccessFacet.previewIntent` calls this to tell a
+    ///         keeper, off-chain, whether a `requiresKeeperAuth` intent is
+    ///         fillable BY THAT SOLVER before it spends gas on `matchIntent`
+    ///         (which would revert `KeeperAccessRequired`). Reusing the same
+    ///         predicate the enforcing path consumes means preview and
+    ///         execution can't diverge on authorization.
+    function isKeeperForPrincipal(
+        address solver,
+        uint8 action,
+        address principal
+    ) internal view returns (bool) {
+        if (solver == address(this)) return true; // diamond-internal
+        if (solver == principal) return true; // self
+        // #633 — global delegated-keeper pause (principal can still self-act).
+        if (LibVaipakam.cfgKeepersPaused()) return false;
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        if (
-            !s.keeperAccessEnabled[principal] ||
-            (s.approvedKeeperActions[principal][msg.sender] & action) == 0
-        ) revert IVaipakamErrors.KeeperAccessRequired();
+        return
+            s.keeperAccessEnabled[principal] &&
+            (s.approvedKeeperActions[principal][solver] & action) != 0;
     }
 
 }

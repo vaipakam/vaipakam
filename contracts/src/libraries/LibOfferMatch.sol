@@ -5,6 +5,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {LibRiskMath} from "./LibRiskMath.sol";
 import {LibAutoRefinanceCheck} from "./LibAutoRefinanceCheck.sol";
+import {LibAuth} from "./LibAuth.sol";
+import {LibPausable} from "./LibPausable.sol";
 import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 
@@ -69,6 +71,54 @@ library LibOfferMatch {
         uint256 matchRateBps;
         uint256 reqCollateral;
         uint256 lenderRemainingPostMatch;
+    }
+
+    /// @notice #625 WI-2b — intent-fill preview failure codes. Each mirrors,
+    ///         1:1 and IN THE SAME ORDER, a revert `OfferMatchFacet.matchIntent`
+    ///         raises BEFORE the shared match core runs, so an off-chain solver
+    ///         learns the exact reason a fill would fail without spending gas on
+    ///         a reverting tx. `Ok` means every intent-level guard passed and
+    ///         the verdict moves to `MatchResult.errorCode` (+ the facet's
+    ///         risk-access block). The order is load-bearing: `previewIntent`
+    ///         returns the FIRST failing code, exactly as `matchIntent` reverts
+    ///         on its first failing guard — the agreement test pins this.
+    enum IntentError {
+        Ok,
+        Paused,                  // diamond globally paused (whenNotPaused)
+        Sanctioned,              // solver or lender flagged by the sanctions oracle
+        MatcherDisabled,         // partialFillEnabled OFF  → FunctionDisabled(3)
+        IntentDisabled,          // lenderIntentEnabled OFF → FunctionDisabled(4)
+        AggregatorPaused,        // aggregator-adapter intent frozen (#633)
+        Inactive,                // LenderIntentInactive
+        VpfiLendingUnsupported,  // LenderIntentVpfiLendingUnsupported
+        KeeperUnauthorized,      // requiresKeeperAuth + this solver not delegated
+        BelowMinFill,            // LenderIntentFillBelowMin
+        ExposureExceeded,        // LenderIntentExposureExceeded
+        DurationTooLong,         // LenderIntentDurationTooLong
+        FullTermRequired,        // LenderIntentFullTermRequired
+        PartialRepayNotAllowed,  // LenderIntentPartialRepayNotAllowed
+        CollateralUnresolvable,  // LenderIntentCollateralUnresolvable
+        CapitalInsufficient      // funded capital < fillAmount (IntentCapitalInsufficient)
+    }
+
+    /// @notice Structured outcome of `RiskAccessFacet.previewIntent`. `ok` is
+    ///         true iff EVERY layer cleared: `intentError == Ok` AND
+    ///         `matchError == Ok` AND `riskBlock == 0`. The numeric figures
+    ///         mirror what the on-chain fill would lock, so a solver can size a
+    ///         fill from a single call.
+    /// @dev    `matchError` is `Ok` and the figures are zero when an
+    ///         intent-level guard already failed (the match core was never
+    ///         reached). `riskBlock` is layered in by the facet wrapper (this
+    ///         library has no access to the risk-access actor resolver).
+    struct IntentPreviewResult {
+        bool ok;
+        IntentError intentError;  // intent-level guard verdict (this library)
+        MatchError matchError;    // shared match-core verdict (Ok if not reached)
+        uint8 riskBlock;          // #671 risk-access gate code (facet-filled; 0 = clear)
+        uint256 matchAmount;      // principal the fill would draw (== fillAmount on Ok)
+        uint256 matchRateBps;     // midpoint rate the resulting loan would carry
+        uint256 reqCollateral;    // collateral the borrower must post
+        uint256 availableCapital; // un-lent funded capital this intent can still deploy
     }
 
     /// @notice Asset-continuity check between an existing loan and a
@@ -220,9 +270,43 @@ library LibOfferMatch {
         returns (MatchResult memory r)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        LibVaipakam.Offer storage L = s.offers[lenderOfferId];
-        LibVaipakam.Offer storage B = s.offers[borrowerOfferId];
+        // Delegate to the struct-based core so the identical match-admission
+        // mirror serves both stored-offer matches and a synthesized #625
+        // auto-lend intent slice — the latter has no stored lender offer to
+        // pass an id for (it is materialised only inside the state-changing
+        // `matchIntent`), so `RiskAccessFacet.previewIntent` builds the slice
+        // in memory and previews it through this same core.
+        return _previewMatchCore(
+            s.offers[lenderOfferId], s.offers[borrowerOfferId], s, borrowerCollFloor
+        );
+    }
 
+    /// @notice Struct-based core of `previewMatch` — runs the full
+    ///         match-admission mirror on offer VALUES instead of stored ids.
+    /// @dev    The lender leg is `memory` so a not-yet-stored intent slice can
+    ///         be previewed through the SAME predicates the on-chain fill runs;
+    ///         the borrower leg stays `storage` because a #625 intent fill
+    ///         always targets a stored borrower offer and the
+    ///         refinance-carryover (`matchAdmissible`) + expiry helpers it
+    ///         feeds take a storage ref. An `Offer memory` param is a single
+    ///         memory pointer (not a 40-field stack spill), so this carries no
+    ///         viaIR stack cost. `previewMatch` loads both stored offers and
+    ///         delegates here — behaviour is byte-identical for the id path.
+    /// @param  L Lender-side offer values (a stored lender offer copied to
+    ///         memory, or a synthesized intent slice).
+    /// @param  B Borrower-side stored offer.
+    /// @param  s Diamond storage pointer (refinance-target + risk-param reads).
+    /// @param  borrowerCollFloor See the id-based overload's dev note above.
+    function _previewMatchCore(
+        LibVaipakam.Offer memory L,
+        LibVaipakam.Offer storage B,
+        LibVaipakam.Storage storage s,
+        uint256 borrowerCollFloor
+    )
+        internal
+        view
+        returns (MatchResult memory r)
+    {
         // Both offers must exist and be Lender + Borrower respectively.
         if (
             L.creator == address(0)
@@ -292,7 +376,11 @@ library LibOfferMatch {
         // to be self-trade is still primarily expired, not a
         // racing self-trade attempt; the indexer-facing classifier
         // should reflect that.
-        if (LibVaipakam.isOfferExpired(L) || LibVaipakam.isOfferExpired(B)) {
+        // L may be a memory slice (no storage ref for `isOfferExpired`), so
+        // inline the GTC-sentinel expiry check on it; B stays a storage read.
+        bool lExpired =
+            L.expiresAt != 0 && block.timestamp >= uint256(L.expiresAt);
+        if (lExpired || LibVaipakam.isOfferExpired(B)) {
             r.errorCode = MatchError.OfferExpired;
             return r;
         }
@@ -568,5 +656,167 @@ library LibOfferMatch {
         r.lenderRemainingPostMatch = lenderRemaining - r.matchAmount;
         r.errorCode = MatchError.Ok;
         return r;
+    }
+
+    /// @notice #625 WI-2b — non-mutating preview of a `matchIntent` fill. Runs
+    ///         the SAME intent-level guards `OfferMatchFacet.matchIntent`
+    ///         enforces, IN THE SAME ORDER, then synthesizes the single-fill
+    ///         lender slice in memory and runs it through the shared
+    ///         {_previewMatchCore} against the stored borrower offer. Returns
+    ///         the first failing reason (intent guard OR match-core code) so a
+    ///         solver can decide whether to submit `matchIntent` without
+    ///         spending gas on a revert.
+    /// @dev    The risk-access gate (#671) is layered on by the
+    ///         `RiskAccessFacet.previewIntent` wrapper — it owns the actor
+    ///         resolver — so `ok` here is provisional (intent + match only);
+    ///         the wrapper downgrades it if `riskBlock != 0`. The binding
+    ///         guarantee that this preview agrees with the live path is the
+    ///         `previewIntent` Ok ⟺ `matchIntent` succeeds agreement test.
+    /// @param  solver Prospective filler (the would-be `matchIntent` caller) —
+    ///         caller-sensitive because `requiresKeeperAuth` is checked against
+    ///         it, not against `msg.sender` of this view.
+    function previewIntent(
+        address solver,
+        address lender,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 counterpartyOfferId,
+        uint256 fillAmount
+    ) internal view returns (IntentPreviewResult memory res) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+
+        // ── Mirror matchIntent's guard order EXACTLY (modifier first, then the
+        //    body checks) so each failure maps to the precise on-chain revert. ──
+        if (LibPausable.paused()) return _intentFail(res, IntentError.Paused);
+        if (
+            LibVaipakam.isSanctionedAddress(solver) ||
+            LibVaipakam.isSanctionedAddress(lender)
+        ) return _intentFail(res, IntentError.Sanctioned);
+        if (!s.protocolCfg.partialFillEnabled) {
+            return _intentFail(res, IntentError.MatcherDisabled);
+        }
+        if (!s.protocolCfg.lenderIntentEnabled) {
+            return _intentFail(res, IntentError.IntentDisabled);
+        }
+        if (
+            s.isAggregatorAdapter[lender] &&
+            LibVaipakam.cfgAggregatorAdaptersPaused()
+        ) return _intentFail(res, IntentError.AggregatorPaused);
+
+        LibVaipakam.LenderIntent memory intent =
+            s.lenderIntent[lender][lendingAsset][collateralAsset];
+        if (!intent.active) return _intentFail(res, IntentError.Inactive);
+        if (lendingAsset == s.vpfiToken) {
+            return _intentFail(res, IntentError.VpfiLendingUnsupported);
+        }
+        if (
+            intent.requiresKeeperAuth &&
+            !LibAuth.isKeeperForPrincipal(
+                solver, LibVaipakam.KEEPER_ACTION_SIGNED_FILL, lender
+            )
+        ) return _intentFail(res, IntentError.KeeperUnauthorized);
+        if (fillAmount < intent.minFillAmount) {
+            return _intentFail(res, IntentError.BelowMinFill);
+        }
+
+        uint256 live =
+            s.lenderIntentLivePrincipal[lender][lendingAsset][collateralAsset];
+        if (live + fillAmount > intent.maxExposure) {
+            return _intentFail(res, IntentError.ExposureExceeded);
+        }
+
+        LibVaipakam.Offer storage cp = s.offers[counterpartyOfferId];
+        if (cp.durationDays > intent.maxDurationDays) {
+            return _intentFail(res, IntentError.DurationTooLong);
+        }
+        if (!cp.useFullTermInterest) {
+            return _intentFail(res, IntentError.FullTermRequired);
+        }
+        if (cp.allowsPartialRepay) {
+            return _intentFail(res, IntentError.PartialRepayNotAllowed);
+        }
+
+        uint256 reqColl = LibRiskMath.minCollateralForLtvCap(
+            fillAmount, lendingAsset, collateralAsset, intent.maxInitLtvBps
+        );
+        if (reqColl == 0 || reqColl == type(uint256).max) {
+            return _intentFail(res, IntentError.CollateralUnresolvable);
+        }
+
+        // Funded-capital sufficiency: matchIntent's `unlienIntentCapital`
+        // reverts `IntentCapitalInsufficient` when the fill exceeds funded
+        // capital — the hard funding guard (distinct from `maxExposure`).
+        uint256 capital =
+            s.lenderIntentCapital[lender][lendingAsset][collateralAsset];
+        res.availableCapital = capital;
+        if (fillAmount > capital) {
+            return _intentFail(res, IntentError.CapitalInsufficient);
+        }
+
+        // ── Every intent guard cleared. Synthesize the single-fill lender
+        //    slice in memory (the values matchIntent materializes via
+        //    `_intentSliceParams` + createOffer defaults) and run the shared
+        //    match-admission core against the stored borrower offer. ──
+        LibVaipakam.Offer memory slice = _buildIntentSlice(
+            lender,
+            lendingAsset,
+            collateralAsset,
+            fillAmount,
+            reqColl,
+            intent.minRateBps,
+            cp.durationDays
+        );
+        MatchResult memory mr = _previewMatchCore(slice, cp, s, 0);
+        res.intentError = IntentError.Ok;
+        res.matchError = mr.errorCode;
+        res.matchAmount = mr.matchAmount;
+        res.matchRateBps = mr.matchRateBps;
+        res.reqCollateral = mr.reqCollateral;
+        // Provisional — the facet wrapper downgrades on a non-zero riskBlock.
+        res.ok = (mr.errorCode == MatchError.Ok);
+    }
+
+    /// @dev Stamp an intent-guard failure and short-circuit. `ok` stays false;
+    ///      `matchError` stays `Ok` (the core was never reached) and the figures
+    ///      stay zero — callers key off `intentError` first.
+    function _intentFail(IntentPreviewResult memory res, IntentError e)
+        private
+        pure
+        returns (IntentPreviewResult memory)
+    {
+        res.intentError = e;
+        res.ok = false;
+        return res;
+    }
+
+    /// @dev Build the in-memory single-fill lender slice an intent fill would
+    ///      materialize. Mirrors `OfferMatchFacet._intentSliceParams` for every
+    ///      field {_previewMatchCore} reads; all other fields take the memory
+    ///      zero-default (`amountFilled`/`collateralAmountFilled` = 0, `accepted`
+    ///      = false, `expiresAt`/`refinanceTargetLoanId` = 0, ERC20 token ids /
+    ///      quantities = 0) — exactly what the freshly-created slice carries.
+    function _buildIntentSlice(
+        address creator,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 fillAmount,
+        uint256 reqColl,
+        uint256 minRateBps,
+        uint256 durationDays
+    ) private pure returns (LibVaipakam.Offer memory o) {
+        o.creator = creator;
+        o.offerType = LibVaipakam.OfferType.Lender;
+        o.lendingAsset = lendingAsset;
+        o.collateralAsset = collateralAsset;
+        o.assetType = LibVaipakam.AssetType.ERC20;
+        o.collateralAssetType = LibVaipakam.AssetType.ERC20;
+        o.amount = fillAmount;
+        o.amountMax = fillAmount; // single-fill slice
+        o.interestRateBps = minRateBps; // the lender's floor
+        o.interestRateBpsMax = LibVaipakam.MAX_INTEREST_BPS; // accept any rate ≥ floor
+        o.collateralAmount = reqColl; // init-LTV-cap requirement
+        o.collateralAmountMax = reqColl;
+        o.durationDays = durationDays; // == counterparty term (≤ maxDuration)
+        o.fillMode = LibVaipakam.FillMode.Partial;
     }
 }
