@@ -88,14 +88,15 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
    that reverts `IntentCapitalInsufficient`.
 2. **`previewIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)
    → MatchResult`** — a view that synthesizes the lender slice the way `matchIntent` would
-   and runs the `previewMatch` matrix against the counterparty, **plus every intent-only
-   check `matchIntent` adds that `previewMatch` does NOT**: capital ≥ fillAmount, exposure
-   room, duration ≤ cap, the borrower's `useFullTermInterest == true` AND
-   `allowsPartialRepay == false` (`previewMatch` never inspects these — it only runs the
-   generic asset/amount/rate/collateral/HF matrix), LTV-resolvable collateral, and the two
-   kill-switches + aggregator-pause + VPFI-lending block. A preview that mirrored only
-   `previewMatch` would report Ok for a borrower offer `matchIntent` rejects — defeating the
-   dry-run.
+   and runs the `previewMatch` matrix against the counterparty, **plus EVERY intent-only
+   check `matchIntent` adds that `previewMatch` does NOT** (mirror them exhaustively):
+   `intent.active`, `fillAmount ≥ minFillAmount`, exposure room (`live + fillAmount ≤
+   maxExposure`), capital ≥ fillAmount, duration ≤ cap, the borrower's
+   `useFullTermInterest == true` AND `allowsPartialRepay == false` (`previewMatch` never
+   inspects these — it only runs the generic asset/amount/rate/collateral/HF matrix),
+   LTV-resolvable collateral, and the two kill-switches + aggregator-pause + VPFI-lending
+   block. A preview that mirrored only `previewMatch` would report Ok for a borrower offer
+   `matchIntent` rejects — defeating the dry-run.
 3. **EIP-170 watch:** if `LenderIntentFacet` lacks headroom for the view(s), place the
    read views on the metrics facet that already hosts `getActiveOffersPaginated`, keeping
    only the enumerable-set maintenance on `LenderIntentFacet`. Facet-addition / selector /
@@ -111,10 +112,11 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 3. For each remaining intent, find borrower offers that fit: **rate** — `intent.minRateBps
    ≤ borrowerOffer.interestRateBpsMax` (the borrower's CEILING — NOT `interestRateBps`, the
    floor); **duration** ≤ `maxDurationDays`; **init-LTV** ≤ `maxInitLtvBps`; **amount** —
-   bounded by BOTH sides: `[minFillAmount, min(maxExposure − live, availableCapital,
-   borrowerRemainingCapacity)]`. The slice is single-fill (`amount == fillAmount`) and
-   `previewMatch` requires the borrower posts ≥ the slice, so the borrower offer's
-   remaining capacity is a hard upper bound on `fillAmount`.
+   bounded by BOTH sides: `[max(intent.minFillAmount, borrowerOffer.minimumPrincipal),
+   min(maxExposure − live, availableCapital, borrowerRemainingCapacity)]`. The slice is
+   single-fill (`amount == amountMax == fillAmount`), so `fillAmount` must clear the
+   borrower offer's OWN minimum-principal floor (lower bound) AND not exceed its remaining
+   capacity (upper bound), not just the intent's `minFillAmount`.
 4. `previewIntent` → if Ok, submit `matchIntent(...)`. The keeper earns the 1% LIF.
 5. **Off-chain kill-switch self-gate:** honour `partialFillEnabled`, `lenderIntentEnabled`,
    AND `keepersPaused` before submitting. `matchIntent` enforces the first two on-chain, but
@@ -124,8 +126,10 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 6. **Auto-roll pass:** discover the lender's repaid intent loans via the per-loan
    `intentOrigin[loanId]` marker (set at fill) — there is no enumerable source today, so
    surface them through a new `getRollableIntentLoans`-style view OR an indexed
-   `OfferMatched`-derived intent-loan set — filter to `status == Repaid` (+ the on-chain
-   roll guards: position not sold, `loan.lender == owner`, no `heldForLender`), and call
+   `OfferMatched`-derived intent-loan set — filter by **mirroring ALL of `rollIntentLoan`'s
+   guards** (else the roll reverts): `status == Repaid`, the intent still active,
+   `loan.lender == owner`, position NFT not sold (`ownerOf == owner`), no `heldForLender`
+   reservation, asset not paused, no post-match VPFI rotation — then call
    `rollIntentLoan(loanId)` so the proceeds re-lien into `lenderIntentCapital` and the
    intent revolves. **Roll uses a DIFFERENT delegation:** `rollIntentLoan` requires the
    owner or a keeper authorized for `KEEPER_ACTION_AUTO_ROLL` (NOT `SIGNED_FILL` /
@@ -133,16 +137,24 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
    "revolving" never materialises.
 
 ### WI-1 — dapp auto-lend opt-in: register + **fund** a `LenderIntent`
-Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" = `setAutoLendConsent(true)` +
-`setLenderIntent(...)` + **`fundLenderIntent(...)`** (a registered-but-unfunded intent never
-fills — the funding step is load-bearing, not optional), and "turn off" =
-`cancelLenderIntent(...)` + withdraw capital + `setAutoLendConsent(false)`. The toggle moves
-the consent flag and the intent state **together**, so the on-chain `autoLendConsent` marker
-never diverges from whether an intent is actually live (gated by `cfgAutoLendEnabled`, which
-must be on for `setAutoLendConsent(true)` to succeed). The lender sets the bounds, signs the
-one-time risk/terms consent, and chooses how much capital to commit. The registration UI
-surfaces the **market-rate widget** (already shipped) as the suggested `minRateBps` floor
-so a passive lender doesn't underprice (O4).
+Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" runs this ordered sequence:
+1. `setLenderIntent(...)` (bounds + one-time risk/terms consent);
+2. `fundLenderIntent(...)` (a registered-but-unfunded intent never fills — load-bearing,
+   not optional);
+3. **grant the keeper the delegations the automation needs** — `KEEPER_ACTION_AUTO_ROLL`
+   (so the keeper can roll repaid loans; `rollIntentLoan` rejects any non-owner caller
+   without it), AND `KEEPER_ACTION_SIGNED_FILL` **iff** the lender chose a keeper-gated
+   (`requiresKeeperAuth == true`) intent (else the keeper correctly skips it and a gated
+   intent never fills);
+4. `setAutoLendConsent(true)` **LAST**.
+
+Setting consent **last** matters because these are separate transactions: if any earlier
+step is rejected / cancelled, the consent flag never gets set, so it can't diverge from a
+not-actually-live intent (the r4 atomicity finding). "Turn off" reverses it:
+`cancelLenderIntent(...)` + withdraw capital + revoke the keeper grants +
+`setAutoLendConsent(false)`. `setAutoLendConsent` itself requires `cfgAutoLendEnabled` on.
+The registration UI surfaces the **market-rate widget** (already shipped) as the suggested
+`minRateBps` floor so a passive lender doesn't underprice (O4).
 
 **`autoLendConsent` stays — the opt-in master switch (O1).** Default `false` ⇒ the lender
 lends **manually** (point offers) — the default experience. Removing it would make
