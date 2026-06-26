@@ -167,10 +167,13 @@ export default function KeeperSettings() {
           ).getKeeperActions(address, k);
           bits[k.toLowerCase()] = Number(raw);
         } catch {
-          // Fallback: treat unreadable entries as "all actions" to avoid
-          // accidentally stripping privileges. The on-chain call will
-          // tell the truth at action time either way.
-          bits[k.toLowerCase()] = KEEPER_ACTION_ALL;
+          // Fallback for an unreadable entry: default to the loan-
+          // management bits only — NOT the capital-deployment auto-lend
+          // bits (#625). Over-showing SIGNED_FILL/AUTO_ROLL here would let
+          // a transient read failure pre-tick those sensitive bits in the
+          // edit form, granting them on save. The on-chain call tells the
+          // truth at action time either way.
+          bits[k.toLowerCase()] = DEFAULT_KEEPER_ACTIONS;
         }
       }
       setActionsByKeeper(bits);
@@ -276,7 +279,7 @@ export default function KeeperSettings() {
 
   function beginEdit(keeper: string) {
     setEditingKeeper(keeper);
-    setEditActions(actionsByKeeper[keeper.toLowerCase()] ?? KEEPER_ACTION_ALL);
+    setEditActions(actionsByKeeper[keeper.toLowerCase()] ?? DEFAULT_KEEPER_ACTIONS);
   }
 
   function cancelEdit() {

@@ -146,7 +146,14 @@ export function PerThingKeeperToggles(props: PerThingKeeperTogglesProps) {
           };
         }),
       );
-      setRows(fetched);
+      // #625 WI-1 — drop keepers whose only authority is the auto-lend
+      // PRINCIPAL-level bits (SIGNED_FILL / AUTO_ROLL). The per-position
+      // flag this card toggles doesn't gate those, so listing such a
+      // keeper would let a user save a no-op toggle and wrongly believe
+      // they'd authorized it for this position. (`rows.length === 0`
+      // below then renders the standard "no keepers" state.)
+      const PER_POSITION_MASK = ~(KEEPER_ACTION.SIGNED_FILL | KEEPER_ACTION.AUTO_ROLL);
+      setRows(fetched.filter((r) => (r.actions & PER_POSITION_MASK) !== 0));
     } catch (e) {
       setErr(decodeContractError(e));
     } finally {

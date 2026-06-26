@@ -29,17 +29,20 @@ import { CardInfo } from '../CardInfo';
  * The enable sequence is ordered and **resumable** — every step probes
  * its on-chain post-state first, so a sequence interrupted mid-way (a
  * rejected wallet prompt, a dropped tx) resumes from where it stopped
- * on the next click rather than redoing completed steps:
+ * on the next click rather than redoing completed steps. The order is
+ * security-critical: registration reactivates and re-lists a PAUSED
+ * intent's reserved capital into the fill registry, so every
+ * authorisation that gates fillability is recorded BEFORE registration:
  *
- *   1. `setLenderIntent(...)` — register / update the standing intent.
+ *   1. `setAutoLendConsent(true)` — the user-level opt-in marker, FIRST,
+ *      so the intent is never fillable with it unset. When the admin
+ *      consent kill-switch is down this step can't run; the sequence is
+ *      rejected up front (nothing is written on-chain).
  *   2. Keeper delegation (only when the keeper address is published for
  *      this chain): `setKeeperAccess(true)` + `approveKeeper` /
  *      `setKeeperActions` granting AUTO_ROLL (+ SIGNED_FILL when the
- *      intent is keeper-gated).
- *   3. `setAutoLendConsent(true)` — the user-level opt-in marker. When
- *      the admin consent kill-switch is down this step can't run; the
- *      sequence then STOPS before funding (the funded intent would be
- *      fillable while the marker is unset, breaking the ordering).
+ *      intent is keeper-gated) — BEFORE registration relists capital.
+ *   3. `setLenderIntent(...)` — register / update (relist) the intent.
  *   4. `fundLenderIntent(...)` LAST — pulls working capital into vault
  *      custody only after every authorisation is in place, so capital
  *      is never parked ahead of a fillable, properly-delegated intent.
@@ -122,6 +125,10 @@ export default function AutoLendIntentCard() {
   useEffect(() => {
     formRef.current = form;
   }, [form]);
+  // Latest `${chainId}:${wallet}`, so an async prefill resolve can also
+  // detect a wallet/chain switch (not just a pair switch) before writing
+  // the form. Updated in an effect below once `idKey` is derived.
+  const idKeyRef = useRef('');
   const setField = useCallback(
     <K extends keyof FormState>(k: K, v: FormState[K]) =>
       setForm((f) => ({ ...f, [k]: v })),
@@ -185,6 +192,9 @@ export default function AutoLendIntentCard() {
   const idKey = `${chainId ?? ''}:${address ?? ''}`;
   const currentPairKey = `${idKey}:${form.lendingAsset}:${form.collateralAsset}`;
   const currentDecimalsKey = `${chainId ?? ''}:${form.lendingAsset}`;
+  useEffect(() => {
+    idKeyRef.current = idKey;
+  }, [idKey]);
 
   // Account-level reads (independent of the chosen pair). Returns early
   // without touching state when deps are missing — so every setState
@@ -263,19 +273,20 @@ export default function AutoLendIntentCard() {
       setIntent(view);
       setCapital(BigInt(cap));
       setLoadedPairKey(key);
-      // Prefill the form once per (chain, wallet, pair) from an active
-      // intent, so editing shows current on-chain terms. Guard against a
-      // stale resolve (user switched pairs mid-flight) by checking the
-      // LIVE form via the ref, and only stamp `prefilledKey` when the
-      // prefill is actually applied — so a stale resolve never marks a
-      // pair prefilled without applying it (which would suppress a later
-      // legitimate prefill when the user returns to that pair).
-      if (view.active && prefilledKey !== key) {
+      // Prefill the form once per (chain, wallet, pair) from a stored
+      // intent, so editing shows current on-chain terms. Also prefill an
+      // INACTIVE intent that still has reserved capital (a paused intent)
+      // so "Enable to resume" has the prior bounds without manual re-entry.
+      // Guard against a stale resolve by re-deriving the FULL live key
+      // (chain+wallet+pair via the refs) and only applying / stamping when
+      // it still matches the captured `key` — so a wallet/chain/pair switch
+      // mid-flight can't write another account's terms, and a stale resolve
+      // never marks a pair prefilled without applying it.
+      const hasStoredTerms = view.active || BigInt(cap) > 0n;
+      if (hasStoredTerms && prefilledKey !== key) {
         const live = formRef.current;
-        if (
-          `${live.lendingAsset}:${live.collateralAsset}` ===
-          `${lendingAsset}:${collateralAsset}`
-        ) {
+        const liveFullKey = `${idKeyRef.current}:${live.lendingAsset}:${live.collateralAsset}`;
+        if (liveFullKey === key) {
           setPrefilledKey(key);
           setForm((f) => ({
             ...f,
@@ -403,12 +414,20 @@ export default function AutoLendIntentCard() {
       return t('autoLend.errMinFill');
     if (parsed.maxInitLtvBps <= 0 || parsed.maxInitLtvBps > 10000)
       return t('autoLend.errLtv');
-    if (parsed.maxDurationDays <= 0) return t('autoLend.errDuration');
+    // Term is a uint32 on-chain (and must be positive); reject 0 and any
+    // value past the uint32 ceiling before the multi-tx flow so it can't
+    // fail at ABI-encoding after consent + grants are already recorded.
+    if (parsed.maxDurationDays <= 0 || parsed.maxDurationDays > 4294967295)
+      return t('autoLend.errDuration');
     // Rate floor can't exceed the protocol interest ceiling (100% APR) —
     // the contract rejects it, so catch it before the multi-tx flow.
     if (parsed.minRateBps > 10000n) return t('autoLend.errRateTooHigh');
     if (parsed.fund < 0n) return t('autoLend.errAmount');
-    if (parsed.fund > parsed.maxExposure) return t('autoLend.errFundOverExposure');
+    // Cap the TOTAL reserved capital (already-funded + this top-up) at the
+    // max exposure — funding beyond it just locks idle capital that can
+    // never be lent (exposure caps concurrent live principal).
+    if ((capitalView ?? 0n) + parsed.fund > parsed.maxExposure)
+      return t('autoLend.errFundOverExposure');
     // A keeper-only intent on a chain with no published keeper can never
     // be filled (no solver can hold the signed-fill grant) — block it.
     if (form.requiresKeeperAuth && !keeperAddress)
@@ -425,6 +444,7 @@ export default function AutoLendIntentCard() {
   }, [
     form,
     parsed,
+    capitalView,
     keeperAddress,
     keeperAccess,
     riskConsentGiven,
@@ -643,28 +663,18 @@ export default function AutoLendIntentCard() {
         await tx.wait();
         setConsent(false);
       }
-      // Revoke the auto-lend delegation this card granted, so the keeper
-      // doesn't retain capital-deployment authority after the user stops.
-      // Only the auto-lend bits are cleared — any other actions the user
-      // granted this keeper separately are preserved; if nothing remains,
-      // the keeper is revoked entirely.
-      if (keeperAddress) {
-        const current = keeperActions ?? 0;
-        const autoLendBits = KEEPER_ACTION_SIGNED_FILL | KEEPER_ACTION_AUTO_ROLL;
-        if ((current & autoLendBits) !== 0) {
-          const remaining = current & ~autoLendBits;
-          setStep(t('autoLend.stepRevoke'));
-          if (remaining === 0) {
-            const tx = await dw.revokeKeeper(keeperAddress);
-            await tx.wait();
-          } else {
-            const tx = await dw.setKeeperActions(keeperAddress, remaining);
-            await tx.wait();
-          }
-          setKeeperActions(remaining);
-        }
-      }
-      setNotice(t('autoLend.noticeStopped'));
+      // NOTE: we deliberately do NOT auto-revoke the keeper's
+      // SIGNED_FILL / AUTO_ROLL bits here. Those are PRINCIPAL-level
+      // (one bitmask per wallet, not per pair), so the same grant backs
+      // every standing intent this wallet has — clearing it on a
+      // single-pair stop would silently disable fills/rolls for the
+      // lender's OTHER active intents. The bits are inert without a
+      // funded intent anyway; the notice points the user to Keeper
+      // Settings to revoke deliberately if they have no other intents.
+      const stoppedKey = keeperAddress
+        ? 'autoLend.noticeStoppedKeeper'
+        : 'autoLend.noticeStopped';
+      setNotice(t(stoppedKey));
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));

@@ -77,6 +77,11 @@ export function useMarketAnchorRate(
 
   return useMemo(() => {
     if (!hasPair) return null;
+    // If the current index has no recent accepted offers, surface no
+    // anchor even if `recent` still holds a previous fetch's offers
+    // (the effect's early-return on an emptied id list intentionally
+    // leaves `recent` untouched to avoid a synchronous reset-in-effect).
+    if (recentAcceptedOfferIds.length === 0) return null;
     const lend = lendingAsset.toLowerCase();
     const coll = collateralAsset.toLowerCase();
     const hit = recent.find(
@@ -85,5 +90,5 @@ export function useMarketAnchorRate(
         o.collateralAsset?.toLowerCase() === coll,
     );
     return hit ? hit.interestRateBps : null;
-  }, [recent, hasPair, lendingAsset, collateralAsset]);
+  }, [recent, hasPair, recentAcceptedOfferIds, lendingAsset, collateralAsset]);
 }
