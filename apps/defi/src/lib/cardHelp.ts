@@ -68,6 +68,10 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     summary: "cardHelp.dashboardRewardsSummary",
     learnMoreHref: `${TOKENOMICS}#7-rewards`,
   },
+  "dashboard.auto-lend-intent": {
+    summary: "cardHelp.dashboardAutoLendIntent",
+    learnMoreHref: `${README}#5-offer-and-loan-lifecycle`,
+  },
 
   // ── Offer Book ─────────────────────────────────────────────────────────
   "offer-book.filters": {

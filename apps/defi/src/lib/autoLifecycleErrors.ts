@@ -50,6 +50,21 @@ const SELECTORS = [
   'RefinanceTargetIncompatible',
   // OfferCreateFacet refinance-tagged path
   'InvalidRefinanceTarget',
+  // #625 WI-1 — auto-lend intent + keeper-delegation surface
+  // (LenderIntentFacet / ProfileFacet keeper grants). Listed before the
+  // shorter generic names so the more specific intent names match first.
+  'LenderIntentInvalidBounds',
+  'LenderIntentSelfCollateralized',
+  'LenderIntentVpfiLendingUnsupported',
+  'LenderIntentZeroAddress',
+  'LenderIntentNotActive',
+  'IntentCapitalInsufficient',
+  'RiskAndTermsConsentRequired',
+  'InvalidKeeperActions',
+  'KeeperAlreadyApproved',
+  'KeeperNotApproved',
+  'KeeperWhitelistFull',
+  'SanctionedAddress',
 ] as const;
 
 export type AutoLifecycleErrorName = (typeof SELECTORS)[number];

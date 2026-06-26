@@ -36,6 +36,9 @@ const ACTION_LABELS: Record<keyof typeof KEEPER_ACTION, string> = {
   REFINANCE: 'Refinance',
   // T-092 Phase 3 (#503) — auto-extend in place toggle.
   EXTEND: 'Auto-extend',
+  // #625 WI-1 — standing-intent (auto-lend) delegation bits.
+  SIGNED_FILL: 'Fill intent',
+  AUTO_ROLL: 'Auto-roll',
 };
 
 interface CommonProps {
@@ -143,7 +146,14 @@ export function PerThingKeeperToggles(props: PerThingKeeperTogglesProps) {
           };
         }),
       );
-      setRows(fetched);
+      // #625 WI-1 — drop keepers whose only authority is the auto-lend
+      // PRINCIPAL-level bits (SIGNED_FILL / AUTO_ROLL). The per-position
+      // flag this card toggles doesn't gate those, so listing such a
+      // keeper would let a user save a no-op toggle and wrongly believe
+      // they'd authorized it for this position. (`rows.length === 0`
+      // below then renders the standard "no keepers" state.)
+      const PER_POSITION_MASK = ~(KEEPER_ACTION.SIGNED_FILL | KEEPER_ACTION.AUTO_ROLL);
+      setRows(fetched.filter((r) => (r.actions & PER_POSITION_MASK) !== 0));
     } catch (e) {
       setErr(decodeContractError(e));
     } finally {
@@ -346,6 +356,13 @@ export function PerThingKeeperToggles(props: PerThingKeeperTogglesProps) {
                 >
                   {(Object.keys(KEEPER_ACTION) as Array<keyof typeof KEEPER_ACTION>)
                     .filter((k) => (row.actions & KEEPER_ACTION[k]) !== 0)
+                    // #625 WI-1 — SIGNED_FILL / AUTO_ROLL are PRINCIPAL-level
+                    // (enforced via requireKeeperForPrincipal), not per-loan /
+                    // per-offer (isLoanKeeperEnabled / isOfferKeeperEnabled).
+                    // Unchecking the keeper here does NOT remove that authority,
+                    // so don't surface those chips on a per-thing toggle — they
+                    // live on the Keeper Settings / auto-lend surfaces.
+                    .filter((k) => k !== 'SIGNED_FILL' && k !== 'AUTO_ROLL')
                     .map((k) => (
                       <span
                         key={k}

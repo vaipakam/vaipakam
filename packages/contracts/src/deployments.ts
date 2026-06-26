@@ -198,6 +198,21 @@ export interface Deployment {
    *  permissionless, this is just OUR reference deployment. */
   flashLoanLiquidator?: HexAddress;
 
+  /** #625 WI-1 — the production keeper bot's signing EOA on this chain.
+   *  The dapp's auto-lend surface reads it to delegate the keeper-driven
+   *  actions a standing LenderIntent needs (auto-roll, and signed-fill
+   *  when the intent is keeper-gated) via `ProfileFacet.approveKeeper`.
+   *  Optional: chains where the keeper isn't yet provisioned, or where
+   *  the operator hasn't published the address, leave it `undefined` —
+   *  the dapp then offers intent registration + funding but hides the
+   *  keeper-delegation step (auto-FILL still works; auto-ROLL needs the
+   *  grant). It is NOT a contract artifact — the operator pastes the
+   *  keeper's public address into each chain's `addresses.json`, and the
+   *  merge step folds it through like any other deployment key. Never an
+   *  on-chain registry value, so the dapp treats absence as "no keeper
+   *  delegation available", not an error. */
+  keeperAddress?: HexAddress;
+
   // ── Deploy metadata ─────────────────────────────────────────────
   deployedAt?: string;
 }

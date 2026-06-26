@@ -42,6 +42,7 @@ import { HealthFactorChip, LTVChip } from '../components/app/RiskGauge';
 import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { StakeVPFICTA } from '../components/app/StakeVPFICTA';
 import AutoLifecycleSettingsCard from '../components/app/AutoLifecycleSettingsCard';
+import AutoLendIntentCard from '../components/app/AutoLendIntentCard';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -356,10 +357,15 @@ export default function Dashboard() {
           below for users who want to inspect their tier status. */}
       <VPFIDiscountConsentCard />
 
-      {/* T-092 #511 sub (#520) — per-user auto-lifecycle toggles.
+      {/* #625 WI-1 — auto-lend, wired to the standing LenderIntent layer
+          (register -> delegate keeper -> consent -> fund). Hidden when
+          the intent/auto-lend facet set isn't cut on the current chain. */}
+      <AutoLendIntentCard />
+
+      {/* T-092 #511 sub (#520) — per-user auto-lifecycle toggle.
           Hidden when the auto-lifecycle facet isn't readable on the
           current chain (old testnet deploys); otherwise renders the
-          auto-lend + auto-opt-in-on-new-loan opt-ins. */}
+          auto-opt-in-on-new-loan opt-in. */}
       <AutoLifecycleSettingsCard />
 
       {/* T-087 Sub 4 phase 2 — chain-agnostic Deposit VPFI CTA.

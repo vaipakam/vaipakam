@@ -24,6 +24,12 @@ export const KEEPER_ACTION = {
   // from 0x1F to 0x3F server-side. The dedicated toggle row below
   // lets users opt in or out per-action.
   EXTEND: 0x20,
+  // #625 WI-1 (auto-lend) — the standing-intent delegation bits. On-chain
+  // KEEPER_ACTION_ALL is 0xFF, so these are valid grants. Surfaced here so
+  // a keeper delegated via the auto-lend card (which may hold only AUTO_ROLL
+  // and/or SIGNED_FILL) shows those permissions instead of appearing blank.
+  SIGNED_FILL: 0x40,
+  AUTO_ROLL: 0x80,
 } as const;
 export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.COMPLETE_LOAN_SALE |
@@ -31,7 +37,19 @@ export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.INIT_EARLY_WITHDRAW |
   KEEPER_ACTION.INIT_PRECLOSE |
   KEEPER_ACTION.REFINANCE |
-  KEEPER_ACTION.EXTEND;
+  KEEPER_ACTION.EXTEND |
+  KEEPER_ACTION.SIGNED_FILL |
+  KEEPER_ACTION.AUTO_ROLL;
+
+// #625 WI-1 — default grant for the manual "Add keeper" flow EXCLUDES the
+// auto-lend capital-deployment bits (SIGNED_FILL / AUTO_ROLL). Those let a
+// keeper deploy standing-intent capital and re-lien repaid proceeds, so
+// they must be granted deliberately — via the auto-lend card (which gates
+// them behind an explicit acknowledgement) or by ticking their rows here —
+// never handed out by leaving the default boxes checked for a keeper added
+// for ordinary loan-management actions.
+export const DEFAULT_KEEPER_ACTIONS =
+  KEEPER_ACTION_ALL & ~(KEEPER_ACTION.SIGNED_FILL | KEEPER_ACTION.AUTO_ROLL);
 
 type ActionKey = keyof typeof KEEPER_ACTION;
 
@@ -66,6 +84,16 @@ const ACTION_ROWS: Array<{ key: ActionKey; labelKey: string; hintKey: string }> 
     labelKey: "keeperPicker.permissionAutoExtendTitle",
     hintKey: "keeperPicker.permissionAutoExtendDesc",
   },
+  {
+    key: "SIGNED_FILL",
+    labelKey: "keeperPicker.permissionSignedFillTitle",
+    hintKey: "keeperPicker.permissionSignedFillDesc",
+  },
+  {
+    key: "AUTO_ROLL",
+    labelKey: "keeperPicker.permissionAutoRollTitle",
+    hintKey: "keeperPicker.permissionAutoRollDesc",
+  },
 ];
 
 /**
@@ -87,13 +115,21 @@ export default function KeeperSettings() {
   const [optIn, setOptIn] = useState<boolean>(false);
   const [keepers, setKeepers] = useState<string[]>([]);
   const [actionsByKeeper, setActionsByKeeper] = useState<Record<string, number>>({});
+  // Keepers (lowercased) whose action mask couldn't be read this refresh —
+  // editing is disabled for them so a transient failure can't overwrite
+  // real permissions with a synthesized default (#625).
+  const [unreadableKeepers, setUnreadableKeepers] = useState<string[]>([]);
   const [input, setInput] = useState("");
-  const [draftActions, setDraftActions] = useState<number>(KEEPER_ACTION_ALL);
+  const [draftActions, setDraftActions] = useState<number>(DEFAULT_KEEPER_ACTIONS);
   const [editingKeeper, setEditingKeeper] = useState<string | null>(null);
   const [editActions, setEditActions] = useState<number>(0);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
+  // #625 — true when the latest refresh couldn't read the approved-keeper
+  // list (transient RPC). Editing is blocked while set so a stale/empty
+  // mask can't be saved over a keeper's real (unread) permissions.
+  const [keeperReadError, setKeeperReadError] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!address) return;
@@ -121,15 +157,27 @@ export default function KeeperSettings() {
       else setErr((e as Error).message);
     }
     let list: string[] = [];
+    let listReadFailed = false;
     try {
       list = [...((await diamondRo.getApprovedKeepers(address)) as string[])];
       setKeepers(list);
     } catch (e) {
       if (isMissingSelector(e)) missing = true;
-      else setErr((e as Error).message);
+      else {
+        setErr((e as Error).message);
+        // #625 — a TRANSIENT list read failure must not clear the keeper
+        // rows / masks: `setKeepers` wasn't called (so old rows persist),
+        // and clearing `actionsByKeeper` + `unreadableKeepers` below would
+        // make those rows show "none" and become editable with
+        // DEFAULT_KEEPER_ACTIONS — letting a Save silently rewrite an
+        // auto-lend keeper's SIGNED_FILL/AUTO_ROLL to loan-management bits.
+        // Preserve previous state and block editing via `keeperReadError`.
+        listReadFailed = true;
+      }
     }
-    if (!missing && list.length > 0) {
+    if (!missing && !listReadFailed && list.length > 0) {
       const bits: Record<string, number> = {};
+      const unreadable: string[] = [];
       for (const k of list) {
         try {
           const raw = await (
@@ -139,16 +187,26 @@ export default function KeeperSettings() {
           ).getKeeperActions(address, k);
           bits[k.toLowerCase()] = Number(raw);
         } catch {
-          // Fallback: treat unreadable entries as "all actions" to avoid
-          // accidentally stripping privileges. The on-chain call will
-          // tell the truth at action time either way.
-          bits[k.toLowerCase()] = KEEPER_ACTION_ALL;
+          // Unreadable entry (#625): do NOT synthesize a writable mask.
+          // A fallback like DEFAULT_KEEPER_ACTIONS would let the user open
+          // the edit form and Save, REPLACING the keeper's real (unread)
+          // permissions — e.g. an auto-lend keeper holding only
+          // SIGNED_FILL/AUTO_ROLL would be rewritten to loan-management
+          // bits it was never granted. Instead mark it unreadable and
+          // disable editing until a successful re-read.
+          unreadable.push(k.toLowerCase());
         }
       }
       setActionsByKeeper(bits);
-    } else {
+      setUnreadableKeepers(unreadable);
+    } else if (!missing && !listReadFailed) {
+      // Genuinely empty list (no approved keepers).
       setActionsByKeeper({});
+      setUnreadableKeepers([]);
     }
+    // On a transient list-read failure: preserve the previous keepers /
+    // masks / unreadable markers untouched, and gate ALL editing.
+    setKeeperReadError(listReadFailed);
     if (missing) {
       setSupported(false);
       setOptIn(false);
@@ -214,7 +272,7 @@ export default function KeeperSettings() {
       await tx.wait();
       step.success({ note: `${input} actions=0x${draftActions.toString(16)}` });
       setInput("");
-      setDraftActions(KEEPER_ACTION_ALL);
+      setDraftActions(DEFAULT_KEEPER_ACTIONS);
       await refresh();
     } catch (e) {
       setErr((e as Error).message);
@@ -248,7 +306,7 @@ export default function KeeperSettings() {
 
   function beginEdit(keeper: string) {
     setEditingKeeper(keeper);
-    setEditActions(actionsByKeeper[keeper.toLowerCase()] ?? KEEPER_ACTION_ALL);
+    setEditActions(actionsByKeeper[keeper.toLowerCase()] ?? DEFAULT_KEEPER_ACTIONS);
   }
 
   function cancelEdit() {
@@ -386,6 +444,7 @@ export default function KeeperSettings() {
         )}
         {keepers.map((k) => {
           const bits = actionsByKeeper[k.toLowerCase()] ?? 0;
+          const unread = unreadableKeepers.includes(k.toLowerCase());
           const isEditing = editingKeeper?.toLowerCase() === k.toLowerCase();
           return (
             <div
@@ -409,7 +468,17 @@ export default function KeeperSettings() {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn btn-sm btn-secondary"
-                    disabled={busy || !supported}
+                    disabled={
+                      busy ||
+                      !supported ||
+                      keeperReadError ||
+                      (unread && !isEditing)
+                    }
+                    title={
+                      unread || keeperReadError
+                        ? t('keeperPicker.actionsUnreadableHint')
+                        : undefined
+                    }
                     onClick={() => (isEditing ? cancelEdit() : beginEdit(k))}
                   >
                     {isEditing ? "Cancel" : "Edit actions"}
@@ -445,7 +514,9 @@ export default function KeeperSettings() {
                   style={{ marginTop: 6, fontSize: "0.85rem", opacity: 0.8 }}
                 >
                   {t('keeperPicker.actionsLabel')}{" "}
-                  {bits === 0 ? (
+                  {unread ? (
+                    <em>{t('keeperPicker.actionsUnreadable')}</em>
+                  ) : bits === 0 ? (
                     <em>{t('keeperPicker.actionsNone')}</em>
                   ) : (
                     ACTION_ROWS.filter((r) => (bits & KEEPER_ACTION[r.key]) !== 0)
