@@ -777,6 +777,48 @@ The schema each script populates (no manual editing needed since the
 | `vpfiDiscountEthPriceAsset` / `vpfiBuyWeiPerVpfi` / `vpfiBuyGlobalCap` / `vpfiBuyPerWalletCap` / `vpfiBuyEnabled` | `ConfigureVPFIBuy` |
 | `interactionLaunchTimestamp`, `interactionCapVpfiPerEth` | `SetInteractionLaunch` |
 | `weth`, `mockChainlinkAggregator`, `mockUniswapV3Factory`, `mockERC20A/B`, `mockUSDC/WBTC/WETHFeed` | `DeployTestnetLiquidityMocks` |
+| `keeperAddress` | **MANUAL (operator-set)** — see "Auto-lend keeper address" below |
+
+### Auto-lend keeper address (#625 WI-1) — manual post-deploy step
+
+`keeperAddress` is the **only** `addresses.json` key not written by a
+deploy script. It is the production keeper bot's **signing EOA** — the
+public address of the `apps/keeper` Worker's `KEEPER_PRIVATE_KEY`
+secret (the same key that signs `matchIntent` / `rollIntentLoan` /
+`triggerLiquidation`). The dapp's **Auto-lend** card reads it
+(`getDeployment(chainId).keeperAddress`) to offer the lender the
+auto-roll / signed-fill delegation step (`ProfileFacet.approveKeeper` +
+`setKeeperAccess`).
+
+It is a **public address, not a secret** — but it MUST match the address
+the keeper actually signs with, or every delegated `rollIntentLoan` /
+keeper-gated `matchIntent` reverts `KeeperAccessRequired`. Steps, once a
+chain is deployed and the keeper provisioned:
+
+```bash
+# 1. Derive the keeper's public address from its signing key (the value
+#    you set as the apps/keeper KEEPER_PRIVATE_KEY Cloudflare secret).
+cast wallet address --private-key "$KEEPER_PRIVATE_KEY"
+
+# 2. Add it to that chain's addresses.json (the ONLY manual edit here):
+#    contracts/deployments/<chain-slug>/addresses.json
+#      { ..., "keeperAddress": "0xKEEPER_EOA" }
+
+# 3. Fold it into the consolidated deployments.json the dapp reads:
+bash contracts/script/exportFrontendDeployments.sh
+pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # consumer still typechecks
+
+# 4. Review `git diff packages/contracts/src/deployments.json` and commit
+#    alongside the deploy.
+```
+
+**Graceful absence**: while `keeperAddress` is unset for a chain, the
+Auto-lend card still lets lenders register + fund intents — **auto-FILL
+needs no delegation** (the keeper fills permissionless intents directly).
+It only **hides the auto-ROLL delegation step** and explains it's
+unavailable until a keeper address is published. So this step is not a
+hard deploy gate; it's the switch that turns hands-off auto-roll on for
+that chain. (Pre-live today, so nothing to populate yet.)
 
 Both the frontend and the hf-watcher Worker consume these via a
 single consolidated `deployments.json` keyed by `chainId`:

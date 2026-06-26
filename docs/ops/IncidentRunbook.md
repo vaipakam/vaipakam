@@ -338,6 +338,27 @@ asset-level `AdminFacet.pauseAsset`) before relying on one of these.
 - Unrelated paths still run (ordinary liquidation, repayment, claims) —
   these are surgical levers, not a global pause.
 
+### Diagnostic — auto-lend delegated rolls / keeper-gated fills reverting
+
+If lenders report that **auto-roll** or **keeper-gated `matchIntent`** isn't
+happening and the keeper logs `KeeperAccessRequired` — but `keepersPaused`
+is **false** (not a deliberate freeze) — the usual cause is a **published
+`keeperAddress` that doesn't match the keeper's actual signing key**, so
+lenders delegated to the wrong address (#625 WI-1). This is a config issue,
+not an on-chain incident:
+
+1. Compare the dapp's published address — `getDeployment(chainId).keeperAddress`
+   (from `contracts/deployments/<slug>/addresses.json`) — against
+   `cast wallet address --private-key "$KEEPER_PRIVATE_KEY"` for the
+   `apps/keeper` Worker on that chain.
+2. If they differ, correct `keeperAddress` in `addresses.json`, re-run
+   `bash contracts/script/exportFrontendDeployments.sh`, and redeploy the
+   dapp. Lenders re-run the (idempotent) delegation step in the Auto-lend
+   card against the corrected address. See the Deployment Runbook
+   "Auto-lend keeper address" section. (Auto-FILL of permissionless intents
+   is unaffected — it needs no delegation — so only the auto-roll / signed-
+   fill paths surface this.)
+
 ---
 
 ## 4. Off-chain alert-rail key compromise
