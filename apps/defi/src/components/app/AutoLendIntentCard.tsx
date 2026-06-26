@@ -10,6 +10,7 @@ import { getDeployment } from '@vaipakam/contracts/deployments';
 import { autoLifecycleErrorOrRaw } from '../../lib/autoLifecycleErrors';
 import { useMarketAnchorRate } from '../../hooks/useMarketAnchorRate';
 import { AssetPicker } from './AssetPicker';
+import { RiskDisclosures, RiskConsentLabel } from './RiskDisclosures';
 import { CardInfo } from '../CardInfo';
 
 /**
@@ -35,10 +36,28 @@ import { CardInfo } from '../CardInfo';
  *      this chain): `setKeeperAccess(true)` + `approveKeeper` /
  *      `setKeeperActions` granting AUTO_ROLL (+ SIGNED_FILL when the
  *      intent is keeper-gated).
- *   3. `setAutoLendConsent(true)` — the user-level opt-in marker.
+ *   3. `setAutoLendConsent(true)` — the user-level opt-in marker. When
+ *      the admin consent kill-switch is down this step can't run; the
+ *      sequence then STOPS before funding (the funded intent would be
+ *      fillable while the marker is unset, breaking the ordering).
  *   4. `fundLenderIntent(...)` LAST — pulls working capital into vault
  *      custody only after every authorisation is in place, so capital
  *      is never parked ahead of a fillable, properly-delegated intent.
+ *
+ * Registration records the same mandatory risk/terms consent the
+ * offer-create flow captures, so the user must tick the risk-disclosure
+ * checkbox first (the `riskAndTermsConsent` flag is never hard-coded).
+ *
+ * **Pause genuinely stops fills.** Because `autoLendConsent` is only a
+ * dapp marker with no on-chain enforcement, clearing it would NOT stop
+ * the keeper from filling a funded intent. Pause therefore CANCELS the
+ * intent (de-lists it from the fill registry) and clears consent; the
+ * funded capital stays reserved (re-enable resumes with no re-funding,
+ * or withdraw retrieves it).
+ *
+ * All loaded reads are keyed by the connected wallet (and pair / lending
+ * asset) so a wallet or pair switch can never let a previous account's
+ * consent / delegation / decimals drive a skip decision for a new one.
  *
  * Two admin kill-switches are surfaced read-only: the consent switch
  * (`getAutoLendEnabled`) gates step 3, and the fill-path switch
@@ -111,6 +130,17 @@ export default function AutoLendIntentCard() {
   const [keeperActions, setKeeperActions] = useState<number | null>(null);
   const [keeperAccess, setKeeperAccess] = useState<boolean | null>(null);
   const [lendingDecimals, setLendingDecimals] = useState<number>(18);
+  // The lending asset `lendingDecimals` was last read for — writes are
+  // gated until this matches the form so amounts never parse with a
+  // previous token's decimals (a 6-dec/18-dec swap would misscale).
+  const [decimalsAsset, setDecimalsAsset] = useState<string>('');
+  // The wallet `reloadAccount` last resolved for — account-level reads
+  // (consent / keeper grant) are only trusted while this equals `address`.
+  const [loadedAccountAddr, setLoadedAccountAddr] = useState<string>('');
+
+  // Mandatory risk/terms consent — must be ticked before registering,
+  // mirroring the offer-create flow (never hard-coded to true).
+  const [riskConsent, setRiskConsent] = useState<boolean>(false);
 
   const [busy, setBusy] = useState<boolean>(false);
   const [step, setStep] = useState<string | null>(null);
@@ -127,14 +157,15 @@ export default function AutoLendIntentCard() {
 
   const lendingErc20 = useERC20(form.lendingAsset || null);
 
-  // `${lend}:${coll}` the loaded intent/capital belong to — render gates
-  // on it so a prior pair's data never shows after a pair switch (avoids
-  // a synchronous reset-in-effect; everything below is set post-await).
+  // `${wallet}:${lend}:${coll}` the loaded intent/capital belong to —
+  // render gates on it so neither a prior pair's NOR a prior wallet's
+  // data shows after a switch (avoids a synchronous reset-in-effect;
+  // everything below is set post-await).
   const [loadedPairKey, setLoadedPairKey] = useState<string>('');
-  // Pair the form was last prefilled from, so prefill runs once per pair.
+  // Wallet+pair the form was last prefilled from, so prefill runs once.
   const [prefilledKey, setPrefilledKey] = useState<string>('');
 
-  const currentPairKey = `${form.lendingAsset}:${form.collateralAsset}`;
+  const currentPairKey = `${address ?? ''}:${form.lendingAsset}:${form.collateralAsset}`;
 
   // Account-level reads (independent of the chosen pair). Returns early
   // without touching state when deps are missing — so every setState
@@ -163,6 +194,9 @@ export default function AutoLendIntentCard() {
       setConsent(Boolean(c));
       setKeeperAccess(Boolean(kAccess));
       setKeeperActions(acts === null ? null : Number(acts));
+      // Stamp the wallet these reads belong to; skip decisions trust
+      // them only while this still equals the connected wallet.
+      setLoadedAccountAddr(address);
     } catch {
       // Facet not cut on this (old) deploy — leave loading; card hides.
     }
@@ -175,7 +209,7 @@ export default function AutoLendIntentCard() {
     const lendingAsset = form.lendingAsset;
     const collateralAsset = form.collateralAsset;
     if (!address || !diamondRo || !lendingAsset || !collateralAsset) return;
-    const key = `${lendingAsset}:${collateralAsset}`;
+    const key = `${address}:${lendingAsset}:${collateralAsset}`;
     try {
       const ro = diamondRo as unknown as {
         getLenderIntent: (o: string, l: string, c: string) => Promise<IntentView>;
@@ -206,22 +240,31 @@ export default function AutoLendIntentCard() {
         requiresKeeperAuth: Boolean(iv.requiresKeeperAuth),
       };
       setLendingDecimals(dec);
+      setDecimalsAsset(lendingAsset);
       setIntent(view);
       setCapital(BigInt(cap));
       setLoadedPairKey(key);
-      // Prefill the form once per pair from an active intent, so editing
-      // shows current on-chain terms.
+      // Prefill the form once per (wallet, pair) from an active intent,
+      // so editing shows current on-chain terms.
       if (view.active && prefilledKey !== key) {
         setPrefilledKey(key);
-        setForm((f) => ({
-          ...f,
-          maxExposure: formatUnits(view.maxExposure, dec),
-          minFillAmount: formatUnits(view.minFillAmount, dec),
-          minRatePct: String(Number(view.minRateBps) / 100),
-          maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
-          maxDurationDays: String(Number(view.maxDurationDays)),
-          requiresKeeperAuth: view.requiresKeeperAuth,
-        }));
+        setForm((f) => {
+          // Guard against a stale resolve: if the user switched pairs
+          // while this read was in flight, don't overwrite the new
+          // pair's editable bounds with this (now-stale) intent's terms.
+          if (`${f.lendingAsset}:${f.collateralAsset}` !== `${lendingAsset}:${collateralAsset}`) {
+            return f;
+          }
+          return {
+            ...f,
+            maxExposure: formatUnits(view.maxExposure, dec),
+            minFillAmount: formatUnits(view.minFillAmount, dec),
+            minRatePct: String(Number(view.minRateBps) / 100),
+            maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
+            maxDurationDays: String(Number(view.maxDurationDays)),
+            requiresKeeperAuth: view.requiresKeeperAuth,
+          };
+        });
       }
     } catch {
       setLoadedPairKey(key);
@@ -257,15 +300,22 @@ export default function AutoLendIntentCard() {
     [anchorBps],
   );
 
-  // Only treat the loaded intent/capital as belonging to the chosen pair
-  // once `reloadPair` has resolved for it — otherwise hold them as
-  // "not yet known" so a prior pair's data never leaks into the UI.
+  // Only treat the loaded intent/capital as belonging to the chosen
+  // wallet+pair once `reloadPair` has resolved for it — otherwise hold
+  // them as "not yet known" so a prior pair's / wallet's data never
+  // leaks into the UI or a skip decision.
   const pairLoaded =
     !!form.lendingAsset &&
     !!form.collateralAsset &&
     loadedPairKey === currentPairKey;
   const intentView = pairLoaded ? intent : null;
   const capitalView = pairLoaded ? capital : null;
+  // Account-level reads are trustworthy only while they belong to the
+  // connected wallet; decimals only while they belong to the chosen
+  // lending asset. Writes are gated on both so a wallet/asset switch
+  // can't drive a stale skip decision or misscale an amount.
+  const accountLoaded = !!address && loadedAccountAddr === address;
+  const decimalsReady = !!form.lendingAsset && decimalsAsset === form.lendingAsset;
 
   // ── Derived ──────────────────────────────────────────────────────
   const diamondAddr = useMemo(
@@ -319,8 +369,11 @@ export default function AutoLendIntentCard() {
     // be filled (no solver can hold the signed-fill grant) — block it.
     if (form.requiresKeeperAuth && !keeperAddress)
       return t('autoLend.errKeeperOnlyNoKeeper');
+    // Mandatory risk/terms consent — the registration records it, so the
+    // user must accept the disclosures first (never recorded silently).
+    if (!riskConsent) return t('autoLend.errRiskConsent');
     return null;
-  }, [form, parsed, keeperAddress, t]);
+  }, [form, parsed, keeperAddress, riskConsent, t]);
 
   // Whether the on-chain intent already matches the form (lets the
   // resumable enable skip step 1).
@@ -340,7 +393,10 @@ export default function AutoLendIntentCard() {
 
   // ── Enable sequence (resumable) ──────────────────────────────────
   const handleEnable = async () => {
-    if (!address || !diamond || !parsed.ok) return;
+    // Gate on fresh, wallet-correct reads so a stale wallet/asset can't
+    // drive a skip decision or misscale amounts.
+    if (!address || !diamond || !parsed.ok || !accountLoaded || !decimalsReady)
+      return;
     if (validation) {
       setError(validation);
       return;
@@ -363,7 +419,7 @@ export default function AutoLendIntentCard() {
           parsed.maxDurationDays,
           parsed.minFill,
           form.requiresKeeperAuth,
-          true, // riskAndTermsConsent — captured once for the standing intent
+          riskConsent, // mandatory risk/terms consent — validated above, never silent
         );
         await tx.wait();
       }
@@ -396,16 +452,20 @@ export default function AutoLendIntentCard() {
       // 3. Consent marker (gated by the admin consent kill-switch).
       if (consent === false) {
         if (adminLendEnabled === false) {
-          // Can't set consent now; intent + grant are in place, so the
-          // keeper can still act once admin re-enables. Surface as a
-          // notice rather than a hard error.
+          // Can't set consent now. STOP before funding: a funded intent
+          // is fillable on-chain regardless of this marker, so funding
+          // here would let the keeper fill while the user-level consent
+          // is still unset — breaking the register → consent → fund
+          // ordering. The intent + grant stay in place; the user can
+          // fund once admin re-enables and consent is recorded.
           setNotice(t('autoLend.noticeConsentBlocked'));
-        } else {
-          setStep(t('autoLend.stepConsent'));
-          const tx = await dw.setAutoLendConsent(true);
-          await tx.wait();
-          setConsent(true);
+          await Promise.all([reloadAccount(), reloadPair()]);
+          return;
         }
+        setStep(t('autoLend.stepConsent'));
+        const tx = await dw.setAutoLendConsent(true);
+        await tx.wait();
+        setConsent(true);
       }
 
       // 4. Fund LAST — only after every authorisation is in place.
@@ -436,26 +496,44 @@ export default function AutoLendIntentCard() {
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
+      // Refresh on-chain state so a retry after a partial failure
+      // resumes at the next incomplete step rather than redoing
+      // already-committed ones.
+      await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
     } finally {
       setBusy(false);
       setStep(null);
     }
   };
 
-  // ── Pause (clear consent marker; keep intent + capital) ──────────
+  // ── Pause — genuinely stop fills by CANCELLING the intent ─────────
+  // Clearing `autoLendConsent` alone would not stop fills (it's a dapp
+  // marker with no on-chain enforcement; `matchIntent` reads the active
+  // intent + capital). Cancelling de-lists the intent from the fill
+  // registry; the funded capital stays reserved (re-enable resumes with
+  // no re-funding, or Withdraw retrieves it).
   const handlePause = async () => {
     if (!address || !diamond) return;
+    const { lendingAsset, collateralAsset } = form;
+    if (!lendingAsset || !collateralAsset) return;
     setError(null);
     setNotice(null);
     setBusy(true);
-    setStep(t('autoLend.stepConsent'));
     try {
-      const tx = await dw.setAutoLendConsent(false);
+      setStep(t('autoLend.stepCancel'));
+      const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
       await tx.wait();
-      setConsent(false);
+      if (consent) {
+        setStep(t('autoLend.stepConsent'));
+        const tx2 = await dw.setAutoLendConsent(false);
+        await tx2.wait();
+        setConsent(false);
+      }
       setNotice(t('autoLend.noticePaused'));
+      await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
+      await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
     } finally {
       setBusy(false);
       setStep(null);
@@ -495,6 +573,7 @@ export default function AutoLendIntentCard() {
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
+      await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
     } finally {
       setBusy(false);
       setStep(null);
@@ -662,13 +741,29 @@ export default function AutoLendIntentCard() {
             <label>
               <span className="stat-label">{t('autoLend.fundAmountLabel')}</span>
               <input
-                className="input"
+                className="form-input"
                 inputMode="decimal"
                 value={form.fundAmount}
                 onChange={(e) => setField('fundAmount', e.target.value)}
                 placeholder="0.0"
                 disabled={busy}
               />
+            </label>
+          </div>
+
+          {/* Mandatory risk/terms consent — registration records it, so
+              the user accepts the disclosures here (same gate the
+              offer-create flow uses). */}
+          <div style={{ marginTop: 12 }}>
+            <RiskDisclosures />
+            <label className="checkbox-row" style={{ marginTop: 12 }}>
+              <input
+                type="checkbox"
+                checked={riskConsent}
+                onChange={(e) => setRiskConsent(e.target.checked)}
+                disabled={busy}
+              />
+              <span><RiskConsentLabel /></span>
             </label>
           </div>
 
@@ -680,12 +775,27 @@ export default function AutoLendIntentCard() {
             </div>
           )}
 
+          {/* Reserved capital after a pause (intent cancelled but capital
+              still liened) — give an explicit way to retrieve it. */}
+          {!isActive && (capitalView ?? 0n) > 0n && (
+            <div className="alert alert-info" role="status" style={{ marginTop: 10 }}>
+              <Info size={14} />
+              <div>{t('autoLend.reservedCapital', { capital: capitalStr ?? '0' })}</div>
+            </div>
+          )}
+
           {/* Actions */}
           <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
             <button
               className="btn btn-primary btn-sm"
               onClick={handleEnable}
-              disabled={busy || !isCorrectChain || validation != null}
+              disabled={
+                busy ||
+                !isCorrectChain ||
+                validation != null ||
+                !accountLoaded ||
+                !decimalsReady
+              }
             >
               {busy && step
                 ? step
@@ -693,7 +803,7 @@ export default function AutoLendIntentCard() {
                   ? t('autoLend.actionUpdate')
                   : t('autoLend.actionEnable')}
             </button>
-            {isActive && consent !== false && (
+            {isActive && (
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handlePause}
@@ -702,7 +812,7 @@ export default function AutoLendIntentCard() {
                 {t('autoLend.actionPause')}
               </button>
             )}
-            {isActive && (
+            {(isActive || (capitalView ?? 0n) > 0n) && (
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={handleWithdrawAndStop}

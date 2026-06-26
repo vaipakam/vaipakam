@@ -467,6 +467,10 @@
     "permissionInitiateRefinanceDesc": "Triggers a refinance against a matching borrower offer.",
     "permissionAutoExtendTitle": "Auto-extend in place",
     "permissionAutoExtendDesc": "Extends an active loan in place when both you and the lender have pre-approved extend caps. Pays the accrued interest from your vault automatically.",
+    "permissionSignedFillTitle": "Fill my standing lend intents (auto-lend)",
+    "permissionSignedFillDesc": "Lets this keeper fill your keeper-gated standing lend intents against matching borrower demand, within the bounds you set. Only used when you mark an auto-lend intent as keeper-only.",
+    "permissionAutoRollTitle": "Auto-roll my repaid lend intents (auto-lend)",
+    "permissionAutoRollDesc": "Lets this keeper redeploy a fully-repaid standing-intent loan straight back into your intent capital, with no manual claim. Required for hands-off auto-lend.",
     "actionsLabel": "Actions:",
     "actionsNone": "none",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
@@ -527,8 +531,9 @@
     "noKeeperHere": "No keeper is published for this chain yet, so auto-roll delegation is unavailable here. You can still register and fund an intent; the keeper auto-fills it. Auto-roll needs the delegation step, which appears once a keeper address is configured.",
     "noticeConsentBlocked": "Your intent and keeper delegation are set. The consent marker couldn't be set because admin has it disabled right now — the keeper can still act, and you can flip consent on later.",
     "noticeEnabled": "Auto-lend is set up. The keeper will fill matching demand under your bounds.",
-    "noticePaused": "Auto-lend paused. Your intent and capital stay in place; flip it back on any time.",
+    "noticePaused": "Auto-lend paused — the intent is de-listed so no new fills happen. Your funded capital stays reserved: click Enable to resume (no re-funding needed) or Withdraw & stop to retrieve it.",
     "noticeStopped": "Auto-lend stopped. Your un-lent capital has been withdrawn and the intent cancelled.",
+    "reservedCapital": "{{capital}} of funded capital is still reserved from a paused intent. Click Enable to resume lending it, or Withdraw & stop to return it to your wallet.",
     "actionEnable": "Enable auto-lend",
     "actionUpdate": "Update & fund",
     "actionPause": "Pause",
@@ -551,6 +556,7 @@
     "errDuration": "Max term must be at least one day.",
     "errFundOverExposure": "Amount to fund can't exceed your max exposure.",
     "errKeeperOnlyNoKeeper": "No keeper is published on this chain, so a keeper-only intent could never be filled. Uncheck \"restrict fills to my delegated keeper\" to allow permissionless fills.",
+    "errRiskConsent": "Please review and accept the risk disclosures before enabling auto-lend.",
     "errNoToken": "Couldn't load the lending token — check the address."
   },
   "autoLifecycle": {

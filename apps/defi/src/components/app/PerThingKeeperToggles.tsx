@@ -36,6 +36,9 @@ const ACTION_LABELS: Record<keyof typeof KEEPER_ACTION, string> = {
   REFINANCE: 'Refinance',
   // T-092 Phase 3 (#503) — auto-extend in place toggle.
   EXTEND: 'Auto-extend',
+  // #625 WI-1 — standing-intent (auto-lend) delegation bits.
+  SIGNED_FILL: 'Fill intent',
+  AUTO_ROLL: 'Auto-roll',
 };
 
 interface CommonProps {

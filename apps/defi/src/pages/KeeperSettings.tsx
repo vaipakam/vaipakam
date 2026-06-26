@@ -24,6 +24,12 @@ export const KEEPER_ACTION = {
   // from 0x1F to 0x3F server-side. The dedicated toggle row below
   // lets users opt in or out per-action.
   EXTEND: 0x20,
+  // #625 WI-1 (auto-lend) — the standing-intent delegation bits. On-chain
+  // KEEPER_ACTION_ALL is 0xFF, so these are valid grants. Surfaced here so
+  // a keeper delegated via the auto-lend card (which may hold only AUTO_ROLL
+  // and/or SIGNED_FILL) shows those permissions instead of appearing blank.
+  SIGNED_FILL: 0x40,
+  AUTO_ROLL: 0x80,
 } as const;
 export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.COMPLETE_LOAN_SALE |
@@ -31,7 +37,9 @@ export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.INIT_EARLY_WITHDRAW |
   KEEPER_ACTION.INIT_PRECLOSE |
   KEEPER_ACTION.REFINANCE |
-  KEEPER_ACTION.EXTEND;
+  KEEPER_ACTION.EXTEND |
+  KEEPER_ACTION.SIGNED_FILL |
+  KEEPER_ACTION.AUTO_ROLL;
 
 type ActionKey = keyof typeof KEEPER_ACTION;
 
@@ -65,6 +73,16 @@ const ACTION_ROWS: Array<{ key: ActionKey; labelKey: string; hintKey: string }> 
     key: "EXTEND",
     labelKey: "keeperPicker.permissionAutoExtendTitle",
     hintKey: "keeperPicker.permissionAutoExtendDesc",
+  },
+  {
+    key: "SIGNED_FILL",
+    labelKey: "keeperPicker.permissionSignedFillTitle",
+    hintKey: "keeperPicker.permissionSignedFillDesc",
+  },
+  {
+    key: "AUTO_ROLL",
+    labelKey: "keeperPicker.permissionAutoRollTitle",
+    hintKey: "keeperPicker.permissionAutoRollDesc",
   },
 ];
 
