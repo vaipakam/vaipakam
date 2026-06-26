@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Coins, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
-import { parseUnits, formatUnits, isAddress, zeroAddress } from 'viem';
+import {
+  parseUnits,
+  formatUnits,
+  isAddress,
+  zeroAddress,
+  maxUint256,
+} from 'viem';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import {
@@ -546,6 +552,15 @@ export default function AutoLendIntentCard() {
     if (vpfiToken && form.lendingAsset.toLowerCase() === vpfiToken.toLowerCase())
       return t('autoLend.errVpfiLending');
     if (!parsed.ok) return t('autoLend.errAmount');
+    // Token amounts are uint256 on-chain — reject anything over the ceiling
+    // before the multi-tx flow so an out-of-range value can't ABI-fail at
+    // setLenderIntent/fundLenderIntent after consent + grants were written.
+    if (
+      parsed.maxExposure > maxUint256 ||
+      parsed.minFill > maxUint256 ||
+      parsed.fund > maxUint256
+    )
+      return t('autoLend.errAmount');
     if (parsed.maxExposure <= 0n) return t('autoLend.errExposure');
     if (parsed.minFill <= 0n || parsed.minFill > parsed.maxExposure)
       return t('autoLend.errMinFill');
@@ -698,6 +713,15 @@ export default function AutoLendIntentCard() {
       //    outruns the grant. Skip decisions use the FRESH grant state.
       if (keeperAddress) {
         if (!acct.keeperAccess) {
+          // Re-check the acknowledgement against the FRESH master-switch
+          // state: validation may have run while cached keeperAccess was
+          // true (so the warning checkbox never showed and the ack is
+          // unset). Flipping the global switch on without it would silently
+          // reactivate every keeper the wallet approved — require it here.
+          if (!ackKeeperMasterGiven) {
+            setError(t('autoLend.errAckKeeperMaster'));
+            return;
+          }
           setStep(t('autoLend.stepKeeperAccess'));
           const tx = await dw.setKeeperAccess(true);
           await tx.wait();
@@ -875,7 +899,9 @@ export default function AutoLendIntentCard() {
   // a user can always revoke their own consent. Does NOT touch any
   // intent or capital; the per-pair Stop handles those.
   const handleRevokeConsent = async () => {
-    if (!address || !diamond || !canWrite) return;
+    // Gate on accountLoaded so the action acts on THIS wallet's freshly
+    // read consent, not a previous account's stale `consent === true`.
+    if (!address || !diamond || !canWrite || !accountLoaded) return;
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -1169,9 +1195,10 @@ export default function AutoLendIntentCard() {
               </button>
             )}
             {/* Global consent revoke — the only path to clear the
-                wallet-level marker (Pause/Stop stay per-pair). Shown
-                whenever consent is on, independent of any single pair. */}
-            {consent === true && (
+                wallet-level marker (Pause/Stop stay per-pair). Shown only
+                once the account is loaded for the CURRENT wallet, so a
+                stale-render of a previous wallet's consent can't drive it. */}
+            {consent === true && accountLoaded && (
               <button
                 className="btn btn-ghost btn-sm"
                 onClick={handleRevokeConsent}
