@@ -302,6 +302,14 @@ export default function AutoLendIntentCard() {
             : Promise.resolve(null),
           ro.getApprovedKeepers(address),
         ]);
+      // Stale-resolve guard: if a wallet/chain switch happened while this
+      // read was in flight, drop it — otherwise a slower response for the
+      // PREVIOUS identity could land after the new one and overwrite
+      // `loadedAccountKey` with the old key, wedging `accountLoaded` false
+      // for the connected wallet with no scheduled re-read.
+      const capturedAccountKey = `${chainId ?? ''}:${address}`;
+      if (idKeyRef.current !== capturedAccountKey) return null;
+
       const snap: AccountSnapshot = {
         adminLendEnabled: Boolean(adminLend),
         // matchIntent rejects when EITHER the partial-fill gate OR the
@@ -321,7 +329,7 @@ export default function AutoLendIntentCard() {
       setApprovedKeepersCount(snap.approvedKeepersCount);
       // Stamp the chain+wallet these reads belong to; skip decisions
       // trust them only while this still equals the live id.
-      setLoadedAccountKey(`${chainId ?? ''}:${address}`);
+      setLoadedAccountKey(capturedAccountKey);
       return snap;
     } catch {
       // Facet not cut on this (old) deploy — leave loading; card hides.
@@ -693,13 +701,6 @@ export default function AutoLendIntentCard() {
         return;
       }
 
-      // Ordering rationale: consent -> delegate -> register -> fund.
-      // Registration (setLenderIntent) reactivates and relists a PAUSED
-      // intent's reserved capital into the fill registry, so every
-      // authorisation that must be in place before the intent can be
-      // filled is done FIRST (consent, then keeper delegation), then
-      // register relists/creates, then fund adds capital last.
-
       // 1. Consent marker FIRST (fresh: skip only if actually recorded).
       if (!acct.consent) {
         setStep(t('autoLend.stepConsent'));
@@ -708,20 +709,28 @@ export default function AutoLendIntentCard() {
         setConsent(true);
       }
 
-      // 2. Keeper delegation (only when a keeper is published here) —
-      //    BEFORE registration, so re-listing paused capital never
-      //    outruns the grant. Skip decisions use the FRESH grant state.
-      if (keeperAddress) {
+      // Hoisted master-switch ack gate: re-check against the FRESH
+      // keeperAccess (validation may have run while cached keeperAccess was
+      // true, so the warning checkbox never showed and the ack is unset).
+      // Flipping the global switch on without it would silently reactivate
+      // every keeper the wallet approved — block here, independent of
+      // step ordering.
+      if (keeperAddress && !acct.keeperAccess && !ackKeeperMasterGiven) {
+        setError(t('autoLend.errAckKeeperMaster'));
+        return;
+      }
+
+      const needsRegister = !intentMatchesParsed(
+        pair.view,
+        parsed,
+        form.requiresKeeperAuth,
+      );
+
+      // Keeper delegation (keeper access + grant). Skip decisions use the
+      // FRESH grant state.
+      const runDelegate = async () => {
+        if (!keeperAddress) return;
         if (!acct.keeperAccess) {
-          // Re-check the acknowledgement against the FRESH master-switch
-          // state: validation may have run while cached keeperAccess was
-          // true (so the warning checkbox never showed and the ack is
-          // unset). Flipping the global switch on without it would silently
-          // reactivate every keeper the wallet approved — require it here.
-          if (!ackKeeperMasterGiven) {
-            setError(t('autoLend.errAckKeeperMaster'));
-            return;
-          }
           setStep(t('autoLend.stepKeeperAccess'));
           const tx = await dw.setKeeperAccess(true);
           await tx.wait();
@@ -742,11 +751,12 @@ export default function AutoLendIntentCard() {
           await tx.wait();
           setKeeperActions(current | desiredKeeperActions);
         }
-      }
+      };
 
-      // 3. Register / update the standing intent (skip if the FRESH on-chain
-      //    intent already matches the form).
-      if (!intentMatchesParsed(pair.view, parsed, form.requiresKeeperAuth)) {
+      // Register / update the standing intent (skip if the FRESH on-chain
+      // intent already matches the form).
+      const runRegister = async () => {
+        if (!needsRegister) return;
         setStep(t('autoLend.stepRegister'));
         const tx = await dw.setLenderIntent(
           lendingAsset,
@@ -760,11 +770,45 @@ export default function AutoLendIntentCard() {
           riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
         );
         await tx.wait();
+      };
+
+      // 2 & 3. Order the delegate / register steps by intent state:
+      //  - ACTIVE + mismatched (the user is e.g. TIGHTENING rate/LTV/term):
+      //    UPDATE TERMS FIRST, then delegate. The intent is already
+      //    fillable, so enabling the keeper before the update would let it
+      //    fill under the OLD looser terms in the inter-tx window.
+      //  - otherwise (a PAUSED/inactive relist, or no register needed):
+      //    DELEGATE FIRST, then register — so re-listing reserved capital
+      //    never outruns the grant.
+      if (pair.view.active && needsRegister) {
+        await runRegister();
+        await runDelegate();
+      } else {
+        await runDelegate();
+        await runRegister();
       }
 
       // 4. Fund LAST — only after every authorisation is in place.
       if (parsed.fund > 0n) {
         if (!lendingErc20) throw new Error(t('autoLend.errNoToken'));
+        // Re-read the pair and RE-APPLY the headroom check immediately
+        // before funding — another tab funding, or an auto-roll compounding
+        // proceeds, could have raised capital/live-principal since the
+        // initial read. fundLenderIntent does not enforce maxExposure, so
+        // this is the last guard against pulling idle capital the exposure
+        // cap would reject.
+        const freshPair = await reloadPair();
+        if (!freshPair) {
+          setError(t('autoLend.errLoadFailed'));
+          return;
+        }
+        if (
+          freshPair.capital + freshPair.livePrincipal + parsed.fund >
+          parsed.maxExposure
+        ) {
+          setError(t('autoLend.errFundOverExposure'));
+          return;
+        }
         setStep(t('autoLend.stepApprove'));
         const erc20 = lendingErc20 as unknown as {
           allowance: (o: string, s: string) => Promise<bigint>;
