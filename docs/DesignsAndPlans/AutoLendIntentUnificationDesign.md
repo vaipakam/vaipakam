@@ -51,7 +51,7 @@ layer's **capital lifecycle** (fund → lien → fill → roll) is more involved
 | **Registration** | LIVE | `LenderIntentFacet.setLenderIntent(lendingAsset, collateralAsset, maxExposure, minRateBps, maxInitLtvBps, maxDurationDays, minFillAmount, requiresKeeperAuth, riskAndTermsConsent)` — bounds + one-time risk/terms consent. Registration is always open (NOT gated by the fill kill-switch). |
 | **Funding (REQUIRED before fill)** | LIVE | `fundLenderIntent(lendingAsset, collateralAsset, amount)` pulls wallet→vault and **liens** the capital under the intent (`LibEncumbrance.lienIntentCapital`). `matchIntent` draws strictly from this `lenderIntentCapital` lien (`unlienIntentCapital`) and **reverts `IntentCapitalInsufficient`** if the intent is unfunded / depleted below `fillAmount`. So a registered-but-unfunded intent is NOT fillable. |
 | **Fill** | LIVE | `OfferMatchFacet.matchIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)` — materializes a temporary lender slice, routes through `_executeMatch`. Enforces `duration ≤ maxDurationDays`, full-term, no-partial, exposure ≤ `maxExposure`, capital ≥ `fillAmount`. Lender-of-record stays the user. |
-| **Fill kill-switch** | LIVE | `matchIntent` reverts `FunctionDisabled(4)` unless `protocolCfg.lenderIntentEnabled` is on (default **false**; set via `setLenderIntentEnabled`). **This** — not `cfgAutoLendEnabled` — is the switch that enables intent fills. (`cfgAutoLendEnabled` only gates `setAutoLendConsent`.) |
+| **Fill kill-switches (TWO)** | LIVE | `matchIntent` checks **both**, in order: `partialFillEnabled` (reverts `FunctionDisabled(3)`) THEN `lenderIntentEnabled` (reverts `FunctionDisabled(4)`) — both default **false**. Intent fills need BOTH on. **Neither is `cfgAutoLendEnabled`** (that only gates `setAutoLendConsent`). It also freezes an aggregator's intent when `cfgAggregatorAdaptersPaused`, and blocks a VPFI-lending intent. |
 | **Revolving (NOT automatic)** | LIVE but explicit | When an intent loan repays, proceeds land as the lender's **free balance + a Position-NFT claim** — they are NOT auto-re-lent. An explicit `LenderIntentFacet.rollIntentLoan(loanId)` (owner or authorized keeper) consumes the lender claim and re-liens the proceeds into `lenderIntentCapital`. Only then is the same intent re-fillable from the compounded capital. The normal `ClaimFacet` path just releases exposure + withdraws to the lender. |
 | **Keeper-pause** | CONDITIONAL | `matchIntent` reaches `LibAuth.requireKeeperForPrincipal` (which enforces `keepersPaused`) **only when `intent.requiresKeeperAuth == true`**. An intent with `requiresKeeperAuth == false` is openly fillable by anyone and the on-chain keeper pause does NOT apply to it. |
 | **Preview** | MISSING | `previewMatch(lenderOfferId, borrowerOfferId)` needs two already-materialized offers; an intent's slice is created *inside* the state-changing `matchIntent`, so there is **no** dry-run for an intent fill today. |
@@ -87,10 +87,15 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
    funded-but-depleted, and a keeper that filters only on exposure would submit a fill
    that reverts `IntentCapitalInsufficient`.
 2. **`previewIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)
-   → MatchResult`** — a view that synthesizes the lender slice the way `matchIntent`
-   would and runs the `previewMatch` matrix against the counterparty, **plus** the intent
-   bounds (capital ≥ fillAmount, exposure room, duration ≤ cap, rate, LTV). Without this
-   the keeper can only fill blind and eat reverts.
+   → MatchResult`** — a view that synthesizes the lender slice the way `matchIntent` would
+   and runs the `previewMatch` matrix against the counterparty, **plus every intent-only
+   check `matchIntent` adds that `previewMatch` does NOT**: capital ≥ fillAmount, exposure
+   room, duration ≤ cap, the borrower's `useFullTermInterest == true` AND
+   `allowsPartialRepay == false` (`previewMatch` never inspects these — it only runs the
+   generic asset/amount/rate/collateral/HF matrix), LTV-resolvable collateral, and the two
+   kill-switches + aggregator-pause + VPFI-lending block. A preview that mirrored only
+   `previewMatch` would report Ok for a borrower offer `matchIntent` rejects — defeating the
+   dry-run.
 3. **EIP-170 watch:** if `LenderIntentFacet` lacks headroom for the view(s), place the
    read views on the metrics facet that already hosts `getActiveOffersPaginated`, keeping
    only the enumerable-set maintenance on `LenderIntentFacet`. Facet-addition / selector /
@@ -98,27 +103,43 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 
 **Keeper — `apps/keeper/src/matcher.ts` (or a sibling), each tick:**
 1. Page `getActiveLenderIntents`; skip intents with **zero available capital**.
-2. For each, find borrower offers that fit: **rate** — `intent.minRateBps ≤
-   borrowerOffer.interestRateBpsMax` (the borrower's CEILING, the rate they'll accept up
-   to — NOT `interestRateBps`, the floor); **duration** ≤ `maxDurationDays`; **init-LTV** ≤
-   `maxInitLtvBps`; **amount** in `[minFillAmount, min(maxExposure − live, availableCapital)]`.
-3. `previewIntent` → if Ok, submit `matchIntent(...)`. The keeper earns the 1% LIF.
-4. **Off-chain kill-switch checks:** the bot itself must honour `keepersPaused` and
-   `lenderIntentEnabled` before submitting — `matchIntent` enforces `lenderIntentEnabled`
-   on-chain, but `keepersPaused` is enforced on-chain ONLY for `requiresKeeperAuth == true`
-   intents, so for openly-fillable intents the official bot must self-gate off-chain
-   (otherwise it would keep matching during a keeper pause).
-5. **Auto-roll pass:** for the lender's own repaid intent loans, call
+2. **Filter out keeper-gated intents the bot can't fill:** `matchIntent` calls
+   `requireKeeperForPrincipal(KEEPER_ACTION_SIGNED_FILL, lender)` when
+   `intent.requiresKeeperAuth == true`, so only attempt an intent that is either openly
+   fillable (`requiresKeeperAuth == false`) OR for which the bot holds the lender's
+   `SIGNED_FILL` delegation — else the fill reverts.
+3. For each remaining intent, find borrower offers that fit: **rate** — `intent.minRateBps
+   ≤ borrowerOffer.interestRateBpsMax` (the borrower's CEILING — NOT `interestRateBps`, the
+   floor); **duration** ≤ `maxDurationDays`; **init-LTV** ≤ `maxInitLtvBps`; **amount** —
+   bounded by BOTH sides: `[minFillAmount, min(maxExposure − live, availableCapital,
+   borrowerRemainingCapacity)]`. The slice is single-fill (`amount == fillAmount`) and
+   `previewMatch` requires the borrower posts ≥ the slice, so the borrower offer's
+   remaining capacity is a hard upper bound on `fillAmount`.
+4. `previewIntent` → if Ok, submit `matchIntent(...)`. The keeper earns the 1% LIF.
+5. **Off-chain kill-switch self-gate:** honour `partialFillEnabled`, `lenderIntentEnabled`,
+   AND `keepersPaused` before submitting. `matchIntent` enforces the first two on-chain, but
+   `keepersPaused` is enforced on-chain ONLY for `requiresKeeperAuth == true` intents — so
+   for openly-fillable intents the bot must self-gate on `keepersPaused` off-chain (else it
+   keeps matching during a pause).
+6. **Auto-roll pass:** discover the lender's repaid intent loans via the per-loan
+   `intentOrigin[loanId]` marker (set at fill) — there is no enumerable source today, so
+   surface them through a new `getRollableIntentLoans`-style view OR an indexed
+   `OfferMatched`-derived intent-loan set — filter to `status == Repaid` (+ the on-chain
+   roll guards: position not sold, `loan.lender == owner`, no `heldForLender`), and call
    `rollIntentLoan(loanId)` so the proceeds re-lien into `lenderIntentCapital` and the
-   intent revolves. Without this pass, repaid capital sits idle as free balance and the
-   "revolving" property doesn't materialise. (Gate on `requiresKeeperAuth` / the lender's
-   keeper-delegation, same as the fill path.)
+   intent revolves. **Roll uses a DIFFERENT delegation:** `rollIntentLoan` requires the
+   owner or a keeper authorized for `KEEPER_ACTION_AUTO_ROLL` (NOT `SIGNED_FILL` /
+   `requiresKeeperAuth`). Without this pass, repaid capital sits idle as free balance and
+   "revolving" never materialises.
 
 ### WI-1 — dapp auto-lend opt-in: register + **fund** a `LenderIntent`
-Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" = `setLenderIntent(...)`
-**followed by `fundLenderIntent(...)`** (a registered-but-unfunded intent never fills —
-the funding step is load-bearing, not optional), and "turn off" =
-`cancelLenderIntent(...)` (+ withdraw capital). The lender sets the bounds, signs the
+Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" = `setAutoLendConsent(true)` +
+`setLenderIntent(...)` + **`fundLenderIntent(...)`** (a registered-but-unfunded intent never
+fills — the funding step is load-bearing, not optional), and "turn off" =
+`cancelLenderIntent(...)` + withdraw capital + `setAutoLendConsent(false)`. The toggle moves
+the consent flag and the intent state **together**, so the on-chain `autoLendConsent` marker
+never diverges from whether an intent is actually live (gated by `cfgAutoLendEnabled`, which
+must be on for `setAutoLendConsent(true)` to succeed). The lender sets the bounds, signs the
 one-time risk/terms consent, and chooses how much capital to commit. The registration UI
 surfaces the **market-rate widget** (already shipped) as the suggested `minRateBps` floor
 so a passive lender doesn't underprice (O4).
