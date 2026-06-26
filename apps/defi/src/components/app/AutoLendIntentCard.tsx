@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Coins, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
 import { parseUnits, formatUnits } from 'viem';
 import { useTranslation } from 'react-i18next';
@@ -115,6 +115,13 @@ export default function AutoLendIntentCard() {
   const diamondRo = useDiamondRead();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // Latest form, readable inside async resolves to guard against a
+  // stale pair switch without threading state through closures. Kept
+  // current via an effect (ref writes don't belong in render).
+  const formRef = useRef(form);
+  useEffect(() => {
+    formRef.current = form;
+  }, [form]);
   const setField = useCallback(
     <K extends keyof FormState>(k: K, v: FormState[K]) =>
       setForm((f) => ({ ...f, [k]: v })),
@@ -130,17 +137,23 @@ export default function AutoLendIntentCard() {
   const [keeperActions, setKeeperActions] = useState<number | null>(null);
   const [keeperAccess, setKeeperAccess] = useState<boolean | null>(null);
   const [lendingDecimals, setLendingDecimals] = useState<number>(18);
-  // The lending asset `lendingDecimals` was last read for — writes are
+  // `${chainId}:${lendingAsset}` the decimals were read for — writes are
   // gated until this matches the form so amounts never parse with a
-  // previous token's decimals (a 6-dec/18-dec swap would misscale).
-  const [decimalsAsset, setDecimalsAsset] = useState<string>('');
-  // The wallet `reloadAccount` last resolved for — account-level reads
-  // (consent / keeper grant) are only trusted while this equals `address`.
-  const [loadedAccountAddr, setLoadedAccountAddr] = useState<string>('');
+  // previous token's (or chain's) decimals (a 6-dec/18-dec swap, or a
+  // same-address token on another chain, would misscale).
+  const [decimalsKey, setDecimalsKey] = useState<string>('');
+  // `${chainId}:${wallet}` the account-level reads (consent / keeper
+  // grant) belong to — trusted only while it still equals the live id.
+  const [loadedAccountKey, setLoadedAccountKey] = useState<string>('');
 
-  // Mandatory risk/terms consent — must be ticked before registering,
-  // mirroring the offer-create flow (never hard-coded to true).
+  // Mandatory risk/terms consent + (when enabling the global keeper
+  // master switch) an explicit acknowledgement that doing so reactivates
+  // every keeper the wallet has approved. Both are stamped with the
+  // `${chainId}:${wallet}` they were given under, so a wallet/chain
+  // switch makes the new account re-accept before registration.
   const [riskConsent, setRiskConsent] = useState<boolean>(false);
+  const [ackKeeperMaster, setAckKeeperMaster] = useState<boolean>(false);
+  const [consentsKey, setConsentsKey] = useState<string>('');
 
   const [busy, setBusy] = useState<boolean>(false);
   const [step, setStep] = useState<string | null>(null);
@@ -157,15 +170,19 @@ export default function AutoLendIntentCard() {
 
   const lendingErc20 = useERC20(form.lendingAsset || null);
 
-  // `${wallet}:${lend}:${coll}` the loaded intent/capital belong to —
-  // render gates on it so neither a prior pair's NOR a prior wallet's
-  // data shows after a switch (avoids a synchronous reset-in-effect;
-  // everything below is set post-await).
+  // `${chainId}:${wallet}:${lend}:${coll}` the loaded intent/capital
+  // belong to — render gates on it so no prior pair's, wallet's, OR
+  // chain's data shows after a switch (avoids a synchronous reset-in-
+  // effect; everything below is set post-await).
   const [loadedPairKey, setLoadedPairKey] = useState<string>('');
-  // Wallet+pair the form was last prefilled from, so prefill runs once.
+  // chain+wallet+pair the form was last prefilled from, so prefill runs once.
   const [prefilledKey, setPrefilledKey] = useState<string>('');
 
-  const currentPairKey = `${address ?? ''}:${form.lendingAsset}:${form.collateralAsset}`;
+  // Identity all stamps are scoped to: a chain switch OR a wallet switch
+  // invalidates every loaded read so none can drive a stale skip decision.
+  const idKey = `${chainId ?? ''}:${address ?? ''}`;
+  const currentPairKey = `${idKey}:${form.lendingAsset}:${form.collateralAsset}`;
+  const currentDecimalsKey = `${chainId ?? ''}:${form.lendingAsset}`;
 
   // Account-level reads (independent of the chosen pair). Returns early
   // without touching state when deps are missing — so every setState
@@ -194,13 +211,13 @@ export default function AutoLendIntentCard() {
       setConsent(Boolean(c));
       setKeeperAccess(Boolean(kAccess));
       setKeeperActions(acts === null ? null : Number(acts));
-      // Stamp the wallet these reads belong to; skip decisions trust
-      // them only while this still equals the connected wallet.
-      setLoadedAccountAddr(address);
+      // Stamp the chain+wallet these reads belong to; skip decisions
+      // trust them only while this still equals the live id.
+      setLoadedAccountKey(`${chainId ?? ''}:${address}`);
     } catch {
       // Facet not cut on this (old) deploy — leave loading; card hides.
     }
-  }, [address, diamondRo, keeperAddress]);
+  }, [address, chainId, diamondRo, keeperAddress]);
 
   // Pair-scoped reads — intent struct + funded capital + lending-token
   // decimals, all in one pass so prefill formats with the right decimals.
@@ -209,7 +226,7 @@ export default function AutoLendIntentCard() {
     const lendingAsset = form.lendingAsset;
     const collateralAsset = form.collateralAsset;
     if (!address || !diamondRo || !lendingAsset || !collateralAsset) return;
-    const key = `${address}:${lendingAsset}:${collateralAsset}`;
+    const key = `${chainId ?? ''}:${address}:${lendingAsset}:${collateralAsset}`;
     try {
       const ro = diamondRo as unknown as {
         getLenderIntent: (o: string, l: string, c: string) => Promise<IntentView>;
@@ -240,22 +257,25 @@ export default function AutoLendIntentCard() {
         requiresKeeperAuth: Boolean(iv.requiresKeeperAuth),
       };
       setLendingDecimals(dec);
-      setDecimalsAsset(lendingAsset);
+      setDecimalsKey(`${chainId ?? ''}:${lendingAsset}`);
       setIntent(view);
       setCapital(BigInt(cap));
       setLoadedPairKey(key);
-      // Prefill the form once per (wallet, pair) from an active intent,
-      // so editing shows current on-chain terms.
+      // Prefill the form once per (chain, wallet, pair) from an active
+      // intent, so editing shows current on-chain terms. Guard against a
+      // stale resolve (user switched pairs mid-flight) by checking the
+      // LIVE form via the ref, and only stamp `prefilledKey` when the
+      // prefill is actually applied — so a stale resolve never marks a
+      // pair prefilled without applying it (which would suppress a later
+      // legitimate prefill when the user returns to that pair).
       if (view.active && prefilledKey !== key) {
-        setPrefilledKey(key);
-        setForm((f) => {
-          // Guard against a stale resolve: if the user switched pairs
-          // while this read was in flight, don't overwrite the new
-          // pair's editable bounds with this (now-stale) intent's terms.
-          if (`${f.lendingAsset}:${f.collateralAsset}` !== `${lendingAsset}:${collateralAsset}`) {
-            return f;
-          }
-          return {
+        const live = formRef.current;
+        if (
+          `${live.lendingAsset}:${live.collateralAsset}` ===
+          `${lendingAsset}:${collateralAsset}`
+        ) {
+          setPrefilledKey(key);
+          setForm((f) => ({
             ...f,
             maxExposure: formatUnits(view.maxExposure, dec),
             minFillAmount: formatUnits(view.minFillAmount, dec),
@@ -263,8 +283,8 @@ export default function AutoLendIntentCard() {
             maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
             maxDurationDays: String(Number(view.maxDurationDays)),
             requiresKeeperAuth: view.requiresKeeperAuth,
-          };
-        });
+          }));
+        }
       }
     } catch {
       setLoadedPairKey(key);
@@ -273,6 +293,7 @@ export default function AutoLendIntentCard() {
     }
   }, [
     address,
+    chainId,
     diamondRo,
     form.lendingAsset,
     form.collateralAsset,
@@ -293,17 +314,10 @@ export default function AutoLendIntentCard() {
     void reloadPair();
   }, [reloadPair]);
 
-  // Market anchor (suggested rate floor) for the chosen pair.
-  const anchorBps = useMarketAnchorRate(form.lendingAsset, form.collateralAsset);
-  const anchorPct = useMemo(
-    () => (anchorBps !== null ? Number(anchorBps) / 100 : null),
-    [anchorBps],
-  );
-
   // Only treat the loaded intent/capital as belonging to the chosen
-  // wallet+pair once `reloadPair` has resolved for it — otherwise hold
-  // them as "not yet known" so a prior pair's / wallet's data never
-  // leaks into the UI or a skip decision.
+  // chain+wallet+pair once `reloadPair` has resolved for it — otherwise
+  // hold them as "not yet known" so no prior pair's / wallet's / chain's
+  // data leaks into the UI or a skip decision.
   const pairLoaded =
     !!form.lendingAsset &&
     !!form.collateralAsset &&
@@ -311,11 +325,17 @@ export default function AutoLendIntentCard() {
   const intentView = pairLoaded ? intent : null;
   const capitalView = pairLoaded ? capital : null;
   // Account-level reads are trustworthy only while they belong to the
-  // connected wallet; decimals only while they belong to the chosen
-  // lending asset. Writes are gated on both so a wallet/asset switch
-  // can't drive a stale skip decision or misscale an amount.
-  const accountLoaded = !!address && loadedAccountAddr === address;
-  const decimalsReady = !!form.lendingAsset && decimalsAsset === form.lendingAsset;
+  // connected chain+wallet; decimals only while they belong to the chosen
+  // chain+lending-asset. Writes are gated on both so a wallet / chain /
+  // asset switch can't drive a stale skip decision or misscale an amount.
+  const accountLoaded = !!address && loadedAccountKey === idKey;
+  const decimalsReady =
+    !!form.lendingAsset && decimalsKey === currentDecimalsKey;
+  // Consents are valid only for the chain+wallet they were given under,
+  // so a wallet/chain switch forces the new account to re-accept.
+  const consentsValid = consentsKey === idKey;
+  const riskConsentGiven = riskConsent && consentsValid;
+  const ackKeeperMasterGiven = ackKeeperMaster && consentsValid;
 
   // ── Derived ──────────────────────────────────────────────────────
   const diamondAddr = useMemo(
@@ -371,9 +391,22 @@ export default function AutoLendIntentCard() {
       return t('autoLend.errKeeperOnlyNoKeeper');
     // Mandatory risk/terms consent — the registration records it, so the
     // user must accept the disclosures first (never recorded silently).
-    if (!riskConsent) return t('autoLend.errRiskConsent');
+    if (!riskConsentGiven) return t('autoLend.errRiskConsent');
+    // Enabling auto-lend flips the GLOBAL keeper master switch, which
+    // reactivates every keeper this wallet has approved — require an
+    // explicit acknowledgement when it's currently off.
+    if (keeperAddress && keeperAccess === false && !ackKeeperMasterGiven)
+      return t('autoLend.errAckKeeperMaster');
     return null;
-  }, [form, parsed, keeperAddress, riskConsent, t]);
+  }, [
+    form,
+    parsed,
+    keeperAddress,
+    keeperAccess,
+    riskConsentGiven,
+    ackKeeperMasterGiven,
+    t,
+  ]);
 
   // Whether the on-chain intent already matches the form (lets the
   // resumable enable skip step 1).
@@ -401,6 +434,16 @@ export default function AutoLendIntentCard() {
       setError(validation);
       return;
     }
+    // Consent kill-switch gate — checked BEFORE any registration. A
+    // re-registration relists previously-reserved capital into the fill
+    // registry, so it would become fillable even though we'd then stop
+    // before recording consent. If consent can't be set and isn't already
+    // set, abort before touching the chain. (`adminLendEnabled`/`consent`
+    // are trusted because Enable is gated on `accountLoaded`.)
+    if (consent === false && adminLendEnabled === false) {
+      setNotice(t('autoLend.noticeConsentBlocked'));
+      return;
+    }
     setError(null);
     setNotice(null);
     setBusy(true);
@@ -419,7 +462,7 @@ export default function AutoLendIntentCard() {
           parsed.maxDurationDays,
           parsed.minFill,
           form.requiresKeeperAuth,
-          riskConsent, // mandatory risk/terms consent — validated above, never silent
+          riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
         );
         await tx.wait();
       }
@@ -449,19 +492,10 @@ export default function AutoLendIntentCard() {
         }
       }
 
-      // 3. Consent marker (gated by the admin consent kill-switch).
+      // 3. Consent marker. The blocked case (admin off + consent unset)
+      //    was already rejected at the top, so here consent is either
+      //    already true or the admin switch allows setting it now.
       if (consent === false) {
-        if (adminLendEnabled === false) {
-          // Can't set consent now. STOP before funding: a funded intent
-          // is fillable on-chain regardless of this marker, so funding
-          // here would let the keeper fill while the user-level consent
-          // is still unset — breaking the register → consent → fund
-          // ordering. The intent + grant stay in place; the user can
-          // fund once admin re-enables and consent is recorded.
-          setNotice(t('autoLend.noticeConsentBlocked'));
-          await Promise.all([reloadAccount(), reloadPair()]);
-          return;
-        }
         setStep(t('autoLend.stepConsent'));
         const tx = await dw.setAutoLendConsent(true);
         await tx.wait();
@@ -692,16 +726,16 @@ export default function AutoLendIntentCard() {
                   placeholder="0.0"
                   disabled={busy}
                 />
-                {anchorPct !== null && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-xs"
-                    style={{ marginTop: 4 }}
-                    onClick={() => setField('minRatePct', String(anchorPct))}
+                {/* Suggested-rate floor — the child mounts the log-index
+                    scan only once both legs are chosen, so a bare
+                    Dashboard render never triggers it. */}
+                {!!form.lendingAsset && !!form.collateralAsset && (
+                  <MarketRateFloor
+                    lendingAsset={form.lendingAsset}
+                    collateralAsset={form.collateralAsset}
                     disabled={busy}
-                  >
-                    {t('autoLend.useMarketRate', { pct: anchorPct.toFixed(2) })}
-                  </button>
+                    onUse={(pct) => setField('minRatePct', pct)}
+                  />
                 )}
               </label>
               <label style={{ flex: 1, minWidth: 120 }}>
@@ -753,19 +787,46 @@ export default function AutoLendIntentCard() {
 
           {/* Mandatory risk/terms consent — registration records it, so
               the user accepts the disclosures here (same gate the
-              offer-create flow uses). */}
+              offer-create flow uses). Stamped with the chain+wallet it
+              was given under so a switch forces re-acceptance. */}
           <div style={{ marginTop: 12 }}>
             <RiskDisclosures />
             <label className="checkbox-row" style={{ marginTop: 12 }}>
               <input
                 type="checkbox"
-                checked={riskConsent}
-                onChange={(e) => setRiskConsent(e.target.checked)}
+                checked={riskConsentGiven}
+                onChange={(e) => {
+                  setRiskConsent(e.target.checked);
+                  setConsentsKey(idKey);
+                }}
                 disabled={busy}
               />
               <span><RiskConsentLabel /></span>
             </label>
           </div>
+
+          {/* Global keeper master-switch acknowledgement — enabling
+              auto-lend turns ON keeper access for this wallet, which
+              reactivates EVERY keeper it has approved, not just the
+              auto-lend keeper. Only shown when the switch is currently
+              off (so enabling it would flip it). */}
+          {keeperAddress && keeperAccess === false && (
+            <label
+              className="checkbox-row alert alert-warning"
+              style={{ marginTop: 10, alignItems: 'flex-start' }}
+            >
+              <input
+                type="checkbox"
+                checked={ackKeeperMasterGiven}
+                onChange={(e) => {
+                  setAckKeeperMaster(e.target.checked);
+                  setConsentsKey(idKey);
+                }}
+                disabled={busy}
+              />
+              <span>{t('autoLend.ackKeeperMasterLabel')}</span>
+            </label>
+          )}
 
           {/* Keeper-delegation availability note */}
           {!keeperAddress && (
@@ -849,5 +910,38 @@ export default function AutoLendIntentCard() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Suggested-rate floor hint. Lives in a child so `useMarketAnchorRate`
+ * (and the `useLogIndex` scan behind it) only mounts once both legs are
+ * chosen — a bare Dashboard render never triggers the log-index scan.
+ */
+function MarketRateFloor({
+  lendingAsset,
+  collateralAsset,
+  disabled,
+  onUse,
+}: {
+  lendingAsset: string;
+  collateralAsset: string;
+  disabled: boolean;
+  onUse: (pct: string) => void;
+}) {
+  const { t } = useTranslation();
+  const anchorBps = useMarketAnchorRate(lendingAsset, collateralAsset);
+  if (anchorBps === null) return null;
+  const pct = Number(anchorBps) / 100;
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost btn-xs"
+      style={{ marginTop: 4 }}
+      onClick={() => onUse(String(pct))}
+      disabled={disabled}
+    >
+      {t('autoLend.useMarketRate', { pct: pct.toFixed(2) })}
+    </button>
   );
 }

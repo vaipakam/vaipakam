@@ -557,6 +557,8 @@
     "errFundOverExposure": "Amount to fund can't exceed your max exposure.",
     "errKeeperOnlyNoKeeper": "No keeper is published on this chain, so a keeper-only intent could never be filled. Uncheck \"restrict fills to my delegated keeper\" to allow permissionless fills.",
     "errRiskConsent": "Please review and accept the risk disclosures before enabling auto-lend.",
+    "errAckKeeperMaster": "Please acknowledge that enabling auto-lend turns on keeper access for your wallet.",
+    "ackKeeperMasterLabel": "Enabling auto-lend turns ON keeper access for your wallet — this reactivates EVERY keeper you've approved (not just the auto-lend keeper). I understand.",
     "errNoToken": "Couldn't load the lending token — check the address."
   },
   "autoLifecycle": {
