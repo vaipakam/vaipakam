@@ -169,17 +169,16 @@ const killSwitchLogged = new Map<number, boolean>();
 /** Pagination size for `getActiveLenderIntents`. */
 const INTENT_SCAN_PAGE = 100n;
 
-/** Per-tick cap on `previewIntent` eth_calls (intent × borrower candidates). */
-const MAX_INTENT_PREVIEW_CALLS_PER_TICK = 1000;
-
-/** Per-tick cap on `matchIntent` submissions. */
-const MAX_INTENT_SUBMITS_PER_TICK = 15;
-
 /** `LibVaipakam.FillMode.Aon`. */
 const FILL_MODE_AON = 1;
 
-/** `LibOfferMatch.IntentError.Ok` / `IntentPreviewResult.ok` gate. */
-const INTENT_OK = 0;
+/** `LibOfferMatch.IntentError.KeeperUnauthorized` — index 8 in the enum
+ *  (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled, AggregatorPaused,
+ *  Inactive, VpfiLendingUnsupported, KeeperUnauthorized, …). Auth is
+ *  intent-level (same verdict for every borrower), so on this code the keeper
+ *  abandons the WHOLE intent after a single probe rather than burning one
+ *  `previewIntent` per borrower (Codex #748 r1). */
+const INTENT_ERR_KEEPER_UNAUTHORIZED = 8;
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 interface LenderIntentSummary {
@@ -634,20 +633,31 @@ async function runIntentFillPass(
   ctx: KeeperContext,
   borrowers: readonly OfferLite[],
   overBudget: () => boolean,
+  submitsUsed: number,
+  previewsUsed: number,
 ): Promise<void> {
+  // Codex #748 r1 — check the shared wall-time budget BEFORE paging intents:
+  // on a large registry, `getActiveLenderIntents` RPC alone can blow past the
+  // 90s budget even when no preview/submit follows.
+  if (overBudget()) return;
   const solver = ctx.wallet.account?.address;
   if (!solver) return;
   const intents = await listActiveIntents(ctx);
   if (intents.length === 0 || borrowers.length === 0) return;
 
-  let previews = 0;
-  let submits = 0;
+  // Codex #748 r1 — CONTINUE the outer tick's RPC/gas budget rather than
+  // resetting it: the intent pass shares `MAX_PREVIEW_CALLS_PER_TICK` /
+  // `MAX_SUBMITS_PER_TICK` with the matchOffers loop, so the two passes can't
+  // together exceed the documented per-chain rails on a busy book.
+  let previews = previewsUsed;
+  let submits = submitsUsed;
+  let intentFills = 0;
   for (const intent of intents) {
-    if (overBudget() || submits >= MAX_INTENT_SUBMITS_PER_TICK) break;
+    if (overBudget() || submits >= MAX_SUBMITS_PER_TICK) break;
     for (const b of borrowers) {
       if (
-        previews >= MAX_INTENT_PREVIEW_CALLS_PER_TICK ||
-        submits >= MAX_INTENT_SUBMITS_PER_TICK ||
+        previews >= MAX_PREVIEW_CALLS_PER_TICK ||
+        submits >= MAX_SUBMITS_PER_TICK ||
         overBudget()
       ) {
         break;
@@ -666,24 +676,45 @@ async function runIntentFillPass(
       ) {
         continue;
       }
+      // `b.amountFilled` is kept fresh as same-tick fills land (below + in the
+      // matchOffers loop), so `sizeIntentFill` sees live residual capacity and
+      // doesn't oversize into a `previewIntent` rejection (Codex #748 r1).
       const fillAmount = sizeIntentFill(intent, b);
       if (fillAmount === null) continue;
 
       previews += 1;
       const preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
+      if (!preview) continue;
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
-      if (!preview || !preview.ok) continue;
+      if (!preview.ok) {
+        // Authorization is intent-level: a `requiresKeeperAuth` intent this
+        // keeper can't fill returns `KeeperUnauthorized` for EVERY borrower, so
+        // abandon the whole intent after this single probe rather than burning
+        // a preview per borrower (Codex #748 r1).
+        if (preview.intentError === INTENT_ERR_KEEPER_UNAUTHORIZED) break;
+        continue;
+      }
 
       submits += 1;
       const filled = await submitIntentFill(ctx, intent, b.id, fillAmount, preview);
-      // A successful fill moved this intent's exposure + capital; stop scanning
-      // borrowers for it this tick and re-evaluate against fresh state next tick.
-      if (filled) break;
+      if (filled) {
+        intentFills += 1;
+        // Keep the in-memory borrower snapshot live for later intents that
+        // target the same borrower (the single-fill slice consumes exactly
+        // `matchAmount`).
+        b.amountFilled += preview.matchAmount;
+      }
+      // Back off this intent after ANY submit attempt — a success moved its
+      // exposure/capital, and an uncertain result (broadcast fail / receipt
+      // timeout) leaves the tx possibly in-flight; either way, sizing more
+      // fills for it against the stale snapshot would queue reverting txs
+      // (mirrors the matchOffers path — Codex #748 r1).
+      break;
     }
   }
-  if (submits > 0) {
+  if (intentFills > 0) {
     console.log(
-      `[matcher] chain=${ctx.chainId} intent-fill pass: ${submits} fill(s) across ${intents.length} active intent(s) (${previews} preview(s))`,
+      `[matcher] chain=${ctx.chainId} intent-fill pass: ${intentFills} fill(s) across ${intents.length} active intent(s)`,
     );
   }
 }
@@ -757,6 +788,10 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         const ok = await submitMatch(ctx, L.id, B.id, p);
         if (ok) {
           submits += 1;
+          // Keep B's in-memory snapshot live so the later #625 intent-fill pass
+          // sizes against B's true residual capacity, not its tick-start value
+          // (Codex #748 r1).
+          B.amountFilled += p.matchAmount;
           // Issue #172 / #102 — post-borrower-partial-fill, borrower
           // offers are NOT single-fill anymore. Don't break the inner
           // loop on success: the same lender may have remaining capacity
@@ -810,7 +845,9 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
     for (const list of borrowers.values()) {
       for (const b of list) allBorrowers.push(b);
     }
-    await runIntentFillPass(ctx, allBorrowers, overBudget);
+    // Hand the matchOffers loop's spent budget across so the two passes share
+    // the per-tick preview/submit rails (Codex #748 r1).
+    await runIntentFillPass(ctx, allBorrowers, overBudget, submits, previewCalls);
   }
 
   if (submits > 0 || previewCalls > 0) {
