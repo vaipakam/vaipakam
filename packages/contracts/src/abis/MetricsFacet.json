@@ -66,6 +66,11 @@
             "internalType": "bool"
           },
           {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
             "name": "livePrincipal",
             "type": "uint256",
             "internalType": "uint256"

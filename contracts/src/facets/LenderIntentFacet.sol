@@ -15,6 +15,8 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {LibMetricsTypes} from "../libraries/LibMetricsTypes.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title LenderIntentFacet
@@ -49,6 +51,8 @@ contract LenderIntentFacet is
     DiamondPausable,
     DiamondAccessControl
 {
+    using EnumerableSet for EnumerableSet.Bytes32Set;
+
     /// @notice A lender registered / updated a standing intent for an asset-pair.
     event LenderIntentSet(
         address indexed owner,
@@ -728,5 +732,58 @@ contract LenderIntentFacet is
         return LibVaipakam.storageSlot().lenderIntentCapital[owner][
             lendingAsset
         ][collateralAsset];
+    }
+
+    /// @notice #755 — paginated view of ALL standing intents a single lender
+    ///         owns across pairs, so the dapp can list and manage them in one
+    ///         place. Unlike the owner-agnostic, funded-active-only
+    ///         `MetricsFacet.getActiveLenderIntents` global keeper feed, this
+    ///         pages the per-owner registry and ALSO returns PAUSED intents
+    ///         (cancelled but still carrying reserved capital) — the `active`
+    ///         flag on each `LenderIntentSummary` row distinguishes active from
+    ///         paused, and `availableCapital` / `livePrincipal` show what's
+    ///         reserved and what's out on loan. An intent leaves the registry
+    ///         only once fully torn down (inactive AND zero reserved capital).
+    /// @param  owner   The lender whose standing intents to list.
+    /// @param  offset  Start index into the owner's intent set.
+    /// @param  limit   Maximum rows to return from `offset`.
+    /// @return intents The owner's intents within `[offset, offset+limit)`.
+    /// @return total   The owner's total intent count, for pagination.
+    function getLenderIntentsByOwner(
+        address owner,
+        uint256 offset,
+        uint256 limit
+    )
+        external
+        view
+        returns (
+            LibMetricsTypes.LenderIntentSummary[] memory intents,
+            uint256 total
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        EnumerableSet.Bytes32Set storage keys = s.ownerIntentKeys[owner];
+        total = keys.length();
+        if (offset >= total) {
+            return (new LibMetricsTypes.LenderIntentSummary[](0), total);
+        }
+        uint256 endExcl = offset + limit;
+        if (endExcl > total) endExcl = total;
+        uint256 size = endExcl - offset;
+        intents = new LibMetricsTypes.LenderIntentSummary[](size);
+        for (uint256 i = 0; i < size; i++) {
+            LibVaipakam.IntentKey memory key =
+                s.intentKeyTuple[keys.at(offset + i)];
+            intents[i] = LibMetricsTypes.toLenderIntentSummary(
+                key,
+                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
+                s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
+                    key.collateralAsset
+                ],
+                s.lenderIntentCapital[key.owner][key.lendingAsset][
+                    key.collateralAsset
+                ]
+            );
+        }
     }
 }

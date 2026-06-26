@@ -166,6 +166,102 @@
   },
   {
     "type": "function",
+    "name": "getLenderIntentsByOwner",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "offset",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "limit",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "intents",
+        "type": "tuple[]",
+        "internalType": "struct LibMetricsTypes.LenderIntentSummary[]",
+        "components": [
+          {
+            "name": "owner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "lendingAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "collateralAsset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxExposure",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxInitLtvBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "maxDurationDays",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "minFillAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "requiresKeeperAuth",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "active",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "livePrincipal",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "availableCapital",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "total",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "isLenderIntentEnabled",
     "inputs": [],
     "outputs": [

@@ -79,6 +79,11 @@ library LibMetricsTypes {
         uint32 maxDurationDays;
         uint256 minFillAmount;
         bool requiresKeeperAuth;
+        // #755 — always true in the global `getActiveLenderIntents` feed (it
+        // lists only active intents), but meaningful in the per-owner
+        // `getLenderIntentsByOwner` view, which also returns PAUSED
+        // (cancelled-but-capital-reserved) intents.
+        bool active;
         uint256 livePrincipal;
         uint256 availableCapital;
     }
@@ -99,6 +104,7 @@ library LibMetricsTypes {
             maxDurationDays: i.maxDurationDays,
             minFillAmount: i.minFillAmount,
             requiresKeeperAuth: i.requiresKeeperAuth,
+            active: i.active,
             livePrincipal: livePrincipal,
             availableCapital: availableCapital
         });
