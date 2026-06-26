@@ -135,7 +135,6 @@ interface OfferLite {
   amount: bigint; // min fill (single-value lower bound)
   amountMax: bigint; // max fill ceiling
   amountFilled: bigint; // already consumed
-  collateralAmount: bigint; // borrower's posted collateral (size-down retry)
   interestRateBpsMax: bigint; // borrower's rate ceiling (rate-overlap pre-filter)
   fillMode: number; // 0 = Partial, 1 = Aon
   useFullTermInterest: boolean; // intent fills require this true
@@ -213,11 +212,17 @@ const INTENT_ERR_INTENT_TERMINAL = new Set<number>([
   8, // KeeperUnauthorized — this keeper not delegated for a gated intent
 ]);
 
-/** `LibOfferMatch.MatchError.CollateralBelowRequired` — index 6. The keeper
- *  uses it to scale an oversized fill DOWN to what the borrower's posted
- *  collateral supports at the intent's (possibly stricter) LTV and retry once,
- *  rather than re-attempting the same too-large amount every tick (Codex r4). */
+/** `LibOfferMatch.MatchError.CollateralBelowRequired` — index 6. When a non-AON
+ *  fill fails on this, the keeper binary-searches `previewIntent.ok` over
+ *  [lo, hi) for the LARGEST viable fill, rather than re-attempting the same
+ *  too-large amount every tick (Codex r4/r5). NOTE: `previewIntent` returns
+ *  `reqCollateral == 0` on this failure (the match core returns before assigning
+ *  it — LibOfferMatch CBR branches), so a reqCollateral-scaled single retry
+ *  cannot work; the search probes the predicate directly. */
 const MATCH_ERR_COLLATERAL_BELOW = 6;
+
+/** Max `previewIntent` probes for the collateral size-down binary search. */
+const INTENT_SIZE_DOWN_MAX_PROBES = 6;
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 interface LenderIntentSummary {
@@ -270,7 +275,6 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
     amount: BigInt(raw['amount'] as bigint | number),
     amountMax: BigInt(raw['amountMax'] as bigint | number),
     amountFilled: BigInt(raw['amountFilled'] as bigint | number),
-    collateralAmount: BigInt(raw['collateralAmount'] as bigint | number),
     interestRateBpsMax: BigInt(raw['interestRateBpsMax'] as bigint | number),
     fillMode: Number(raw['fillMode']),
     useFullTermInterest: Boolean(raw['useFullTermInterest']),
@@ -782,28 +786,39 @@ async function runIntentFillPass(
       previews += 1;
       let preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
       if (!preview) continue;
-      // Codex #748 r4 — a non-AON oversized fill that fails ONLY on the
-      // borrower's collateral can often succeed smaller: `reqCollateral` scales
-      // ~linearly with the fill, so scale down to what the posted collateral
-      // supports and retry ONCE, rather than re-attempting the too-large amount
-      // every tick (which would never auto-fill that borrower for this intent).
+      // Codex #748 r4/r5 — a non-AON oversized fill that fails ONLY on the
+      // borrower's collateral (intent LTV stricter than the offer was sized
+      // for) can often succeed smaller. `previewIntent` returns reqCollateral=0
+      // on that very failure, so instead of reqCollateral-scaling, binary-search
+      // `previewIntent.ok` over [lo, hi) for the LARGEST viable fill — a bounded
+      // handful of probes — rather than re-attempting the too-large amount every
+      // tick (which would never auto-fill that borrower for this intent).
       if (
         !preview.ok &&
         preview.matchError === MATCH_ERR_COLLATERAL_BELOW &&
-        b.fillMode !== FILL_MODE_AON &&
-        preview.reqCollateral > 0n &&
-        b.collateralAmount < preview.reqCollateral &&
-        previews < MAX_PREVIEW_CALLS_PER_TICK
+        b.fillMode !== FILL_MODE_AON
       ) {
         const lo =
           intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
-        const viable = (fillAmount * b.collateralAmount) / preview.reqCollateral;
-        if (viable >= lo && viable < fillAmount) {
+        let searchLo = lo;
+        let searchHi = fillAmount - 1n; // `hi` already failed
+        let probes = 0;
+        while (
+          searchLo <= searchHi &&
+          probes < INTENT_SIZE_DOWN_MAX_PROBES &&
+          previews < MAX_PREVIEW_CALLS_PER_TICK
+        ) {
+          const mid = (searchLo + searchHi) / 2n;
           previews += 1;
-          const retry = await previewIntent(ctx, solver, intent, b.id, viable);
-          if (retry && retry.ok) {
-            fillAmount = viable;
-            preview = retry;
+          probes += 1;
+          const probe = await previewIntent(ctx, solver, intent, b.id, mid);
+          if (probe && probe.ok) {
+            // Viable — record it and reach for a LARGER fill.
+            fillAmount = mid;
+            preview = probe;
+            searchLo = mid + 1n;
+          } else {
+            searchHi = mid - 1n; // still too large (or a transient null)
           }
         }
       }
