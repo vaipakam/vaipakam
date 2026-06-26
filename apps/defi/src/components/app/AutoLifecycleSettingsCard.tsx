@@ -33,6 +33,10 @@ export default function AutoLifecycleSettingsCard() {
   const diamondRo = useDiamondRead();
 
   const [optInEnabled, setOptInEnabled] = useState<boolean | null>(null);
+  // The wallet `optInEnabled` was last read for — the toggle is only
+  // trusted while it matches the connected wallet, so a previous wallet's
+  // value can't flip the newly connected one during the pre-reload window.
+  const [loadedAddr, setLoadedAddr] = useState<string>('');
   const [pending, setPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   // T-092-F (#537) — two-step confirm. First Enable click sets
@@ -53,6 +57,7 @@ export default function AutoLifecycleSettingsCard() {
         }
       ).getAutoOptInOnNewLoan(address);
       setOptInEnabled(Boolean(optInCurrent));
+      setLoadedAddr(address);
     } catch {
       // Diamond may not have the auto-lifecycle facet cut yet (old
       // testnet deploy). Leave the panel in its loading state.
@@ -67,16 +72,19 @@ export default function AutoLifecycleSettingsCard() {
     void reload();
   }, [reload]);
 
+  // Trust the loaded opt-in only while it belongs to the connected wallet.
+  const optInView = !!address && loadedAddr === address ? optInEnabled : null;
+
   const handleToggleOptIn = async () => {
-    if (!address || !diamond || optInEnabled == null) return;
+    if (!address || !diamond || optInView == null) return;
     // T-092-F two-step: enabling requires a confirm click first.
-    if (!optInEnabled && !confirming) {
+    if (!optInView && !confirming) {
       setConfirming(true);
       return;
     }
     setError(null);
     setPending(true);
-    const next = !optInEnabled;
+    const next = !optInView;
     try {
       const tx = await (
         diamond as unknown as {
@@ -97,9 +105,10 @@ export default function AutoLifecycleSettingsCard() {
 
   if (!address) return null;
 
-  // Hide entirely when the facet isn't readable — keeps old deploys
-  // and pre-T-092 chains from showing a broken card.
-  if (optInEnabled == null) return null;
+  // Hide entirely when the facet isn't readable for the CURRENT wallet —
+  // keeps old deploys / pre-T-092 chains, and a not-yet-loaded wallet
+  // switch, from showing a stale or broken card.
+  if (optInView == null) return null;
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
@@ -107,7 +116,7 @@ export default function AutoLifecycleSettingsCard() {
         <Repeat
           size={22}
           style={{
-            color: optInEnabled ? 'var(--accent-green)' : 'var(--text-tertiary)',
+            color: optInView ? 'var(--accent-green)' : 'var(--text-tertiary)',
             flexShrink: 0,
             marginTop: 2,
           }}
@@ -139,16 +148,16 @@ export default function AutoLifecycleSettingsCard() {
               </div>
               <button
                 className={
-                  optInEnabled
+                  optInView
                     ? 'btn btn-secondary btn-sm'
                     : 'btn btn-primary btn-sm'
                 }
                 onClick={handleToggleOptIn}
-                disabled={pending || optInEnabled == null}
+                disabled={pending || optInView == null}
               >
                 {pending
                   ? t('autoLifecycleSettings.statePending')
-                  : optInEnabled
+                  : optInView
                     ? t('autoLifecycleSettings.actionDisable')
                     : confirming
                       ? t('autoLifecycleSettings.actionConfirm')
