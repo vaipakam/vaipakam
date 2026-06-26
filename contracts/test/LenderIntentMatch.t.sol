@@ -909,4 +909,75 @@ contract LenderIntentMatchTest is SetupTest {
     // it (which reuses the SAME helper + `rangeAmountEnabled` condition, so it
     // cannot drift from `OfferCreateFacet`) skip. The agreement holds: with the
     // floor inactive, matchIntent succeeds and preview reports Ok.
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // #625 WI-2c — getRollableIntentLoans registry (roll-discovery surface)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function _rollable()
+        internal
+        view
+        returns (LibMetricsTypes.RollableIntentLoan[] memory loans, uint256 total)
+    {
+        return MetricsFacet(address(diamond)).getRollableIntentLoans(0, 100);
+    }
+
+    // Active → (repay) Repaid surfaces as rollable → (normal claim) de-registers.
+    function test_getRollableIntentLoans_repaidThenClaimedLifecycle() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        // Registered but Active → not yet a roll candidate.
+        (LibMetricsTypes.RollableIntentLoan[] memory r0, uint256 t0) = _rollable();
+        assertEq(t0, 1, "intent loan registered");
+        assertEq(r0.length, 0, "an Active loan is not rollable");
+
+        // Repay → Repaid → surfaces as rollable, keyed off intentOrigin.
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+        (LibMetricsTypes.RollableIntentLoan[] memory r1, uint256 t1) = _rollable();
+        assertEq(t1, 1, "still registered after repay");
+        assertEq(r1.length, 1, "a Repaid intent loan is rollable");
+        assertEq(r1[0].loanId, loanId, "loanId");
+        assertEq(r1[0].owner, lender, "owner from intentOrigin");
+        assertEq(r1[0].amount, PRINCIPAL, "original fill amount");
+
+        // Normal claim (not roll) → de-registered via releaseIntentExposure.
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+        (, uint256 t2) = _rollable();
+        assertEq(t2, 0, "a normal claim de-registers the loan");
+    }
+
+    // A roll de-registers the loan AND re-liens its proceeds as intent capital.
+    function test_getRollableIntentLoans_rollDeregisters() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        vm.prank(b);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        (, uint256 tBefore) = _rollable();
+        assertEq(tBefore, 1, "rollable before roll");
+
+        // Owner auto-rolls → de-registered + proceeds re-liened.
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).rollIntentLoan(loanId);
+        (LibMetricsTypes.RollableIntentLoan[] memory rAfter, uint256 tAfter) =
+            _rollable();
+        assertEq(tAfter, 0, "roll de-registers the loan");
+        assertEq(rAfter.length, 0, "no rollable loans after roll");
+        assertGt(_intentCapital(), 0, "proceeds re-liened as intent capital");
+    }
 }

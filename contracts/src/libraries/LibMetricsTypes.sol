@@ -104,6 +104,35 @@ library LibMetricsTypes {
         });
     }
 
+    /// @dev #625 WI-2c — one row of `MetricsFacet.getRollableIntentLoans`: a
+    ///      fully-repaid intent-originated loan a keeper can AUTO-ROLL via
+    ///      `LenderIntentFacet.rollIntentLoan(loanId)`. `owner` /
+    ///      `lendingAsset` / `collateralAsset` come from the per-loan
+    ///      `intentOrigin` (NOT the live `loan.lender`, which a position sale
+    ///      mutates — a sold position is reported but `rollIntentLoan` rejects
+    ///      it, so the keeper still keys auth off `owner`). `amount` is the
+    ///      original fill that would be re-liened as intent capital.
+    struct RollableIntentLoan {
+        uint256 loanId;
+        address owner;
+        address lendingAsset;
+        address collateralAsset;
+        uint256 amount;
+    }
+
+    function toRollableIntentLoan(
+        uint256 loanId,
+        LibVaipakam.IntentOrigin memory io
+    ) internal pure returns (RollableIntentLoan memory r) {
+        r = RollableIntentLoan({
+            loanId: loanId,
+            owner: io.owner,
+            lendingAsset: io.lendingAsset,
+            collateralAsset: io.collateralAsset,
+            amount: io.amount
+        });
+    }
+
     function toOfferSummary(LibVaipakam.Offer storage o)
         internal view returns (OfferSummary memory s)
     {
