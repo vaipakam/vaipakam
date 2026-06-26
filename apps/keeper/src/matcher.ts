@@ -48,6 +48,7 @@ import {
   OfferCancelFacetABI,
   OfferMatchFacetABI,
   RiskAccessFacetABI,
+  AdminFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -72,6 +73,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferCancelFacetABI as Abi),
   ...(OfferMatchFacetABI as Abi),
   ...(RiskAccessFacetABI as Abi),
+  ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
 ];
 
 /** Pagination size for `getActiveOffersPaginated`. */
@@ -151,6 +153,10 @@ interface MatchPreview {
  *  chain per warm isolate. */
 const killSwitchLogged = new Map<number, boolean>();
 
+/** Throttles the `keepersPaused` self-gate log to once per chain per warm
+ *  isolate (Codex #748 r3). */
+const keepersPausedLogged = new Map<number, boolean>();
+
 // ═══════════════════════════════════════════════════════════════════════
 // #625 WI-2c — auto-lend intent-fill pass
 //
@@ -172,19 +178,34 @@ const INTENT_SCAN_PAGE = 100n;
 /** `LibVaipakam.FillMode.Aon`. */
 const FILL_MODE_AON = 1;
 
-// `LibOfferMatch.IntentError` indices the intent-fill pass keys off
-// (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled, AggregatorPaused,
-//  Inactive, VpfiLendingUnsupported, KeeperUnauthorized, …):
-/** A master kill-switch is off (`partialFillEnabled` / `lenderIntentEnabled`).
- *  GLOBAL — true for every intent + borrower, so it is TERMINAL for the whole
- *  pass: log once and stop, rather than probe every borrower until the shared
- *  preview cap is drained (Codex #748 r2). */
+// `LibOfferMatch.IntentError` indices the intent-fill pass classifies a non-ok
+// `previewIntent` by (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled,
+//  AggregatorPaused, Inactive, VpfiLendingUnsupported, KeeperUnauthorized,
+//  BelowMinFill, ExposureExceeded, DurationTooLong, FullTermRequired,
+//  PartialRepayNotAllowed, CollateralUnresolvable, CapitalInsufficient, …):
+
+/** GLOBAL codes — identical for every intent + borrower this tick, so the whole
+ *  pass stops (Codex #748 r2/r3). 3/4 (the master kill-switches) additionally
+ *  log once. */
+const INTENT_ERR_PASS_TERMINAL = new Set<number>([
+  1, // Paused — diamond globally paused
+  3, // MatcherDisabled — partialFillEnabled off
+  4, // IntentDisabled — lenderIntentEnabled off
+]);
 const INTENT_ERR_MATCHER_DISABLED = 3;
 const INTENT_ERR_INTENT_DISABLED = 4;
-/** `requiresKeeperAuth` intent this keeper can't fill. Intent-level (same
- *  verdict for every borrower) → abandon the WHOLE intent after a single probe
- *  rather than burning one `previewIntent` per borrower (Codex #748 r1). */
-const INTENT_ERR_KEEPER_UNAUTHORIZED = 8;
+
+/** INTENT-level codes — identical for every BORROWER of this intent, so abandon
+ *  the intent (not just the one borrower) rather than burning a preview per
+ *  borrower for the same verdict (Codex #748 r1/r3). */
+const INTENT_ERR_INTENT_TERMINAL = new Set<number>([
+  2, // Sanctioned — solver (keeper) or this lender
+  5, // AggregatorPaused — this aggregator-adapter intent frozen
+  6, // Inactive
+  7, // VpfiLendingUnsupported
+  8, // KeeperUnauthorized — this keeper not delegated for a gated intent
+  14, // CollateralUnresolvable — this pair can't be priced
+]);
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
 interface LenderIntentSummary {
@@ -467,6 +488,7 @@ function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
 
 async function listActiveIntents(
   ctx: KeeperContext,
+  overBudget: () => boolean,
 ): Promise<LenderIntentSummary[]> {
   const out: LenderIntentSummary[] = [];
   let total: bigint | null = null;
@@ -475,6 +497,10 @@ async function listActiveIntents(
     total === null || offset < total;
     offset += INTENT_SCAN_PAGE
   ) {
+    // Codex #748 r3 — stop paging the registry the moment the per-chain
+    // wall-time budget is spent; a large/slow registry must not delay later
+    // chains in the same cron tick before any borrower scanning starts.
+    if (overBudget()) break;
     try {
       const res = (await ctx.client.readContract({
         address: ctx.diamond,
@@ -641,6 +667,10 @@ async function runIntentFillPass(
   overBudget: () => boolean,
   submitsUsed: number,
   previewsUsed: number,
+  // Codex #748 r2/r3 — borrowers whose submit (matchOffers OR matchIntent) was
+  // uncertain this tick. Shared with the matchOffers loop so a borrower left
+  // in-flight by an offer-match timeout isn't double-filled by an intent.
+  uncertainBorrowers: Set<string>,
 ): Promise<void> {
   // Codex #748 r1/r2 — don't even PAGE the intent registry unless there is
   // budget left to act on it: the wall-time budget, AND the inherited shared
@@ -656,7 +686,35 @@ async function runIntentFillPass(
   }
   const solver = ctx.wallet.account?.address;
   if (!solver) return;
-  const intents = await listActiveIntents(ctx);
+
+  // Codex #748 r3 — self-gate on the OPERATIONAL keeper pause. For OPEN
+  // (non-keeper-gated) intents `previewIntent` returns ok even while
+  // `keepersPaused` is set — `LibAuth` is consulted only for gated intents — so
+  // without this the keeper would keep ORIGINATING auto-lend loans during a
+  // pause. The design requires the off-chain bot to self-gate
+  // (AutoLendIntentUnificationDesign.md). Fail CLOSED: a failed read skips the
+  // pass this tick rather than risk filling during an (unconfirmed) pause.
+  let paused: boolean;
+  try {
+    paused = (await ctx.client.readContract({
+      address: ctx.diamond,
+      abi: MATCHER_ABI,
+      functionName: 'keepersPaused',
+    })) as boolean;
+  } catch {
+    paused = true;
+  }
+  if (paused) {
+    if (!keepersPausedLogged.get(ctx.chainId)) {
+      console.log(
+        `[matcher] chain=${ctx.chainId} intent-fill skipped: keepersPaused (or its read failed); retrying every tick`,
+      );
+      keepersPausedLogged.set(ctx.chainId, true);
+    }
+    return;
+  }
+
+  const intents = await listActiveIntents(ctx, overBudget);
   if (intents.length === 0 || borrowers.length === 0) return;
 
   // Codex #748 r1 — CONTINUE the outer tick's RPC/gas budget rather than
@@ -666,11 +724,6 @@ async function runIntentFillPass(
   let previews = previewsUsed;
   let submits = submitsUsed;
   let intentFills = 0;
-  // Codex #748 r2 — a borrower whose `matchIntent` submit returned uncertain
-  // (broadcast fail / receipt timeout — the tx may still mine) is off-limits to
-  // EVERY later intent this tick: previewing it against `latest` could submit a
-  // second fill for the same borrower that reverts once the first tx lands.
-  const uncertainBorrowers = new Set<string>();
   for (const intent of intents) {
     if (overBudget() || submits >= MAX_SUBMITS_PER_TICK) break;
     for (const b of borrowers) {
@@ -707,16 +760,16 @@ async function runIntentFillPass(
       if (!preview) continue;
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
       if (!preview.ok) {
-        // GLOBAL master switch off (partialFill / lenderIntent) — the same
-        // verdict for every intent + borrower, so it is terminal for the whole
-        // pass: log once (sharing the matchOffers kill-switch latch) and stop,
-        // rather than probe every borrower until the preview cap drains
-        // (Codex #748 r2).
-        if (
-          preview.intentError === INTENT_ERR_MATCHER_DISABLED ||
-          preview.intentError === INTENT_ERR_INTENT_DISABLED
-        ) {
-          if (!killSwitchLogged.get(ctx.chainId)) {
+        const e = preview.intentError;
+        // GLOBAL terminal — same verdict for EVERY intent + borrower this tick,
+        // so stop the whole pass; the master kill-switches additionally log
+        // once (sharing the matchOffers latch) (Codex #748 r2/r3).
+        if (INTENT_ERR_PASS_TERMINAL.has(e)) {
+          if (
+            (e === INTENT_ERR_MATCHER_DISABLED ||
+              e === INTENT_ERR_INTENT_DISABLED) &&
+            !killSwitchLogged.get(ctx.chainId)
+          ) {
             console.log(
               `[matcher] chain=${ctx.chainId} intent-fill disabled: a master flag (partialFill/lenderIntent) is off; retrying every tick`,
             );
@@ -724,11 +777,12 @@ async function runIntentFillPass(
           }
           return;
         }
-        // Authorization is intent-level: a `requiresKeeperAuth` intent this
-        // keeper can't fill returns `KeeperUnauthorized` for EVERY borrower, so
-        // abandon the whole intent after this single probe rather than burning
-        // a preview per borrower (Codex #748 r1).
-        if (preview.intentError === INTENT_ERR_KEEPER_UNAUTHORIZED) break;
+        // INTENT-level terminal — same verdict for every BORROWER of this intent
+        // (auth, aggregator-pause, inactive, VPFI-lending, unresolvable
+        // collateral, …), so abandon the intent rather than burning a preview
+        // per borrower for an identical result (Codex #748 r1/r3).
+        if (INTENT_ERR_INTENT_TERMINAL.has(e)) break;
+        // Borrower-specific — try the next borrower.
         continue;
       }
 
@@ -777,6 +831,11 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   let previewCalls = 0;
   let submits = 0;
   const attempted = new Set<string>();
+  // Codex #748 r3 — borrowers left in-flight by an UNCERTAIN matchOffers submit
+  // (broadcast fail / receipt timeout). Shared with the intent-fill pass so it
+  // doesn't queue a `matchIntent` for the same borrower while the offer-match
+  // tx may still mine.
+  const uncertainBorrowers = new Set<string>();
 
   for (const [key, lenderList] of lenders) {
     if (submits >= MAX_SUBMITS_PER_TICK) break;
@@ -872,6 +931,11 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         // doomed pairs. Back off this lender for the tick — `attempted`
         // already prevents (L,B1) retry, but we need an explicit
         // `break` to skip the rest of the borrower list too.
+        //
+        // #748 r3 — also mark B uncertain so the intent-fill pass below won't
+        // queue a `matchIntent` for the same borrower while this offer-match tx
+        // may still be in flight (it would revert once the offer-match mines).
+        uncertainBorrowers.add(B.id.toString());
         break;
       }
     }
@@ -886,9 +950,17 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
     for (const list of borrowers.values()) {
       for (const b of list) allBorrowers.push(b);
     }
-    // Hand the matchOffers loop's spent budget across so the two passes share
-    // the per-tick preview/submit rails (Codex #748 r1).
-    await runIntentFillPass(ctx, allBorrowers, overBudget, submits, previewCalls);
+    // Hand the matchOffers loop's spent budget + uncertain-borrower set across
+    // so the two passes share the per-tick rails and don't double-fill a
+    // borrower left in flight (Codex #748 r1/r3).
+    await runIntentFillPass(
+      ctx,
+      allBorrowers,
+      overBudget,
+      submits,
+      previewCalls,
+      uncertainBorrowers,
+    );
   }
 
   if (submits > 0 || previewCalls > 0) {
