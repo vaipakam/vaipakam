@@ -1203,7 +1203,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](45);
+        selectors = new bytes4[](46);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1272,6 +1272,7 @@ contract HelperTest {
         // Used by SignedOfferMatcherTest to assert a consumed transient
         // lender slice is de-listed. Already cut in DeployDiamond.s.sol.
         selectors[44] = MetricsFacet.getUserPositionOffers.selector;
+        selectors[45] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
         return selectors;
     }
 

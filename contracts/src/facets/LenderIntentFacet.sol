@@ -15,6 +15,7 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title LenderIntentFacet
@@ -49,6 +50,8 @@ contract LenderIntentFacet is
     DiamondPausable,
     DiamondAccessControl
 {
+    using EnumerableSet for EnumerableSet.Bytes32Set;
+
     /// @notice A lender registered / updated a standing intent for an asset-pair.
     event LenderIntentSet(
         address indexed owner,
@@ -246,6 +249,19 @@ contract LenderIntentFacet is
             requiresKeeperAuth: requiresKeeperAuth
         });
 
+        // #625 WI-2a — register the active intent in the enumerable set so
+        // `getActiveLenderIntents` can page it. Idempotent: re-setting an
+        // already-active intent (a bounds update) re-adds the same key (a no-op) and
+        // re-stamps the resolver tuple.
+        bytes32 ik =
+            LibVaipakam.intentKeyHash(msg.sender, lendingAsset, collateralAsset);
+        s.activeIntentKeys.add(ik);
+        s.intentKeyTuple[ik] = LibVaipakam.IntentKey({
+            owner: msg.sender,
+            lendingAsset: lendingAsset,
+            collateralAsset: collateralAsset
+        });
+
         emit LenderIntentSet(
             msg.sender,
             lendingAsset,
@@ -274,6 +290,12 @@ contract LenderIntentFacet is
             s.lenderIntent[msg.sender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentNotActive();
         intent.active = false;
+        // #625 WI-2a — drop it from the active registry so `getActiveLenderIntents`
+        // stops advertising it. The resolver tuple is left in place (harmless; only
+        // keys IN the set are ever read) so a later re-`setLenderIntent` reuses it.
+        s.activeIntentKeys.remove(
+            LibVaipakam.intentKeyHash(msg.sender, lendingAsset, collateralAsset)
+        );
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
     }
 

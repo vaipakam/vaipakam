@@ -42,6 +42,8 @@ const CHAIN_INDEXER = join(REPO_ROOT, 'apps', 'indexer', 'src', 'chainIndexer.ts
  *  is a conscious decision; removing the corresponding contract event
  *  later just makes the allowlist entry dead (harmless). */
 const DELIBERATELY_NOT_HANDLED = {
+  IntentMatched:
+    '#625 WI-2a — owner-keyed marker emitted alongside OfferMatched when a lender intent is filled; the resulting LOAN is already indexed via OfferMatched / LoanInitiatedDetails (no loans-row field to set here). It exists for the off-chain keeper auto-roll discovery (WI-2c), which reads it directly; if/when the indexer materialises an intent-loan table for that, add a handler and remove this entry',
   PartialCollateralWithdrawn:
     'TEMPORARY — the handler needs the `newCollateralAmount` field added to the event in commit bd0e4aa, which is not yet on-chain. When the next contracts redeploy lands (+ ABI re-export + indexer redeploy), add a `log.eventName === "PartialCollateralWithdrawn"` branch (UPDATE loans SET collateral_amount = newCollateralAmount) and REMOVE this entry — the deadAllowlist check will flag it if you forget the removal',
   LoanFallbackPending:

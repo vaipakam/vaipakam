@@ -63,6 +63,47 @@ library LibMetricsTypes {
         uint64 minHealthFactorAtInit;
     }
 
+    /// @dev #625 WI-2a — one row of `MetricsFacet.getActiveLenderIntents`: the lender's
+    ///      standing bounds plus the two figures a keeper needs to size a fill —
+    ///      `livePrincipal` (exposure already out) and `availableCapital` (un-lent, liened
+    ///      capital the fill draws from; a fill exceeding it reverts
+    ///      `IntentCapitalInsufficient`). `requiresKeeperAuth` lets the keeper skip an
+    ///      intent it isn't delegated to fill.
+    struct LenderIntentSummary {
+        address owner;
+        address lendingAsset;
+        address collateralAsset;
+        uint256 maxExposure;
+        uint256 minRateBps;
+        uint16 maxInitLtvBps;
+        uint32 maxDurationDays;
+        uint256 minFillAmount;
+        bool requiresKeeperAuth;
+        uint256 livePrincipal;
+        uint256 availableCapital;
+    }
+
+    function toLenderIntentSummary(
+        LibVaipakam.IntentKey memory key,
+        LibVaipakam.LenderIntent storage i,
+        uint256 livePrincipal,
+        uint256 availableCapital
+    ) internal view returns (LenderIntentSummary memory s) {
+        s = LenderIntentSummary({
+            owner: key.owner,
+            lendingAsset: key.lendingAsset,
+            collateralAsset: key.collateralAsset,
+            maxExposure: i.maxExposure,
+            minRateBps: i.minRateBps,
+            maxInitLtvBps: i.maxInitLtvBps,
+            maxDurationDays: i.maxDurationDays,
+            minFillAmount: i.minFillAmount,
+            requiresKeeperAuth: i.requiresKeeperAuth,
+            livePrincipal: livePrincipal,
+            availableCapital: availableCapital
+        });
+    }
+
     function toOfferSummary(LibVaipakam.Offer storage o)
         internal view returns (OfferSummary memory s)
     {

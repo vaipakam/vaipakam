@@ -2262,7 +2262,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](46);
+        s = new bytes4[](47);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2349,6 +2349,7 @@ contract DeployDiamond is Script {
         s[43] = MetricsFacet.getOfferPrincipalLien.selector;
         s[44] = MetricsFacet.getEncumbered.selector;
         s[45] = MetricsFacet.getFreeBalance.selector;
+        s[46] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

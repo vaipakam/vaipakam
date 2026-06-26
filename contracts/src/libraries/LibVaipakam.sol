@@ -1210,6 +1210,27 @@ library LibVaipakam {
         bool requiresKeeperAuth; // true ⇒ only an opted-in solver may fill (v1-c gate)
     }
 
+    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a
+    ///      `LenderIntent`, stored so the `activeIntentKeys` enumerable set can be resolved
+    ///      back to a concrete intent by `getActiveLenderIntents`.
+    struct IntentKey {
+        address owner;
+        address lendingAsset;
+        address collateralAsset;
+    }
+
+    /// @dev #625 WI-2a — canonical key hash for the active-intent registry. The ONE place
+    ///      the (owner, lend, coll) → bytes32 mapping is defined, so the maintenance sites
+    ///      (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view can
+    ///      never disagree on the key.
+    function intentKeyHash(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(owner, lendingAsset, collateralAsset));
+    }
+
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
     struct CreateOfferParams {
         OfferType offerType;
@@ -4481,6 +4502,15 @@ library LibVaipakam {
         // again once A is re-published. `revealRiskTermsBump` rejects any hash
         // already marked here.
         mapping(bytes32 => bool) riskTermsHashUsed;
+        // #625 WI-2a — enumerable registry of ACTIVE lender intents, so a keeper can
+        // page them (`getActiveLenderIntents`) instead of needing an off-chain index of
+        // `LenderIntentSet`/`Cancelled` events. `activeIntentKeys` holds the
+        // `intentKeyHash(owner, lend, coll)` of every currently-active intent (added on
+        // `setLenderIntent`, removed on `cancelLenderIntent`); `intentKeyTuple` resolves a
+        // key hash back to its (owner, lend, coll) so the view can read the concrete
+        // intent + its live-principal + funded capital.
+        EnumerableSet.Bytes32Set activeIntentKeys;
+        mapping(bytes32 => IntentKey) intentKeyTuple;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

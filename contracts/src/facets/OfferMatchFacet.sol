@@ -91,6 +91,19 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
     /// @custom:event-category state-change/offer-mutation
     event OfferClosed(uint256 indexed offerId, OfferCloseReason reason);
 
+    /// @notice #625 WI-2a — a `matchIntent` fill, emitted alongside `OfferMatched` so the
+    ///         keeper's auto-roll pass can discover repaid intent loans keyed by the
+    ///         ORIGINATING owner. `OfferMatched`'s lender id is the transient lender slice
+    ///         (burned post-match), so it can't carry the intent owner; this does.
+    /// @custom:event-category state-change/loan-mutation
+    event IntentMatched(
+        uint256 indexed loanId,
+        address indexed owner,
+        address lendingAsset,
+        address collateralAsset,
+        uint256 fillAmount
+    );
+
     // ── Errors ──────────────────────────────────────────────────────
     error InvalidOfferType();
     error OfferAlreadyAccepted();
@@ -488,6 +501,8 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             collateralAsset: collateralAsset,
             amount: fillAmount // release the ORIGINAL fill, not a partial-repaid remainder
         });
+        // #625 WI-2a — owner-keyed fill marker for keeper roll-discovery.
+        emit IntentMatched(loanId, lender, lendingAsset, collateralAsset, fillAmount);
 
         // Transient lender-slice cleanup (identical to the signed-lender path):
         // the slice is the match ACCEPTOR, so its own OfferCreated NFT + reverse-
