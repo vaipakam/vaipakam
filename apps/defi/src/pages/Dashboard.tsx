@@ -162,6 +162,9 @@ export default function Dashboard() {
   const [selectedIntentPair, setSelectedIntentPair] =
     useState<ManageIntentPair | null>(null);
   const [selectedIntentNonce, setSelectedIntentNonce] = useState(0);
+  // Bumped after the auto-lend card mutates an intent so the overview list
+  // refetches the new state (its read cache has no timer-driven refresh).
+  const [intentRefreshNonce, setIntentRefreshNonce] = useState(0);
   const autoLendCardRef = useRef<HTMLDivElement | null>(null);
   const handleManageIntent = useCallback((pair: ManageIntentPair) => {
     setSelectedIntentPair(pair);
@@ -170,6 +173,9 @@ export default function Dashboard() {
       behavior: 'smooth',
       block: 'start',
     });
+  }, []);
+  const handleIntentChanged = useCallback(() => {
+    setIntentRefreshNonce((n) => n + 1);
   }, []);
 
   const activeLoans = loans.filter((l) => l.status === LoanStatus.Active);
@@ -385,6 +391,7 @@ export default function Dashboard() {
       <MyLenderIntentsCard
         owner={address as Address | null}
         onManage={handleManageIntent}
+        refreshSignal={intentRefreshNonce}
       />
 
       {/* #625 WI-1 — auto-lend, wired to the standing LenderIntent layer
@@ -394,6 +401,7 @@ export default function Dashboard() {
         <AutoLendIntentCard
           selectedPair={selectedIntentPair}
           selectedPairNonce={selectedIntentNonce}
+          onIntentChanged={handleIntentChanged}
         />
       </div>
 

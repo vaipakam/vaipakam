@@ -31,6 +31,13 @@ interface Props {
    * into that card.
    */
   onManage: (pair: ManageIntentPair) => void;
+  /**
+   * Bumped by the parent after the auto-lend card mutates an intent
+   * (pause / resume / fund / withdraw). Folded into the read's cache key so
+   * the list refetches the freshly-changed Active/Paused/Funded values
+   * instead of serving its 30s cache.
+   */
+  refreshSignal?: number;
 }
 
 /**
@@ -49,14 +56,34 @@ interface Props {
  * Self-hides when the wallet has no intents at all (and isn't loading /
  * erroring), so it never adds clutter for users who don't auto-lend.
  */
-export function MyLenderIntentsCard({ owner, onManage }: Props) {
+export function MyLenderIntentsCard({
+  owner,
+  onManage,
+  refreshSignal = 0,
+}: Props) {
   const { t } = useTranslation();
   const [page, setPage] = useState(0);
   const { rows, total, loading, error, reload } = useLenderIntentsByOwner(
     owner,
     page * PAGE_SIZE,
     PAGE_SIZE,
+    refreshSignal,
   );
+
+  // Keep `page` in range, via React's render-time "adjust state on prop
+  // change" pattern (no effect → no set-state-in-effect). On an owner switch
+  // snap to page 0; otherwise clamp when `total` shrank below the current
+  // window (e.g. an intent was torn down while on a later page) — without
+  // this the out-of-range offset returns rows=[] with total>0, hiding the
+  // owner's real intents behind the empty-state with no Pager to escape.
+  const [trackedOwner, setTrackedOwner] = useState(owner);
+  if (owner !== trackedOwner) {
+    setTrackedOwner(owner);
+    if (page !== 0) setPage(0);
+  } else {
+    const lastPage = total > 0n ? Math.ceil(Number(total) / PAGE_SIZE) - 1 : 0;
+    if (page > lastPage) setPage(lastPage);
+  }
 
   // Nothing to manage and not mid-flight → render nothing.
   if (!owner) return null;

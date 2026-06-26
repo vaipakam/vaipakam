@@ -189,11 +189,18 @@ interface AutoLendIntentCardProps {
    * (and re-prefills) — the pair addresses alone wouldn't change.
    */
   selectedPairNonce?: number;
+  /**
+   * #755 — fired after a successful intent mutation (enable/resume, pause,
+   * withdraw/stop) so a parent overview (the multi-intent list) can
+   * invalidate its cached read and reflect the new state.
+   */
+  onIntentChanged?: () => void;
 }
 
 export default function AutoLendIntentCard({
   selectedPair,
   selectedPairNonce,
+  onIntentChanged,
 }: AutoLendIntentCardProps = {}) {
   const { t } = useTranslation();
   const { address, activeChain, isCorrectChain, chainId } = useWallet();
@@ -533,6 +540,21 @@ export default function AutoLendIntentCard({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadPair();
   }, [reloadPair]);
+  // #755 — on a "Manage" (re-)click, force a fresh prefill from on-chain
+  // even when the pair is unchanged: clear the once-per-pair prefill stamp
+  // and re-read. Without this, re-managing the same pair leaves any unsaved
+  // edits to bounds/funding in the form (reloadPair wouldn't re-run and the
+  // stamp wouldn't clear) instead of resetting to the row's current terms.
+  // Ref write + post-await reads belong in an effect, not render. Keyed only
+  // on the nonce; standalone usage passes none, so this never runs there.
+  useEffect(() => {
+    if (selectedPairNonce === undefined) return;
+    prefilledKeyRef.current = '';
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void reloadPair();
+    // reloadPair is intentionally excluded — see the keyed-on-nonce note.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPairNonce]);
 
   // Only treat the loaded intent/capital as belonging to the chosen
   // chain+wallet+pair once `reloadPair` has resolved for it — otherwise
@@ -903,6 +925,7 @@ export default function AutoLendIntentCard({
 
       setNotice((n) => n ?? t('autoLend.noticeEnabled'));
       await Promise.all([reloadAccount(), reloadPair()]);
+      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       // Refresh on-chain state so a retry after a partial failure
@@ -939,6 +962,7 @@ export default function AutoLendIntentCard({
       // "paused" even though the keeper can still fill them.
       setNotice(t('autoLend.noticePaused'));
       await Promise.all([reloadAccount(), reloadPair()]);
+      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
@@ -1014,6 +1038,7 @@ export default function AutoLendIntentCard({
         : 'autoLend.noticeStopped';
       setNotice(t(stoppedKey));
       await Promise.all([reloadAccount(), reloadPair()]);
+      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
