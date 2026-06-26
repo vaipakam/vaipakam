@@ -569,7 +569,8 @@
     "errRiskConsent": "Please review and accept the risk disclosures before enabling auto-lend.",
     "errAckKeeperMaster": "Please acknowledge that enabling auto-lend turns on keeper access for your wallet.",
     "ackKeeperMasterLabel": "Enabling auto-lend turns ON keeper access for your wallet — this reactivates EVERY keeper you've approved (not just the auto-lend keeper). I understand.",
-    "errNoToken": "Couldn't load the lending token — check the address."
+    "errNoToken": "Couldn't load the lending token — check the address.",
+    "errLoadFailed": "Couldn't read the latest on-chain state for this pair. Please try again."
   },
   "autoLifecycle": {
     "errors": {

@@ -94,6 +94,53 @@ type IntentView = {
   requiresKeeperAuth: boolean;
 };
 
+/** Fresh account-level snapshot returned by `reloadAccount` — so the
+ *  enable flow can base skip/gate decisions on a just-read value rather
+ *  than possibly-stale React state (TOCTOU). */
+type AccountSnapshot = {
+  adminLendEnabled: boolean;
+  fillPathEnabled: boolean;
+  consent: boolean;
+  keeperAccess: boolean;
+  keeperActions: number | null;
+  approvedKeepersCount: number;
+};
+
+/** Fresh pair-level snapshot returned by `reloadPair`. */
+type PairSnapshot = {
+  view: IntentView;
+  capital: bigint;
+  livePrincipal: bigint;
+  decimals: number;
+};
+
+type ParsedForm = {
+  maxExposure: bigint;
+  minFill: bigint;
+  minRateBps: bigint;
+  maxInitLtvBps: number;
+  maxDurationDays: number;
+};
+
+/** True when an on-chain intent already matches the form's terms (so the
+ *  enable flow can skip the register step). Pure so it can run against
+ *  either the cached view (for the memo) or a freshly-read snapshot. */
+function intentMatchesParsed(
+  view: IntentView | null,
+  p: ParsedForm,
+  requiresKeeperAuth: boolean,
+): boolean {
+  if (!view?.active) return false;
+  return (
+    view.maxExposure === p.maxExposure &&
+    view.minFillAmount === p.minFill &&
+    view.minRateBps === p.minRateBps &&
+    Number(view.maxInitLtvBps) === p.maxInitLtvBps &&
+    Number(view.maxDurationDays) === p.maxDurationDays &&
+    view.requiresKeeperAuth === requiresKeeperAuth
+  );
+}
+
 type FormState = {
   lendingAsset: string;
   collateralAsset: string;
@@ -225,8 +272,8 @@ export default function AutoLendIntentCard() {
   // Account-level reads (independent of the chosen pair). Returns early
   // without touching state when deps are missing — so every setState
   // lands post-await and never trips react-hooks/set-state-in-effect.
-  const reloadAccount = useCallback(async () => {
-    if (!address || !diamondRo) return;
+  const reloadAccount = useCallback(async (): Promise<AccountSnapshot | null> => {
+    if (!address || !diamondRo) return null;
     try {
       const ro = diamondRo as unknown as {
         getAutoLendEnabled: () => Promise<boolean>;
@@ -249,30 +296,40 @@ export default function AutoLendIntentCard() {
             : Promise.resolve(null),
           ro.getApprovedKeepers(address),
         ]);
-      setAdminLendEnabled(Boolean(adminLend));
-      // matchIntent rejects when EITHER the partial-fill gate OR the
-      // lender-intent gate is off (it checks partial-fill first), so
-      // fills are only really possible when BOTH are enabled.
-      setFillPathEnabled(Boolean(intentEnabled) && Boolean(partialFill));
-      setConsent(Boolean(c));
-      setKeeperAccess(Boolean(kAccess));
-      setKeeperActions(acts === null ? null : Number(acts));
-      setApprovedKeepersCount(Array.isArray(keepers) ? keepers.length : 0);
+      const snap: AccountSnapshot = {
+        adminLendEnabled: Boolean(adminLend),
+        // matchIntent rejects when EITHER the partial-fill gate OR the
+        // lender-intent gate is off (it checks partial-fill first), so
+        // fills are only really possible when BOTH are enabled.
+        fillPathEnabled: Boolean(intentEnabled) && Boolean(partialFill),
+        consent: Boolean(c),
+        keeperAccess: Boolean(kAccess),
+        keeperActions: acts === null ? null : Number(acts),
+        approvedKeepersCount: Array.isArray(keepers) ? keepers.length : 0,
+      };
+      setAdminLendEnabled(snap.adminLendEnabled);
+      setFillPathEnabled(snap.fillPathEnabled);
+      setConsent(snap.consent);
+      setKeeperAccess(snap.keeperAccess);
+      setKeeperActions(snap.keeperActions);
+      setApprovedKeepersCount(snap.approvedKeepersCount);
       // Stamp the chain+wallet these reads belong to; skip decisions
       // trust them only while this still equals the live id.
       setLoadedAccountKey(`${chainId ?? ''}:${address}`);
+      return snap;
     } catch {
       // Facet not cut on this (old) deploy — leave loading; card hides.
+      return null;
     }
   }, [address, chainId, diamondRo, keeperAddress]);
 
   // Pair-scoped reads — intent struct + funded capital + lending-token
   // decimals, all in one pass so prefill formats with the right decimals.
   // Folds the prefill in (post-await) so there's no derived-state effect.
-  const reloadPair = useCallback(async () => {
+  const reloadPair = useCallback(async (): Promise<PairSnapshot | null> => {
     const lendingAsset = form.lendingAsset;
     const collateralAsset = form.collateralAsset;
-    if (!address || !diamondRo || !lendingAsset || !collateralAsset) return;
+    if (!address || !diamondRo || !lendingAsset || !collateralAsset) return null;
     const key = `${chainId ?? ''}:${address}:${lendingAsset}:${collateralAsset}`;
     try {
       const ro = diamondRo as unknown as {
@@ -317,7 +374,7 @@ export default function AutoLendIntentCard() {
       // `loadedPairKey`, leaving `pairLoaded` false for B with no re-fetch.
       const liveForm = formRef.current;
       const liveFullKey = `${idKeyRef.current}:${liveForm.lendingAsset}:${liveForm.collateralAsset}`;
-      if (liveFullKey !== key) return;
+      if (liveFullKey !== key) return null;
 
       const view: IntentView = {
         active: Boolean(iv.active),
@@ -351,14 +408,23 @@ export default function AutoLendIntentCard() {
           requiresKeeperAuth: view.requiresKeeperAuth,
         }));
       }
+      return { view, capital: BigInt(cap), livePrincipal: BigInt(live), decimals: dec };
     } catch {
-      // FAIL CLOSED: do NOT stamp `loadedPairKey` on a read failure. If we
-      // did, `pairLoaded` would go true with capital / live-principal held
-      // as null (treated as 0), and the headroom check could approve an
-      // over-funding the data was meant to block. Leaving the key unstamped
-      // keeps `pairLoaded` false for this pair, disabling Enable until a
-      // successful read. (A prior successful load for the SAME pair keeps
-      // its last-good values; a first load or a new pair stays unloaded.)
+      // FAIL CLOSED on every catch (#625): clear `loadedPairKey` (only if
+      // this read still owns the current pair) so `pairLoaded` goes FALSE
+      // and Enable/validation can't reuse possibly-stale capital /
+      // live-principal — even after a prior successful load for this same
+      // pair (a keeper fill or another tab may have moved on-chain usage
+      // since). A fresh successful read re-stamps it.
+      const liveForm = formRef.current;
+      const liveFullKey = `${idKeyRef.current}:${liveForm.lendingAsset}:${liveForm.collateralAsset}`;
+      if (liveFullKey === key) {
+        setLoadedPairKey('');
+        setIntent(null);
+        setCapital(null);
+        setLivePrincipal(null);
+      }
+      return null;
     }
   }, [
     address,
@@ -544,20 +610,6 @@ export default function AutoLendIntentCard() {
     t,
   ]);
 
-  // Whether the on-chain intent already matches the form (lets the
-  // resumable enable skip step 1).
-  const intentMatchesForm = useMemo(() => {
-    if (!intentView?.active || !parsed.ok) return false;
-    return (
-      intentView.maxExposure === parsed.maxExposure &&
-      intentView.minFillAmount === parsed.minFill &&
-      intentView.minRateBps === parsed.minRateBps &&
-      Number(intentView.maxInitLtvBps) === parsed.maxInitLtvBps &&
-      Number(intentView.maxDurationDays) === parsed.maxDurationDays &&
-      intentView.requiresKeeperAuth === form.requiresKeeperAuth
-    );
-  }, [intentView, parsed, form.requiresKeeperAuth]);
-
   const dw = diamond as unknown as Record<string, (...a: unknown[]) => Promise<WriteTx>>;
 
   // ── Enable sequence (resumable) ──────────────────────────────────
@@ -579,37 +631,62 @@ export default function AutoLendIntentCard() {
       setError(validation);
       return;
     }
-    // Consent kill-switch gate — checked BEFORE touching the chain. When
-    // consent isn't already recorded and the admin switch is down, the
-    // consent-first step below can't run, so abort entirely rather than
-    // register an intent that could never be consented (and, for a paused
-    // intent, would relist reserved capital). (`adminLendEnabled`/`consent`
-    // are trusted because Enable is gated on `accountLoaded`.)
-    if (consent === false && adminLendEnabled === false) {
-      setNotice(t('autoLend.noticeConsentBlocked'));
-      return;
-    }
+    if (!parsed.ok) return;
     setError(null);
     setNotice(null);
     setBusy(true);
     try {
       const { lendingAsset, collateralAsset } = form;
 
+      // Re-read fresh account + pair state IMMEDIATELY before acting, so
+      // every skip / gate decision below uses on-chain truth rather than
+      // possibly-stale cached React state (a keeper fill, an admin switch
+      // flip, a consent revoke in another tab — TOCTOU). Fail closed if
+      // either read fails: better to make the user retry than to skip a
+      // required authorization or over-fund against stale usage.
+      const [acct, pair] = await Promise.all([reloadAccount(), reloadPair()]);
+      if (!acct || !pair) {
+        setError(t('autoLend.errLoadFailed'));
+        return;
+      }
+
+      // Consent kill-switch gate (FRESH): when consent isn't recorded and
+      // the admin switch is down, the consent-first step can't run, so
+      // abort before any tx (registering a paused intent would relist its
+      // reserved capital with the marker unset).
+      if (!acct.consent && !acct.adminLendEnabled) {
+        setNotice(t('autoLend.noticeConsentBlocked'));
+        return;
+      }
+      // Whitelist-full preflight (FRESH): block before any tx when the
+      // keeper must be approved but the wallet is at the cap.
+      if (
+        keeperAddress &&
+        acct.keeperActions === 0 &&
+        acct.approvedKeepersCount >= MAX_APPROVED_KEEPERS
+      ) {
+        setError(t('autoLend.errKeeperListFull'));
+        return;
+      }
+      // Funding headroom re-check (FRESH): idle reserved + live principal +
+      // new top-up must fit the cap.
+      if (
+        parsed.fund > 0n &&
+        pair.capital + pair.livePrincipal + parsed.fund > parsed.maxExposure
+      ) {
+        setError(t('autoLend.errFundOverExposure'));
+        return;
+      }
+
       // Ordering rationale: consent -> delegate -> register -> fund.
       // Registration (setLenderIntent) reactivates and relists a PAUSED
       // intent's reserved capital into the fill registry, so every
       // authorisation that must be in place before the intent can be
-      // filled is done FIRST:
-      //   1. consent  — the intent is never fillable with the marker unset.
-      //   2. delegate — the keeper holds auto-roll / signed-fill before the
-      //                 intent (re)lists, so a failed grant can't leave a
-      //                 relisted intent without its intended delegation.
-      // then register relists/creates, then fund adds capital last.
+      // filled is done FIRST (consent, then keeper delegation), then
+      // register relists/creates, then fund adds capital last.
 
-      // 1. Consent marker FIRST. The blocked case (admin off + consent
-      //    unset) was already rejected at the top, so here consent is
-      //    either already true or the admin switch allows setting it.
-      if (consent === false) {
+      // 1. Consent marker FIRST (fresh: skip only if actually recorded).
+      if (!acct.consent) {
         setStep(t('autoLend.stepConsent'));
         const tx = await dw.setAutoLendConsent(true);
         await tx.wait();
@@ -618,15 +695,15 @@ export default function AutoLendIntentCard() {
 
       // 2. Keeper delegation (only when a keeper is published here) —
       //    BEFORE registration, so re-listing paused capital never
-      //    outruns the grant.
+      //    outruns the grant. Skip decisions use the FRESH grant state.
       if (keeperAddress) {
-        if (keeperAccess === false) {
+        if (!acct.keeperAccess) {
           setStep(t('autoLend.stepKeeperAccess'));
           const tx = await dw.setKeeperAccess(true);
           await tx.wait();
           setKeeperAccess(true);
         }
-        const current = keeperActions ?? 0;
+        const current = acct.keeperActions ?? 0;
         if (current === 0) {
           setStep(t('autoLend.stepGrant'));
           const tx = await dw.approveKeeper(keeperAddress, desiredKeeperActions);
@@ -643,8 +720,9 @@ export default function AutoLendIntentCard() {
         }
       }
 
-      // 3. Register / update the standing intent (skip if unchanged).
-      if (!intentMatchesForm) {
+      // 3. Register / update the standing intent (skip if the FRESH on-chain
+      //    intent already matches the form).
+      if (!intentMatchesParsed(pair.view, parsed, form.requiresKeeperAuth)) {
         setStep(t('autoLend.stepRegister'));
         const tx = await dw.setLenderIntent(
           lendingAsset,
@@ -740,20 +818,29 @@ export default function AutoLendIntentCard() {
     setNotice(null);
     setBusy(true);
     try {
+      // Re-read fresh: the cached view may say "inactive" while the same
+      // pair was re-enabled in another tab. Decide cancel/withdraw on the
+      // FRESH intent so a full stop never leaves an active intent behind
+      // (which a later auto-roll could re-lien and relist). Fail closed.
+      const pair = await reloadPair();
+      if (!pair) {
+        setError(t('autoLend.errLoadFailed'));
+        return;
+      }
       // Cancel (de-list) FIRST so no keeper can match the intent during
       // the withdraw signature window — then pull the now-un-fillable
       // capital (the contract's withdraw path stays usable after cancel).
-      if (intentView?.active) {
+      if (pair.view.active) {
         setStep(t('autoLend.stepCancel'));
         const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
         await tx.wait();
       }
-      if ((capitalView ?? 0n) > 0n) {
+      if (pair.capital > 0n) {
         setStep(t('autoLend.stepWithdraw'));
         const tx = await dw.withdrawLenderIntentCapital(
           lendingAsset,
           collateralAsset,
-          capitalView,
+          pair.capital,
         );
         await tx.wait();
       }
