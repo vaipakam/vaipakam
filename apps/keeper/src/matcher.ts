@@ -172,12 +172,18 @@ const INTENT_SCAN_PAGE = 100n;
 /** `LibVaipakam.FillMode.Aon`. */
 const FILL_MODE_AON = 1;
 
-/** `LibOfferMatch.IntentError.KeeperUnauthorized` — index 8 in the enum
- *  (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled, AggregatorPaused,
- *  Inactive, VpfiLendingUnsupported, KeeperUnauthorized, …). Auth is
- *  intent-level (same verdict for every borrower), so on this code the keeper
- *  abandons the WHOLE intent after a single probe rather than burning one
- *  `previewIntent` per borrower (Codex #748 r1). */
+// `LibOfferMatch.IntentError` indices the intent-fill pass keys off
+// (Ok, Paused, Sanctioned, MatcherDisabled, IntentDisabled, AggregatorPaused,
+//  Inactive, VpfiLendingUnsupported, KeeperUnauthorized, …):
+/** A master kill-switch is off (`partialFillEnabled` / `lenderIntentEnabled`).
+ *  GLOBAL — true for every intent + borrower, so it is TERMINAL for the whole
+ *  pass: log once and stop, rather than probe every borrower until the shared
+ *  preview cap is drained (Codex #748 r2). */
+const INTENT_ERR_MATCHER_DISABLED = 3;
+const INTENT_ERR_INTENT_DISABLED = 4;
+/** `requiresKeeperAuth` intent this keeper can't fill. Intent-level (same
+ *  verdict for every borrower) → abandon the WHOLE intent after a single probe
+ *  rather than burning one `previewIntent` per borrower (Codex #748 r1). */
 const INTENT_ERR_KEEPER_UNAUTHORIZED = 8;
 
 /** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
@@ -636,10 +642,18 @@ async function runIntentFillPass(
   submitsUsed: number,
   previewsUsed: number,
 ): Promise<void> {
-  // Codex #748 r1 — check the shared wall-time budget BEFORE paging intents:
-  // on a large registry, `getActiveLenderIntents` RPC alone can blow past the
-  // 90s budget even when no preview/submit follows.
-  if (overBudget()) return;
+  // Codex #748 r1/r2 — don't even PAGE the intent registry unless there is
+  // budget left to act on it: the wall-time budget, AND the inherited shared
+  // preview/submit caps the matchOffers loop may already have drained. Either
+  // way the pass can do no legal work, so the `getActiveLenderIntents` RPCs
+  // would be pure waste (and could themselves blow the 90s budget).
+  if (
+    overBudget() ||
+    submitsUsed >= MAX_SUBMITS_PER_TICK ||
+    previewsUsed >= MAX_PREVIEW_CALLS_PER_TICK
+  ) {
+    return;
+  }
   const solver = ctx.wallet.account?.address;
   if (!solver) return;
   const intents = await listActiveIntents(ctx);
@@ -652,6 +666,11 @@ async function runIntentFillPass(
   let previews = previewsUsed;
   let submits = submitsUsed;
   let intentFills = 0;
+  // Codex #748 r2 — a borrower whose `matchIntent` submit returned uncertain
+  // (broadcast fail / receipt timeout — the tx may still mine) is off-limits to
+  // EVERY later intent this tick: previewing it against `latest` could submit a
+  // second fill for the same borrower that reverts once the first tx lands.
+  const uncertainBorrowers = new Set<string>();
   for (const intent of intents) {
     if (overBudget() || submits >= MAX_SUBMITS_PER_TICK) break;
     for (const b of borrowers) {
@@ -662,6 +681,7 @@ async function runIntentFillPass(
       ) {
         break;
       }
+      if (uncertainBorrowers.has(b.id.toString())) continue;
       // Cheap client-side pre-filter (cuts previewIntent eth_calls) — the
       // continuity + WI-3 + rate-overlap conditions `matchIntent` enforces.
       if (
@@ -687,6 +707,23 @@ async function runIntentFillPass(
       if (!preview) continue;
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
       if (!preview.ok) {
+        // GLOBAL master switch off (partialFill / lenderIntent) — the same
+        // verdict for every intent + borrower, so it is terminal for the whole
+        // pass: log once (sharing the matchOffers kill-switch latch) and stop,
+        // rather than probe every borrower until the preview cap drains
+        // (Codex #748 r2).
+        if (
+          preview.intentError === INTENT_ERR_MATCHER_DISABLED ||
+          preview.intentError === INTENT_ERR_INTENT_DISABLED
+        ) {
+          if (!killSwitchLogged.get(ctx.chainId)) {
+            console.log(
+              `[matcher] chain=${ctx.chainId} intent-fill disabled: a master flag (partialFill/lenderIntent) is off; retrying every tick`,
+            );
+            killSwitchLogged.set(ctx.chainId, true);
+          }
+          return;
+        }
         // Authorization is intent-level: a `requiresKeeperAuth` intent this
         // keeper can't fill returns `KeeperUnauthorized` for EVERY borrower, so
         // abandon the whole intent after this single probe rather than burning
@@ -703,12 +740,16 @@ async function runIntentFillPass(
         // target the same borrower (the single-fill slice consumes exactly
         // `matchAmount`).
         b.amountFilled += preview.matchAmount;
+      } else {
+        // Uncertain (broadcast fail / receipt timeout) — quarantine this
+        // borrower for the rest of the tick so no other intent double-fills it
+        // before the possibly-in-flight tx lands (Codex #748 r2).
+        uncertainBorrowers.add(b.id.toString());
       }
       // Back off this intent after ANY submit attempt — a success moved its
-      // exposure/capital, and an uncertain result (broadcast fail / receipt
-      // timeout) leaves the tx possibly in-flight; either way, sizing more
-      // fills for it against the stale snapshot would queue reverting txs
-      // (mirrors the matchOffers path — Codex #748 r1).
+      // exposure/capital, an uncertain result leaves the tx possibly in-flight;
+      // either way, sizing more fills for it against the stale snapshot would
+      // queue reverting txs (mirrors the matchOffers path — Codex #748 r1).
       break;
     }
   }
