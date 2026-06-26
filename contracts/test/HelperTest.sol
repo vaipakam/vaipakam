@@ -762,7 +762,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = LenderIntentFacet.setLenderIntent.selector;
         selectors[1] = LenderIntentFacet.cancelLenderIntent.selector;
         selectors[2] = LenderIntentFacet.setLenderIntentEnabled.selector;
@@ -774,6 +774,7 @@ contract HelperTest {
         selectors[8] = LenderIntentFacet.withdrawLenderIntentCapital.selector;
         selectors[9] = LenderIntentFacet.getLenderIntentCapital.selector;
         selectors[10] = LenderIntentFacet.rollIntentLoan.selector;
+        selectors[11] = LenderIntentFacet.getLenderIntentsByOwner.selector;
     }
 
     function getRiskAccessFacetSelectors()

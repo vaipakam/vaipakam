@@ -104,6 +104,33 @@ library LibMetricsTypes {
         });
     }
 
+    /// @dev #755 — one row of `LenderIntentFacet.getLenderIntentsByOwner`: the
+    ///      lender's own standing intent PLUS an `active` flag. The global
+    ///      keeper feed (`getActiveLenderIntents`) lists only ACTIVE intents, so
+    ///      it needs no such flag; the per-owner management view also surfaces
+    ///      PAUSED (cancelled-but-capital-reserved) intents and so must tell the
+    ///      two apart. This is a SEPARATE wrapper type — deliberately NOT a new
+    ///      field on the shared {LenderIntentSummary} — so the global feed's
+    ///      tuple-array ABI stays byte-for-byte stable across a diamond upgrade
+    ///      (an extra field there would shift every decoder's per-row stride;
+    ///      Codex #756 P1).
+    struct OwnerLenderIntentSummary {
+        LenderIntentSummary intent;
+        bool active;
+    }
+
+    function toOwnerLenderIntentSummary(
+        LibVaipakam.IntentKey memory key,
+        LibVaipakam.LenderIntent storage i,
+        uint256 livePrincipal,
+        uint256 availableCapital
+    ) internal view returns (OwnerLenderIntentSummary memory s) {
+        s = OwnerLenderIntentSummary({
+            intent: toLenderIntentSummary(key, i, livePrincipal, availableCapital),
+            active: i.active
+        });
+    }
+
     /// @dev #625 WI-2c — one row of `MetricsFacet.getRollableIntentLoans`: a
     ///      fully-repaid intent-originated loan a keeper can AUTO-ROLL via
     ///      `LenderIntentFacet.rollIntentLoan(loanId)`. `owner` /

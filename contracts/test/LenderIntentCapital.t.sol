@@ -13,6 +13,7 @@ import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
@@ -632,5 +633,124 @@ contract LenderIntentCapitalTest is SetupTest {
             uint8(LibVaipakam.LoanStatus.Settled),
             "loan settled by roll"
         );
+    }
+
+    // ─── #755 per-owner intent view (`getLenderIntentsByOwner`) ──────────────
+
+    function _byOwner(address who)
+        internal
+        view
+        returns (
+            LibMetricsTypes.OwnerLenderIntentSummary[] memory rows,
+            uint256 total
+        )
+    {
+        return
+            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+                who, 0, 50
+            );
+    }
+
+    /// Active+funded stays listed; a PAUSED intent (cancelled but capital
+    /// reserved) stays listed with `active=false`; a fully torn-down intent
+    /// (inactive AND zero capital) is de-listed.
+    function test_byOwner_listsActiveFunded_keepsPaused_dropsTornDown() public {
+        _setIntent();
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =
+            _byOwner(lender);
+        assertEq(total, 1, "registered intent listed");
+        assertEq(rows[0].intent.owner, lender);
+        assertEq(rows[0].intent.lendingAsset, mockERC20);
+        assertEq(rows[0].intent.collateralAsset, mockCollateralERC20);
+        assertTrue(rows[0].active, "active");
+        assertEq(rows[0].intent.availableCapital, 0, "unfunded");
+        assertEq(rows[0].intent.maxExposure, MAX_EXPOSURE, "bounds surfaced");
+
+        _fund(PRINCIPAL);
+        (rows, total) = _byOwner(lender);
+        assertEq(total, 1);
+        assertEq(rows[0].intent.availableCapital, PRINCIPAL, "funded capital");
+
+        // Cancel ⇒ paused, capital still reserved ⇒ stays listed, active=false.
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).cancelLenderIntent(
+            mockERC20, mockCollateralERC20
+        );
+        (rows, total) = _byOwner(lender);
+        assertEq(total, 1, "paused intent with reserved capital stays listed");
+        assertFalse(rows[0].active, "paused");
+        assertEq(
+            rows[0].intent.availableCapital, PRINCIPAL, "capital still reserved"
+        );
+
+        // Withdraw all ⇒ inactive AND zero capital ⇒ fully torn down ⇒ de-listed.
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            mockERC20, mockCollateralERC20, PRINCIPAL
+        );
+        (, total) = _byOwner(lender);
+        assertEq(total, 0, "fully torn-down intent de-listed");
+    }
+
+    /// An active intent fully drawn down by a fill (capital 0, live principal
+    /// out) stays in the OWNER feed — unlike the funded-active global feed.
+    function test_byOwner_reflectsLivePrincipalAfterFill() public {
+        _setIntent();
+        _fund(PRINCIPAL);
+        address b = _newBorrower("byOwnerLP");
+        uint256 cp = _postBorrower(b);
+        vm.prank(solver);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =
+            _byOwner(lender);
+        assertEq(total, 1, "active intent stays listed even fully drawn down");
+        assertTrue(rows[0].active);
+        assertEq(rows[0].intent.availableCapital, 0, "capital drawn by the fill");
+        assertEq(
+            rows[0].intent.livePrincipal, PRINCIPAL, "live principal reflected"
+        );
+    }
+
+    function test_byOwner_multiplePairs_andOwnerIsolation() public {
+        _setIntent(); // pair A: (mockERC20, mockCollateralERC20)
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockCollateralERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+        ); // pair B: (mockCollateralERC20, mockERC20)
+        (, uint256 total) = _byOwner(lender);
+        assertEq(total, 2, "both pairs listed for the owner");
+
+        (, uint256 otherTotal) = _byOwner(makeAddr("strangerLender"));
+        assertEq(otherTotal, 0, "owner-scoped: a different lender sees none");
+    }
+
+    function test_byOwner_pagination() public {
+        _setIntent();
+        vm.prank(lender);
+        LenderIntentFacet(address(diamond)).setLenderIntent(
+            mockCollateralERC20, mockERC20, MAX_EXPOSURE, MIN_RATE_BPS,
+            MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
+        );
+        (
+            LibMetricsTypes.OwnerLenderIntentSummary[] memory p0,
+            uint256 total
+        ) = LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+            lender, 0, 1
+        );
+        assertEq(total, 2, "total is the full count");
+        assertEq(p0.length, 1, "page window respected");
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory p1, ) =
+            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+                lender, 1, 1
+            );
+        assertEq(p1.length, 1);
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory pEnd, ) =
+            LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
+                lender, 2, 10
+            );
+        assertEq(pEnd.length, 0, "offset >= total returns empty");
     }
 }

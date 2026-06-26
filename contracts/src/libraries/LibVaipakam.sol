@@ -1255,22 +1255,36 @@ library LibVaipakam {
         LenderIntent storage intent =
             s.lenderIntent[owner][lendingAsset][collateralAsset];
         bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
-        // List ONLY if active AND funded enough for at least one VALID fill: a fill
-        // must be >= minFillAmount AND <= available capital, so available capital below
-        // `minFillAmount` means no fill is possible — don't advertise an unfillable
-        // intent (Codex WI-2a r3).
-        if (
-            intent.active
-                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset]
-                    >= intent.minFillAmount
-        ) {
-            if (s.activeIntentKeys.add(ik)) {
+        uint256 capital =
+            s.lenderIntentCapital[owner][lendingAsset][collateralAsset];
+
+        // #755 — per-OWNER registry: list while the intent EXISTS for the
+        // lender to manage in the dapp — `active` OR carrying reserved capital
+        // (a PAUSED intent) — and drop it only once fully torn down (inactive
+        // AND no reserved capital). Broader than the global feed below, and the
+        // first place the key->tuple resolution is recorded (active or funded
+        // both imply owner-listed, so the global feed can read the tuple
+        // without re-stamping it).
+        if (intent.active || capital > 0) {
+            if (s.ownerIntentKeys[owner].add(ik)) {
                 s.intentKeyTuple[ik] = IntentKey({
                     owner: owner,
                     lendingAsset: lendingAsset,
                     collateralAsset: collateralAsset
                 });
             }
+        } else {
+            s.ownerIntentKeys[owner].remove(ik);
+        }
+
+        // Global keeper feed (#625 WI-2a): list ONLY if active AND funded enough
+        // for at least one VALID fill: a fill must be >= minFillAmount AND <=
+        // available capital, so available capital below `minFillAmount` means no
+        // fill is possible — don't advertise an unfillable intent (Codex WI-2a
+        // r3). `intentKeyTuple` is already set by the per-owner branch above
+        // (active ⇒ owner-listed).
+        if (intent.active && capital >= intent.minFillAmount) {
+            s.activeIntentKeys.add(ik);
         } else {
             s.activeIntentKeys.remove(ik);
         }
@@ -4583,6 +4597,18 @@ library LibVaipakam {
         // therefore holds exactly the loans with a live `intentOrigin`; the view filters
         // to `LoanStatus.Repaid` for the keeper's roll candidates.
         EnumerableSet.UintSet activeIntentLoans;
+        // #625 #755 — per-OWNER enumerable registry so the dapp can list a
+        // single lender's standing intents across pairs (the global
+        // `activeIntentKeys` feed is owner-agnostic and funded-active only).
+        // Membership is BROADER than the global feed — `active || capital > 0`
+        // — so it includes PAUSED (cancelled-but-capital-reserved) intents the
+        // lender still needs to manage; it drops a key only once the intent is
+        // fully torn down (inactive AND no reserved capital). Maintained by
+        // `syncIntentRegistry` at the same sites as `activeIntentKeys`.
+        // APPENDED AT THE END of the struct (after the pre-existing
+        // `activeIntentLoans`) per the append-only storage rule — a new shared
+        // field must never shift an existing field's slot (Codex #756 P1).
+        mapping(address => EnumerableSet.Bytes32Set) ownerIntentKeys;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
