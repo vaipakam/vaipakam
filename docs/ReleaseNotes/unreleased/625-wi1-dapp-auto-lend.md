@@ -27,9 +27,13 @@ What's new for the user — a new **Auto-lend** card on the Dashboard:
   can register and fund now; the keeper starts filling once it's
   re-enabled" — an intent can be staged while filling is paused and
   starts automatically when governance flips it on.
-- Wind-down is first-class: **Pause** clears the consent marker while
-  leaving the intent and capital in place, and **Withdraw & stop**
-  returns the un-lent capital to the wallet and cancels the intent.
+- Wind-down is first-class and genuinely stops fills. Because the
+  auto-lend consent marker carries no on-chain fill enforcement, **Pause**
+  *cancels* (de-lists) the standing intent rather than just clearing the
+  marker — the lender's un-lent capital stays reserved and is resumable
+  (re-enabling re-registers the intent without re-funding) or withdrawable
+  at any time. **Withdraw & stop** cancels the intent first (closing the
+  fill window) and then returns the un-lent capital to the wallet.
 
 The keeper's signing address is published per-chain (a new optional
 deployment field the operator sets); where it isn't yet configured, the

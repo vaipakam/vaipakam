@@ -529,7 +529,7 @@
     "fundAmountLabel": "Amount to fund now (optional — pulled from your wallet)",
     "useMarketRate": "Use recent market rate ({{pct}}%)",
     "noKeeperHere": "No keeper is published for this chain yet, so auto-roll delegation is unavailable here. You can still register and fund an intent; the keeper auto-fills it. Auto-roll needs the delegation step, which appears once a keeper address is configured.",
-    "noticeConsentBlocked": "Your intent and keeper delegation are set. The consent marker couldn't be set because admin has it disabled right now — the keeper can still act, and you can flip consent on later.",
+    "noticeConsentBlocked": "Auto-lend consent is currently disabled by admin, so nothing was set up — no intent was registered, delegated, or funded. Please try again once it's re-enabled.",
     "noticeEnabled": "Auto-lend is set up. The keeper will fill matching demand under your bounds.",
     "noticePaused": "Auto-lend paused — the intent is de-listed so no new fills happen. Your funded capital stays reserved: click Enable to resume (no re-funding needed) or Withdraw & stop to retrieve it.",
     "noticeStopped": "Auto-lend stopped. Your un-lent capital has been withdrawn and the intent cancelled.",

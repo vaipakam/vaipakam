@@ -148,12 +148,14 @@ export default function AutoLendIntentCard() {
 
   // Mandatory risk/terms consent + (when enabling the global keeper
   // master switch) an explicit acknowledgement that doing so reactivates
-  // every keeper the wallet has approved. Both are stamped with the
-  // `${chainId}:${wallet}` they were given under, so a wallet/chain
-  // switch makes the new account re-accept before registration.
+  // every keeper the wallet has approved. Each is stamped with its OWN
+  // `${chainId}:${wallet}` key — separate so ticking one never makes the
+  // other count as accepted, and a wallet/chain switch makes the new
+  // account re-accept each before registration.
   const [riskConsent, setRiskConsent] = useState<boolean>(false);
+  const [riskConsentKey, setRiskConsentKey] = useState<string>('');
   const [ackKeeperMaster, setAckKeeperMaster] = useState<boolean>(false);
-  const [consentsKey, setConsentsKey] = useState<string>('');
+  const [ackKeeperKey, setAckKeeperKey] = useState<string>('');
 
   const [busy, setBusy] = useState<boolean>(false);
   const [step, setStep] = useState<string | null>(null);
@@ -331,11 +333,11 @@ export default function AutoLendIntentCard() {
   const accountLoaded = !!address && loadedAccountKey === idKey;
   const decimalsReady =
     !!form.lendingAsset && decimalsKey === currentDecimalsKey;
-  // Consents are valid only for the chain+wallet they were given under,
-  // so a wallet/chain switch forces the new account to re-accept.
-  const consentsValid = consentsKey === idKey;
-  const riskConsentGiven = riskConsent && consentsValid;
-  const ackKeeperMasterGiven = ackKeeperMaster && consentsValid;
+  // Each consent is valid only for the chain+wallet it was given under
+  // (separate keys), so a wallet/chain switch forces the new account to
+  // re-accept and ticking one never implies the other.
+  const riskConsentGiven = riskConsent && riskConsentKey === idKey;
+  const ackKeeperMasterGiven = ackKeeperMaster && ackKeeperKey === idKey;
 
   // ── Derived ──────────────────────────────────────────────────────
   const diamondAddr = useMemo(
@@ -363,9 +365,27 @@ export default function AutoLendIntentCard() {
       const fund = form.fundAmount
         ? parseUnits(form.fundAmount, lendingDecimals)
         : 0n;
-      const minRateBps = BigInt(Math.round(Number(form.minRatePct || '0') * 100));
-      const maxInitLtvBps = Math.round(Number(form.maxInitLtvPct || '0') * 100);
-      const maxDurationDays = Math.round(Number(form.maxDurationDays || '0'));
+      // Percent / term fields go through Number() — reject non-finite
+      // (e.g. "abc" -> NaN) and negative values here so the form shows a
+      // validation error instead of letting a NaN slip past the range
+      // checks (NaN comparisons are all false) or a negative bigint reach
+      // the uint256 encoder and fail at the wallet.
+      const minRateNum = Number(form.minRatePct || '0');
+      const maxLtvNum = Number(form.maxInitLtvPct || '0');
+      const durNum = Number(form.maxDurationDays || '0');
+      if (
+        !Number.isFinite(minRateNum) ||
+        !Number.isFinite(maxLtvNum) ||
+        !Number.isFinite(durNum) ||
+        minRateNum < 0 ||
+        maxLtvNum < 0 ||
+        durNum < 0
+      ) {
+        return { ok: false as const };
+      }
+      const minRateBps = BigInt(Math.round(minRateNum * 100));
+      const maxInitLtvBps = Math.round(maxLtvNum * 100);
+      const maxDurationDays = Math.round(durNum);
       return { maxExposure, minFill, fund, minRateBps, maxInitLtvBps, maxDurationDays, ok: true as const };
     } catch {
       return { ok: false as const };
@@ -434,11 +454,11 @@ export default function AutoLendIntentCard() {
       setError(validation);
       return;
     }
-    // Consent kill-switch gate — checked BEFORE any registration. A
-    // re-registration relists previously-reserved capital into the fill
-    // registry, so it would become fillable even though we'd then stop
-    // before recording consent. If consent can't be set and isn't already
-    // set, abort before touching the chain. (`adminLendEnabled`/`consent`
+    // Consent kill-switch gate — checked BEFORE touching the chain. When
+    // consent isn't already recorded and the admin switch is down, the
+    // consent-first step below can't run, so abort entirely rather than
+    // register an intent that could never be consented (and, for a paused
+    // intent, would relist reserved capital). (`adminLendEnabled`/`consent`
     // are trusted because Enable is gated on `accountLoaded`.)
     if (consent === false && adminLendEnabled === false) {
       setNotice(t('autoLend.noticeConsentBlocked'));
@@ -450,7 +470,21 @@ export default function AutoLendIntentCard() {
     try {
       const { lendingAsset, collateralAsset } = form;
 
-      // 1. Register / update the standing intent (skip if unchanged).
+      // 1. Consent marker FIRST. Registration (step 2) reactivates and
+      //    relists a paused intent's reserved capital into the fill
+      //    registry, so consent must be recorded before that — otherwise
+      //    a later-rejected consent prompt would leave reserved capital
+      //    fillable with the marker still unset. The blocked case (admin
+      //    off + consent unset) was already rejected at the top, so here
+      //    consent is either already true or the admin switch allows it.
+      if (consent === false) {
+        setStep(t('autoLend.stepConsent'));
+        const tx = await dw.setAutoLendConsent(true);
+        await tx.wait();
+        setConsent(true);
+      }
+
+      // 2. Register / update the standing intent (skip if unchanged).
       if (!intentMatchesForm) {
         setStep(t('autoLend.stepRegister'));
         const tx = await dw.setLenderIntent(
@@ -467,7 +501,7 @@ export default function AutoLendIntentCard() {
         await tx.wait();
       }
 
-      // 2. Keeper delegation (only when a keeper is published here).
+      // 3. Keeper delegation (only when a keeper is published here).
       if (keeperAddress) {
         if (keeperAccess === false) {
           setStep(t('autoLend.stepKeeperAccess'));
@@ -490,16 +524,6 @@ export default function AutoLendIntentCard() {
           await tx.wait();
           setKeeperActions(current | desiredKeeperActions);
         }
-      }
-
-      // 3. Consent marker. The blocked case (admin off + consent unset)
-      //    was already rejected at the top, so here consent is either
-      //    already true or the admin switch allows setting it now.
-      if (consent === false) {
-        setStep(t('autoLend.stepConsent'));
-        const tx = await dw.setAutoLendConsent(true);
-        await tx.wait();
-        setConsent(true);
       }
 
       // 4. Fund LAST — only after every authorisation is in place.
@@ -583,6 +607,14 @@ export default function AutoLendIntentCard() {
     setNotice(null);
     setBusy(true);
     try {
+      // Cancel (de-list) FIRST so no keeper can match the intent during
+      // the withdraw signature window — then pull the now-un-fillable
+      // capital (the contract's withdraw path stays usable after cancel).
+      if (intentView?.active) {
+        setStep(t('autoLend.stepCancel'));
+        const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
+        await tx.wait();
+      }
       if ((capitalView ?? 0n) > 0n) {
         setStep(t('autoLend.stepWithdraw'));
         const tx = await dw.withdrawLenderIntentCapital(
@@ -590,11 +622,6 @@ export default function AutoLendIntentCard() {
           collateralAsset,
           capitalView,
         );
-        await tx.wait();
-      }
-      if (intentView?.active) {
-        setStep(t('autoLend.stepCancel'));
-        const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
         await tx.wait();
       }
       if (consent) {
@@ -797,7 +824,7 @@ export default function AutoLendIntentCard() {
                 checked={riskConsentGiven}
                 onChange={(e) => {
                   setRiskConsent(e.target.checked);
-                  setConsentsKey(idKey);
+                  setRiskConsentKey(idKey);
                 }}
                 disabled={busy}
               />
@@ -820,7 +847,7 @@ export default function AutoLendIntentCard() {
                 checked={ackKeeperMasterGiven}
                 onChange={(e) => {
                   setAckKeeperMaster(e.target.checked);
-                  setConsentsKey(idKey);
+                  setAckKeeperKey(idKey);
                 }}
                 disabled={busy}
               />
