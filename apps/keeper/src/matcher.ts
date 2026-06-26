@@ -8,8 +8,11 @@
  * accepts; THEN run the #625 WI-2c auto-lend intent-fill pass — page the
  * funded, active lender intents (`getActiveLenderIntents`), size a fill
  * against the same hydrated borrower book, confirm it with `previewIntent`,
- * and submit `matchIntent`. Both paths earn the keeper EOA the 1% LIF
- * matcher kickback (see
+ * and submit `matchIntent`; and FINALLY the auto-roll pass — page the
+ * fully-repaid intent loans (`getRollableIntentLoans`) and `rollIntentLoan`
+ * each, re-lending the proceeds back into the lender's intent capital (this
+ * pass runs even when there are no open offers). The match + fill paths earn
+ * the keeper EOA the 1% LIF matcher kickback (see
  * `OfferFacet._acceptOffer` lender-asset path + `LibVPFIDiscount.*` VPFI
  * path). Ported from the public reference bot
  * (`vaipakam-keeper-bot/src/detectors/offerMatcher.ts`) into the Worker
@@ -49,6 +52,7 @@ import {
   OfferMatchFacetABI,
   RiskAccessFacetABI,
   AdminFacetABI,
+  LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -74,6 +78,7 @@ const MATCHER_ABI: Abi = [
   ...(OfferMatchFacetABI as Abi),
   ...(RiskAccessFacetABI as Abi),
   ...(AdminFacetABI as Abi), // keepersPaused() self-gate (Codex #748 r3)
+  ...(LenderIntentFacetABI as Abi), // rollIntentLoan — #625 WI-2c part 2b
 ];
 
 /** Pagination size for `getActiveOffersPaginated`. */
@@ -249,6 +254,30 @@ interface IntentPreview {
   matchRateBps: bigint;
   reqCollateral: bigint;
   availableCapital: bigint;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// #625 WI-2c part 2b — auto-lend ROLL pass
+//
+// After the fill pass, the keeper pages the on-chain registry of fully-repaid
+// intent loans (`getRollableIntentLoans`, the WI-2c part-2a discovery surface)
+// and AUTO-ROLLS each via `rollIntentLoan` — re-lending the proceeds straight
+// back into the lender's intent capital with no claim/refund round-trip. The
+// keeper must hold the lender's `KEEPER_ACTION_AUTO_ROLL` delegation (or be the
+// owner); a loan it isn't delegated for reverts, so the pass skips every later
+// loan with the SAME owner once one reverts for that reason.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Pagination size for `getRollableIntentLoans`. */
+const ROLL_SCAN_PAGE = 100n;
+
+/** One row of `MetricsFacet.getRollableIntentLoans` (`RollableIntentLoan`). */
+interface RollableIntentLoan {
+  loanId: bigint;
+  owner: Address;
+  lendingAsset: Address;
+  collateralAsset: Address;
+  amount: bigint;
 }
 
 function bucketKey(o: OfferLite): string {
@@ -713,7 +742,9 @@ async function runIntentFillPass(
   // uncertain this tick. Shared with the matchOffers loop so a borrower left
   // in-flight by an offer-match timeout isn't double-filled by an intent.
   uncertainBorrowers: Set<string>,
-): Promise<void> {
+  // #625 WI-2c part 2b — returns the cumulative submit count so the tick can
+  // thread the SHARED per-tick budget on into the roll pass.
+): Promise<number> {
   // Codex #748 r1/r2 — don't even PAGE the intent registry unless there is
   // budget left to act on it: the wall-time budget, AND the inherited shared
   // preview/submit caps the matchOffers loop may already have drained. Either
@@ -724,10 +755,10 @@ async function runIntentFillPass(
     submitsUsed >= MAX_SUBMITS_PER_TICK ||
     previewsUsed >= MAX_PREVIEW_CALLS_PER_TICK
   ) {
-    return;
+    return submitsUsed;
   }
   const solver = ctx.wallet.account?.address;
-  if (!solver) return;
+  if (!solver) return submitsUsed;
 
   // Codex #748 r3 — self-gate on the OPERATIONAL keeper pause. For OPEN
   // (non-keeper-gated) intents `previewIntent` returns ok even while
@@ -739,11 +770,11 @@ async function runIntentFillPass(
   // flag is re-read immediately before each submit too (Codex r4 P1 race).
   if (await keepersPaused(ctx)) {
     logKeepersPausedOnce(ctx);
-    return;
+    return submitsUsed;
   }
 
   const intents = await listActiveIntents(ctx, overBudget);
-  if (intents.length === 0 || borrowers.length === 0) return;
+  if (intents.length === 0 || borrowers.length === 0) return submitsUsed;
 
   // Codex #748 r1 — CONTINUE the outer tick's RPC/gas budget rather than
   // resetting it: the intent pass shares `MAX_PREVIEW_CALLS_PER_TICK` /
@@ -859,7 +890,7 @@ async function runIntentFillPass(
             );
             killSwitchLogged.set(ctx.chainId, true);
           }
-          return;
+          return submits;
         }
         // INTENT-level terminal — same verdict for every BORROWER of this intent
         // (auth, aggregator-pause, inactive, VPFI-lending, unresolvable
@@ -877,7 +908,7 @@ async function runIntentFillPass(
       // moments after operators paused for an incident. Fail-closed (terminal).
       if (await keepersPaused(ctx)) {
         logKeepersPausedOnce(ctx);
-        return;
+        return submits;
       }
 
       submits += 1;
@@ -906,21 +937,180 @@ async function runIntentFillPass(
       `[matcher] chain=${ctx.chainId} intent-fill pass: ${intentFills} fill(s) across ${intents.length} active intent(s)`,
     );
   }
+  return submits;
+}
+
+// ─── #625 WI-2c part 2b roll-pass helpers ───────────────────────────────────
+
+function liftRollable(raw: Record<string, unknown>): RollableIntentLoan {
+  return {
+    loanId: BigInt(raw['loanId'] as bigint | number),
+    owner: raw['owner'] as Address,
+    lendingAsset: raw['lendingAsset'] as Address,
+    collateralAsset: raw['collateralAsset'] as Address,
+    amount: BigInt(raw['amount'] as bigint | number),
+  };
+}
+
+/**
+ * Collect ALL fully-repaid intent loans from the on-chain registry up front.
+ * Paged into memory (not rolled mid-page) because a successful roll REMOVES the
+ * loan from the registry — paginating while mutating would skip entries. Rolling
+ * happens afterward by stable `loanId`. `total` is the FULL registry size; each
+ * page yields only its Repaid subset, so we advance by the page span.
+ */
+async function listRollableLoans(
+  ctx: KeeperContext,
+  overBudget: () => boolean,
+): Promise<RollableIntentLoan[]> {
+  const out: RollableIntentLoan[] = [];
+  let total: bigint | null = null;
+  for (
+    let offset = 0n;
+    total === null || offset < total;
+    offset += ROLL_SCAN_PAGE
+  ) {
+    if (overBudget()) break;
+    try {
+      const res = (await ctx.client.readContract({
+        address: ctx.diamond,
+        abi: MATCHER_ABI,
+        functionName: 'getRollableIntentLoans',
+        args: [offset, ROLL_SCAN_PAGE],
+      })) as readonly [readonly Record<string, unknown>[], bigint];
+      const [rows, t] = res;
+      total = t;
+      for (const r of rows) out.push(liftRollable(r));
+    } catch (err) {
+      console.error(
+        `[matcher] chain=${ctx.chainId} getRollableIntentLoans offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+      );
+      break;
+    }
+  }
+  return out;
+}
+
+async function submitRoll(
+  ctx: KeeperContext,
+  loanId: bigint,
+): Promise<{ ok: boolean; unauthorized: boolean }> {
+  const account = ctx.wallet.account;
+  if (!account) return { ok: false, unauthorized: false };
+  let hash: Hex;
+  try {
+    hash = await ctx.wallet.writeContract({
+      address: ctx.diamond,
+      abi: MATCHER_ABI,
+      functionName: 'rollIntentLoan',
+      args: [loanId],
+      account,
+      chain: ctx.wallet.chain,
+    });
+  } catch (err) {
+    const errStr = String(err);
+    // KeeperAccessRequired — the keeper isn't AUTO_ROLL-delegated for this loan's
+    // owner; every later loan with the SAME owner is equally unrollable, so the
+    // caller skips them rather than re-probing each.
+    const unauthorized = errStr.includes('KeeperAccessRequired');
+    if (!unauthorized) {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      );
+    }
+    return { ok: false, unauthorized };
+  }
+  try {
+    const receipt = await ctx.client.waitForTransactionReceipt({
+      hash,
+      timeout: 30_000,
+    });
+    if (receipt.status !== 'success') {
+      console.log(
+        `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} reverted on-chain tx=${hash}`,
+      );
+      return { ok: false, unauthorized: false };
+    }
+  } catch (err) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} rollIntentLoan loan=${Number(loanId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+    );
+    return { ok: false, unauthorized: false };
+  }
+  console.log(
+    `[matcher] chain=${ctx.chainId} intent-rolled loan=${Number(loanId)} tx=${hash}`,
+  );
+  return { ok: true, unauthorized: false };
+}
+
+/**
+ * Auto-roll pass: page all fully-repaid intent loans + roll each via
+ * `rollIntentLoan`. Shares the per-tick submit budget (`submitsUsed`) + wall-time
+ * budget with the match/fill passes, and self-gates on `keepersPaused` (re-read
+ * before each submit). A loan whose owner the keeper isn't AUTO_ROLL-delegated
+ * for reverts; every later loan with that owner is then skipped.
+ */
+async function runIntentRollPass(
+  ctx: KeeperContext,
+  overBudget: () => boolean,
+  submitsUsed: number,
+): Promise<void> {
+  if (overBudget() || submitsUsed >= MAX_SUBMITS_PER_TICK) return;
+  if (!ctx.wallet.account) return;
+  if (await keepersPaused(ctx)) {
+    logKeepersPausedOnce(ctx);
+    return;
+  }
+
+  const rollable = await listRollableLoans(ctx, overBudget);
+  if (rollable.length === 0) return;
+
+  let submits = submitsUsed;
+  let rolled = 0;
+  const unauthorizedOwners = new Set<string>();
+  for (const loan of rollable) {
+    if (submits >= MAX_SUBMITS_PER_TICK || overBudget()) break;
+    if (unauthorizedOwners.has(loan.owner.toLowerCase())) continue;
+    // Re-read the pause immediately before committing gas (mirrors the fill
+    // pass — the AUTO_ROLL auth path enforces keepersPaused on-chain anyway, but
+    // skip the doomed submit + its gas).
+    if (await keepersPaused(ctx)) {
+      logKeepersPausedOnce(ctx);
+      return;
+    }
+    submits += 1;
+    const res = await submitRoll(ctx, loan.loanId);
+    if (res.ok) {
+      rolled += 1;
+    } else if (res.unauthorized) {
+      unauthorizedOwners.add(loan.owner.toLowerCase());
+    }
+  }
+  if (rolled > 0) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} roll pass: ${rolled} loan(s) rolled (${rollable.length} repaid candidate(s))`,
+    );
+  }
 }
 
 /** One pass over a chain's order book. */
 async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
-  const ids = await listActiveOfferIds(ctx);
-  if (ids.length === 0) return;
-  const offers = await hydrateOffers(ctx, ids);
-  const { lenders, borrowers } = partitionByBucket(offers);
-
   // Codex #176 round-2 P2 — bound the chain's wall-time so a congested
   // chain can't starve later chains in the same cron tick. Each call
   // site checks `overBudget()` before doing more work.
   const tickStart = Date.now();
   const overBudget = () =>
     Date.now() - tickStart > PER_CHAIN_WALL_TIME_BUDGET_MS;
+
+  const ids = await listActiveOfferIds(ctx);
+  if (ids.length === 0) {
+    // No open offers to match/fill, but there may still be fully-repaid intent
+    // loans to AUTO-ROLL (independent of the offer book) — #625 WI-2c part 2b.
+    if (!overBudget()) await runIntentRollPass(ctx, overBudget, 0);
+    return;
+  }
+  const offers = await hydrateOffers(ctx, ids);
+  const { lenders, borrowers } = partitionByBucket(offers);
 
   let previewCalls = 0;
   let submits = 0;
@@ -1046,8 +1236,9 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
     }
     // Hand the matchOffers loop's spent budget + uncertain-borrower set across
     // so the two passes share the per-tick rails and don't double-fill a
-    // borrower left in flight (Codex #748 r1/r3).
-    await runIntentFillPass(
+    // borrower left in flight (Codex #748 r1/r3). The fill pass returns the
+    // cumulative submit count so the roll pass below inherits the shared budget.
+    submits = await runIntentFillPass(
       ctx,
       allBorrowers,
       overBudget,
@@ -1062,6 +1253,13 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
       `[matcher] chain=${ctx.chainId} activeOffers=${offers.length} previewCalls=${previewCalls} submits=${submits} elapsedMs=${Date.now() - tickStart}`,
     );
   }
+
+  // #625 WI-2c part 2b — auto-roll fully-repaid intent loans, sharing the
+  // per-tick submit + wall-time budget carried through the match + fill passes.
+  if (!overBudget()) {
+    await runIntentRollPass(ctx, overBudget, submits);
+  }
+
   if (overBudget()) {
     console.log(
       `[matcher] chain=${ctx.chainId} wall-time budget exhausted (${
