@@ -13,20 +13,24 @@ keeper can simply page the current set each tick.
 
 What's new:
 
-- An **enumerable registry of active intents**: registering an intent adds it; cancelling
-  removes it; re-registering an already-active intent is idempotent (a bounds update never
-  double-counts).
+- An **enumerable registry of funded, active intents**: an intent enters the feed once it
+  is both active and has committed (funded) capital, and leaves it when cancelled or when
+  its capital is fully withdrawn. Gating feed membership on funded capital means a bare
+  registration that commits nothing is never advertised — so the global feed can't be
+  bloated by zero-capital registrations (entering it costs committed capital, not just gas).
 - **`getActiveLenderIntents(offset, limit)`** — a paginated, lean read view returning, per
   active intent, the lender's bounds plus the two figures a filler needs to size a fill
   safely: the live principal already lent out, and the un-lent funded capital a fill draws
   from (a fill exceeding that capital reverts on-chain). It also reports whether the intent
   requires a keeper authorisation, so a filler can skip intents it isn't delegated to fill.
-- An **`IntentMatched`** event emitted whenever an intent is filled into a loan, keyed by
-  the originating owner. The generic match event only carries the transient lender slice
-  (which is discarded after the match), so this owner-keyed marker is what lets a later
-  auto-roll pass find an intent's repaid loans. The loan itself continues to be indexed by
-  the existing match/loan events; this marker is purely for off-chain roll discovery.
+Roll discovery (the keeper finding an intent's repaid loans) does **not** need a new event:
+the existing intent-fill event already carries the originating owner and the loan id, which
+is exactly what the later auto-roll pass keys off.
 
-This is a read + event surface only — no change to how intents are funded, filled, or
-priced. The keeper that consumes these (the fill and auto-roll passes) lands in the
-following Phase-2 steps; this step gives that work a clean, paginated on-chain source.
+This is a read-only surface plus registry bookkeeping — no change to how intents are funded,
+filled, or priced. The keeper that consumes the feed (the fill and auto-roll passes) lands
+in the following Phase-2 steps; this step gives that work a clean, paginated on-chain source.
+
+(Note: the registry is populated only by the new funding path, so it is correct from this
+deployment forward; the protocol is pre-live, so there are no pre-existing funded intents to
+back-fill.)

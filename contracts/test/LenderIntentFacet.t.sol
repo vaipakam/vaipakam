@@ -8,6 +8,8 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
+import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /**
  * @title  LenderIntentFacetTest
@@ -46,66 +48,87 @@ contract LenderIntentFacetTest is SetupTest {
         );
     }
 
-    // ─── #625 WI-2a — active-intent discovery registry ──────────────────────
+    // ─── #625 WI-2a — active-intent discovery registry (funded-set) ─────────
 
-    function test_getActiveLenderIntents_listsDelistsAndIsIdempotent() public {
-        // Two distinct pairs for the same owner (swapped lend/coll — both valid).
+    /// @dev Fund an intent's lending leg so it enters the keeper feed — the registry
+    ///      advertises ONLY active + FUNDED intents (zero-capital registrations stay out).
+    function _fund(address lendAsset, address collAsset, uint256 amount) internal {
+        ERC20Mock(lendAsset).mint(user, amount);
+        vm.prank(user);
+        ERC20(lendAsset).approve(address(diamond), amount);
+        vm.prank(user);
+        LenderIntentFacet(address(diamond)).fundLenderIntent(
+            lendAsset, collAsset, amount
+        );
+    }
+
+    function _activeCount() internal view returns (uint256 total) {
+        (, total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 100);
+    }
+
+    function test_getActiveLenderIntents_onlyFundedAreListed() public {
+        // Bare registration commits no capital ⇒ NOT advertised (anti-spam: entering
+        // the global feed costs committed capital, not just gas).
         _set(mockERC20, mockCollateralERC20);
-        _set(mockCollateralERC20, mockERC20);
+        assertEq(_activeCount(), 0, "unfunded intent is not listed");
 
+        // Funding it lists it, with the bounds + sizing figures.
+        _fund(mockERC20, mockCollateralERC20, 1_000 ether);
         (LibMetricsTypes.LenderIntentSummary[] memory page, uint256 total) =
             MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
-        assertEq(total, 2, "both active intents listed");
-        assertEq(page.length, 2, "page returns both");
+        assertEq(total, 1, "funded intent listed");
+        assertEq(page[0].owner, user, "owner");
+        assertEq(page[0].lendingAsset, mockERC20, "lendingAsset");
+        assertEq(page[0].collateralAsset, mockCollateralERC20, "collateralAsset");
+        assertEq(page[0].maxExposure, MAX_EXPOSURE, "maxExposure");
+        assertEq(page[0].minRateBps, MIN_RATE_BPS, "minRateBps");
+        assertEq(page[0].maxInitLtvBps, MAX_INIT_LTV_BPS, "maxInitLtvBps");
+        assertEq(page[0].maxDurationDays, MAX_DURATION_DAYS, "maxDurationDays");
+        assertEq(page[0].minFillAmount, MIN_FILL, "minFillAmount");
+        assertEq(page[0].requiresKeeperAuth, false, "requiresKeeperAuth");
+        assertEq(page[0].livePrincipal, 0, "no live principal yet");
+        assertEq(page[0].availableCapital, 1_000 ether, "funded capital");
+    }
 
-        bool found;
-        for (uint256 i = 0; i < page.length; i++) {
-            if (
-                page[i].lendingAsset == mockERC20
-                    && page[i].collateralAsset == mockCollateralERC20
-            ) {
-                found = true;
-                assertEq(page[i].owner, user, "owner");
-                assertEq(page[i].maxExposure, MAX_EXPOSURE, "maxExposure");
-                assertEq(page[i].minRateBps, MIN_RATE_BPS, "minRateBps");
-                assertEq(page[i].maxInitLtvBps, MAX_INIT_LTV_BPS, "maxInitLtvBps");
-                assertEq(page[i].maxDurationDays, MAX_DURATION_DAYS, "maxDurationDays");
-                assertEq(page[i].minFillAmount, MIN_FILL, "minFillAmount");
-                assertEq(page[i].requiresKeeperAuth, false, "requiresKeeperAuth");
-                assertEq(page[i].livePrincipal, 0, "no live principal yet");
-                assertEq(page[i].availableCapital, 0, "no funded capital yet");
-            }
-        }
-        assertTrue(found, "the seeded pair is in the page");
+    function test_getActiveLenderIntents_delistsOnCancelAndDepletion() public {
+        _set(mockERC20, mockCollateralERC20);
+        _fund(mockERC20, mockCollateralERC20, 1_000 ether);
+        _set(mockCollateralERC20, mockERC20);
+        _fund(mockCollateralERC20, mockERC20, 2_000 ether);
+        assertEq(_activeCount(), 2, "two funded intents listed");
 
-        // Cancel one → it de-lists; the other survives.
+        // Cancel one → de-lists.
         vm.prank(user);
         LenderIntentFacet(address(diamond)).cancelLenderIntent(
             mockERC20, mockCollateralERC20
         );
-        (page, total) =
-            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
-        assertEq(total, 1, "cancelled intent de-listed");
-        assertEq(page[0].collateralAsset, mockERC20, "the surviving pair remains");
+        assertEq(_activeCount(), 1, "cancelled intent de-listed");
 
-        // Re-set the cancelled pair → re-lists.
-        _set(mockERC20, mockCollateralERC20);
-        (, total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
-        assertEq(total, 2, "re-set intent re-listed");
+        // Withdraw the other's capital to 0 → de-lists (depleted, still active).
+        vm.prank(user);
+        LenderIntentFacet(address(diamond)).withdrawLenderIntentCapital(
+            mockCollateralERC20, mockERC20, 2_000 ether
+        );
+        assertEq(_activeCount(), 0, "depleted intent de-listed");
 
-        // Re-setting an ALREADY-active intent (a bounds update) doesn't double-count.
-        _set(mockERC20, mockCollateralERC20);
-        (, total) = MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
-        assertEq(total, 2, "idempotent re-set keeps count at 2");
+        // Re-fund the depleted intent → re-lists.
+        _fund(mockCollateralERC20, mockERC20, 500 ether);
+        assertEq(_activeCount(), 1, "re-funded intent re-listed");
+
+        // A top-up of an already-listed intent is idempotent.
+        _fund(mockCollateralERC20, mockERC20, 500 ether);
+        assertEq(_activeCount(), 1, "idempotent top-up keeps count at 1");
     }
 
     function test_getActiveLenderIntents_pagination() public {
         _set(mockERC20, mockCollateralERC20);
+        _fund(mockERC20, mockCollateralERC20, 1_000 ether);
         _set(mockCollateralERC20, mockERC20);
+        _fund(mockCollateralERC20, mockERC20, 1_000 ether);
 
         (LibMetricsTypes.LenderIntentSummary[] memory p0, uint256 total) =
             MetricsFacet(address(diamond)).getActiveLenderIntents(0, 1);
-        assertEq(total, 2, "total reflects all active");
+        assertEq(total, 2, "total reflects all funded-active");
         assertEq(p0.length, 1, "limit honoured");
 
         (LibMetricsTypes.LenderIntentSummary[] memory p1,) =
