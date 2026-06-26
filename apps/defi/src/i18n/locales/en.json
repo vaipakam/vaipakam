@@ -162,6 +162,7 @@
     "dashboardFeeDiscountConsent": "Opt-in for the protocol to pay discounted fees in VPFI from the vault. Discount scales with the vault VPFI balance: {{tier1Discount}}% at Tier 1 (≥{{tier1Min}} VPFI), {{tier2Discount}}% Tier 2 (≥{{tier2Min}}), {{tier3Discount}}% Tier 3 (≥{{tier3Min}}), {{tier4Discount}}% Tier 4 (>{{tier4Min}}).",
     "dashboardRewardsSummary": "View of your platform-interaction rewards — a daily VPFI share for every loan you're part of. Click a row to jump to the full claim card on the matching page.",
     "dashboardAutoLendIntent": "Set up passive lending: register a standing intent on an asset pair, fund working capital, and let the protocol keeper fill matching borrower demand under your bounds — and auto-roll repaid loans once you delegate it. Pause, top up, or withdraw any time.",
+    "dashboardMyLenderIntents": "Every standing auto-lend intent the connected wallet runs, one per asset pair — including paused ones that still hold reserved capital. \"Funded\" is un-lent working capital; \"On loan\" is principal currently out. Use Manage to load a pair into the auto-lend card to resume, edit, top up, or withdraw it.",
     "offerBookFilters": "Narrow the market lists below by asset, side, status, and other criteria. Filters apply to Lender / Borrower offers — the connected wallet's own active offers (shown above) are always visible regardless.",
     "offerBookYourActiveOffers": "Offers the connected wallet created on this chain that haven't been filled yet. Cancel any time before someone accepts; once accepted, the loan lifecycle moves to \"Your Loans\" on the Dashboard.",
     "offerBookLenderOffers": "Offers posted by lenders ready to lend. A borrower accepting one initiates a loan: the borrower's collateral is locked, the principal asset arrives in the borrower's wallet, and interest accrues until repayment. HF must be ≥ 1.5 at initiation.",
@@ -572,6 +573,24 @@
     "ackKeeperMasterLabel": "Enabling auto-lend turns ON keeper access for your wallet — this reactivates EVERY keeper you've approved (not just the auto-lend keeper). I understand.",
     "errNoToken": "Couldn't load the lending token — check the address.",
     "errLoadFailed": "Couldn't read the latest on-chain state for this pair. Please try again."
+  },
+  "myLenderIntents": {
+    "title": "Your auto-lend intents",
+    "subtitle": "{{count}} standing",
+    "empty": "No standing auto-lend intents on this chain yet.",
+    "loading": "Loading your intents…",
+    "loadError": "Couldn't load your auto-lend intents.",
+    "retry": "Try again",
+    "colPair": "Pair",
+    "colStatus": "Status",
+    "colFunded": "Funded",
+    "colOnLoan": "On loan",
+    "colMaxExposure": "Max exposure",
+    "colMinRate": "Min rate",
+    "statusActive": "Active",
+    "statusPaused": "Paused",
+    "manage": "Manage",
+    "unit": "intent"
   },
   "autoLifecycle": {
     "errors": {

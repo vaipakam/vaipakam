@@ -175,7 +175,26 @@ const DEFAULT_FORM: FormState = {
   requiresKeeperAuth: false,
 };
 
-export default function AutoLendIntentCard() {
+interface AutoLendIntentCardProps {
+  /**
+   * #755 — pair handed in by the multi-intent list's "Manage" deep-link.
+   * When it changes, the card selects this pair and prefills that intent's
+   * bounds/capital, so resume/edit/fund runs the card's correct ordered
+   * enable sequence. Optional & default-undefined → unchanged standalone
+   * behaviour (the internal AssetPickers stay the source of truth).
+   */
+  selectedPair?: { lendingAsset: string; collateralAsset: string } | null;
+  /**
+   * Bumped on every "Manage" click so re-selecting the SAME pair re-applies
+   * (and re-prefills) — the pair addresses alone wouldn't change.
+   */
+  selectedPairNonce?: number;
+}
+
+export default function AutoLendIntentCard({
+  selectedPair,
+  selectedPairNonce,
+}: AutoLendIntentCardProps = {}) {
   const { t } = useTranslation();
   const { address, activeChain, isCorrectChain, chainId } = useWallet();
   const diamond = useDiamondContract();
@@ -186,6 +205,22 @@ export default function AutoLendIntentCard() {
   const canWrite = useCanWrite();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // #755 — apply a "Manage" deep-linked pair via React's render-time
+  // "adjust state when a prop changes" pattern (NOT an effect — that would
+  // cost a wasted commit and trip the set-state-in-effect lint). Gated on a
+  // nonce so it fires once per Manage click, including re-selecting the same
+  // pair; standalone usage passes no nonce, so this never runs there.
+  const [appliedPairNonce, setAppliedPairNonce] = useState(selectedPairNonce);
+  if (selectedPairNonce !== appliedPairNonce) {
+    setAppliedPairNonce(selectedPairNonce);
+    if (selectedPair?.lendingAsset && selectedPair?.collateralAsset) {
+      setForm((f) => ({
+        ...f,
+        lendingAsset: selectedPair.lendingAsset,
+        collateralAsset: selectedPair.collateralAsset,
+      }));
+    }
+  }
   // Latest form, readable inside async resolves to guard against a
   // stale pair switch without threading state through closures. Kept
   // current via an effect (ref writes don't belong in render).
