@@ -349,6 +349,13 @@ export function PerThingKeeperToggles(props: PerThingKeeperTogglesProps) {
                 >
                   {(Object.keys(KEEPER_ACTION) as Array<keyof typeof KEEPER_ACTION>)
                     .filter((k) => (row.actions & KEEPER_ACTION[k]) !== 0)
+                    // #625 WI-1 — SIGNED_FILL / AUTO_ROLL are PRINCIPAL-level
+                    // (enforced via requireKeeperForPrincipal), not per-loan /
+                    // per-offer (isLoanKeeperEnabled / isOfferKeeperEnabled).
+                    // Unchecking the keeper here does NOT remove that authority,
+                    // so don't surface those chips on a per-thing toggle — they
+                    // live on the Keeper Settings / auto-lend surfaces.
+                    .filter((k) => k !== 'SIGNED_FILL' && k !== 'AUTO_ROLL')
                     .map((k) => (
                       <span
                         key={k}

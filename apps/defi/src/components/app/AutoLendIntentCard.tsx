@@ -404,6 +404,10 @@ export default function AutoLendIntentCard() {
     if (parsed.maxInitLtvBps <= 0 || parsed.maxInitLtvBps > 10000)
       return t('autoLend.errLtv');
     if (parsed.maxDurationDays <= 0) return t('autoLend.errDuration');
+    // Rate floor can't exceed the protocol interest ceiling (100% APR) —
+    // the contract rejects it, so catch it before the multi-tx flow.
+    if (parsed.minRateBps > 10000n) return t('autoLend.errRateTooHigh');
+    if (parsed.fund < 0n) return t('autoLend.errAmount');
     if (parsed.fund > parsed.maxExposure) return t('autoLend.errFundOverExposure');
     // A keeper-only intent on a chain with no published keeper can never
     // be filled (no solver can hold the signed-fill grant) — block it.
@@ -470,13 +474,20 @@ export default function AutoLendIntentCard() {
     try {
       const { lendingAsset, collateralAsset } = form;
 
-      // 1. Consent marker FIRST. Registration (step 2) reactivates and
-      //    relists a paused intent's reserved capital into the fill
-      //    registry, so consent must be recorded before that — otherwise
-      //    a later-rejected consent prompt would leave reserved capital
-      //    fillable with the marker still unset. The blocked case (admin
-      //    off + consent unset) was already rejected at the top, so here
-      //    consent is either already true or the admin switch allows it.
+      // Ordering rationale: consent -> delegate -> register -> fund.
+      // Registration (setLenderIntent) reactivates and relists a PAUSED
+      // intent's reserved capital into the fill registry, so every
+      // authorisation that must be in place before the intent can be
+      // filled is done FIRST:
+      //   1. consent  — the intent is never fillable with the marker unset.
+      //   2. delegate — the keeper holds auto-roll / signed-fill before the
+      //                 intent (re)lists, so a failed grant can't leave a
+      //                 relisted intent without its intended delegation.
+      // then register relists/creates, then fund adds capital last.
+
+      // 1. Consent marker FIRST. The blocked case (admin off + consent
+      //    unset) was already rejected at the top, so here consent is
+      //    either already true or the admin switch allows setting it.
       if (consent === false) {
         setStep(t('autoLend.stepConsent'));
         const tx = await dw.setAutoLendConsent(true);
@@ -484,24 +495,9 @@ export default function AutoLendIntentCard() {
         setConsent(true);
       }
 
-      // 2. Register / update the standing intent (skip if unchanged).
-      if (!intentMatchesForm) {
-        setStep(t('autoLend.stepRegister'));
-        const tx = await dw.setLenderIntent(
-          lendingAsset,
-          collateralAsset,
-          parsed.maxExposure,
-          parsed.minRateBps,
-          parsed.maxInitLtvBps,
-          parsed.maxDurationDays,
-          parsed.minFill,
-          form.requiresKeeperAuth,
-          riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
-        );
-        await tx.wait();
-      }
-
-      // 3. Keeper delegation (only when a keeper is published here).
+      // 2. Keeper delegation (only when a keeper is published here) —
+      //    BEFORE registration, so re-listing paused capital never
+      //    outruns the grant.
       if (keeperAddress) {
         if (keeperAccess === false) {
           setStep(t('autoLend.stepKeeperAccess'));
@@ -524,6 +520,23 @@ export default function AutoLendIntentCard() {
           await tx.wait();
           setKeeperActions(current | desiredKeeperActions);
         }
+      }
+
+      // 3. Register / update the standing intent (skip if unchanged).
+      if (!intentMatchesForm) {
+        setStep(t('autoLend.stepRegister'));
+        const tx = await dw.setLenderIntent(
+          lendingAsset,
+          collateralAsset,
+          parsed.maxExposure,
+          parsed.minRateBps,
+          parsed.maxInitLtvBps,
+          parsed.maxDurationDays,
+          parsed.minFill,
+          form.requiresKeeperAuth,
+          riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
+        );
+        await tx.wait();
       }
 
       // 4. Fund LAST — only after every authorisation is in place.
@@ -629,6 +642,27 @@ export default function AutoLendIntentCard() {
         const tx = await dw.setAutoLendConsent(false);
         await tx.wait();
         setConsent(false);
+      }
+      // Revoke the auto-lend delegation this card granted, so the keeper
+      // doesn't retain capital-deployment authority after the user stops.
+      // Only the auto-lend bits are cleared — any other actions the user
+      // granted this keeper separately are preserved; if nothing remains,
+      // the keeper is revoked entirely.
+      if (keeperAddress) {
+        const current = keeperActions ?? 0;
+        const autoLendBits = KEEPER_ACTION_SIGNED_FILL | KEEPER_ACTION_AUTO_ROLL;
+        if ((current & autoLendBits) !== 0) {
+          const remaining = current & ~autoLendBits;
+          setStep(t('autoLend.stepRevoke'));
+          if (remaining === 0) {
+            const tx = await dw.revokeKeeper(keeperAddress);
+            await tx.wait();
+          } else {
+            const tx = await dw.setKeeperActions(keeperAddress, remaining);
+            await tx.wait();
+          }
+          setKeeperActions(remaining);
+        }
       }
       setNotice(t('autoLend.noticeStopped'));
       await Promise.all([reloadAccount(), reloadPair()]);

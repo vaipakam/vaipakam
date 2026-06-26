@@ -41,6 +41,16 @@ export const KEEPER_ACTION_ALL =
   KEEPER_ACTION.SIGNED_FILL |
   KEEPER_ACTION.AUTO_ROLL;
 
+// #625 WI-1 — default grant for the manual "Add keeper" flow EXCLUDES the
+// auto-lend capital-deployment bits (SIGNED_FILL / AUTO_ROLL). Those let a
+// keeper deploy standing-intent capital and re-lien repaid proceeds, so
+// they must be granted deliberately — via the auto-lend card (which gates
+// them behind an explicit acknowledgement) or by ticking their rows here —
+// never handed out by leaving the default boxes checked for a keeper added
+// for ordinary loan-management actions.
+export const DEFAULT_KEEPER_ACTIONS =
+  KEEPER_ACTION_ALL & ~(KEEPER_ACTION.SIGNED_FILL | KEEPER_ACTION.AUTO_ROLL);
+
 type ActionKey = keyof typeof KEEPER_ACTION;
 
 const ACTION_ROWS: Array<{ key: ActionKey; labelKey: string; hintKey: string }> = [
@@ -106,7 +116,7 @@ export default function KeeperSettings() {
   const [keepers, setKeepers] = useState<string[]>([]);
   const [actionsByKeeper, setActionsByKeeper] = useState<Record<string, number>>({});
   const [input, setInput] = useState("");
-  const [draftActions, setDraftActions] = useState<number>(KEEPER_ACTION_ALL);
+  const [draftActions, setDraftActions] = useState<number>(DEFAULT_KEEPER_ACTIONS);
   const [editingKeeper, setEditingKeeper] = useState<string | null>(null);
   const [editActions, setEditActions] = useState<number>(0);
   const [busy, setBusy] = useState(false);
@@ -232,7 +242,7 @@ export default function KeeperSettings() {
       await tx.wait();
       step.success({ note: `${input} actions=0x${draftActions.toString(16)}` });
       setInput("");
-      setDraftActions(KEEPER_ACTION_ALL);
+      setDraftActions(DEFAULT_KEEPER_ACTIONS);
       await refresh();
     } catch (e) {
       setErr((e as Error).message);
