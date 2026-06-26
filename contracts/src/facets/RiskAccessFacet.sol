@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibRiskAccess} from "../libraries/LibRiskAccess.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
+import {ProfileFacet} from "./ProfileFacet.sol";
+import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {LibAccessControl, DiamondAccessControl} from
     "../libraries/LibAccessControl.sol";
 
@@ -780,23 +782,45 @@ contract RiskAccessFacet is DiamondAccessControl {
             }
         }
 
-        // #747 Codex r1/r2 — accept-time gates. After the match + risk gate the
-        // live fill enters `acceptOfferInternal(counterpartyOfferId)` with the
-        // lender slice as acceptor, which can still reject on gates a borrower
-        // newly trips AFTER posting. Reproduce the gates LIVE on the retail
-        // deploy: sanctions on the borrower (offer creator), and a parallel-sale
-        // consumed offer — `offerConsumedBySale` is the terminal bit set when a
-        // Scenario-A parallel sale consumes the offer, which `_acceptOffer`
-        // rejects with `OfferConsumedBySale` even while the row still looks
-        // matchable (Codex r2). (Per-asset pause is mirrored EARLIER at the
-        // slice-materialization stage, matching the live order. KYC + country-
-        // pair are runtime-disabled on retail — see the deploy policy — so the
-        // live accept no-ops them; the industrial fork that enables them must
-        // extend this mirror. Already-accepted / expired are covered by the
-        // match core.)
+        // #747 Codex r1/r2/r3 — accept-time gates. After the match + risk gate
+        // the live fill enters `acceptOfferInternal(counterpartyOfferId)` with
+        // the lender slice as acceptor, which can still reject on gates a
+        // borrower newly trips AFTER posting. Reproduce the gates that can fail
+        // on this deploy:
+        //   - sanctions on the borrower (offer creator);
+        //   - `offerConsumedBySale` — the terminal bit a Scenario-A parallel
+        //     sale sets, which `_acceptOffer` rejects with `OfferConsumedBySale`
+        //     even while the row still looks matchable (Codex r2);
+        //   - KYC, when governance has enabled enforcement (Codex r3). Reuse the
+        //     SAME value + predicate the accept path applies: the #627 public
+        //     `calculateTransactionValueNumeraire` (effectivePrincipal for a
+        //     match == the matched amount) and `ProfileFacet.meetsKYCRequirement`
+        //     for BOTH the borrower (offer creator) and the lender (acceptor).
+        //     Gated on the flag so retail (enforcement off) pays no oracle read;
+        //     `meetsKYCRequirement` itself also short-circuits true when off.
+        // (Per-asset pause is mirrored EARLIER at the slice-materialization
+        // stage, matching the live order. Country-pair is compile-time pure-true
+        // on the retail deploy — the gated variant is a separate industrial-fork
+        // function — so it can never block here. Already-accepted / expired are
+        // covered by the match core.)
+        bool kycBlocked;
+        if (s.kycEnforcementEnabled) {
+            uint256 valueNumeraire = OfferAcceptFacet(address(this))
+                .calculateTransactionValueNumeraire(
+                    counterpartyOfferId, res.matchAmount
+                );
+            kycBlocked =
+                !ProfileFacet(address(this)).meetsKYCRequirement(
+                    s.offers[counterpartyOfferId].creator, valueNumeraire
+                )
+                || !ProfileFacet(address(this)).meetsKYCRequirement(
+                    lender, valueNumeraire
+                );
+        }
         if (
             LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
             || s.offerConsumedBySale[counterpartyOfferId]
+            || kycBlocked
         ) {
             res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
             res.ok = false;
