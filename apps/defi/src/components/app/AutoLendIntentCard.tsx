@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Coins, AlertTriangle, CheckCircle2, Info } from 'lucide-react';
-import { parseUnits, formatUnits } from 'viem';
+import { parseUnits, formatUnits, isAddress, zeroAddress } from 'viem';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
 import { useDiamondContract, useDiamondRead } from '../../contracts/useDiamond';
@@ -72,6 +72,9 @@ import { CardInfo } from '../CardInfo';
 // Keeper action bits — mirror `LibVaipakam.KEEPER_ACTION_*`.
 const KEEPER_ACTION_SIGNED_FILL = 0x40; // 1 << 6
 const KEEPER_ACTION_AUTO_ROLL = 0x80; // 1 << 7
+// Mirror `LibVaipakam.MAX_APPROVED_KEEPERS` — used to pre-flight a full
+// keeper whitelist before recording any consent / grant side effects.
+const MAX_APPROVED_KEEPERS = 5;
 
 /** Ethers-Contract-shaped tx the diamond write handle returns. */
 type WriteTx = { wait: () => Promise<unknown> };
@@ -141,8 +144,15 @@ export default function AutoLendIntentCard() {
   const [consent, setConsent] = useState<boolean | null>(null);
   const [intent, setIntent] = useState<IntentView | null>(null);
   const [capital, setCapital] = useState<bigint | null>(null);
+  // Aggregate LIVE principal already out from this intent — also consumes
+  // maxExposure, so funding headroom must account for it (not just idle
+  // capital). Pair-scoped.
+  const [livePrincipal, setLivePrincipal] = useState<bigint | null>(null);
   const [keeperActions, setKeeperActions] = useState<number | null>(null);
   const [keeperAccess, setKeeperAccess] = useState<boolean | null>(null);
+  // How many keepers the wallet has approved — to pre-flight a full
+  // whitelist before recording any consent / master-switch side effects.
+  const [approvedKeepersCount, setApprovedKeepersCount] = useState<number | null>(null);
   const [lendingDecimals, setLendingDecimals] = useState<number>(18);
   // `${chainId}:${lendingAsset}` the decimals were read for — writes are
   // gated until this matches the form so amounts never parse with a
@@ -177,6 +187,14 @@ export default function AutoLendIntentCard() {
     return getDeployment(chainId)?.keeperAddress ?? null;
   }, [chainId]);
 
+  // VPFI token on this chain — rejected as the LENDING asset by
+  // `setLenderIntent`, so the form blocks it up front (the asset picker
+  // also accepts pasted addresses).
+  const vpfiToken = useMemo<string | null>(() => {
+    if (chainId == null) return null;
+    return getDeployment(chainId)?.vpfiToken ?? null;
+  }, [chainId]);
+
   const lendingErc20 = useERC20(form.lendingAsset || null);
 
   // `${chainId}:${wallet}:${lend}:${coll}` the loaded intent/capital
@@ -208,8 +226,9 @@ export default function AutoLendIntentCard() {
         getAutoLendConsent: (u: string) => Promise<boolean>;
         getKeeperAccess: (u: string) => Promise<boolean>;
         getKeeperActions: (u: string, k: string) => Promise<bigint | number>;
+        getApprovedKeepers: (u: string) => Promise<string[]>;
       };
-      const [adminLend, fillPath, c, kAccess, acts] = await Promise.all([
+      const [adminLend, fillPath, c, kAccess, acts, keepers] = await Promise.all([
         ro.getAutoLendEnabled(),
         ro.isLenderIntentEnabled(),
         ro.getAutoLendConsent(address),
@@ -217,12 +236,14 @@ export default function AutoLendIntentCard() {
         keeperAddress
           ? ro.getKeeperActions(address, keeperAddress)
           : Promise.resolve(null),
+        ro.getApprovedKeepers(address),
       ]);
       setAdminLendEnabled(Boolean(adminLend));
       setFillPathEnabled(Boolean(fillPath));
       setConsent(Boolean(c));
       setKeeperAccess(Boolean(kAccess));
       setKeeperActions(acts === null ? null : Number(acts));
+      setApprovedKeepersCount(Array.isArray(keepers) ? keepers.length : 0);
       // Stamp the chain+wallet these reads belong to; skip decisions
       // trust them only while this still equals the live id.
       setLoadedAccountKey(`${chainId ?? ''}:${address}`);
@@ -247,16 +268,27 @@ export default function AutoLendIntentCard() {
           l: string,
           c: string,
         ) => Promise<bigint>;
+        getLenderIntentLivePrincipal: (
+          o: string,
+          l: string,
+          c: string,
+        ) => Promise<bigint>;
       };
       const decimalsP = lendingErc20
         ? (lendingErc20 as unknown as { decimals: () => Promise<number> })
             .decimals()
-            .then((d) => Number(d) || 18)
+            // A legitimate 0-decimals token must stay 0 — only a non-finite
+            // read (revert / non-ERC20) falls back to 18.
+            .then((d) => {
+              const n = Number(d);
+              return Number.isFinite(n) ? n : 18;
+            })
             .catch(() => 18)
         : Promise.resolve(18);
-      const [iv, cap, dec] = await Promise.all([
+      const [iv, cap, live, dec] = await Promise.all([
         ro.getLenderIntent(address, lendingAsset, collateralAsset),
         ro.getLenderIntentCapital(address, lendingAsset, collateralAsset),
+        ro.getLenderIntentLivePrincipal(address, lendingAsset, collateralAsset),
         decimalsP,
       ]);
       const view: IntentView = {
@@ -272,6 +304,7 @@ export default function AutoLendIntentCard() {
       setDecimalsKey(`${chainId ?? ''}:${lendingAsset}`);
       setIntent(view);
       setCapital(BigInt(cap));
+      setLivePrincipal(BigInt(live));
       setLoadedPairKey(key);
       // Prefill the form once per (chain, wallet, pair) from a stored
       // intent, so editing shows current on-chain terms. Also prefill an
@@ -303,6 +336,7 @@ export default function AutoLendIntentCard() {
       setLoadedPairKey(key);
       setIntent(null);
       setCapital(null);
+      setLivePrincipal(null);
     }
   }, [
     address,
@@ -337,6 +371,7 @@ export default function AutoLendIntentCard() {
     loadedPairKey === currentPairKey;
   const intentView = pairLoaded ? intent : null;
   const capitalView = pairLoaded ? capital : null;
+  const livePrincipalView = pairLoaded ? livePrincipal : null;
   // Account-level reads are trustworthy only while they belong to the
   // connected chain+wallet; decimals only while they belong to the chosen
   // chain+lending-asset. Writes are gated on both so a wallet / chain /
@@ -406,8 +441,22 @@ export default function AutoLendIntentCard() {
   const validation = useMemo<string | null>(() => {
     if (!form.lendingAsset || !form.collateralAsset)
       return t('autoLend.errPickPair');
+    // Both legs must be real, non-zero addresses — a pasted zero/garbage
+    // address would otherwise pass the non-empty check and only revert at
+    // `setLenderIntent` AFTER consent + keeper grants were written.
+    if (
+      !isAddress(form.lendingAsset) ||
+      !isAddress(form.collateralAsset) ||
+      form.lendingAsset === zeroAddress ||
+      form.collateralAsset === zeroAddress
+    )
+      return t('autoLend.errBadAddress');
     if (form.lendingAsset.toLowerCase() === form.collateralAsset.toLowerCase())
       return t('autoLend.errSamePair');
+    // VPFI may not be the LENDING asset (the facet rejects it) — catch it
+    // up front so the flow never records consent/grants for a doomed pair.
+    if (vpfiToken && form.lendingAsset.toLowerCase() === vpfiToken.toLowerCase())
+      return t('autoLend.errVpfiLending');
     if (!parsed.ok) return t('autoLend.errAmount');
     if (parsed.maxExposure <= 0n) return t('autoLend.errExposure');
     if (parsed.minFill <= 0n || parsed.minFill > parsed.maxExposure)
@@ -423,15 +472,28 @@ export default function AutoLendIntentCard() {
     // the contract rejects it, so catch it before the multi-tx flow.
     if (parsed.minRateBps > 10000n) return t('autoLend.errRateTooHigh');
     if (parsed.fund < 0n) return t('autoLend.errAmount');
-    // Cap the TOTAL reserved capital (already-funded + this top-up) at the
-    // max exposure — funding beyond it just locks idle capital that can
-    // never be lent (exposure caps concurrent live principal).
-    if ((capitalView ?? 0n) + parsed.fund > parsed.maxExposure)
+    // Cap the TOTAL committed exposure — idle reserved capital PLUS live
+    // principal already out PLUS this top-up — at max exposure. Both the
+    // idle and the live amounts consume the cap in matchIntent, so funding
+    // beyond it just locks capital that can never be lent.
+    if (
+      (capitalView ?? 0n) + (livePrincipalView ?? 0n) + parsed.fund >
+      parsed.maxExposure
+    )
       return t('autoLend.errFundOverExposure');
     // A keeper-only intent on a chain with no published keeper can never
     // be filled (no solver can hold the signed-fill grant) — block it.
     if (form.requiresKeeperAuth && !keeperAddress)
       return t('autoLend.errKeeperOnlyNoKeeper');
+    // Pre-flight a FULL keeper whitelist: if a keeper must be approved
+    // (not already on the list) but the wallet is at the cap, approveKeeper
+    // would revert AFTER consent + master-switch were written. Block first.
+    if (
+      keeperAddress &&
+      keeperActions === 0 &&
+      (approvedKeepersCount ?? 0) >= MAX_APPROVED_KEEPERS
+    )
+      return t('autoLend.errKeeperListFull');
     // Mandatory risk/terms consent — the registration records it, so the
     // user must accept the disclosures first (never recorded silently).
     if (!riskConsentGiven) return t('autoLend.errRiskConsent');
@@ -445,8 +507,12 @@ export default function AutoLendIntentCard() {
     form,
     parsed,
     capitalView,
+    livePrincipalView,
+    vpfiToken,
     keeperAddress,
     keeperAccess,
+    keeperActions,
+    approvedKeepersCount,
     riskConsentGiven,
     ackKeeperMasterGiven,
     t,
@@ -470,9 +536,17 @@ export default function AutoLendIntentCard() {
 
   // ── Enable sequence (resumable) ──────────────────────────────────
   const handleEnable = async () => {
-    // Gate on fresh, wallet-correct reads so a stale wallet/asset can't
-    // drive a skip decision or misscale amounts.
-    if (!address || !diamond || !parsed.ok || !accountLoaded || !decimalsReady)
+    // Gate on fresh, wallet-correct reads so a stale wallet/asset/pair
+    // can't drive a skip decision, misscale amounts, or act on a pair
+    // whose intent/capital hasn't loaded yet.
+    if (
+      !address ||
+      !diamond ||
+      !parsed.ok ||
+      !accountLoaded ||
+      !decimalsReady ||
+      !pairLoaded
+    )
       return;
     if (validation) {
       setError(validation);
@@ -614,12 +688,11 @@ export default function AutoLendIntentCard() {
       setStep(t('autoLend.stepCancel'));
       const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
       await tx.wait();
-      if (consent) {
-        setStep(t('autoLend.stepConsent'));
-        const tx2 = await dw.setAutoLendConsent(false);
-        await tx2.wait();
-        setConsent(false);
-      }
+      // NB: we do NOT clear `autoLendConsent` here. It's a WALLET-level
+      // marker (not per pair); cancelling this one intent de-lists it
+      // (which is what actually stops its fills), while clearing the
+      // global marker would mislabel the lender's OTHER active intents as
+      // "paused" even though the keeper can still fill them.
       setNotice(t('autoLend.noticePaused'));
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
@@ -657,12 +730,9 @@ export default function AutoLendIntentCard() {
         );
         await tx.wait();
       }
-      if (consent) {
-        setStep(t('autoLend.stepConsent'));
-        const tx = await dw.setAutoLendConsent(false);
-        await tx.wait();
-        setConsent(false);
-      }
+      // NB: like Pause, we do NOT clear the wallet-level `autoLendConsent`
+      // marker here — it governs every pair, and the lender may have other
+      // active intents. Cancelling this intent above is what stops its fills.
       // NOTE: we deliberately do NOT auto-revoke the keeper's
       // SIGNED_FILL / AUTO_ROLL bits here. Those are PRINCIPAL-level
       // (one bitmask per wallet, not per pair), so the same grant backs
@@ -926,7 +996,8 @@ export default function AutoLendIntentCard() {
                 !isCorrectChain ||
                 validation != null ||
                 !accountLoaded ||
-                !decimalsReady
+                !decimalsReady ||
+                !pairLoaded
               }
             >
               {busy && step

@@ -14,14 +14,21 @@ What's new for the user — a new **Auto-lend** card on the Dashboard:
   market rate" hint pre-fills the rate floor from the freshest matched
   offer on that pair (the same anchor the Offer Book surfaces), so the
   lender isn't guessing.
-- Turning it on runs an ordered, **resumable** sequence: register the
-  standing intent, delegate the protocol keeper (auto-roll, plus
-  signed-fill when the lender keeps the intent keeper-gated), record the
-  auto-lend consent marker, and **fund working capital last** — so
+- Turning it on runs an ordered, **resumable** sequence whose order is
+  security-critical: **record the auto-lend consent marker, delegate the
+  protocol keeper (auto-roll, plus signed-fill when the lender keeps the
+  intent keeper-gated), register the standing intent, and fund working
+  capital last.** Consent and the keeper grant land *before* registration
+  because registering reactivates and re-lists a paused intent's reserved
+  capital into the fill registry — so doing it first would risk capital
+  becoming fillable before the authorizations exist. Funding stays last so
   capital is never pulled into custody before a fillable, properly
-  delegated intent exists. Each step probes its on-chain state first, so
-  a sequence interrupted by a rejected wallet prompt or a dropped tx
-  resumes from where it stopped rather than redoing finished steps.
+  delegated intent exists. Each step probes its on-chain state first, so a
+  sequence interrupted by a rejected wallet prompt or a dropped tx resumes
+  from where it stopped rather than redoing finished steps. The form also
+  pre-flights everything the contract would reject (bad/zero or VPFI
+  lending asset, over-cap funding, a full keeper whitelist) so no consent
+  or grant is ever written ahead of a doomed registration.
 - The two admin kill-switches are reflected honestly: the consent switch
   gates the consent step, and the fill-path switch is surfaced as "you
   can register and fund now; the keeper starts filling once it's
