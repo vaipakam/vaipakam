@@ -1251,10 +1251,17 @@ library LibVaipakam {
         address collateralAsset
     ) internal {
         Storage storage s = storageSlot();
+        LenderIntent storage intent =
+            s.lenderIntent[owner][lendingAsset][collateralAsset];
         bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
+        // List ONLY if active AND funded enough for at least one VALID fill: a fill
+        // must be >= minFillAmount AND <= available capital, so available capital below
+        // `minFillAmount` means no fill is possible — don't advertise an unfillable
+        // intent (Codex WI-2a r3).
         if (
-            s.lenderIntent[owner][lendingAsset][collateralAsset].active
-                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset] > 0
+            intent.active
+                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset]
+                    >= intent.minFillAmount
         ) {
             if (s.activeIntentKeys.add(ik)) {
                 s.intentKeyTuple[ik] = IntentKey({

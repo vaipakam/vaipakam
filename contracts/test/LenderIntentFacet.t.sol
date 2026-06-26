@@ -90,6 +90,18 @@ contract LenderIntentFacetTest is SetupTest {
         assertEq(page[0].availableCapital, 1_000 ether, "funded capital");
     }
 
+    function test_getActiveLenderIntents_belowMinFillNotListed() public {
+        _set(mockERC20, mockCollateralERC20);
+        // Funded, but BELOW the intent's minFillAmount ⇒ no valid fill is possible
+        // (a fill must be >= minFillAmount AND <= capital) ⇒ not advertised.
+        _fund(mockERC20, mockCollateralERC20, MIN_FILL - 1);
+        assertEq(_activeCount(), 0, "funded below minFillAmount is not listed");
+
+        // Top up to exactly minFillAmount ⇒ a valid fill now exists ⇒ listed.
+        _fund(mockERC20, mockCollateralERC20, 1);
+        assertEq(_activeCount(), 1, "reaching minFillAmount lists the intent");
+    }
+
     function test_getActiveLenderIntents_delistsOnCancelAndDepletion() public {
         _set(mockERC20, mockCollateralERC20);
         _fund(mockERC20, mockCollateralERC20, 1_000 ether);
