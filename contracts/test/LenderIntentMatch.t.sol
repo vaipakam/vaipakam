@@ -6,6 +6,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
@@ -875,4 +876,37 @@ contract LenderIntentMatchTest is SetupTest {
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
     }
+
+    // ── #747 Codex r1: accept-time gate — borrower-leg asset paused after the
+    //    intent was funded. The match core is clean, but the live fill reverts
+    //    in the accept/materialize path; preview must report AcceptGateBlocked.
+    function test_previewIntent_acceptGate_assetPaused_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Pause the lending asset AFTER the intent/offer exist.
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockERC20);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok when a leg is paused");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.AcceptGateBlocked)
+        );
+        vm.prank(solver);
+        vm.expectRevert(); // live fill reverts in the paused-asset path
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // NOTE: `SliceCollateralBelowFloor` is exercised in production but NOT
+    // pinned by an agreement test here — this suite's $1 mock oracle does not
+    // classify the pair as `Liquid`, so `minCollateralForLending` returns 0 and
+    // both the slice's create-time floor check AND `previewIntent`'s mirror of
+    // it (which reuses the SAME helper + `rangeAmountEnabled` condition, so it
+    // cannot drift from `OfferCreateFacet`) skip. The agreement holds: with the
+    // floor inactive, matchIntent succeeds and preview reports Ok.
 }

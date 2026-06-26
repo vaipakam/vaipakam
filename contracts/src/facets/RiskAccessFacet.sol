@@ -751,27 +751,52 @@ contract RiskAccessFacet is DiamondAccessControl {
             counterpartyOfferId,
             fillAmount
         );
-        // An intent-guard or match-core failure is the binding reason; the
-        // risk-access gate is moot, so leave `riskBlock == 0` and return.
+        // An intent-guard / slice-create / match-core failure is the binding
+        // reason; the risk + accept gates are moot, so return as-is.
         if (!res.ok) return res;
-        if (!LibVaipakam.cfgRiskAccessGateEnabled()) return res;
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // Mirror `_executeMatch`'s `assertMatchAllowed(slice, counterparty)`:
-        // resolve the gated parties via the slice's CREATOR (= `lender`; the
-        // slice has no offer id) and the borrower offer. Handles the
-        // lender-sale-vehicle branch identically to the enforcing path.
-        (
-            address actorA,
-            address actorB,
-            LibRiskAccess.PairId memory pair
-        ) = _resolveMatchActors(s, lender, counterpartyOfferId);
-        uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, pair);
-        if (rb == 0 && actorB != address(0)) {
-            rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
+
+        // #671 risk-access gate — mirrors `_executeMatch`'s
+        // `assertMatchAllowed(slice, counterparty)`, which runs BEFORE the
+        // accept gates. Resolve the gated parties via the slice's CREATOR
+        // (= `lender`; the slice has no offer id) and the borrower offer;
+        // handles the lender-sale-vehicle branch identically to the enforcing
+        // path. If it blocks, the live fill reverts here — before accept.
+        if (LibVaipakam.cfgRiskAccessGateEnabled()) {
+            (
+                address actorA,
+                address actorB,
+                LibRiskAccess.PairId memory pair
+            ) = _resolveMatchActors(s, lender, counterpartyOfferId);
+            uint8 rb = LibRiskAccess.previewActorBlock(s, actorA, pair);
+            if (rb == 0 && actorB != address(0)) {
+                rb = LibRiskAccess.previewActorBlock(s, actorB, pair);
+            }
+            res.riskBlock = rb;
+            if (rb != 0) {
+                res.ok = false;
+                return res;
+            }
         }
-        res.riskBlock = rb;
-        if (rb != 0) res.ok = false;
+
+        // #747 Codex r1 — accept-time gates. After the match + risk gate the
+        // live fill enters `acceptOfferInternal(counterpartyOfferId)` with the
+        // lender slice as acceptor, which can still reject on gates a borrower
+        // newly trips AFTER posting. Reproduce the gates LIVE on the retail
+        // deploy: sanctions on the borrower (offer creator) and a per-asset
+        // pause on either leg. (KYC + country-pair are runtime-disabled on
+        // retail — see the deploy policy — so the live accept no-ops them; the
+        // industrial fork that enables them must extend this mirror. Already-
+        // accepted / expired are covered by the match core.)
+        if (
+            LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
+            || s.assetPaused[lendingAsset]
+            || s.assetPaused[collateralAsset]
+        ) {
+            res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
+            res.ok = false;
+        }
     }
 
     // ─── Internals ───────────────────────────────────────────────────────────

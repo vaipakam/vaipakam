@@ -98,7 +98,18 @@ library LibOfferMatch {
         FullTermRequired,        // LenderIntentFullTermRequired
         PartialRepayNotAllowed,  // LenderIntentPartialRepayNotAllowed
         CollateralUnresolvable,  // LenderIntentCollateralUnresolvable
-        CapitalInsufficient      // funded capital < fillAmount (IntentCapitalInsufficient)
+        CapitalInsufficient,     // funded capital < fillAmount (IntentCapitalInsufficient)
+        // ── #747 Codex r1: the slice the fill MATERIALIZES (createSignedOfferVault)
+        //    can itself trip create-time validators a controlled slice still
+        //    reaches; mirror them so Ok can't precede a guaranteed materialize
+        //    revert (OfferCreateFacet). ──
+        SliceDurationAboveCap,   // slice term > cfgMaxOfferDurationDays (OfferDurationExceedsCap)
+        SliceMultiYearTerm,      // slice term > 365d: the None-cadence slice can't meet the mandatory >=Annual floor (CadenceNotAllowed)
+        SliceCollateralBelowFloor, // range-mode liquid: reqColl < minCollateralForLending floor (MinCollateralBelowFloor)
+        // ── #747 Codex r1: after the match core + risk gate, the live fill enters
+        //    acceptOfferInternal(borrower) with the slice as acceptor; an
+        //    accept-time gate can still reject (set by the facet wrapper). ──
+        AcceptGateBlocked        // borrower sanctioned / asset paused / borrower consent missing
     }
 
     /// @notice Structured outcome of `RiskAccessFacet.previewIntent`. `ok` is
@@ -753,9 +764,42 @@ library LibOfferMatch {
             return _intentFail(res, IntentError.CapitalInsufficient);
         }
 
-        // ── Every intent guard cleared. Synthesize the single-fill lender
-        //    slice in memory (the values matchIntent materializes via
-        //    `_intentSliceParams` + createOffer defaults) and run the shared
+        // ── #747 Codex r1 — slice MATERIALIZATION gates. `matchIntent` next
+        //    calls `_materializeIntentSlice` → `createSignedOfferVault`, which
+        //    re-validates the slice as a fresh offer. A controlled slice still
+        //    reaches three create-time validators, so mirror them here (reusing
+        //    the live cfg / risk helpers) before reporting Ok. ──
+        // (a) Global offer-duration cap. The borrower offer cleared this at ITS
+        //     creation, but the cap may have been lowered since, and the slice
+        //     re-checks against the CURRENT cap.
+        if (cp.durationDays > LibVaipakam.cfgMaxOfferDurationDays()) {
+            return _intentFail(res, IntentError.SliceDurationAboveCap);
+        }
+        // (b) Periodic-cadence floor. The slice carries cadence `None`;
+        //     `_validatePeriodicCadence` mandates at least `Annual` on any
+        //     >365d term, so a None-cadence multi-year slice always reverts
+        //     `CadenceNotAllowed` — independent of liquidity/threshold.
+        if (cp.durationDays > 365) {
+            return _intentFail(res, IntentError.SliceMultiYearTerm);
+        }
+        // (c) Range-mode lender collateral floor (OfferCreateFacet lender
+        //     branch): when range-amount is enabled and the pair is priced,
+        //     the slice's collateral must clear the HF floor at the fill size.
+        //     `reqColl` is the intent-LTV-cap collateral, which can sit BELOW
+        //     the protocol HF floor when the lender's `maxInitLtvBps` is more
+        //     permissive than the standard floor.
+        if (s.protocolCfg.rangeAmountEnabled) {
+            uint256 floorColl = LibRiskMath.minCollateralForLending(
+                fillAmount, lendingAsset, collateralAsset
+            );
+            if (floorColl > 0 && reqColl < floorColl) {
+                return _intentFail(res, IntentError.SliceCollateralBelowFloor);
+            }
+        }
+
+        // ── Every intent + slice-create guard cleared. Synthesize the single-
+        //    fill lender slice in memory (the values matchIntent materializes
+        //    via `_intentSliceParams` + createOffer defaults) and run the shared
         //    match-admission core against the stored borrower offer. ──
         LibVaipakam.Offer memory slice = _buildIntentSlice(
             lender,
