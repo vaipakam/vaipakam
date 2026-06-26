@@ -812,13 +812,18 @@ pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # consumer still typechecks
 #    alongside the deploy.
 ```
 
-**Graceful absence**: while `keeperAddress` is unset for a chain, the
-Auto-lend card still lets lenders register + fund intents — **auto-FILL
-needs no delegation** (the keeper fills permissionless intents directly).
-It only **hides the auto-ROLL delegation step** and explains it's
-unavailable until a keeper address is published. So this step is not a
-hard deploy gate; it's the switch that turns hands-off auto-roll on for
-that chain. (Pre-live today, so nothing to populate yet.)
+**Graceful absence (permissionless intents only)**: while `keeperAddress`
+is unset for a chain, the Auto-lend card still lets lenders register +
+fund **permissionless** intents — **auto-FILL needs no delegation** (the
+keeper fills permissionless intents directly) — and only **hides the
+auto-ROLL delegation step**. Note the limit: a lender who chooses the
+**keeper-gated (signed-fill) mode** is blocked up front (validation
+`errKeeperOnlyNoKeeper`), because no solver can hold the `SIGNED_FILL`
+grant a keeper-only intent requires. So keeper-only auto-lend is NOT
+available on a chain with no published keeper address. This step is
+therefore a hard gate only for keeper-gated intents + all auto-roll; for
+plain permissionless lending it's optional. (Pre-live today, so nothing
+to populate yet.)
 
 Both the frontend and the hf-watcher Worker consume these via a
 single consolidated `deployments.json` keyed by `chainId`:

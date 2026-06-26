@@ -338,26 +338,46 @@ asset-level `AdminFacet.pauseAsset`) before relying on one of these.
 - Unrelated paths still run (ordinary liquidation, repayment, claims) —
   these are surgical levers, not a global pause.
 
-### Diagnostic — auto-lend delegated rolls / keeper-gated fills reverting
+### Diagnostic — auto-lend delegated rolls / keeper-gated fills not happening
 
-If lenders report that **auto-roll** or **keeper-gated `matchIntent`** isn't
-happening and the keeper logs `KeeperAccessRequired` — but `keepersPaused`
-is **false** (not a deliberate freeze) — the usual cause is a **published
-`keeperAddress` that doesn't match the keeper's actual signing key**, so
-lenders delegated to the wrong address (#625 WI-1). This is a config issue,
-not an on-chain incident:
+Symptoms when the **published `keeperAddress` doesn't match the keeper's
+actual signing key** (so lenders delegated to the wrong address, #625 WI-1)
+— with `keepersPaused` **false** (not a deliberate freeze):
 
-1. Compare the dapp's published address — `getDeployment(chainId).keeperAddress`
-   (from `contracts/deployments/<slug>/addresses.json`) — against
+- **Auto-roll** broadcasts and **reverts `KeeperAccessRequired`** (the roll
+  is a direct on-chain submit), visible in the keeper logs.
+- **Keeper-gated (signed-fill) `matchIntent`** does **not** surface as a
+  revert log — the keeper calls `previewIntent` first, gets the
+  `KeeperUnauthorized` intent code, and **abandons the intent before
+  broadcasting**. So this side shows up as fills silently never happening,
+  not as an error. Check both.
+
+This is a config issue, not an on-chain incident:
+
+1. Compare the **live published** address — the `getDeployment(chainId).keeperAddress`
+   value actually shipped in the dapp (`packages/contracts/src/deployments.json`
+   / the deployed frontend bundle), **not just** the source
+   `contracts/deployments/<slug>/addresses.json` (a fixed source that wasn't
+   re-exported or redeployed still serves the stale address) — against
    `cast wallet address --private-key "$KEEPER_PRIVATE_KEY"` for the
    `apps/keeper` Worker on that chain.
-2. If they differ, correct `keeperAddress` in `addresses.json`, re-run
-   `bash contracts/script/exportFrontendDeployments.sh`, and redeploy the
-   dapp. Lenders re-run the (idempotent) delegation step in the Auto-lend
-   card against the corrected address. See the Deployment Runbook
-   "Auto-lend keeper address" section. (Auto-FILL of permissionless intents
-   is unaffected — it needs no delegation — so only the auto-roll / signed-
-   fill paths surface this.)
+2. If they differ: correct `keeperAddress` in `addresses.json`, re-run
+   `bash contracts/script/exportFrontendDeployments.sh`, and **redeploy the
+   dapp** (confirm the live bundle now serves the right address). Lenders
+   re-run the (idempotent) delegation step in the Auto-lend card against the
+   corrected address.
+3. **Revoke the mispublished keeper before closing the incident.** Re-delegating
+   to the correct address only *adds* the new grant — the old (wrong) EOA keeps
+   its `SIGNED_FILL` / `AUTO_ROLL` authority on every lender who already
+   approved it, and the on-chain auth accepts *any* approved address with the
+   bit. If that address is attacker-controlled or later compromised it can
+   still act, so affected lenders must `revokeKeeper(oldAddr)` (the dapp's
+   Keeper Settings page) — or keep delegated keepers paused
+   (`AdminFacet.setKeepersPaused(true)` — the keeper-pause lever in the table
+   above) until they have — before treating it as resolved. (Auto-FILL of
+   *permissionless* intents is unaffected — it needs no delegation.)
+
+See the Deployment Runbook "Auto-lend keeper address" section.
 
 ---
 

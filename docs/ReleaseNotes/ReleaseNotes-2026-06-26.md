@@ -177,7 +177,10 @@ What's new:
 - **`getRollableIntentLoans(offset, limit)`** — a paginated, lean read view that
   pages the registry and returns only the loans that are **fully repaid** (the
   roll candidates), each with the originating owner, the asset pair, and the
-  original fill amount that would be re-lent. It is keyed off each loan's
+  intent's **original fill amount (principal)** — a discovery/labelling figure,
+  not the amount re-lent: the roll itself (`rollIntentLoan`) re-liens the
+  lender's **claim amount** (principal **plus** accrued interest), so auto-roll
+  compounds. It is keyed off each loan's
   recorded origin rather than the live lender of record, so a loan whose lender
   position was sold is still surfaced (the roll itself then safely rejects it,
   and the keeper authorises against the recorded owner).
