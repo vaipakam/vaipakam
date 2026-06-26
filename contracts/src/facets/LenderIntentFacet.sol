@@ -740,10 +740,24 @@ contract LenderIntentFacet is
     ///         `MetricsFacet.getActiveLenderIntents` global keeper feed, this
     ///         pages the per-owner registry and ALSO returns PAUSED intents
     ///         (cancelled but still carrying reserved capital) — the `active`
-    ///         flag on each `LenderIntentSummary` row distinguishes active from
-    ///         paused, and `availableCapital` / `livePrincipal` show what's
+    ///         flag on each `OwnerLenderIntentSummary` row distinguishes active
+    ///         from paused, and `availableCapital` / `livePrincipal` show what's
     ///         reserved and what's out on loan. An intent leaves the registry
     ///         only once fully torn down (inactive AND zero reserved capital).
+    /// @dev    Returns a per-owner wrapper type ({OwnerLenderIntentSummary}),
+    ///         NOT the shared {LenderIntentSummary} the global feed returns, so
+    ///         adding the `active` flag here can't perturb that feed's ABI.
+    /// @dev    Migration note (Codex #756 P2): `ownerIntentKeys` is populated
+    ///         FORWARD-only, at the same `syncIntentRegistry` sites as the
+    ///         global `activeIntentKeys` feed — both registries share that
+    ///         property. On a from-scratch deployment (every deployment to date)
+    ///         that is complete: every intent is registered through a synced
+    ///         path. Only an in-place diamond upgrade performed OVER pre-existing
+    ///         intent state would start this set empty; the one-time migration is
+    ///         a re-sync of the known keys (identical to what the global feed
+    ///         would need), not a per-view backfill — so the two registries stay
+    ///         consistent and the platform's pre-live status means there is no
+    ///         such live state to migrate today.
     /// @param  owner   The lender whose standing intents to list.
     /// @param  offset  Start index into the owner's intent set.
     /// @param  limit   Maximum rows to return from `offset`.
@@ -757,7 +771,7 @@ contract LenderIntentFacet is
         external
         view
         returns (
-            LibMetricsTypes.LenderIntentSummary[] memory intents,
+            LibMetricsTypes.OwnerLenderIntentSummary[] memory intents,
             uint256 total
         )
     {
@@ -765,16 +779,16 @@ contract LenderIntentFacet is
         EnumerableSet.Bytes32Set storage keys = s.ownerIntentKeys[owner];
         total = keys.length();
         if (offset >= total) {
-            return (new LibMetricsTypes.LenderIntentSummary[](0), total);
+            return (new LibMetricsTypes.OwnerLenderIntentSummary[](0), total);
         }
         uint256 endExcl = offset + limit;
         if (endExcl > total) endExcl = total;
         uint256 size = endExcl - offset;
-        intents = new LibMetricsTypes.LenderIntentSummary[](size);
+        intents = new LibMetricsTypes.OwnerLenderIntentSummary[](size);
         for (uint256 i = 0; i < size; i++) {
             LibVaipakam.IntentKey memory key =
                 s.intentKeyTuple[keys.at(offset + i)];
-            intents[i] = LibMetricsTypes.toLenderIntentSummary(
+            intents[i] = LibMetricsTypes.toOwnerLenderIntentSummary(
                 key,
                 s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
                 s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][

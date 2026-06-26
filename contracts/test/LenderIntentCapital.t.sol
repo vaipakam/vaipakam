@@ -641,7 +641,7 @@ contract LenderIntentCapitalTest is SetupTest {
         internal
         view
         returns (
-            LibMetricsTypes.LenderIntentSummary[] memory rows,
+            LibMetricsTypes.OwnerLenderIntentSummary[] memory rows,
             uint256 total
         )
     {
@@ -656,20 +656,20 @@ contract LenderIntentCapitalTest is SetupTest {
     /// (inactive AND zero capital) is de-listed.
     function test_byOwner_listsActiveFunded_keepsPaused_dropsTornDown() public {
         _setIntent();
-        (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =
             _byOwner(lender);
         assertEq(total, 1, "registered intent listed");
-        assertEq(rows[0].owner, lender);
-        assertEq(rows[0].lendingAsset, mockERC20);
-        assertEq(rows[0].collateralAsset, mockCollateralERC20);
+        assertEq(rows[0].intent.owner, lender);
+        assertEq(rows[0].intent.lendingAsset, mockERC20);
+        assertEq(rows[0].intent.collateralAsset, mockCollateralERC20);
         assertTrue(rows[0].active, "active");
-        assertEq(rows[0].availableCapital, 0, "unfunded");
-        assertEq(rows[0].maxExposure, MAX_EXPOSURE, "bounds surfaced");
+        assertEq(rows[0].intent.availableCapital, 0, "unfunded");
+        assertEq(rows[0].intent.maxExposure, MAX_EXPOSURE, "bounds surfaced");
 
         _fund(PRINCIPAL);
         (rows, total) = _byOwner(lender);
         assertEq(total, 1);
-        assertEq(rows[0].availableCapital, PRINCIPAL, "funded capital");
+        assertEq(rows[0].intent.availableCapital, PRINCIPAL, "funded capital");
 
         // Cancel ⇒ paused, capital still reserved ⇒ stays listed, active=false.
         vm.prank(lender);
@@ -679,7 +679,9 @@ contract LenderIntentCapitalTest is SetupTest {
         (rows, total) = _byOwner(lender);
         assertEq(total, 1, "paused intent with reserved capital stays listed");
         assertFalse(rows[0].active, "paused");
-        assertEq(rows[0].availableCapital, PRINCIPAL, "capital still reserved");
+        assertEq(
+            rows[0].intent.availableCapital, PRINCIPAL, "capital still reserved"
+        );
 
         // Withdraw all ⇒ inactive AND zero capital ⇒ fully torn down ⇒ de-listed.
         vm.prank(lender);
@@ -701,12 +703,14 @@ contract LenderIntentCapitalTest is SetupTest {
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );
-        (LibMetricsTypes.LenderIntentSummary[] memory rows, uint256 total) =
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory rows, uint256 total) =
             _byOwner(lender);
         assertEq(total, 1, "active intent stays listed even fully drawn down");
         assertTrue(rows[0].active);
-        assertEq(rows[0].availableCapital, 0, "capital drawn by the fill");
-        assertEq(rows[0].livePrincipal, PRINCIPAL, "live principal reflected");
+        assertEq(rows[0].intent.availableCapital, 0, "capital drawn by the fill");
+        assertEq(
+            rows[0].intent.livePrincipal, PRINCIPAL, "live principal reflected"
+        );
     }
 
     function test_byOwner_multiplePairs_andOwnerIsolation() public {
@@ -731,19 +735,19 @@ contract LenderIntentCapitalTest is SetupTest {
             MAX_INIT_LTV_BPS, MAX_DURATION, MIN_FILL, false, true
         );
         (
-            LibMetricsTypes.LenderIntentSummary[] memory p0,
+            LibMetricsTypes.OwnerLenderIntentSummary[] memory p0,
             uint256 total
         ) = LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
             lender, 0, 1
         );
         assertEq(total, 2, "total is the full count");
         assertEq(p0.length, 1, "page window respected");
-        (LibMetricsTypes.LenderIntentSummary[] memory p1, ) =
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory p1, ) =
             LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
                 lender, 1, 1
             );
         assertEq(p1.length, 1);
-        (LibMetricsTypes.LenderIntentSummary[] memory pEnd, ) =
+        (LibMetricsTypes.OwnerLenderIntentSummary[] memory pEnd, ) =
             LenderIntentFacet(address(diamond)).getLenderIntentsByOwner(
                 lender, 2, 10
             );

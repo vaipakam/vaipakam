@@ -4588,15 +4588,6 @@ library LibVaipakam {
         // intent + its live-principal + funded capital.
         EnumerableSet.Bytes32Set activeIntentKeys;
         mapping(bytes32 => IntentKey) intentKeyTuple;
-        // #625 #755 — per-OWNER enumerable registry so the dapp can list a
-        // single lender's standing intents across pairs (the global
-        // `activeIntentKeys` feed is owner-agnostic and funded-active only).
-        // Membership is BROADER than the global feed — `active || capital > 0`
-        // — so it includes PAUSED (cancelled-but-capital-reserved) intents the
-        // lender still needs to manage; it drops a key only once the intent is
-        // fully torn down (inactive AND no reserved capital). Maintained by
-        // `syncIntentRegistry` at the same sites as `activeIntentKeys`.
-        mapping(address => EnumerableSet.Bytes32Set) ownerIntentKeys;
         // #625 WI-2c — enumerable registry of LIVE intent-originated LOANS, so a keeper
         // can page them (`getRollableIntentLoans`) to find fully-repaid ones to AUTO-ROLL
         // (`rollIntentLoan`) instead of needing an off-chain index of `IntentMatched`
@@ -4606,6 +4597,18 @@ library LibVaipakam {
         // therefore holds exactly the loans with a live `intentOrigin`; the view filters
         // to `LoanStatus.Repaid` for the keeper's roll candidates.
         EnumerableSet.UintSet activeIntentLoans;
+        // #625 #755 — per-OWNER enumerable registry so the dapp can list a
+        // single lender's standing intents across pairs (the global
+        // `activeIntentKeys` feed is owner-agnostic and funded-active only).
+        // Membership is BROADER than the global feed — `active || capital > 0`
+        // — so it includes PAUSED (cancelled-but-capital-reserved) intents the
+        // lender still needs to manage; it drops a key only once the intent is
+        // fully torn down (inactive AND no reserved capital). Maintained by
+        // `syncIntentRegistry` at the same sites as `activeIntentKeys`.
+        // APPENDED AT THE END of the struct (after the pre-existing
+        // `activeIntentLoans`) per the append-only storage rule — a new shared
+        // field must never shift an existing field's slot (Codex #756 P1).
+        mapping(address => EnumerableSet.Bytes32Set) ownerIntentKeys;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

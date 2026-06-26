@@ -22,12 +22,19 @@ What's new:
   view (on `LenderIntentFacet`, alongside the other `getLenderIntent*`
   reads) returning every standing intent that owner holds, each with its
   bounds, the un-lent funded capital, the live principal already out on
-  loans, and — new on the shared summary shape — an **`active` flag** so a
-  consumer can tell an active intent from a paused one. (The flag is always
-  true in the global keeper feed, which lists only active intents.)
+  loans, and an **`active` flag** so a consumer can tell an active intent
+  from a paused one. The flag rides on a **dedicated per-owner row type**,
+  not on the shared intent summary the global keeper feed
+  (`getActiveLenderIntents`) returns — so the global feed's wire shape is
+  left byte-for-byte unchanged and existing keeper/frontend decoders are
+  untouched. (The global feed needs no such flag; it lists only active
+  intents.)
 
 This is a read-only surface plus per-owner registry bookkeeping — no change
 to how intents are registered, funded, filled, rolled, priced, or settled.
+The per-owner registry is populated forward-only, at the same sites as the
+existing global keeper feed, so the two stay consistent; on a from-scratch
+deployment (every deployment to date) every intent is captured.
 The lender-facing list/manage UI that pages this view is the next step;
 there is no borrower-side equivalent because the intent layer is
 lender-only by design (borrowers use the offer book).

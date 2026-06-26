@@ -188,67 +188,74 @@
       {
         "name": "intents",
         "type": "tuple[]",
-        "internalType": "struct LibMetricsTypes.LenderIntentSummary[]",
+        "internalType": "struct LibMetricsTypes.OwnerLenderIntentSummary[]",
         "components": [
           {
-            "name": "owner",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "lendingAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "collateralAsset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "maxExposure",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "minRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "maxInitLtvBps",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "maxDurationDays",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "minFillAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "requiresKeeperAuth",
-            "type": "bool",
-            "internalType": "bool"
+            "name": "intent",
+            "type": "tuple",
+            "internalType": "struct LibMetricsTypes.LenderIntentSummary",
+            "components": [
+              {
+                "name": "owner",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "lendingAsset",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "collateralAsset",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "maxExposure",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "minRateBps",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "maxInitLtvBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxDurationDays",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "minFillAmount",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "requiresKeeperAuth",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "livePrincipal",
+                "type": "uint256",
+                "internalType": "uint256"
+              },
+              {
+                "name": "availableCapital",
+                "type": "uint256",
+                "internalType": "uint256"
+              }
+            ]
           },
           {
             "name": "active",
             "type": "bool",
             "internalType": "bool"
-          },
-          {
-            "name": "livePrincipal",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "availableCapital",
-            "type": "uint256",
-            "internalType": "uint256"
           }
         ]
       },
