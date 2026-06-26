@@ -9,16 +9,15 @@ import { CardInfo } from '../CardInfo';
 /**
  * T-092 #511 sub (#520) — per-user auto-lifecycle opt-in surface.
  *
- * Two toggles:
- *   - **Auto-lend opt-in** (`setAutoLendConsent`) — when true, the
- *     dapp may auto-post standing offers from vault deposits, and
- *     keepers may match those offers. Disabled when the admin kill
- *     switch (`getAutoLendEnabled`) is off.
+ * #625 WI-1 — auto-lend was REWIRED off the legacy fixed-duration
+ * offer-posting marker onto the standing LenderIntent layer and now
+ * lives in its own card (`AutoLendIntentCard`). This card keeps the
+ * remaining borrower-convenience toggle:
+ *
  *   - **Auto-opt-in on every new loan** (`setAutoOptInOnNewLoan`) —
- *     borrower convenience. When true, every new loan auto-populates
- *     its per-loan `autoRefinanceCaps` from the user's stored
- *     defaults (set via the LoanDetails per-loan editor, separate
- *     card #521).
+ *     when true, every new ERC20-principal loan auto-populates its
+ *     per-loan `autoRefinanceCaps` from the user's stored defaults
+ *     (set via the LoanDetails per-loan editor, separate card #521).
  *
  * Per-loan refinance / extend cap editors live on the LoanDetails
  * page (separate sub-card #521). The default-caps editor (rate +
@@ -33,48 +32,27 @@ export default function AutoLifecycleSettingsCard() {
   const diamond = useDiamondContract();
   const diamondRo = useDiamondRead();
 
-  const [lendEnabled, setLendEnabled] = useState<boolean | null>(null);
   const [optInEnabled, setOptInEnabled] = useState<boolean | null>(null);
-  // Admin kill-switch state — when false, the auto-lend toggle is
-  // disabled because `setAutoLendConsent(true)` would revert with
-  // `AutoLendDisabled`. Users can still revoke (set to false).
-  const [adminAllowsLend, setAdminAllowsLend] = useState<boolean | null>(null);
-  const [pending, setPending] = useState<'lend' | 'optIn' | null>(null);
+  const [pending, setPending] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  // T-092-F (#537) — two-step confirm state. First Enable click sets
-  // `confirming`; second click submits the actual setter. Clicking
-  // a different toggle, or any non-Enable interaction, clears it.
-  // Disabling never requires confirmation — safe direction.
-  const [confirming, setConfirming] = useState<'lend' | 'optIn' | null>(null);
+  // T-092-F (#537) — two-step confirm. First Enable click sets
+  // `confirming`; second click submits. Disabling never requires
+  // confirmation — safe direction.
+  const [confirming, setConfirming] = useState<boolean>(false);
 
   const reload = useCallback(async () => {
-    if (!address || !diamondRo) {
-      setLendEnabled(null);
-      setOptInEnabled(null);
-      setAdminAllowsLend(null);
-      return;
-    }
+    // Return early without a synchronous reset (the card returns null
+    // when there's no address; a missing diamond just leaves the panel
+    // loading) so every setState lands post-await — keeps
+    // react-hooks/set-state-in-effect satisfied.
+    if (!address || !diamondRo) return;
     try {
-      const [lendCurrent, optInCurrent, adminCurrent] = await Promise.all([
-        (
-          diamondRo as unknown as {
-            getAutoLendConsent: (user: string) => Promise<boolean>;
-          }
-        ).getAutoLendConsent(address),
-        (
-          diamondRo as unknown as {
-            getAutoOptInOnNewLoan: (user: string) => Promise<boolean>;
-          }
-        ).getAutoOptInOnNewLoan(address),
-        (
-          diamondRo as unknown as {
-            getAutoLendEnabled: () => Promise<boolean>;
-          }
-        ).getAutoLendEnabled(),
-      ]);
-      setLendEnabled(Boolean(lendCurrent));
+      const optInCurrent = await (
+        diamondRo as unknown as {
+          getAutoOptInOnNewLoan: (user: string) => Promise<boolean>;
+        }
+      ).getAutoOptInOnNewLoan(address);
       setOptInEnabled(Boolean(optInCurrent));
-      setAdminAllowsLend(Boolean(adminCurrent));
     } catch {
       // Diamond may not have the auto-lifecycle facet cut yet (old
       // testnet deploy). Leave the panel in its loading state.
@@ -82,48 +60,22 @@ export default function AutoLifecycleSettingsCard() {
   }, [address, diamondRo]);
 
   useEffect(() => {
+    // Data-sync effect: pulls the opt-in flag into React state. Writes
+    // are post-await; the rule flags the call site regardless, so opt
+    // out here as the other data-loading hooks do.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload();
   }, [reload]);
 
-  const handleToggleLend = async () => {
-    if (!address || !diamond || lendEnabled == null) return;
-    // T-092-F two-step: if currently disabled AND not yet in
-    // confirmation, switch to confirmation state instead of
-    // submitting. Disabling is the safe direction → no confirmation.
-    if (!lendEnabled && confirming !== 'lend') {
-      setConfirming('lend');
-      return;
-    }
-    setError(null);
-    setPending('lend');
-    const next = !lendEnabled;
-    try {
-      const tx = await (
-        diamond as unknown as {
-          setAutoLendConsent: (
-            enabled: boolean,
-          ) => Promise<{ hash: string; wait: () => Promise<unknown> }>;
-        }
-      ).setAutoLendConsent(next);
-      await tx.wait();
-      setLendEnabled(next);
-      setConfirming(null);
-    } catch (err) {
-      setError(autoLifecycleErrorOrRaw(err, t));
-    } finally {
-      setPending(null);
-    }
-  };
-
   const handleToggleOptIn = async () => {
     if (!address || !diamond || optInEnabled == null) return;
-    // T-092-F two-step (see handleToggleLend).
-    if (!optInEnabled && confirming !== 'optIn') {
-      setConfirming('optIn');
+    // T-092-F two-step: enabling requires a confirm click first.
+    if (!optInEnabled && !confirming) {
+      setConfirming(true);
       return;
     }
     setError(null);
-    setPending('optIn');
+    setPending(true);
     const next = !optInEnabled;
     try {
       const tx = await (
@@ -135,11 +87,11 @@ export default function AutoLifecycleSettingsCard() {
       ).setAutoOptInOnNewLoan(next);
       await tx.wait();
       setOptInEnabled(next);
-      setConfirming(null);
+      setConfirming(false);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
     } finally {
-      setPending(null);
+      setPending(false);
     }
   };
 
@@ -147,11 +99,7 @@ export default function AutoLifecycleSettingsCard() {
 
   // Hide entirely when the facet isn't readable — keeps old deploys
   // and pre-T-092 chains from showing a broken card.
-  if (lendEnabled == null && optInEnabled == null && adminAllowsLend == null) {
-    return null;
-  }
-
-  const adminBlocksNewLendOptIn = adminAllowsLend === false;
+  if (optInEnabled == null) return null;
 
   return (
     <div className="card" style={{ marginBottom: 20 }}>
@@ -159,9 +107,7 @@ export default function AutoLifecycleSettingsCard() {
         <Repeat
           size={22}
           style={{
-            color: lendEnabled || optInEnabled
-              ? 'var(--accent-green)'
-              : 'var(--text-tertiary)',
+            color: optInEnabled ? 'var(--accent-green)' : 'var(--text-tertiary)',
             flexShrink: 0,
             marginTop: 2,
           }}
@@ -174,65 +120,6 @@ export default function AutoLifecycleSettingsCard() {
           <p className="stat-label" style={{ margin: '0 0 10px' }}>
             {t('autoLifecycleSettings.body')}
           </p>
-
-          {adminBlocksNewLendOptIn && (
-            <div
-              className="alert alert-info"
-              role="status"
-              style={{ marginBottom: 10 }}
-            >
-              <AlertTriangle size={14} />
-              <div>{t('autoLifecycleSettings.adminDisabled')}</div>
-            </div>
-          )}
-
-          {/* Auto-lend toggle */}
-          <div style={{ marginBottom: 10 }}>
-            <div
-              style={{
-                display: 'flex',
-                gap: 10,
-                alignItems: 'center',
-                flexWrap: 'wrap',
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <strong>{t('autoLifecycleSettings.autoLendLabel')}</strong>
-                <div className="stat-label">
-                  {t('autoLifecycleSettings.autoLendHint')}
-                </div>
-              </div>
-              <button
-                className={
-                  lendEnabled ? 'btn btn-secondary btn-sm' : 'btn btn-primary btn-sm'
-                }
-                onClick={handleToggleLend}
-                disabled={
-                  pending !== null ||
-                  lendEnabled == null ||
-                  (!lendEnabled && adminBlocksNewLendOptIn)
-                }
-              >
-                {pending === 'lend'
-                  ? t('autoLifecycleSettings.statePending')
-                  : lendEnabled
-                    ? t('autoLifecycleSettings.actionDisable')
-                    : confirming === 'lend'
-                      ? t('autoLifecycleSettings.actionConfirm')
-                      : t('autoLifecycleSettings.actionEnable')}
-              </button>
-            </div>
-            {confirming === 'lend' && (
-              <div
-                className="alert alert-warning"
-                role="alert"
-                style={{ marginTop: 8 }}
-              >
-                <AlertTriangle size={14} />
-                <div>{t('autoLifecycleSettings.bestEffortWarning')}</div>
-              </div>
-            )}
-          </div>
 
           {/* Auto-opt-in-on-new-loan toggle */}
           <div>
@@ -257,18 +144,18 @@ export default function AutoLifecycleSettingsCard() {
                     : 'btn btn-primary btn-sm'
                 }
                 onClick={handleToggleOptIn}
-                disabled={pending !== null || optInEnabled == null}
+                disabled={pending || optInEnabled == null}
               >
-                {pending === 'optIn'
+                {pending
                   ? t('autoLifecycleSettings.statePending')
                   : optInEnabled
                     ? t('autoLifecycleSettings.actionDisable')
-                    : confirming === 'optIn'
+                    : confirming
                       ? t('autoLifecycleSettings.actionConfirm')
                       : t('autoLifecycleSettings.actionEnable')}
               </button>
             </div>
-            {confirming === 'optIn' && (
+            {confirming && (
               <div
                 className="alert alert-warning"
                 role="alert"
