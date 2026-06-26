@@ -1465,7 +1465,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRiskAccessFacetSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](35);
+        s = new bytes4[](36);
         s[0] = RiskAccessFacet.setVaultRiskTier.selector;
         s[1] = RiskAccessFacet.setIlliquidPairConsent.selector;
         s[2] = RiskAccessFacet.setVaultRiskTierBySig.selector;
@@ -1507,6 +1507,7 @@ contract DeployDiamond is Script {
         s[32] = RiskAccessFacet.previewCreatorBlock.selector; // #735 item 3 creator-side gate
         s[33] = RiskAccessFacet.isPairConsentPending.selector; // #735 item 3 pending-consent
         s[34] = RiskAccessFacet.isMidTierAckPending.selector; // #735 item 3 pending-ack
+        s[35] = RiskAccessFacet.previewIntent.selector; // #625 WI-2b intent-fill preview
     }
 
     function _getAggregatorAdapterFactorySelectors()

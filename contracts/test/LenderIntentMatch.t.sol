@@ -5,6 +5,10 @@ import {SetupTest} from "./SetupTest.t.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
+import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
+import {LibEncumbrance} from "../src/libraries/LibEncumbrance.sol";
 import {LenderIntentFacet} from "../src/facets/LenderIntentFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -508,4 +512,401 @@ contract LenderIntentMatchTest is SetupTest {
         );
         assertGt(loanId, 0, "lender fills own keeper-gated intent");
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // #625 WI-2b — previewIntent ⟺ matchIntent agreement
+    //
+    // Binding guarantee of `RiskAccessFacet.previewIntent`: for identical
+    // inputs, `preview.ok == true` IFF `matchIntent` would succeed, and each
+    // `IntentError` maps to the precise revert the live path raises. Because
+    // `previewIntent` is a pure view it is read FIRST without disturbing the
+    // state the subsequent `matchIntent` runs against, so each test pairs the
+    // two on one fresh state (foundry resets state per test fn — no snapshot).
+    // ═══════════════════════════════════════════════════════════════════════
+
+    function _preview(address solver_, uint256 fill, uint256 boId)
+        internal
+        view
+        returns (LibOfferMatch.IntentPreviewResult memory)
+    {
+        return RiskAccessFacet(address(diamond)).previewIntent(
+            solver_, lender, mockERC20, mockCollateralERC20, boId, fill
+        );
+    }
+
+    /// @dev Flexible borrower-offer builder for the guard cases (duration,
+    ///      full-term, partial-repay, under-collateral all vary). Mirrors
+    ///      `_postBorrower` otherwise.
+    function _postBorrowerCustom(
+        address creator,
+        uint256 principal,
+        uint256 coll,
+        uint32 duration,
+        bool fullTerm,
+        bool partialRepay
+    ) internal returns (uint256 offerId) {
+        vm.prank(creator);
+        offerId = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Borrower,
+                lendingAsset: mockERC20,
+                amount: principal,
+                interestRateBps: MIN_RATE_BPS,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: coll,
+                durationDays: duration,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: partialRepay,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: principal,
+                interestRateBpsMax: MIN_RATE_BPS + 100,
+                collateralAmountMax: coll,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: fullTerm
+            })
+        );
+    }
+
+    // ── Happy path: preview Ok, figures mirror the loan, fill succeeds ──
+    function test_previewIntent_happyPath_agreesAndReportsFigures() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertTrue(r.ok, "preview Ok on a fillable intent");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.Ok),
+            "intentError Ok"
+        );
+        assertEq(
+            uint8(r.matchError),
+            uint8(LibOfferMatch.MatchError.Ok),
+            "matchError Ok"
+        );
+        assertEq(r.riskBlock, 0, "no risk block (gate off)");
+        assertEq(r.matchAmount, PRINCIPAL, "matchAmount == fill");
+        assertEq(r.reqCollateral, 2 * PRINCIPAL, "reqCollateral == 2x (50% LTV cap)");
+        assertEq(r.availableCapital, PRINCIPAL, "availableCapital == funded");
+        assertEq(r.matchRateBps, 550, "midpoint of [500,600]");
+
+        // matchIntent succeeds for the same inputs ⇒ agrees with preview Ok.
+        vm.prank(solver);
+        uint256 loanId = OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+        assertGt(loanId, 0, "fill succeeds - agrees with preview Ok");
+    }
+
+    // ── below-min fill ──
+    function test_previewIntent_belowMinFill_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        uint256 tiny = MIN_FILL - 1;
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, tiny, cp);
+        assertFalse(r.ok, "preview !ok below min fill");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.BelowMinFill)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentFillBelowMin.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, tiny
+        );
+    }
+
+    // ── exposure cap (checked BEFORE funded-capital) ──
+    function test_previewIntent_exposureExceeded_agrees() public {
+        _setIntent(500 ether); // maxExposure below the fill
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, 600 ether, 1200 ether);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, 600 ether, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.ExposureExceeded)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentExposureExceeded.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, 600 ether
+        );
+    }
+
+    // ── funded-capital shortfall (within exposure, above min) ──
+    function test_previewIntent_capitalInsufficient_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(MIN_FILL); // fund only the dust floor
+        address b = _newBorrower("b1");
+        uint256 fill = 2 * MIN_FILL; // > capital, < exposure, >= min
+        uint256 cp = _postBorrower(b, fill, 2 * fill);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, fill, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.CapitalInsufficient)
+        );
+        assertEq(r.availableCapital, MIN_FILL, "reports the un-lent capital");
+        vm.prank(solver);
+        // `IntentCapitalInsufficient` carries args, so match the full encoded
+        // error (selector-only `expectRevert(bytes4)` wants exactly 4 bytes).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibEncumbrance.IntentCapitalInsufficient.selector,
+                lender,
+                mockERC20,
+                mockCollateralERC20,
+                fill,
+                MIN_FILL
+            )
+        );
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, fill
+        );
+    }
+
+    // ── borrower term exceeds the lender's max (WI-3 guard family) ──
+    function test_previewIntent_durationTooLong_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrowerCustom(
+            b, PRINCIPAL, 2 * PRINCIPAL, MAX_DURATION + 1, true, false
+        );
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.DurationTooLong)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentDurationTooLong.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── borrower disables full-term interest (WI-3 protective guard) ──
+    function test_previewIntent_fullTermRequired_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrowerCustom(
+            b, PRINCIPAL, 2 * PRINCIPAL, MAX_DURATION, false, false
+        );
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.FullTermRequired)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentFullTermRequired.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── borrower opts into partial-repay (WI-3 protective guard) ──
+    function test_previewIntent_partialRepayNotAllowed_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrowerCustom(
+            b, PRINCIPAL, 2 * PRINCIPAL, MAX_DURATION, true, true
+        );
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.PartialRepayNotAllowed)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentPartialRepayNotAllowed.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── inactive intent ──
+    function test_previewIntent_inactiveIntent_agrees() public {
+        // No `_setIntent` ⇒ intent.active == false.
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.Inactive)
+        );
+        vm.prank(solver);
+        vm.expectRevert(OfferMatchFacet.LenderIntentInactive.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── matcher kill-switch OFF (checked before the intent switch) ──
+    function test_previewIntent_matcherDisabled_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setPartialFillEnabled(false);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.MatcherDisabled)
+        );
+        vm.prank(solver);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferMatchFacet.FunctionDisabled.selector, 3)
+        );
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── intent kill-switch OFF (matcher stays on) ──
+    function test_previewIntent_intentDisabled_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(owner);
+        LenderIntentFacet(address(diamond)).setLenderIntentEnabled(false);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.IntentDisabled)
+        );
+        vm.prank(solver);
+        vm.expectRevert(
+            abi.encodeWithSelector(OfferMatchFacet.FunctionDisabled.selector, 4)
+        );
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── keeper-gated intent, unauthorized solver (the isKeeperForPrincipal path) ──
+    function test_previewIntent_keeperUnauthorized_agrees() public {
+        _setIntentKeeperGated();
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+
+        // Unauthorized solver ⇒ preview reports KeeperUnauthorized.
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok);
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.KeeperUnauthorized)
+        );
+        vm.prank(solver);
+        vm.expectRevert(IVaipakamErrors.KeeperAccessRequired.selector);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        // Once the lender opts the solver in, preview flips to Ok.
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            solver, LibVaipakam.KEEPER_ACTION_SIGNED_FILL
+        );
+        LibOfferMatch.IntentPreviewResult memory r2 = _preview(solver, PRINCIPAL, cp);
+        assertTrue(r2.ok, "authorized solver -> preview Ok");
+        // The lender themselves is always authorized.
+        LibOfferMatch.IntentPreviewResult memory rSelf = _preview(lender, PRINCIPAL, cp);
+        assertTrue(rSelf.ok, "lender self-fill -> preview Ok");
+    }
+
+    // ── match-core failure: borrower under-collateralizes the fill ──
+    function test_previewIntent_matchCoreCollateralShortfall_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        // 1x collateral vs the 2x the 50% init-LTV cap requires ⇒ the match
+        // core rejects on CollateralBelowRequired (an intent-guard-clean pair).
+        uint256 cp = _postBorrowerCustom(
+            b, PRINCIPAL, PRINCIPAL, MAX_DURATION, true, false
+        );
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok on a match-core shortfall");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.Ok),
+            "intent guards all cleared"
+        );
+        assertEq(
+            uint8(r.matchError),
+            uint8(LibOfferMatch.MatchError.CollateralBelowRequired),
+            "match core flags the collateral shortfall"
+        );
+        vm.prank(solver);
+        vm.expectRevert(); // the fill reverts (match-core classifier)
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // ── #747 Codex r1/r2: a paused leg fails at the slice-MATERIALIZATION stage
+    //    (createSignedOfferVault calls requireAssetNotPaused before the match),
+    //    so preview reports SlicePausedAsset — mirroring the live first reason.
+    function test_previewIntent_slicePausedAsset_agrees() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        address b = _newBorrower("b1");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        // Pause the lending asset AFTER the intent/offer exist.
+        vm.prank(owner);
+        AdminFacet(address(diamond)).pauseAsset(mockERC20);
+
+        LibOfferMatch.IntentPreviewResult memory r = _preview(solver, PRINCIPAL, cp);
+        assertFalse(r.ok, "preview !ok when a leg is paused");
+        assertEq(
+            uint8(r.intentError),
+            uint8(LibOfferMatch.IntentError.SlicePausedAsset)
+        );
+        vm.prank(solver);
+        vm.expectRevert(); // live fill reverts at createSignedOfferVault's pause guard
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+    }
+
+    // NOTE: `SliceCollateralBelowFloor` is exercised in production but NOT
+    // pinned by an agreement test here — this suite's $1 mock oracle does not
+    // classify the pair as `Liquid`, so `minCollateralForLending` returns 0 and
+    // both the slice's create-time floor check AND `previewIntent`'s mirror of
+    // it (which reuses the SAME helper + `rangeAmountEnabled` condition, so it
+    // cannot drift from `OfferCreateFacet`) skip. The agreement holds: with the
+    // floor inactive, matchIntent succeeds and preview reports Ok.
 }

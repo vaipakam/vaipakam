@@ -610,6 +610,92 @@
   },
   {
     "type": "function",
+    "name": "previewIntent",
+    "inputs": [
+      {
+        "name": "solver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lender",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "lendingAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "collateralAsset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "counterpartyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "fillAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "res",
+        "type": "tuple",
+        "internalType": "struct LibOfferMatch.IntentPreviewResult",
+        "components": [
+          {
+            "name": "ok",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "intentError",
+            "type": "uint8",
+            "internalType": "enum LibOfferMatch.IntentError"
+          },
+          {
+            "name": "matchError",
+            "type": "uint8",
+            "internalType": "enum LibOfferMatch.MatchError"
+          },
+          {
+            "name": "riskBlock",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "matchAmount",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "matchRateBps",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "reqCollateral",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "availableCapital",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "previewMatchRiskBlock",
     "inputs": [
       {
@@ -1270,6 +1356,17 @@
   },
   {
     "type": "error",
+    "name": "ERC721NonexistentToken",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IlliquidPairNotConsented",
     "inputs": [
       {
@@ -1320,6 +1417,32 @@
     "type": "error",
     "name": "NoPendingRiskTermsCommitment",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ParameterOutOfRange",
+    "inputs": [
+      {
+        "name": "name",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "value",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "min",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "max",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",

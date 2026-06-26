@@ -371,6 +371,24 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   refused, not opened blind to the bound), and carrying the lender's full-term-
   interest floor (a borrower can't escape the lender's committed interest by
   repaying early).
+- **Previewing a fill.** Before submitting, a solver can ask the protocol — read-
+  only and without spending gas — whether one specific fill (a named intent, a
+  borrower offer, an amount, and the prospective filler the fill would be
+  submitted by) would succeed, and if not, the exact first reason it would be
+  rejected. The preview runs the same checks the live fill runs, in the same
+  order: the intent's bounds (active, not below minimum fill, within the exposure
+  cap, within the maximum term, full-term and no-partial-repay honoured by the
+  borrower offer, a resolvable collateral requirement, and sufficient funded
+  capital), the shared match-admission checks (asset continuity, term match,
+  range overlap, synthetic health-factor), the keeper-authorisation requirement
+  for a keeper-gated intent — judged against the named prospective filler, not
+  the caller of the preview — and the progressive risk-access gate. On success it
+  also reports the principal the fill would draw, the midpoint rate the loan
+  would carry, the collateral the borrower must post, and the un-lent funded
+  capital the intent can still deploy, so a solver can size the fill from a single
+  read. The standing guarantee is exactness: the preview reports success if and
+  only if the live fill would succeed for identical inputs, and each reported
+  reason corresponds to the precise condition the live fill enforces.
 - **Exposure cap + release.** The principal a lender has live in intent loans is
   tracked per asset-pair against their exposure cap, by the original fill amount
   (a partially-repaid loan still frees its full reserved amount). The cap is
