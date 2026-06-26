@@ -791,12 +791,23 @@ export default function AutoLendIntentCard() {
       // 4. Fund LAST — only after every authorisation is in place.
       if (parsed.fund > 0n) {
         if (!lendingErc20) throw new Error(t('autoLend.errNoToken'));
-        // Re-read the pair and RE-APPLY the headroom check immediately
-        // before funding — another tab funding, or an auto-roll compounding
-        // proceeds, could have raised capital/live-principal since the
-        // initial read. fundLenderIntent does not enforce maxExposure, so
-        // this is the last guard against pulling idle capital the exposure
-        // cap would reject.
+        setStep(t('autoLend.stepApprove'));
+        const erc20 = lendingErc20 as unknown as {
+          allowance: (o: string, s: string) => Promise<bigint>;
+          approve: (s: string, n: bigint) => Promise<WriteTx>;
+        };
+        const allowance = await erc20.allowance(address, diamondAddr);
+        if (allowance < parsed.fund) {
+          // Exact-amount approval convention (never MaxUint256).
+          const atx = await erc20.approve(diamondAddr, parsed.fund);
+          await atx.wait();
+        }
+        // Re-read the pair and RE-APPLY the headroom check AFTER the
+        // approval and immediately before funding — another tab funding, or
+        // an auto-roll compounding proceeds (including during the approval
+        // tx), could have raised capital/live-principal since the initial
+        // read. fundLenderIntent does not enforce maxExposure, so this is
+        // the last guard against pulling idle capital the cap would reject.
         const freshPair = await reloadPair();
         if (!freshPair) {
           setError(t('autoLend.errLoadFailed'));
@@ -808,17 +819,6 @@ export default function AutoLendIntentCard() {
         ) {
           setError(t('autoLend.errFundOverExposure'));
           return;
-        }
-        setStep(t('autoLend.stepApprove'));
-        const erc20 = lendingErc20 as unknown as {
-          allowance: (o: string, s: string) => Promise<bigint>;
-          approve: (s: string, n: bigint) => Promise<WriteTx>;
-        };
-        const allowance = await erc20.allowance(address, diamondAddr);
-        if (allowance < parsed.fund) {
-          // Exact-amount approval convention (never MaxUint256).
-          const atx = await erc20.approve(diamondAddr, parsed.fund);
-          await atx.wait();
         }
         setStep(t('autoLend.stepFund'));
         const tx = await dw.fundLenderIntent(
@@ -903,12 +903,20 @@ export default function AutoLendIntentCard() {
         const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
         await tx.wait();
       }
-      if (pair.capital > 0n) {
+      // Re-read capital AFTER the cancel mined: a keeper could have
+      // auto-rolled a just-repaid loan and re-liened its proceeds between
+      // the initial read and the cancel, so `pair.capital` may understate
+      // the un-lent balance. Withdraw the CURRENT amount so a full stop
+      // doesn't strand the rolled capital. (Once cancelled the intent is
+      // de-listed, so no further roll can relist it.)
+      const afterCancel = await reloadPair();
+      const toWithdraw = afterCancel ? afterCancel.capital : pair.capital;
+      if (toWithdraw > 0n) {
         setStep(t('autoLend.stepWithdraw'));
         const tx = await dw.withdrawLenderIntentCapital(
           lendingAsset,
           collateralAsset,
-          pair.capital,
+          toWithdraw,
         );
         await tx.wait();
       }
@@ -1277,6 +1285,26 @@ export default function AutoLendIntentCard() {
               <div>{error}</div>
             </div>
           )}
+
+          {/* Retry affordance — a read failure clears the loaded keys
+              (fail-closed) without rescheduling the load effects, so offer
+              an explicit re-fetch (calls the stable reload callbacks
+              directly) when this pair didn't load. */}
+          {!!form.lendingAsset &&
+            !!form.collateralAsset &&
+            !pairLoaded &&
+            !busy && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  void Promise.all([reloadAccount(), reloadPair()]);
+                }}
+              >
+                {t('autoLend.actionRetry')}
+              </button>
+            )}
         </div>
       </div>
     </div>

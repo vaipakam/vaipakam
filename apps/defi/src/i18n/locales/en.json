@@ -542,6 +542,7 @@
     "actionPause": "Pause",
     "actionStop": "Withdraw & stop",
     "actionRevokeConsent": "Revoke auto-lend consent",
+    "actionRetry": "Retry loading this pair",
     "revokeConsentHint": "Clears your wallet-level auto-lend opt-in for all pairs. Doesn't touch any intent or capital — use Pause / Withdraw & stop for those.",
     "noticeConsentRevoked": "Auto-lend consent revoked for your wallet. Any standing intents you still have are unaffected; manage them per pair above.",
     "wrongChain": "Switch your wallet to this chain to manage auto-lend.",

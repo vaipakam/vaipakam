@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Repeat, AlertTriangle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useWallet } from '../../context/WalletContext';
@@ -31,6 +31,13 @@ export default function AutoLifecycleSettingsCard() {
   const { address } = useWallet();
   const diamond = useDiamondContract();
   const diamondRo = useDiamondRead();
+  // Latest connected wallet, readable inside async resolves to drop a
+  // stale read after a wallet switch (so an older request can't stamp
+  // `loadedAddr` back to the previous address).
+  const addrRef = useRef(address);
+  useEffect(() => {
+    addrRef.current = address;
+  }, [address]);
 
   const [optInEnabled, setOptInEnabled] = useState<boolean | null>(null);
   // The wallet `optInEnabled` was last read for — the toggle is only
@@ -56,6 +63,9 @@ export default function AutoLifecycleSettingsCard() {
           getAutoOptInOnNewLoan: (user: string) => Promise<boolean>;
         }
       ).getAutoOptInOnNewLoan(address);
+      // Drop a stale resolve: if the wallet changed while this read was in
+      // flight, don't stamp the previous address back over the new one.
+      if (addrRef.current !== address) return;
       setOptInEnabled(Boolean(optInCurrent));
       setLoadedAddr(address);
     } catch {
