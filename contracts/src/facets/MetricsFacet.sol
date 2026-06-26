@@ -51,6 +51,7 @@ import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet
  */
 contract MetricsFacet {
     using EnumerableSet for EnumerableSet.Bytes32Set;
+    using EnumerableSet for EnumerableSet.UintSet; // #625 WI-2c intent-loan registry
 
     uint256 private constant NUMERAIRE_SCALE = 1e18;
 
@@ -1072,6 +1073,54 @@ contract MetricsFacet {
                     key.collateralAsset
                 ]
             );
+        }
+    }
+
+    /// @notice #625 WI-2c — paginated view of fully-repaid intent-originated
+    ///         loans a keeper can AUTO-ROLL (`LenderIntentFacet.rollIntentLoan`).
+    ///         Pages the `activeIntentLoans` registry (every live intent loan)
+    ///         and returns only those at `LoanStatus.Repaid` — the roll
+    ///         candidates — keyed off each loan's `intentOrigin` (so a sold
+    ///         lender position is still surfaced; `rollIntentLoan` then rejects
+    ///         it, and the keeper keys AUTO_ROLL auth off `owner`).
+    /// @param  offset / limit  Window over the registry. `total` is the FULL
+    ///         registry size (Active + Repaid); the keeper pages until
+    ///         `offset >= total`, accumulating the Repaid rows each page yields.
+    /// @return loans  The Repaid intent loans within `[offset, offset+limit)`.
+    /// @return total  The registry size, for pagination.
+    function getRollableIntentLoans(uint256 offset, uint256 limit)
+        external
+        view
+        returns (
+            LibMetricsTypes.RollableIntentLoan[] memory loans,
+            uint256 total
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        total = s.activeIntentLoans.length();
+        if (offset >= total) {
+            return (new LibMetricsTypes.RollableIntentLoan[](0), total);
+        }
+        uint256 endExcl = offset + limit;
+        if (endExcl > total) endExcl = total;
+        uint256 window = endExcl - offset;
+        // Filter to Repaid (the roll candidates); over-allocate to the window,
+        // then truncate to the matched count.
+        LibMetricsTypes.RollableIntentLoan[] memory buf =
+            new LibMetricsTypes.RollableIntentLoan[](window);
+        uint256 n = 0;
+        for (uint256 i = 0; i < window; i++) {
+            uint256 loanId = s.activeIntentLoans.at(offset + i);
+            if (s.loans[loanId].status == LibVaipakam.LoanStatus.Repaid) {
+                buf[n] = LibMetricsTypes.toRollableIntentLoan(
+                    loanId, s.intentOrigin[loanId]
+                );
+                n++;
+            }
+        }
+        loans = new LibMetricsTypes.RollableIntentLoan[](n);
+        for (uint256 i = 0; i < n; i++) {
+            loans[i] = buf[i];
         }
     }
 

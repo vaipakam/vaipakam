@@ -413,6 +413,17 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   returns are never diverted into the original lender's intent. The repayment
   claim that would have paid a wallet is consumed in the same step as the
   re-commitment, so a rolled loan's funds are never both claimable and re-lent.
+- **On-chain roll discovery.** So an automated roller can find the loans it may
+  roll without trusting an off-chain index (the roller signs transactions, so its
+  decisions must come from authoritative chain state), the protocol maintains an
+  enumerable on-chain registry of live intent-originated loans and exposes a
+  paginated read view returning only the fully-repaid ones — the roll candidates
+  — each with its originating owner, asset pair, and original fill amount. A loan
+  joins the registry when a fill records its intent origin and leaves it when that
+  origin is cleared (a normal claim or a roll), so the registry never grows
+  unboundedly. The view is keyed off the recorded origin, so a sold position is
+  still listed; the roll itself then rejects it (per the sold-position guard
+  above) and authorisation keys off the recorded owner.
 - **External aggregator access (ERC-4626).** A yield aggregator can supply capital
   through a standard ERC-4626 vault interface: it is provisioned its own adapter
   that places deposited capital behind a standing intent (matched + auto-rolled by

@@ -56,6 +56,7 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  */
 library LibVaipakam {
     using EnumerableSet for EnumerableSet.Bytes32Set; // #625 WI-2a — intent registry
+    using EnumerableSet for EnumerableSet.UintSet; // #625 WI-2c — intent-loan registry
 
     /// @dev ERC-7201 namespaced storage slot for Vaipakam's global state.
     ///      Derived from: keccak256(abi.encode(uint256(keccak256("vaipakam.storage")) - 1)) & ~bytes32(uint256(0xff))
@@ -1273,6 +1274,24 @@ library LibVaipakam {
         } else {
             s.activeIntentKeys.remove(ik);
         }
+    }
+
+    /// @notice #625 WI-2c — register/deregister an intent-originated loan in the
+    ///         `activeIntentLoans` roll-discovery set. Called at the SET site
+    ///         (`OfferMatchFacet.matchIntent`, when `intentOrigin` is written) and
+    ///         both CLEAR sites (`LenderIntentFacet.releaseIntentExposure` — the
+    ///         shared claim/withdraw/consolidation terminal hook — and
+    ///         `LenderIntentFacet.rollIntentLoan`), so the set tracks EXACTLY the
+    ///         loans with a live `intentOrigin`. Defined here because the
+    ///         `using EnumerableSet for EnumerableSet.UintSet` directive lives in
+    ///         this library; idempotent (EnumerableSet add/remove no-op on a
+    ///         present/absent key).
+    function addIntentLoan(uint256 loanId) internal {
+        storageSlot().activeIntentLoans.add(loanId);
+    }
+
+    function removeIntentLoan(uint256 loanId) internal {
+        storageSlot().activeIntentLoans.remove(loanId);
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -4555,6 +4574,15 @@ library LibVaipakam {
         // intent + its live-principal + funded capital.
         EnumerableSet.Bytes32Set activeIntentKeys;
         mapping(bytes32 => IntentKey) intentKeyTuple;
+        // #625 WI-2c — enumerable registry of LIVE intent-originated LOANS, so a keeper
+        // can page them (`getRollableIntentLoans`) to find fully-repaid ones to AUTO-ROLL
+        // (`rollIntentLoan`) instead of needing an off-chain index of `IntentMatched`
+        // events. A loan id is added when `matchIntent` sets its `intentOrigin`, and
+        // removed when that origin is cleared — at terminal release (`releaseIntentExposure`,
+        // the shared claim/withdraw/consolidation hook) or at `rollIntentLoan`. The set
+        // therefore holds exactly the loans with a live `intentOrigin`; the view filters
+        // to `LoanStatus.Repaid` for the keeper's roll candidates.
+        EnumerableSet.UintSet activeIntentLoans;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

@@ -481,6 +481,9 @@ contract LenderIntentFacet is
         s.lenderIntentLivePrincipal[io.owner][io.lendingAsset][io.collateralAsset] =
             io.amount <= live ? live - io.amount : 0;
         delete s.intentOrigin[loanId];
+        // #625 WI-2c — de-register from the roll-discovery set (the proceeds were
+        // claimed/withdrawn through the normal path, not auto-rolled).
+        LibVaipakam.removeIntentLoan(loanId);
     }
 
     /// @notice #393 v1-d.2 — AUTO-ROLL a fully-repaid standing-intent loan:
@@ -641,6 +644,8 @@ contract LenderIntentFacet is
             io.collateralAsset
         ] = io.amount <= live ? live - io.amount : 0;
         delete s.intentOrigin[loanId];
+        // #625 WI-2c — de-register from the roll-discovery set (now rolled).
+        LibVaipakam.removeIntentLoan(loanId);
 
         // Burn the lender position NFT (its claim is consumed) — mirrors the
         // lender-claim close.

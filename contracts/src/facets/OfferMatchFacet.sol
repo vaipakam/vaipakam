@@ -491,6 +491,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
             collateralAsset: collateralAsset,
             amount: fillAmount // release the ORIGINAL fill, not a partial-repaid remainder
         });
+        // #625 WI-2c — register the loan in the roll-discovery set (removed when
+        // its intentOrigin is cleared at terminal release / roll).
+        LibVaipakam.addIntentLoan(loanId);
 
         // Transient lender-slice cleanup (identical to the signed-lender path):
         // the slice is the match ACCEPTOR, so its own OfferCreated NFT + reverse-
