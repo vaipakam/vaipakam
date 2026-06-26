@@ -55,6 +55,8 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  *      rounding down is actively dangerous (none currently).
  */
 library LibVaipakam {
+    using EnumerableSet for EnumerableSet.Bytes32Set; // #625 WI-2a — intent registry
+
     /// @dev ERC-7201 namespaced storage slot for Vaipakam's global state.
     ///      Derived from: keccak256(abi.encode(uint256(keccak256("vaipakam.storage")) - 1)) & ~bytes32(uint256(0xff))
     ///      The `-1` and `& ~0xff` guard against collisions with Solidity's standard
@@ -1229,6 +1231,41 @@ library LibVaipakam {
         address collateralAsset
     ) internal pure returns (bytes32) {
         return keccak256(abi.encode(owner, lendingAsset, collateralAsset));
+    }
+
+    /// @dev #625 WI-2a — keep the active-intent discovery registry
+    ///      (`getActiveLenderIntents`) in sync with an intent's (active, funded) state.
+    ///      The feed advertises ONLY intents that are active AND have funded capital, so
+    ///      (a) a keeper never pages a zero-capital row, and (b) a bare zero-capital
+    ///      registration can't bloat the global feed — entering it costs committed
+    ///      capital. SHARED in this library (not a facet-private helper) so EVERY
+    ///      `(active | capital)` transition can call it: `setLenderIntent` /
+    ///      `cancelLenderIntent` / `fundLenderIntent` / `withdrawLenderIntentCapital` /
+    ///      `rollIntentLoan` (LenderIntentFacet), `matchIntent` (OfferMatchFacet, the
+    ///      fill draw-down), and the backstop's direct seeding (BackstopFacet). Call it
+    ///      after EVERY `lienIntentCapital` / `unlienIntentCapital` / active flip;
+    ///      idempotent (add/remove are no-ops when membership already matches).
+    function syncIntentRegistry(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) internal {
+        Storage storage s = storageSlot();
+        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
+        if (
+            s.lenderIntent[owner][lendingAsset][collateralAsset].active
+                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset] > 0
+        ) {
+            if (s.activeIntentKeys.add(ik)) {
+                s.intentKeyTuple[ik] = IntentKey({
+                    owner: owner,
+                    lendingAsset: lendingAsset,
+                    collateralAsset: collateralAsset
+                });
+            }
+        } else {
+            s.activeIntentKeys.remove(ik);
+        }
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.

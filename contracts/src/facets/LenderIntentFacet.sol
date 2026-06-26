@@ -15,7 +15,6 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title LenderIntentFacet
@@ -50,8 +49,6 @@ contract LenderIntentFacet is
     DiamondPausable,
     DiamondAccessControl
 {
-    using EnumerableSet for EnumerableSet.Bytes32Set;
-
     /// @notice A lender registered / updated a standing intent for an asset-pair.
     event LenderIntentSet(
         address indexed owner,
@@ -253,7 +250,7 @@ contract LenderIntentFacet is
         // capital, so it does NOT enter the keeper feed until funded — gating set
         // membership on funded capital blocks arbitrary zero-capital registrations
         // from bloating the global feed (Codex WI-2a r1).
-        _syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
 
         emit LenderIntentSet(
             msg.sender,
@@ -284,7 +281,7 @@ contract LenderIntentFacet is
         if (!intent.active) revert LenderIntentNotActive();
         intent.active = false;
         // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
-        _syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
     }
 
@@ -356,7 +353,7 @@ contract LenderIntentFacet is
             msg.sender, lendingAsset, collateralAsset, amount
         );
         // #625 WI-2a — funded ⇒ the intent is now fillable; (re)list it in the feed.
-        _syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentFunded(
             msg.sender,
             lendingAsset,
@@ -427,7 +424,7 @@ contract LenderIntentFacet is
             amount
         );
         // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
-        _syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentCapitalWithdrawn(
             msg.sender,
             lendingAsset,
@@ -632,7 +629,7 @@ contract LenderIntentFacet is
             io.owner, io.lendingAsset, io.collateralAsset, rolledAmount
         );
         // #625 WI-2a — re-lien re-funds the owner's intent ⇒ (re)list it (if active).
-        _syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset);
+        LibVaipakam.syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset);
 
         // Release the loan's live-principal exposure (the ORIGINAL fill amount)
         // and clear the per-loan origin marker — the same decrement
@@ -726,40 +723,5 @@ contract LenderIntentFacet is
         return LibVaipakam.storageSlot().lenderIntentCapital[owner][
             lendingAsset
         ][collateralAsset];
-    }
-
-    /// @dev #625 WI-2a — keep the active-intent discovery registry
-    ///      (`getActiveLenderIntents`) in sync with the intent's (active, funded)
-    ///      state. The feed advertises ONLY intents that are active AND have funded
-    ///      capital, so (a) a keeper never pages a zero-capital row it can't fill, and
-    ///      (b) arbitrary zero-capital registrations can't bloat the global feed —
-    ///      entering it costs committed capital (Codex WI-2a r1). Call after any change
-    ///      to `active` or `lenderIntentCapital`; idempotent (add/remove are no-ops when
-    ///      the membership already matches). A `matchIntent` draw-down that depletes
-    ///      capital is NOT synced here (it's in OfferMatchFacet), but the keeper skips a
-    ///      capital-0 row anyway and the next withdraw/cancel/roll re-syncs — bounded to
-    ///      the owner's own funded intents, never griefable.
-    function _syncIntentRegistry(
-        address owner,
-        address lendingAsset,
-        address collateralAsset
-    ) private {
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        bytes32 ik =
-            LibVaipakam.intentKeyHash(owner, lendingAsset, collateralAsset);
-        if (
-            s.lenderIntent[owner][lendingAsset][collateralAsset].active
-                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset] > 0
-        ) {
-            if (s.activeIntentKeys.add(ik)) {
-                s.intentKeyTuple[ik] = LibVaipakam.IntentKey({
-                    owner: owner,
-                    lendingAsset: lendingAsset,
-                    collateralAsset: collateralAsset
-                });
-            }
-        } else {
-            s.activeIntentKeys.remove(ik);
-        }
     }
 }

@@ -13,9 +13,12 @@ keeper can simply page the current set each tick.
 
 What's new:
 
-- An **enumerable registry of funded, active intents**: an intent enters the feed once it
-  is both active and has committed (funded) capital, and leaves it when cancelled or when
-  its capital is fully withdrawn. Gating feed membership on funded capital means a bare
+- An **enumerable registry of funded, active intents**: an intent appears in the feed
+  exactly when it is both active and holds funded capital, and drops out when it is
+  cancelled or when its capital reaches zero — whether by a withdrawal or by a fill drawing
+  it down. The registry is kept correct by re-syncing at every point capital or the active
+  flag changes (register, cancel, fund, withdraw, auto-roll, a fill's draw-down, and the
+  backstop's direct seeding). Gating feed membership on funded capital means a bare
   registration that commits nothing is never advertised — so the global feed can't be
   bloated by zero-capital registrations (entering it costs committed capital, not just gas).
 - **`getActiveLenderIntents(offset, limit)`** — a paginated, lean read view returning, per
