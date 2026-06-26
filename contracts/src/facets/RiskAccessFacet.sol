@@ -780,19 +780,23 @@ contract RiskAccessFacet is DiamondAccessControl {
             }
         }
 
-        // #747 Codex r1 — accept-time gates. After the match + risk gate the
+        // #747 Codex r1/r2 — accept-time gates. After the match + risk gate the
         // live fill enters `acceptOfferInternal(counterpartyOfferId)` with the
         // lender slice as acceptor, which can still reject on gates a borrower
         // newly trips AFTER posting. Reproduce the gates LIVE on the retail
-        // deploy: sanctions on the borrower (offer creator) and a per-asset
-        // pause on either leg. (KYC + country-pair are runtime-disabled on
-        // retail — see the deploy policy — so the live accept no-ops them; the
-        // industrial fork that enables them must extend this mirror. Already-
-        // accepted / expired are covered by the match core.)
+        // deploy: sanctions on the borrower (offer creator), and a parallel-sale
+        // consumed offer — `offerConsumedBySale` is the terminal bit set when a
+        // Scenario-A parallel sale consumes the offer, which `_acceptOffer`
+        // rejects with `OfferConsumedBySale` even while the row still looks
+        // matchable (Codex r2). (Per-asset pause is mirrored EARLIER at the
+        // slice-materialization stage, matching the live order. KYC + country-
+        // pair are runtime-disabled on retail — see the deploy policy — so the
+        // live accept no-ops them; the industrial fork that enables them must
+        // extend this mirror. Already-accepted / expired are covered by the
+        // match core.)
         if (
             LibVaipakam.isSanctionedAddress(s.offers[counterpartyOfferId].creator)
-            || s.assetPaused[lendingAsset]
-            || s.assetPaused[collateralAsset]
+            || s.offerConsumedBySale[counterpartyOfferId]
         ) {
             res.intentError = LibOfferMatch.IntentError.AcceptGateBlocked;
             res.ok = false;

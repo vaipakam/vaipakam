@@ -877,10 +877,10 @@ contract LenderIntentMatchTest is SetupTest {
         );
     }
 
-    // ── #747 Codex r1: accept-time gate — borrower-leg asset paused after the
-    //    intent was funded. The match core is clean, but the live fill reverts
-    //    in the accept/materialize path; preview must report AcceptGateBlocked.
-    function test_previewIntent_acceptGate_assetPaused_agrees() public {
+    // ── #747 Codex r1/r2: a paused leg fails at the slice-MATERIALIZATION stage
+    //    (createSignedOfferVault calls requireAssetNotPaused before the match),
+    //    so preview reports SlicePausedAsset — mirroring the live first reason.
+    function test_previewIntent_slicePausedAsset_agrees() public {
         _setIntent(MAX_EXPOSURE);
         _fundIntent(PRINCIPAL);
         address b = _newBorrower("b1");
@@ -893,10 +893,10 @@ contract LenderIntentMatchTest is SetupTest {
         assertFalse(r.ok, "preview !ok when a leg is paused");
         assertEq(
             uint8(r.intentError),
-            uint8(LibOfferMatch.IntentError.AcceptGateBlocked)
+            uint8(LibOfferMatch.IntentError.SlicePausedAsset)
         );
         vm.prank(solver);
-        vm.expectRevert(); // live fill reverts in the paused-asset path
+        vm.expectRevert(); // live fill reverts at createSignedOfferVault's pause guard
         OfferMatchFacet(address(diamond)).matchIntent(
             lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
         );

@@ -104,8 +104,9 @@ library LibOfferMatch {
         //    reaches; mirror them so Ok can't precede a guaranteed materialize
         //    revert (OfferCreateFacet). ──
         SliceDurationAboveCap,   // slice term > cfgMaxOfferDurationDays (OfferDurationExceedsCap)
+        SlicePausedAsset,        // either leg paused at materialize (requireAssetNotPaused)
+        SliceCollateralBelowFloor, // range-mode + both-liquid: reqColl < minCollateralForLending floor (MinCollateralBelowFloor)
         SliceMultiYearTerm,      // slice term > 365d: the None-cadence slice can't meet the mandatory >=Annual floor (CadenceNotAllowed)
-        SliceCollateralBelowFloor, // range-mode liquid: reqColl < minCollateralForLending floor (MinCollateralBelowFloor)
         // ── #747 Codex r1: after the match core + risk gate, the live fill enters
         //    acceptOfferInternal(borrower) with the slice as acceptor; an
         //    accept-time gate can still reject (set by the facet wrapper). ──
@@ -764,37 +765,52 @@ library LibOfferMatch {
             return _intentFail(res, IntentError.CapitalInsufficient);
         }
 
-        // ── #747 Codex r1 — slice MATERIALIZATION gates. `matchIntent` next
+        // ── #747 Codex r1/r2 — slice MATERIALIZATION gates. `matchIntent` next
         //    calls `_materializeIntentSlice` → `createSignedOfferVault`, which
         //    re-validates the slice as a fresh offer. A controlled slice still
-        //    reaches three create-time validators, so mirror them here (reusing
-        //    the live cfg / risk helpers) before reporting Ok. ──
-        // (a) Global offer-duration cap. The borrower offer cleared this at ITS
-        //     creation, but the cap may have been lowered since, and the slice
-        //     re-checks against the CURRENT cap.
+        //    reaches these create-time validators; mirror them IN THE SAME ORDER
+        //    `createSignedOfferVault` runs them (Codex r2: a combined failure
+        //    must report the SAME first reason as the live revert), reusing the
+        //    live cfg / oracle / risk helpers. ──
+        // (a) Global offer-duration cap (OfferCreateFacet:744). The borrower
+        //     offer cleared this at ITS creation, but the cap may have been
+        //     lowered since, and the slice re-checks the CURRENT cap.
         if (cp.durationDays > LibVaipakam.cfgMaxOfferDurationDays()) {
             return _intentFail(res, IntentError.SliceDurationAboveCap);
         }
-        // (b) Periodic-cadence floor. The slice carries cadence `None`;
-        //     `_validatePeriodicCadence` mandates at least `Annual` on any
-        //     >365d term, so a None-cadence multi-year slice always reverts
-        //     `CadenceNotAllowed` — independent of liquidity/threshold.
+        // (b) Per-asset pause (OfferCreateFacet:767 — `requireAssetNotPaused`
+        //     on BOTH legs, before `_executeMatch`). Either paused leg fails the
+        //     materialize here, ahead of the match core / risk gate.
+        if (s.assetPaused[lendingAsset] || s.assetPaused[collateralAsset]) {
+            return _intentFail(res, IntentError.SlicePausedAsset);
+        }
+        // (c) Range-mode lender collateral floor (OfferCreateFacet:919, lender
+        //     branch). Runs BEFORE the cadence validator, and ONLY when range-
+        //     amount is on AND BOTH legs are classified `Liquid` (same gate as
+        //     the live path — Codex r2: don't apply it to a priced-but-illiquid
+        //     leg). `reqColl` (the intent-LTV-cap collateral) can sit below the
+        //     HF floor when the lender's `maxInitLtvBps` is more permissive.
+        if (s.protocolCfg.rangeAmountEnabled) {
+            bool bothLiquid =
+                OracleFacet(address(this)).checkLiquidity(lendingAsset)
+                    == LibVaipakam.LiquidityStatus.Liquid
+                && OracleFacet(address(this)).checkLiquidity(collateralAsset)
+                    == LibVaipakam.LiquidityStatus.Liquid;
+            if (bothLiquid) {
+                uint256 floorColl = LibRiskMath.minCollateralForLending(
+                    fillAmount, lendingAsset, collateralAsset
+                );
+                if (floorColl > 0 && reqColl < floorColl) {
+                    return _intentFail(res, IntentError.SliceCollateralBelowFloor);
+                }
+            }
+        }
+        // (d) Periodic-cadence floor (OfferCreateFacet:965, AFTER the collateral
+        //     floor). The slice carries cadence `None`; `_validatePeriodicCadence`
+        //     mandates at least `Annual` on any >365d term, so a None-cadence
+        //     multi-year slice always reverts `CadenceNotAllowed`.
         if (cp.durationDays > 365) {
             return _intentFail(res, IntentError.SliceMultiYearTerm);
-        }
-        // (c) Range-mode lender collateral floor (OfferCreateFacet lender
-        //     branch): when range-amount is enabled and the pair is priced,
-        //     the slice's collateral must clear the HF floor at the fill size.
-        //     `reqColl` is the intent-LTV-cap collateral, which can sit BELOW
-        //     the protocol HF floor when the lender's `maxInitLtvBps` is more
-        //     permissive than the standard floor.
-        if (s.protocolCfg.rangeAmountEnabled) {
-            uint256 floorColl = LibRiskMath.minCollateralForLending(
-                fillAmount, lendingAsset, collateralAsset
-            );
-            if (floorColl > 0 && reqColl < floorColl) {
-                return _intentFail(res, IntentError.SliceCollateralBelowFloor);
-            }
         }
 
         // ── Every intent + slice-create guard cleared. Synthesize the single-
