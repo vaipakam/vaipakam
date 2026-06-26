@@ -81,22 +81,31 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 1. **`getActiveLenderIntents(offset, limit) → LenderIntentSummary[]`** — requires backing
    storage the facet lacks today (intents are a non-enumerable `(owner, lend, coll)`
    mapping), so add an **enumerable set of active intent keys** maintained on
-   `setLenderIntent` (add) / `cancelLenderIntent` (remove). The DTO is a **lean** summary
-   (owner + pair + bounds + `lenderIntentLivePrincipal` + **available capital**
-   `lenderIntentCapital`) — including available capital is REQUIRED: an intent can be
-   funded-but-depleted, and a keeper that filters only on exposure would submit a fill
-   that reverts `IntentCapitalInsufficient`.
+   `setLenderIntent` (add) / `cancelLenderIntent` (remove). The DTO is a **lean** summary:
+   owner + pair + bounds + **`requiresKeeperAuth`** (the keeper must know to skip a gated
+   intent it can't fill) + `lenderIntentLivePrincipal` + **available capital**
+   `lenderIntentCapital` (REQUIRED — an intent can be funded-but-depleted, and a keeper
+   that filters only on exposure submits a fill that reverts `IntentCapitalInsufficient`).
 2. **`previewIntent(lender, lendingAsset, collateralAsset, counterpartyOfferId, fillAmount)
-   → MatchResult`** — a view that synthesizes the lender slice the way `matchIntent` would
-   and runs the `previewMatch` matrix against the counterparty, **plus EVERY intent-only
-   check `matchIntent` adds that `previewMatch` does NOT** (mirror them exhaustively):
-   `intent.active`, `fillAmount ≥ minFillAmount`, exposure room (`live + fillAmount ≤
-   maxExposure`), capital ≥ fillAmount, duration ≤ cap, the borrower's
-   `useFullTermInterest == true` AND `allowsPartialRepay == false` (`previewMatch` never
-   inspects these — it only runs the generic asset/amount/rate/collateral/HF matrix),
-   LTV-resolvable collateral, and the two kill-switches + aggregator-pause + VPFI-lending
-   block. A preview that mirrored only `previewMatch` would report Ok for a borrower offer
-   `matchIntent` rejects — defeating the dry-run.
+   → IntentPreviewResult`** — the dry-run for an intent fill. **Implementation principle
+   (load-bearing): reproduce the ACTUAL `matchIntent → _executeMatch` outcome by REUSING
+   the same check helpers, NOT by re-deriving a hand-maintained gate list.** `matchIntent`'s
+   success depends on a deep call stack — its own intent guards, then `_executeMatch` which
+   runs `previewMatch` AND reasserts `RiskAccessFacet.assertMatchAllowed` (the **#671
+   progressive-risk gate**), then `_materializeIntentSlice` → `createOffer` validations. A
+   gate list copied into a view will always drift from that stack; instead `previewIntent`
+   calls the same predicates the live path calls, and the binding guarantee is a test that
+   **`previewIntent` Ok ⟺ `matchIntent` would succeed** for identical inputs (incl. the
+   underfunded / depleted-capital / risk-gated / sub-minimum / full-term-required cases).
+   The gate **categories** it must cover (the test enforces completeness): intent bounds
+   (`active`, `minFillAmount`, exposure, capital, duration, LTV), the full-term/no-partial
+   borrower guards, the two kill-switches + aggregator/VPFI blocks, the **#671 risk-access
+   gate**, and the slice-`createOffer` validations.
+   - **Result type:** the existing `MatchResult` enum can't express intent-only failures
+     (underfunded capital, exposure exceeded, full-term-required, risk-gated, …), so
+     `previewIntent` returns an **extended `IntentPreviewResult`** = `MatchResult` + an
+     intent-failure reason code, so the keeper learns *why* a candidate is unfillable, not
+     just that the generic `previewMatch` matrix was Ok.
 3. **EIP-170 watch:** if `LenderIntentFacet` lacks headroom for the view(s), place the
    read views on the metrics facet that already hosts `getActiveOffersPaginated`, keeping
    only the enumerable-set maintenance on `LenderIntentFacet`. Facet-addition / selector /
@@ -126,10 +135,12 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
 6. **Auto-roll pass:** discover the lender's repaid intent loans via the per-loan
    `intentOrigin[loanId]` marker (set at fill) — there is no enumerable source today, so
    surface them through a new `getRollableIntentLoans`-style view OR an indexed
-   `OfferMatched`-derived intent-loan set — filter by **mirroring ALL of `rollIntentLoan`'s
-   guards** (else the roll reverts): `status == Repaid`, the intent still active,
-   `loan.lender == owner`, position NFT not sold (`ownerOf == owner`), no `heldForLender`
-   reservation, asset not paused, no post-match VPFI rotation — then call
+   `OfferMatched`-derived intent-loan set — filter by **reusing `rollIntentLoan`'s own
+   rollability predicate** (don't hand-copy a list that will drift); the categories are
+   `status == Repaid`, intent still active, `loan.lender == owner`, position NFT not sold
+   (`ownerOf == owner`), no `heldForLender` reservation, asset not paused, no post-match
+   VPFI rotation — and the binding guarantee is the same `discovery ⟹ roll succeeds`
+   agreement test as `previewIntent`. Then call
    `rollIntentLoan(loanId)` so the proceeds re-lien into `lenderIntentCapital` and the
    intent revolves. **Roll uses a DIFFERENT delegation:** `rollIntentLoan` requires the
    owner or a keeper authorized for `KEEPER_ACTION_AUTO_ROLL` (NOT `SIGNED_FILL` /
@@ -148,9 +159,16 @@ Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" runs this ordered seq
    intent never fills);
 4. `setAutoLendConsent(true)` **LAST**.
 
-Setting consent **last** matters because these are separate transactions: if any earlier
-step is rejected / cancelled, the consent flag never gets set, so it can't diverge from a
-not-actually-live intent (the r4 atomicity finding). "Turn off" reverses it:
+Setting consent **last** matters because these are separate transactions (the diamond has
+no single-tx "enable auto-lend"): if any earlier step is rejected / cancelled, the consent
+flag never gets set, so it can't diverge from a not-actually-live intent. But a partial
+success (e.g. intent registered + funded, then the user abandons before the grants/consent)
+still leaves a **half-configured** state, so the dapp must make the flow **resumable**: on
+load, read the on-chain state (intent active? funded? grants present? consent set?) and
+offer "resume / finish enabling" rather than assume a clean slate — every step is
+idempotent, so resuming just runs the missing ones. (If the diamond exposes a `multicall`,
+batching the calls into one tx is the cleaner end-state; absent that, resumable is the
+fallback.) "Turn off" reverses it:
 `cancelLenderIntent(...)` + withdraw capital + revoke the keeper grants +
 `setAutoLendConsent(false)`. `setAutoLendConsent` itself requires `cfgAutoLendEnabled` on.
 The registration UI surfaces the **market-rate widget** (already shipped) as the suggested
@@ -163,10 +181,11 @@ the dapp runs the register+fund flow; when OFF, no intent is auto-managed. Retir
 **fixed-duration `autoLendConsent`→post-offer** logic the old design implied. The
 unrelated auto-extend / auto-refinance keeper paths on `AutoLifecycleFacet` are untouched.
 
-**Note on the fill kill-switch:** `lenderIntentEnabled` (governance, default off) must be
-ON for any intent to fill — that's a deployment-level enablement, not a per-user dapp
-control. The dapp should reflect its state ("auto-lend fills are currently disabled by
-governance") rather than try to set it.
+**Note on the fill kill-switches:** BOTH `partialFillEnabled` AND `lenderIntentEnabled`
+(governance, both default off) must be ON for any intent to fill — `matchIntent` checks
+`partialFillEnabled` first. These are deployment-level enablements, not per-user dapp
+controls. The dapp should reflect their combined state ("auto-lend fills are currently
+disabled by governance") rather than try to set them.
 
 ---
 
