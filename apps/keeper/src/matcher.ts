@@ -1,11 +1,15 @@
 /**
- * apps/keeper — Range Orders Phase 1 matching pass.
+ * apps/keeper — Range Orders matching + #625 auto-lend intent-fill pass.
  *
  * A cron sibling to the autonomous liquidator (keeper.ts). Each tick,
  * per chain: scan the order book, evaluate plausible (lender × borrower)
  * pairs via the on-chain `previewMatch` view, and submit
  * `matchOffers(lenderId, borrowerId)` for every pair the preview
- * accepts — the keeper EOA earns the 1% LIF matcher kickback (see
+ * accepts; THEN run the #625 WI-2c auto-lend intent-fill pass — page the
+ * funded, active lender intents (`getActiveLenderIntents`), size a fill
+ * against the same hydrated borrower book, confirm it with `previewIntent`,
+ * and submit `matchIntent`. Both paths earn the keeper EOA the 1% LIF
+ * matcher kickback (see
  * `OfferFacet._acceptOffer` lender-asset path + `LibVPFIDiscount.*` VPFI
  * path). Ported from the public reference bot
  * (`vaipakam-keeper-bot/src/detectors/offerMatcher.ts`) into the Worker
@@ -43,6 +47,7 @@ import {
   OfferAcceptFacetABI,
   OfferCancelFacetABI,
   OfferMatchFacetABI,
+  RiskAccessFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
@@ -57,12 +62,16 @@ import {
 // split; `previewMatch` / `matchOffers` on OfferMatchFacet. Merge the
 // relevant facet ABIs so viem can resolve every selector against the
 // Diamond.
+// `getActiveLenderIntents` lives on MetricsFacet; `previewIntent` on
+// RiskAccessFacet; `matchIntent` on OfferMatchFacet — added for the #625
+// WI-2c auto-lend intent-fill pass alongside the Range-Orders selectors.
 const MATCHER_ABI: Abi = [
   ...(MetricsFacetABI as Abi),
   ...(OfferCreateFacetABI as Abi),
   ...(OfferAcceptFacetABI as Abi),
   ...(OfferCancelFacetABI as Abi),
   ...(OfferMatchFacetABI as Abi),
+  ...(RiskAccessFacetABI as Abi),
 ];
 
 /** Pagination size for `getActiveOffersPaginated`. */
@@ -118,6 +127,16 @@ interface OfferLite {
   lendingAsset: Address;
   collateralAsset: Address;
   durationDays: bigint;
+  // #625 WI-2c — borrower-side fields the auto-lend intent-fill pass needs to
+  // pre-size a fill + pre-filter on the WI-3 guards before paying for a
+  // `previewIntent` eth_call. (Carried on every offer; only read for borrowers.)
+  amount: bigint; // min fill (single-value lower bound)
+  amountMax: bigint; // max fill ceiling
+  amountFilled: bigint; // already consumed
+  interestRateBpsMax: bigint; // borrower's rate ceiling (rate-overlap pre-filter)
+  fillMode: number; // 0 = Partial, 1 = Aon
+  useFullTermInterest: boolean; // intent fills require this true
+  allowsPartialRepay: boolean; // intent fills require this false
 }
 
 interface MatchPreview {
@@ -131,6 +150,63 @@ interface MatchPreview {
 /** Throttles the `FunctionDisabled(3)` kill-switch log to once per
  *  chain per warm isolate. */
 const killSwitchLogged = new Map<number, boolean>();
+
+// ═══════════════════════════════════════════════════════════════════════
+// #625 WI-2c — auto-lend intent-fill pass
+//
+// Alongside the Range-Orders matcher, each tick also scans the funded,
+// active LENDER INTENTS (`getActiveLenderIntents`, the WI-2a discovery feed)
+// and, for each, looks across the already-hydrated borrower book for a fillable
+// counterparty. The keeper sizes the fill from the intent's + borrower's
+// bounds, confirms it with the gas-free `previewIntent` view (WI-2b — the SAME
+// predicates `matchIntent` runs), and only then submits `matchIntent`. The
+// keeper EOA is the solver, so it earns the 1% LIF matcher kickback exactly as
+// on the `matchOffers` path. A `requiresKeeperAuth` intent is skipped unless
+// the keeper holds the lender's `KEEPER_ACTION_SIGNED_FILL` delegation — the
+// `previewIntent` `KeeperUnauthorized` code surfaces that without a revert.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Pagination size for `getActiveLenderIntents`. */
+const INTENT_SCAN_PAGE = 100n;
+
+/** Per-tick cap on `previewIntent` eth_calls (intent × borrower candidates). */
+const MAX_INTENT_PREVIEW_CALLS_PER_TICK = 1000;
+
+/** Per-tick cap on `matchIntent` submissions. */
+const MAX_INTENT_SUBMITS_PER_TICK = 15;
+
+/** `LibVaipakam.FillMode.Aon`. */
+const FILL_MODE_AON = 1;
+
+/** `LibOfferMatch.IntentError.Ok` / `IntentPreviewResult.ok` gate. */
+const INTENT_OK = 0;
+
+/** One row of `MetricsFacet.getActiveLenderIntents` (`LenderIntentSummary`). */
+interface LenderIntentSummary {
+  owner: Address;
+  lendingAsset: Address;
+  collateralAsset: Address;
+  maxExposure: bigint;
+  minRateBps: bigint;
+  maxInitLtvBps: number;
+  maxDurationDays: number;
+  minFillAmount: bigint;
+  requiresKeeperAuth: boolean;
+  livePrincipal: bigint;
+  availableCapital: bigint;
+}
+
+/** `RiskAccessFacet.previewIntent` → `LibOfferMatch.IntentPreviewResult`. */
+interface IntentPreview {
+  ok: boolean;
+  intentError: number;
+  matchError: number;
+  riskBlock: number;
+  matchAmount: bigint;
+  matchRateBps: bigint;
+  reqCollateral: bigint;
+  availableCapital: bigint;
+}
 
 function bucketKey(o: OfferLite): string {
   return [
@@ -153,6 +229,13 @@ function liftOffer(raw: Record<string, unknown>): OfferLite {
     lendingAsset: raw['lendingAsset'] as Address,
     collateralAsset: raw['collateralAsset'] as Address,
     durationDays: BigInt(raw['durationDays'] as bigint | number),
+    amount: BigInt(raw['amount'] as bigint | number),
+    amountMax: BigInt(raw['amountMax'] as bigint | number),
+    amountFilled: BigInt(raw['amountFilled'] as bigint | number),
+    interestRateBpsMax: BigInt(raw['interestRateBpsMax'] as bigint | number),
+    fillMode: Number(raw['fillMode']),
+    useFullTermInterest: Boolean(raw['useFullTermInterest']),
+    allowsPartialRepay: Boolean(raw['allowsPartialRepay']),
   };
 }
 
@@ -359,6 +442,252 @@ async function submitMatch(
   return true;
 }
 
+// ─── #625 WI-2c intent-fill helpers ────────────────────────────────────────
+
+function liftIntent(raw: Record<string, unknown>): LenderIntentSummary {
+  return {
+    owner: raw['owner'] as Address,
+    lendingAsset: raw['lendingAsset'] as Address,
+    collateralAsset: raw['collateralAsset'] as Address,
+    maxExposure: BigInt(raw['maxExposure'] as bigint | number),
+    minRateBps: BigInt(raw['minRateBps'] as bigint | number),
+    maxInitLtvBps: Number(raw['maxInitLtvBps']),
+    maxDurationDays: Number(raw['maxDurationDays']),
+    minFillAmount: BigInt(raw['minFillAmount'] as bigint | number),
+    requiresKeeperAuth: Boolean(raw['requiresKeeperAuth']),
+    livePrincipal: BigInt(raw['livePrincipal'] as bigint | number),
+    availableCapital: BigInt(raw['availableCapital'] as bigint | number),
+  };
+}
+
+async function listActiveIntents(
+  ctx: KeeperContext,
+): Promise<LenderIntentSummary[]> {
+  const out: LenderIntentSummary[] = [];
+  let total: bigint | null = null;
+  for (
+    let offset = 0n;
+    total === null || offset < total;
+    offset += INTENT_SCAN_PAGE
+  ) {
+    try {
+      const res = (await ctx.client.readContract({
+        address: ctx.diamond,
+        abi: MATCHER_ABI,
+        functionName: 'getActiveLenderIntents',
+        args: [offset, INTENT_SCAN_PAGE],
+      })) as readonly [readonly Record<string, unknown>[], bigint];
+      const [rows, t] = res;
+      total = t;
+      for (const r of rows) out.push(liftIntent(r));
+      if (rows.length < Number(INTENT_SCAN_PAGE)) break;
+    } catch (err) {
+      console.error(
+        `[matcher] chain=${ctx.chainId} getActiveLenderIntents offset=${Number(offset)} failed: ${String(err).slice(0, 200)}`,
+      );
+      break;
+    }
+  }
+  return out;
+}
+
+async function previewIntent(
+  ctx: KeeperContext,
+  solver: Address,
+  intent: LenderIntentSummary,
+  borrowerId: bigint,
+  fillAmount: bigint,
+): Promise<IntentPreview | null> {
+  try {
+    const raw = (await ctx.client.readContract({
+      address: ctx.diamond,
+      abi: MATCHER_ABI,
+      functionName: 'previewIntent',
+      args: [
+        solver,
+        intent.owner,
+        intent.lendingAsset,
+        intent.collateralAsset,
+        borrowerId,
+        fillAmount,
+      ],
+    })) as Record<string, unknown>;
+    return {
+      ok: Boolean(raw['ok']),
+      intentError: Number(raw['intentError']),
+      matchError: Number(raw['matchError']),
+      riskBlock: Number(raw['riskBlock']),
+      matchAmount: BigInt(raw['matchAmount'] as bigint | number),
+      matchRateBps: BigInt(raw['matchRateBps'] as bigint | number),
+      reqCollateral: BigInt(raw['reqCollateral'] as bigint | number),
+      availableCapital: BigInt(raw['availableCapital'] as bigint | number),
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function submitIntentFill(
+  ctx: KeeperContext,
+  intent: LenderIntentSummary,
+  borrowerId: bigint,
+  fillAmount: bigint,
+  preview: IntentPreview,
+): Promise<boolean> {
+  const account = ctx.wallet.account;
+  if (!account) return false;
+  let hash: Hex;
+  try {
+    hash = await ctx.wallet.writeContract({
+      address: ctx.diamond,
+      abi: MATCHER_ABI,
+      functionName: 'matchIntent',
+      args: [
+        intent.owner,
+        intent.lendingAsset,
+        intent.collateralAsset,
+        borrowerId,
+        fillAmount,
+      ],
+      account,
+      chain: ctx.wallet.chain,
+    });
+  } catch (err) {
+    const errStr = String(err);
+    // partialFillEnabled (3) or lenderIntentEnabled (4) master flag off.
+    if (errStr.includes('FunctionDisabled')) {
+      if (!killSwitchLogged.get(ctx.chainId)) {
+        console.log(
+          `[matcher] chain=${ctx.chainId} intent-fill disabled: a master flag (partialFill/lenderIntent) is off; retrying every tick`,
+        );
+        killSwitchLogged.set(ctx.chainId, true);
+      }
+    } else {
+      console.log(
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} broadcast failed: ${errStr.slice(0, 200)}`,
+      );
+    }
+    return false;
+  }
+  try {
+    const receipt = await ctx.client.waitForTransactionReceipt({
+      hash,
+      timeout: 30_000,
+    });
+    if (receipt.status !== 'success') {
+      console.log(
+        `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} reverted on-chain tx=${hash}`,
+      );
+      return false;
+    }
+  } catch (err) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} matchIntent lender=${intent.owner} borrower=${Number(borrowerId)} receipt wait failed tx=${hash}: ${String(err).slice(0, 200)}`,
+    );
+    return false;
+  }
+  console.log(
+    `[matcher] chain=${ctx.chainId} intent-filled lender=${intent.owner} borrower=${Number(borrowerId)} tx=${hash} amount=${fillAmount.toString()} rateBps=${Number(preview.matchRateBps)}`,
+  );
+  return true;
+}
+
+/**
+ * Size the fill for an (intent, borrower) pair from BOTH sides' bounds, or
+ * null when no legal amount exists. Mirrors `matchIntent`'s reserve accounting:
+ *   lo = max(intent dust floor, borrower min);
+ *   hi = min(remaining exposure headroom, un-lent funded capital, borrower
+ *           remaining capacity).
+ * A non-AON fill deploys the most capital the window allows (`hi`); an AON
+ * borrower pins the fill to its full `amount` (admits exactly one fill).
+ */
+function sizeIntentFill(
+  intent: LenderIntentSummary,
+  b: OfferLite,
+): bigint | null {
+  const exposureHeadroom =
+    intent.maxExposure > intent.livePrincipal
+      ? intent.maxExposure - intent.livePrincipal
+      : 0n;
+  const borrowerRemaining =
+    b.amountMax > b.amountFilled ? b.amountMax - b.amountFilled : 0n;
+  const lo = intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
+  let hi =
+    exposureHeadroom < intent.availableCapital
+      ? exposureHeadroom
+      : intent.availableCapital;
+  if (borrowerRemaining < hi) hi = borrowerRemaining;
+  if (hi === 0n || hi < lo) return null;
+  if (b.fillMode === FILL_MODE_AON) {
+    return b.amount >= lo && b.amount <= hi ? b.amount : null;
+  }
+  return hi;
+}
+
+/**
+ * Auto-lend intent-fill pass: for each funded, active lender intent, scan the
+ * already-hydrated borrower book for a fillable counterparty, confirm with the
+ * gas-free `previewIntent` view, and submit `matchIntent`. Bounded by the
+ * per-tick caps + the shared per-chain wall-time budget.
+ */
+async function runIntentFillPass(
+  ctx: KeeperContext,
+  borrowers: readonly OfferLite[],
+  overBudget: () => boolean,
+): Promise<void> {
+  const solver = ctx.wallet.account?.address;
+  if (!solver) return;
+  const intents = await listActiveIntents(ctx);
+  if (intents.length === 0 || borrowers.length === 0) return;
+
+  let previews = 0;
+  let submits = 0;
+  for (const intent of intents) {
+    if (overBudget() || submits >= MAX_INTENT_SUBMITS_PER_TICK) break;
+    for (const b of borrowers) {
+      if (
+        previews >= MAX_INTENT_PREVIEW_CALLS_PER_TICK ||
+        submits >= MAX_INTENT_SUBMITS_PER_TICK ||
+        overBudget()
+      ) {
+        break;
+      }
+      // Cheap client-side pre-filter (cuts previewIntent eth_calls) — the
+      // continuity + WI-3 + rate-overlap conditions `matchIntent` enforces.
+      if (
+        b.lendingAsset.toLowerCase() !== intent.lendingAsset.toLowerCase() ||
+        b.collateralAsset.toLowerCase() !==
+          intent.collateralAsset.toLowerCase() ||
+        b.creator.toLowerCase() === intent.owner.toLowerCase() || // self-trade
+        Number(b.durationDays) > intent.maxDurationDays ||
+        !b.useFullTermInterest ||
+        b.allowsPartialRepay ||
+        intent.minRateBps > b.interestRateBpsMax // rate overlap
+      ) {
+        continue;
+      }
+      const fillAmount = sizeIntentFill(intent, b);
+      if (fillAmount === null) continue;
+
+      previews += 1;
+      const preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
+      // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
+      if (!preview || !preview.ok) continue;
+
+      submits += 1;
+      const filled = await submitIntentFill(ctx, intent, b.id, fillAmount, preview);
+      // A successful fill moved this intent's exposure + capital; stop scanning
+      // borrowers for it this tick and re-evaluate against fresh state next tick.
+      if (filled) break;
+    }
+  }
+  if (submits > 0) {
+    console.log(
+      `[matcher] chain=${ctx.chainId} intent-fill pass: ${submits} fill(s) across ${intents.length} active intent(s) (${previews} preview(s))`,
+    );
+  }
+}
+
 /** One pass over a chain's order book. */
 async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
   const ids = await listActiveOfferIds(ctx);
@@ -470,6 +799,18 @@ async function runOfferMatcherTickForChain(ctx: KeeperContext): Promise<void> {
         break;
       }
     }
+  }
+
+  // #625 WI-2c — auto-lend intent-fill pass. Reuses the hydrated borrower book
+  // + the same per-chain wall-time budget. Runs AFTER the Range-Orders
+  // matchOffers loop so an explicit lender-offer match is preferred when both
+  // an offer and an intent could fill the same borrower.
+  if (!overBudget() && borrowers.size > 0) {
+    const allBorrowers: OfferLite[] = [];
+    for (const list of borrowers.values()) {
+      for (const b of list) allBorrowers.push(b);
+    }
+    await runIntentFillPass(ctx, allBorrowers, overBudget);
   }
 
   if (submits > 0 || previewCalls > 0) {
