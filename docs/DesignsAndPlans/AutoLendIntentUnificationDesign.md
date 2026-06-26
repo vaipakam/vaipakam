@@ -147,30 +147,52 @@ change ⇒ no ABI/selector change. **Phase 1, independently shippable.**
    `requiresKeeperAuth`). Without this pass, repaid capital sits idle as free balance and
    "revolving" never materialises.
 
-### WI-1 — dapp auto-lend opt-in: register + **fund** a `LenderIntent`
-Repoint `AutoLifecycleSettingsCard` so "turn on auto-lend" runs this ordered sequence:
-1. `setLenderIntent(...)` (bounds + one-time risk/terms consent);
-2. `fundLenderIntent(...)` (a registered-but-unfunded intent never fills — load-bearing,
-   not optional);
-3. **grant the keeper the delegations the automation needs** — `KEEPER_ACTION_AUTO_ROLL`
-   (so the keeper can roll repaid loans; `rollIntentLoan` rejects any non-owner caller
-   without it), AND `KEEPER_ACTION_SIGNED_FILL` **iff** the lender chose a keeper-gated
-   (`requiresKeeperAuth == true`) intent (else the keeper correctly skips it and a gated
-   intent never fills);
-4. `setAutoLendConsent(true)` **LAST**.
+**WI-2 build checklist (design-review-sourced — verify each in code + the agreement tests):**
+- **`previewIntent` takes the prospective SOLVER** as a parameter: `matchIntent` auth is
+  `msg.sender`-sensitive (`requireKeeperForPrincipal` reads the caller) for keeper-gated
+  intents, so a generic preview that ignores the solver mis-predicts those.
+- **Preview parity includes `whenNotPaused` + sanctions screening** of BOTH `msg.sender`
+  (solver) and the lender — `matchIntent` runs these before any intent gate.
+- **Extract a NON-MUTATING create-offer validation helper:** `previewIntent` can't literally
+  call `_materializeIntentSlice → createSignedOfferVault` (it mutates state), so factor the
+  slice-`createOffer` validation into a pure/view helper shared by the live path and the
+  preview — the way to "reuse" without re-deriving.
+- **Keeper-gate filter also honours the GLOBAL keeper opt-in**, not just the per-action
+  `SIGNED_FILL` grant — `requireKeeperForPrincipal` checks both.
+- **Roll discovery uses a dedicated `IntentMatched` event, not `OfferMatched`:** the latter
+  fires for every match and its lender id is the *transient slice*; emit (add if absent) an
+  `IntentMatched(loanId, owner, …)` so the indexer can key the intent-loan set correctly.
+- **Roll parity also mirrors `lenderProceedsEncumbered[loanId] == 0`** (a distinct guard from
+  `heldForLender`).
+The `preview ⟺ matchIntent` and `discovery ⟹ roll` agreement tests are what actually
+guarantee this checklist is complete; the list is the starting set, not a substitute.
 
-Setting consent **last** matters because these are separate transactions (the diamond has
-no single-tx "enable auto-lend"): if any earlier step is rejected / cancelled, the consent
-flag never gets set, so it can't diverge from a not-actually-live intent. But a partial
-success (e.g. intent registered + funded, then the user abandons before the grants/consent)
-still leaves a **half-configured** state, so the dapp must make the flow **resumable**: on
-load, read the on-chain state (intent active? funded? grants present? consent set?) and
-offer "resume / finish enabling" rather than assume a clean slate — every step is
-idempotent, so resuming just runs the missing ones. (If the diamond exposes a `multicall`,
-batching the calls into one tx is the cleaner end-state; absent that, resumable is the
-fallback.) "Turn off" reverses it:
-`cancelLenderIntent(...)` + withdraw capital + revoke the keeper grants +
-`setAutoLendConsent(false)`. `setAutoLendConsent` itself requires `cfgAutoLendEnabled` on.
+### WI-1 — dapp auto-lend opt-in: register + **fund** a `LenderIntent`
+**`autoLendConsent` is a dapp-side marker, NOT an on-chain fill gate** — the keeper scans
+ACTIVE intents and fills any that is active **+ funded**; `matchIntent` never reads
+`autoLendConsent`. The lender's on-chain commitment is `setLenderIntent`-with-
+`riskAndTermsConsent` + funding. So the enable sequence puts **funding LAST**, because
+funding is the step that makes the intent *fillable* — that way the fillable moment
+coincides with a fully-configured intent and there is no window where a keeper fills a
+half-configured one:
+1. `setLenderIntent(...)` (bounds + the one-time risk/terms consent). Active but
+   **unfunded ⇒ not yet fillable**.
+2. **grant the keeper delegations** — `KEEPER_ACTION_AUTO_ROLL` (so the keeper can roll
+   repaid loans; `rollIntentLoan` rejects a non-owner caller without it), AND
+   `KEEPER_ACTION_SIGNED_FILL` **iff** the lender chose a keeper-gated
+   (`requiresKeeperAuth == true`) intent (else the keeper correctly skips it).
+3. `setAutoLendConsent(true)` (the dapp marker; requires `cfgAutoLendEnabled` on).
+4. `fundLenderIntent(...)` **LAST** — the intent becomes fillable only now, with every
+   other step already in place.
+
+The flow is multi-tx (the diamond has no single-tx "enable auto-lend"), so the dapp must be
+**resumable**: on load, read the on-chain state (intent active? grants present? consent set?
+funded?) and offer "resume / finish enabling" rather than assume a clean slate — every step
+is idempotent and funding stays final. (A diamond `multicall`, if exposed, is the cleaner
+end-state.) "Turn off" reverses it: `cancelLenderIntent(...)` + withdraw capital + revoke
+**only the auto-lend keeper action bits** (the keeper whitelist is a bitmask per
+`(user, keeper)` — preserve unrelated grants) + `setAutoLendConsent(false)` (which works
+even when `cfgAutoLendEnabled` is OFF — the flag gates only ENABLING consent, not revoking).
 The registration UI surfaces the **market-rate widget** (already shipped) as the suggested
 `minRateBps` floor so a passive lender doesn't underprice (O4).
 
