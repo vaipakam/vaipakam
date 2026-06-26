@@ -10,6 +10,7 @@ import {LibPausable} from "../libraries/LibPausable.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
+import {EnumerableSet} from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 
 /**
  * @title MetricsFacet
@@ -49,6 +50,8 @@ import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IER
  *      governance has configured (USD by post-deploy default).
  */
 contract MetricsFacet {
+    using EnumerableSet for EnumerableSet.Bytes32Set;
+
     uint256 private constant NUMERAIRE_SCALE = 1e18;
 
     // ─── 1. Protocol-Wide Metrics ───────────────────────────────────────────
@@ -1023,6 +1026,52 @@ contract MetricsFacet {
         offers = new LibMetricsTypes.OfferSummary[](size);
         for (uint256 i = 0; i < size; i++) {
             offers[i] = LibMetricsTypes.toOfferSummary(s.offers[src[offset + i]]);
+        }
+    }
+
+    /// @notice #625 WI-2a — paginated ACTIVE lender intents: the discovery source the
+    ///         keeper's intent-fill pass pages each tick instead of indexing
+    ///         `LenderIntentSet`/`Cancelled` events. Pages the `activeIntentKeys`
+    ///         enumerable set (cancelled intents drop out), resolving each to a lean
+    ///         {LibMetricsTypes.LenderIntentSummary} — the bounds + `requiresKeeperAuth`
+    ///         (so the keeper skips an intent it isn't delegated to fill) + the two sizing
+    ///         figures: `livePrincipal` (exposure already out) and `availableCapital` (the
+    ///         un-lent, liened pool a fill draws from; a fill exceeding it reverts
+    ///         `IntentCapitalInsufficient`).
+    /// @dev    The set is swap-pop unstable across cancellations, so page over a single
+    ///         block's snapshot. O(limit) reads.
+    /// @return intents Page of active-intent summaries.
+    /// @return total   Count of active intents at this block.
+    function getActiveLenderIntents(uint256 offset, uint256 limit)
+        external
+        view
+        returns (
+            LibMetricsTypes.LenderIntentSummary[] memory intents,
+            uint256 total
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        total = s.activeIntentKeys.length();
+        if (offset >= total) {
+            return (new LibMetricsTypes.LenderIntentSummary[](0), total);
+        }
+        uint256 endExcl = offset + limit;
+        if (endExcl > total) endExcl = total;
+        uint256 size = endExcl - offset;
+        intents = new LibMetricsTypes.LenderIntentSummary[](size);
+        for (uint256 i = 0; i < size; i++) {
+            LibVaipakam.IntentKey memory key =
+                s.intentKeyTuple[s.activeIntentKeys.at(offset + i)];
+            intents[i] = LibMetricsTypes.toLenderIntentSummary(
+                key,
+                s.lenderIntent[key.owner][key.lendingAsset][key.collateralAsset],
+                s.lenderIntentLivePrincipal[key.owner][key.lendingAsset][
+                    key.collateralAsset
+                ],
+                s.lenderIntentCapital[key.owner][key.lendingAsset][
+                    key.collateralAsset
+                ]
+            );
         }
     }
 

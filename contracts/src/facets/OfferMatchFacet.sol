@@ -457,6 +457,9 @@ contract OfferMatchFacet is DiamondReentrancyGuard, DiamondPausable {
         LibEncumbrance.unlienIntentCapital(
             lender, lendingAsset, collateralAsset, fillAmount
         );
+        // #625 WI-2a — the draw-down may have depleted the intent's funded capital ⇒
+        // re-sync the discovery registry (de-lists it from the keeper feed if now 0).
+        LibVaipakam.syncIntentRegistry(lender, lendingAsset, collateralAsset);
 
         // Materialize the single-fill lender slice (creator = lender; consumes
         // the just-freed slice from the lender's vault + creates the

@@ -246,6 +246,12 @@ contract LenderIntentFacet is
             requiresKeeperAuth: requiresKeeperAuth
         });
 
+        // #625 WI-2a — sync the discovery registry. A bare registration commits NO
+        // capital, so it does NOT enter the keeper feed until funded — gating set
+        // membership on funded capital blocks arbitrary zero-capital registrations
+        // from bloating the global feed (Codex WI-2a r1).
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
+
         emit LenderIntentSet(
             msg.sender,
             lendingAsset,
@@ -274,6 +280,8 @@ contract LenderIntentFacet is
             s.lenderIntent[msg.sender][lendingAsset][collateralAsset];
         if (!intent.active) revert LenderIntentNotActive();
         intent.active = false;
+        // #625 WI-2a — now inactive ⇒ drop it from the discovery registry.
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentCancelled(msg.sender, lendingAsset, collateralAsset);
     }
 
@@ -344,6 +352,8 @@ contract LenderIntentFacet is
         LibEncumbrance.lienIntentCapital(
             msg.sender, lendingAsset, collateralAsset, amount
         );
+        // #625 WI-2a — funded ⇒ the intent is now fillable; (re)list it in the feed.
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentFunded(
             msg.sender,
             lendingAsset,
@@ -413,6 +423,8 @@ contract LenderIntentFacet is
             msg.sender,
             amount
         );
+        // #625 WI-2a — capital may now be 0 ⇒ de-list the intent if depleted.
+        LibVaipakam.syncIntentRegistry(msg.sender, lendingAsset, collateralAsset);
         emit LenderIntentCapitalWithdrawn(
             msg.sender,
             lendingAsset,
@@ -616,6 +628,8 @@ contract LenderIntentFacet is
         LibEncumbrance.lienIntentCapital(
             io.owner, io.lendingAsset, io.collateralAsset, rolledAmount
         );
+        // #625 WI-2a — re-lien re-funds the owner's intent ⇒ (re)list it (if active).
+        LibVaipakam.syncIntentRegistry(io.owner, io.lendingAsset, io.collateralAsset);
 
         // Release the loan's live-principal exposure (the ORIGINAL fill amount)
         // and clear the per-loan origin marker — the same decrement

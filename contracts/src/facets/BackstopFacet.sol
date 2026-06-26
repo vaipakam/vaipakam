@@ -280,6 +280,10 @@ contract BackstopFacet is
         IERC20(lend).safeTransfer(proxy, amount);
         LibVaipakam.recordVaultDeposit(vault, lend, amount);
         LibEncumbrance.lienIntentCapital(vault, lend, coll, amount);
+        // #625 WI-2a — the backstop seeds intent capital DIRECTLY (not via
+        // `fundLenderIntent`), so sync the discovery registry here too — else the
+        // backstop's funded intent would never appear in the keeper feed.
+        LibVaipakam.syncIntentRegistry(vault, lend, coll);
         emit BackstopSeeded(lend, coll, amount);
     }
 

@@ -55,6 +55,8 @@ import {ISanctionsList} from "../interfaces/ISanctionsList.sol";
  *      rounding down is actively dangerous (none currently).
  */
 library LibVaipakam {
+    using EnumerableSet for EnumerableSet.Bytes32Set; // #625 WI-2a — intent registry
+
     /// @dev ERC-7201 namespaced storage slot for Vaipakam's global state.
     ///      Derived from: keccak256(abi.encode(uint256(keccak256("vaipakam.storage")) - 1)) & ~bytes32(uint256(0xff))
     ///      The `-1` and `& ~0xff` guard against collisions with Solidity's standard
@@ -1208,6 +1210,69 @@ library LibVaipakam {
         uint32 maxDurationDays; // longest loan term the lender will accept
         uint256 minFillAmount; // smallest slice a solver may fill (dust floor; > 0)
         bool requiresKeeperAuth; // true ⇒ only an opted-in solver may fill (v1-c gate)
+    }
+
+    /// @dev #625 WI-2a — the (owner, lendingAsset, collateralAsset) triple that keys a
+    ///      `LenderIntent`, stored so the `activeIntentKeys` enumerable set can be resolved
+    ///      back to a concrete intent by `getActiveLenderIntents`.
+    struct IntentKey {
+        address owner;
+        address lendingAsset;
+        address collateralAsset;
+    }
+
+    /// @dev #625 WI-2a — canonical key hash for the active-intent registry. The ONE place
+    ///      the (owner, lend, coll) → bytes32 mapping is defined, so the maintenance sites
+    ///      (`setLenderIntent` add / `cancelLenderIntent` remove) and the read view can
+    ///      never disagree on the key.
+    function intentKeyHash(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encode(owner, lendingAsset, collateralAsset));
+    }
+
+    /// @dev #625 WI-2a — keep the active-intent discovery registry
+    ///      (`getActiveLenderIntents`) in sync with an intent's (active, funded) state.
+    ///      The feed advertises ONLY intents that are active AND have funded capital, so
+    ///      (a) a keeper never pages a zero-capital row, and (b) a bare zero-capital
+    ///      registration can't bloat the global feed — entering it costs committed
+    ///      capital. SHARED in this library (not a facet-private helper) so EVERY
+    ///      `(active | capital)` transition can call it: `setLenderIntent` /
+    ///      `cancelLenderIntent` / `fundLenderIntent` / `withdrawLenderIntentCapital` /
+    ///      `rollIntentLoan` (LenderIntentFacet), `matchIntent` (OfferMatchFacet, the
+    ///      fill draw-down), and the backstop's direct seeding (BackstopFacet). Call it
+    ///      after EVERY `lienIntentCapital` / `unlienIntentCapital` / active flip;
+    ///      idempotent (add/remove are no-ops when membership already matches).
+    function syncIntentRegistry(
+        address owner,
+        address lendingAsset,
+        address collateralAsset
+    ) internal {
+        Storage storage s = storageSlot();
+        LenderIntent storage intent =
+            s.lenderIntent[owner][lendingAsset][collateralAsset];
+        bytes32 ik = intentKeyHash(owner, lendingAsset, collateralAsset);
+        // List ONLY if active AND funded enough for at least one VALID fill: a fill
+        // must be >= minFillAmount AND <= available capital, so available capital below
+        // `minFillAmount` means no fill is possible — don't advertise an unfillable
+        // intent (Codex WI-2a r3).
+        if (
+            intent.active
+                && s.lenderIntentCapital[owner][lendingAsset][collateralAsset]
+                    >= intent.minFillAmount
+        ) {
+            if (s.activeIntentKeys.add(ik)) {
+                s.intentKeyTuple[ik] = IntentKey({
+                    owner: owner,
+                    lendingAsset: lendingAsset,
+                    collateralAsset: collateralAsset
+                });
+            }
+        } else {
+            s.activeIntentKeys.remove(ik);
+        }
     }
 
     /// @dev Struct to store parameters of createOffer function, avoiding stack-too-deep.
@@ -4481,6 +4546,15 @@ library LibVaipakam {
         // again once A is re-published. `revealRiskTermsBump` rejects any hash
         // already marked here.
         mapping(bytes32 => bool) riskTermsHashUsed;
+        // #625 WI-2a — enumerable registry of ACTIVE lender intents, so a keeper can
+        // page them (`getActiveLenderIntents`) instead of needing an off-chain index of
+        // `LenderIntentSet`/`Cancelled` events. `activeIntentKeys` holds the
+        // `intentKeyHash(owner, lend, coll)` of every currently-active intent (added on
+        // `setLenderIntent`, removed on `cancelLenderIntent`); `intentKeyTuple` resolves a
+        // key hash back to its (owner, lend, coll) so the view can read the concrete
+        // intent + its live-principal + funded capital.
+        EnumerableSet.Bytes32Set activeIntentKeys;
+        mapping(bytes32 => IntentKey) intentKeyTuple;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,

@@ -10,7 +10,9 @@ import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {LibMetricsTypes} from "../src/libraries/LibMetricsTypes.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -193,6 +195,29 @@ contract LenderIntentMatchTest is SetupTest {
         // either the guard or the inheritance copy.
         assertTrue(loan.useFullTermInterest, "intent loan is full-term");
         assertFalse(loan.allowsPartialRepay, "intent loan disallows partial repay");
+    }
+
+    /// @dev #625 WI-2a — a fill that depletes the intent's funded capital re-syncs the
+    ///      discovery registry, so `getActiveLenderIntents` stops advertising it (the
+    ///      keeper can't fill a zero-capital intent). Pins the matchIntent sync site.
+    function test_matchIntent_depletionDelistsFromDiscoveryFeed() public {
+        _setIntent(MAX_EXPOSURE);
+        _fundIntent(PRINCIPAL);
+        (, uint256 listedBefore) =
+            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        assertEq(listedBefore, 1, "funded intent is listed in the feed");
+
+        address b = _newBorrower("bdep");
+        uint256 cp = _postBorrower(b, PRINCIPAL, 2 * PRINCIPAL);
+        vm.prank(solver);
+        OfferMatchFacet(address(diamond)).matchIntent(
+            lender, mockERC20, mockCollateralERC20, cp, PRINCIPAL
+        );
+
+        assertEq(_intentCapital(), 0, "fill depleted the funded capital");
+        (, uint256 listedAfter) =
+            MetricsFacet(address(diamond)).getActiveLenderIntents(0, 10);
+        assertEq(listedAfter, 0, "depleted intent de-listed (matchIntent re-sync)");
     }
 
     // ─── 2. Exposure cap across simultaneous fills ──────────────────────────
