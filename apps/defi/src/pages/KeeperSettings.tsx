@@ -115,6 +115,10 @@ export default function KeeperSettings() {
   const [optIn, setOptIn] = useState<boolean>(false);
   const [keepers, setKeepers] = useState<string[]>([]);
   const [actionsByKeeper, setActionsByKeeper] = useState<Record<string, number>>({});
+  // Keepers (lowercased) whose action mask couldn't be read this refresh —
+  // editing is disabled for them so a transient failure can't overwrite
+  // real permissions with a synthesized default (#625).
+  const [unreadableKeepers, setUnreadableKeepers] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [draftActions, setDraftActions] = useState<number>(DEFAULT_KEEPER_ACTIONS);
   const [editingKeeper, setEditingKeeper] = useState<string | null>(null);
@@ -158,6 +162,7 @@ export default function KeeperSettings() {
     }
     if (!missing && list.length > 0) {
       const bits: Record<string, number> = {};
+      const unreadable: string[] = [];
       for (const k of list) {
         try {
           const raw = await (
@@ -167,18 +172,21 @@ export default function KeeperSettings() {
           ).getKeeperActions(address, k);
           bits[k.toLowerCase()] = Number(raw);
         } catch {
-          // Fallback for an unreadable entry: default to the loan-
-          // management bits only — NOT the capital-deployment auto-lend
-          // bits (#625). Over-showing SIGNED_FILL/AUTO_ROLL here would let
-          // a transient read failure pre-tick those sensitive bits in the
-          // edit form, granting them on save. The on-chain call tells the
-          // truth at action time either way.
-          bits[k.toLowerCase()] = DEFAULT_KEEPER_ACTIONS;
+          // Unreadable entry (#625): do NOT synthesize a writable mask.
+          // A fallback like DEFAULT_KEEPER_ACTIONS would let the user open
+          // the edit form and Save, REPLACING the keeper's real (unread)
+          // permissions — e.g. an auto-lend keeper holding only
+          // SIGNED_FILL/AUTO_ROLL would be rewritten to loan-management
+          // bits it was never granted. Instead mark it unreadable and
+          // disable editing until a successful re-read.
+          unreadable.push(k.toLowerCase());
         }
       }
       setActionsByKeeper(bits);
+      setUnreadableKeepers(unreadable);
     } else {
       setActionsByKeeper({});
+      setUnreadableKeepers([]);
     }
     if (missing) {
       setSupported(false);
@@ -417,6 +425,7 @@ export default function KeeperSettings() {
         )}
         {keepers.map((k) => {
           const bits = actionsByKeeper[k.toLowerCase()] ?? 0;
+          const unread = unreadableKeepers.includes(k.toLowerCase());
           const isEditing = editingKeeper?.toLowerCase() === k.toLowerCase();
           return (
             <div
@@ -440,7 +449,12 @@ export default function KeeperSettings() {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn btn-sm btn-secondary"
-                    disabled={busy || !supported}
+                    disabled={busy || !supported || (unread && !isEditing)}
+                    title={
+                      unread
+                        ? t('keeperPicker.actionsUnreadableHint')
+                        : undefined
+                    }
                     onClick={() => (isEditing ? cancelEdit() : beginEdit(k))}
                   >
                     {isEditing ? "Cancel" : "Edit actions"}
@@ -476,7 +490,9 @@ export default function KeeperSettings() {
                   style={{ marginTop: 6, fontSize: "0.85rem", opacity: 0.8 }}
                 >
                   {t('keeperPicker.actionsLabel')}{" "}
-                  {bits === 0 ? (
+                  {unread ? (
+                    <em>{t('keeperPicker.actionsUnreadable')}</em>
+                  ) : bits === 0 ? (
                     <em>{t('keeperPicker.actionsNone')}</em>
                   ) : (
                     ACTION_ROWS.filter((r) => (bits & KEEPER_ACTION[r.key]) !== 0)

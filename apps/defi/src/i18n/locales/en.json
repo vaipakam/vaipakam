@@ -473,6 +473,8 @@
     "permissionAutoRollDesc": "Lets this keeper redeploy a fully-repaid standing-intent loan straight back into your intent capital, with no manual claim. Required for hands-off auto-lend.",
     "actionsLabel": "Actions:",
     "actionsNone": "none",
+    "actionsUnreadable": "permissions unavailable — refresh to read",
+    "actionsUnreadableHint": "This keeper's on-chain permissions couldn't be read just now. Editing is disabled to avoid overwriting them with a guessed value — refresh the page and try again.",
     "whitelistFull": "Whitelist full. Revoke an entry to add a new keeper."
   },
   "autoLifecycleLoanCaps": {
@@ -539,6 +541,9 @@
     "actionUpdate": "Update & fund",
     "actionPause": "Pause",
     "actionStop": "Withdraw & stop",
+    "actionRevokeConsent": "Revoke auto-lend consent",
+    "revokeConsentHint": "Clears your wallet-level auto-lend opt-in for all pairs. Doesn't touch any intent or capital — use Pause / Withdraw & stop for those.",
+    "noticeConsentRevoked": "Auto-lend consent revoked for your wallet. Any standing intents you still have are unaffected; manage them per pair above.",
     "wrongChain": "Switch your wallet to this chain to manage auto-lend.",
     "stepRegister": "Registering intent…",
     "stepKeeperAccess": "Enabling keeper access…",

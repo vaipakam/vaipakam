@@ -291,6 +291,16 @@ export default function AutoLendIntentCard() {
         ro.getLenderIntentLivePrincipal(address, lendingAsset, collateralAsset),
         decimalsP,
       ]);
+      // Stale-resolve guard for the WHOLE write set: if the live
+      // chain+wallet+pair no longer matches what this read was issued for
+      // (the user switched mid-flight), drop the result entirely — a newer
+      // `reloadPair` owns the current state. Without this, a late response
+      // for pair A could overwrite B's intent/capital and stamp A's
+      // `loadedPairKey`, leaving `pairLoaded` false for B with no re-fetch.
+      const liveForm = formRef.current;
+      const liveFullKey = `${idKeyRef.current}:${liveForm.lendingAsset}:${liveForm.collateralAsset}`;
+      if (liveFullKey !== key) return;
+
       const view: IntentView = {
         active: Boolean(iv.active),
         maxExposure: BigInt(iv.maxExposure),
@@ -306,33 +316,28 @@ export default function AutoLendIntentCard() {
       setCapital(BigInt(cap));
       setLivePrincipal(BigInt(live));
       setLoadedPairKey(key);
-      // Prefill the form once per (chain, wallet, pair) from a stored
-      // intent, so editing shows current on-chain terms. Also prefill an
-      // INACTIVE intent that still has reserved capital (a paused intent)
-      // so "Enable to resume" has the prior bounds without manual re-entry.
-      // Guard against a stale resolve by re-deriving the FULL live key
-      // (chain+wallet+pair via the refs) and only applying / stamping when
-      // it still matches the captured `key` — so a wallet/chain/pair switch
-      // mid-flight can't write another account's terms, and a stale resolve
-      // never marks a pair prefilled without applying it.
+      // Prefill once per (chain, wallet, pair) from a stored intent so
+      // editing shows current on-chain terms; also prefill an INACTIVE
+      // intent that still has reserved capital (a paused intent) so
+      // "Enable to resume" keeps the prior bounds without manual re-entry.
       const hasStoredTerms = view.active || BigInt(cap) > 0n;
       if (hasStoredTerms && prefilledKey !== key) {
-        const live = formRef.current;
-        const liveFullKey = `${idKeyRef.current}:${live.lendingAsset}:${live.collateralAsset}`;
-        if (liveFullKey === key) {
-          setPrefilledKey(key);
-          setForm((f) => ({
-            ...f,
-            maxExposure: formatUnits(view.maxExposure, dec),
-            minFillAmount: formatUnits(view.minFillAmount, dec),
-            minRatePct: String(Number(view.minRateBps) / 100),
-            maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
-            maxDurationDays: String(Number(view.maxDurationDays)),
-            requiresKeeperAuth: view.requiresKeeperAuth,
-          }));
-        }
+        setPrefilledKey(key);
+        setForm((f) => ({
+          ...f,
+          maxExposure: formatUnits(view.maxExposure, dec),
+          minFillAmount: formatUnits(view.minFillAmount, dec),
+          minRatePct: String(Number(view.minRateBps) / 100),
+          maxInitLtvPct: String(Number(view.maxInitLtvBps) / 100),
+          maxDurationDays: String(Number(view.maxDurationDays)),
+          requiresKeeperAuth: view.requiresKeeperAuth,
+        }));
       }
     } catch {
+      // Only stamp the failure if this read still owns the current pair.
+      const liveForm = formRef.current;
+      const liveFullKey = `${idKeyRef.current}:${liveForm.lendingAsset}:${liveForm.collateralAsset}`;
+      if (liveFullKey !== key) return;
       setLoadedPairKey(key);
       setIntent(null);
       setCapital(null);
@@ -472,13 +477,17 @@ export default function AutoLendIntentCard() {
     // the contract rejects it, so catch it before the multi-tx flow.
     if (parsed.minRateBps > 10000n) return t('autoLend.errRateTooHigh');
     if (parsed.fund < 0n) return t('autoLend.errAmount');
-    // Cap the TOTAL committed exposure — idle reserved capital PLUS live
-    // principal already out PLUS this top-up — at max exposure. Both the
-    // idle and the live amounts consume the cap in matchIntent, so funding
-    // beyond it just locks capital that can never be lent.
+    // Only guard a NEW top-up against the cap — don't retroactively block
+    // updates. The check fires solely when funding (`fund > 0`): the new
+    // top-up plus what's already committed (idle reserved + live principal,
+    // both of which consume maxExposure in matchIntent) must fit the cap,
+    // so we never pull capital that can never be lent. A fund-less update
+    // (e.g. LOWERING the cap to stop further exposure — a valid risk
+    // reduction even when current capital exceeds the new cap) is allowed.
     if (
+      parsed.fund > 0n &&
       (capitalView ?? 0n) + (livePrincipalView ?? 0n) + parsed.fund >
-      parsed.maxExposure
+        parsed.maxExposure
     )
       return t('autoLend.errFundOverExposure');
     // A keeper-only intent on a chain with no published keeper can never
@@ -755,6 +764,32 @@ export default function AutoLendIntentCard() {
     }
   };
 
+  // ── Global revoke of the wallet-level auto-lend consent marker ────
+  // Pause/Stop are per-pair and deliberately leave the global marker, so
+  // this is the single place that clears it — preserving the policy that
+  // a user can always revoke their own consent. Does NOT touch any
+  // intent or capital; the per-pair Stop handles those.
+  const handleRevokeConsent = async () => {
+    if (!address || !diamond) return;
+    setError(null);
+    setNotice(null);
+    setBusy(true);
+    setStep(t('autoLend.stepConsent'));
+    try {
+      const tx = await dw.setAutoLendConsent(false);
+      await tx.wait();
+      setConsent(false);
+      setNotice(t('autoLend.noticeConsentRevoked'));
+      await reloadAccount();
+    } catch (err) {
+      setError(autoLifecycleErrorOrRaw(err, t));
+      await reloadAccount().catch(() => {});
+    } finally {
+      setBusy(false);
+      setStep(null);
+    }
+  };
+
   if (!address) return null;
   // Hide the card entirely on deploys where the facet set isn't cut yet.
   if (adminLendEnabled == null && fillPathEnabled == null && consent == null) {
@@ -1022,6 +1057,19 @@ export default function AutoLendIntentCard() {
                 disabled={busy}
               >
                 {t('autoLend.actionStop')}
+              </button>
+            )}
+            {/* Global consent revoke — the only path to clear the
+                wallet-level marker (Pause/Stop stay per-pair). Shown
+                whenever consent is on, independent of any single pair. */}
+            {consent === true && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={handleRevokeConsent}
+                disabled={busy || !isCorrectChain}
+                title={t('autoLend.revokeConsentHint')}
+              >
+                {t('autoLend.actionRevokeConsent')}
               </button>
             )}
           </div>
