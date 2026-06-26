@@ -786,40 +786,60 @@ async function runIntentFillPass(
       previews += 1;
       let preview = await previewIntent(ctx, solver, intent, b.id, fillAmount);
       if (!preview) continue;
-      // Codex #748 r4/r5 — a non-AON oversized fill that fails ONLY on the
+      // Codex #748 r4/r5/r6 — a non-AON oversized fill that fails ONLY on the
       // borrower's collateral (intent LTV stricter than the offer was sized
       // for) can often succeed smaller. `previewIntent` returns reqCollateral=0
-      // on that very failure, so instead of reqCollateral-scaling, binary-search
-      // `previewIntent.ok` over [lo, hi) for the LARGEST viable fill — a bounded
-      // handful of probes — rather than re-attempting the too-large amount every
-      // tick (which would never auto-fill that borrower for this intent).
+      // on that very failure, so rather than reqCollateral-scaling, probe `lo`
+      // first (guaranteeing a viable fill is found when one exists) then
+      // binary-search upward for the LARGEST viable fill — a bounded handful of
+      // probes — instead of re-attempting the too-large amount every tick (which
+      // would never auto-fill that borrower for this intent).
       if (
         !preview.ok &&
         preview.matchError === MATCH_ERR_COLLATERAL_BELOW &&
-        b.fillMode !== FILL_MODE_AON
+        b.fillMode !== FILL_MODE_AON &&
+        previews < MAX_PREVIEW_CALLS_PER_TICK
       ) {
         const lo =
           intent.minFillAmount > b.amount ? intent.minFillAmount : b.amount;
-        let searchLo = lo;
-        let searchHi = fillAmount - 1n; // `hi` already failed
-        let probes = 0;
-        while (
-          searchLo <= searchHi &&
-          probes < INTENT_SIZE_DOWN_MAX_PROBES &&
-          previews < MAX_PREVIEW_CALLS_PER_TICK
-        ) {
-          const mid = (searchLo + searchHi) / 2n;
+        const originalFill = fillAmount; // the `hi` that just failed
+        if (lo < originalFill) {
+          // Probe the SMALLEST legal fill FIRST (Codex #748 r6): when the
+          // collateral-supported amount is a tiny fraction of `hi`, a pure
+          // midpoint search can spend every probe still above the viable
+          // threshold and miss a fillable `lo`. Probing `lo` guarantees we find
+          // a viable fill when one exists; if even `lo` fails the borrower is
+          // unfillable for this intent.
           previews += 1;
-          probes += 1;
-          const probe = await previewIntent(ctx, solver, intent, b.id, mid);
-          if (probe && probe.ok) {
-            // Viable — record it and reach for a LARGER fill.
-            fillAmount = mid;
-            preview = probe;
-            searchLo = mid + 1n;
-          } else {
-            searchHi = mid - 1n; // still too large (or a transient null)
+          const loProbe = await previewIntent(ctx, solver, intent, b.id, lo);
+          if (loProbe && loProbe.ok) {
+            fillAmount = lo;
+            preview = loProbe;
+            // Binary-search (lo, hi) for the LARGEST viable fill, on the now
+            // known-viable floor.
+            let searchLo = lo + 1n;
+            let searchHi = originalFill - 1n;
+            let probes = 0;
+            while (
+              searchLo <= searchHi &&
+              probes < INTENT_SIZE_DOWN_MAX_PROBES &&
+              previews < MAX_PREVIEW_CALLS_PER_TICK
+            ) {
+              const mid = (searchLo + searchHi) / 2n;
+              previews += 1;
+              probes += 1;
+              const probe = await previewIntent(ctx, solver, intent, b.id, mid);
+              if (probe && probe.ok) {
+                fillAmount = mid;
+                preview = probe;
+                searchLo = mid + 1n;
+              } else {
+                searchHi = mid - 1n;
+              }
+            }
           }
+          // else: even `lo` failed — `preview` stays the original CBR failure
+          // and the handler below continues to the next borrower.
         }
       }
       // `ok` already folds intentError == Ok && matchError == Ok && riskBlock == 0.
