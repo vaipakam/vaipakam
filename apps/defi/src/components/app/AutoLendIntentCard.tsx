@@ -243,6 +243,10 @@ export default function AutoLendIntentCard() {
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // True when the account-level read failed TRANSIENTLY (facets are cut on
+  // this chain). Keeps the card visible with a retry instead of hiding it
+  // — distinct from a missing-facet deploy where the card stays hidden.
+  const [accountLoadFailed, setAccountLoadFailed] = useState<boolean>(false);
 
   // Keeper EOA published for THIS chain (operator-set in addresses.json).
   // Absent => delegation step is hidden (auto-FILL still works; auto-ROLL
@@ -337,9 +341,22 @@ export default function AutoLendIntentCard() {
       // Stamp the chain+wallet these reads belong to; skip decisions
       // trust them only while this still equals the live id.
       setLoadedAccountKey(capturedAccountKey);
+      setAccountLoadFailed(false);
       return snap;
-    } catch {
-      // Facet not cut on this (old) deploy — leave loading; card hides.
+    } catch (e) {
+      // Distinguish a missing facet (old deploy — card stays hidden, no
+      // point retrying) from a TRANSIENT RPC failure on a chain where the
+      // facets ARE cut (offer a retry so a one-off blip doesn't hide
+      // auto-lend until a full page refresh).
+      const msg = String(
+        (e as { data?: string; message?: string })?.data ??
+          (e as Error)?.message ??
+          '',
+      );
+      const missingFacet =
+        msg.includes('0xa9ad62f8') ||
+        /function does not exist|functionnotfound/i.test(msg);
+      setAccountLoadFailed(!missingFacet);
       return null;
     }
   }, [address, chainId, diamondRo, keeperAddress]);
@@ -927,15 +944,22 @@ export default function AutoLendIntentCard() {
       // the initial read and the cancel, so `pair.capital` may understate
       // the un-lent balance. Withdraw the CURRENT amount so a full stop
       // doesn't strand the rolled capital. (Once cancelled the intent is
-      // de-listed, so no further roll can relist it.)
+      // de-listed, so no further roll can relist it.) FAIL CLOSED if the
+      // re-read fails: do NOT fall back to the stale pre-cancel snapshot
+      // (that could withdraw less than the now-liened balance and strand
+      // rolled capital under a "stopped" notice). The intent is already
+      // cancelled, so the user just retries Withdraw & stop.
       const afterCancel = await reloadPair();
-      const toWithdraw = afterCancel ? afterCancel.capital : pair.capital;
-      if (toWithdraw > 0n) {
+      if (!afterCancel) {
+        setError(t('autoLend.errLoadFailed'));
+        return;
+      }
+      if (afterCancel.capital > 0n) {
         setStep(t('autoLend.stepWithdraw'));
         const tx = await dw.withdrawLenderIntentCapital(
           lendingAsset,
           collateralAsset,
-          toWithdraw,
+          afterCancel.capital,
         );
         await tx.wait();
       }
@@ -993,8 +1017,15 @@ export default function AutoLendIntentCard() {
   };
 
   if (!address) return null;
-  // Hide the card entirely on deploys where the facet set isn't cut yet.
-  if (adminLendEnabled == null && fillPathEnabled == null && consent == null) {
+  // Hide the card entirely on deploys where the facet set isn't cut yet —
+  // but NOT when a transient account-read failure left the sentinels null
+  // (we keep the card visible with a retry in that case).
+  if (
+    adminLendEnabled == null &&
+    fillPathEnabled == null &&
+    consent == null &&
+    !accountLoadFailed
+  ) {
     return null;
   }
 
@@ -1305,14 +1336,23 @@ export default function AutoLendIntentCard() {
             </div>
           )}
 
+          {/* Account-read failure notice — distinct from a missing-facet
+              deploy (which hides the card); a transient blip keeps the card
+              up with the retry below. */}
+          {accountLoadFailed && !accountLoaded && (
+            <div className="alert alert-warning" role="status" style={{ marginTop: 10 }}>
+              <AlertTriangle size={14} />
+              <div>{t('autoLend.errLoadFailed')}</div>
+            </div>
+          )}
+
           {/* Retry affordance — a read failure clears the loaded keys
               (fail-closed) without rescheduling the load effects, so offer
               an explicit re-fetch (calls the stable reload callbacks
-              directly) when this pair didn't load. */}
-          {!!form.lendingAsset &&
-            !!form.collateralAsset &&
-            !pairLoaded &&
-            !busy && (
+              directly) when the pair OR the account state didn't load. */}
+          {!busy &&
+            ((!!form.lendingAsset && !!form.collateralAsset && !pairLoaded) ||
+              (accountLoadFailed && !accountLoaded)) && (
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"

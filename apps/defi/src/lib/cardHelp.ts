@@ -70,7 +70,7 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
   },
   "dashboard.auto-lend-intent": {
     summary: "cardHelp.dashboardAutoLendIntent",
-    learnMoreHref: `${README}#3-offer-creation`,
+    learnMoreHref: `${README}#5-offer-and-loan-lifecycle`,
   },
 
   // ── Offer Book ─────────────────────────────────────────────────────────

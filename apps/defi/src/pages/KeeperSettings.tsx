@@ -126,6 +126,10 @@ export default function KeeperSettings() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [supported, setSupported] = useState(true);
+  // #625 — true when the latest refresh couldn't read the approved-keeper
+  // list (transient RPC). Editing is blocked while set so a stale/empty
+  // mask can't be saved over a keeper's real (unread) permissions.
+  const [keeperReadError, setKeeperReadError] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!address) return;
@@ -153,14 +157,25 @@ export default function KeeperSettings() {
       else setErr((e as Error).message);
     }
     let list: string[] = [];
+    let listReadFailed = false;
     try {
       list = [...((await diamondRo.getApprovedKeepers(address)) as string[])];
       setKeepers(list);
     } catch (e) {
       if (isMissingSelector(e)) missing = true;
-      else setErr((e as Error).message);
+      else {
+        setErr((e as Error).message);
+        // #625 — a TRANSIENT list read failure must not clear the keeper
+        // rows / masks: `setKeepers` wasn't called (so old rows persist),
+        // and clearing `actionsByKeeper` + `unreadableKeepers` below would
+        // make those rows show "none" and become editable with
+        // DEFAULT_KEEPER_ACTIONS — letting a Save silently rewrite an
+        // auto-lend keeper's SIGNED_FILL/AUTO_ROLL to loan-management bits.
+        // Preserve previous state and block editing via `keeperReadError`.
+        listReadFailed = true;
+      }
     }
-    if (!missing && list.length > 0) {
+    if (!missing && !listReadFailed && list.length > 0) {
       const bits: Record<string, number> = {};
       const unreadable: string[] = [];
       for (const k of list) {
@@ -184,10 +199,14 @@ export default function KeeperSettings() {
       }
       setActionsByKeeper(bits);
       setUnreadableKeepers(unreadable);
-    } else {
+    } else if (!missing && !listReadFailed) {
+      // Genuinely empty list (no approved keepers).
       setActionsByKeeper({});
       setUnreadableKeepers([]);
     }
+    // On a transient list-read failure: preserve the previous keepers /
+    // masks / unreadable markers untouched, and gate ALL editing.
+    setKeeperReadError(listReadFailed);
     if (missing) {
       setSupported(false);
       setOptIn(false);
@@ -449,9 +468,14 @@ export default function KeeperSettings() {
                 <div style={{ display: "flex", gap: 8 }}>
                   <button
                     className="btn btn-sm btn-secondary"
-                    disabled={busy || !supported || (unread && !isEditing)}
+                    disabled={
+                      busy ||
+                      !supported ||
+                      keeperReadError ||
+                      (unread && !isEditing)
+                    }
                     title={
-                      unread
+                      unread || keeperReadError
                         ? t('keeperPicker.actionsUnreadableHint')
                         : undefined
                     }
