@@ -84,6 +84,25 @@ export interface WorkerEnv {
   OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
     limit: (args: { key: string }) => Promise<{ success: boolean }>;
   };
+  // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
+  // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
+  // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
+  // the other Secrets-Store fetches). Optional: unset ⇒ the route fails closed
+  // (401) and ingest stays cron-paced.
+  ALCHEMY_WEBHOOK_SIGNING_KEY?: SecretBinding;
+  // #757 Phase A — per-chain ingest Durable Object namespace. The webhook
+  // route and the cron `scheduled()` both resolve `idFromName(String(chainId))`
+  // and forward a (chainId, target-block) hint; the DO is the single serialized
+  // ingest writer per chain. Optional so a deploy without the DO binding
+  // degrades to the legacy inline cron scan.
+  CHAIN_INGEST_DO?: DurableObjectNamespace;
+  // #757 Phase A — two-step rollout gate. The DO ingest path (cron→DO AND the
+  // webhook→DO forward) is active ONLY when this is "true" AND the DO is bound.
+  // Default unset ⇒ the cron keeps the legacy inline scan and the webhook
+  // 200-no-ops, so merging/deploying the new DO never re-routes live ingest by
+  // itself. Plain `var`, read from the raw env (the route runs before
+  // `resolveEnv`).
+  CHAIN_INGEST_VIA_DO?: string;
 }
 
 /**
@@ -144,7 +163,7 @@ export interface Env {
  * and downstream code already handles `undefined` (skip that chain).
  * (T-078 — PR #36 Codex review.)
  */
-async function readSecret(
+export async function readSecret(
   b: SecretBinding | undefined,
 ): Promise<string | undefined> {
   if (!b) return undefined;

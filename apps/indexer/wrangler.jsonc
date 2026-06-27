@@ -79,6 +79,32 @@
     // close-browser edge case is covered even if the
     // frontend-direct push didn't fire.
     { "binding": "OPENSEA_API_KEY",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
+    // #757 Phase A — Alchemy webhook HMAC signing key. Read directly from the
+    // raw WorkerEnv in the `/hooks/chain-event` route (dispatched before the
+    // global resolveEnv). The route fails closed (401) while this is unbound, so
+    // it stays COMMENTED until the operator enables #757 (the binding can only
+    // be added once the secret exists in the store — wrangler validates it at
+    // deploy). To enable: create `ALCHEMY_WEBHOOK_SIGNING_KEY` in the store,
+    // uncomment this binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
+    // { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY" },
+  ],
+
+  // #757 Phase A — per-chain ingest Durable Object: the single serialized
+  // writer. One instance per chain (`idFromName(String(chainId))`); the webhook
+  // route and the cron both forward a (chainId, target-block) hint to it.
+  // SQLite-backed DO class (free plan); the DO uses its own storage for the
+  // single-flight `scanning`/`pendingTarget` state and writes the shared D1 via
+  // the `DB` binding. The class deploys here, but the DO ingest path stays OFF
+  // (the cron keeps the legacy inline scan, the webhook 200-no-ops) until
+  // `CHAIN_INGEST_VIA_DO` is "true" — a deliberate two-step rollout so deploying
+  // the new DO doesn't immediately re-route live ingest.
+  "durable_objects": {
+    "bindings": [
+      { "name": "CHAIN_INGEST_DO", "class_name": "ChainIngestDO" },
+    ],
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ChainIngestDO"] },
   ],
 
   // Custom-domain binding for the public read-API. Cloudflare
