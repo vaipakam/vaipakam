@@ -747,6 +747,13 @@ async function processOfferLogs(
         abi: DIAMOND_OFFER_DETAILS_ABI,
         functionName: 'getOfferDetails',
         args: [o.offerId],
+        // #763 — pin to the OfferCreated block so a cron catch-up / re-scan that
+        // processes this event after later blocks reads the offer's CREATION
+        // state, not a `latest` that a subsequent modify/cancel/partial-fill
+        // moved. The INSERT OR IGNORE below already no-ops a pure re-scan, but
+        // the first (delayed) processing of a since-modified offer would
+        // otherwise persist post-creation fields.
+        blockNumber: o.blockNumber,
       })) as Record<string, unknown>;
     } catch (err) {
       console.error(
@@ -1783,7 +1790,12 @@ async function processLoanLogs(
         .bind(chainId, loanId)
         .first<{ '1': number } | null>();
       if (hasListing) {
-        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        const refreshedGraceEnd = await _resolveGraceEnd(
+          client,
+          diamond,
+          loanId,
+          log.blockNumber, // #763 — pin to this event's block
+        );
         await env.DB.prepare(
           `UPDATE prepay_listings
              SET grace_period_end = ?, updated_at = ?
@@ -2176,7 +2188,10 @@ async function processLoanLogs(
       // boundaries. The RPC read is fine on this rare hot-path
       // event. Codex P2 round-2 on PR #304.
       const graceEnd = await _resolveGraceEnd(
-        client, diamond, loanId,
+        client,
+        diamond,
+        loanId,
+        log.blockNumber, // #763 — pin to the PrepayListingPosted block
       );
       // Use the log's block timestamp (chain-time) for posted_at /
       // updated_at — backfills processed minutes later still
@@ -2310,7 +2325,10 @@ async function processLoanLogs(
       // handler — start_time + duration_days can drift after
       // partial repayment / auto-deduct.
       const graceEnd = await _resolveGraceEnd(
-        client, diamond, loanId,
+        client,
+        diamond,
+        loanId,
+        log.blockNumber, // #763 — pin to the PrepayListingUpdated block
       );
       // T-086 step 14 — try the autonomous publish for the
       // rotated orderHash. Transient failure stays NULL (sweep
@@ -2723,6 +2741,13 @@ async function _resolveGraceEnd(
   client: PublicClient,
   diamond: Address,
   loanId: number,
+  /** #763 — pin BOTH reads to the triggering event's block so a
+   *  partial-failure re-scan (or a cron catch-up that runs an old block range
+   *  after later blocks were seen) computes the grace boundary from the loan's
+   *  state AT that event, not a post-`scanTo` `latest` that a subsequent partial
+   *  repay / governance `setGraceBuckets` could have moved. Omit (undefined) to
+   *  read `latest` — viem treats an absent `blockNumber` as the latest head. */
+  blockNumber?: bigint,
 ): Promise<number> {
   try {
     const detail = (await client.readContract({
@@ -2730,6 +2755,7 @@ async function _resolveGraceEnd(
       abi: DIAMOND_LOAN_DETAILS_ABI,
       functionName: 'getLoanDetails',
       args: [BigInt(loanId)],
+      blockNumber,
     })) as { startTime: bigint; durationDays: number | bigint };
     const startTime = Number(detail.startTime);
     const durationDays = Number(detail.durationDays);
@@ -2739,6 +2765,7 @@ async function _resolveGraceEnd(
         abi: GRACE_SECONDS_ABI,
         functionName: 'getEffectiveGraceSeconds',
         args: [BigInt(durationDays)],
+        blockNumber,
       })) as bigint,
     );
     return startTime + durationDays * 86_400 + graceSeconds;
