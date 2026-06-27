@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { Address } from 'viem';
 import { useReadyDiamond, useReadChain } from '../contracts/useDiamond';
 import { beginStep } from '../lib/journeyLog';
@@ -107,6 +113,13 @@ export function useLenderIntentsByOwner(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
+  // Monotonic request sequence. Bumped SYNCHRONOUSLY at the start of every
+  // load (a callback write, immediate — not an effect that lags a render),
+  // so a slow response for a now-stale owner/chain/page/refresh is dropped:
+  // a newer load bumps the seq, and the older in-flight load sees the
+  // mismatch at resolve. A ref, since it must not trigger a re-render.
+  const reqSeqRef = useRef(0);
+
   // The IDENTITY of the data on display (owner/chain/page, ignoring the
   // refresh nonce). When it changes to an uncached key, drop the prior
   // rows/total NOW — render-time "adjust state on key change" — so the table
@@ -122,13 +135,16 @@ export function useLenderIntentsByOwner(
     setRows(seed?.rows ?? []);
     setTotal(seed?.total ?? 0n);
   }
-
-  // Monotonic request sequence. Bumped SYNCHRONOUSLY at the start of every
-  // load (a callback write, immediate — not an effect that lags a render),
-  // so a slow response for a now-stale owner/chain/page/refresh is dropped:
-  // a newer load bumps the seq, and the older in-flight load sees the
-  // mismatch at resolve. A ref, since it must not trigger a re-render.
-  const reqSeqRef = useRef(0);
+  // Invalidate any in-flight load the MOMENT the identity changes — not just
+  // when the next passive load() effect starts. A layout effect runs
+  // synchronously in the commit phase, before React yields to the event loop
+  // (and thus before any in-flight RPC's resolve callback can run), so an
+  // RPC for the OLD identity resolving in that window fails the seq check
+  // instead of writing the previous owner's/page's rows back. (Refs in
+  // effects are fine; refs in render are not.)
+  useLayoutEffect(() => {
+    reqSeqRef.current += 1;
+  }, [identityKey]);
 
   const load = useCallback(async () => {
     // Every invocation supersedes any in-flight one — bump first, capture
@@ -220,6 +236,19 @@ export function useLenderIntentsByOwner(
   }, [load, cacheKey]);
 
   return { rows, total, loading, error, reload };
+}
+
+/**
+ * #755 — drop every cached page after an intent mutation. The cache is
+ * MODULE-level, so this survives a Dashboard remount: without it, a remount
+ * within `STALE_MS` resets the component refresh nonce to 0 and the
+ * `...:0` key could still serve the pre-write entry, showing stale
+ * Active/Paused/Funded values. Pair it with a refresh-nonce bump on the
+ * mounted hook (the nonce changes the cache key → forces the load effect to
+ * re-run → cache miss → fresh fetch); this clear handles the remount case.
+ */
+export function invalidateLenderIntentsCache() {
+  cache.clear();
 }
 
 /** Test-only — wipes the per-page cache. */

@@ -47,6 +47,7 @@ import {
   MyLenderIntentsCard,
   type ManageIntentPair,
 } from '../components/app/MyLenderIntentsCard';
+import { invalidateLenderIntentsCache } from '../hooks/useLenderIntentsByOwner';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -179,6 +180,9 @@ export default function Dashboard() {
     });
   }, []);
   const handleIntentChanged = useCallback(() => {
+    // Clear the module-level read cache (survives a remount, unlike the
+    // local nonce) AND bump the nonce so the mounted overview refetches.
+    invalidateLenderIntentsCache();
     setIntentRefreshNonce((n) => n + 1);
   }, []);
   // Stable so it doesn't churn the auto-lend card's busy-report effect.
