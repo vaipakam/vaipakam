@@ -10,17 +10,25 @@
  *
  * IMPORTANT (design §3.1): the DO input gate does NOT keep the object closed
  * across awaited network work, so the input gate alone is not enough. The
- * single-writer guarantee is the `scanning` flag + coalesced `pendingTarget`,
- * both persisted in DO STORAGE (so they survive hibernation and an alarm that
- * fires after a memory reset).
+ * single-writer guarantee is an IN-MEMORY `scanRunning` flag, set synchronously
+ * at the very top of `alarm()` and cleared in its `finally`. Because Cloudflare
+ * runs exactly one instance per DO id and JS is single-threaded — a concurrent
+ * `fetch()` trigger only interleaves at this instance's `await` points — that
+ * boolean is an EXACT "is a scan executing right now" signal, with none of the
+ * guesswork of a time-based lease (which could lapse mid-scan and let a trigger
+ * spuriously start a second scan — Codex #764 round 3). It also fails SAFE
+ * across eviction/crash: a fresh instance reads `false`, so a genuinely dead
+ * alarm chain is restarted by the next trigger rather than wedged shut. The
+ * coalesced `pendingTarget` (the only cross-hop state a trigger must survive)
+ * stays persisted in DO STORAGE.
  *
  * Catch-up loop (alarm-driven, Hibernation-friendly): each `alarm()` runs ONE
  * `runChainIndexerForChain` (one cursor-derived, safe-head-bounded scan) and
  * re-arms itself until the cursor reaches `pendingTarget` or an attempt budget
  * is hit. A target above the safe head simply keeps the loop scanning (cheaply,
  * empty range) until the block finalizes. On scan failure the alarm retries
- * (bounded), and the `scanning` flag is always cleared in a `finally`-style
- * path so the DO can never wedge "scanning" forever.
+ * (bounded). A migrated/overlapping instance can't corrupt state either: the
+ * event handlers are re-scan-idempotent (block-pinned absolute reads, #760).
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
@@ -32,12 +40,6 @@ import { runChainIndexerForChain } from './chainIndexer';
 const MAX_ALARM_ATTEMPTS = 12;
 /** Delay between catch-up iterations — cheap wait while a target finalizes. */
 const ALARM_DELAY_MS = 3_000;
-/** Single-flight lease: an `alarm()` renews `leaseUntil = now + this` at its
- *  start, so a trigger arriving while a scan is live sees a valid lease and
- *  does NOT re-arm (which would spawn a concurrent scan). Must exceed one
- *  scan's duration + the inter-iteration delay; a chain whose alarm dies is
- *  resumed by the next trigger once the lease lapses. */
-const SCAN_LEASE_MS = 90_000;
 
 interface ChainIngestState {
   storage: DurableObjectStorage;
@@ -50,6 +52,16 @@ interface TriggerBody {
 }
 
 export class ChainIngestDO {
+  /**
+   * In-memory single-flight guard: `true` only while THIS instance's `alarm()`
+   * is actively scanning. A concurrent `fetch()` trigger (same instance, only
+   * interleaved at our awaits) reads it synchronously to decide whether to arm
+   * a new alarm — so two scans never overlap, and a fresh instance (eviction /
+   * crash) reads `false` and correctly restarts a dead chain. NOT persisted on
+   * purpose: persistence is exactly what made the old time-lease unsafe.
+   */
+  private scanRunning = false;
+
   constructor(
     private readonly state: ChainIngestState,
     private readonly env: WorkerEnv,
@@ -87,73 +99,69 @@ export class ChainIngestDO {
       chainId: body.chainId,
     });
 
-    const now = Date.now();
-    const scanning = (await this.state.storage.get<boolean>('scanning')) === true;
-    const leaseUntil =
-      (await this.state.storage.get<number>('leaseUntil')) ?? 0;
-    // (Re)start the catch-up loop when it isn't running, OR when a prior run's
-    // LEASE has expired (its alarm chain died) — but NOT while a run is live
-    // (lease still valid), which would start a second concurrent scan and break
-    // the single-writer invariant. We must NOT use `getAlarm()` here: Cloudflare
-    // returns null WHILE an alarm handler is executing, so a trigger arriving
-    // mid-scan would look "dead" and spuriously re-arm. The lease (renewed at
-    // the start of every `alarm()`) is the correct liveness signal.
-    if (!scanning || now > leaseUntil) {
-      await this.state.storage.put({
-        scanning: true,
-        attempts: 0,
-        leaseUntil: now + SCAN_LEASE_MS,
-      });
-      await this.state.storage.setAlarm(now);
+    // Arm the catch-up loop only when no scan is executing in this instance. If
+    // one IS running it will re-read `pendingTarget` after its scan and keep
+    // going (so we don't start a second). `scanRunning` is the EXACT liveness
+    // signal — not `getAlarm()` (returns null mid-alarm) nor a time-lease (can
+    // lapse mid-scan). `setAlarm` holds a single slot, so even a flood of
+    // triggers during the inter-hop gap collapses to one alarm, never two
+    // scans. `attempts` is reset here because a fresh external trigger is fresh
+    // demand and deserves the full catch-up budget.
+    if (!this.scanRunning) {
+      await this.state.storage.put({ attempts: 0 });
+      await this.state.storage.setAlarm(Date.now());
     }
     return new Response('queued', { status: 202 });
   }
 
   /** One catch-up iteration: scan once, then re-arm or finish. */
   async alarm(): Promise<void> {
-    // Renew the single-flight lease so a concurrent trigger (which sees
-    // `getAlarm() === null` while we run) does NOT treat this live scan as dead
-    // and start a second one.
-    await this.state.storage.put({ leaseUntil: Date.now() + SCAN_LEASE_MS });
-    const chainId = await this.state.storage.get<number>('chainId');
-    if (typeof chainId !== 'number') {
-      await this.clearScanning();
-      return;
-    }
-    const attempts = (await this.state.storage.get<number>('attempts')) ?? 0;
-
-    let scannedTo: bigint | null = null;
+    // Synchronously (before any await) mark a scan live, so any concurrent
+    // `fetch()` trigger sees `scanRunning` and won't arm a second scan. Cleared
+    // in `finally` no matter how we exit, so the DO can never wedge "running".
+    this.scanRunning = true;
     try {
-      const resolved = await resolveEnv(this.env);
-      const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
-      if (!chain) {
-        // Chain not configured here (no RPC / no deployment) — nothing to do.
-        await this.clearScanning();
+      const chainId = await this.state.storage.get<number>('chainId');
+      if (typeof chainId !== 'number') {
+        await this.clearLoopState();
         return;
       }
-      const result = await runChainIndexerForChain(resolved, chain);
-      scannedTo = result.scannedTo;
-      // Phase B hook — broadcast an invalidation to subscribed clients after
-      // the D1 write. No-op stub until Phase B wires the WebSocket fan-out.
-      this.broadcast(chainId, result);
-    } catch (err) {
-      // §9 P1 — never leave `scanning` stuck. Retry (bounded) on failure; the
-      // event re-processes next iteration / next cron tick (handlers are
-      // re-scan-idempotent, #760).
-      // eslint-disable-next-line no-console
-      console.error(`[chainIngestDO] scan failed for chain ${chainId}`, err);
-      await this.rearmOrFinish(attempts);
-      return;
-    }
+      const attempts = (await this.state.storage.get<number>('attempts')) ?? 0;
 
-    // Re-read the target AFTER the awaited scan — a trigger may have raised it.
-    const target = BigInt(
-      (await this.state.storage.get<string>('pendingTarget')) ?? '0',
-    );
-    if (scannedTo !== null && scannedTo >= target) {
-      await this.clearScanning(); // caught up
-    } else {
-      await this.rearmOrFinish(attempts);
+      let scannedTo: bigint | null = null;
+      try {
+        const resolved = await resolveEnv(this.env);
+        const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
+        if (!chain) {
+          // Chain not configured here (no RPC / no deployment) — nothing to do.
+          await this.clearLoopState();
+          return;
+        }
+        const result = await runChainIndexerForChain(resolved, chain);
+        scannedTo = result.scannedTo;
+        // Phase B hook — broadcast an invalidation to subscribed clients after
+        // the D1 write. No-op stub until Phase B wires the WebSocket fan-out.
+        this.broadcast(chainId, result);
+      } catch (err) {
+        // Retry (bounded) on failure; the event re-processes next iteration /
+        // next cron tick (handlers are re-scan-idempotent, #760).
+        // eslint-disable-next-line no-console
+        console.error(`[chainIngestDO] scan failed for chain ${chainId}`, err);
+        await this.rearmOrFinish(attempts);
+        return;
+      }
+
+      // Re-read the target AFTER the awaited scan — a trigger may have raised it.
+      const target = BigInt(
+        (await this.state.storage.get<string>('pendingTarget')) ?? '0',
+      );
+      if (scannedTo !== null && scannedTo >= target) {
+        await this.clearLoopState(); // caught up
+      } else {
+        await this.rearmOrFinish(attempts);
+      }
+    } finally {
+      this.scanRunning = false;
     }
   }
 
@@ -163,12 +171,12 @@ export class ChainIngestDO {
       await this.state.storage.setAlarm(Date.now() + ALARM_DELAY_MS);
     } else {
       // Budget exhausted — defer the rest to the cron backstop.
-      await this.clearScanning();
+      await this.clearLoopState();
     }
   }
 
-  private async clearScanning(): Promise<void> {
-    await this.state.storage.delete(['scanning', 'attempts', 'leaseUntil']);
+  private async clearLoopState(): Promise<void> {
+    await this.state.storage.delete('attempts');
   }
 
   /** Phase B placeholder — broadcast a lightweight invalidation key to the DO's

@@ -316,12 +316,22 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
     );
     if (result.published) {
       const now = Math.floor(Date.now() / 1000);
+      // #757 (Codex #764) — atomic published-marker. Guard the write on the
+      // SAME `order_hash` the sweep just published. If a concurrent re-price
+      // (PrepayListingUpdated) rotated the row to a new order between our SELECT
+      // and here — resetting `opensea_published_at` to NULL for the NEW order —
+      // this UPDATE matches 0 rows, so we never falsely mark the new, still-
+      // unpublished order as published; the next sweep republishes it. This
+      // closes the read-modify-write race on BOTH the legacy and DO ingest
+      // paths (the sweep has always run concurrently with the scan via
+      // `ctx.waitUntil`), which is why the sweep no longer needs to be gated
+      // off when DO ingest is enabled.
       await env.DB.prepare(
         `UPDATE prepay_listings
            SET opensea_published_at = ?
-         WHERE chain_id = ? AND loan_id = ?`,
+         WHERE chain_id = ? AND loan_id = ? AND order_hash = ?`,
       )
-        .bind(now, chain.id, row.loan_id)
+        .bind(now, chain.id, row.loan_id, row.order_hash)
         .run();
     } else if (result.error?.startsWith('unsupported-chain')) {
       // Terminal sentinel — chain isn't in `OPENSEA_CHAINS` (post

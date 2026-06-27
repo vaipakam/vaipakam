@@ -159,7 +159,18 @@ export interface ParsedChainEvent {
   deliveryId: string;
   /** Resolved chainId, or null when the network is unknown/unmapped. */
   chainId: number | null;
-  /** Max delivered block — the DO's catch-up wait-for-safe TARGET. 0 if none. */
+  /**
+   * Max delivered block — the DO's catch-up wait-for-safe TARGET. `0` when the
+   * payload carries no block number (a Custom Webhook whose GraphQL selection
+   * omits `block { number }`). `0` degrades GRACEFULLY, it is not an error: the
+   * DO treats it as "scan to the current safe head once" (`scannedTo >= 0` is
+   * always caught-up), so a just-mined event at or below the safe head still
+   * lands this tick. An event ABOVE the safe head simply isn't waited for here
+   * — the once-a-minute cron ping (and the next delivery) cover it. To get the
+   * tightest end-to-end latency (the DO waiting for a specific block to
+   * finalize), the operator's Custom Webhook GraphQL MUST include
+   * `block { number }`; this field is the only place that hint is consumed.
+   */
   maxBlock: bigint;
 }
 

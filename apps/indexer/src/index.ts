@@ -155,20 +155,22 @@ export default {
     // publish at event-ingest time failed (e.g. transient OpenSea outage).
     // Codex round-1 P2 fix on PR #312. Capped at a small batch per tick.
     //
-    // #757 (Codex #764 P1): this sweep writes `prepay_listings`, which the DO's
-    // scan also writes. Running it on the Worker WHILE DO-ingest is active would
-    // be a second concurrent writer (it could mark a freshly-rotated row as
-    // published). So skip it on the DO path — routing the sweep THROUGH the DO
-    // (with the atomic published-marker) is part-3, a prerequisite to enabling
-    // the DO path. On the legacy path it runs as before.
-    if (!doIngestEnabled(env)) {
-      ctx.waitUntil(
-        sweepUnpublishedListings(resolved).catch((err) => {
-          // eslint-disable-next-line no-console
-          console.error('[indexer] sweepUnpublishedListings pass failed:', err);
-        }),
-      );
-    }
+    // #757 (Codex #764 round 3): this runs on BOTH paths. It writes
+    // `prepay_listings`, which the scan also writes — but the sweep has ALWAYS
+    // raced the scan here (both are concurrent `ctx.waitUntil`), so the DO path
+    // is no different in kind. The genuine read-modify-write hazard (marking a
+    // concurrently re-priced row as published) is closed at the source: the
+    // sweep's published-marker UPDATE is order_hash-guarded (see
+    // `sweepUnpublishedListings`). Gating it off on the DO path would instead
+    // DROP the OpenSea retry safety net the moment an operator enables DO
+    // ingest — so it stays on. (Routing the global sweep per-chain THROUGH the
+    // DO remains a nice-to-have follow-up, no longer a correctness gate.)
+    ctx.waitUntil(
+      sweepUnpublishedListings(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+      }),
+    );
   },
 
   async fetch(
