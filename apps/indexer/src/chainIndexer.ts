@@ -1471,6 +1471,35 @@ async function processLoanLogs(
           det.borrowerTokenId !== undefined ? String(det.borrowerTokenId as bigint) : '0';
         const isStub =
           det.lenderTokenId !== undefined && det.borrowerTokenId !== undefined ? 0 : 1;
+        // #749 — seed the CREATOR side's current-owner from the offer, not the
+        // event. `LoanFacet._mintCounterpartyPosition` REUSES the creator's
+        // offer-position NFT as one loan side's token (and mints a fresh token
+        // for the acceptor); the event's `lender`/`borrower` is the origination
+        // record (`loan.lender = offer.creator`), so if that offer NFT was
+        // transferred on the secondary market BEFORE accept, its true holder is
+        // `offers.creator_current_owner`. The creator side is whichever loan
+        // token equals the offer's `position_token_id`; the acceptor side keeps
+        // the event party (a fresh mint to them — also re-set by its mint
+        // Transfer). Falls back to the event party when the offer row isn't
+        // resolvable yet (no-transfer case is identical anyway). The frontend's
+        // on-chain verify is the authoritative backstop for the residual stub /
+        // same-batch race.
+        let lenderOwner = lender;
+        let borrowerOwner = borrower;
+        const offerRow = await env.DB.prepare(
+          `SELECT position_token_id, creator_current_owner FROM offers
+            WHERE chain_id = ? AND offer_id = ?`,
+        )
+          .bind(chainId, offerId)
+          .first<{ position_token_id: string; creator_current_owner: string }>();
+        if (offerRow?.creator_current_owner) {
+          const creatorTok = String(offerRow.position_token_id);
+          if (creatorTok !== '0' && creatorTok === lenderTok) {
+            lenderOwner = offerRow.creator_current_owner;
+          } else if (creatorTok !== '0' && creatorTok === borrowerTok) {
+            borrowerOwner = offerRow.creator_current_owner;
+          }
+        }
         const result = await env.DB.prepare(
           `INSERT OR IGNORE INTO loans
             (chain_id, loan_id, offer_id, status, lender, borrower,
@@ -1507,12 +1536,11 @@ async function processLoanLogs(
             det.allowsPartialRepay ? 1 : 0,
             Number(det.periodicInterestCadence ?? 0),
             blockAt,
-            // Seed current-owner to the LoanInitiated participants; a
-            // later Transfer for these tokenIds overwrites. Correct for
-            // the no-transfer case (most loans) without waiting on a
-            // Transfer to fire.
-            lender,
-            borrower,
+            // Creator side from the offer's current holder, acceptor side from
+            // the event party (see the #749 note above). A later Transfer for
+            // these tokenIds still overwrites.
+            lenderOwner,
+            borrowerOwner,
             isStub,
             Number(log.blockNumber),
             blockAt,
@@ -1958,19 +1986,49 @@ async function processLoanLogs(
         )
         .run();
     } else if (log.eventName === 'LoanObligationTransferred') {
-      // Preclose Option 2 — the borrower obligation moves to a new
-      // borrower; the loan stays Active. The position-NFT Transfer
-      // handler below already updates `borrower_current_owner`; mirror
-      // the canonical `borrower` column too so direct reads stay
-      // consistent. (Collateral / duration / rate also change on this
-      // path, but the event doesn't carry the new collateral amount —
-      // see the contract-side payload-completeness follow-up.)
+      // Preclose Option 2 — the borrower obligation moves to a new borrower;
+      // the loan stays Active. #749: this BURNS the old borrower position NFT
+      // and MINTS a FRESH `newBorrowerTokenId` (LibLoan.migrateBorrowerPosition),
+      // so the plain Transfer handler — which matches `WHERE borrower_token_id =
+      // ?` against the row's OLD id — can't follow the migration. Update the
+      // canonical `borrower`, the immutable position-token id, AND the
+      // current-owner together so the read routes attribute the loan to the new
+      // borrower (and not the exited one). The mint Transfer for the new id is a
+      // no-op until this write lands; this write is the authoritative one.
       await env.DB.prepare(
-        `UPDATE loans SET borrower = ?, updated_at = ?
-         WHERE chain_id = ? AND loan_id = ?`,
+        `UPDATE loans
+            SET borrower = ?, borrower_token_id = ?, borrower_current_owner = ?,
+                updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
       )
         .bind(
           String(a.newBorrower as string).toLowerCase(),
+          String(a.newBorrowerTokenId as bigint),
+          String(a.newBorrower as string).toLowerCase(),
+          Math.floor(Date.now() / 1000),
+          chainId,
+          Number(a.loanId as bigint),
+        )
+        .run();
+    } else if (log.eventName === 'LoanSold') {
+      // EarlyWithdrawal — the lender position is sold to a new lender; the loan
+      // stays Active. #749: like the obligation transfer, this BURNS the old
+      // lender position NFT and MINTS a FRESH `newLenderTokenId`
+      // (LibLoan.migrateLenderPosition), so the Transfer handler can't follow it.
+      // Update `lender`, the position-token id, AND the current-owner together so
+      // the read routes attribute the loan to the new lender. (Previously
+      // allowlisted as "covered by the Transfer handler" — it was NOT, since the
+      // token id migrates.)
+      await env.DB.prepare(
+        `UPDATE loans
+            SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
+                updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          String(a.newLender as string).toLowerCase(),
+          String(a.newLenderTokenId as bigint),
+          String(a.newLender as string).toLowerCase(),
           Math.floor(Date.now() / 1000),
           chainId,
           Number(a.loanId as bigint),
@@ -2618,26 +2676,29 @@ async function processLoanLogs(
     else if (log.eventName === 'Transfer') {
       const tokenId = String(a.tokenId as bigint);
       const to = String(a.to as string).toLowerCase();
-      // Skip burns (to=0x0) — current_owner stays as whatever the last
-      // non-zero holder was. The position is "burned" but the row
-      // remains for history; null'ing current_owner would falsely
-      // signal an active holder of address(0).
-      if (to !== '0x0000000000000000000000000000000000000000') {
-        await env.DB.batch([
-          env.DB.prepare(
-            `UPDATE loans SET lender_current_owner = ?, updated_at = ?
-             WHERE chain_id = ? AND lender_token_id = ?`,
-          ).bind(to, now, chainId, tokenId),
-          env.DB.prepare(
-            `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
-             WHERE chain_id = ? AND borrower_token_id = ?`,
-          ).bind(to, now, chainId, tokenId),
-          env.DB.prepare(
-            `UPDATE offers SET creator_current_owner = ?, updated_at = ?
-             WHERE chain_id = ? AND position_token_id = ?`,
-          ).bind(to, now, chainId, tokenId),
-        ]);
-      }
+      // #749 — apply EVERY Transfer, INCLUDING burns (`to = 0x0`). A position
+      // NFT is burned when its side claims (ClaimFacet) — writing `to` (the
+      // zero address) into `*_current_owner` makes a burned position stop
+      // matching the `WHERE *_current_owner = <wallet>` read predicate (a real
+      // wallet is never `0x0`), so the claimed/closed position correctly drops
+      // out of /loans/by-lender|by-borrower and /claimables. (Previously burns
+      // were skipped, leaving the last live holder — they'd keep showing the
+      // claimed position as still held.) The same tokenId sits on at most one
+      // of the three rows; the others no-op.
+      await env.DB.batch([
+        env.DB.prepare(
+          `UPDATE loans SET lender_current_owner = ?, updated_at = ?
+           WHERE chain_id = ? AND lender_token_id = ?`,
+        ).bind(to, now, chainId, tokenId),
+        env.DB.prepare(
+          `UPDATE loans SET borrower_current_owner = ?, updated_at = ?
+           WHERE chain_id = ? AND borrower_token_id = ?`,
+        ).bind(to, now, chainId, tokenId),
+        env.DB.prepare(
+          `UPDATE offers SET creator_current_owner = ?, updated_at = ?
+           WHERE chain_id = ? AND position_token_id = ?`,
+        ).bind(to, now, chainId, tokenId),
+      ]);
     }
   }
   return { newLoans, statusUpdates };

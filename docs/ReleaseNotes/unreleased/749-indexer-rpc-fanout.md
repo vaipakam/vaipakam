@@ -14,19 +14,29 @@ on. Second, once the loan table grew past the per-request subrequest ceiling, th
 extra ownership calls failed silently and those loans simply **dropped out of the
 results** — so the endpoints quietly under-reported for legitimate users at scale.
 
-These endpoints now answer from a **single authoritative on-chain call** that
-enumerates exactly the loans whose position NFT the requesting wallet currently
-holds. The work per request scales only with that wallet's **own** holdings, not
-the global loan count, so the quota-amplification vector and the silent
-under-return are both gone — and because it reads live ownership directly, it's
-correct across secondary transfers, position-NFT burns on claim, and the other
-lifecycle cases an indexer projection can lag on. The wallet's role (lender vs
-borrower) is resolved from the loan's fixed position-token identifiers, and a chain
-this indexer doesn't serve now returns a clear "not configured" response so the app
-falls back to reading the chain directly rather than showing an empty list.
+These endpoints now answer **purely from the indexer's database** — zero on-chain
+calls, so the operator's RPC quota is never touched and the work scales only with
+the requesting wallet's own holdings. To make that database answer trustworthy
+(real funds are at stake for claimables), the indexer's record of *who currently
+holds each loan's lender/borrower position* was made authoritative across the
+lifecycle cases it previously missed:
 
-(Part of the pre-audit security sweep. A separate, lower-severity defense-in-depth
-note about escaping reflected on-chain text is tracked on the frontend. The
-on-chain enumeration is bounded by the wallet's NFT count; a paginated variant — to
-keep even a wallet deliberately stuffed with thousands of dust NFTs responsive — is
-tracked as a follow-up.)
+- a position NFT **burned** on claim now correctly drops out of the lists (it was
+  staying attributed to the last holder);
+- a **lender sale** or **borrower-obligation transfer** mid-loan (which mints a
+  fresh position token for the new party) now re-points ownership to that party;
+- a loan whose offer position NFT was **sold on the secondary market before the
+  offer was accepted** is now attributed to the actual holder, not the original
+  offer creator.
+
+A chain this indexer doesn't serve now returns a clear "not configured" response
+so the app falls back to reading the chain directly rather than showing an empty
+list.
+
+(Part of the pre-audit security sweep. The app additionally confirms ownership
+on-chain using the **user's own wallet** as the authoritative layer over this
+database projection — see the companion frontend change. A separate
+defense-in-depth note about escaping reflected on-chain text is tracked on the
+frontend. Operational note: the position-owner projection is rebuilt from the
+chain's transfer history during normal indexing; an environment that pre-dates the
+current-holder columns is brought current by a one-time re-index.)

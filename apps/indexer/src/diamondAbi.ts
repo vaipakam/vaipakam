@@ -19,15 +19,11 @@
  *   - `LoanFacet` hosts
  *     `getLoanDetails(uint256) returns (LibVaipakam.Loan)` plus the
  *     loan-list helpers the indexer's catch-up walk relies on.
- *   - `MetricsFacet` hosts
- *     `getUserPositionLoans(address) returns (uint256[] loanIds,
- *     uint256[] tokenIds)` — the AUTHORITATIVE live-ownership
- *     enumeration (ERC721Enumerable + `loanIdByPositionTokenId`)
- *     that /loans/by-lender, /loans/by-borrower, /claimables call
- *     (#749). One wallet-scoped call replaces the old per-loan
- *     `ownerOf` fan-out, and being on-chain it has none of the
- *     indexer `*_current_owner` projection's gaps (burns, token-id
- *     migration, pre-accept offer-NFT transfer, pre-backfill rows).
+ *
+ * (The wallet-scoped loan/claimable read routes answer purely from D1 — #749 —
+ * so the indexer no longer needs an `ownerOf` / `getUserPositionLoans` ABI here;
+ * the authoritative on-chain `getUserPositionLoans` verify lives in the FRONTEND,
+ * called with the user's own RPC.)
  *
  * Event signatures parsed via viem's `parseAbi` in `chainIndexer.ts`
  * stay inline because event routing uses topic-hash matching, not
@@ -37,18 +33,8 @@
  * specifically a positional-decode issue; events are immune.)
  */
 
-import {
-  OfferCancelFacetABI,
-  LoanFacetABI,
-  MetricsFacetABI,
-} from '@vaipakam/contracts/abis';
+import { OfferCancelFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
 
 export const DIAMOND_OFFER_DETAILS_ABI = OfferCancelFacetABI;
 
 export const DIAMOND_LOAN_DETAILS_ABI = LoanFacetABI;
-
-/** `MetricsFacet` — hosts `getUserPositionLoans(address)`, the authoritative
- *  on-chain live-ownership enumeration backing the wallet-scoped loan/claimable
- *  read routes (#749). Full facet ABI re-exported (viem's `readContract` accepts
- *  any ABI containing the function). */
-export const DIAMOND_USER_POSITION_ABI = MetricsFacetABI;
