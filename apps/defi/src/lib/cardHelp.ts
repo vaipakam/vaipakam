@@ -72,6 +72,10 @@ export const CARD_HELP: Record<string, CardHelpEntry> = {
     summary: "cardHelp.dashboardAutoLendIntent",
     learnMoreHref: `${README}#5-offer-and-loan-lifecycle`,
   },
+  "dashboard.my-lender-intents": {
+    summary: "cardHelp.dashboardMyLenderIntents",
+    learnMoreHref: `${README}#5-offer-and-loan-lifecycle`,
+  },
 
   // ── Offer Book ─────────────────────────────────────────────────────────
   "offer-book.filters": {

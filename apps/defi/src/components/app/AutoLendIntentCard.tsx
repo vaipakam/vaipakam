@@ -175,7 +175,41 @@ const DEFAULT_FORM: FormState = {
   requiresKeeperAuth: false,
 };
 
-export default function AutoLendIntentCard() {
+interface AutoLendIntentCardProps {
+  /**
+   * #755 — pair handed in by the multi-intent list's "Manage" deep-link.
+   * When it changes, the card selects this pair and prefills that intent's
+   * bounds/capital, so resume/edit/fund runs the card's correct ordered
+   * enable sequence. Optional & default-undefined → unchanged standalone
+   * behaviour (the internal AssetPickers stay the source of truth).
+   */
+  selectedPair?: { lendingAsset: string; collateralAsset: string } | null;
+  /**
+   * Bumped on every "Manage" click so re-selecting the SAME pair re-applies
+   * (and re-prefills) — the pair addresses alone wouldn't change.
+   */
+  selectedPairNonce?: number;
+  /**
+   * #755 — fired after a successful intent mutation (enable/resume, pause,
+   * withdraw/stop) so a parent overview (the multi-intent list) can
+   * invalidate its cached read and reflect the new state.
+   */
+  onIntentChanged?: () => void;
+  /**
+   * #755 — reports the card's busy (tx-in-flight) state to the parent so it
+   * can disable the multi-intent list's "Manage" deep-links: retargeting the
+   * form mid-write would show one pair while a tx for another is still
+   * signing/pending.
+   */
+  onBusyChange?: (busy: boolean) => void;
+}
+
+export default function AutoLendIntentCard({
+  selectedPair,
+  selectedPairNonce,
+  onIntentChanged,
+  onBusyChange,
+}: AutoLendIntentCardProps = {}) {
   const { t } = useTranslation();
   const { address, activeChain, isCorrectChain, chainId } = useWallet();
   const diamond = useDiamondContract();
@@ -186,6 +220,40 @@ export default function AutoLendIntentCard() {
   const canWrite = useCanWrite();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // tx-in-flight. Declared up here so the Manage-retarget guard below can
+  // read it; a `busyRef` mirror lets the nonce effect read it without making
+  // it a dependency.
+  const [busy, setBusy] = useState<boolean>(false);
+  const busyRef = useRef(false);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+  // #755 — apply a "Manage" deep-linked pair via React's render-time
+  // "adjust state when a prop changes" pattern (NOT an effect — that would
+  // cost a wasted commit and trip the set-state-in-effect lint). Gated on a
+  // nonce so it fires once per Manage click, including re-selecting the same
+  // pair; standalone usage passes no nonce, so this never runs there.
+  const [appliedPairNonce, setAppliedPairNonce] = useState(selectedPairNonce);
+  if (selectedPairNonce !== appliedPairNonce) {
+    setAppliedPairNonce(selectedPairNonce);
+    // Self-gate the retarget while a tx is in flight: the parent disables the
+    // external Manage buttons via onBusyChange, but a click queued in the
+    // render/effect gap could still reach here — applying it would show a
+    // different pair than the one being signed/awaited. Consume the nonce
+    // (drop the slipped-through click) without retargeting.
+    if (!busy && selectedPair?.lendingAsset && selectedPair?.collateralAsset) {
+      setForm((f) => ({
+        ...f,
+        lendingAsset: selectedPair.lendingAsset,
+        collateralAsset: selectedPair.collateralAsset,
+        // Drop any unsubmitted top-up carried from the previously-edited
+        // pair — bounds get re-prefilled from on-chain, but `fundAmount`
+        // has no prefill, so a stale value would otherwise fund the newly
+        // managed intent on the next Enable/Update.
+        fundAmount: '',
+      }));
+    }
+  }
   // Latest form, readable inside async resolves to guard against a
   // stale pair switch without threading state through closures. Kept
   // current via an effect (ref writes don't belong in render).
@@ -239,7 +307,12 @@ export default function AutoLendIntentCard() {
   const [ackKeeperMaster, setAckKeeperMaster] = useState<boolean>(false);
   const [ackKeeperKey, setAckKeeperKey] = useState<string>('');
 
-  const [busy, setBusy] = useState<boolean>(false);
+  // #755 — surface tx-in-flight to the parent so the multi-intent list can
+  // disable "Manage" while a write is pending (post-await notify, so no
+  // synchronous setState in this effect's body). `busy` is declared above.
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -498,6 +571,23 @@ export default function AutoLendIntentCard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadPair();
   }, [reloadPair]);
+  // #755 — on a "Manage" (re-)click, force a fresh prefill from on-chain
+  // even when the pair is unchanged: clear the once-per-pair prefill stamp
+  // and re-read. Without this, re-managing the same pair leaves any unsaved
+  // edits to bounds/funding in the form (reloadPair wouldn't re-run and the
+  // stamp wouldn't clear) instead of resetting to the row's current terms.
+  // Ref write + post-await reads belong in an effect, not render. Keyed only
+  // on the nonce; standalone usage passes none, so this never runs there.
+  useEffect(() => {
+    if (selectedPairNonce === undefined) return;
+    // Same busy-gate as the render-time apply above: don't re-prefill (which
+    // resets the once-per-pair stamp + re-reads) while a tx is in flight.
+    if (busyRef.current) return;
+    prefilledKeyRef.current = '';
+    void reloadPair();
+    // reloadPair is intentionally excluded — see the keyed-on-nonce note.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPairNonce]);
 
   // Only treat the loaded intent/capital as belonging to the chosen
   // chain+wallet+pair once `reloadPair` has resolved for it — otherwise
@@ -806,6 +896,10 @@ export default function AutoLendIntentCard() {
           riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
         );
         await tx.wait();
+        // #755 — registration changed the intent's visibility/terms already;
+        // refresh the overview NOW so a later step (approve/fund) failing
+        // can't leave the list on its 30s-stale Active/Paused/terms view.
+        onIntentChanged?.();
       };
 
       // 2 & 3. Order the delegate / register steps by intent state:
@@ -867,6 +961,9 @@ export default function AutoLendIntentCard() {
       }
 
       setNotice((n) => n ?? t('autoLend.noticeEnabled'));
+      // #755 — fire on mutation success BEFORE the local refresh reads, so a
+      // transient post-write read failure can't skip the overview invalidation.
+      onIntentChanged?.();
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
@@ -903,6 +1000,7 @@ export default function AutoLendIntentCard() {
       // global marker would mislabel the lender's OTHER active intents as
       // "paused" even though the keeper can still fill them.
       setNotice(t('autoLend.noticePaused'));
+      onIntentChanged?.(); // #755 — fire on success, before the refresh reads.
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
@@ -938,6 +1036,10 @@ export default function AutoLendIntentCard() {
         setStep(t('autoLend.stepCancel'));
         const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
         await tx.wait();
+        // #755 — the intent is de-listed/paused as of this mined tx; refresh
+        // the overview NOW so a later withdraw failing can't leave the row
+        // showing Active/fillable on the list's 30s cache.
+        onIntentChanged?.();
       }
       // Re-read capital AFTER the cancel mined: a keeper could have
       // auto-rolled a just-repaid loan and re-liened its proceeds between
@@ -978,6 +1080,7 @@ export default function AutoLendIntentCard() {
         ? 'autoLend.noticeStoppedKeeper'
         : 'autoLend.noticeStopped';
       setNotice(t(stoppedKey));
+      onIntentChanged?.(); // #755 — fire on success, before the refresh reads.
       await Promise.all([reloadAccount(), reloadPair()]);
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));

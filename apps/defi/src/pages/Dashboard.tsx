@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Address } from 'viem';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { RescanButton } from '../components/app/RescanButton';
@@ -43,6 +43,11 @@ import VPFIDiscountConsentCard from '../components/app/VPFIDiscountConsentCard';
 import { StakeVPFICTA } from '../components/app/StakeVPFICTA';
 import AutoLifecycleSettingsCard from '../components/app/AutoLifecycleSettingsCard';
 import AutoLendIntentCard from '../components/app/AutoLendIntentCard';
+import {
+  MyLenderIntentsCard,
+  type ManageIntentPair,
+} from '../components/app/MyLenderIntentsCard';
+import { invalidateLenderIntentsCache } from '../hooks/useLenderIntentsByOwner';
 import { RewardsSummaryCard } from '../components/app/RewardsSummaryCard';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { Pager } from '../components/app/Pager';
@@ -150,6 +155,40 @@ export default function Dashboard() {
   const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
   const [sortBy, setSortBy] = useState<SortKey>('id');
   const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  // #755 — the multi-intent list's "Manage" deep-link: selects a pair into
+  // the auto-lend card below it (which owns every write) and scrolls it into
+  // view. The nonce fires the card's apply once per click, even when the same
+  // pair is re-selected.
+  const [selectedIntentPair, setSelectedIntentPair] =
+    useState<ManageIntentPair | null>(null);
+  const [selectedIntentNonce, setSelectedIntentNonce] = useState(0);
+  // Bumped after the auto-lend card mutates an intent so the overview list
+  // refetches the new state (its read cache has no timer-driven refresh).
+  const [intentRefreshNonce, setIntentRefreshNonce] = useState(0);
+  // True while the auto-lend card has a tx in flight — disables the
+  // overview's "Manage" deep-links so a mid-write click can't retarget the
+  // form away from the pair being signed/awaited.
+  const [autoLendBusy, setAutoLendBusy] = useState(false);
+  const autoLendCardRef = useRef<HTMLDivElement | null>(null);
+  const handleManageIntent = useCallback((pair: ManageIntentPair) => {
+    setSelectedIntentPair(pair);
+    setSelectedIntentNonce((n) => n + 1);
+    autoLendCardRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  }, []);
+  const handleIntentChanged = useCallback(() => {
+    // Clear the module-level read cache (survives a remount, unlike the
+    // local nonce) AND bump the nonce so the mounted overview refetches.
+    invalidateLenderIntentsCache();
+    setIntentRefreshNonce((n) => n + 1);
+  }, []);
+  // Stable so it doesn't churn the auto-lend card's busy-report effect.
+  const handleAutoLendBusyChange = useCallback((busy: boolean) => {
+    setAutoLendBusy(busy);
+  }, []);
 
   const activeLoans = loans.filter((l) => l.status === LoanStatus.Active);
   const lentCount = loans.filter((l) => l.role === 'lender').length;
@@ -357,10 +396,28 @@ export default function Dashboard() {
           below for users who want to inspect their tier status. */}
       <VPFIDiscountConsentCard />
 
+      {/* #755 — multi-intent overview: lists every standing lender-intent
+          the wallet owns across pairs (incl. paused ones), with a "Manage"
+          deep-link into the auto-lend card below. Self-hides when there are
+          no intents. */}
+      <MyLenderIntentsCard
+        owner={address as Address | null}
+        onManage={handleManageIntent}
+        refreshSignal={intentRefreshNonce}
+        manageDisabled={autoLendBusy}
+      />
+
       {/* #625 WI-1 — auto-lend, wired to the standing LenderIntent layer
           (register -> delegate keeper -> consent -> fund). Hidden when
           the intent/auto-lend facet set isn't cut on the current chain. */}
-      <AutoLendIntentCard />
+      <div ref={autoLendCardRef}>
+        <AutoLendIntentCard
+          selectedPair={selectedIntentPair}
+          selectedPairNonce={selectedIntentNonce}
+          onIntentChanged={handleIntentChanged}
+          onBusyChange={handleAutoLendBusyChange}
+        />
+      </div>
 
       {/* T-092 #511 sub (#520) — per-user auto-lifecycle toggle.
           Hidden when the auto-lifecycle facet isn't readable on the
