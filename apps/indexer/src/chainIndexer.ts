@@ -110,7 +110,7 @@ const CURSOR_KIND = 'diamond';
  *  every chain we ship on with a comfortable margin. */
 const SAFE_FALLBACK_BUFFER = 32n;
 
-interface ChainIndexerResult {
+export interface ChainIndexerResult {
   chainId?: number;
   scannedFrom: bigint;
   scannedTo: bigint;
@@ -347,7 +347,12 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
   }
 }
 
-async function runChainIndexerForChain(
+// #757 — exported so the per-chain ingest Durable Object can drive a scan
+// directly (the DO is the single serialized writer; the cron and the webhook
+// both route through it). Unchanged behaviour: one cursor-derived,
+// safe-head-bounded scan that advances the cursor. `scannedTo` is the new
+// cursor, which the DO's catch-up loop compares against its target block.
+export async function runChainIndexerForChain(
   env: Env,
   chain: ChainConfig,
 ): Promise<ChainIndexerResult> {

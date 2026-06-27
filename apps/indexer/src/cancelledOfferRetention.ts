@@ -46,3 +46,20 @@ export async function pruneOldCancelledOffers(env: Env): Promise<void> {
     .bind(cutoff)
     .run();
 }
+
+/**
+ * #757 Phase A — prune the inbound-webhook delivery dedupe table. The rows only
+ * bound DUPLICATE work (an exact-seen short-circuit); correctness never depends
+ * on them, so a short window well past any provider retry horizon is enough.
+ * Without this dedicated prune the table would grow unbounded.
+ */
+const WEBHOOK_DELIVERY_RETENTION_HOURS = 6;
+
+export async function pruneOldWebhookDeliveries(env: Env): Promise<void> {
+  const cutoff =
+    Math.floor(Date.now() / 1000) - WEBHOOK_DELIVERY_RETENTION_HOURS * 3600;
+  await env.DB
+    .prepare(`DELETE FROM webhook_deliveries WHERE seen_at < ?`)
+    .bind(cutoff)
+    .run();
+}

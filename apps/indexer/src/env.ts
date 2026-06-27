@@ -84,6 +84,18 @@ export interface WorkerEnv {
   OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT?: {
     limit: (args: { key: string }) => Promise<{ success: boolean }>;
   };
+  // #757 Phase A — Alchemy webhook HMAC signing key. Read DIRECTLY from this
+  // raw `WorkerEnv` in the `/hooks/chain-event` route (which is dispatched
+  // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
+  // the other Secrets-Store fetches). Optional: unset ⇒ the route fails closed
+  // (401) and ingest stays cron-paced.
+  ALCHEMY_WEBHOOK_SIGNING_KEY?: SecretBinding;
+  // #757 Phase A — per-chain ingest Durable Object namespace. The webhook
+  // route and the cron `scheduled()` both resolve `idFromName(String(chainId))`
+  // and forward a (chainId, target-block) hint; the DO is the single serialized
+  // ingest writer per chain. Optional so a deploy without the DO binding
+  // degrades to the legacy inline cron scan.
+  CHAIN_INGEST_DO?: DurableObjectNamespace;
 }
 
 /**

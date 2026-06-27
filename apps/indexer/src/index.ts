@@ -48,9 +48,22 @@
  * state writes). The rest of the surface stays public-read.
  */
 
-import { resolveEnv, type WorkerEnv } from './env';
+import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
-import { pruneOldCancelledOffers } from './cancelledOfferRetention';
+import {
+  pruneOldCancelledOffers,
+  pruneOldWebhookDeliveries,
+} from './cancelledOfferRetention';
+import {
+  readCappedBody,
+  verifyAlchemySignature,
+  parseChainEventPayload,
+  WebhookBodyTooLargeError,
+} from './webhookAuth';
+
+// #757 — the per-chain ingest Durable Object. Re-exported from the Worker
+// entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
+export { ChainIngestDO } from './chainIngestDO';
 import {
   handleOffersStats,
   handleOffersActive,
@@ -83,19 +96,48 @@ export default {
     // T-078 — resolve the Secrets Store RPC bindings once, here at
     // the entry point; both passes get the plain resolved env.
     const resolved = await resolveEnv(env);
-    // Each pass is wrapped so a transient D1 / RPC blip on one pass
-    // can't wedge the next — indexer ticks fail one-at-a-time rather
-    // than tick-wide.
-    ctx.waitUntil(
-      runChainIndexer(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[indexer] runChainIndexer pass failed:', err);
-      }),
-    );
+    // #757 — chain ingest. When the per-chain ingest Durable Object is bound,
+    // the cron PINGS each chain's DO (target 0 ⇒ "scan to safe head"): every
+    // chain is serviced each minute (not one per round-robin tick), and the DO
+    // is the single serialized writer that the webhook also routes through.
+    // Without the DO binding, fall back to the legacy inline round-robin scan.
+    if (env.CHAIN_INGEST_DO) {
+      const ns = env.CHAIN_INGEST_DO;
+      for (const chain of getChainConfigs(resolved)) {
+        const stub = ns.get(ns.idFromName(String(chain.id)));
+        ctx.waitUntil(
+          stub
+            .fetch('https://chain-ingest-do/trigger', {
+              method: 'POST',
+              body: JSON.stringify({ chainId: chain.id, targetBlock: '0' }),
+            })
+            .catch((err) => {
+              // eslint-disable-next-line no-console
+              console.error(`[indexer] DO ping failed for chain ${chain.id}:`, err);
+            }),
+        );
+      }
+    } else {
+      // Each pass is wrapped so a transient D1 / RPC blip on one pass can't
+      // wedge the next — ticks fail one-at-a-time rather than tick-wide.
+      ctx.waitUntil(
+        runChainIndexer(resolved).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[indexer] runChainIndexer pass failed:', err);
+        }),
+      );
+    }
     ctx.waitUntil(
       pruneOldCancelledOffers(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[indexer] pruneOldCancelledOffers pass failed:', err);
+      }),
+    );
+    // #757 — prune the webhook delivery dedupe table (short retention window).
+    ctx.waitUntil(
+      pruneOldWebhookDeliveries(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
       }),
     );
     // T-086 step 14 round 2 — retry the OpenSea publish for rows
@@ -111,8 +153,21 @@ export default {
     );
   },
 
-  async fetch(req: Request, env: WorkerEnv): Promise<Response> {
+  async fetch(
+    req: Request,
+    env: WorkerEnv,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     const url = new URL(req.url);
+
+    // #757 — inbound chain webhook. Dispatched BEFORE the global `resolveEnv`
+    // so an unauthenticated POST never triggers the other Secrets-Store
+    // fetches: the handler reads ONLY the signing key from the raw env, caps
+    // the body, and HMAC-verifies before any further work.
+    if (url.pathname === '/hooks/chain-event' && req.method === 'POST') {
+      return handleChainEventWebhook(req, env);
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
@@ -225,3 +280,82 @@ export default {
     return new Response('Not found', { status: 404 });
   },
 } satisfies ExportedHandler<WorkerEnv>;
+
+/**
+ * #757 — `POST /hooks/chain-event`. Authenticate the Alchemy delivery, then
+ * forward a (chainId, target-block) hint to that chain's ingest DO. Reads ONLY
+ * the signing key from the raw env (no `resolveEnv`), so an unauthenticated
+ * POST never triggers the other Secrets-Store fetches. No CORS (caller is
+ * Alchemy's edge, not a browser). Fails closed at every step; the cron + DO
+ * backstop means a dropped/failed webhook only loses latency, never data.
+ */
+async function handleChainEventWebhook(
+  req: Request,
+  env: WorkerEnv,
+): Promise<Response> {
+  // 1. Cap the body before any hashing.
+  let rawBody: string;
+  try {
+    rawBody = await readCappedBody(req);
+  } catch (err) {
+    if (err instanceof WebhookBodyTooLargeError) {
+      return new Response('payload too large', { status: 413 });
+    }
+    return new Response('bad request', { status: 400 });
+  }
+
+  // 2. HMAC-verify (fail-closed). Reads only the signing key from the raw env.
+  const signingKey = await env.ALCHEMY_WEBHOOK_SIGNING_KEY?.get();
+  const ok = await verifyAlchemySignature(
+    rawBody,
+    req.headers.get('x-alchemy-signature'),
+    signingKey,
+  );
+  if (!ok) return new Response('unauthorized', { status: 401 });
+
+  // 3. Parse the hint (network → chainId, max delivered block, delivery id).
+  const parsed = parseChainEventPayload(rawBody);
+  if (!parsed) return new Response('bad payload', { status: 400 });
+  // Unmapped network / DO not bound ⇒ accept + no-op (cron covers it).
+  if (parsed.chainId === null || !env.CHAIN_INGEST_DO) {
+    return new Response('ok (no-op)', { status: 200 });
+  }
+
+  // 4. Early dedupe — drop a delivery already recorded (no DO work).
+  const seen = await env.DB.prepare(
+    `SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?`,
+  )
+    .bind(parsed.deliveryId)
+    .first();
+  if (seen) return new Response('ok (dup)', { status: 200 });
+
+  // 5. Durable forward to the chain's ingest DO (enqueue-only ack).
+  const ns = env.CHAIN_INGEST_DO;
+  const stub = ns.get(ns.idFromName(String(parsed.chainId)));
+  let forwarded: Response;
+  try {
+    forwarded = await stub.fetch('https://chain-ingest-do/trigger', {
+      method: 'POST',
+      body: JSON.stringify({
+        chainId: parsed.chainId,
+        targetBlock: parsed.maxBlock.toString(),
+      }),
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[indexer] webhook DO forward threw:', err);
+    // Don't record the dedupe row → Alchemy's retry re-forwards (5xx).
+    return new Response('forward failed', { status: 502 });
+  }
+  if (!forwarded.ok) {
+    return new Response('forward rejected', { status: 502 });
+  }
+
+  // 6. Record the dedupe row ONLY after a durable accept, then ack.
+  await env.DB.prepare(
+    `INSERT OR IGNORE INTO webhook_deliveries (delivery_id, seen_at) VALUES (?, ?)`,
+  )
+    .bind(parsed.deliveryId, Math.floor(Date.now() / 1000))
+    .run();
+  return new Response('queued', { status: 200 });
+}
