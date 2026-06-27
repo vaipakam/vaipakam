@@ -48,14 +48,26 @@ this scan/decode/dispatch code verbatim** — we change only *who calls it* and
 
 ## 3. The architecture: a per-chain Durable Object is the single ingest writer
 
-### 3.1 Why a DO — remove concurrency instead of patching it
+### 3.1 Why a DO — collapse ingest to a single in-memory writer
 
-A Cloudflare **Durable Object processes requests single-threaded** (the input
-gate serializes them). So if **all** ingest for a chain goes through that
-chain's DO, there is **never** a second concurrent writer — which is precisely
-the assumption the existing handlers already satisfy. No lock, no watermark, no
-tombstones, no per-field-group columns: the whole concurrency-hardening tax that
-the Worker-writes-D1 approach incurred simply does not arise.
+A Cloudflare **Durable Object is a single addressable instance**: all requests
+for `idFromName(chainId)` land on one object, in one location. That gives us a
+single place to run an **explicit single-flight queue** so only one scan for a
+chain runs at a time — which is precisely the assumption the existing handlers
+already satisfy. No lock, no watermark, no tombstones, no per-field-group
+columns: the whole concurrency-hardening tax the Worker-writes-D1 approach
+incurred does not arise.
+
+> **Important (Codex r7 P1): the DO input gate is NOT enough on its own.** The
+> input gate serializes request *delivery* and closes during *storage*
+> operations, but it is **open across awaited network work**. Our scan awaits
+> dRPC reads for seconds before the cursor advances, so a second trigger could
+> be delivered mid-scan, read the same cursor, and start an overlapping scan.
+> So the DO must run an **explicit single-flight guard** (§3.4): a `scanning`
+> flag + a coalesced `pendingTarget`, persisted in **DO storage** (so it
+> survives hibernation), gates all scans. A trigger that arrives while a scan is
+> running only *raises* `pendingTarget` and returns; the in-flight loop picks it
+> up. This — not the input gate — is what guarantees the single writer.
 
 The DO is *also* the component the locked Phase B architecture already mandates
 (inbound WebSocket + Hibernation for browser push). So we are not adding new
@@ -98,10 +110,14 @@ Alchemy webhook ─► indexer Worker /hooks/chain-event                     │
   DO** every minute. (Bonus: every chain is serviced each minute rather than one
   per round-robin tick, so baseline staleness drops to ~1 min even with **no**
   webhook; the webhook makes it seconds.)
-- **Retention/republish passes** (`pruneOldCancelledOffers`,
-  `sweepUnpublishedListings`) touch **disjoint** rows (old cancelled rows /
-  the OpenSea publish marker), not the live event projection, so they may stay
-  on the cron Worker without conflicting with the DO writer.
+- **Retention pass** (`pruneOldCancelledOffers`) touches **disjoint** rows (old
+  cancelled rows past the retention window), not the live event projection, so it
+  may stay on the cron Worker.
+- **`sweepUnpublishedListings` is NOT disjoint (Codex r7 P2)** — it selects and
+  updates `prepay_listings` (the OpenSea publish marker) which the chain handlers
+  also write. So it must run **through the chain's DO** (so it's serialized with
+  ingest), not on the cron Worker. The cron pings the DO to run both its scan and
+  its listing-republish for that chain.
 
 ### 3.3 The webhook route (`POST /hooks/chain-event`)
 
@@ -120,52 +136,98 @@ does **not** write D1 itself.
   hex-decoding `X-Alchemy-Signature`. **Fail-closed**: secret unset / header
   missing-malformed / verify fails → **401**, no forward. New secret
   `ALCHEMY_WEBHOOK_SIGNING_KEY` (Secrets Store binding).
-- **Per-delivery dedupe** (after HMAC): `INSERT OR IGNORE` into
-  `webhook_deliveries(delivery_id PK, seen_at)` keyed by the Alchemy delivery id
-  (or `(network, H)`); a duplicate 200-acks without forwarding. Pruned by the
-  existing scheduled retention sweep (short replay window only).
 - **Payload → (chainId, max block H)**, hint only: map the Alchemy network →
   `chainId`; extract the max delivered block `H` as the DO's catch-up **target**
   (it bounds *how long the DO waits for finality*, never what gets written — the
   scan range stays cursor-derived and every row is a fresh dRPC re-read).
   Unknown network / unconfigured chain → 200 no-op.
-- Forward to `ChainIngestDO(chainId)` with `{ targetBlock: H }` and return
-  **200** immediately (Alchemy wants a prompt 2xx; the scan happens in the DO).
+- **Durable forward, then ack (Codex r7 P2 ×2).** Forwarding must not be
+  fire-and-forget: the Worker `await`s `stub.fetch(chainId, { targetBlock: H })`,
+  whose DO handler is **enqueue-only** — it durably records `pendingTarget` in DO
+  storage (§3.4) and returns a fast ack *before* running the scan. Only **after**
+  that durable enqueue-ack does the Worker (a) `INSERT OR IGNORE` the
+  `webhook_deliveries(delivery_id PK, seen_at)` dedupe row and (b) return **200**.
+  Ordering matters: dedupe-after-enqueue means a delivery whose forward failed is
+  **not** marked seen, so Alchemy's retry re-forwards it (rather than hitting a
+  dedupe row and 200-ing without forwarding — which would drop the trigger). The
+  whole thing still returns a prompt 2xx because the DO ack is enqueue-only (the
+  scan runs async in the DO via its alarm/loop).
 
-### 3.4 The DO's catch-up / wait-for-safe loop (alarm-driven)
+### 3.4 The DO's single-flight catch-up loop (storage-backed, alarm-driven)
 
 Alchemy fires on the just-mined tip, so `H` is often **above** the safe head. The
-DO must wait for `H` to finalize, not scan once and stop.
+DO must wait for `H` to finalize, not scan once and stop — and must run **one
+scan at a time** (§3.1) with state that **survives hibernation** (Codex r7 P2).
 
-- On a trigger, the DO records `max(pendingTarget, H)`, then runs one
-  `runChainIndexerForChain` (each scan clamped to the **current** safe head, so
-  it never caches reorg-able blocks).
-- If `cursor < pendingTarget` (H not yet safe, or backlog beyond one scan's
-  ~2000-block cap), the DO **`setAlarm(now + ~3s)`**; the alarm handler
-  re-checks the safe head and re-scans, looping until `cursor >= pendingTarget`
-  or a bounded attempt budget. Alarms (not a pinned `waitUntil` loop) keep the
-  DO **Hibernation-friendly** and naturally bound the work.
-- **Latency (honest):** on **fast-finality L2s** (Base/OP/Arbitrum — safe head
-  trails seconds) a just-mined repay/match is ingested **within seconds of
-  becoming safe**. **Ethereum mainnet** (~13 min safe lag) and **deep backlog**
-  finalize cron/alarm-paced — inherent to not caching reorg-able state. The
-  acceptance test (§7) is scoped to a fast-finality testnet.
+- **Storage-backed single-flight.** The DO keeps `pendingTarget` and a
+  `scanning` flag in **DO storage** (not just instance memory — hibernation
+  resets memory and the alarm can fire after a reset). An enqueue (from the
+  webhook forward or the cron ping): `pendingTarget = max(pendingTarget, H)`
+  persisted; if `scanning` is already true, return immediately (the in-flight
+  loop will chase the raised target); else set `scanning = true` and `setAlarm`.
+- **The loop (alarm handler).** Read `pendingTarget` from storage; read the
+  current safe head (1 subrequest). If `H > safeHead`, the tip isn't final yet —
+  re-`setAlarm(now + ~3s)` and return (cheap wait). Else run **one**
+  `runChainIndexerForChain` (clamped to the current safe head). If `cursor <
+  pendingTarget` (backlog beyond one scan's ~2000-block cap), `setAlarm` again;
+  when `cursor >= pendingTarget` or a bounded attempt budget is hit, clear
+  `scanning`. Alarms (not a pinned `waitUntil`) keep the DO Hibernation-friendly
+  and bound the work; the `scanning` flag guarantees the single writer across the
+  awaited dRPC reads the input gate alone would not.
+- **Latency (honest, Codex r7 P2).** The guarantee is "**within seconds of the
+  block being reported `safe`**", which is *not* always seconds after mining: an
+  L2 `safe` head is tied to L1 batch posting / finality, so on production
+  Base/OP/Arbitrum the safe lag can be **minutes**, not seconds, even when the
+  webhook arrives instantly. We deliberately keep the reorg-proof `blockTag:
+  'safe'` clamp (never cache reorg-able state), so the realtime win is "remove
+  the round-robin delay; ingest within seconds of *safe*". A fast-finality
+  **testnet** (short safe lag) demonstrates seconds-after-mining; production L2
+  latency tracks each chain's real safe-finality, and Ethereum mainnet (~13 min)
+  and deep backlog finalize alarm/cron-paced. (If a future product decision wants
+  sub-safe "pending" invalidation for UI, that's a separate confirmation policy —
+  explicitly out of scope here because it would cache reorg-able state.)
 
-### 3.5 Prerequisite (#760): re-scan-idempotent handlers — the ONLY residual
+### 3.5 Prerequisite (#760, broadened): make a sequential RE-SCAN fully deterministic
 
 A single writer removes *concurrency*, but **sequential re-scan** still exists:
 `runChainIndexerForChain` writes rows before advancing the cursor, so a
-partial-failure scan re-runs the range. Under that re-scan, handlers that do a
-**read-modify-write delta** (`InternalMatchExecuted` `-= delta`;
-`OfferMatched`/`OfferModified` computing `amount_filled` from the current D1
-`amount_max`) double-apply. **This is a pre-existing cron bug**, fixed
-**first and separately as #760**: those handlers are converted to **absolute,
-block-pinned (`{blockNumber: log.blockNumber}`) chain-derived writes**, so
-re-applying an event sets the same value. (Block-pin is end-of-block, but under
-single-writer **in-order** processing the later event simply overwrites the
-earlier in the same scan — the last write wins naturally, no watermark needed.)
-**#757 depends on #760 landing first**; with it, the DO re-scan is safe by
-construction, and *none* of the watermark/lock/tombstone machinery is needed.
+partial-failure scan re-runs the range — possibly **after later blocks have been
+seen** by a subsequent scan. For the projection to converge, *every* write a
+re-scan can repeat must be deterministic. **#760 lands first and covers all of
+it** (Codex r7 widened the scope beyond the delta handlers):
+
+1. **Delta / current-row handlers → absolute block-pinned writes** (the core
+   corruption bug). `InternalMatchExecuted` (`-= notional` on the D1 row) and
+   `OfferMatched` (`amount_filled` from the current `amount_max`) now write
+   absolute values read at `{blockNumber: log.blockNumber}`. *(Done in PR #761.)*
+2. **Block-pin EVERY replayed chain read, not just the deltas** (Codex r7 L164).
+   Other handlers also do live RPC reads — the `OfferCreated`/stub-heal
+   `getOfferDetails` path and the prepay `grace_period_end` resolution
+   (`_resolveGraceEnd`). At `latest` head, a re-scan of an *old* range after
+   later blocks would write **post-`scanTo`** state for an old event. Pin those
+   reads to `log.blockNumber` too. *(Follow-on within #760, not yet in #761.)*
+3. **External side-effects must be replay-safe** (Codex r7 L163). The prepay
+   handlers `_maybePublishToOpenSea` **before** the cursor advances; a re-scan
+   re-POSTs the same order and can flip `opensea_published_at` back to NULL on a
+   non-2xx. Guard with an **atomic `INSERT OR IGNORE` published-marker** keyed by
+   order hash before the external call; only the winner publishes; a transient
+   failure leaves the marker absent so the legitimate republish sweep still runs.
+4. **Same-block, same-row ordering** (Codex r7 L166). The dispatch buckets events
+   by type, not strictly by chain log order, so two same-block events on one row
+   could apply in bucket order. With (1)+(2) every value write is an absolute
+   end-of-block snapshot (order-independent — they all converge to the same
+   end-of-block state); the residual is **status flips that read the event, not
+   chain** (`OfferAccepted`/`Canceled` vs a match). Cover them by dispatching
+   same-row events in **log order** *or* by deriving status from a block-pinned
+   read — to be settled in #760's implementation.
+
+(Block-pin is "end-of-block"; combined with absolute snapshots + the chosen
+ordering rule, the final state is the highest-log event's end-of-block snapshot
+= correct.) **#757 depends on #760 (all four) landing first**; with it, the DO
+re-scan is deterministic, and *none* of the watermark/lock/tombstone machinery is
+needed. The `webhook_deliveries` dedupe table gets its **own** prune in the
+scheduled retention path (Codex r7 P3 — the existing sweep only prunes cancelled
+offers).
 
 ### 3.6 Monotonic cursor (small hardening)
 
