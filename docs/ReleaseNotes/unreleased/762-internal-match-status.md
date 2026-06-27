@@ -15,12 +15,14 @@ active) couldn't fix it.
 
 The handler now reads the loan's **actual on-chain status** at that block (the
 same lookup it already performs returns it) instead of guessing from the
-principal. It records "internally matched" only when the chain itself reports
-that state; when a later same-block event is the real closer, the loan is left
-for that event's handler, which sets the correct terminal status. Loan labels
-now match the chain in this ordering.
+principal, and records exactly that status: internally matched, repaid, settled,
+or defaulted. So whatever truly closed the loan in that block is what the label
+reflects — including the case where a claim-time match is **settled in the same
+block** (previously that too could be mislabelled, and would have been left
+stuck "active" by a naive fix).
 
-User-visible effect: in the (uncommon) case above, a loan that was repaid now
-shows as repaid rather than internally matched. No balances were ever affected —
-this was a status-label fix only. Closes the last of the re-scan-determinism
-follow-ups raised during the #760 review.
+User-visible effect: in the (uncommon) same-block cases above, a loan now shows
+its true terminal state (repaid / settled) rather than "internally matched" or a
+stuck "active". No balances were ever affected — this was a status-label fix
+only. Closes the last of the re-scan-determinism follow-ups raised during the
+#760 review.

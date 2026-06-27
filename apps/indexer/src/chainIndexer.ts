@@ -104,12 +104,21 @@ const DETAILS_REFRESH_BATCH = 50;
  *  consumes the same scan window. */
 const CURSOR_KIND = 'diamond';
 
-/** `LibVaipakam.LoanStatus.InternalMatched` — the uint8 value `getLoanDetails`
- *  returns for a fully internal-matched loan. Append-only enum, so this slot is
+/** `LibVaipakam.LoanStatus` (uint8) → the indexer's TERMINAL status string, for
+ *  the subset that are terminal end-of-block states an `InternalMatchExecuted`
+ *  block-pinned read can land on (#762/#766). Append-only enum, so the slots are
  *  stable: Active=0, Repaid=1, Defaulted=2, Settled=3, FallbackPending=4,
- *  InternalMatched=5. Used by the `InternalMatchExecuted` handler to decide a
- *  loan's terminal status from the chain's own end-of-block status (#762). */
-const LOAN_STATUS_INTERNAL_MATCHED = 5;
+ *  InternalMatched=5. Active(0) and FallbackPending(4) are deliberately ABSENT:
+ *  they're non-terminal-from-a-match (a partial match leaves the loan `Active`;
+ *  a partial rescue leaves it `FallbackPending`) and get a numbers-only refresh,
+ *  never a status overwrite. An unknown future value also maps to `undefined`
+ *  here → numbers-only, so we never write a guessed status. */
+const LOAN_STATUS_TO_INDEXER_TERMINAL: Record<number, string> = {
+  1: 'repaid',
+  2: 'defaulted',
+  3: 'settled',
+  5: 'internal_matched',
+};
 
 /** Conservative reorg-horizon buffer used when an RPC doesn't support
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
@@ -2049,29 +2058,33 @@ async function processLoanLogs(
         // #762 — decide the terminal status from the loan's ACTUAL on-chain
         // end-of-block status (this same block-pinned read returns the full
         // `Loan`, status included), NOT from the `principal == 0` heuristic. The
-        // old heuristic mis-stamped `internal_matched` when a loan was PARTIALLY
-        // matched and then fully repaid/swap-repaid LATER in the SAME block: the
-        // end-of-block principal is 0 because of the repay, not the match, but
-        // the chain status is then `Repaid`/`Settled`, never `InternalMatched`.
-        // So we only stamp `internal_matched` when the chain itself says
-        // `InternalMatched (5)`. Otherwise we just refresh the absolute
-        // principal/collateral and LEAVE the status for the proper terminal
-        // handler in this same batch (its `flipLoanStatus` matches `active`):
-        // a superseded loan is left `active` here so the later `LoanRepaid` /
-        // `SwapToRepayExecuted` flips it correctly, and a genuine partial match
-        // (chain status still `Active`) stays `active` exactly as before.
-        if (onchainStatus === LOAN_STATUS_INTERNAL_MATCHED) {
+        // old heuristic mis-stamped `internal_matched` whenever a loan's
+        // principal reached 0 for ANY same-block reason — e.g. a loan PARTIALLY
+        // internal-matched then fully repaid/swap-repaid later in the block, or a
+        // claim-time match that the lender claim SETTLES in the same block (#766
+        // P1). We instead PROJECT the chain's exact terminal status:
+        //   InternalMatched(5)→internal_matched, Repaid(1)→repaid, Settled(3)→
+        //   settled, Defaulted(2)→defaulted.
+        // We do NOT rely on a later same-block handler to flip the row, because
+        // not all of them flip an `active` row (e.g. `LoanSettled` only promotes
+        // an already-terminal row → settled), which would otherwise strand a
+        // settled loan as `active`. Active(0)/FallbackPending(4)/unknown map to
+        // `undefined` → a numbers-only refresh that never overwrites status (a
+        // partial match stays `active`; a partial rescue stays `fallback_pending`).
+        const terminalStatus = LOAN_STATUS_TO_INDEXER_TERMINAL[onchainStatus];
+        if (terminalStatus !== undefined) {
           await env.DB.prepare(
-            // #630 — also flip a 'fallback_pending' row: the backstop keeper's
-            // claimAsLenderViaBackstop runs the same internal-match auto-dispatch,
-            // which can FULLY rescue a FallbackPending loan to InternalMatched.
-            // Without 'fallback_pending' here that loan would stay indexed as
-            // fallback-pending forever (no claim event follows the keeper call).
-            `UPDATE loans SET principal = ?, collateral_amount = ?, status = 'internal_matched', terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
+            // Guarded to `active`/`fallback_pending` so it's a no-op on re-scan
+            // (the row is already terminal) and so #630 holds: the backstop
+            // keeper's claim-time auto-dispatch can FULLY rescue a
+            // `fallback_pending` loan straight to `internal_matched` with no
+            // later claim event, so that row must be promotable here too.
+            `UPDATE loans SET principal = ?, collateral_amount = ?, status = ?, terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
               absPrincipal.toString(),
               absCollateral.toString(),
+              terminalStatus,
               Number(log.blockNumber),
               now,
               now,
@@ -2080,23 +2093,19 @@ async function processLoanLogs(
             )
             .run();
           statusUpdates++;
-          // T-086 step 12 / Codex P2 round-5 — internal-match
-          // terminal also clears the listing. The on-chain loan
-          // is no longer Active so any subsequent Seaport fill
-          // would revert at the executor's `getPrepayContext`
-          // check, but the indexed projection needs to mirror
-          // the terminal state immediately.
+          // T-086 step 12 / Codex P2 round-5 — a terminal loan also clears its
+          // prepay listing. The on-chain loan is no longer Active so any
+          // subsequent Seaport fill would revert at the executor's
+          // `getPrepayContext` check, but the indexed projection needs to mirror
+          // the terminal state immediately. (A superseded loan's own terminal
+          // handler — LoanRepaid/SwapToRepayExecuted — also deletes the listing;
+          // both are idempotent.)
           await _deletePrepayListing(env, chainId, loanId);
         } else {
-          // Not a full internal-match close. Either a genuine PARTIAL match
-          // (chain status still `Active`, principal > 0) or a match SUPERSEDED
-          // by a later same-block terminal event (#762: chain status already
-          // `Repaid`/`Settled`, principal 0 from the repay). In both cases we
-          // only refresh the absolute principal/collateral and DON'T touch
-          // status: a partial loan stays `active`; a superseded loan is left
-          // `active` for its later `LoanRepaid`/`SwapToRepayExecuted` handler to
-          // flip (its `flipLoanStatus` matches `active`), which — running later
-          // in this same batch — sets the correct terminal status.
+          // Non-terminal-from-a-match: a genuine PARTIAL match (chain status
+          // still `Active`, principal > 0) or a partial rescue of a
+          // `fallback_pending` loan. Refresh the absolute principal/collateral
+          // and DON'T touch status.
           await env.DB.prepare(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
           )
