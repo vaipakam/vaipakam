@@ -195,12 +195,20 @@ interface AutoLendIntentCardProps {
    * invalidate its cached read and reflect the new state.
    */
   onIntentChanged?: () => void;
+  /**
+   * #755 — reports the card's busy (tx-in-flight) state to the parent so it
+   * can disable the multi-intent list's "Manage" deep-links: retargeting the
+   * form mid-write would show one pair while a tx for another is still
+   * signing/pending.
+   */
+  onBusyChange?: (busy: boolean) => void;
 }
 
 export default function AutoLendIntentCard({
   selectedPair,
   selectedPairNonce,
   onIntentChanged,
+  onBusyChange,
 }: AutoLendIntentCardProps = {}) {
   const { t } = useTranslation();
   const { address, activeChain, isCorrectChain, chainId } = useWallet();
@@ -225,6 +233,11 @@ export default function AutoLendIntentCard({
         ...f,
         lendingAsset: selectedPair.lendingAsset,
         collateralAsset: selectedPair.collateralAsset,
+        // Drop any unsubmitted top-up carried from the previously-edited
+        // pair — bounds get re-prefilled from on-chain, but `fundAmount`
+        // has no prefill, so a stale value would otherwise fund the newly
+        // managed intent on the next Enable/Update.
+        fundAmount: '',
       }));
     }
   }
@@ -282,6 +295,12 @@ export default function AutoLendIntentCard({
   const [ackKeeperKey, setAckKeeperKey] = useState<string>('');
 
   const [busy, setBusy] = useState<boolean>(false);
+  // #755 — surface tx-in-flight to the parent so the multi-intent list can
+  // disable "Manage" while a write is pending (post-await notify, so no
+  // synchronous setState in this effect's body).
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -924,8 +943,10 @@ export default function AutoLendIntentCard({
       }
 
       setNotice((n) => n ?? t('autoLend.noticeEnabled'));
+      // #755 — fire on mutation success BEFORE the local refresh reads, so a
+      // transient post-write read failure can't skip the overview invalidation.
+      onIntentChanged?.();
       await Promise.all([reloadAccount(), reloadPair()]);
-      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       // Refresh on-chain state so a retry after a partial failure
@@ -961,8 +982,8 @@ export default function AutoLendIntentCard({
       // global marker would mislabel the lender's OTHER active intents as
       // "paused" even though the keeper can still fill them.
       setNotice(t('autoLend.noticePaused'));
+      onIntentChanged?.(); // #755 — fire on success, before the refresh reads.
       await Promise.all([reloadAccount(), reloadPair()]);
-      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});
@@ -1037,8 +1058,8 @@ export default function AutoLendIntentCard({
         ? 'autoLend.noticeStoppedKeeper'
         : 'autoLend.noticeStopped';
       setNotice(t(stoppedKey));
+      onIntentChanged?.(); // #755 — fire on success, before the refresh reads.
       await Promise.all([reloadAccount(), reloadPair()]);
-      onIntentChanged?.(); // #755 — refresh the multi-intent overview.
     } catch (err) {
       setError(autoLifecycleErrorOrRaw(err, t));
       await Promise.all([reloadAccount(), reloadPair()]).catch(() => {});

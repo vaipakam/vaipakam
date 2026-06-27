@@ -165,6 +165,10 @@ export default function Dashboard() {
   // Bumped after the auto-lend card mutates an intent so the overview list
   // refetches the new state (its read cache has no timer-driven refresh).
   const [intentRefreshNonce, setIntentRefreshNonce] = useState(0);
+  // True while the auto-lend card has a tx in flight — disables the
+  // overview's "Manage" deep-links so a mid-write click can't retarget the
+  // form away from the pair being signed/awaited.
+  const [autoLendBusy, setAutoLendBusy] = useState(false);
   const autoLendCardRef = useRef<HTMLDivElement | null>(null);
   const handleManageIntent = useCallback((pair: ManageIntentPair) => {
     setSelectedIntentPair(pair);
@@ -176,6 +180,10 @@ export default function Dashboard() {
   }, []);
   const handleIntentChanged = useCallback(() => {
     setIntentRefreshNonce((n) => n + 1);
+  }, []);
+  // Stable so it doesn't churn the auto-lend card's busy-report effect.
+  const handleAutoLendBusyChange = useCallback((busy: boolean) => {
+    setAutoLendBusy(busy);
   }, []);
 
   const activeLoans = loans.filter((l) => l.status === LoanStatus.Active);
@@ -392,6 +400,7 @@ export default function Dashboard() {
         owner={address as Address | null}
         onManage={handleManageIntent}
         refreshSignal={intentRefreshNonce}
+        manageDisabled={autoLendBusy}
       />
 
       {/* #625 WI-1 — auto-lend, wired to the standing LenderIntent layer
@@ -402,6 +411,7 @@ export default function Dashboard() {
           selectedPair={selectedIntentPair}
           selectedPairNonce={selectedIntentNonce}
           onIntentChanged={handleIntentChanged}
+          onBusyChange={handleAutoLendBusyChange}
         />
       </div>
 

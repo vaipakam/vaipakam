@@ -106,6 +106,23 @@ export function useLenderIntentsByOwner(
   const [total, setTotal] = useState<bigint>(seed?.total ?? 0n);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  // The IDENTITY of the data on display (owner/chain/page, ignoring the
+  // refresh nonce). When it changes to an uncached key, drop the prior
+  // rows/total NOW — render-time "adjust state on key change" — so the table
+  // can't show another owner's/page's intents as actionable during the
+  // fetch. A refresh-only bump (same identity) keeps the rows visible while
+  // the post-write refetch lands, so there's no flicker on the same account.
+  const identityKey = user
+    ? `${chain.chainId}:${user.toLowerCase()}:${offset}:${limit}`
+    : '';
+  const [shownIdentity, setShownIdentity] = useState(identityKey);
+  if (identityKey !== shownIdentity) {
+    setShownIdentity(identityKey);
+    setRows(seed?.rows ?? []);
+    setTotal(seed?.total ?? 0n);
+  }
+
   // Latest in-scope request key, so a slow response for a now-stale
   // owner/chain/page/refresh doesn't overwrite the current list. Written
   // in an effect (ref writes don't belong in render).

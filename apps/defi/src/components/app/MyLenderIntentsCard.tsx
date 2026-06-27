@@ -38,6 +38,12 @@ interface Props {
    * instead of serving its 30s cache.
    */
   refreshSignal?: number;
+  /**
+   * True while the auto-lend card has a tx in flight. Disables every
+   * "Manage" deep-link so a mid-write click can't retarget the form to a
+   * different pair than the one being signed/awaited.
+   */
+  manageDisabled?: boolean;
 }
 
 /**
@@ -60,6 +66,7 @@ export function MyLenderIntentsCard({
   owner,
   onManage,
   refreshSignal = 0,
+  manageDisabled = false,
 }: Props) {
   const { t } = useTranslation();
   const [page, setPage] = useState(0);
@@ -152,6 +159,7 @@ export function MyLenderIntentsCard({
                     key={`${row.intent.lendingAsset}:${row.intent.collateralAsset}`}
                     row={row}
                     onManage={onManage}
+                    manageDisabled={manageDisabled}
                   />
                 ))}
               </tbody>
@@ -175,9 +183,11 @@ export function MyLenderIntentsCard({
 function IntentRow({
   row,
   onManage,
+  manageDisabled,
 }: {
   row: OwnerLenderIntentSummary;
   onManage: (pair: ManageIntentPair) => void;
+  manageDisabled: boolean;
 }) {
   const { t } = useTranslation();
   const { intent, active } = row;
@@ -226,6 +236,7 @@ function IntentRow({
         <button
           type="button"
           className="btn btn-ghost btn-sm"
+          disabled={manageDisabled}
           onClick={() =>
             onManage({
               lendingAsset: intent.lendingAsset,
