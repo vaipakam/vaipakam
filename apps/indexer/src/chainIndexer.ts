@@ -1125,16 +1125,17 @@ async function refreshStubOffers(
   // `OfferMatched` / `OfferClosed` handlers in `processOfferLogs`, so
   // no `OR status = 'active'` clause is needed here. Cheap on free
   // tier — `idx_offers_chain_is_stub` keeps the lookup index-only.
-  // #763 (Codex #767) — exclude TERMINAL offers. A 'cancelled' /
-  // 'consumed_by_sale' offer is deleted on-chain, so `getOfferDetails` returns a
-  // zero struct forever; without this exclusion a same-block-cancelled stub
-  // would sit at the head of the `updated_at ASC` queue (the zero-creator guard
-  // above leaves `updated_at` untouched) and starve real stubs of the per-tick
-  // refresh budget every cron.
+  // NB (#763 / Codex #767): we do NOT exclude terminal offers here. A
+  // 'cancelled' offer with a PARTIAL fill, and every 'consumed_by_sale' offer,
+  // still have their `s.offers[offerId]` struct on-chain (cancel only
+  // `delete`s on a zero-fill; `markOfferConsumedBySale` clears only listing
+  // metadata) — so they're still healable by `getOfferDetails` and must stay in
+  // the refresh set. Genuinely-deleted offers (zero-fill cancels) are handled in
+  // `refreshOfferDetails`, which clears `is_stub` on a zero read so the dead row
+  // drops out of this queue instead of starving real stubs.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
      WHERE chain_id = ? AND is_stub = 1
-       AND status NOT IN ('cancelled', 'consumed_by_sale')
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
@@ -1176,20 +1177,28 @@ async function refreshOfferDetails(
     return false;
   }
   if (!detail) return false;
-  // #763 (Codex #767) — a DELETED offer (e.g. created and cancelled in the same
-  // block, or otherwise gone) returns a ZERO struct, not a revert. Don't
-  // overwrite the row with a zero creator/assets + `is_stub = 0` — that would
-  // undo the inline path's same-block-cancel guard and blank out the
-  // event-derived creator on the cancelled row. Leave the stub as-is (the
-  // `refreshStubOffers` query below also stops selecting terminal rows, so this
-  // can't loop). Shares the inline-path guard.
+  const now = Math.floor(Date.now() / 1000);
+  // #763 (Codex #767) — a GENUINELY-DELETED offer (a zero-fill cancel runs
+  // `delete s.offers[offerId]`) returns a ZERO struct, not a revert. Don't
+  // overwrite the row with a zero creator/assets — that would blank out the
+  // event-derived creator on the cancelled row. Instead clear `is_stub` so this
+  // permanently-unhealable row drops OUT of the `refreshStubOffers` queue
+  // (which orders by `updated_at ASC`) instead of sitting at its head and
+  // starving real stubs every tick. Terminal offers that still HAVE storage
+  // (partial-fill cancels, `consumed_by_sale`) read real data and fall through
+  // to the normal heal below. Shares the inline OfferCreated-path guard.
   if (
     (detail.creator as string | undefined)?.toLowerCase() ===
     '0x0000000000000000000000000000000000000000'
   ) {
+    await env.DB.prepare(
+      `UPDATE offers SET is_stub = 0, updated_at = ?
+       WHERE chain_id = ? AND offer_id = ?`,
+    )
+      .bind(now, chainId, offerId)
+      .run();
     return false;
   }
-  const now = Math.floor(Date.now() / 1000);
   const o = detail as {
     creator: Address;
     offerType: number;
