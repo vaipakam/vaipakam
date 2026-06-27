@@ -54,6 +54,12 @@ const cache = new Map<
   string,
   { rows: OwnerLenderIntentSummary[]; total: bigint; at: number }
 >();
+// Module-level invalidation generation, bumped by `invalidateLenderIntentsCache`
+// on every intent mutation. A load captures it at start and only writes to the
+// cache if it's unchanged at resolve — so an in-flight request that began
+// BEFORE a mutation's cache clear can't re-poison the just-cleared cache with
+// pre-mutation rows (which a later remount within the TTL would then seed from).
+let cacheGeneration = 0;
 // `refreshKey` is part of the key so an explicit bump (e.g. after the
 // auto-lend card mutates an intent) misses the 30s cache and refetches,
 // via the same load effect — no extra setState-in-effect refresh path.
@@ -150,6 +156,8 @@ export function useLenderIntentsByOwner(
     // Every invocation supersedes any in-flight one — bump first, capture
     // locally, and re-check before each state write below.
     const mySeq = ++reqSeqRef.current;
+    // Invalidation generation at request start — gates the cache write below.
+    const myGen = cacheGeneration;
     if (!user) {
       setRows([]);
       setTotal(0n);
@@ -192,7 +200,12 @@ export function useLenderIntentsByOwner(
           ) => Promise<[OwnerLenderIntentSummary[], bigint]>;
         }
       ).getLenderIntentsByOwner(user, offset, limit);
-      cache.set(requestedKey, { rows: intents, total: count, at: Date.now() });
+      // Only cache if no mutation cleared the cache since this request began —
+      // otherwise a pre-mutation response would re-poison the just-cleared
+      // cache (and a later remount within the TTL would seed stale rows).
+      if (cacheGeneration === myGen) {
+        cache.set(requestedKey, { rows: intents, total: count, at: Date.now() });
+      }
       // Drop a response a newer load has already superseded.
       if (reqSeqRef.current !== mySeq) return;
       setRows(intents);
@@ -248,10 +261,15 @@ export function useLenderIntentsByOwner(
  * re-run → cache miss → fresh fetch); this clear handles the remount case.
  */
 export function invalidateLenderIntentsCache() {
+  // Bump the generation FIRST: any request already in flight captured the
+  // prior generation and so will skip its cache write at resolve, preventing
+  // a pre-mutation response from re-poisoning the cache after this clear.
+  cacheGeneration += 1;
   cache.clear();
 }
 
 /** Test-only — wipes the per-page cache. */
 export function __clearLenderIntentsByOwnerCache() {
+  cacheGeneration += 1;
   cache.clear();
 }
