@@ -132,6 +132,19 @@ export class ChainIngestDO {
     // in `finally` no matter how we exit, so the DO can never wedge "running".
     this.scanRunning = true;
     try {
+      // Honor the rollout gate INSIDE the alarm (Codex #764 round 5). If an
+      // operator turns `CHAIN_INGEST_VIA_DO` off after it was on, `scheduled()`
+      // immediately reverts to the legacy inline scan — but alarms already
+      // armed in this DO would keep scanning, and the legacy cron + a DO alarm
+      // writing the same chain is exactly the two-writer state the flag exists
+      // to prevent. So bail (and stop re-arming) until it's re-enabled. We gate
+      // on the var only: being INSIDE the DO already implies the namespace
+      // binding exists, so the `CHAIN_INGEST_DO` half of `doIngestEnabled` is
+      // moot here.
+      if (this.env.CHAIN_INGEST_VIA_DO !== 'true') {
+        await this.clearLoopState();
+        return;
+      }
       const chainId = await this.state.storage.get<number>('chainId');
       if (typeof chainId !== 'number') {
         await this.clearLoopState();
@@ -140,6 +153,7 @@ export class ChainIngestDO {
       const attempts = (await this.state.storage.get<number>('attempts')) ?? 0;
 
       let scannedTo: bigint | null = null;
+      let retryableFailure = false;
       try {
         const resolved = await resolveEnv(this.env);
         const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
@@ -150,6 +164,13 @@ export class ChainIngestDO {
         }
         const result = await runChainIndexerForChain(resolved, chain);
         scannedTo = result.scannedTo;
+        // A soft RPC/log-fetch failure returns `skipped: 'rpc-error'` with
+        // `scannedTo` rewound to the previous cursor instead of throwing
+        // (Codex #764 round 5). Treat it as retryable so the caught-up check
+        // below doesn't mistake a failed pass (whose `scannedTo` is usually
+        // `>= target`, e.g. target 0 for a block-less webhook) for success and
+        // drop the already-acked webhook's only retry until the next cron tick.
+        retryableFailure = result.skipped === 'rpc-error';
         // Phase B hook — broadcast an invalidation to subscribed clients after
         // the D1 write. No-op stub until Phase B wires the WebSocket fan-out.
         this.broadcast(chainId, result);
@@ -166,10 +187,10 @@ export class ChainIngestDO {
       const target = BigInt(
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
-      if (scannedTo !== null && scannedTo >= target) {
-        await this.clearLoopState(); // caught up
+      if (!retryableFailure && scannedTo !== null && scannedTo >= target) {
+        await this.clearLoopState(); // genuinely caught up
       } else {
-        await this.rearmOrFinish(attempts);
+        await this.rearmOrFinish(attempts); // more work, or retry a soft failure
       }
     } finally {
       this.scanRunning = false;
