@@ -104,6 +104,13 @@ const DETAILS_REFRESH_BATCH = 50;
  *  consumes the same scan window. */
 const CURSOR_KIND = 'diamond';
 
+/** `LibVaipakam.LoanStatus.InternalMatched` — the uint8 value `getLoanDetails`
+ *  returns for a fully internal-matched loan. Append-only enum, so this slot is
+ *  stable: Active=0, Repaid=1, Defaulted=2, Settled=3, FallbackPending=4,
+ *  InternalMatched=5. Used by the `InternalMatchExecuted` handler to decide a
+ *  loan's terminal status from the chain's own end-of-block status (#762). */
+const LOAN_STATUS_INTERNAL_MATCHED = 5;
+
 /** Conservative reorg-horizon buffer used when an RPC doesn't support
  *  the `safe` block tag. Ethereum's exact finality is 32 blocks; L2s
  *  (Base / Arb / OP / Polygon zkEVM) settle well within ~10. 32 covers
@@ -2015,6 +2022,7 @@ async function processLoanLogs(
         if (loanId === 0) return; // C is 0 for a 2-way match
         let absPrincipal: bigint;
         let absCollateral: bigint;
+        let onchainStatus: number;
         try {
           const d = (await client.readContract({
             address: diamond,
@@ -2022,9 +2030,14 @@ async function processLoanLogs(
             functionName: 'getLoanDetails',
             args: [BigInt(loanId)],
             blockNumber: log.blockNumber,
-          })) as { principal: bigint; collateralAmount: bigint };
+          })) as {
+            principal: bigint;
+            collateralAmount: bigint;
+            status: number;
+          };
           absPrincipal = BigInt(d.principal);
           absCollateral = BigInt(d.collateralAmount);
+          onchainStatus = Number(d.status);
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error(
@@ -2033,7 +2046,21 @@ async function processLoanLogs(
           );
           throw err;
         }
-        if (absPrincipal === 0n) {
+        // #762 — decide the terminal status from the loan's ACTUAL on-chain
+        // end-of-block status (this same block-pinned read returns the full
+        // `Loan`, status included), NOT from the `principal == 0` heuristic. The
+        // old heuristic mis-stamped `internal_matched` when a loan was PARTIALLY
+        // matched and then fully repaid/swap-repaid LATER in the SAME block: the
+        // end-of-block principal is 0 because of the repay, not the match, but
+        // the chain status is then `Repaid`/`Settled`, never `InternalMatched`.
+        // So we only stamp `internal_matched` when the chain itself says
+        // `InternalMatched (5)`. Otherwise we just refresh the absolute
+        // principal/collateral and LEAVE the status for the proper terminal
+        // handler in this same batch (its `flipLoanStatus` matches `active`):
+        // a superseded loan is left `active` here so the later `LoanRepaid` /
+        // `SwapToRepayExecuted` flips it correctly, and a genuine partial match
+        // (chain status still `Active`) stays `active` exactly as before.
+        if (onchainStatus === LOAN_STATUS_INTERNAL_MATCHED) {
           await env.DB.prepare(
             // #630 — also flip a 'fallback_pending' row: the backstop keeper's
             // claimAsLenderViaBackstop runs the same internal-match auto-dispatch,
@@ -2061,6 +2088,15 @@ async function processLoanLogs(
           // the terminal state immediately.
           await _deletePrepayListing(env, chainId, loanId);
         } else {
+          // Not a full internal-match close. Either a genuine PARTIAL match
+          // (chain status still `Active`, principal > 0) or a match SUPERSEDED
+          // by a later same-block terminal event (#762: chain status already
+          // `Repaid`/`Settled`, principal 0 from the repay). In both cases we
+          // only refresh the absolute principal/collateral and DON'T touch
+          // status: a partial loan stays `active`; a superseded loan is left
+          // `active` for its later `LoanRepaid`/`SwapToRepayExecuted` handler to
+          // flip (its `flipLoanStatus` matches `active`), which — running later
+          // in this same batch — sets the correct terminal status.
           await env.DB.prepare(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
           )
