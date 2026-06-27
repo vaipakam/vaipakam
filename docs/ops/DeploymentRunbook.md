@@ -743,6 +743,65 @@ actual broadcasts.
 
 ---
 
+## #757 — near-real-time indexer ingest (Durable Object + webhook): operator activation
+
+The `apps/indexer` Worker ships with a per-chain ingest **Durable Object**
+(`ChainIngestDO`) and an inbound webhook route (`POST /hooks/chain-event`), but
+**both are OFF by default** — the cron keeps the legacy round-robin inline scan
+and the webhook 200-no-ops — until an operator explicitly enables them. This is a
+deliberate two-step rollout so deploying the new code never re-routes live ingest
+on its own. Nothing here is required for correctness; it only lowers staleness
+(round-robin minutes → ~1 min from the cron pinging every chain's DO, → seconds
+once the provider webhook fires).
+
+**To enable (per environment):**
+
+```bash
+# 1. Create the Alchemy webhook HMAC signing key in the SAME Cloudflare Secrets
+#    Store the RPC_* secrets live in (store vaipakam-credentials). The value is
+#    the "signing key" Alchemy shows for the webhook (Webhooks dashboard).
+wrangler secret-store secret create ALCHEMY_WEBHOOK_SIGNING_KEY \
+  --store-id 1e66429d0fa24aa38a27bc05b7bcf63e
+
+# 2. In apps/indexer/wrangler.jsonc, UNCOMMENT the binding (it's commented out so
+#    a deploy can't fail validating a not-yet-existing store secret):
+#      { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY", "store_id": "1e66…", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY" }
+#    and set the gate var:
+#      "vars": { …, "CHAIN_INGEST_VIA_DO": "true" }
+
+# 3. Redeploy the indexer Worker.
+cd apps/indexer && wrangler deploy
+```
+
+**Provision the provider webhook (one per chain):** create an Alchemy **Custom
+Webhook** watching the Diamond address, target URL
+`https://<indexer-host>/hooks/chain-event?chain=<chainId>` — the `?chain=`
+param pins the chain (the Custom Webhook payload carries no `network` field). For
+the tightest finalize-wait latency, include `block { number }` in the webhook's
+GraphQL selection (absent → the DO still scans to the safe head, just without an
+upper-bound hint). The route fails closed (401) for any delivery whose HMAC
+doesn't verify, so a mis-configured signing key is safe (it just disables the
+fast path; the cron still covers ingest).
+
+**Guarantees that make this safe:** the DO is the single serialized writer (the
+runtime never runs its `alarm()` concurrently), reads only the chain's `safe`
+(finalized) head, and the event handlers are re-scan-idempotent — so a
+missed/duplicate/failed webhook delivery only changes latency, never data.
+
+**Rollback:** set `CHAIN_INGEST_VIA_DO` back to anything other than `"true"` (or
+remove it) and redeploy. The cron immediately reverts to the legacy inline scan,
+the webhook 200-no-ops, and any already-armed DO alarm bails on its next fire
+(it re-checks the gate before scanning). No data migration either direction.
+
+**Verify after enabling:** the per-chain `indexer_cursor` should keep advancing
+(same check as "Post-deploy verification" above); webhook deliveries land in the
+`webhook_deliveries` dedupe table (pruned to a ~6-hour window by the cron).
+
+(Follow-ups tracked separately: #765 routes the marketplace-republish sweep
+per-chain through the DO; Phase B adds a WebSocket push fan-out from the same DO.)
+
+---
+
 ## How addresses get persisted
 
 Every deploy script writes its outputs to a single per-chain artifact at:
