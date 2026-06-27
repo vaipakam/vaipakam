@@ -123,15 +123,17 @@ export function useLenderIntentsByOwner(
     setTotal(seed?.total ?? 0n);
   }
 
-  // Latest in-scope request key, so a slow response for a now-stale
-  // owner/chain/page/refresh doesn't overwrite the current list. Written
-  // in an effect (ref writes don't belong in render).
-  const latestKeyRef = useRef(cacheKey);
-  useEffect(() => {
-    latestKeyRef.current = cacheKey;
-  }, [cacheKey]);
+  // Monotonic request sequence. Bumped SYNCHRONOUSLY at the start of every
+  // load (a callback write, immediate — not an effect that lags a render),
+  // so a slow response for a now-stale owner/chain/page/refresh is dropped:
+  // a newer load bumps the seq, and the older in-flight load sees the
+  // mismatch at resolve. A ref, since it must not trigger a re-render.
+  const reqSeqRef = useRef(0);
 
   const load = useCallback(async () => {
+    // Every invocation supersedes any in-flight one — bump first, capture
+    // locally, and re-check before each state write below.
+    const mySeq = ++reqSeqRef.current;
     if (!user) {
       setRows([]);
       setTotal(0n);
@@ -175,8 +177,8 @@ export function useLenderIntentsByOwner(
         }
       ).getLenderIntentsByOwner(user, offset, limit);
       cache.set(requestedKey, { rows: intents, total: count, at: Date.now() });
-      // Drop a response the user has already navigated away from.
-      if (latestKeyRef.current !== requestedKey) return;
+      // Drop a response a newer load has already superseded.
+      if (reqSeqRef.current !== mySeq) return;
       setRows(intents);
       setTotal(count);
       step.success({
@@ -185,7 +187,7 @@ export function useLenderIntentsByOwner(
         })`,
       });
     } catch (err) {
-      if (latestKeyRef.current !== requestedKey) return;
+      if (reqSeqRef.current !== mySeq) return;
       if (isMissingFacetError(err)) {
         // Facet not cut on this lagging deploy → empty + non-error so the
         // overview self-hides (like the auto-lend card's missing-facet path).
@@ -198,8 +200,8 @@ export function useLenderIntentsByOwner(
         step.failure(err);
       }
     } finally {
-      // Only the request that still owns the key clears the spinner.
-      if (latestKeyRef.current === requestedKey) setLoading(false);
+      // Only the latest request clears the spinner.
+      if (reqSeqRef.current === mySeq) setLoading(false);
     }
   }, [diamond, user, offset, limit, cacheKey]);
 
