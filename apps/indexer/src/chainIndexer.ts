@@ -623,8 +623,9 @@ async function processOfferLogs(
         collateralAmountMax: bigint; }
     | { kind: 'matched';
         lenderOfferId: bigint;
-        matchAmount: bigint;
-        lenderRemainingPostMatch: bigint; };
+        // #760 — block of the OfferMatched log, for the block-pinned
+        // absolute `amountFilled` read in the apply loop below.
+        blockNumber: bigint; };
   const orderedMatchAndModify: ModifiedOrMatched[] = [];
   for (const log of logs) {
     const a = log.args;
@@ -660,8 +661,9 @@ async function processOfferLogs(
       orderedMatchAndModify.push({
         kind: 'matched',
         lenderOfferId: a.lenderOfferId as bigint,
-        matchAmount: a.matchAmount as bigint,
-        lenderRemainingPostMatch: a.lenderRemainingPostMatch as bigint,
+        // #760 — carried so the matched apply can read the absolute
+        // `amountFilled` block-pinned to THIS event (idempotent re-scan).
+        blockNumber: log.blockNumber,
       });
     } else if (log.eventName === 'OfferClosed') {
       closed.push({
@@ -905,40 +907,59 @@ async function processOfferLogs(
     if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
   }
 
-  // #193 / Codex round-1 P1 — log-order replay of OfferMatched and
-  // OfferModified. Both events are interleaved in `orderedMatchAndModify`
-  // in their emit order so amount_filled (computed in the matched
-  // handler from `current amount_max - lenderRemainingPostMatch`) is
-  // always derived from the contract's actual amount_max at the time
-  // of the match. Mixing this into a single log-order loop replaces
-  // the two prior per-type buckets and closes the cross-event
-  // ordering hole Codex called out: under the old order, a
-  // modify-then-match within the same indexed batch would compute
-  // amount_filled against the PRE-modify amount_max, then overwrite
-  // amount_max with the new value — leaving the row's
-  // (amount_filled / amount_max) ratio inconsistent.
+  // #193 — OfferMatched and OfferModified are processed interleaved in
+  // `orderedMatchAndModify` (their emit order). #760 made the matched
+  // handler write the ABSOLUTE `amount_filled` read block-pinned to the
+  // event (not the old `current amount_max - lenderRemainingPostMatch`),
+  // so the row's (amount_filled / amount_max) ratio is now consistent and
+  // RE-SCAN-idempotent regardless of match/modify ordering within the
+  // batch — the prior log-order-dependent delta hole is gone. The
+  // interleaving is retained because OfferModified still applies its own
+  // post-image to amount_max.
   //
   // Note: borrower-side partial fills are out of Phase 1 scope (the
-  // borrowerOfferId is single-fill). The `OfferMatched` event still
-  // fires for them but `lenderRemainingPostMatch` semantics only
-  // apply to the lender-side row, so we filter on `lenderOfferId`
-  // only when applying.
+  // borrowerOfferId is single-fill), so we apply on `lenderOfferId` only.
   for (const ev of orderedMatchAndModify) {
     if (ev.kind === 'matched') {
-      const r = await env.DB.prepare(
-        `UPDATE offers
-         SET amount_filled = CAST(amount_max AS INTEGER) - ?,
-             updated_at = ?
-         WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
-      )
-        .bind(
-          ev.lenderRemainingPostMatch.toString(),
-          now,
-          chainId,
-          Number(ev.lenderOfferId),
+      // #760 — write the ABSOLUTE `amount_filled` read block-pinned to this
+      // event, instead of `amount_max - lenderRemainingPostMatch` computed
+      // against the CURRENT D1 `amount_max`. The old delta was non-idempotent
+      // under a partial-failure RE-SCAN: if an OfferModified changed
+      // `amount_max` in the same batch, the first scan left the modified
+      // value in D1, and the re-scan's match then computed `amount_filled`
+      // against the wrong (post-modify) base. A block-pinned `getOfferDetails`
+      // read returns the same `amountFilled` deterministically on every
+      // replay. FAIL-CLOSED: if the read fails, do NOT write a fallback —
+      // leave the row for the next scan to heal (a committed wrong value
+      // would look "applied").
+      let absFilled: bigint | null = null;
+      try {
+        const od = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_OFFER_DETAILS_ABI,
+          functionName: 'getOfferDetails',
+          args: [ev.lenderOfferId],
+          blockNumber: ev.blockNumber,
+        })) as { amountFilled?: bigint };
+        if (od.amountFilled !== undefined) absFilled = BigInt(od.amountFilled);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] #760 getOfferDetails(${Number(ev.lenderOfferId)}) for OfferMatched failed; leaving amount_filled for next scan`,
+          err,
+        );
+      }
+      if (absFilled !== null) {
+        const r = await env.DB.prepare(
+          `UPDATE offers
+           SET amount_filled = ?,
+               updated_at = ?
+           WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
         )
-        .run();
-      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+          .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
+          .run();
+        if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
+      }
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
@@ -1951,25 +1972,40 @@ async function processLoanLogs(
       const loanIdA = Number(a.loanIdA as bigint);
       const loanIdB = Number(a.loanIdB as bigint);
       const loanIdC = Number(a.loanIdC as bigint);
-      const nA = BigInt(a.notionalA as bigint);
-      const nB = BigInt(a.notionalB as bigint);
-      const nC = BigInt(a.notionalC as bigint);
-      const isThreeWay = loanIdC !== 0;
 
-      // Apply per-loan principal+collateral decrements then flip
-      // status when fully cleared. Loop helper inlined to avoid a
-      // separate function — each loan's two notionals are the only
-      // input.
-      async function applyMatch(loanId: number, principalDelta: bigint, collateralDelta: bigint) {
-        if (loanId === 0) return;
-        // Read current values, decrement in JS (bigint), write back.
-        const cur = await env.DB.prepare(
-          `SELECT principal, collateral_amount FROM loans WHERE chain_id = ? AND loan_id = ?`
-        ).bind(chainId, loanId).first<{ principal: string; collateral_amount: string }>();
-        if (!cur) return;
-        const newPrincipal = BigInt(cur.principal) - principalDelta;
-        const newCollateral = BigInt(cur.collateral_amount) - collateralDelta;
-        if (newPrincipal === 0n) {
+      // #760 — write each touched loan's ABSOLUTE principal/collateral read
+      // block-pinned to THIS event, instead of reading the current D1 row and
+      // SUBTRACTING the event notionals. The old read-modify-write delta was
+      // non-idempotent under a partial-failure RE-SCAN: the second pass read an
+      // already-decremented D1 row and subtracted the same notionals again,
+      // corrupting principal/collateral. A `getLoanDetails` pinned to the
+      // event's block returns the same post-image on every replay, so the
+      // per-leg notionals are no longer needed (the contract's post-image is
+      // the source of truth). FAIL-CLOSED: on a read failure, leave the loan
+      // for the next scan to heal rather than committing a fallback value.
+      async function applyMatch(loanId: number) {
+        if (loanId === 0) return; // C is 0 for a 2-way match
+        let absPrincipal: bigint;
+        let absCollateral: bigint;
+        try {
+          const d = (await client.readContract({
+            address: diamond,
+            abi: DIAMOND_LOAN_DETAILS_ABI,
+            functionName: 'getLoanDetails',
+            args: [BigInt(loanId)],
+            blockNumber: log.blockNumber,
+          })) as { principal: bigint; collateralAmount: bigint };
+          absPrincipal = BigInt(d.principal);
+          absCollateral = BigInt(d.collateralAmount);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error(
+            `[chainIndexer] #760 getLoanDetails(${loanId}) for InternalMatchExecuted failed; leaving loan for next scan`,
+            err,
+          );
+          return;
+        }
+        if (absPrincipal === 0n) {
           await env.DB.prepare(
             // #630 — also flip a 'fallback_pending' row: the backstop keeper's
             // claimAsLenderViaBackstop runs the same internal-match auto-dispatch,
@@ -1979,8 +2015,8 @@ async function processLoanLogs(
             `UPDATE loans SET principal = ?, collateral_amount = ?, status = 'internal_matched', terminal_block = ?, terminal_at = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ? AND status IN ('active', 'fallback_pending')`,
           )
             .bind(
-              newPrincipal.toString(),
-              newCollateral.toString(),
+              absPrincipal.toString(),
+              absCollateral.toString(),
               Number(log.blockNumber),
               now,
               now,
@@ -2001,8 +2037,8 @@ async function processLoanLogs(
             `UPDATE loans SET principal = ?, collateral_amount = ?, updated_at = ? WHERE chain_id = ? AND loan_id = ?`,
           )
             .bind(
-              newPrincipal.toString(),
-              newCollateral.toString(),
+              absPrincipal.toString(),
+              absCollateral.toString(),
               now,
               chainId,
               loanId,
@@ -2011,14 +2047,9 @@ async function processLoanLogs(
         }
       }
 
-      if (isThreeWay) {
-        await applyMatch(loanIdA, nA, nC);
-        await applyMatch(loanIdB, nB, nA);
-        await applyMatch(loanIdC, nC, nB);
-      } else {
-        await applyMatch(loanIdA, nA, nB);
-        await applyMatch(loanIdB, nB, nA);
-      }
+      await applyMatch(loanIdA);
+      await applyMatch(loanIdB);
+      await applyMatch(loanIdC);
     } else if (log.eventName === 'PrepayListingPosted') {
       // T-086 step 12 — Seaport prepay-listing INSERT.
       // T-086 step 14 — also persist `conduitKey` + `salt` (event
