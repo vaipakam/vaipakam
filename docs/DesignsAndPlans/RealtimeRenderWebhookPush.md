@@ -317,3 +317,37 @@ No new contract events, no ABI change → `check-event-coverage` unaffected.
       unaffected).
 - [ ] On a fast-finality testnet, D1 reflects an on-chain repay/match within
       seconds of the block becoming safe.
+
+## 9. Implementation notes folded from review (Codex #759 round 8)
+
+These are build-time requirements for the #757 implementation (the design is
+settled; these are details the implementation's own review will verify):
+
+- **DO scan-failure handling (P1).** The alarm loop holds the persisted
+  `scanning` flag true across the awaited `runChainIndexerForChain`. If the scan
+  **throws** (e.g. #760's fail-closed RPC abort), the handler MUST clear
+  `scanning` (or re-arm a retry alarm) in a `finally`, else the DO is stuck
+  "scanning" forever and never processes the next trigger.
+- **Re-read `pendingTarget` after the scan.** An enqueue can raise the stored
+  target *during* the awaited scan; re-read it from storage before deciding to
+  clear `scanning`, so a target raised mid-scan isn't dropped.
+- **Bind the FULL indexer env inside the DO**, not just D1 + RPC — the scan path
+  reaches the prepay OpenSea publish (`OPENSEA_API_KEY`) and any rate-limit
+  bindings. The DO needs the same resolved `Env` the cron `scheduled()` builds.
+- **Retryable publish marker, not pre-call success marker.** The OpenSea
+  published-marker (§3.5 part 3) must be cleared / left absent on a non-2xx so
+  the existing republish sweep still retries — a pre-call "success" marker would
+  permanently skip a failed publish (mirror #761's fail-closed pattern).
+- **Early dedupe check.** Check the `webhook_deliveries` dedupe row *before*
+  forwarding to the DO (an exact-seen short-circuit), in addition to recording
+  it after a durable enqueue — so a tight retdelivery storm doesn't repeatedly
+  forward.
+- **Topology wording.** The single-writer guarantee is the explicit `scanning`
+  single-flight (§3.1/§3.4), NOT the input gate — any remaining "the DO
+  serializes them" phrasing means the single-flight guard.
+- **Broaden the part-2 block-pin to the LOAN heal paths too** (`LoanInitiated`
+  `getLoanDetails` heal), and source same-block *deleted* offers from the
+  companion event rather than an end-of-block read (tracked under #763).
+- **Acceptance must require all four #760 parts** (§3.5), not just the delta
+  handlers — parts 1 (done #761), 3 (OpenSea marker) in the pragmatic slice;
+  parts 2 (#763) and 4 (#762) tracked as follow-ups per the agreed scope.
