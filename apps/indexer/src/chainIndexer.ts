@@ -742,12 +742,36 @@ async function processOfferLogs(
     // on the next cron tick. No event is dropped on the floor.
     let detail: Record<string, unknown> | null = null;
     try {
+      // #763 — read at `latest`, NOT pinned to the OfferCreated block. Pinning
+      // was reconsidered: (a) the row is already deterministic without it — the
+      // `INSERT OR IGNORE` below no-ops a pure re-scan, and a delayed first
+      // processing of a since-modified offer is corrected by the subsequent
+      // `OfferModified` (event-payload post-image) / `OfferMatched` (#760
+      // block-pinned) replay in the same batch; (b) pinning would add an
+      // archive-node dependency this fail-soft read can't satisfy on a catch-up;
+      // and (c) a block-END read of an offer created AND cancelled in the same
+      // block reads the post-`delete` ZERO struct anyway. So we keep `latest`
+      // and guard the zero struct directly (below).
       detail = (await client.readContract({
         address: diamond,
         abi: DIAMOND_OFFER_DETAILS_ABI,
         functionName: 'getOfferDetails',
         args: [o.offerId],
       })) as Record<string, unknown>;
+      // A `getOfferDetails` for an already-DELETED offer (created then cancelled
+      // — `OfferCancelFacet` emits `OfferCanceledDetails` BEFORE
+      // `delete s.offers[offerId]`) returns a ZERO struct, not a revert. Writing
+      // that as a real detail row persists a zero creator/assets with
+      // `is_stub = 0` that the later cancel status-update can't repair. Treat a
+      // zero-creator read as a miss → fall through to the stub INSERT; the
+      // `OfferCanceled` handler then marks it cancelled.
+      if (
+        detail &&
+        (detail.creator as string | undefined)?.toLowerCase() ===
+          '0x0000000000000000000000000000000000000000'
+      ) {
+        detail = null;
+      }
     } catch (err) {
       console.error(
         `[chainIndexer] inline getOfferDetails(${Number(o.offerId)}) failed; falling back to stub`,
@@ -1101,6 +1125,14 @@ async function refreshStubOffers(
   // `OfferMatched` / `OfferClosed` handlers in `processOfferLogs`, so
   // no `OR status = 'active'` clause is needed here. Cheap on free
   // tier — `idx_offers_chain_is_stub` keeps the lookup index-only.
+  // NB (#763 / Codex #767): we do NOT exclude terminal offers here. A
+  // 'cancelled' offer with a PARTIAL fill, and every 'consumed_by_sale' offer,
+  // still have their `s.offers[offerId]` struct on-chain (cancel only
+  // `delete`s on a zero-fill; `markOfferConsumedBySale` clears only listing
+  // metadata) — so they're still healable by `getOfferDetails` and must stay in
+  // the refresh set. Genuinely-deleted offers (zero-fill cancels) are handled in
+  // `refreshOfferDetails`, which clears `is_stub` on a zero read so the dead row
+  // drops out of this queue instead of starving real stubs.
   const stale = await env.DB.prepare(
     `SELECT offer_id FROM offers
      WHERE chain_id = ? AND is_stub = 1
@@ -1146,6 +1178,27 @@ async function refreshOfferDetails(
   }
   if (!detail) return false;
   const now = Math.floor(Date.now() / 1000);
+  // #763 (Codex #767) — a GENUINELY-DELETED offer (a zero-fill cancel runs
+  // `delete s.offers[offerId]`) returns a ZERO struct, not a revert. Don't
+  // overwrite the row with a zero creator/assets — that would blank out the
+  // event-derived creator on the cancelled row. Instead clear `is_stub` so this
+  // permanently-unhealable row drops OUT of the `refreshStubOffers` queue
+  // (which orders by `updated_at ASC`) instead of sitting at its head and
+  // starving real stubs every tick. Terminal offers that still HAVE storage
+  // (partial-fill cancels, `consumed_by_sale`) read real data and fall through
+  // to the normal heal below. Shares the inline OfferCreated-path guard.
+  if (
+    (detail.creator as string | undefined)?.toLowerCase() ===
+    '0x0000000000000000000000000000000000000000'
+  ) {
+    await env.DB.prepare(
+      `UPDATE offers SET is_stub = 0, updated_at = ?
+       WHERE chain_id = ? AND offer_id = ?`,
+    )
+      .bind(now, chainId, offerId)
+      .run();
+    return false;
+  }
   const o = detail as {
     creator: Address;
     offerType: number;
@@ -1783,7 +1836,12 @@ async function processLoanLogs(
         .bind(chainId, loanId)
         .first<{ '1': number } | null>();
       if (hasListing) {
-        const refreshedGraceEnd = await _resolveGraceEnd(client, diamond, loanId);
+        const refreshedGraceEnd = await _resolveGraceEnd(
+          client,
+          diamond,
+          loanId,
+          log.blockNumber, // #763 — pin to this event's block
+        );
         await env.DB.prepare(
           `UPDATE prepay_listings
              SET grace_period_end = ?, updated_at = ?
@@ -2176,7 +2234,10 @@ async function processLoanLogs(
       // boundaries. The RPC read is fine on this rare hot-path
       // event. Codex P2 round-2 on PR #304.
       const graceEnd = await _resolveGraceEnd(
-        client, diamond, loanId,
+        client,
+        diamond,
+        loanId,
+        log.blockNumber, // #763 — pin to the PrepayListingPosted block
       );
       // Use the log's block timestamp (chain-time) for posted_at /
       // updated_at — backfills processed minutes later still
@@ -2310,7 +2371,10 @@ async function processLoanLogs(
       // handler — start_time + duration_days can drift after
       // partial repayment / auto-deduct.
       const graceEnd = await _resolveGraceEnd(
-        client, diamond, loanId,
+        client,
+        diamond,
+        loanId,
+        log.blockNumber, // #763 — pin to the PrepayListingUpdated block
       );
       // T-086 step 14 — try the autonomous publish for the
       // rotated orderHash. Transient failure stays NULL (sweep
@@ -2723,6 +2787,13 @@ async function _resolveGraceEnd(
   client: PublicClient,
   diamond: Address,
   loanId: number,
+  /** #763 — pin BOTH reads to the triggering event's block so a
+   *  partial-failure re-scan (or a cron catch-up that runs an old block range
+   *  after later blocks were seen) computes the grace boundary from the loan's
+   *  state AT that event, not a post-`scanTo` `latest` that a subsequent partial
+   *  repay / governance `setGraceBuckets` could have moved. Omit (undefined) to
+   *  read `latest` — viem treats an absent `blockNumber` as the latest head. */
+  blockNumber?: bigint,
 ): Promise<number> {
   try {
     const detail = (await client.readContract({
@@ -2730,6 +2801,7 @@ async function _resolveGraceEnd(
       abi: DIAMOND_LOAN_DETAILS_ABI,
       functionName: 'getLoanDetails',
       args: [BigInt(loanId)],
+      blockNumber,
     })) as { startTime: bigint; durationDays: number | bigint };
     const startTime = Number(detail.startTime);
     const durationDays = Number(detail.durationDays);
@@ -2739,10 +2811,24 @@ async function _resolveGraceEnd(
         abi: GRACE_SECONDS_ABI,
         functionName: 'getEffectiveGraceSeconds',
         args: [BigInt(durationDays)],
+        blockNumber,
       })) as bigint,
     );
     return startTime + durationDays * 86_400 + graceSeconds;
   } catch (err) {
+    // #763 (Codex #767 P2) — a block-pinned read can fail when the RPC can't
+    // serve HISTORICAL state for `blockNumber` on a catch-up (non-archive /
+    // transient). Do NOT persist the `0` sentinel for that — it'd advance the
+    // cursor with a permanently-wrong "unknown grace end". Fall back to a
+    // `latest` read (the pre-#763 behaviour: a possibly-slightly-stale but
+    // PRESENT boundary); only a total RPC failure reaches the `0` sentinel.
+    if (blockNumber !== undefined) {
+      console.warn(
+        `[chainIndexer] _resolveGraceEnd(${loanId}) block-pinned read failed; retrying at latest`,
+        err,
+      );
+      return _resolveGraceEnd(client, diamond, loanId);
+    }
     console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
     return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
   }
