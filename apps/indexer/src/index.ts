@@ -64,6 +64,17 @@ import {
 // #757 — the per-chain ingest Durable Object. Re-exported from the Worker
 // entry so `wrangler.jsonc`'s `durable_objects` binding can resolve the class.
 export { ChainIngestDO } from './chainIngestDO';
+
+/**
+ * #757 — is the DO ingest path active? Gated on BOTH the DO binding being
+ * present AND the `CHAIN_INGEST_VIA_DO` rollout flag, so deploying the new DO
+ * doesn't re-route ingest until the operator flips it. The cron and the webhook
+ * route consult the SAME gate so they're always consistent (a half-enabled
+ * state — webhook→DO while the cron still scans inline — would mean two writers).
+ */
+function doIngestEnabled(env: WorkerEnv): boolean {
+  return env.CHAIN_INGEST_VIA_DO === 'true' && !!env.CHAIN_INGEST_DO;
+}
 import {
   handleOffersStats,
   handleOffersActive,
@@ -101,7 +112,7 @@ export default {
     // chain is serviced each minute (not one per round-robin tick), and the DO
     // is the single serialized writer that the webhook also routes through.
     // Without the DO binding, fall back to the legacy inline round-robin scan.
-    if (env.CHAIN_INGEST_DO) {
+    if (doIngestEnabled(env) && env.CHAIN_INGEST_DO) {
       const ns = env.CHAIN_INGEST_DO;
       for (const chain of getChainConfigs(resolved)) {
         const stub = ns.get(ns.idFromName(String(chain.id)));
@@ -316,8 +327,10 @@ async function handleChainEventWebhook(
   // 3. Parse the hint (network → chainId, max delivered block, delivery id).
   const parsed = parseChainEventPayload(rawBody);
   if (!parsed) return new Response('bad payload', { status: 400 });
-  // Unmapped network / DO not bound ⇒ accept + no-op (cron covers it).
-  if (parsed.chainId === null || !env.CHAIN_INGEST_DO) {
+  // Unmapped network / DO ingest not enabled ⇒ accept + no-op (cron covers it).
+  // The SAME gate as the cron keeps the two consistent — never webhook→DO while
+  // the cron still scans inline (which would be two writers).
+  if (parsed.chainId === null || !doIngestEnabled(env) || !env.CHAIN_INGEST_DO) {
     return new Response('ok (no-op)', { status: 200 });
   }
 

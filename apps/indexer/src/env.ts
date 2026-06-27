@@ -96,6 +96,13 @@ export interface WorkerEnv {
   // ingest writer per chain. Optional so a deploy without the DO binding
   // degrades to the legacy inline cron scan.
   CHAIN_INGEST_DO?: DurableObjectNamespace;
+  // #757 Phase A — two-step rollout gate. The DO ingest path (cron→DO AND the
+  // webhook→DO forward) is active ONLY when this is "true" AND the DO is bound.
+  // Default unset ⇒ the cron keeps the legacy inline scan and the webhook
+  // 200-no-ops, so merging/deploying the new DO never re-routes live ingest by
+  // itself. Plain `var`, read from the raw env (the route runs before
+  // `resolveEnv`).
+  CHAIN_INGEST_VIA_DO?: string;
 }
 
 /**
