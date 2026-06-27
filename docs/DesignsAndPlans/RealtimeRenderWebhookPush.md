@@ -141,80 +141,97 @@ its budget likewise finishes cron-paced. The webhook's guarantee is therefore
 on L2s is within seconds of mining — not "within seconds of mining on every
 chain". The acceptance test (§8) is scoped to a fast-finality testnet.
 
-The refactor into `runChainIndexerForChain`: thread a per-chain **lease lock**
-(§3.3) so the cron tick and webhook loops can't process the same chain
-concurrently, and make `InternalMatchExecuted` replay-idempotent (§3.3b) so a
-partial-failure re-scan can't double-apply. No change to the scan, decode, or
-dispatch order otherwise.
+The refactor into `runChainIndexerForChain` has two parts, with a clear split
+of responsibility (Codex r3):
 
-### 3.3 Per-chain advisory lock — serialize webhook vs cron (Codex P1: idempotency / interleave)
+- **Correctness comes from idempotent handlers (§3.3b)** — every
+  re-processable handler is rewritten to an absolute, chain-derived write
+  (`InternalMatchExecuted`, `OfferMatched`, `OfferModified`), so processing the
+  same block twice (concurrently OR sequentially) converges to the same state.
+- **The per-chain lock (§3.3) is a best-effort de-dup OPTIMIZATION, not the
+  correctness mechanism** — it avoids two scans doing the same work, but
+  correctness no longer depends on perfect mutual exclusion (so a lease
+  TTL-overrun under slow RPC, or a not-yet-applied lock migration, can't corrupt
+  data — at worst they waste a duplicate scan).
+
+The loop targets the **maximum delivered block** `H` parsed from the payload
+(§3.5) — `H` is the *finish line* for "wait until safe", while the scan *range*
+stays cursor-derived. No change to the scan, decode, or dispatch order
+otherwise.
+
+### 3.3 Per-chain advisory lock — a best-effort de-dup optimization (NOT the correctness mechanism)
 
 The cron is implicitly single-writer-per-chain (one chain per tick, ticks
-rarely overlap), which is why its order-dependent / read-modify-write handlers
-are safe today. The webhook introduces **real concurrency** (a webhook
-invocation racing the cron tick, or two webhooks), under which those handlers
-break: `InternalMatchExecuted` reads `principal`/`collateral_amount` from D1 and
-subtracts event deltas (chainIndexer.ts:1965-2001) → a second concurrent pass
-double-subtracts; `OfferMatched`/`OfferModified` compute `amount_filled` against
-the mutable D1 row (chainIndexer.ts:928-956) → two passes can interleave to a
-wrong value.
+rarely overlap). The webhook introduces concurrency (a webhook racing the cron,
+or two webhooks). The lock reduces wasted duplicate scans — but **correctness
+is owned by the idempotent handlers in §3.3b, not the lock** (Codex r3): a lease
+that overruns `LOCK_TTL_SECONDS` under slow RPC, or a lock table not yet
+migrated, can at worst cause a duplicate scan, never data corruption.
 
-Rather than rewrite every such handler to be absolute / monotonic, **preserve
-the single-writer-per-chain invariant the cron always relied on** with a D1
-advisory lock that BOTH the cron and the webhook acquire before
+Both the cron and the webhook *try* to acquire a D1 lease before
 `runChainIndexerForChain`:
 
-The lock carries a **per-acquisition owner token** so a holder that overran the
-TTL can't clear a *new* holder's lock (Codex r2 P1):
-
 ```sql
--- migration: indexer_lock(chain_id PK, locked_until INTEGER, owner TEXT)
+-- migration: indexer_lock(chain_id PK, locked_until INTEGER NOT NULL DEFAULT 0, owner TEXT)
+-- seed each chain explicitly unlocked (DEFAULT 0 also covers INSERT OR IGNORE):
+INSERT OR IGNORE INTO indexer_lock (chain_id, locked_until) VALUES (?, 0);
 -- acquire (atomic CAS — D1 serializes writes); `token` = a fresh random id:
 UPDATE indexer_lock SET locked_until = ?, owner = ?   -- now + LOCK_TTL_SECONDS, token
   WHERE chain_id = ? AND locked_until < ?;            -- now  (lock free / expired)
 --   meta.changes === 1  ⇒ acquired;  0 ⇒ held elsewhere
--- (INSERT OR IGNORE a row per chain first so the UPDATE has a target)
 -- release (ONLY if we still own it — guards the TTL-overrun race):
 UPDATE indexer_lock SET locked_until = 0
   WHERE chain_id = ? AND owner = ?;                    -- token
 ```
 
-- The release is **owner-guarded**: if our lease expired and another scan took
-  the lock, our `owner` no longer matches, so our `finally` release is a no-op
-  and can't free the new holder's lock (which would let a third scan in and
-  reintroduce the concurrent corruption). `LOCK_TTL_SECONDS` should comfortably
-  exceed a normal scan; an overrun only loses *mutual exclusion for that one
-  long scan*, and the §3.3b idempotency makes even that safe.
-- `LOCK_TTL_SECONDS` self-heals a crashed holder — the lock can't deadlock the
-  chain.
-- Lock not acquired ⇒ the caller does **not** silently drop the trigger: the
-  webhook loop (§3.2) **retries the acquire** within its budget, so the hint is
-  serviced by either the in-progress scan or this loop once the holder releases.
-  The cron, contended, just skips the chain that tick (next tick re-tries).
-- This keeps every block processed by **exactly one scan at a time**, so the
-  existing single-threaded handler assumptions hold unchanged.
+- **`locked_until INTEGER NOT NULL DEFAULT 0`** (Codex r3 P2) — a seeded row is
+  explicitly *unlocked*; without the default, an `INSERT OR IGNORE (chain_id)`
+  would store `NULL`, `NULL < now` is never true, and every acquire would
+  forever report "held". The seed `INSERT` sets `0` explicitly too.
+- **Owner-guarded release** (Codex r2 P1) — if our lease expired and another
+  scan took the lock, our `owner` no longer matches, so our `finally` release is
+  a no-op and can't free the new holder's lock.
+- **Best-effort / fail-open** (Codex r3 P1) — the whole acquire/release is
+  wrapped so that a **missing `indexer_lock` table** (Worker deployed before the
+  migration) or any lock error is caught and treated as "proceed without the
+  lock". Because §3.3b makes the handlers idempotent, running without the lock
+  is merely today's behaviour — never a corruption or an ingestion outage. So
+  the migration is **recommended, not a hard deploy gate** (revises §5).
+- Contended ⇒ the webhook loop (§3.2) **retries the acquire** within budget
+  rather than dropping the hint; the cron skips that chain for the tick.
 
-### 3.3b Make `InternalMatchExecuted` replay-idempotent (Codex r2 P1 — sequential retry)
+### 3.3b Idempotent, absolute-write handlers — the real correctness layer (Codex r2/r3 P1)
 
-The lock prevents *concurrent* double-processing, but **not sequential** retry:
 `runChainIndexerForChain` writes domain rows **before** the final cursor update
-([chainIndexer.ts:499-545]), so if a step fails after `InternalMatchExecuted`'s
-read-modify-write delta applied but before the cursor advanced, the **next**
-scan re-applies the same delta and double-subtracts principal/collateral. This
-is a **latent bug in the cron today** (any partial-tick failure hits it); the
-webhook just raises the re-scan frequency. Fix the handler to be idempotent
-regardless of replay:
+([chainIndexer.ts:499-545]), so a partial-failure scan (some rows written, cursor
+not advanced) makes the **next** scan re-process the same blocks — *sequential*
+replay that the lock can't prevent. Combined with possible TTL-overrun
+*concurrency* (§3.3), every re-processable handler must converge on re-run. The
+non-idempotent ones are rewritten to **absolute, chain-derived writes** (the same
+"re-read chain, don't trust the log/D1-delta" principle the creation handlers
+already use):
 
-- Replace the `principal -= delta` / `collateral_amount -= delta` reads-then-
-  subtract with an **absolute, chain-derived write**: on `InternalMatchExecuted`,
-  `getLoanDetails(loanId)` for each affected loan at the event and write the
-  absolute post-image (the same "re-read chain, don't trust the log/D1-delta"
-  principle the creation handlers already use). Re-applying then sets the same
-  value — idempotent under both concurrent and sequential replay. (Internal
-  match is a rare event, so the extra `getLoanDetails` calls are negligible.)
-- This is a self-contained handler change to an already-covered event (no
-  `check-event-coverage` impact) and **hardens the existing cron**, not just the
-  webhook path.
+- **`InternalMatchExecuted`** (chainIndexer.ts:1965-2001) — today reads
+  `principal`/`collateral_amount` from D1 and **subtracts** event deltas (a
+  re-run double-subtracts). Rewrite: `getLoanDetails(loanId)` for each affected
+  loan and write the absolute post-image. **Preserve the existing terminal
+  side-effects** (Codex r3 P2): when a leg reaches `principal == 0`, still set
+  the terminal/internal-matched status **and delete any live prepay listing**
+  for that loan — otherwise an internally-matched loan keeps serving a stale
+  `/loans/:id` prepay-listing row.
+- **`OfferMatched` / `OfferModified`** (chainIndexer.ts:601-610, 928-956) — today
+  compute `amount_filled` from the **current D1 `amount_max`**, so a re-run after
+  an interleaved modify recomputes against the wrong base. Rewrite: re-read the
+  offer's absolute fill/`amount_max` via `getOfferDetails(offerId)` at the event
+  and write absolute values (or use the event's absolute post-image fields if it
+  carries them), so a replay sets the same value regardless of D1's current row.
+- Other current-state handlers (`PrepayListing*`, `SwapToRepay*`) already use
+  `INSERT OR REPLACE`/delete with the event's own data, which is idempotent under
+  *same-range* replay (the only replay the forward-scan model produces) — no
+  change needed.
+- All are already-covered events (no `check-event-coverage` impact), and these
+  fixes **harden the existing cron** (which has the same latent partial-tick
+  replay exposure today), not just the webhook path.
 
 ### 3.4 HMAC verification + pre-auth body cap (fail-closed)
 
@@ -255,15 +272,21 @@ signing key and sends it hex-encoded in `X-Alchemy-Signature`.
 - Read the (capped) body **once** as text for the HMAC; the payload is then
   parsed from that same text — never re-read the stream.
 
-### 3.5 Payload → chainId (HINT — which chain, not which blocks)
+### 3.5 Payload → (chainId, target block H) — hint for *which chain* + *the loop finish line*
 
 - Map the Alchemy **network** field (`BASE_MAINNET`, `ETH_MAINNET`,
   `BASE_SEPOLIA`, …) → our `chainId` via a small explicit table. Unknown /
   unmapped network → 200 ack + no-op (a webhook for a chain we don't index is
   not an error; the cron owns coverage).
-- We use the payload **only** to choose the chain to scan; the block range is
-  the cursor gap (§3.2), so the payload's block numbers and log contents are
-  advisory and never trusted into D1.
+- **Extract the maximum delivered block number `H` (Codex r3 P1).** The
+  catch-up loop (§3.2) needs `H` as its finish line — "keep scanning until
+  `cursor ≥ min(H, safeHead)`" — so a webhook fired before `H` is safe waits for
+  it to finalize instead of doing one current scan and stopping. Parsing `H`
+  is **not** "trusting the payload": `H` only bounds *how long the loop waits*;
+  the scan **range is still cursor-derived** and every row written comes from a
+  fresh dRPC `getLogs`/`get*Details`, never from the payload. A bogus/oversized
+  `H` is clamped to `safeHead` (the loop never targets beyond the safe head), so
+  a forged `H` can at most make the loop spin to its budget — no bad data.
 - Resolve `ChainConfig` from the mapped chainId via `getChainConfigs(env)`; no
   RPC/deployment configured → 200 ack + no-op (degrade like the cron skipping
   an unconfigured chain). Reads use `chain.rpc` (**dRPC**); Alchemy is never
@@ -330,6 +353,17 @@ signing key and sends it hex-encoded in `X-Alchemy-Signature`.
 | P2 | Body cap ineffective because **`resolveEnv` runs first** for all routes | Dispatch `/hooks/chain-event` **before** `resolveEnv`; read only the signing key from raw `WorkerEnv` (§3.4) |
 | P2 | Contended `{skipped:'locked'}` **drops the only trigger** | Loop retries the lock acquire within budget instead of dropping (§3.2/§3.3) |
 
+**Round 3 (lock-not-load-bearing + parse-H findings):**
+
+| # | Finding | Closed by |
+|---|---|---|
+| P1 | Lease **TTL-overrun under slow RPC** reopens concurrent-scan corruption (only `InternalMatchExecuted` was absolute) | Correctness moved OFF the lock onto **idempotent absolute-write handlers**; `OfferMatched`/`OfferModified` also made absolute (§3.3b); lock is now best-effort de-dup only (§3.3) |
+| P1 | Catch-up loop needs `H`, but §3.5 said "ignore payload blocks" | §3.5 now **parses the max delivered block `H`** as the loop finish line (clamped to `safeHead`); range still cursor-derived |
+| P1 | Lock migration treated as post-merge but the **cron acquires it every scan** → deploy-before-migrate stops ingestion | Lock acquire/release is **fail-open** (missing table / error → proceed without lock); migration recommended, not a hard gate (§3.3, §5) |
+| P2 | Absolute-write rewrite would **drop `InternalMatchExecuted` terminal side-effects** (status + prepay-listing delete on principal→0) | §3.3b explicitly preserves them |
+| P2 | `OfferMatched`/`OfferModified` still non-idempotent on partial-failure replay | Made absolute via `getOfferDetails` post-image (§3.3b) |
+| P2 | `indexer_lock.locked_until` had **no default** → `NULL < now` never true → always "held" | Schema is `locked_until INTEGER NOT NULL DEFAULT 0` + explicit seed (§3.3) |
+
 Plus the always-present guards: writes stay `INSERT OR IGNORE`/`OR REPLACE`
 keyed by chain+id / chain+block+logIndex+tx; all reads go to dRPC; ingest
 failure logs and falls to the cron.
@@ -345,7 +379,10 @@ failure logs and falls to the cron.
    filtered to the Diamond address, target URL `…/hooks/chain-event`. Configure
    the payload to carry the network identifier we map in §3.5.
 3. Apply the new `indexer_lock` migration (`wrangler d1 migrations apply
-   vaipakam-archive --remote` from `apps/indexer/`).
+   vaipakam-archive --remote` from `apps/indexer/`). **Not deploy-order-
+   critical** — the lock acquire/release is fail-open, so a Worker deployed
+   before the migration simply runs without the de-dup lock (still correct via
+   the §3.3b idempotent handlers); apply it to enable the optimization.
 4. No contract change, no ABI re-export, **no new contract events** → the
    `check-event-coverage` guardrail is unaffected. No deploy gate; degrades to
    cron-only when unconfigured.
