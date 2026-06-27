@@ -32,6 +32,12 @@ import { runChainIndexerForChain } from './chainIndexer';
 const MAX_ALARM_ATTEMPTS = 12;
 /** Delay between catch-up iterations — cheap wait while a target finalizes. */
 const ALARM_DELAY_MS = 3_000;
+/** Single-flight lease: an `alarm()` renews `leaseUntil = now + this` at its
+ *  start, so a trigger arriving while a scan is live sees a valid lease and
+ *  does NOT re-arm (which would spawn a concurrent scan). Must exceed one
+ *  scan's duration + the inter-iteration delay; a chain whose alarm dies is
+ *  resumed by the next trigger once the lease lapses. */
+const SCAN_LEASE_MS = 90_000;
 
 interface ChainIngestState {
   storage: DurableObjectStorage;
@@ -81,19 +87,34 @@ export class ChainIngestDO {
       chainId: body.chainId,
     });
 
+    const now = Date.now();
     const scanning = (await this.state.storage.get<boolean>('scanning')) === true;
-    // Self-heal: if we believe we're scanning but no alarm is actually
-    // scheduled (a prior alarm died before re-arming / clearing), restart it.
-    const alarmAt = await this.state.storage.getAlarm();
-    if (!scanning || alarmAt === null) {
-      await this.state.storage.put({ scanning: true, attempts: 0 });
-      await this.state.storage.setAlarm(Date.now());
+    const leaseUntil =
+      (await this.state.storage.get<number>('leaseUntil')) ?? 0;
+    // (Re)start the catch-up loop when it isn't running, OR when a prior run's
+    // LEASE has expired (its alarm chain died) — but NOT while a run is live
+    // (lease still valid), which would start a second concurrent scan and break
+    // the single-writer invariant. We must NOT use `getAlarm()` here: Cloudflare
+    // returns null WHILE an alarm handler is executing, so a trigger arriving
+    // mid-scan would look "dead" and spuriously re-arm. The lease (renewed at
+    // the start of every `alarm()`) is the correct liveness signal.
+    if (!scanning || now > leaseUntil) {
+      await this.state.storage.put({
+        scanning: true,
+        attempts: 0,
+        leaseUntil: now + SCAN_LEASE_MS,
+      });
+      await this.state.storage.setAlarm(now);
     }
     return new Response('queued', { status: 202 });
   }
 
   /** One catch-up iteration: scan once, then re-arm or finish. */
   async alarm(): Promise<void> {
+    // Renew the single-flight lease so a concurrent trigger (which sees
+    // `getAlarm() === null` while we run) does NOT treat this live scan as dead
+    // and start a second one.
+    await this.state.storage.put({ leaseUntil: Date.now() + SCAN_LEASE_MS });
     const chainId = await this.state.storage.get<number>('chainId');
     if (typeof chainId !== 'number') {
       await this.clearScanning();
@@ -147,7 +168,7 @@ export class ChainIngestDO {
   }
 
   private async clearScanning(): Promise<void> {
-    await this.state.storage.delete(['scanning', 'attempts']);
+    await this.state.storage.delete(['scanning', 'attempts', 'leaseUntil']);
   }
 
   /** Phase B placeholder — broadcast a lightweight invalidation key to the DO's

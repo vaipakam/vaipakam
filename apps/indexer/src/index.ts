@@ -151,17 +151,24 @@ export default {
         console.error('[indexer] pruneOldWebhookDeliveries pass failed:', err);
       }),
     );
-    // T-086 step 14 round 2 — retry the OpenSea publish for rows
-    // whose inline publish at event-ingest time failed (e.g.
-    // transient OpenSea outage). Codex round-1 P2 fix on PR #312.
-    // The sweep is capped at a small batch per tick so it can't
-    // monopolise the schedule budget.
-    ctx.waitUntil(
-      sweepUnpublishedListings(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[indexer] sweepUnpublishedListings pass failed:', err);
-      }),
-    );
+    // T-086 step 14 round 2 — retry the OpenSea publish for rows whose inline
+    // publish at event-ingest time failed (e.g. transient OpenSea outage).
+    // Codex round-1 P2 fix on PR #312. Capped at a small batch per tick.
+    //
+    // #757 (Codex #764 P1): this sweep writes `prepay_listings`, which the DO's
+    // scan also writes. Running it on the Worker WHILE DO-ingest is active would
+    // be a second concurrent writer (it could mark a freshly-rotated row as
+    // published). So skip it on the DO path — routing the sweep THROUGH the DO
+    // (with the atomic published-marker) is part-3, a prerequisite to enabling
+    // the DO path. On the legacy path it runs as before.
+    if (!doIngestEnabled(env)) {
+      ctx.waitUntil(
+        sweepUnpublishedListings(resolved).catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[indexer] sweepUnpublishedListings pass failed:', err);
+        }),
+      );
+    }
   },
 
   async fetch(
@@ -324,13 +331,21 @@ async function handleChainEventWebhook(
   );
   if (!ok) return new Response('unauthorized', { status: 401 });
 
-  // 3. Parse the hint (network → chainId, max delivered block, delivery id).
+  // 3. Parse the hint (max delivered block, delivery id, network if present).
   const parsed = parseChainEventPayload(rawBody);
   if (!parsed) return new Response('bad payload', { status: 400 });
-  // Unmapped network / DO ingest not enabled ⇒ accept + no-op (cron covers it).
-  // The SAME gate as the cron keeps the two consistent — never webhook→DO while
-  // the cron still scans inline (which would be two writers).
-  if (parsed.chainId === null || !doIngestEnabled(env) || !env.CHAIN_INGEST_DO) {
+  // Resolve the chain. PREFER an explicit `?chain=<chainId>` URL param (Codex
+  // #764 P1): Alchemy's *Custom Webhook* payload — the preferred rollout for
+  // full Diamond-log coverage — carries no `network` field, so the operator
+  // configures one webhook per chain whose target URL pins the chainId. Fall
+  // back to the payload network (Address Activity) when the param is absent.
+  const urlChain = Number(new URL(req.url).searchParams.get('chain'));
+  const chainId =
+    Number.isInteger(urlChain) && urlChain > 0 ? urlChain : parsed.chainId;
+  // Unmapped/absent chain / DO ingest not enabled ⇒ accept + no-op (cron
+  // covers it). The SAME gate as the cron keeps the two consistent — never
+  // webhook→DO while the cron still scans inline (which would be two writers).
+  if (chainId === null || !doIngestEnabled(env) || !env.CHAIN_INGEST_DO) {
     return new Response('ok (no-op)', { status: 200 });
   }
 
@@ -344,13 +359,13 @@ async function handleChainEventWebhook(
 
   // 5. Durable forward to the chain's ingest DO (enqueue-only ack).
   const ns = env.CHAIN_INGEST_DO;
-  const stub = ns.get(ns.idFromName(String(parsed.chainId)));
+  const stub = ns.get(ns.idFromName(String(chainId)));
   let forwarded: Response;
   try {
     forwarded = await stub.fetch('https://chain-ingest-do/trigger', {
       method: 'POST',
       body: JSON.stringify({
-        chainId: parsed.chainId,
+        chainId,
         targetBlock: parsed.maxBlock.toString(),
       }),
     });
