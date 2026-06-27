@@ -14,16 +14,19 @@ on. Second, once the loan table grew past the per-request subrequest ceiling, th
 extra ownership calls failed silently and those loans simply **dropped out of the
 results** — so the endpoints quietly under-reported for legitimate users at scale.
 
-These endpoints now answer entirely from the indexer's own current-holder columns
-(which already track who currently holds each loan's lender/borrower position NFT,
-including secondary-market transfers), with a real database row limit. The work per
-request now scales only with the requesting wallet's **own** holdings, not the
-global loan count, and makes **zero** on-chain calls — closing both the
-quota-amplification vector and the silent under-return bug. The observable results
-are unchanged for honest callers; the on-chain position view remains the
-authoritative fallback the app uses while the indexer catches up.
+These endpoints now answer from a **single authoritative on-chain call** that
+enumerates exactly the loans whose position NFT the requesting wallet currently
+holds. The work per request scales only with that wallet's **own** holdings, not
+the global loan count, so the quota-amplification vector and the silent
+under-return are both gone — and because it reads live ownership directly, it's
+correct across secondary transfers, position-NFT burns on claim, and the other
+lifecycle cases an indexer projection can lag on. The wallet's role (lender vs
+borrower) is resolved from the loan's fixed position-token identifiers, and a chain
+this indexer doesn't serve now returns a clear "not configured" response so the app
+falls back to reading the chain directly rather than showing an empty list.
 
 (Part of the pre-audit security sweep. A separate, lower-severity defense-in-depth
-note about escaping reflected on-chain text is tracked on the frontend; a paginated
-on-chain position view is a possible future hardening of the fallback path, not
-required for this fix.)
+note about escaping reflected on-chain text is tracked on the frontend. The
+on-chain enumeration is bounded by the wallet's NFT count; a paginated variant — to
+keep even a wallet deliberately stuffed with thousands of dust NFTs responsive — is
+tracked as a follow-up.)

@@ -14,6 +14,9 @@
  */
 
 import type { Env } from './env';
+import { createPublicClient, http, type Address, type PublicClient } from 'viem';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import { DIAMOND_USER_POSITION_ABI } from './diamondAbi';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -36,15 +39,86 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * (removed #749) The wallet-scoped loan read endpoints below no longer fan out an
- * on-chain `ownerOf` multicall — they answer from the indexer-maintained
- * `lender_current_owner` / `borrower_current_owner` columns (kept current by the
- * ERC721 `Transfer` handler, initialised to the original lender/borrower at loan
- * creation). That removed the only RPC use in this file, so the
- * `resolveChainClient` + `batchOwnerOf` helpers and the viem / deployment imports
- * are gone. See the on-chain `MetricsFacet.getUserPositionLoans` view for the
- * authoritative live-ownership fallback (called by the frontend, not here).
+ * Resolve a viem PublicClient + diamond Address for the given chain.
+ * Returns null when the chain isn't currently configured (no RPC or
+ * no deployment) — the caller returns a `chain-not-configured` 503 so the
+ * frontend's indexer-first → on-chain-fallback wrapper actually falls back
+ * (a successful empty 200 would be cached as "no loans" — #749 Codex P2).
  */
+function resolveChainClient(
+  env: Env,
+  chainId: number,
+): { client: PublicClient; diamond: Address } | null {
+  const rpcMap: Record<number, string | undefined> = {
+    8453: env.RPC_BASE,
+    1: env.RPC_ETH,
+    42161: env.RPC_ARB,
+    10: env.RPC_OP,
+    1101: env.RPC_ZKEVM,
+    56: env.RPC_BNB,
+    84532: env.RPC_BASE_SEPOLIA,
+    11155111: env.RPC_SEPOLIA,
+    421614: env.RPC_ARB_SEPOLIA,
+    11155420: env.RPC_OP_SEPOLIA,
+    80002: env.RPC_POLYGON_AMOY,
+    97: env.RPC_BNB_TESTNET,
+  };
+  const rpc = rpcMap[chainId];
+  const dep = getDeployment(chainId);
+  if (!rpc || !dep) return null;
+  return {
+    client: createPublicClient({ transport: http(rpc) }),
+    diamond: dep.diamond as Address,
+  };
+}
+
+/**
+ * #749 — the AUTHORITATIVE live-ownership query for the wallet-scoped loan read
+ * routes. ONE `MetricsFacet.getUserPositionLoans(addr)` call enumerates the
+ * loans whose lender- or borrower-position NFT `addr` CURRENTLY holds
+ * (ERC721Enumerable + `loanIdByPositionTokenId`), bounded by `balanceOf(addr)`
+ * — the wallet's own holdings, NEVER the global loan count. It replaces the old
+ * "pull every loan + N×`ownerOf`" fan-out (unauthenticated global-scaling RPC
+ * amplification + silent under-return past the subrequest cap), and being a live
+ * on-chain read it has none of the indexer `*_current_owner` projection's gaps
+ * (burns, position token-id migration on lender-sale / borrower-transfer,
+ * offer-NFT transfer before accept, pre-backfill rows).
+ *
+ * Returns a map loanId → set of the position-token-ids `addr` holds for that
+ * loan (a wallet holding BOTH the lender and borrower NFT of one loan gets both
+ * token-ids). The caller infers the role by matching against the loan row's
+ * IMMUTABLE `lender_token_id` / `borrower_token_id`. `null` token-ids (a fresh,
+ * not-yet-bootstrapped stub) simply don't match — a tiny transient window that
+ * the next refresh closes.
+ *
+ * NB (large-wallet edge): `getUserPositionLoans` is unbounded over
+ * `balanceOf(addr)`, so a wallet griefed with a huge NFT inventory can make this
+ * single call exceed the RPC `eth_call` limit and revert — failing closed for
+ * THAT wallet only (no global amplification, strictly better than the old global
+ * subrequest-cap break). A paginated `getUserPositionLoansPaginated` view is the
+ * follow-up hardening for that edge (tracked separately).
+ */
+async function getUserPositionLoanMap(
+  client: PublicClient,
+  diamond: Address,
+  addr: string,
+): Promise<Map<number, Set<string>>> {
+  const [loanIds, tokenIds] = (await client.readContract({
+    address: diamond,
+    abi: DIAMOND_USER_POSITION_ABI,
+    functionName: 'getUserPositionLoans',
+    args: [addr as Address],
+  })) as readonly [readonly bigint[], readonly bigint[]];
+  const map = new Map<number, Set<string>>();
+  for (let i = 0; i < loanIds.length; i++) {
+    const loanId = Number(loanIds[i]);
+    const tokenId = tokenIds[i].toString();
+    const set = map.get(loanId) ?? new Set<string>();
+    set.add(tokenId);
+    map.set(loanId, set);
+  }
+  return map;
+}
 
 interface LoanRow {
   chain_id: number;
@@ -64,8 +138,6 @@ interface LoanRow {
   collateral_token_id: string;
   lender_token_id: string;
   borrower_token_id: string;
-  lender_current_owner: string | null;
-  borrower_current_owner: string | null;
   interest_rate_bps: number;
   start_time: number;
   allows_partial_repay: number;
@@ -294,21 +366,22 @@ export async function handleLoanById(
  * position NFT. Live-ownership filter — NOT a SQL match on the
  * historical `lender` / `borrower` columns from LoanInitiated.
  *
- * #749 — answered from the indexer-maintained `lender_current_owner` /
- * `borrower_current_owner` column with a SQL `LIMIT`, NOT an `ownerOf`
- * multicall over every loan. The old path pulled every loan (no LIMIT) and fanned
- * out one on-chain read PER LOAN, so an unauthenticated caller could amplify
- * RPC load with the GLOBAL loan count (the `limit` param only truncated AFTER the
- * fan-out) and, past the Worker subrequest cap, silently under-returned. The
- * column is set to the original lender/borrower at loan creation and updated by
- * the ERC721 `Transfer` handler, so it captures secondary-market holders too.
+ * #749 — answered from ONE authoritative on-chain
+ * `MetricsFacet.getUserPositionLoans(addr)` call (see
+ * {@link getUserPositionLoanMap}), then the matched loans' display rows are read
+ * from D1. The old path pulled EVERY loan (no SQL LIMIT) and fanned out one
+ * `ownerOf` read PER LOAN — an unauthenticated caller could amplify RPC load with
+ * the GLOBAL loan count (the `limit` param only truncated AFTER the fan-out) and,
+ * past the Worker subrequest cap, silently under-returned. The new call is
+ * bounded by the wallet's OWN holdings and is a single read.
  *
- * Why live-via-projection: NFT secondary trades transfer claim/repay rights to
- * the new holder, but `loans.lender` / `loans.borrower` reflect origination and
- * never change; the `*_current_owner` columns track the live holder. Eventually
- * consistent with the indexer cursor; the on-chain
- * `MetricsFacet.getUserPositionLoans` view is the authoritative fallback the
- * frontend uses for the catch-up window.
+ * Why on-chain (not the `*_current_owner` projection): NFT secondary trades
+ * transfer claim/repay rights to the new holder. The indexer's projection columns
+ * lag and have edge-case gaps (burns, position token-id migration, offer-NFT
+ * transfer before accept, pre-backfill rows); the live enumeration has none of
+ * those, so role attribution (and thus who can claim) is always correct. The role
+ * (lender vs borrower) is inferred by matching the held token-id against the
+ * loan's IMMUTABLE `lender_token_id` / `borrower_token_id` in D1.
  */
 export async function handleLoansByParticipant(
   req: Request,
@@ -324,28 +397,49 @@ export async function handleLoansByParticipant(
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
-  // Column is selected from the validated `side` enum — a hardcoded literal,
-  // never caller input, so this is not a dynamic-SQL injection surface.
-  const ownerCol =
-    side === 'lender' ? 'lender_current_owner' : 'borrower_current_owner';
+  // Fail closed when this chain isn't indexed here, so the frontend's
+  // indexer-first → on-chain-fallback wrapper actually falls back (#749).
+  const chainCtx = resolveChainClient(env, chainId);
+  if (!chainCtx) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
   try {
-    const stmt = before
-      ? env.DB.prepare(
-          `SELECT * FROM loans
-           WHERE chain_id = ? AND ${ownerCol} = ? AND loan_id < ?
-           ORDER BY loan_id DESC
-           LIMIT ?`,
-        ).bind(chainId, addr, before, limit)
-      : env.DB.prepare(
-          `SELECT * FROM loans
-           WHERE chain_id = ? AND ${ownerCol} = ?
-           ORDER BY loan_id DESC
-           LIMIT ?`,
-        ).bind(chainId, addr, limit);
-    const rows = (await stmt.all<LoanRow>()).results ?? [];
-    const loans = rows.map(loanToJson);
+    // 1. ONE on-chain call: the loans whose position NFT `addr` currently holds
+    //    (wallet-scoped, authoritative). Maps loanId → held position-token-ids.
+    const heldByLoan = await getUserPositionLoanMap(
+      chainCtx.client,
+      chainCtx.diamond,
+      addr,
+    );
+    if (heldByLoan.size === 0) {
+      return jsonResponse({ chainId, side, address: addr, loans: [], nextBefore: null });
+    }
+    // 2. Fetch those loans' rows from D1 (bounded by the wallet's holdings).
+    const candidateIds = [...heldByLoan.keys()];
+    const placeholders = candidateIds.map(() => '?').join(',');
+    const rows = (
+      await env.DB.prepare(
+        `SELECT * FROM loans
+         WHERE chain_id = ? AND loan_id IN (${placeholders})
+         ORDER BY loan_id DESC`,
+      )
+        .bind(chainId, ...candidateIds)
+        .all<LoanRow>()
+    ).results ?? [];
+    // 3. Keep loans where `addr` holds THIS SIDE's (immutable) position token,
+    //    then apply `before` / `limit` over the wallet-bounded set in memory.
+    const matched = rows.filter((r) => {
+      const held = heldByLoan.get(r.loan_id);
+      const sideTokenId = side === 'lender' ? r.lender_token_id : r.borrower_token_id;
+      return held?.has(String(sideTokenId)) ?? false;
+    });
+    const paged = (before === null ? matched : matched.filter((r) => r.loan_id < before)).slice(
+      0,
+      limit,
+    );
+    const loans = paged.map(loanToJson);
     const next =
-      rows.length === limit && rows.length > 0
+      paged.length === limit && paged.length > 0
         ? (loans[loans.length - 1] as { loanId: number }).loanId
         : null;
     return jsonResponse({ chainId, side, address: addr, loans, nextBefore: next });
@@ -509,29 +603,45 @@ export async function handleClaimables(
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
+  // Fail closed when this chain isn't indexed here so the frontend falls back.
+  const chainCtx = resolveChainClient(env, chainId);
+  if (!chainCtx) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
   try {
-    // #749 — filter to the wallet's OWN terminal loans in SQL via the
-    // indexer-maintained `*_current_owner` columns, instead of pulling EVERY
-    // terminal loan and fanning out a 2N `ownerOf` multicall (lender + borrower
-    // per loan) as the authoritative filter. The old path scaled RPC work with
-    // the GLOBAL terminal-loan count for an unauthenticated caller and silently
-    // dropped loans past the Worker subrequest cap. The result is now naturally
-    // bounded by this wallet's own participation (capital-gated) with zero RPC.
+    // #749 — ONE authoritative on-chain `getUserPositionLoans(addr)` call (bounded
+    // by the wallet's holdings) instead of pulling EVERY terminal loan and fanning
+    // out a 2N `ownerOf` multicall (lender + borrower per loan) as the
+    // authoritative filter. The old path scaled RPC work with the GLOBAL
+    // terminal-loan count for an unauthenticated caller and silently dropped loans
+    // past the Worker subrequest cap. Role attribution is correct even across
+    // burns / token-id migration that the `*_current_owner` projection would miss.
+    const heldByLoan = await getUserPositionLoanMap(
+      chainCtx.client,
+      chainCtx.diamond,
+      addr,
+    );
+    if (heldByLoan.size === 0) {
+      return jsonResponse({ chainId, address: addr, asLender: [], asBorrower: [] });
+    }
+    const candidateIds = [...heldByLoan.keys()];
+    const placeholders = candidateIds.map(() => '?').join(',');
     const rows = (
       await env.DB.prepare(
         `SELECT * FROM loans
          WHERE chain_id = ? AND status IN ('repaid', 'defaulted', 'liquidated')
-           AND (lender_current_owner = ? OR borrower_current_owner = ?)
+           AND loan_id IN (${placeholders})
          ORDER BY loan_id DESC`,
       )
-        .bind(chainId, addr, addr)
+        .bind(chainId, ...candidateIds)
         .all<LoanRow>()
     ).results ?? [];
     if (rows.length === 0) {
       return jsonResponse({ chainId, address: addr, asLender: [], asBorrower: [] });
     }
     // Pre-fetch already-claimed loan IDs so we can dedup in memory
-    // without N round trips. One query per side.
+    // without N round trips. One query per side. (Belt-and-suspenders: a claimed
+    // position NFT is burned, so it's already absent from `getUserPositionLoans`.)
     const claimedLender = new Set<number>();
     const claimedBorrower = new Set<number>();
     const lenderClaims = (
@@ -552,16 +662,20 @@ export async function handleClaimables(
         .all<{ loan_id: number }>()
     ).results ?? [];
     for (const r of borrowerClaims) claimedBorrower.add(r.loan_id);
-    // Split by the projected current owner (a wallet can hold BOTH NFTs), then
-    // drop sides already claimed. Same filter the multicall provided, from D1.
+    // Split by which side's IMMUTABLE position token `addr` holds (a wallet can
+    // hold BOTH NFTs of one loan), then drop sides already claimed.
     const asLender: LoanRow[] = [];
     const asBorrower: LoanRow[] = [];
     for (const row of rows) {
-      if (row.lender_current_owner === addr && !claimedLender.has(row.loan_id)) {
+      const held = heldByLoan.get(row.loan_id);
+      if (
+        held?.has(String(row.lender_token_id)) &&
+        !claimedLender.has(row.loan_id)
+      ) {
         asLender.push(row);
       }
       if (
-        row.borrower_current_owner === addr &&
+        held?.has(String(row.borrower_token_id)) &&
         !claimedBorrower.has(row.loan_id)
       ) {
         asBorrower.push(row);
