@@ -358,6 +358,17 @@ An offer may be created two ways, both reaching the same on-chain offer state:
   and never double-pay — money already owed as a repayment claim. A fill can
   never lend more capital than the lender has funded; an under-funded intent
   cannot be filled until more is added.
+- **On-chain intent discovery.** The protocol maintains an enumerable feed of
+  funded, active lender intents so solvers can discover fillable liquidity from
+  chain state rather than reconstructing it from historical events. An intent
+  appears in this feed only while it is both active and funded, and it drops out
+  when cancelled or when its un-lent funded capital reaches zero. The registry
+  must be re-synced anywhere intent capital or active status changes, including
+  registration, cancellation, funding, withdrawal, fills that draw capital,
+  auto-roll re-commitments, and direct backstop seeding. The paginated read view
+  should return each active intent's bounds, current live principal, un-lent
+  funded capital, and whether the intent requires solver authorization, so a
+  keeper can size and skip candidates without trusting an off-chain index.
 - **Filling an intent.** A solver fills a lender's standing intent against an
   existing on-chain borrower offer: the protocol builds a one-time lender offer
   from the intent — the lender's rate floor, the borrower offer's term (which
@@ -1954,6 +1965,7 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **Deployment Tooling:** Deployment scripts and runbooks should remain chain-parameterized so the same controlled process can deploy, wire, verify, and post-check Base, Polygon, Arbitrum, Optimism, Ethereum mainnet, and their testnet equivalents without one-off per-chain drift. The supported operator entrypoints are the legacy all-in-one rehearsal script (`contracts/script/deploy-chain.sh`), the phase-mirrored testnet ceremony (`contracts/script/deploy-testnet.sh`), and the mainnet ceremony (`contracts/script/deploy-mainnet.sh`). Scripts that require post-handover powers should read `ADMIN_PRIVATE_KEY` or the documented role-specific key and pre-flight the broadcaster's owner / `ADMIN_ROLE` status before broadcasting.
 - **Private-Key Environment Naming:** Deployment and script environments should avoid a bare `PRIVATE_KEY` variable. Use role-explicit names such as `DEPLOYER_PRIVATE_KEY`, `ADMIN_PRIVATE_KEY`, `KEEPER_PRIVATE_KEY`, `VPFI_OWNER_PRIVATE_KEY`, and `REWARD_OWNER_PRIVATE_KEY`, preserving role-prefixed sibling names verbatim. `DEPLOYER_PRIVATE_KEY` is the default deployer / owner-key slot paired with `DEPLOYER_ADDRESS`.
 - **Deployment Artifact Sync:** Per-chain `contracts/deployments/<chain>/addresses.json` files are the source of truth for deployed contract addresses. After a redeploy, operators should run the export phases that merge those artifacts into committed typed deployment JSON for the connected app, marketing app, keeper, indexer, and agent surfaces under `apps/{defi,www,keeper,indexer,agent}`. Frontend `.env.local` and Worker secrets should keep only operator-specific values such as RPC URLs, WalletConnect IDs, feature flags, tuning knobs, and API credentials; deployed Diamond / facet / adapter addresses should not be hand-copied into local env files or Worker vars.
+- **Auto-Lend Keeper Address Artifact:** When the production keeper is deployed for a chain, that chain's deployment artifact should include the optional `keeperAddress` field: the public signing address of the `apps/keeper` worker's `KEEPER_PRIVATE_KEY`. The connected app uses this exported address for lender delegation of auto-roll and permissioned signed-fill authority. If the field is absent, intent registration and funding may still work, but delegated auto-roll must remain unavailable in the UI; if the field does not match the keeper's actual signer, delegated rolls should fail rather than route authority to an unexpected address.
 - **Canonical Deployment Artifacts:** Operator runbooks and scripts should read deployed Diamond, messenger, token-pool, and adapter addresses from `contracts/deployments/<chain>/addresses.json` or exported package artifacts, not from ad hoc `.env` Diamond variables. Environment files may carry convenience variables for manual calls, but stale env addresses must not override deployment artifacts or mislead authority checks.
 - **CCIP Deploy and Wire Flow:** Cross-chain deployment should be split into a per-chain deploy pass and a deliberate topology-wiring pass. The deploy pass creates the local messenger, token pool, rate-limit governor, reward messenger, and the canonical or mirror buy components according to the chain's own EVM chain id. The wiring pass should run only after all participating chains have deployment artifacts, then configure chain selectors, remote messengers, buy and reward channels, token-pool rate limits, and Cross-Chain Token registration from those artifacts.
 - **CCIP Verification:** Deploy verification should confirm that each token pool is controlled by the configured rate-limit governor, that every lane / pool / channel points at the intended peer, and that buy, reward, and token-transfer paths have the configured rate limits and authorities before the chain is considered cross-chain ready.
@@ -2063,7 +2075,21 @@ A comprehensive user dashboard is essential for managing activities on Vaipakam.
 - **API Origin:** Frontend and worker consumers should use a generic API-origin configuration such as `VITE_API_ORIGIN` once the Worker serves more than HF alerts. Legacy hostnames like `alerts.vaipakam.com` should not remain in code, env examples, built bundles, runbooks, or sibling bot repositories after the API domain cutover.
 - **Indexer Stub Discipline:** Offer and loan event handlers should try to fetch canonical `getOfferDetails` / full `getLoanDetails` data inline before inserting D1 rows. If an RPC failure forces a placeholder insert, the row must be marked with an explicit `is_stub` flag and targeted by a stub-only refresh predicate until canonical data lands. Active non-stub rows should not be re-read on every cron tick merely to detect ordinary status or partial-fill changes.
 - **Event-Driven Offer Updates:** Range Orders partial-fill and close state should update from emitted events where the payload carries enough data. `OfferMatched` should update filled amount from post-match remaining capacity without a read round-trip, and `OfferClosed` should map close reasons into the indexer's status model in a single update.
-- **Round-Robin Chain Processing:** Worker cron processing should respect Cloudflare-style subrequest budgets by processing a bounded number of chains per tick, with a persisted round-robin cursor when needed. A one-minute cron that processes one active chain per invocation is acceptable; the resulting per-chain cadence should be explicit and scale with the active chain count rather than silently exhausting the worker budget.
+- **Near-Real-Time Per-Chain Ingest:** The indexer should route all ingest for a
+  given chain through one serialized per-chain worker / Durable Object, so cron
+  and webhook-triggered scans cannot overlap for the same chain. The scheduled
+  fallback should ping every active chain at least once per minute where platform
+  budgets allow, instead of depending on a one-chain-per-minute round-robin as
+  the steady-state freshness model. Provider webhooks may accelerate ingest by
+  posting mined-event hints, but webhook delivery is only a latency optimization:
+  the cron path remains the decentralized fallback and a missed webhook must not
+  create user-facing failure.
+- **Webhook Safety:** Inbound chain-event webhooks must authenticate delivery,
+  bound body size, deduplicate repeated deliveries, and ingest only through the
+  same per-chain serialized path as cron. The indexer should process only blocks
+  the chain reports as safe/finalized; a webhook for a block beyond safe head is
+  waited on rather than committed speculatively. The webhook and per-chain ingest
+  path remain off until an operator provisions the signing key and provider hook.
 - **Active Chain Allow-List:** Deployment metadata exports should support an explicit operator-maintained active-chain allow-list, such as `contracts/deployments/.active-chains`, so stale deployment folders remain available for forensics without being exported to the frontend chain picker or crawled by the watcher. If the allow-list is absent, exports may fall back to the legacy include-all behavior; deploy scripts should not auto-edit the allow-list.
 - **Safe-Block Indexing:** Both the browser fallback log index and the worker D1 indexer should cursor from the chain's safe block tag, falling back to `latest - 32` where safe tags are unavailable. Initial load, tab refocus, manual rescan, watermark refresh, and worker cron scans should all share this safe-aligned cursor policy so events from reorg-prone unsafe blocks are never cached as durable truth.
 - **Watermark Probe Singleton:** Frontend watermark / freshness probing should run through a single app-level provider per active `(chainId, diamondAddress)`. Individual hooks and components subscribe with their desired cadence tier; the provider schedules one timer at the fastest currently active tier, handles visibility / idle / pause behavior centrally, and broadcasts the shared snapshot. This prevents Dashboard, OfferBook, and layout-level badges from creating duplicate drifting RPC probe loops. If the chain is cold and both global offer / loan counters are zero, the provider should stretch to a bounded 30-second cadence even when a hot page is mounted, then wake subscribers within that window after first activity.
@@ -2107,6 +2133,25 @@ General design requirements:
 - current-holder worker endpoints should expose `/loans/by-current-holder/:addr` and `/offers/by-current-holder/:addr`, backed by D1 current-owner indexes. Dashboard and Claim Center discovery should prefer those endpoints over original lender / borrower / creator routes, with on-chain current-holder views as the outage fallback.
 - periodic-interest events should land in the same append-only `activity_events` ledger as ordinary loan lifecycle events so Loan Details timelines, Activity, and watcher reconciliation all read one event source.
 - internal-match liquidation events should land in the same append-only activity ledger. The indexer should update each matched leg's principal and collateral according to the protocol's match fraction, mark fully cleared legs as internally matched, and preserve a user-visible event row with the matcher as actor.
+- Indexer handlers must be replay-safe across partial-tick failures and catch-up
+  re-scans. When a scan writes domain rows but fails before advancing its cursor,
+  re-processing the same block range must converge to the same rows rather than
+  applying deltas twice. Loan and offer handlers that change principal,
+  collateral, status, or filled amount should prefer absolute post-state values
+  read from the chain at the event's own block; if that historical read fails,
+  the row should be left untouched for a later healing scan rather than written
+  with a guessed fallback.
+- Same-block lifecycle ordering should be resolved from authoritative chain
+  state rather than inferred from balances alone. For example, if an internal
+  match and a repay / swap-repay settle the same loan in one block, the indexed
+  loan status should reflect the actual on-chain terminal status at that block,
+  not whichever handler observed a zero principal first.
+- Event-time derived fields must use the event's block as their read anchor.
+  Marketplace-listing grace boundaries, offer detail hydration, and similar
+  projections should not accidentally read later chain state during downtime
+  catch-up. If an offer is created and cancelled in the same block and the detail
+  lookup is already empty, the indexer should leave a lightweight placeholder for
+  the cancel handler instead of committing blank creator or asset fields.
 - active-loan discovery should include a paginated, current-state view for match-eligible loans while internal matching is enabled. This view should include active distressed loans and fallback-pending loans, filter active loans by current LTV against their snapshotted liquidation threshold, require oracle-priceability for fallback-pending legs, and return empty when the internal-match switch is off.
 - internal-match candidate discovery should support exact asset-pair indexing so matchers can find reciprocal and cyclic candidates without scanning every loan. Fallback-pending loans should remain in the index until they are fully rescued, claimed, or otherwise terminally resolved.
 
