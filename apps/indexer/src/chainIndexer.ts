@@ -928,11 +928,13 @@ async function processOfferLogs(
       // `amount_max` in the same batch, the first scan left the modified
       // value in D1, and the re-scan's match then computed `amount_filled`
       // against the wrong (post-modify) base. A block-pinned `getOfferDetails`
-      // read returns the same `amountFilled` deterministically on every
-      // replay. FAIL-CLOSED: if the read fails, do NOT write a fallback —
-      // leave the row for the next scan to heal (a committed wrong value
-      // would look "applied").
-      let absFilled: bigint | null = null;
+      // read returns the same `amountFilled` deterministically on every replay.
+      // FAIL-CLOSED (Codex #761 P1): a read failure must PROPAGATE — the scan
+      // aborts before `runChainIndexerForChain` advances the cursor, so this
+      // event is re-processed on the next scan. Swallowing it here would let the
+      // cursor advance past a never-applied update, stranding `amount_filled`
+      // stale indefinitely (only stub rows get a later refresh).
+      let absFilled: bigint;
       try {
         const od = (await client.readContract({
           address: diamond,
@@ -941,25 +943,27 @@ async function processOfferLogs(
           args: [ev.lenderOfferId],
           blockNumber: ev.blockNumber,
         })) as { amountFilled?: bigint };
-        if (od.amountFilled !== undefined) absFilled = BigInt(od.amountFilled);
+        if (od.amountFilled === undefined) {
+          throw new Error('getOfferDetails returned no amountFilled');
+        }
+        absFilled = BigInt(od.amountFilled);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error(
-          `[chainIndexer] #760 getOfferDetails(${Number(ev.lenderOfferId)}) for OfferMatched failed; leaving amount_filled for next scan`,
+          `[chainIndexer] #760 getOfferDetails(${Number(ev.lenderOfferId)}) for OfferMatched failed; aborting scan so the cursor doesn't advance`,
           err,
         );
+        throw err;
       }
-      if (absFilled !== null) {
-        const r = await env.DB.prepare(
-          `UPDATE offers
-           SET amount_filled = ?,
-               updated_at = ?
-           WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
-        )
-          .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
-          .run();
-        if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
-      }
+      const r = await env.DB.prepare(
+        `UPDATE offers
+         SET amount_filled = ?,
+             updated_at = ?
+         WHERE chain_id = ? AND offer_id = ? AND amount_max != '0'`,
+      )
+        .bind(absFilled.toString(), now, chainId, Number(ev.lenderOfferId))
+        .run();
+      if ((r.meta?.changes ?? 0) > 0) statusUpdates++;
     } else {
       // OfferModified — full post-image. Status stays 'active'
       // (modifications are only allowed on unaccepted offers;
@@ -1981,8 +1985,9 @@ async function processLoanLogs(
       // corrupting principal/collateral. A `getLoanDetails` pinned to the
       // event's block returns the same post-image on every replay, so the
       // per-leg notionals are no longer needed (the contract's post-image is
-      // the source of truth). FAIL-CLOSED: on a read failure, leave the loan
-      // for the next scan to heal rather than committing a fallback value.
+      // the source of truth). FAIL-CLOSED (Codex #761 P1): a read failure
+      // PROPAGATES so the scan aborts before the cursor advances and this event
+      // is re-processed next scan — not swallowed (which would strand the loan).
       async function applyMatch(loanId: number) {
         if (loanId === 0) return; // C is 0 for a 2-way match
         let absPrincipal: bigint;
@@ -2000,10 +2005,10 @@ async function processLoanLogs(
         } catch (err) {
           // eslint-disable-next-line no-console
           console.error(
-            `[chainIndexer] #760 getLoanDetails(${loanId}) for InternalMatchExecuted failed; leaving loan for next scan`,
+            `[chainIndexer] #760 getLoanDetails(${loanId}) for InternalMatchExecuted failed; aborting scan so the cursor doesn't advance`,
             err,
           );
-          return;
+          throw err;
         }
         if (absPrincipal === 0n) {
           await env.DB.prepare(
