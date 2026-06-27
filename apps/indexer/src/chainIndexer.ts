@@ -742,19 +742,36 @@ async function processOfferLogs(
     // on the next cron tick. No event is dropped on the floor.
     let detail: Record<string, unknown> | null = null;
     try {
+      // #763 — read at `latest`, NOT pinned to the OfferCreated block. Pinning
+      // was reconsidered: (a) the row is already deterministic without it — the
+      // `INSERT OR IGNORE` below no-ops a pure re-scan, and a delayed first
+      // processing of a since-modified offer is corrected by the subsequent
+      // `OfferModified` (event-payload post-image) / `OfferMatched` (#760
+      // block-pinned) replay in the same batch; (b) pinning would add an
+      // archive-node dependency this fail-soft read can't satisfy on a catch-up;
+      // and (c) a block-END read of an offer created AND cancelled in the same
+      // block reads the post-`delete` ZERO struct anyway. So we keep `latest`
+      // and guard the zero struct directly (below).
       detail = (await client.readContract({
         address: diamond,
         abi: DIAMOND_OFFER_DETAILS_ABI,
         functionName: 'getOfferDetails',
         args: [o.offerId],
-        // #763 — pin to the OfferCreated block so a cron catch-up / re-scan that
-        // processes this event after later blocks reads the offer's CREATION
-        // state, not a `latest` that a subsequent modify/cancel/partial-fill
-        // moved. The INSERT OR IGNORE below already no-ops a pure re-scan, but
-        // the first (delayed) processing of a since-modified offer would
-        // otherwise persist post-creation fields.
-        blockNumber: o.blockNumber,
       })) as Record<string, unknown>;
+      // A `getOfferDetails` for an already-DELETED offer (created then cancelled
+      // — `OfferCancelFacet` emits `OfferCanceledDetails` BEFORE
+      // `delete s.offers[offerId]`) returns a ZERO struct, not a revert. Writing
+      // that as a real detail row persists a zero creator/assets with
+      // `is_stub = 0` that the later cancel status-update can't repair. Treat a
+      // zero-creator read as a miss → fall through to the stub INSERT; the
+      // `OfferCanceled` handler then marks it cancelled.
+      if (
+        detail &&
+        (detail.creator as string | undefined)?.toLowerCase() ===
+          '0x0000000000000000000000000000000000000000'
+      ) {
+        detail = null;
+      }
     } catch (err) {
       console.error(
         `[chainIndexer] inline getOfferDetails(${Number(o.offerId)}) failed; falling back to stub`,
@@ -2770,6 +2787,19 @@ async function _resolveGraceEnd(
     );
     return startTime + durationDays * 86_400 + graceSeconds;
   } catch (err) {
+    // #763 (Codex #767 P2) — a block-pinned read can fail when the RPC can't
+    // serve HISTORICAL state for `blockNumber` on a catch-up (non-archive /
+    // transient). Do NOT persist the `0` sentinel for that — it'd advance the
+    // cursor with a permanently-wrong "unknown grace end". Fall back to a
+    // `latest` read (the pre-#763 behaviour: a possibly-slightly-stale but
+    // PRESENT boundary); only a total RPC failure reaches the `0` sentinel.
+    if (blockNumber !== undefined) {
+      console.warn(
+        `[chainIndexer] _resolveGraceEnd(${loanId}) block-pinned read failed; retrying at latest`,
+        err,
+      );
+      return _resolveGraceEnd(client, diamond, loanId);
+    }
     console.error(`[chainIndexer] _resolveGraceEnd(${loanId}) failed`, err);
     return 0; // Sentinel — the frontend treats 0 as "unknown grace end".
   }
