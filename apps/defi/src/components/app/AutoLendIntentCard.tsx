@@ -220,6 +220,14 @@ export default function AutoLendIntentCard({
   const canWrite = useCanWrite();
 
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // tx-in-flight. Declared up here so the Manage-retarget guard below can
+  // read it; a `busyRef` mirror lets the nonce effect read it without making
+  // it a dependency.
+  const [busy, setBusy] = useState<boolean>(false);
+  const busyRef = useRef(false);
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
   // #755 — apply a "Manage" deep-linked pair via React's render-time
   // "adjust state when a prop changes" pattern (NOT an effect — that would
   // cost a wasted commit and trip the set-state-in-effect lint). Gated on a
@@ -228,7 +236,12 @@ export default function AutoLendIntentCard({
   const [appliedPairNonce, setAppliedPairNonce] = useState(selectedPairNonce);
   if (selectedPairNonce !== appliedPairNonce) {
     setAppliedPairNonce(selectedPairNonce);
-    if (selectedPair?.lendingAsset && selectedPair?.collateralAsset) {
+    // Self-gate the retarget while a tx is in flight: the parent disables the
+    // external Manage buttons via onBusyChange, but a click queued in the
+    // render/effect gap could still reach here — applying it would show a
+    // different pair than the one being signed/awaited. Consume the nonce
+    // (drop the slipped-through click) without retargeting.
+    if (!busy && selectedPair?.lendingAsset && selectedPair?.collateralAsset) {
       setForm((f) => ({
         ...f,
         lendingAsset: selectedPair.lendingAsset,
@@ -294,10 +307,9 @@ export default function AutoLendIntentCard({
   const [ackKeeperMaster, setAckKeeperMaster] = useState<boolean>(false);
   const [ackKeeperKey, setAckKeeperKey] = useState<string>('');
 
-  const [busy, setBusy] = useState<boolean>(false);
   // #755 — surface tx-in-flight to the parent so the multi-intent list can
   // disable "Manage" while a write is pending (post-await notify, so no
-  // synchronous setState in this effect's body).
+  // synchronous setState in this effect's body). `busy` is declared above.
   useEffect(() => {
     onBusyChange?.(busy);
   }, [busy, onBusyChange]);
@@ -568,8 +580,10 @@ export default function AutoLendIntentCard({
   // on the nonce; standalone usage passes none, so this never runs there.
   useEffect(() => {
     if (selectedPairNonce === undefined) return;
+    // Same busy-gate as the render-time apply above: don't re-prefill (which
+    // resets the once-per-pair stamp + re-reads) while a tx is in flight.
+    if (busyRef.current) return;
     prefilledKeyRef.current = '';
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reloadPair();
     // reloadPair is intentionally excluded — see the keyed-on-nonce note.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -882,6 +896,10 @@ export default function AutoLendIntentCard({
           riskConsentGiven, // mandatory risk/terms consent — validated above, never silent
         );
         await tx.wait();
+        // #755 — registration changed the intent's visibility/terms already;
+        // refresh the overview NOW so a later step (approve/fund) failing
+        // can't leave the list on its 30s-stale Active/Paused/terms view.
+        onIntentChanged?.();
       };
 
       // 2 & 3. Order the delegate / register steps by intent state:
@@ -1018,6 +1036,10 @@ export default function AutoLendIntentCard({
         setStep(t('autoLend.stepCancel'));
         const tx = await dw.cancelLenderIntent(lendingAsset, collateralAsset);
         await tx.wait();
+        // #755 — the intent is de-listed/paused as of this mined tx; refresh
+        // the overview NOW so a later withdraw failing can't leave the row
+        // showing Active/fillable on the list's 30s cache.
+        onIntentChanged?.();
       }
       // Re-read capital AFTER the cancel mined: a keeper could have
       // auto-rolled a just-repaid loan and re-liened its proceeds between
