@@ -5,6 +5,17 @@ context. Architecture is **owner-locked** (issue #757, sign-off 2026-06-27);
 this doc is the *implementation* design that slots that architecture into the
 existing `apps/indexer` ingest, not a re-litigation of the architecture.
 
+> **Design evolution.** This design went through several Codex review rounds on
+> PR #759. The early drafts tried to keep the webhook ingest "clever" (a window
+> around the delivered block) and then "safe via a per-chain lock". Review
+> showed both were fragile under reorg, replay, out-of-order, and concurrent
+> processing — because the existing indexer handlers were written for
+> single-threaded, in-order, never-replayed processing. The final design makes
+> the indexer **convergent by construction** with a **per-row `(block,
+> log_index)` high-water-mark** on every mutated table; the webhook then just
+> runs the cron's own scan immediately. The advisory lock is dropped (the
+> watermark, not a lock, is the correctness mechanism).
+
 ## 1. Goal & non-goals
 
 **Goal.** Cut render staleness from "up to N minutes" (N = number of indexed
@@ -21,9 +32,9 @@ chains, because the cron processes one chain per tick, round-robin) to
   **authoritative backstop**. Correctness must never depend on the webhook.
 - Reads stay on **dRPC (paid)**; Alchemy is **trigger-only** (push), never
   read through.
-- Push carries an **invalidation key only**, never authoritative data (Phase
-  B). Time-based states (offer expiry) are **not** event-driven and stay owned
-  by the client clock + the cron sweep.
+- Push (Phase B) carries an **invalidation key only**, never authoritative
+  data. Time-based states (offer expiry) are **not** event-driven and stay
+  owned by the client clock + the cron sweep.
 
 ## 2. Today's ingest (what Phase A reuses)
 
@@ -31,10 +42,8 @@ chains, because the cron processes one chain per tick, round-robin) to
 ([chainIndexer.ts:134](../../apps/indexer/src/chainIndexer.ts)):
 
 1. **Round-robin chain pick** via the `indexer_cursor` sentinel row
-   `(chain_id=0, kind='roundrobin')`, whose `last_block` column is repurposed
-   as the pointer.
-2. `runChainIndexerForChain(env, chain)` (chainIndexer.ts:350) for the picked
-   chain:
+   `(chain_id=0, kind='roundrobin')`, whose `last_block` column is the pointer.
+2. `runChainIndexerForChain(env, chain)` (chainIndexer.ts:350):
    - read cursor `SELECT last_block FROM indexer_cursor WHERE chain_id=? AND
      kind='diamond'`; `scanFrom = last_block + 1`;
    - `scanTo = min(scanFrom + SCAN_LOOKBACK_BLOCKS*4, safeHead)` (≤ ~2000
@@ -44,17 +53,15 @@ chains, because the cron processes one chain per tick, round-robin) to
      against `EVENT_ABI` (derived from `DIAMOND_ABI_VIEM`, deduped by event
      signature — never hand-typed);
    - dispatch the decoded logs to `processOfferLogs` / `processLoanLogs` /
-     `recordActivityEvents` (all internal to chainIndexer.ts);
+     `recordActivityEvents` (all internal to chainIndexer.ts), **in log order**;
    - side-lane heals (`refreshStubOffers` / `refreshStubLoans`);
-   - **advance cursor** to `scanTo` (`INSERT … ON CONFLICT … DO UPDATE`).
+   - **advance cursor** to `scanTo` after every step succeeds.
 
-**Idempotency already present** — every domain write is
-`INSERT OR IGNORE` (offers PK `(chain_id, offer_id)`, loans PK
-`(chain_id, loan_id)`, activity PK `(chain_id, block_number, log_index,
-tx_hash)`) or `INSERT OR REPLACE` (swap-to-repay / prepay, PK
-`(chain_id, loan_id)`); status changes are deterministic `UPDATE`s of
-chain-derived values. So re-processing the same block converges — this is what
-makes a webhook fast-path safe alongside the cron.
+`recordActivityEvents` is **append-only** — `INSERT OR IGNORE` keyed by
+`(chain_id, block_number, log_index, tx_hash)`, already idempotent. The domain
+tables (`offers`, `loans`, `prepay_listings`, `swap_to_repay_intents`) are
+**mutated** by status flips, fill updates, balance changes — those are what the
+high-water-mark protects.
 
 **RPC client**: `createPublicClient({ transport: http(chain.rpc) })`, where
 `chain.rpc` is the dRPC URL from `getChainConfigs(env)`.
@@ -65,417 +72,283 @@ makes a webhook fast-path safe alongside the cron.
 
 ```
 Alchemy Custom Webhook ──POST (HMAC-signed body)──▶ /hooks/chain-event
-                                                       │ 1. cap body size (pre-auth) + verify X-Alchemy-Signature (fail-closed)
-                                                       │ 2. parse payload → chainId ONLY  (HINT — which chain, not which blocks)
-                                                       │ 3. ctx.waitUntil( runChainIndexerForChain(env, chain) )  ← the cron's own scan
-                                                       │ 4. return 200 ack immediately
-                                                       ▼
-                                 runChainIndexerForChain(env, chain)   (UNCHANGED scan)
-                                   = read cursor → scan [cursor+1, SAFE head] via dRPC
-                                     → decode → dispatch (same handlers, log order)
-                                     → advance cursor.  Run NOW, out of round-robin order,
-                                     under a per-chain lock so it can't race the cron tick.
+   │ 1. dispatch BEFORE global resolveEnv; cap body size (413); verify
+   │    X-Alchemy-Signature with the signing key from raw env (401, fail-closed)
+   │ 2. per-delivery throttle (dedupe id / (network,H)) — drop replays
+   │ 3. parse payload → chainId + max block H (hint: which chain + loop target)
+   │ 4. ctx.waitUntil( catch-up loop: run the cron's scan for that chain )
+   │ 5. return 200 ack immediately
+   ▼
+runChainIndexerForChain(env, chain)  (the cron's own scan — UNCHANGED control flow)
+   read cursor → scan [cursor+1, SAFE head] via dRPC → decode → dispatch
+   (same handlers, log order) → advance cursor.   Every mutating write is
+   gated by the per-row (block, log_index) HIGH-WATER-MARK (§3.3).
 ```
 
-**Design correction (Codex review #759).** An earlier draft had the webhook
-ingest an arbitrary window `[H - k, H]` around the delivered block and *not*
-advance the cursor. Review surfaced four P1 / three P2 holes in that shape:
-unsafe (reorg-able) blocks getting cached, replayed old deliveries resurrecting
-deleted rows, the non-idempotent `InternalMatchExecuted` delta handler
-double-subtracting, bounded-lookback blind spots in the `amount_filled` replay,
-activity rows missing prior-state enrichment, and cron/webhook interleaving the
-log-order replay. The revised design below avoids all of them by **not inventing
-a second ingest shape**: the webhook simply runs the cron's existing
-cursor-derived, safe-head-bounded, in-order, cursor-advancing scan for the
-hinted chain — immediately instead of waiting up to N minutes for its
-round-robin slot — serialized by a per-chain lock.
-
-### 3.2 The webhook runs the cron's scan — it does NOT invent a second ingest
+### 3.2 The webhook triggers the cron's own scan (no second ingest shape)
 
 The webhook handler, for the hinted chain, calls the **existing**
-`runChainIndexerForChain(env, chain)` — the same function the cron tick uses —
-immediately, out of round-robin order. That function already:
+`runChainIndexerForChain(env, chain)` immediately, out of round-robin order. It
+inherits the cron's safe-head reorg-safety, full cursor-gap coverage (no
+bounded-window blind spot), in-order dispatch, and cursor advancement. The
+payload's block `H` is used **only** to pick the chain and as the catch-up
+loop's finish line — never to derive the scan range or write data.
 
-- reads the cursor and scans **`[cursor+1, safeHead]`** (the FULL gap — no
-  bounded-window blind spot), with `head` read at `blockTag:'safe'`
-  (reorg-proof — never caches a block that can still reorg);
-- decodes against `EVENT_ABI` and dispatches to the handlers **in log order**,
-  single-threaded within the scan (so the `amount_filled` replay is correct);
-- **advances the cursor** to `safeHead`.
+**Bounded catch-up / wait-for-safe loop** (inside `ctx.waitUntil`), two phases
+per iteration:
 
-The webhook therefore inherits safe-head reorg-safety, full-gap coverage,
-in-order replay, and cursor advancement **for free** — none of the order- or
-delta-sensitive handlers (`InternalMatchExecuted`, `OfferMatched`/`OfferModified`,
-`PrepayListing*`, `SwapToRepay*`) is re-processed out of order or with a partial
-range, because the webhook never re-reads an arbitrary old range — it only ever
-scans *forward from the cursor to the current safe head*, exactly as the cron
-does. The block `H` in the payload is used **only to pick the chain**; the range
-comes from the cursor, never from `H`.
+1. **Cheap wait-for-safe poll** — read just the current safe head (1 RPC
+   subrequest). If `H > safeHead`, the hinted block hasn't finalized; sleep
+   ~2-3 s and loop. (Alchemy fires on the just-mined tip, so `H` is often above
+   safe head; we must wait for it, not scan once and stop.)
+2. **Scan when safe** — once `H <= safeHead`, run `runChainIndexerForChain`
+   (each internal scan still clamped to the then-current safe head, so it never
+   caches reorg-able blocks). **Loop until `cursor >= H`** — *not*
+   `min(H, currentSafeHead)`: at steady state `cursor == safeHead == S` and a
+   just-mined `H > S` would make `min(H,S)` immediately true, so the loop would
+   exit without ever waiting for `H` to finalize — exactly the case it exists
+   for. Targeting `H` keeps it pending until `H` is actually ingested.
 
-**Bounded catch-up / wait-for-safe loop (Codex r2 P1 — just-mined block above
-safe head; P2 — per-scan block cap; P2 — contended scan).** A single immediate
-scan is not enough on its own for two reasons: (i) the delivered block `H` may
-be **above the current safe head** (Alchemy fires on the just-mined tip), so the
-first safe-bounded scan won't include it and Alchemy won't retry; (ii)
-`runChainIndexerForChain` caps each scan at `scanTo = min(scanFrom +
-SCAN_LOOKBACK_BLOCKS*4, head)` (~2000 blocks, [chainIndexer.ts:405-408]), so a
-deep backlog (post-outage / cold start) isn't drained in one pass. So the
-webhook runs a **bounded loop inside `ctx.waitUntil`**, with two phases each
-iteration:
-
-1. **Cheap wait-for-safe poll.** Read just the current safe head (1 RPC
-   subrequest). If `H > safeHead`, the hinted block hasn't finalized — sleep a
-   short delay (~2-3 s) and loop; do **not** run a full scan yet.
-2. **Scan when safe.** Once `H <= safeHead`, `(try-acquire lock →
-   runChainIndexerForChain → release)`. Each scan is still internally clamped to
-   the **then-current safe head** (so it never caches reorg-able blocks), but
-   the **loop's finish line is `cursor >= H`** — *not* `min(H, currentSafeHead)`
-   (Codex r4 P1): at steady state `cursor == safeHead == S` and a just-mined
-   `H > S` would make `min(H,S) == S == cursor` *immediately true*, so the loop
-   would exit without ever waiting for `H` to finalize — exactly the case it
-   exists for. Targeting `H` keeps it pending until `H` is actually ingested.
-
-The loop is **bounded by three budgets** so it never runs unbounded: an
-iteration cap, the `waitUntil` wall-budget (~25 s), **and a subrequest budget**
-(Codex r4 P2 — a single backfill scan can already spend ~38 of the Worker's ~50
-subrequests per invocation, [chainIndexer.ts]). The cheap wait-poll costs 1
-subrequest, so waiting is subrequest-light; but only **one** full
-`runChainIndexerForChain` is run per webhook invocation when subrequests are
-near the cap — a remaining backlog is left to the next webhook / the cron rather
-than risking a mid-scan abort that drops events. A contended lock-acquire
-retries (rather than dropping the hint) within the budgets.
+The loop is **bounded by three budgets**: an iteration cap, the `waitUntil`
+wall-budget (~25 s), and a **subrequest budget** (a single backfill scan can
+spend ~38 of the Worker's ~50 subrequests/invocation). The wait-poll is 1
+subrequest, so waiting is cheap; but only **one** full scan runs per webhook
+invocation when subrequests are near the cap — remaining backlog is left to the
+next webhook / the cron, never risking a mid-scan abort that drops events.
 
 **Latency claim (honest, narrowed).** In **steady state** (cursor near head),
 on **fast-finality L2s** (Base / OP / Arbitrum — safe head trails the tip by
-seconds), the loop ingests a just-mined repay/match **within seconds**. Two
-cases fall back to the cron, by design, not silently: **Ethereum mainnet**'s
-safe head trails ~2 epochs (~13 min) — `H` can't be ingested before it
-finalizes (inherent to not caching reorg-able state), so the loop exits at the
-budget and the cron covers it; a **deep backlog** beyond what the loop drains in
-its budget likewise finishes cron-paced. The webhook's guarantee is therefore
-"*ingest within seconds of the event becoming **safe**, in steady state*", which
-on L2s is within seconds of mining — not "within seconds of mining on every
-chain". The acceptance test (§8) is scoped to a fast-finality testnet.
+seconds), the loop ingests a just-mined repay/match **within seconds of it
+becoming safe**, which on L2s is within seconds of mining. **Ethereum
+mainnet**'s safe head trails ~2 epochs (~13 min) — `H` can't be ingested before
+it finalizes (inherent to not caching reorg-able state), so the loop exits at
+the budget and the cron covers it; a **deep backlog** likewise finishes
+cron-paced. The acceptance test (§8) is scoped to a fast-finality testnet.
 
-The refactor into `runChainIndexerForChain` has two parts, with a clear split
-of responsibility (Codex r3):
+### 3.3 Per-row `(block, log_index)` high-water-mark — the correctness mechanism
 
-- **Correctness comes from idempotent handlers (§3.3b)** — every
-  re-processable handler is rewritten to an absolute, chain-derived write
-  (`InternalMatchExecuted`, `OfferMatched`, `OfferModified`), so processing the
-  same block twice (concurrently OR sequentially) converges to the same state.
-- **The per-chain lock (§3.3) is a best-effort de-dup OPTIMIZATION, not the
-  correctness mechanism** — it avoids two scans doing the same work, but
-  correctness no longer depends on perfect mutual exclusion (so a lease
-  TTL-overrun under slow RPC, or a not-yet-applied lock migration, can't corrupt
-  data — at worst they waste a duplicate scan).
+The existing domain handlers assume single-threaded, in-order, never-replayed
+processing. The webhook breaks all three assumptions: it can run **concurrently**
+with the cron, a partial-failure scan re-runs a range **sequentially** (rows are
+written before the cursor advances), and Alchemy can **replay** a delivery. The
+high-water-mark makes every mutated row **convergent under all of these**.
 
-The loop targets the **maximum delivered block** `H` parsed from the payload
-(§3.5) — `H` is the *finish line* for "wait until safe", while the scan *range*
-stays cursor-derived. No change to the scan, decode, or dispatch order
-otherwise.
-
-### 3.3 Per-chain advisory lock — a best-effort de-dup optimization (NOT the correctness mechanism)
-
-The cron is implicitly single-writer-per-chain (one chain per tick, ticks
-rarely overlap). The webhook introduces concurrency (a webhook racing the cron,
-or two webhooks). The lock reduces wasted duplicate scans — but **correctness
-is owned by the idempotent handlers in §3.3b, not the lock** (Codex r3): a lease
-that overruns `LOCK_TTL_SECONDS` under slow RPC, or a lock table not yet
-migrated, can at worst cause a duplicate scan, never data corruption.
-
-Both the cron and the webhook *try* to acquire a D1 lease before
-`runChainIndexerForChain`:
+**Schema** — a new migration adds two columns to each mutated domain table
+(`offers`, `loans`, `prepay_listings`, `swap_to_repay_intents`):
 
 ```sql
--- migration: indexer_lock(chain_id PK, locked_until INTEGER NOT NULL DEFAULT 0, owner TEXT)
--- seed each chain explicitly unlocked (DEFAULT 0 also covers INSERT OR IGNORE):
-INSERT OR IGNORE INTO indexer_lock (chain_id, locked_until) VALUES (?, 0);
--- acquire (atomic CAS — D1 serializes writes); `token` = a fresh random id:
-UPDATE indexer_lock SET locked_until = ?, owner = ?   -- now + LOCK_TTL_SECONDS, token
-  WHERE chain_id = ? AND locked_until < ?;            -- now  (lock free / expired)
---   meta.changes === 1  ⇒ acquired;  0 ⇒ held elsewhere
--- release (ONLY if we still own it — guards the TTL-overrun race):
-UPDATE indexer_lock SET locked_until = 0
-  WHERE chain_id = ? AND owner = ?;                    -- token
+ALTER TABLE <table> ADD COLUMN last_event_block INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE <table> ADD COLUMN last_event_log_index INTEGER NOT NULL DEFAULT 0;
 ```
 
-- **`locked_until INTEGER NOT NULL DEFAULT 0`** (Codex r3 P2) — a seeded row is
-  explicitly *unlocked*; without the default, an `INSERT OR IGNORE (chain_id)`
-  would store `NULL`, `NULL < now` is never true, and every acquire would
-  forever report "held". The seed `INSERT` sets `0` explicitly too.
-- **Owner-guarded release** (Codex r2 P1) — if our lease expired and another
-  scan took the lock, our `owner` no longer matches, so our `finally` release is
-  a no-op and can't free the new holder's lock.
-- **Best-effort / fail-open** (Codex r3 P1) — the whole acquire/release is
-  wrapped so that a **missing `indexer_lock` table** (Worker deployed before the
-  migration) or any lock error is caught and treated as "proceed without the
-  lock". Because §3.3b makes the handlers idempotent, running without the lock
-  is merely today's behaviour — never a corruption or an ingestion outage. So
-  the migration is **recommended, not a hard deploy gate** (revises §5).
-- Contended ⇒ the webhook loop (§3.2) **retries the acquire** within budget
-  rather than dropping the hint; the cron skips that chain for the tick.
+**The guard** — every **mutating** write carries the event's `(block,
+log_index)` and applies **only if it is strictly newer** than what the row
+records, stamping the new pair in the same statement:
 
-### 3.3b Idempotent, absolute-write handlers — the real correctness layer (Codex r2/r3 P1)
+```sql
+UPDATE <table> SET <fields> = ...,
+       last_event_block = :block, last_event_log_index = :logIndex
+ WHERE <pk> = ...
+   AND ( :block > last_event_block
+      OR (:block = last_event_block AND :logIndex > last_event_log_index) );
+```
 
-`runChainIndexerForChain` writes domain rows **before** the final cursor update
-([chainIndexer.ts:499-545]), so a partial-failure scan (some rows written, cursor
-not advanced) makes the **next** scan re-process the same blocks — *sequential*
-replay that the lock can't prevent. Combined with possible TTL-overrun
-*concurrency* (§3.3), every re-processable handler must converge on re-run. The
-non-idempotent ones are rewritten to **absolute, chain-derived writes** (the same
-"re-read chain, don't trust the log/D1-delta" principle the creation handlers
-already use):
+(For the `INSERT`-creating handlers, the create stamps the creating event's
+pair; subsequent mutations use the guard above.)
 
-- **Block-pin every absolute read (Codex r4 P1).** All the `get*Details` reads
-  below MUST be anchored to the **event's** block — `blockNumber:
-  log.blockNumber` — never a default current-head read. Otherwise, during a
-  backlog/partial-failure replay, an *older* `InternalMatchExecuted` read at
-  current head could observe a *later* terminal state (e.g. a subsequent
-  `LoanRepaid` that already zeroed `principal`), wrongly take the terminal
-  branch, and write `internal_matched`; the existing terminal handlers only flip
-  `active` loans, so the later replayed terminal log wouldn't correct it.
-  Block-pinned reads make every replay reconstruct the state *as of that log*,
-  which is what makes them deterministic/idempotent.
-- **`InternalMatchExecuted`** (chainIndexer.ts:1965-2001) — today reads
-  `principal`/`collateral_amount` from D1 and **subtracts** event deltas (a
-  re-run double-subtracts). Rewrite: `getLoanDetails(loanId, {blockNumber:
-  log.blockNumber})` for each affected loan and write the absolute post-image.
-  **Preserve the existing terminal side-effects** (Codex r3 P2): when a leg
-  reaches `principal == 0`, still set the terminal/internal-matched status **and
-  delete any live prepay listing** for that loan — otherwise an
-  internally-matched loan keeps serving a stale `/loans/:id` prepay-listing row.
+This single rule makes the indexer convergent:
+
+- **Replay / same-event re-process** — the re-applied event's `(block,
+  logIndex)` is *not greater* than the stored pair → the `UPDATE` matches 0
+  rows → no-op. Even a raw `-=`/`+=` delta becomes idempotent (it can't apply
+  twice), and a re-run of a creation+mutation range can't double-apply.
+- **Concurrent out-of-order writes** — if a slow scan tries to write an *older*
+  log after a faster scan already stamped a *newer* one, the older write's guard
+  fails → rejected. No stale row survives a cursor that advanced past it. "**The
+  highest `(block, logIndex)` event wins**", deterministically, regardless of
+  processing order or concurrency.
+- **Same-block ordering** — `log_index` disambiguates two events touching the
+  same entity in one block (e.g. `InternalMatchExecuted` then `LoanRepaid`); the
+  later-logIndex event's state is the one that survives.
+
+Because the watermark — not a lock — guarantees convergence, **no per-chain
+advisory lock is needed**; the cron and webhook may run the same chain
+concurrently and still converge. (A lock could be added later purely as a
+de-dup *optimization* to avoid duplicate-scan RPC cost; it would never be
+load-bearing. Dropping it removes the lease/owner-token/migration-ordering
+complexity entirely.)
+
+### 3.4 Absolute-snapshot writes for value handlers (the watermark's companion rule)
+
+The watermark gives "**last event wins per row**". That is automatically correct
+for a field set to an **absolute** value (status, `principal`, an
+absolute `amount_filled`). It has one trap: a handler that updates only **one**
+field computed from the **current row** can have its update dropped when a
+*later* event to a **different** field stamps a higher watermark first. So the
+handlers that today read-modify-write the current row are converted to write a
+**complete, absolute, block-pinned snapshot** of the mutable fields, so whichever
+event wins carries the *whole* correct row, never a partial patch:
+
 - **`OfferMatched` / `OfferModified`** (chainIndexer.ts:601-610, 928-956) — today
-  compute `amount_filled` from the **current D1 `amount_max`**, so a re-run after
-  an interleaved modify recomputes against the wrong base. Rewrite: re-read the
-  offer's absolute fill/`amount_max` via `getOfferDetails(offerId, {blockNumber:
-  log.blockNumber})` and write absolute values (or use the event's absolute
-  post-image fields if it carries them), so a replay sets the same value
-  regardless of D1's current row.
-- **`PrepayListing*` / `SwapToRepay*` D1 shape is idempotent, but guard the
-  EXTERNAL publish (Codex r4 P2).** Their `INSERT OR REPLACE`/delete with the
-  event's own data converges under same-range replay — but `PrepayListingPosted`
-  /`Updated` also call the **OpenSea publish** path before writing the row.
-  Under the replay paths this design now tolerates (partial-retry / TTL-overrun /
-  fail-open lock), the same log would re-submit the same marketplace order —
-  burning quota / creating duplicate listings even though D1 converges. So
-  **skip the publish when that order hash is already marked published** (a
-  published-marker check before the external call); the D1 write stays as-is.
-- All are already-covered events (no `check-event-coverage` impact), and these
-  fixes **harden the existing cron** (which has the same latent partial-tick
-  replay exposure today), not just the webhook path.
+  compute `amount_filled` from the **current D1 `amount_max`**. Rewrite: re-read
+  the offer's absolute fill/`amount_max` via `getOfferDetails(offerId,
+  {blockNumber: log.blockNumber})` and write absolute values.
+- **`InternalMatchExecuted`** (chainIndexer.ts:1965-2001) — today reads
+  `principal`/`collateral_amount` from D1 and **subtracts** deltas. Rewrite:
+  `getLoanDetails(loanId, {blockNumber: log.blockNumber})` per affected loan and
+  write the absolute post-image. **Preserve its terminal side-effects**: when a
+  leg reaches `principal == 0`, still set the terminal status **and delete any
+  live prepay listing** for that loan (else it serves a stale listing). Both the
+  status write and the listing delete are watermark-guarded.
+- **Audit the remaining mutators for current-row dependence** during
+  implementation (e.g. `PartialRepaid`, `CollateralAdded`, periodic-interest
+  updates): any that compute from the current row become absolute block-pinned
+  writes; pure absolute-field setters (`LoanRepaid` → `status`+`principal=0`,
+  `LoanDefaulted`, `Transfer` → owner) just gain the watermark guard.
 
-### 3.4 HMAC verification + pre-auth body cap (fail-closed)
+**Block-pin every absolute read** — `{blockNumber: log.blockNumber}`. A
+block-pinned read is "end-of-block", not literally "as of this log", but
+combined with the watermark ("highest log wins") the *final* applied write is
+the highest-logIndex event's end-of-block snapshot = the true end-of-block state,
+which is correct. (The prepay-listing handler's `grace_period_end` helper, which
+calls `getLoanDetails`, must be block-pinned too, so a replayed older listing
+event can't mix in later/unsafe loan state.)
 
-Alchemy signs the **raw request body** with HMAC-SHA256 using the webhook's
-signing key and sends it hex-encoded in `X-Alchemy-Signature`.
+**External side-effects need their own replay guard.** `PrepayListingPosted`/
+`Updated` call the **OpenSea publish** before writing the row. D1 converges via
+the watermark, but the external call doesn't — a replay/concurrent re-process
+would re-submit the same order. Guard it with an **atomic reservation**: an
+`INSERT OR IGNORE` on a persistent `(order_hash)` published-marker *before* the
+external call; only the row that wins the insert publishes. (A plain
+read-before-call isn't enough — two concurrent scans could both read "unpublished"
+then both publish.)
 
-- **Dispatch this route BEFORE the global `resolveEnv` (Codex r2 P2).**
-  `index.ts` currently calls `resolveEnv(env)` at the top of `fetch`, which
-  fetches **every** RPC/OpenSea Secrets-Store secret for *any* request. If the
-  webhook route ran after that, an oversized unauthenticated POST would still
-  force all that Secrets-Store work before the 413/401. So `fetch` checks the
-  `/hooks/chain-event` path **first**, runs the body cap + HMAC verify reading
-  **only `ALCHEMY_WEBHOOK_SIGNING_KEY`** from the raw `WorkerEnv` (one
-  `.get()`), and only **after** auth passes resolves the rest of the env (for
-  the ingest, inside `waitUntil`). Every other route keeps the existing
-  top-of-`fetch` `resolveEnv`.
-- **Body-size cap BEFORE any hashing (Codex P2):** reject with `413` if
-  `Content-Length` exceeds a small cap (e.g. `MAX_WEBHOOK_BODY = 64 KiB`;
-  Alchemy payloads are a few KB). If `Content-Length` is absent, read the body
-  through a length-bounded reader and abort past the cap. This bounds the
-  pre-auth CPU/alloc cost of this public write route — an unauthenticated
-  caller can't force unbounded `req.text()` + HMAC work just to be 401'd.
-- New secret **`ALCHEMY_WEBHOOK_SIGNING_KEY`** (Cloudflare Secrets Store
-  binding, same pattern as `RPC_*`): added to `WorkerEnv` (SecretBinding) and
-  `wrangler.jsonc:secrets_store_secrets`; read **directly from the raw
-  `WorkerEnv`** in the route (not via `resolveEnv`, per the dispatch-order point
-  above).
-- Verify with **Web Crypto** (constant-time, Worker-native; same primitive as
+### 3.5 HMAC verification + pre-auth body cap (fail-closed) + dispatch order
+
+Alchemy signs the **raw request body** with HMAC-SHA256 and sends it hex-encoded
+in `X-Alchemy-Signature`.
+
+- **Dispatch `/hooks/chain-event` BEFORE the global `resolveEnv`.** `index.ts`
+  currently calls `resolveEnv(env)` at the top of `fetch`, fetching **every**
+  RPC/OpenSea Secrets-Store secret for *any* request. The webhook route is
+  matched first and runs the body cap + HMAC reading **only**
+  `ALCHEMY_WEBHOOK_SIGNING_KEY` from the raw `WorkerEnv` (one `.get()`); it
+  resolves the rest of the env only **after** auth passes (for the scan, inside
+  `waitUntil`). Every other route keeps the existing top-of-`fetch` resolve.
+- **Body-size cap before any hashing** — `413` if `Content-Length` exceeds a
+  small cap (`MAX_WEBHOOK_BODY ≈ 64 KiB`; Alchemy payloads are a few KB); if
+  `Content-Length` is absent, read through a length-bounded reader and abort
+  past the cap. Bounds the pre-auth CPU/alloc cost of this public route.
+- New secret **`ALCHEMY_WEBHOOK_SIGNING_KEY`** — Secrets Store binding, added to
+  `WorkerEnv` + `wrangler.jsonc`, read directly from the raw env in the route.
+- Verify with **Web Crypto** (constant-time; same primitive as
   `apps/agent/src/diagHash.ts`): `crypto.subtle.importKey('raw', keyBytes,
   {name:'HMAC',hash:'SHA-256'}, false, ['verify'])` then
-  `crypto.subtle.verify('HMAC', key, sigBytes, rawBodyBytes)` —
-  `crypto.subtle.verify` is constant-time, no hand-rolled compare. Decode the
-  hex `X-Alchemy-Signature` to bytes; a malformed/odd-length header → reject.
+  `crypto.subtle.verify('HMAC', key, sigBytes, rawBodyBytes)`. Decode the hex
+  header to bytes; malformed/odd-length → reject.
 - **Fail-closed**: secret unset, header missing/malformed, or verify fails →
-  **401, no D1 write, no RPC read**. (Unlike the optional RPC secrets that
-  degrade to "skip a chain", an unsigned write path must never ingest — the
-  signature is the route's whole defense.)
-- Read the (capped) body **once** as text for the HMAC; the payload is then
-  parsed from that same text — never re-read the stream.
+  **401, no read/write**. Read the (capped) body **once** as text for the HMAC;
+  parse the payload from that same text.
 
-### 3.5 Payload → (chainId, target block H) — hint for *which chain* + *the loop finish line*
+### 3.6 Payload → (chainId, target block H) — hint only
 
-- Map the Alchemy **network** field (`BASE_MAINNET`, `ETH_MAINNET`,
-  `BASE_SEPOLIA`, …) → our `chainId` via a small explicit table. Unknown /
-  unmapped network → 200 ack + no-op (a webhook for a chain we don't index is
-  not an error; the cron owns coverage).
-- **Extract the maximum delivered block number `H` (Codex r3/r4 P1).** The
-  catch-up loop (§3.2) uses `H` as its finish line — "wait for `H` to become
-  safe, then keep scanning until `cursor ≥ H` or budget" — so a webhook fired
-  before `H` is safe waits for it to finalize instead of doing one current scan
-  and stopping. Parsing `H` is **not** "trusting the payload": `H` only bounds
-  *how long the loop waits*; the scan **range is still cursor-derived**, each
-  individual scan is still **clamped to the current safe head** (never caches
-  reorg-able blocks), and every row written comes from a fresh dRPC
-  `getLogs`/`get*Details`, never from the payload. A forged/oversized `H` that
+- Map the Alchemy **network** field (`BASE_MAINNET`, `ETH_MAINNET`, …) →
+  `chainId` via a small explicit table. Unknown/unmapped → 200 ack + no-op.
+- **Extract the maximum delivered block `H`** as the catch-up loop's finish line
+  (§3.2). Parsing `H` is not "trusting the payload": `H` only bounds *how long
+  the loop waits*; the scan range stays cursor-derived, each scan is clamped to
+  the safe head, and every row comes from a fresh dRPC re-read. A forged `H` that
   never finalizes just makes the loop wait to its budget and exit — no bad data,
-  and the per-delivery throttle (§3.6) bounds how often that can be triggered.
-- Resolve `ChainConfig` from the mapped chainId via `getChainConfigs(env)`; no
-  RPC/deployment configured → 200 ack + no-op (degrade like the cron skipping
-  an unconfigured chain). Reads use `chain.rpc` (**dRPC**); Alchemy is never
-  read through.
+  and the per-delivery throttle (§3.7) bounds how often that can be triggered.
+- Resolve `ChainConfig` via `getChainConfigs(env)`; no RPC/deployment → 200 ack
+  + no-op. Reads use `chain.rpc` (**dRPC**); Alchemy is never read through.
 
-### 3.6 Route wiring + ack timing
+### 3.7 Route wiring, ack timing, replay throttle
 
 - Add the route in `index.ts` `fetch`, before the generic 404, **no CORS** (the
-  caller is Alchemy's edge, not a browser): `if (url.pathname ===
-  '/hooks/chain-event' && req.method === 'POST') …`.
-- **Add `ctx: ExecutionContext`** to the `fetch` signature (currently `(req,
-  env)`) so the handler can `ctx.waitUntil(<catch-up loop §3.2>)` and return a
-  fast **200** ack. Alchemy expects a prompt 2xx (it retries on non-2xx/timeout);
-  the bounded loop can exceed that window, so it runs in `waitUntil` and a
-  transient failure is covered by the cron backstop. Body-cap + HMAC verify +
-  chain resolution happen **synchronously** before the ack (so a bad signature
-  is a real 401, an oversized body a real 413 — not a swallowed 200). The
-  ack body is informational only (Alchemy ignores it); it never carries chain
-  data.
-- Wrap the `waitUntil` scan in `.catch(console.error)` like the existing
-  `scheduled()` passes — a webhook scan failure logs and is left to the cron,
-  never wedging the Worker.
-- **Replay-throttle gate (Codex r4 P2).** A *valid* signed body is harmless for
-  data convergence (§3.7) but not for cost: an aggressively duplicated/replayed
-  delivery would schedule a fresh catch-up loop — burning RPC/D1 subrequests and
-  `waitUntil` budget — every time, even when the cursor is already caught up. So
-  **after** HMAC verify and **before** starting the loop, a small dedupe gate
-  keyed by the Alchemy delivery id (or `(network, H)` when no id) drops a
-  duplicate seen within a short window (the existing `ratelimit` binding
-  pattern, e.g. `OPENSEA_OFFERS_MATCH_SOURCE_RATELIMIT`, keyed on that id; a
-  dropped duplicate still 200-acks). This caps the work a replayer can induce
-  past the HMAC gate.
+  caller is Alchemy's edge). **Add `ctx: ExecutionContext`** to the `fetch`
+  signature so the handler can `ctx.waitUntil(<catch-up loop>)` and return a
+  fast **200** ack — Alchemy expects a prompt 2xx (retries on non-2xx/timeout);
+  the loop can exceed that window, so it runs in `waitUntil` and a transient
+  failure is covered by the cron backstop. Auth + parse happen **synchronously**
+  before the ack (bad signature → real 401, oversized body → real 413).
+- Wrap the `waitUntil` loop in `.catch(console.error)` like the existing
+  `scheduled()` passes — a scan failure logs and is left to the cron.
+- **Per-delivery throttle (after HMAC, before the loop).** A *valid* signed body
+  is harmless for data convergence (the watermark) but not for cost: an
+  aggressively replayed delivery would schedule a fresh catch-up loop each time.
+  An **exact seen-delivery dedupe** — `INSERT OR IGNORE` into a small
+  `webhook_deliveries(delivery_id PRIMARY KEY, seen_at)` table keyed by the
+  Alchemy delivery id (or `(network, H)` when none), dropping a duplicate that's
+  already present — runs **before** `resolveEnv`/`getChainConfigs`/the loop, so a
+  replay 200-acks without burning RPC/D1/`waitUntil`. (A 60/min rate-limiter
+  binding is too coarse here — many replays pass before it trips — so an exact
+  dedupe is used; an old `seen_at` row is pruned by the same retention sweep the
+  cron already runs.)
 
-### 3.7 Replay safety
+## 4. How this design closes the review concerns
 
-- HMAC is the primary gate: no key ⇒ no forged body; bad signature ⇒ 401 before
-  any read/write.
-- **Replayed/duplicate/out-of-order delivery is harmless** because the webhook
-  never re-reads an arbitrary old range — it scans `[cursor+1, safeHead]`. A
-  replay of an old delivery just triggers another forward scan, which (the
-  cursor having advanced past those blocks) scans a now-empty or already-current
-  range. No old delivery re-processes a stale block to resurrect a deleted
-  prepay listing / swap intent (the windowed draft's failure), because old
-  blocks are below the cursor and never re-read.
-- **The one re-process path** — a partial-failure scan that wrote some rows but
-  didn't advance the cursor, so the *next* scan re-runs `[cursor+1, …]` over the
-  same blocks — is made safe by §3.3b: **every** re-processable handler does a
-  **block-pinned absolute chain-derived write** (`InternalMatchExecuted`,
-  `OfferMatched`, `OfferModified`, creation handlers) or an `INSERT OR
-  REPLACE`/delete keyed by the event's own data (`PrepayListing*`,
-  `SwapToRepay*`). No handler computes from the *current D1 row* and no handler
-  does a non-idempotent `+=`/`-=` after the §3.3b fix — so a replay sets the
-  same value regardless of what D1 currently holds. (The earlier draft's
-  "`OfferMatched` recomputes from the current row" is exactly the bug §3.3b
-  removes — it is now an absolute read, not a current-row recompute.)
-- The only **external** side-effect that a replay could repeat (OpenSea publish)
-  is guarded by a published-marker check (§3.3b).
+The high-water-mark + absolute-snapshot rules replace the earlier lock-centric
+mechanism and close every concern raised across PR #759's review rounds:
 
-## 4. How the revised design closes each Codex #759 finding
+| Concern (review round) | Closed by |
+|---|---|
+| Webhook caches **reorg-able** blocks | Scan reads `blockTag:'safe'` — same reorg-proof head as the cron (§3.2) |
+| **Replayed** delivery resurrects deleted / re-applies a delta | Watermark rejects any write `≤` the row's recorded `(block,logIndex)` (§3.3) |
+| `InternalMatchExecuted` **delta** double-subtract (concurrent OR sequential) | Watermark makes it apply-once; rewritten to absolute block-pinned snapshot so it can't drop a field either (§3.3/§3.4) |
+| Cron/webhook **interleave** / **out-of-order** writes leave a stale row | Watermark: highest `(block,logIndex)` wins, order-independent (§3.3) |
+| Block-pin is **end-of-block**, not "as-of-log" → wrong terminal status | Highest-logIndex event wins (watermark) + absolute snapshot = correct end-of-block state (§3.3/§3.4) |
+| `OfferMatched`/`OfferModified` recompute from the **current row** | Rewritten to absolute `getOfferDetails` block-pinned snapshot (§3.4) |
+| `OpenSea publish` re-submits on replay/concurrency | Atomic `INSERT OR IGNORE` published-marker reservation before the call (§3.4) |
+| Prepay `grace_period_end` read at current head on replay | Block-pinned `{blockNumber: log.blockNumber}` (§3.4) |
+| Bounded-window blind spot / lost activity enrichment | No window — full cursor-gap scan in order; activity is append-only `INSERT OR IGNORE` (§2/§3.2) |
+| Just-mined block **above safe head** / per-scan block cap / contended | Catch-up loop waits for `H` to become safe then scans to `cursor ≥ H`, within iteration/wall/**subrequest** budgets (§3.2) |
+| Unbounded **pre-auth** body hashing / `resolveEnv`-runs-first | Dispatch before `resolveEnv`; body cap + signing-key-from-raw-env first (§3.5) |
+| Valid body **replayed** burns RPC/D1/`waitUntil` | Exact seen-delivery dedupe before the loop (§3.7) |
+| Lock lease TTL-overrun / migration-ordering / NULL-init | **Lock removed** — the watermark, not a lock, owns correctness (§3.3) |
 
-| # | Finding (windowed draft) | Closed by |
-|---|---|---|
-| P1 | Webhook cached **reorg-able** blocks | Scan reads `blockTag:'safe'` (§3.2) — same reorg-proof head as the cron; never ingests unsafe blocks |
-| P1 | **Replayed** delivery resurrects deleted prepay/swap rows | Scan is forward-from-cursor only; old blocks are below the cursor and never re-read (§3.7) |
-| P1 | `InternalMatchExecuted` **delta** double-subtract under *concurrency* | **Block-pinned absolute-write handler (§3.3b)** is the correctness mechanism — converges under concurrent/sequential replay; the lease lock (§3.3) is only a best-effort de-dup optimization |
-| P1 | Cron/webhook **interleave** the log-order `amount_filled` replay | **Absolute `getOfferDetails` writes (§3.3b)** make the result order-independent; the lease lock (§3.3) merely reduces duplicate work |
-| P2 | Bounded lookback **blind spot** for `OfferModified` before the window | No window — scan covers the full cursor gap (§3.2) |
-| P2 | Activity rows miss **prior-state enrichment** outside the window | Full-gap scan gives the same prior-state coverage the cron has (§3.2) |
-| P2 | Unbounded **pre-auth** body hashing | `Content-Length` / bounded-read cap before HMAC (§3.4) |
-
-**Round 2 (revised-design findings):**
-
-| # | Finding | Closed by |
-|---|---|---|
-| P1 | Just-mined block **above safe head** → one scan misses it, no Alchemy retry | Bounded loop in `waitUntil` cheaply polls the safe head, then scans (each clamped to safe head) **until cursor ≥ H** or budget (§3.2 — r4 fix: target H, not min(H,safe)); latency claim narrowed to "within seconds of becoming **safe**" |
-| P1 | Lock **release race** — TTL-overrun holder clears a new holder's lock | Per-acquisition **owner token**; release is `WHERE owner = token` (no-op if superseded) (§3.3) |
-| P1 | `InternalMatchExecuted` **delta** double-subtract under *sequential* retry (rows written before cursor advance) | Handler rewritten to an **absolute chain-derived write** (`getLoanDetails` post-image) — idempotent under sequential AND concurrent replay; also fixes a latent cron bug (§3.3b) |
-| P2 | Per-scan **~2000-block cap** → deep backlog not drained in one shot | Loop iterates the scan within budget (§3.2); deep backlog finishes cron-paced (claim narrowed) |
-| P2 | Body cap ineffective because **`resolveEnv` runs first** for all routes | Dispatch `/hooks/chain-event` **before** `resolveEnv`; read only the signing key from raw `WorkerEnv` (§3.4) |
-| P2 | Contended `{skipped:'locked'}` **drops the only trigger** | Loop retries the lock acquire within budget instead of dropping (§3.2/§3.3) |
-
-**Round 3 (lock-not-load-bearing + parse-H findings):**
-
-| # | Finding | Closed by |
-|---|---|---|
-| P1 | Lease **TTL-overrun under slow RPC** reopens concurrent-scan corruption (only `InternalMatchExecuted` was absolute) | Correctness moved OFF the lock onto **idempotent absolute-write handlers**; `OfferMatched`/`OfferModified` also made absolute (§3.3b); lock is now best-effort de-dup only (§3.3) |
-| P1 | Catch-up loop needs `H`, but §3.5 said "ignore payload blocks" | §3.5 now **parses the max delivered block `H`** as the loop finish line (clamped to `safeHead`); range still cursor-derived |
-| P1 | Lock migration treated as post-merge but the **cron acquires it every scan** → deploy-before-migrate stops ingestion | Lock acquire/release is **fail-open** (missing table / error → proceed without lock); migration recommended, not a hard gate (§3.3, §5) |
-| P2 | Absolute-write rewrite would **drop `InternalMatchExecuted` terminal side-effects** (status + prepay-listing delete on principal→0) | §3.3b explicitly preserves them |
-| P2 | `OfferMatched`/`OfferModified` still non-idempotent on partial-failure replay | Made absolute via `getOfferDetails` post-image (§3.3b) |
-| P2 | `indexer_lock.locked_until` had **no default** → `NULL < now` never true → always "held" | Schema is `locked_until INTEGER NOT NULL DEFAULT 0` + explicit seed (§3.3) |
-
-**Round 4 (block-pinning + loop-target + side-effect/throttle findings):**
-
-| # | Finding | Closed by |
-|---|---|---|
-| P1 | Absolute reads at **current head** can see a later terminal state on replay → wrong `internal_matched` | All `get*Details` reads are **block-pinned** `{blockNumber: log.blockNumber}` (§3.3b) — every replay reconstructs state *as of that log* |
-| P1 | Loop targeted `min(H, currentSafeHead)` → at steady state exits immediately, never waits for `H` to finalize | Loop targets **`cursor ≥ H`** (each scan still clamped to safe head); cheap safe-head poll while `H` unsafe (§3.2) |
-| P2 | `PrepayListing*` **OpenSea publish** re-submits on replay (D1 converges, external doesn't) | Skip publish when the order hash is **already marked published** (§3.3b) |
-| P2 | §4 rows still **credited the lease** with the replay/interleave fixes (contradicts §3.3) | Repointed to the absolute-write handlers; lease is de-dup-only |
-| P2 | Loop can exceed the **~50-subrequest Worker cap** across iterations → mid-scan abort drops events | Subrequest budget: cheap 1-subrequest wait-poll; ≤1 full scan per invocation near the cap; rest to next webhook/cron (§3.2) |
-| P2 | §3.7 still said `OfferMatched` recomputes from the **current row** (the bug §3.3b removes) | §3.7 rewritten to "block-pinned absolute write, never current-row recompute" |
-| P2 | A valid signed body **replayed** burns RPC/D1/`waitUntil` each time | Per-delivery dedupe/throttle gate (delivery id / `(network,H)`) after HMAC, before the loop (§3.6) |
-
-Plus the always-present guards: writes stay `INSERT OR IGNORE`/`OR REPLACE`
-keyed by chain+id / chain+block+logIndex+tx; all reads go to dRPC; ingest
-failure logs and falls to the cron.
+Always-present guards: activity stays `INSERT OR IGNORE`; all reads go to dRPC;
+ingest failure logs and falls to the cron.
 
 ## 5. Operator configuration (post-merge, not a deploy gate)
 
 1. Provision `ALCHEMY_WEBHOOK_SIGNING_KEY` in the Cloudflare Secrets Store and
    bind it in `wrangler.jsonc`.
-2. Create the Alchemy webhook (prefer **Custom Webhook** for full log coverage
-   incl. `OfferCreated`/`OfferCanceled`; if Custom is paid-only on the account,
-   fall back to **Address Activity** + let the cron backstop cover pure-state
-   events — the webhook is a latency optimization, partial coverage is fine),
-   filtered to the Diamond address, target URL `…/hooks/chain-event`. Configure
-   the payload to carry the network identifier we map in §3.5.
-3. Apply the new `indexer_lock` migration (`wrangler d1 migrations apply
-   vaipakam-archive --remote` from `apps/indexer/`). **Not deploy-order-
-   critical** — the lock acquire/release is fail-open, so a Worker deployed
-   before the migration simply runs without the de-dup lock (still correct via
-   the §3.3b idempotent handlers); apply it to enable the optimization.
+2. Apply the new migration (`wrangler d1 migrations apply vaipakam-archive
+   --remote` from `apps/indexer/`) — adds the `last_event_block` /
+   `last_event_log_index` columns (`DEFAULT 0`, so existing rows are treated as
+   "no event applied yet" and the first real event always wins) and the
+   `webhook_deliveries` dedupe table. The columns default-0 + the
+   `INSERT OR IGNORE` activity path mean the **cron keeps working unchanged**
+   whether or not the webhook is configured.
+3. Create the Alchemy webhook (prefer **Custom Webhook** for full log coverage
+   incl. `OfferCreated`/`OfferCanceled`; if Custom is paid-only, fall back to
+   **Address Activity** + let the cron backstop cover pure-state events — the
+   webhook is a latency optimization, partial coverage is fine), filtered to the
+   Diamond address, target `…/hooks/chain-event`, payload carrying the network
+   id mapped in §3.6.
 4. No contract change, no ABI re-export, **no new contract events** → the
-   `check-event-coverage` guardrail is unaffected. No deploy gate; degrades to
-   cron-only when unconfigured.
+   `check-event-coverage` guardrail is unaffected. Degrades to cron-only when
+   unconfigured.
 
 ## 6. Verification
 
-- `pnpm --filter @vaipakam/indexer typecheck` (runs `tsc` + the
-  `check-event-coverage` guardrail). apps/indexer has **no unit-test runner**
-  (tsc-only Worker, like apps/keeper), so the HMAC-verify, body-cap, and
-  payload→chainId parse are validated by a typed, side-effect-free shape plus a
-  manual signed-`curl` smoke against `wrangler dev` (assert: valid signature →
-  scan runs; bad signature → 401; oversized body → 413; unmapped network →
-  200 no-op). (If we want assertions, adding `vitest` for the pure helpers —
-  `verifyAlchemySignature`, `parseChainEventPayloadNetwork` — is a small
-  follow-up; flagged, not done here.)
-- **Lock assertion**: while the chain lock is held, the webhook loop retries
-  the acquire within its budget (doesn't drop the hint); the owner-token release
-  is a no-op when our lease was superseded; the lock self-releases after
-  `LOCK_TTL_SECONDS` if a holder dies.
-- **Idempotency assertion**: re-running a scan over a block containing
-  `InternalMatchExecuted` (simulating a partial-failure sequential replay)
-  leaves `principal`/`collateral_amount` unchanged from the single-pass value
-  (absolute-write idempotency).
-- **Backstop assertion** (acceptance): with the webhook disabled, the cron
-  still ingests an on-chain repay/match within its normal window — i.e. Phase A
-  adds no dependency; deleting the route returns the system to today's
-  behaviour.
-- **Latency assertion** (acceptance): on a **fast-finality testnet**, with the
-  webhook enabled and the cursor near head, D1 reflects an on-chain repay/match
-  **within seconds of the block becoming safe** (vs up-to-N-minutes round-robin
-  delay), measured by row `updated_at` vs block timestamp. (Slow-finality L1 and
-  deep-backlog cases finish cron-paced — see the narrowed claim in §3.2.)
+- `pnpm --filter @vaipakam/indexer typecheck` (`tsc` + the `check-event-coverage`
+  guardrail). apps/indexer has **no unit-test runner** (tsc-only Worker), so the
+  HMAC-verify, body-cap, dedupe, and payload→(chainId,H) parse are validated by
+  typed side-effect-free shapes + a manual signed-`curl` smoke against `wrangler
+  dev` (valid sig → loop runs; bad sig → 401; oversized → 413; unmapped network
+  → 200 no-op; replayed delivery id → 200 no-op). Adding `vitest` for the pure
+  helpers is a small follow-up, flagged not done here.
+- **Watermark/idempotency assertion** (the core): re-running a scan over a block
+  range that includes a mutated row (simulating sequential partial-failure
+  replay) leaves the row identical to the single-pass result; processing the same
+  block's events out of order converges to the highest-logIndex state.
+- **Backstop assertion**: with the webhook disabled, the cron still ingests an
+  on-chain repay/match within its normal window — Phase A adds no dependency.
+- **Latency assertion**: on a fast-finality testnet (cursor near head), with the
+  webhook enabled, D1 reflects an on-chain repay/match **within seconds of the
+  block becoming safe** (slow-finality / backlog degrade cron-paced — §3.2).
 
 ## 7. Phase B + UX (later slices — context only, not built here)
 
@@ -486,34 +359,36 @@ failure logs and falls to the cron.
   `indexer.watermark.updated`); the client refetches the affected slice via the
   existing REST. DO Hibernation is inbound-WS-only, which is exactly why Phase
   A is an HTTP webhook (no persistent outbound connection on our side).
-- **UX**: extend the existing `DataFreshnessContext` /
-  `IndexerStatusBadge` / `ChainDiagnosticsPanel` with an orthogonal
-  **transport** dimension (Live / Polling / Reconnecting) composed with the
-  existing **freshness** dimension; numbers live in the drawer, not the badge;
-  a transient "updated" pulse on the affected card; adaptive poll cadence
-  (slow while push healthy, restored on disconnect).
+- **UX**: extend the existing `DataFreshnessContext` / `IndexerStatusBadge` /
+  `ChainDiagnosticsPanel` with an orthogonal **transport** dimension (Live /
+  Polling / Reconnecting) composed with the existing **freshness** dimension;
+  numbers live in the drawer, not the badge; a transient "updated" pulse on the
+  affected card; adaptive poll cadence (slow while push healthy, restored on
+  disconnect).
 
 ## 8. Acceptance criteria (Phase A slice of the issue)
 
 - [ ] `POST /hooks/chain-event` dispatched **before** the global `resolveEnv`;
       body-capped (413) then HMAC-verified (`X-Alchemy-Signature`, signing key
-      read from raw `WorkerEnv`), fail-closed (401). Auth passes → resolve env
-      and run the bounded catch-up loop in `waitUntil`.
-- [ ] The loop re-scans (cursor-derived, safe-head-bounded, same
-      decode/dispatch as the cron) until cursor ≥ min(H, safeHead) or the
-      iteration/wall budget; re-reads safe head each iteration; reads via
-      **dRPC** only, never Alchemy.
-- [ ] Cron and webhook are serialized per chain by the `indexer_lock`
-      **lease** lock (owner-token release); no concurrent same-chain scan; a
-      contended webhook retries the acquire within budget rather than dropping
-      the hint.
-- [ ] `InternalMatchExecuted` writes an **absolute chain-derived** post-image
-      (idempotent under sequential AND concurrent replay) — re-scanning its
-      block doesn't double-subtract.
+      from raw `WorkerEnv`), fail-closed (401); per-delivery dedupe drops
+      replays; then the bounded catch-up loop runs in `waitUntil`.
+- [ ] The loop waits for `H` to become safe, then scans (cursor-derived,
+      safe-head-clamped, same decode/dispatch as the cron) until **`cursor ≥ H`**
+      or the iteration/wall/**subrequest** budget; reads via **dRPC** only.
+- [ ] Every mutating domain write is guarded by the per-row `(last_event_block,
+      last_event_log_index)` high-water-mark — **highest `(block,logIndex)` wins,
+      apply-once** — so concurrent / sequential-replay / out-of-order processing
+      all converge. (No lock required.)
+- [ ] `OfferMatched`/`OfferModified` and `InternalMatchExecuted` write **absolute
+      block-pinned snapshots** (not current-row deltas); `InternalMatchExecuted`
+      preserves its terminal status + prepay-listing-delete side-effects.
+- [ ] The OpenSea publish is gated by an **atomic published-marker** so replay /
+      concurrency can't re-submit the same order.
 - [ ] Cron pass unchanged and still catches events when the webhook is
-      disabled/failing (backstop).
-- [ ] On a fast-finality testnet (cursor near head), D1 reflects an on-chain
-      repay/match **within seconds of the block becoming safe**; slow-finality /
-      backlog degrade cron-paced (narrowed claim §3.2).
+      disabled/failing (backstop); the new columns default-0 so the cron is
+      unaffected.
+- [ ] On a fast-finality testnet, D1 reflects an on-chain repay/match **within
+      seconds of the block becoming safe**; slow-finality / backlog degrade
+      cron-paced.
 - [ ] Push outage / unconfigured chain / unmapped network → clean degrade to
       cron-only, no user-facing error.
