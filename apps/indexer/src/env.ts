@@ -163,7 +163,7 @@ export interface Env {
  * and downstream code already handles `undefined` (skip that chain).
  * (T-078 — PR #36 Codex review.)
  */
-async function readSecret(
+export async function readSecret(
   b: SecretBinding | undefined,
 ): Promise<string | undefined> {
   if (!b) return undefined;

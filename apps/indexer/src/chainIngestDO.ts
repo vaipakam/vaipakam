@@ -8,27 +8,33 @@
  * single-flight flag, two scans never overlap — so the existing single-writer
  * handlers stay valid unchanged (no lock / watermark / tombstones).
  *
- * IMPORTANT (design §3.1): the DO input gate does NOT keep the object closed
- * across awaited network work, so the input gate alone is not enough. The
- * single-writer guarantee is an IN-MEMORY `scanRunning` flag, set synchronously
- * at the very top of `alarm()` and cleared in its `finally`. Because Cloudflare
- * runs exactly one instance per DO id and JS is single-threaded — a concurrent
- * `fetch()` trigger only interleaves at this instance's `await` points — that
- * boolean is an EXACT "is a scan executing right now" signal, with none of the
- * guesswork of a time-based lease (which could lapse mid-scan and let a trigger
- * spuriously start a second scan — Codex #764 round 3). It also fails SAFE
- * across eviction/crash: a fresh instance reads `false`, so a genuinely dead
- * alarm chain is restarted by the next trigger rather than wedged shut. The
- * coalesced `pendingTarget` (the only cross-hop state a trigger must survive)
- * stays persisted in DO STORAGE.
+ * SINGLE-WRITER GUARANTEE — it falls out of two runtime facts, not a lock:
+ *   (1) a scan runs ONLY inside `alarm()`, and
+ *   (2) the Cloudflare runtime never invokes `alarm()` concurrently with itself
+ *       for a given DO (one instance per id; one alarm handler at a time).
+ * So two scans for a chain can never overlap, and the existing single-writer
+ * handlers stay valid unchanged — no lock, lease, watermark, or tombstone. This
+ * is why earlier lease/`getAlarm()` attempts were the wrong shape: there is
+ * nothing to "lease", because the runtime already serializes the only place a
+ * scan runs. (Belt-and-suspenders for a rollout/migration overlap window: the
+ * cursor advance is monotonic and the event handlers are re-scan-idempotent —
+ * block-pinned absolute reads, #760 — so even a hypothetical overlap can't
+ * corrupt or rewind state.)
+ *
+ * COALESCING — `pendingTarget` (persisted, monotonic high-water mark) absorbs
+ * concurrent triggers; `alarm()` re-reads it AFTER each scan, and every trigger
+ * re-arms the single alarm slot, so a target raised in the brief window between
+ * the scan's final read and `finally` is still serviced promptly (not deferred
+ * to the next cron ping). The in-memory `scanRunning` flag is NOT the overlap
+ * guard (the runtime is) — it only decides whether a fresh trigger may reset the
+ * catch-up `attempts` budget without clobbering an in-flight loop's counter.
  *
  * Catch-up loop (alarm-driven, Hibernation-friendly): each `alarm()` runs ONE
  * `runChainIndexerForChain` (one cursor-derived, safe-head-bounded scan) and
  * re-arms itself until the cursor reaches `pendingTarget` or an attempt budget
  * is hit. A target above the safe head simply keeps the loop scanning (cheaply,
  * empty range) until the block finalizes. On scan failure the alarm retries
- * (bounded). A migrated/overlapping instance can't corrupt state either: the
- * event handlers are re-scan-idempotent (block-pinned absolute reads, #760).
+ * (bounded), and `scanRunning` is always cleared in `finally`.
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
@@ -53,12 +59,13 @@ interface TriggerBody {
 
 export class ChainIngestDO {
   /**
-   * In-memory single-flight guard: `true` only while THIS instance's `alarm()`
-   * is actively scanning. A concurrent `fetch()` trigger (same instance, only
-   * interleaved at our awaits) reads it synchronously to decide whether to arm
-   * a new alarm — so two scans never overlap, and a fresh instance (eviction /
-   * crash) reads `false` and correctly restarts a dead chain. NOT persisted on
-   * purpose: persistence is exactly what made the old time-lease unsafe.
+   * `true` only while THIS instance's `alarm()` is actively scanning. This is
+   * NOT the overlap guard — the runtime already serializes `alarm()` (see the
+   * file header). It only lets a fresh `fetch()` trigger decide whether to reset
+   * the catch-up `attempts` budget: skip the reset while a loop is in flight so
+   * a trigger can't clobber its counter, but reset for a fresh burst. In-memory
+   * on purpose (a fresh instance reads `false`, the correct default); never
+   * persisted — persistence is what made the old time-lease unsafe.
    */
   private scanRunning = false;
 
@@ -99,18 +106,22 @@ export class ChainIngestDO {
       chainId: body.chainId,
     });
 
-    // Arm the catch-up loop only when no scan is executing in this instance. If
-    // one IS running it will re-read `pendingTarget` after its scan and keep
-    // going (so we don't start a second). `scanRunning` is the EXACT liveness
-    // signal — not `getAlarm()` (returns null mid-alarm) nor a time-lease (can
-    // lapse mid-scan). `setAlarm` holds a single slot, so even a flood of
-    // triggers during the inter-hop gap collapses to one alarm, never two
-    // scans. `attempts` is reset here because a fresh external trigger is fresh
-    // demand and deserves the full catch-up budget.
+    // ALWAYS (re)arm the alarm. The Cloudflare runtime never runs `alarm()`
+    // concurrently with itself and `setAlarm` holds a single slot, so arming
+    // while a scan is live does NOT start a second scan — it queues ONE
+    // follow-up that fires after the current `alarm()` returns. Arming
+    // unconditionally is what makes a trigger SAFE in the shutdown tail window
+    // (Codex #764 round 4): a delivery that interleaves after the running
+    // `alarm()` already took its final `pendingTarget` read — but before
+    // `finally` clears `scanRunning` — still leaves a pending alarm behind, so
+    // the raised target is serviced promptly instead of waiting for the next
+    // cron ping. `attempts` is reset only when no scan is live, so a fresh burst
+    // gets the full catch-up budget without an in-flight loop clobbering its own
+    // counter.
     if (!this.scanRunning) {
       await this.state.storage.put({ attempts: 0 });
-      await this.state.storage.setAlarm(Date.now());
     }
+    await this.state.storage.setAlarm(Date.now());
     return new Response('queued', { status: 202 });
   }
 

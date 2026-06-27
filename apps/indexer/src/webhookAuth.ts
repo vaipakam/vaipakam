@@ -154,9 +154,29 @@ function maxBlockIn(node: unknown, depth = 0): bigint {
   return max;
 }
 
+/** SHA-256 of a string → lowercase hex. Used by the route as the dedupe-key
+ *  fallback when a delivery carries no provider id (see {@link ParsedChainEvent.providerId}). */
+export async function sha256Hex(s: string): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(s),
+  );
+  return [...new Uint8Array(digest)]
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 export interface ParsedChainEvent {
-  /** Alchemy delivery id (dedupe key); falls back to `<network>:<maxBlock>`. */
-  deliveryId: string;
+  /**
+   * The provider's own delivery id (`p.id`), or `null` when the payload carries
+   * none. The route uses this as the dedupe key when present and otherwise
+   * falls back to a hash of the RAW body — NEVER a coarse `<network>:<block>`
+   * string, which for block-less Custom Webhooks routed by `?chain=` would
+   * collapse to `unknown:0` for every delivery and dedupe them all away (Codex
+   * #764 round 4). A body hash collides only on a byte-identical payload, which
+   * is exactly a provider retry of the same delivery — the dedup we want.
+   */
+  providerId: string | null;
   /** Resolved chainId, or null when the network is unknown/unmapped. */
   chainId: number | null;
   /**
@@ -195,8 +215,6 @@ export function parseChainEventPayload(text: string): ParsedChainEvent | null {
       ? ALCHEMY_NETWORK_TO_CHAIN_ID[networkRaw]
       : null;
   const maxBlock = maxBlockIn(p);
-  const deliveryId =
-    (typeof p.id === 'string' && p.id) ||
-    `${networkRaw ?? 'unknown'}:${maxBlock.toString()}`;
-  return { deliveryId, chainId, maxBlock };
+  const providerId = typeof p.id === 'string' && p.id ? p.id : null;
+  return { providerId, chainId, maxBlock };
 }

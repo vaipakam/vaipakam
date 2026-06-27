@@ -34,6 +34,10 @@ The webhook and the Durable Object are **off** until an operator provisions the
 signing key + the provider webhook; until then the indexer runs exactly as
 before. No contract change, no new on-chain events.
 
-(Follow-ups tracked separately: making the marketplace-listing republish
-replay-safe under the new ingest, and a couple of lower-severity re-scan
-determinism hardenings.)
+Marketplace-listing republish is already replay-safe under the new ingest (the
+republish marker only commits against the exact order it published, so a
+concurrent re-price can't be falsely marked published), and the per-chain ingest
+cursor only ever advances forward — both are part of this change. The one
+remaining follow-up, tracked separately, is routing the periodic
+marketplace-republish sweep per-chain through the Durable Object; it is now an
+efficiency nicety rather than a correctness gate.

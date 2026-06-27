@@ -48,7 +48,12 @@
  * state writes). The rest of the surface stays public-read.
  */
 
-import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
+import {
+  resolveEnv,
+  readSecret,
+  getChainConfigs,
+  type WorkerEnv,
+} from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
 import {
   pruneOldCancelledOffers,
@@ -58,6 +63,7 @@ import {
   readCappedBody,
   verifyAlchemySignature,
   parseChainEventPayload,
+  sha256Hex,
   WebhookBodyTooLargeError,
 } from './webhookAuth';
 
@@ -324,8 +330,12 @@ async function handleChainEventWebhook(
     return new Response('bad request', { status: 400 });
   }
 
-  // 2. HMAC-verify (fail-closed). Reads only the signing key from the raw env.
-  const signingKey = await env.ALCHEMY_WEBHOOK_SIGNING_KEY?.get();
+  // 2. HMAC-verify (fail-closed). Reads only the signing key from the raw env,
+  // via `readSecret` so a Secrets-Store fetch that REJECTS (transient outage,
+  // deleted/deactivated secret, permission issue) resolves to `undefined` →
+  // 401, never a Worker 500 before verification (Codex #764 round 4). This
+  // public route stays fail-closed at every step.
+  const signingKey = await readSecret(env.ALCHEMY_WEBHOOK_SIGNING_KEY);
   const ok = await verifyAlchemySignature(
     rawBody,
     req.headers.get('x-alchemy-signature'),
@@ -351,11 +361,20 @@ async function handleChainEventWebhook(
     return new Response('ok (no-op)', { status: 200 });
   }
 
+  // Dedupe key: prefer the provider's delivery id; otherwise a hash of the RAW
+  // body, namespaced by the resolved chain (Codex #764 round 4). The old
+  // `<network>:<maxBlock>` fallback collapsed every block-less Custom Webhook to
+  // `unknown:0`, so the first delivery in the retention window dup-dropped all
+  // later ones. A body hash collides only on a byte-identical payload — exactly
+  // a provider retry of the same delivery, which is the dedupe we want.
+  const deliveryId =
+    parsed.providerId ?? `${chainId}:sha256:${await sha256Hex(rawBody)}`;
+
   // 4. Early dedupe — drop a delivery already recorded (no DO work).
   const seen = await env.DB.prepare(
     `SELECT 1 FROM webhook_deliveries WHERE delivery_id = ?`,
   )
-    .bind(parsed.deliveryId)
+    .bind(deliveryId)
     .first();
   if (seen) return new Response('ok (dup)', { status: 200 });
 
@@ -385,7 +404,7 @@ async function handleChainEventWebhook(
   await env.DB.prepare(
     `INSERT OR IGNORE INTO webhook_deliveries (delivery_id, seen_at) VALUES (?, ?)`,
   )
-    .bind(parsed.deliveryId, Math.floor(Date.now() / 1000))
+    .bind(deliveryId, Math.floor(Date.now() / 1000))
     .run();
   return new Response('queued', { status: 200 });
 }

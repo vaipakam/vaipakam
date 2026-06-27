@@ -547,14 +547,22 @@ export async function runChainIndexerForChain(
   await refreshStubLoans(client, diamond, chainId, env);
 
   // Advance cursor only after every step succeeded — atomic from the
-  // cron's perspective.
+  // cron's perspective. #757 (Codex #764): the advance is MONOTONIC —
+  // `WHERE excluded.last_block > indexer_cursor.last_block` makes a stale or
+  // overlapping scan (one that read an older cursor and finished after a newer
+  // scan already advanced) a no-op instead of lowering the cursor and forcing a
+  // replay. With the safe-head (`blockTag:'safe'`) bound the cursor only ever
+  // moves forward legitimately, so a backward write is always spurious. This
+  // hardens the DO's single-writer guarantee against a rollout / migration
+  // overlap window (belt-and-suspenders with the in-memory `scanRunning` flag).
   const now = Math.floor(Date.now() / 1000);
   await env.DB.prepare(
     `INSERT INTO indexer_cursor (chain_id, kind, last_block, updated_at)
      VALUES (?, ?, ?, ?)
      ON CONFLICT (chain_id, kind) DO UPDATE SET
        last_block = excluded.last_block,
-       updated_at = excluded.updated_at`,
+       updated_at = excluded.updated_at
+     WHERE excluded.last_block > indexer_cursor.last_block`,
   )
     .bind(chainId, CURSOR_KIND, Number(scanTo), now)
     .run();
