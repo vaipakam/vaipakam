@@ -20,16 +20,19 @@
  *     `getLoanDetails(uint256) returns (LibVaipakam.Loan)` plus the
  *     loan-list helpers the indexer's catch-up walk relies on.
  *
- * Inline ABIs that survive in this file:
+ * (The wallet-scoped loan/claimable READ routes answer purely from D1 — #749 —
+ * so the indexer doesn't need a `getUserPositionLoans` ABI here; the
+ * authoritative on-chain verify lives in the FRONTEND, called with the user's
+ * own RPC. `ERC721_OWNER_OF_ABI` is still used INDEXER-SIDE — in the cron
+ * `refreshOfferDetails` stub-heal — to re-derive a stub offer's current
+ * position-NFT holder, a missed-Transfer the stub couldn't match by tokenId.)
  *
- *   - `ERC721_OWNER_OF_ABI` — single-method, never going to change.
- *   - Event signatures parsed via viem's `parseAbi` in
- *     `chainIndexer.ts` stay inline because event routing uses
- *     topic-hash matching, not positional decode — adding a new
- *     field to an event payload wouldn't silently misalign the way
- *     struct returns can. (The historical `Offer` tuple drift bug
- *     surfaced in ReleaseNotes-2026-05-05.md was specifically a
- *     positional-decode issue; events are immune.)
+ * Event signatures parsed via viem's `parseAbi` in `chainIndexer.ts`
+ * stay inline because event routing uses topic-hash matching, not
+ * positional decode — adding a new field to an event payload wouldn't
+ * silently misalign the way struct returns can. (The historical
+ * `Offer` tuple drift bug surfaced in ReleaseNotes-2026-05-05.md was
+ * specifically a positional-decode issue; events are immune.)
  */
 
 import { OfferCancelFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
@@ -38,11 +41,9 @@ export const DIAMOND_OFFER_DETAILS_ABI = OfferCancelFacetABI;
 
 export const DIAMOND_LOAN_DETAILS_ABI = LoanFacetABI;
 
-/** ERC-721 `ownerOf` — used by the live-ownership multicall in
- *  /loans/by-lender, /loans/by-borrower, /claimables. The Vaipakam
- *  position NFT is a facet on the Diamond, so the diamond address IS
- *  the NFT contract address. Reverts on burned / nonexistent tokens
- *  — caller must catch and treat as "no current holder". */
+/** ERC-721 `ownerOf` — the Vaipakam position NFT is a facet ON the Diamond, so
+ *  the diamond address IS the NFT contract. Reverts on burned / nonexistent
+ *  tokens; the caller catches and falls back. */
 export const ERC721_OWNER_OF_ABI = [
   {
     type: 'function',

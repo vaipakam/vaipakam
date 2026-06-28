@@ -48,9 +48,6 @@ const DELIBERATELY_NOT_HANDLED = {
     'transient status — the indexer keeps loans.status=active through the fallback episode; the eventual terminal event still applies',
   LoanCuredFromFallback:
     'transient — pairs with LoanFallbackPending; D1 status was never moved off active',
-  LoanSold:
-    'original loan stays Active with a new lender (covered by the position-NFT Transfer handler); the sale spins up an internal temp loan that transitions Active→Repaid on-chain but emits no status event — contract-side follow-up',
-  LoanSaleCompleted: 'see LoanSold',
   LoanSaleOfferLinked:
     'intermediate "sale offer linked to live loan" marker — no loans/offers row change',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',
