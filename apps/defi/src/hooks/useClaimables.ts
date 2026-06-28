@@ -147,7 +147,23 @@ export function useClaimables(address: string | null) {
         }
         onchainOk = true;
       } catch {
-        // on-chain read failed (old ABI / RPC blip) — keep the indexer-only union.
+        // #769 — a Diamond that predates the paginated selector (deploy-
+        // transition window) reverts the call above. Fall back to the original
+        // unbounded `getUserPositionLoans` so the authoritative on-chain layer
+        // (and thus claimable visibility for secondary-market holders) is
+        // preserved; only if THAT also fails do we drop to the indexer-only union.
+        try {
+          const legacy = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoans',
+            args: [address as Address],
+          })) as readonly [readonly bigint[], readonly bigint[]];
+          for (const id of legacy[0]) idSet.add(String(id));
+          onchainOk = true;
+        } catch {
+          // both on-chain reads failed — keep the indexer-only union.
+        }
       }
 
       // Build the walk set from the UNION ids — NOT `knownLoans.filter(...)`,
