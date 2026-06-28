@@ -224,7 +224,14 @@ export async function runChainIndexer(env: Env): Promise<ChainIndexerResult[]> {
  * so a batch of 5 fits well under the 50/tick free-tier ceiling
  * alongside the normal scan + offer prune.
  */
-export async function sweepUnpublishedListings(env: Env): Promise<void> {
+export async function sweepUnpublishedListings(
+  env: Env,
+  // #765 — when set, sweep ONLY this chain's listings. The per-chain
+  // `ChainIngestDO` passes its chainId so the sweep runs serialized with that
+  // chain's scan (no concurrent `prepay_listings` writer). Omitted ⇒ the legacy
+  // cron's global sweep across every configured chain.
+  chainIdFilter?: number,
+): Promise<void> {
   const SWEEP_BATCH = 5;
   const SWEEP_MIN_AGE_S = 60; // give the inline publish a minute.
   const cutoff = Math.floor(Date.now() / 1000) - SWEEP_MIN_AGE_S;
@@ -245,6 +252,8 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
   // `auction_end_time IS NULL` branch covers pre-Block-B rows
   // (migration 0018 added the column nullable).
   const nowSec = Math.floor(Date.now() / 1000);
+  // #765 — `chainIdFilter` is a number (the DO's own chainId), never caller
+  // input, so the conditional fragment is not a dynamic-SQL injection surface.
   const rows = await env.DB.prepare(
     `SELECT chain_id, loan_id, order_hash, ask_price, conduit_key,
             salt, executor, tx_hash, fee_legs_json,
@@ -254,10 +263,15 @@ export async function sweepUnpublishedListings(env: Env): Promise<void> {
         AND posted_at <= ?
         AND (auction_mode IS NULL OR auction_mode != 1
              OR auction_end_time IS NULL OR auction_end_time > ?)
+        ${chainIdFilter !== undefined ? 'AND chain_id = ?' : ''}
       ORDER BY posted_at ASC
       LIMIT ?`,
   )
-    .bind(cutoff, nowSec, SWEEP_BATCH)
+    .bind(
+      ...(chainIdFilter !== undefined
+        ? [cutoff, nowSec, chainIdFilter, SWEEP_BATCH]
+        : [cutoff, nowSec, SWEEP_BATCH]),
+    )
     .all<{
       chain_id: number;
       loan_id: number;

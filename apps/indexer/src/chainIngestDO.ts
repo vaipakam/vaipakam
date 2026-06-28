@@ -38,7 +38,10 @@
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
-import { runChainIndexerForChain } from './chainIndexer';
+import {
+  runChainIndexerForChain,
+  sweepUnpublishedListings,
+} from './chainIndexer';
 
 /** Max alarm iterations per single-flight session before deferring the rest to
  *  the cron backstop (bounds subrequest/wall cost; a deep backlog finalizes
@@ -154,8 +157,11 @@ export class ChainIngestDO {
 
       let scannedTo: bigint | null = null;
       let retryableFailure = false;
+      // Hoisted so the caught-up branch below can run the #765 per-chain sweep
+      // with the already-resolved env (no second `resolveEnv`).
+      let resolved: Awaited<ReturnType<typeof resolveEnv>> | null = null;
       try {
-        const resolved = await resolveEnv(this.env);
+        resolved = await resolveEnv(this.env);
         const chain = getChainConfigs(resolved).find((c) => c.id === chainId);
         if (!chain) {
           // Chain not configured here (no RPC / no deployment) — nothing to do.
@@ -188,6 +194,21 @@ export class ChainIngestDO {
         (await this.state.storage.get<string>('pendingTarget')) ?? '0',
       );
       if (!retryableFailure && scannedTo !== null && scannedTo >= target) {
+        // #765 — run this chain's OpenSea republish sweep HERE, on the caught-up
+        // path: serialized AFTER the scan's `prepay_listings` writes (so it sees
+        // the just-written rows and never races a concurrent scan writer), and
+        // only once per catch-up (≈ once per cron cadence per chain) rather than
+        // on every backlog iteration. Best-effort: isolated catch so a sweep
+        // failure can't disrupt the cursor / loop completion.
+        if (resolved) {
+          await sweepUnpublishedListings(resolved, chainId).catch((err) => {
+            // eslint-disable-next-line no-console
+            console.error(
+              `[chainIngestDO] sweep failed for chain ${chainId}`,
+              err,
+            );
+          });
+        }
         await this.clearLoopState(); // genuinely caught up
       } else {
         await this.rearmOrFinish(attempts); // more work, or retry a soft failure
