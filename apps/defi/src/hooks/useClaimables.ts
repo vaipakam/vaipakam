@@ -125,15 +125,26 @@ export function useClaimables(address: string | null) {
       // the on-chain read itself fails do we fall back to the indexer-only set.
       let onchainOk = false;
       try {
-        const result = (await publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI,
-          functionName: 'getUserPositionLoans',
-          args: [address as Address],
-        })) as readonly [readonly bigint[], readonly bigint[]];
-        // result[0] = loanIds, result[1] = tokenIds (aligned); we only need
-        // the loan-id set for narrowing the per-loan fan-out below.
-        for (const id of result[0]) idSet.add(String(id));
+        // #769 — paginate so a wallet griefed with a huge position-NFT inventory
+        // can't make the unbounded single `getUserPositionLoans` `eth_call`
+        // revert and hide a real claimable. Each page is O(PAGE)-bounded; the
+        // loop is wallet-scoped and bounded by `totalBalance`, with a hard page
+        // cap as a pathological-loop guard. We only need the loan-id set for
+        // narrowing the per-loan fan-out below.
+        const PAGE = 200n;
+        let offset = 0n;
+        let pages = 0;
+        for (;;) {
+          const [loanIds, , total] = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoansPaginated',
+            args: [address as Address, offset, PAGE],
+          })) as readonly [readonly bigint[], readonly bigint[], bigint];
+          for (const id of loanIds) idSet.add(String(id));
+          offset += PAGE;
+          if (offset >= total || ++pages >= 1000) break;
+        }
         onchainOk = true;
       } catch {
         // on-chain read failed (old ABI / RPC blip) — keep the indexer-only union.

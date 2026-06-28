@@ -93,13 +93,26 @@ export function useUserLoans(address: string | null) {
       // dropping the wallet's loans entirely.
       let onchainOk = false;
       try {
-        const result = (await publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI,
-          functionName: 'getUserPositionLoans',
-          args: [address as Address],
-        })) as readonly [readonly bigint[], readonly bigint[]];
-        for (const id of result[0]) idSet.add(String(id));
+        // #769 — paginate: a single unbounded `getUserPositionLoans` loops the
+        // whole `balanceOf`, so a wallet griefed with a huge position-NFT
+        // inventory could make that one `eth_call` exceed the RPC limit and
+        // revert. Each page is O(PAGE)-bounded; the loop is wallet-scoped (total
+        // pages scale with the wallet's own holdings) and bounded by
+        // `totalBalance`, with a hard page cap as a pathological-loop guard.
+        const PAGE = 200n;
+        let offset = 0n;
+        let pages = 0;
+        for (;;) {
+          const [loanIds, , total] = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoansPaginated',
+            args: [address as Address, offset, PAGE],
+          })) as readonly [readonly bigint[], readonly bigint[], bigint];
+          for (const id of loanIds) idSet.add(String(id));
+          offset += PAGE;
+          if (offset >= total || ++pages >= 1000) break;
+        }
         onchainOk = true;
       } catch {
         // on-chain read failed — keep the indexer-only union.
