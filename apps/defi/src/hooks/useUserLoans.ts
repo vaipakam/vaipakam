@@ -96,12 +96,13 @@ export function useUserLoans(address: string | null) {
         // #769 — paginate: a single unbounded `getUserPositionLoans` loops the
         // whole `balanceOf`, so a wallet griefed with a huge position-NFT
         // inventory could make that one `eth_call` exceed the RPC limit and
-        // revert. Each page is O(PAGE)-bounded; the loop is wallet-scoped (total
-        // pages scale with the wallet's own holdings) and bounded by
-        // `totalBalance`, with a hard page cap as a pathological-loop guard.
+        // revert. Each page is O(PAGE)-bounded; the loop runs to COMPLETION
+        // (`offset` climbs by `PAGE` toward the contract-reported, finite
+        // `totalBalance`, so it terminates) — a page cap is intentionally NOT
+        // used, since truncating would re-hide exactly the bloated wallet's real
+        // positions this view exists to surface. Total work stays wallet-scoped.
         const PAGE = 200n;
         let offset = 0n;
-        let pages = 0;
         for (;;) {
           const [loanIds, , total] = (await publicClient.readContract({
             address: diamondAddress,
@@ -111,7 +112,7 @@ export function useUserLoans(address: string | null) {
           })) as readonly [readonly bigint[], readonly bigint[], bigint];
           for (const id of loanIds) idSet.add(String(id));
           offset += PAGE;
-          if (offset >= total || ++pages >= 1000) break;
+          if (offset >= total) break;
         }
         onchainOk = true;
       } catch {

@@ -128,12 +128,13 @@ export function useClaimables(address: string | null) {
         // #769 — paginate so a wallet griefed with a huge position-NFT inventory
         // can't make the unbounded single `getUserPositionLoans` `eth_call`
         // revert and hide a real claimable. Each page is O(PAGE)-bounded; the
-        // loop is wallet-scoped and bounded by `totalBalance`, with a hard page
-        // cap as a pathological-loop guard. We only need the loan-id set for
-        // narrowing the per-loan fan-out below.
+        // loop runs to COMPLETION (`offset` climbs by `PAGE` toward the
+        // contract-reported, finite `totalBalance`, so it terminates) — no page
+        // cap, since truncating would re-hide exactly the bloated wallet's real
+        // claimables this view exists to surface. We only need the loan-id set
+        // for narrowing the per-loan fan-out below.
         const PAGE = 200n;
         let offset = 0n;
-        let pages = 0;
         for (;;) {
           const [loanIds, , total] = (await publicClient.readContract({
             address: diamondAddress,
@@ -143,7 +144,7 @@ export function useClaimables(address: string | null) {
           })) as readonly [readonly bigint[], readonly bigint[], bigint];
           for (const id of loanIds) idSet.add(String(id));
           offset += PAGE;
-          if (offset >= total || ++pages >= 1000) break;
+          if (offset >= total) break;
         }
         onchainOk = true;
       } catch {
