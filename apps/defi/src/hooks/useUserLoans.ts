@@ -69,40 +69,50 @@ export function useUserLoans(address: string | null) {
       // manual operator rescan. Mirrors the 2026-05-11 decision in
       // useClaimables.
       let walkSet: typeof knownLoans = [];
-      let narrowedBy: 'indexer' | 'onchain-view' | 'failed' = 'failed';
+      let narrowedBy:
+        | 'indexer+onchain'
+        | 'onchain'
+        | 'indexer-only(onchain-failed)'
+        | 'failed' = 'failed';
+      const idSet = new Set<string>();
 
-      // Layer 1: indexer `/loans/by-current-holder/:addr` — one HTTP
-      // call, NFT-holder-keyed (covers secondary-market recipients).
-      // See useClaimables for the same migration rationale.
+      // Indexer `/loans/by-current-holder/:addr` — a cheap HTTP CACHE of the
+      // NFT-holder projection (returns null when unreachable). Unioned in below.
       const holderPage = await fetchLoansByCurrentHolder(chain.chainId, address);
-      const indexerIds = new Set<string>();
-      if (holderPage) for (const l of holderPage.loans) indexerIds.add(String(l.loanId));
-      if (indexerIds.size > 0) {
-        walkSet = knownLoans.filter((e) => indexerIds.has(String(e.loanId)));
-        narrowedBy = 'indexer';
-      } else {
-        // Layer 2: on-chain `getUserPositionLoans` view. Same
-        // rationale as in useClaimables — NFT-holder-keyed
-        // (ERC721Enumerable + `loanIdByPositionTokenId` reverse
-        // map), so secondary-market recipients are included. The
-        // older `getUserDashboardLoans` (keyed by
-        // `userLoanIds[user]` storage, populated at LoanInitiated)
-        // would miss them.
-        try {
-          const result = await publicClient.readContract({
-            address: diamondAddress,
-            abi: DIAMOND_ABI,
-            functionName: 'getUserPositionLoans',
-            args: [address as Address],
-          }) as readonly [readonly bigint[], readonly bigint[]];
-          const chainIds = new Set<string>();
-          for (const id of result[0]) chainIds.add(String(id));
-          walkSet = knownLoans.filter((e) => chainIds.has(String(e.loanId)));
-          narrowedBy = 'onchain-view';
-        } catch {
-          // Layer 2 errored — walkSet stays empty (walk-all dropped).
-        }
+      if (holderPage) for (const l of holderPage.loans) idSet.add(String(l.loanId));
+      const indexerCount = idSet.size;
+
+      // #749 — AUTHORITATIVE on-chain `getUserPositionLoans` (ERC721Enumerable +
+      // `loanIdByPositionTokenId`) read with the USER's OWN RPC. Run ALWAYS and
+      // UNIONed with the indexer — NOT only when the indexer returns empty — so a
+      // stale or gappy indexer projection can never HIDE a position the wallet
+      // currently holds (the indexer is a cache that can only ADD candidates,
+      // never be the sole authority). The per-loan `ownerOf` check below then
+      // confirms each candidate on-chain. Only if the on-chain read itself fails
+      // (old ABI / RPC blip) do we fall back to the indexer-only set rather than
+      // dropping the wallet's loans entirely.
+      let onchainOk = false;
+      try {
+        const result = (await publicClient.readContract({
+          address: diamondAddress,
+          abi: DIAMOND_ABI,
+          functionName: 'getUserPositionLoans',
+          args: [address as Address],
+        })) as readonly [readonly bigint[], readonly bigint[]];
+        for (const id of result[0]) idSet.add(String(id));
+        onchainOk = true;
+      } catch {
+        // on-chain read failed — keep the indexer-only union.
       }
+
+      walkSet = knownLoans.filter((e) => idSet.has(String(e.loanId)));
+      narrowedBy = onchainOk
+        ? indexerCount > 0
+          ? 'indexer+onchain'
+          : 'onchain'
+        : indexerCount > 0
+          ? 'indexer-only(onchain-failed)'
+          : 'failed';
 
       // 1. Batch all getLoanDetails calls in one Multicall3 round-trip.
       const detailCalls = encodeBatchCalls(
