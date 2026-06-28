@@ -13,8 +13,7 @@
  *                                        offerId / kind.
  */
 
-import type { Env } from './env';
-import { getDeployment } from '@vaipakam/contracts/deployments';
+import { type Env, getChainConfigs } from './env';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -37,20 +36,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 /**
- * #749 — whether this indexer serves `chainId` at all. A chain with no
- * deployment configured isn't indexed here, so the wallet-scoped read routes
- * return a `chain-not-configured` 503 (not a successful empty 200, which the
- * frontend's indexer-first → on-chain-fallback wrapper would cache as "no
- * loans" and never fall back from). These routes are otherwise PURE D1 — the
- * authoritative live-ownership read is the FRONTEND's on-chain fallback
+ * #749 — whether THIS worker actually INDEXES `chainId`. Gated on
+ * `getChainConfigs(env)` membership, NOT just `getDeployment`: the scanner only
+ * runs for a chain that has BOTH a deployment artifact AND an RPC secret bound
+ * (so a deployed-but-disabled chain, an RPC/Secrets-Store outage, or a stray
+ * local 31337 artifact is correctly excluded — Codex #768). A chain this worker
+ * doesn't index returns a `chain-not-configured` 503 (not a cacheable empty 200,
+ * which the frontend's indexer-first → on-chain-fallback wrapper would cache as
+ * "no loans" and never fall back from). `env` here is the RESOLVED env (the
+ * route dispatcher calls `resolveEnv` at the boundary), so the RPC bindings are
+ * populated. These routes are otherwise PURE D1 — the authoritative
+ * live-ownership read is the FRONTEND's on-chain fallback
  * (`MetricsFacet.getUserPositionLoans` via the user's own RPC), so the indexer
  * never spends operator RPC quota here; it just serves the projection, which the
- * ERC721 Transfer / LoanSold / LoanObligationTransferred / claim-burn handlers
- * in chainIndexer.ts keep authoritative.
+ * ERC721 Transfer / LoanSold / LoanSaleCompleted / LoanObligationTransferred /
+ * claim-burn handlers in chainIndexer.ts keep authoritative.
  */
-function chainConfigured(chainId: number): boolean {
+function chainConfigured(env: Env, chainId: number): boolean {
   try {
-    return getDeployment(chainId) != null;
+    return getChainConfigs(env).some((c) => c.id === chainId);
   } catch {
     return false;
   }
@@ -335,7 +339,7 @@ export async function handleLoansByParticipant(
   }
   // Fail closed when this chain isn't indexed here, so the frontend's
   // indexer-first → on-chain-fallback wrapper actually falls back (#749).
-  if (!chainConfigured(chainId)) {
+  if (!chainConfigured(env, chainId)) {
     return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   // Column is selected from the validated `side` enum — a hardcoded literal,
@@ -524,7 +528,7 @@ export async function handleClaimables(
     return jsonResponse({ error: 'bad-address' }, 400);
   }
   // Fail closed when this chain isn't indexed here so the frontend falls back.
-  if (!chainConfigured(chainId)) {
+  if (!chainConfigured(env, chainId)) {
     return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   try {

@@ -44,7 +44,11 @@ import type { Env, ChainConfig } from './env';
 import { getChainConfigs } from './env';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
-import { DIAMOND_OFFER_DETAILS_ABI, DIAMOND_LOAN_DETAILS_ABI } from './diamondAbi';
+import {
+  DIAMOND_OFFER_DETAILS_ABI,
+  DIAMOND_LOAN_DETAILS_ABI,
+  ERC721_OWNER_OF_ABI,
+} from './diamondAbi';
 import { indexerPublishPrepayListing } from './openseaPublish';
 
 /** Resolve a chain's deployBlock from the consolidated deployments
@@ -1231,6 +1235,30 @@ async function refreshOfferDetails(
     expiresAt?: bigint;
     fillMode?: number;
   };
+  // #749 (Codex #768) — re-derive the offer's CURRENT position-NFT holder
+  // authoritatively. A stub offer was inserted with `position_token_id = '0'`
+  // (its inline `getOfferDetails` read had failed), so any ERC721 `Transfer` of
+  // the offer NFT BEFORE this heal couldn't match (`WHERE position_token_id = ?`)
+  // and was missed — `creator_current_owner` is stuck at the OfferCreated seed.
+  // Now that we know the real `positionTokenId`, read its owner ONCE so the
+  // D1-only wallet routes (and the LoanInitiated creator-side seed that copies
+  // this column) see the true holder. Falls back to the creator on a revert
+  // (e.g. an already-burned token) — same as the no-transfer default. One bounded
+  // RPC per stub-heal (cron pass, not the hot read path).
+  let creatorCurrentOwner = o.creator.toLowerCase();
+  if (o.positionTokenId > 0n) {
+    try {
+      const owner = (await client.readContract({
+        address: diamond,
+        abi: ERC721_OWNER_OF_ABI,
+        functionName: 'ownerOf',
+        args: [o.positionTokenId],
+      })) as string;
+      if (owner) creatorCurrentOwner = owner.toLowerCase();
+    } catch {
+      // burned / nonexistent token — keep the creator default.
+    }
+  }
   await env.DB.prepare(
     `UPDATE offers SET
        creator = ?, offer_type = ?, lending_asset = ?, collateral_asset = ?,
@@ -1243,6 +1271,7 @@ async function refreshOfferDetails(
        prepay_asset = ?, use_full_term_interest = ?,
        creator_fallback_consent = ?, allows_partial_repay = ?,
        created_at = ?, expires_at = ?, fill_mode = ?,
+       creator_current_owner = ?,
        is_stub = 0,
        updated_at = ?
      WHERE chain_id = ? AND offer_id = ?`,
@@ -1275,6 +1304,7 @@ async function refreshOfferDetails(
       Number(o.createdAt ?? 0n),
       Number(o.expiresAt ?? 0n),
       Number(o.fillMode ?? 0),
+      creatorCurrentOwner,
       now,
       chainId,
       offerId,
@@ -2032,6 +2062,52 @@ async function processLoanLogs(
           Math.floor(Date.now() / 1000),
           chainId,
           Number(a.loanId as bigint),
+        )
+        .run();
+    } else if (log.eventName === 'LoanSaleCompleted') {
+      // EarlyWithdrawal TWO-STEP sale-offer flow (`completeLoanSale`): like the
+      // direct `sellLoanViaBuyOffer`→`LoanSold` path, it migrates the ORIGINAL
+      // loan's lender position (LibLoan.migrateLenderPosition burns the old token
+      // + mints a fresh one) — but this event carries ONLY
+      // (loanId, originalLender, newLender), NOT the new token id. So read the
+      // migrated `lender` + `lenderTokenId` on-chain, block-pinned to THIS event
+      // (idempotent re-scan, #760), and repoint
+      // lender/lender_token_id/lender_current_owner. Without this the pure-D1
+      // wallet routes (#749) would never attribute the loan to a buyer who went
+      // through the sale-offer flow. FAIL-CLOSED: a read failure re-throws so the
+      // scan aborts before the cursor advances and this event re-processes.
+      const loanId = Number(a.loanId as bigint);
+      let d: { lender: string; lenderTokenId: bigint };
+      try {
+        d = (await client.readContract({
+          address: diamond,
+          abi: DIAMOND_LOAN_DETAILS_ABI,
+          functionName: 'getLoanDetails',
+          args: [BigInt(loanId)],
+          blockNumber: log.blockNumber,
+        })) as { lender: string; lenderTokenId: bigint };
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[chainIndexer] #749 getLoanDetails(${loanId}) for LoanSaleCompleted failed; aborting scan so the cursor doesn't advance`,
+          err,
+        );
+        throw err;
+      }
+      const newLender = String(d.lender).toLowerCase();
+      await env.DB.prepare(
+        `UPDATE loans
+            SET lender = ?, lender_token_id = ?, lender_current_owner = ?,
+                updated_at = ?
+          WHERE chain_id = ? AND loan_id = ?`,
+      )
+        .bind(
+          newLender,
+          String(d.lenderTokenId),
+          newLender,
+          Math.floor(Date.now() / 1000),
+          chainId,
+          loanId,
         )
         .run();
     } else if (log.eventName === 'LoanDefaulted') {

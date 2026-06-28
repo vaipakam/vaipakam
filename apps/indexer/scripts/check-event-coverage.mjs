@@ -48,8 +48,6 @@ const DELIBERATELY_NOT_HANDLED = {
     'transient status — the indexer keeps loans.status=active through the fallback episode; the eventual terminal event still applies',
   LoanCuredFromFallback:
     'transient — pairs with LoanFallbackPending; D1 status was never moved off active',
-  LoanSaleCompleted:
-    'the lender-position migration on the ORIGINAL loan is now handled (the LoanSold branch updates lender / lender_token_id / lender_current_owner); this companion fires for the internal temp loan the sale spins up, which transitions Active→Repaid on-chain but emits no status event for that temp loan — contract-side payload follow-up, not a row mutation we model',
   LoanSaleOfferLinked:
     'intermediate "sale offer linked to live loan" marker — no loans/offers row change',
   LoanKeeperEnabled: 'per-loan keeper authorization — not modelled in the indexer schema',

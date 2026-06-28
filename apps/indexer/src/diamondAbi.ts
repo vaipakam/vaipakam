@@ -20,10 +20,12 @@
  *     `getLoanDetails(uint256) returns (LibVaipakam.Loan)` plus the
  *     loan-list helpers the indexer's catch-up walk relies on.
  *
- * (The wallet-scoped loan/claimable read routes answer purely from D1 — #749 —
- * so the indexer no longer needs an `ownerOf` / `getUserPositionLoans` ABI here;
- * the authoritative on-chain `getUserPositionLoans` verify lives in the FRONTEND,
- * called with the user's own RPC.)
+ * (The wallet-scoped loan/claimable READ routes answer purely from D1 — #749 —
+ * so the indexer doesn't need a `getUserPositionLoans` ABI here; the
+ * authoritative on-chain verify lives in the FRONTEND, called with the user's
+ * own RPC. `ERC721_OWNER_OF_ABI` is still used INDEXER-SIDE — in the cron
+ * `refreshOfferDetails` stub-heal — to re-derive a stub offer's current
+ * position-NFT holder, a missed-Transfer the stub couldn't match by tokenId.)
  *
  * Event signatures parsed via viem's `parseAbi` in `chainIndexer.ts`
  * stay inline because event routing uses topic-hash matching, not
@@ -38,3 +40,16 @@ import { OfferCancelFacetABI, LoanFacetABI } from '@vaipakam/contracts/abis';
 export const DIAMOND_OFFER_DETAILS_ABI = OfferCancelFacetABI;
 
 export const DIAMOND_LOAN_DETAILS_ABI = LoanFacetABI;
+
+/** ERC-721 `ownerOf` — the Vaipakam position NFT is a facet ON the Diamond, so
+ *  the diamond address IS the NFT contract. Reverts on burned / nonexistent
+ *  tokens; the caller catches and falls back. */
+export const ERC721_OWNER_OF_ABI = [
+  {
+    type: 'function',
+    name: 'ownerOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'tokenId', type: 'uint256' }],
+    outputs: [{ type: 'address' }],
+  },
+] as const;
