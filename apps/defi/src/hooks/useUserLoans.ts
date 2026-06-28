@@ -105,7 +105,18 @@ export function useUserLoans(address: string | null) {
         // on-chain read failed — keep the indexer-only union.
       }
 
-      walkSet = knownLoans.filter((e) => idSet.has(String(e.loanId)));
+      // Build the walk set from the UNION ids — NOT `knownLoans.filter(...)`,
+      // which would discard any authoritative on-chain id the browser log index
+      // hasn't seen yet (it can lag/fast-forward past the indexer cursor). Reuse
+      // the known entry when present; synthesize a minimal one otherwise. The
+      // synthetic `lender`/`borrower` are empty, which is safe: an on-chain
+      // `getUserPositionLoans` id is a CURRENT holder, so it's matched by the
+      // live `ownerOf` (`isCurrentLender`/`Borrower`) below, never the
+      // burned-NFT historical fallback that reads those fields (Codex #781).
+      const knownById = new Map(knownLoans.map((e) => [String(e.loanId), e]));
+      walkSet = [...idSet].map(
+        (id) => knownById.get(id) ?? { loanId: BigInt(id), lender: '', borrower: '' },
+      );
       narrowedBy = onchainOk
         ? indexerCount > 0
           ? 'indexer+onchain'

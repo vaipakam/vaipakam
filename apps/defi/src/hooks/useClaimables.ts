@@ -139,7 +139,16 @@ export function useClaimables(address: string | null) {
         // on-chain read failed (old ABI / RPC blip) — keep the indexer-only union.
       }
 
-      walkSet = knownLoans.filter((e) => idSet.has(String(e.loanId)));
+      // Build the walk set from the UNION ids — NOT `knownLoans.filter(...)`,
+      // which would discard any authoritative on-chain id the browser log index
+      // hasn't seen yet (it can lag/fast-forward past the indexer cursor),
+      // hiding a real claimable. Reuse the known entry when present; synthesize a
+      // minimal one otherwise (the per-loan `getLoanDetails`/`ownerOf`/
+      // `getClaimable` confirmation below only needs `loanId`) — Codex #781.
+      const knownById = new Map(knownLoans.map((e) => [String(e.loanId), e]));
+      walkSet = [...idSet].map(
+        (id) => knownById.get(id) ?? { loanId: BigInt(id), lender: '', borrower: '' },
+      );
       narrowedBy = onchainOk
         ? indexerCount > 0
           ? 'indexer+onchain'
