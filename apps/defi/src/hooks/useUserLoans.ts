@@ -93,16 +93,48 @@ export function useUserLoans(address: string | null) {
       // dropping the wallet's loans entirely.
       let onchainOk = false;
       try {
-        const result = (await publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI,
-          functionName: 'getUserPositionLoans',
-          args: [address as Address],
-        })) as readonly [readonly bigint[], readonly bigint[]];
-        for (const id of result[0]) idSet.add(String(id));
+        // #769 — paginate: a single unbounded `getUserPositionLoans` loops the
+        // whole `balanceOf`, so a wallet griefed with a huge position-NFT
+        // inventory could make that one `eth_call` exceed the RPC limit and
+        // revert. Each page is O(PAGE)-bounded; the loop runs to COMPLETION
+        // (`offset` climbs by `PAGE` toward the contract-reported, finite
+        // `totalBalance`, so it terminates) — a page cap is intentionally NOT
+        // used, since truncating would re-hide exactly the bloated wallet's real
+        // positions this view exists to surface. Total work stays wallet-scoped.
+        const PAGE = 200n;
+        let offset = 0n;
+        for (;;) {
+          const [loanIds, , total] = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoansPaginated',
+            args: [address as Address, offset, PAGE],
+          })) as readonly [readonly bigint[], readonly bigint[], bigint];
+          for (const id of loanIds) idSet.add(String(id));
+          offset += PAGE;
+          if (offset >= total) break;
+        }
         onchainOk = true;
       } catch {
-        // on-chain read failed — keep the indexer-only union.
+        // #769 — a Diamond that predates the paginated selector (deploy-
+        // transition window, or a chain not yet upgraded) reverts the call
+        // above. Fall back to the original unbounded `getUserPositionLoans` so
+        // the authoritative on-chain layer is preserved for secondary-market
+        // holders (it can't bound a deliberately-bloated wallet — the only case
+        // the paginated view adds — but for any normal wallet it's correct).
+        // Only if THAT also fails do we drop to the indexer-only union.
+        try {
+          const legacy = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoans',
+            args: [address as Address],
+          })) as readonly [readonly bigint[], readonly bigint[]];
+          for (const id of legacy[0]) idSet.add(String(id));
+          onchainOk = true;
+        } catch {
+          // both on-chain reads failed — keep the indexer-only union.
+        }
       }
 
       // Build the walk set from the UNION ids — NOT `knownLoans.filter(...)`,

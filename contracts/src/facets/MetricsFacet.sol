@@ -1303,6 +1303,122 @@ contract MetricsFacet {
     }
 
     /**
+     * @notice Paginated form of {getUserPositionLoans} — bounded iteration over
+     *         `[offset, offset + limit)` of `user`'s ERC721Enumerable inventory.
+     * @dev    #769 — {getUserPositionLoans} loops the WHOLE `balanceOf(user)`, so
+     *         a wallet griefed with a huge position-NFT inventory (ERC721
+     *         transfers need no recipient consent) can make that single
+     *         `eth_call` exceed an RPC's gas/time/response limit and revert,
+     *         breaking the holder's loan/claimable reads. This bounds the
+     *         worst-case work to O(limit). The caller paginates with
+     *         `offset += limit` until `offset >= totalBalance`. NB the slice
+     *         indexes the wallet's NFT slots at call time — a concurrent transfer
+     *         that changes `balanceOf` mid-pagination can shift indices
+     *         (eventually consistent; callers re-read on the next render).
+     * @param user   Holder to enumerate.
+     * @param offset First NFT index (in ERC721Enumerable order) to scan.
+     * @param limit  Max NFT slots to scan this page (`0` ⇒ empty page).
+     * @return loanIds      Loan IDs whose position NFT `user` holds in the slice.
+     * @return tokenIds     Position NFT id per loanId, aligned 1:1.
+     * @return totalBalance `balanceOf(user)` — the pagination bound.
+     */
+    function getUserPositionLoansPaginated(
+        address user,
+        uint256 offset,
+        uint256 limit
+    )
+        external
+        view
+        returns (
+            uint256[] memory loanIds,
+            uint256[] memory tokenIds,
+            uint256 totalBalance
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        totalBalance = LibERC721.balanceOf(user);
+        if (offset >= totalBalance || limit == 0) {
+            return (new uint256[](0), new uint256[](0), totalBalance);
+        }
+        // Overflow-safe span: offset < totalBalance, so `remaining` is positive.
+        uint256 remaining = totalBalance - offset;
+        uint256 span = limit < remaining ? limit : remaining;
+        uint256 end = offset + span;
+        uint256[] memory loanBuf = new uint256[](span);
+        uint256[] memory tokenBuf = new uint256[](span);
+        uint256 filled;
+        for (uint256 i = offset; i < end; i++) {
+            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 lid = s.loanIdByPositionTokenId[tokenId];
+            if (lid != 0) {
+                loanBuf[filled] = lid;
+                tokenBuf[filled] = tokenId;
+                filled += 1;
+            }
+        }
+        loanIds = new uint256[](filled);
+        tokenIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) {
+            loanIds[k] = loanBuf[k];
+            tokenIds[k] = tokenBuf[k];
+        }
+    }
+
+    /**
+     * @notice Paginated form of {getUserPositionOffers} — bounded iteration over
+     *         `[offset, offset + limit)` of `user`'s ERC721Enumerable inventory.
+     * @dev    Same #769 large-inventory rationale + pagination contract as
+     *         {getUserPositionLoansPaginated}; resolves OPEN offers via
+     *         `offerIdByPositionTokenId`.
+     * @param user   Holder to enumerate.
+     * @param offset First NFT index (in ERC721Enumerable order) to scan.
+     * @param limit  Max NFT slots to scan this page (`0` ⇒ empty page).
+     * @return offerIds     Offer IDs whose creator-NFT `user` holds in the slice.
+     * @return tokenIds     Position NFT id per offerId, aligned 1:1.
+     * @return totalBalance `balanceOf(user)` — the pagination bound.
+     */
+    function getUserPositionOffersPaginated(
+        address user,
+        uint256 offset,
+        uint256 limit
+    )
+        external
+        view
+        returns (
+            uint256[] memory offerIds,
+            uint256[] memory tokenIds,
+            uint256 totalBalance
+        )
+    {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        totalBalance = LibERC721.balanceOf(user);
+        if (offset >= totalBalance || limit == 0) {
+            return (new uint256[](0), new uint256[](0), totalBalance);
+        }
+        uint256 remaining = totalBalance - offset;
+        uint256 span = limit < remaining ? limit : remaining;
+        uint256 end = offset + span;
+        uint256[] memory offerBuf = new uint256[](span);
+        uint256[] memory tokenBuf = new uint256[](span);
+        uint256 filled;
+        for (uint256 i = offset; i < end; i++) {
+            uint256 tokenId = LibERC721.tokenOfOwnerByIndex(user, i);
+            uint256 oid = s.offerIdByPositionTokenId[tokenId];
+            if (oid != 0) {
+                offerBuf[filled] = oid;
+                tokenBuf[filled] = tokenId;
+                filled += 1;
+            }
+        }
+        offerIds = new uint256[](filled);
+        tokenIds = new uint256[](filled);
+        for (uint256 k = 0; k < filled; k++) {
+            offerIds[k] = offerBuf[k];
+            tokenIds[k] = tokenBuf[k];
+        }
+    }
+
+    /**
      * @notice Paginated slice of every loan ever created, regardless of status.
      * @dev Sequential ID scan bounded by `limit`. Loans with `id == 0`
      *      (shouldn't happen post-initiation) are skipped.

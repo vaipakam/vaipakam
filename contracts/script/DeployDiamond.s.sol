@@ -2264,7 +2264,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](48);
+        s = new bytes4[](50);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2353,6 +2353,11 @@ contract DeployDiamond is Script {
         s[45] = MetricsFacet.getFreeBalance.selector;
         s[46] = MetricsFacet.getActiveLenderIntents.selector; // #625 WI-2a
         s[47] = MetricsFacet.getRollableIntentLoans.selector; // #625 WI-2c
+        // #769 — paginated forms of the §8b position views, so a wallet griefed
+        // with a huge position-NFT inventory can't make the unbounded
+        // balanceOf-loop `eth_call` revert and break the holder's reads.
+        s[48] = MetricsFacet.getUserPositionLoansPaginated.selector;
+        s[49] = MetricsFacet.getUserPositionOffersPaginated.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

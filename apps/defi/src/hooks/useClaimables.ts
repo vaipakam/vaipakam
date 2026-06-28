@@ -125,18 +125,46 @@ export function useClaimables(address: string | null) {
       // the on-chain read itself fails do we fall back to the indexer-only set.
       let onchainOk = false;
       try {
-        const result = (await publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI,
-          functionName: 'getUserPositionLoans',
-          args: [address as Address],
-        })) as readonly [readonly bigint[], readonly bigint[]];
-        // result[0] = loanIds, result[1] = tokenIds (aligned); we only need
-        // the loan-id set for narrowing the per-loan fan-out below.
-        for (const id of result[0]) idSet.add(String(id));
+        // #769 — paginate so a wallet griefed with a huge position-NFT inventory
+        // can't make the unbounded single `getUserPositionLoans` `eth_call`
+        // revert and hide a real claimable. Each page is O(PAGE)-bounded; the
+        // loop runs to COMPLETION (`offset` climbs by `PAGE` toward the
+        // contract-reported, finite `totalBalance`, so it terminates) — no page
+        // cap, since truncating would re-hide exactly the bloated wallet's real
+        // claimables this view exists to surface. We only need the loan-id set
+        // for narrowing the per-loan fan-out below.
+        const PAGE = 200n;
+        let offset = 0n;
+        for (;;) {
+          const [loanIds, , total] = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoansPaginated',
+            args: [address as Address, offset, PAGE],
+          })) as readonly [readonly bigint[], readonly bigint[], bigint];
+          for (const id of loanIds) idSet.add(String(id));
+          offset += PAGE;
+          if (offset >= total) break;
+        }
         onchainOk = true;
       } catch {
-        // on-chain read failed (old ABI / RPC blip) — keep the indexer-only union.
+        // #769 — a Diamond that predates the paginated selector (deploy-
+        // transition window) reverts the call above. Fall back to the original
+        // unbounded `getUserPositionLoans` so the authoritative on-chain layer
+        // (and thus claimable visibility for secondary-market holders) is
+        // preserved; only if THAT also fails do we drop to the indexer-only union.
+        try {
+          const legacy = (await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI,
+            functionName: 'getUserPositionLoans',
+            args: [address as Address],
+          })) as readonly [readonly bigint[], readonly bigint[]];
+          for (const id of legacy[0]) idSet.add(String(id));
+          onchainOk = true;
+        } catch {
+          // both on-chain reads failed — keep the indexer-only union.
+        }
       }
 
       // Build the walk set from the UNION ids — NOT `knownLoans.filter(...)`,
