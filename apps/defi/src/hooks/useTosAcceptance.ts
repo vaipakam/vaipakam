@@ -24,8 +24,15 @@ import { beginStep } from '../lib/journeyLog';
 export interface TosAcceptanceState {
   /** True iff the wallet has accepted the current on-chain ToS version.
    *  Also true when the gate is disabled (currentTosVersion == 0) so the
-   *  frontend can render `/app` routes unconditionally in that state. */
+   *  frontend can render the connected-app routes unconditionally in that
+   *  state. **Only ever true after a SUCCESSFUL read** (see `readOk`) — a
+   *  still-loading or errored read leaves this `false` so the gate fails
+   *  CLOSED rather than mistaking the unread default version (0) for the
+   *  gate-disabled state (#822). */
   hasAccepted: boolean;
+  /** True once an on-chain read has completed successfully. While this is
+   *  false (initial load, or after a read error) the gate must not open. */
+  readOk: boolean;
   /** Current in-force ToS version. 0 means the gate is disabled. */
   currentVersion: number;
   /** Current in-force ToS content hash. */
@@ -60,6 +67,11 @@ export function useTosAcceptance(): TosAcceptanceState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // #822 — the gate must fail CLOSED until a read actually succeeds. Without
+  // this, a read error left `currentVersion` at its default 0, which the
+  // gate-disabled check (`currentVersion === 0`) read as "accepted", silently
+  // opening the gated routes on any RPC failure.
+  const [readOk, setReadOk] = useState(false);
 
   const reload = useCallback(async () => {
     if (!diamondAddress) return;
@@ -93,7 +105,13 @@ export function useTosAcceptance(): TosAcceptanceState {
       setCurrentHash(curr[1]);
       setUserVersion(Number(user.version));
       setUserHash(user.hash);
+      setReadOk(true);
     } catch (e) {
+      // Fail CLOSED: drop `readOk` so a stale prior success can't keep the
+      // gate open through an RPC outage, and reset the version so nothing
+      // downstream mistakes the unread value for a real "gate disabled".
+      setReadOk(false);
+      setCurrentVersion(0);
       setError((e as Error)?.message ?? 'Failed to read ToS state');
     } finally {
       setLoading(false);
@@ -137,12 +155,17 @@ export function useTosAcceptance(): TosAcceptanceState {
 
   // Gate disabled (currentVersion=0) → everyone is accepted.
   // Otherwise: user version + hash must both match current.
+  // #822 — gated on `readOk` so the unread/errored default (version 0) is NOT
+  // mistaken for the genuine gate-disabled state. Only a SUCCESSFUL read of a
+  // real on-chain 0 opens the gate via the disabled branch.
   const hasAccepted =
-    currentVersion === 0 ||
-    (userVersion === currentVersion && userHash === currentHash);
+    readOk &&
+    (currentVersion === 0 ||
+      (userVersion === currentVersion && userHash === currentHash));
 
   return {
     hasAccepted,
+    readOk,
     currentVersion,
     currentHash,
     userVersion,

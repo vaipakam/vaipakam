@@ -97,7 +97,11 @@
     "privacyPolicy": "Privacy Policy",
     "signing": "Signing…",
     "signAccept": "Sign & Accept",
-    "footnote": "Signing costs a small on-chain fee. Approve one transaction from the wallet."
+    "footnote": "Signing costs a small on-chain fee. Approve one transaction from the wallet.",
+    "verifying": "Verifying Terms acceptance…",
+    "readErrorTitle": "Couldn't verify Terms acceptance",
+    "readErrorBody": "We couldn't read the current Terms status from the network, so access is held until this can be confirmed. Check your connection and retry.",
+    "retry": "Retry"
   },
   "cardInfo": {
     "ariaLabel": "About this card",
