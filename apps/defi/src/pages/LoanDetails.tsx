@@ -120,8 +120,10 @@ export default function LoanDetails() {
   // keeper master switch gates them — the lender's extend-caps are just the
   // lender's consent surface and don't depend on the lender's keeper (Codex
   // #811 r2). We pass both holders so the hook can resolve, but only read the
-  // borrower side.
-  const { borrowerStatus: keeperBorrowerStatus } =
+  // borrower side. We also read the GLOBAL delegated-keeper pause (#811 r3): a
+  // governance pause makes every keeper-driven call revert even when the
+  // borrower's own switch is on.
+  const { borrowerStatus: keeperBorrowerStatus, keepersPaused } =
     useKeeperStatus(lenderHolder || null, borrowerHolder || null);
   // Signer-connected ERC-20 contracts for the loan's principal / collateral
   // assets. Used to read decimals() and to approve the Diamond before repay
@@ -218,10 +220,14 @@ export default function LoanDetails() {
   // bit AND is enabled for this loan — that finer detail lives in the per-keeper
   // toggles on this page), and we do NOT gate on the LENDER's keeper, since the
   // lender's extend-caps are only their consent surface, not the execution gate.
-  // Only the borrower holder is warned; `null` status (loading / no Diamond) ⇒
-  // stay quiet.
+  // We DO additionally gate on the global delegated-keeper pause (Codex #811
+  // r3): when governance pauses keepers, `requireKeeperFor` rejects every
+  // keeper-driven refinance/extend even with the borrower's switch on, so the
+  // cap is inert — exactly when the borrower needs to know. Only the borrower
+  // holder is warned; `null` status (loading / no Diamond) ⇒ stay quiet.
   const keeperCannotActForUser =
-    isBorrower && keeperBorrowerStatus?.profileOptIn === false;
+    isBorrower &&
+    (keeperBorrowerStatus?.profileOptIn === false || keepersPaused === true);
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;

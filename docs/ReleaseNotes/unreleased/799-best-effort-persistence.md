@@ -26,11 +26,13 @@ What changed:
   auto-refinance / auto-extend is best-effort and not default protection for the
   life of the cap.
 - **Keeper kill-switch visibility on the caps card** — when the **borrower**
-  holder's master keeper switch is off (an unambiguous hard gate — both
-  auto-refinance and auto-extend execute against the borrower side), the card
-  warns that any enabled cap is inert until keeper access is restored: the
-  master switch on, a keeper approved with the right permissions, AND that
-  keeper enabled for this specific loan via the per-loan toggles. The lender's
+  holder's master keeper switch is off, OR keeper automation is **globally
+  paused** by governance (both unambiguous hard gates — auto-refinance and
+  auto-extend execute against the borrower side and `requireKeeperFor` rejects
+  every keeper call while paused), the card warns that any enabled cap is inert
+  until keeper automation can run again: the master switch on, a keeper approved
+  with the right permissions, AND that keeper enabled for this specific loan via
+  the per-loan toggles (and a global pause lifted by governance). The lender's
   keeper is not treated as a blocker (the lender's extend-caps are only their
   consent surface), and the warning does not infer inertness from the
   approved-keeper count.

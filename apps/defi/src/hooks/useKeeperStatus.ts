@@ -30,6 +30,11 @@ export function useKeeperStatus(
   const diamond = useReadyDiamond();
   const [lenderStatus, setLenderStatus] = useState<SideKeeperStatus | null>(null);
   const [borrowerStatus, setBorrowerStatus] = useState<SideKeeperStatus | null>(null);
+  // Global delegated-keeper pause (`AdminFacet.keepersPaused`). When governance
+  // flips this ON, `LibAuth.requireKeeperFor` rejects EVERY keeper-driven call
+  // regardless of any user's opt-in, so it's a third inertness gate the UI must
+  // surface. `null` until read.
+  const [keepersPaused, setKeepersPaused] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,18 +44,22 @@ export function useKeeperStatus(
     setLoading(true);
     setError(null);
     try {
-      const [lOpt, bOpt, lList, bList] = await Promise.all([
+      const [lOpt, bOpt, lList, bList, paused] = await Promise.all([
         diamond.getKeeperAccess(lenderHolder) as Promise<boolean>,
         diamond.getKeeperAccess(borrowerHolder) as Promise<boolean>,
         diamond.getApprovedKeepers(lenderHolder) as Promise<string[]>,
         diamond.getApprovedKeepers(borrowerHolder) as Promise<string[]>,
+        (diamond as unknown as { keepersPaused: () => Promise<boolean> })
+          .keepersPaused() as Promise<boolean>,
       ]);
       setLenderStatus({ profileOptIn: lOpt, approvedCount: lList.length });
       setBorrowerStatus({ profileOptIn: bOpt, approvedCount: bList.length });
+      setKeepersPaused(Boolean(paused));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Keeper status read failed');
       setLenderStatus(null);
       setBorrowerStatus(null);
+      setKeepersPaused(null);
     } finally {
       setLoading(false);
     }
@@ -58,5 +67,5 @@ export function useKeeperStatus(
 
   useEffect(() => { load(); }, [load]);
 
-  return { lenderStatus, borrowerStatus, loading, error, reload: load };
+  return { lenderStatus, borrowerStatus, keepersPaused, loading, error, reload: load };
 }
