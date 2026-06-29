@@ -132,7 +132,9 @@ recompute or re-read the current effective tier at admission:
   materialize a lender slice before initiating the loan;
 - refinance / preclose replacement flows that create new exposure;
 - lender-sale buyer admission;
-- obligation-transfer incoming borrower admission.
+- obligation-transfer incoming borrower admission, plus any other current or future
+  path that can materialize a loan from an offer, signed payload, lender intent,
+  matcher action, or replacement flow.
 
 This list is intentionally exhaustive for current known admission paths and must
 be extended whenever a new path can materialize a loan; no lender-intent,
