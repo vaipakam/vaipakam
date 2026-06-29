@@ -97,33 +97,35 @@ export function useTosAcceptance(): TosAcceptanceState {
       return;
     }
     try {
-      const [curr, user] = await Promise.all([
-        publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getCurrentTos',
-        }) as Promise<readonly [number, `0x${string}`]>,
-        address
-          ? (publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getUserTosAcceptance',
-              args: [address as Address],
-            }) as Promise<{
-              version: number;
-              hash: `0x${string}`;
-              acceptedAt: bigint;
-            }>)
-          : Promise.resolve({
-              version: 0,
-              hash: ZERO_HASH,
-              acceptedAt: 0n,
-            }),
-      ]);
+      const curr = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getCurrentTos',
+      })) as readonly [number, `0x${string}`];
       // #828 r2 — drop a stale in-flight read superseded by a newer reload().
       if (seq !== reqSeq.current) return;
-      setCurrentVersion(Number(curr[0]));
+      const version = Number(curr[0]);
+      setCurrentVersion(version);
       setCurrentHash(curr[1]);
+      // #828 r3 — when the gate is disabled (`currentTosVersion === 0`) the
+      // wallet's own acceptance record is irrelevant (everyone is implicitly
+      // accepted), so short-circuit before the second read rather than issuing
+      // a `getUserTosAcceptance` call whose result is discarded.
+      if (version === 0) {
+        setUserVersion(0);
+        setReadOk(true);
+        return; // `finally` clears `loading` for the current request
+      }
+      const user = address
+        ? ((await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getUserTosAcceptance',
+            args: [address as Address],
+          })) as { version: number; hash: `0x${string}`; acceptedAt: bigint })
+        : { version: 0, hash: ZERO_HASH, acceptedAt: 0n };
+      // Re-check: the wallet/chain may have changed during the second read.
+      if (seq !== reqSeq.current) return;
       setUserVersion(Number(user.version));
       setUserHash(user.hash);
       setReadOk(true);
@@ -144,6 +146,14 @@ export function useTosAcceptance(): TosAcceptanceState {
 
   useEffect(() => {
     void reload();
+    // #828 r3 — invalidate any in-flight read the MOMENT the deps (wallet /
+    // chain / client) change, not only when the next `reload()` starts. Without
+    // this, an old read could resolve in the render→effect gap — while the
+    // generation still matches — and apply the previous wallet's state before
+    // the new `reload()` bumps the counter.
+    return () => {
+      reqSeq.current++;
+    };
   }, [reload]);
 
   const accept = useCallback(async () => {
