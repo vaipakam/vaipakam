@@ -91,6 +91,11 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
     let everLive = false;
+    // Set when a reconnect learns the channel is INTENTIONALLY inactive
+    // (`hello.ingestActive === false` — DO ingest rolled back). The next
+    // `onclose` then schedules a dormant retry and reports honest `polling`
+    // instead of latching `reconnecting` forever off the stale `everLive`.
+    let intentionalInactive = false;
     // When a frame arrives in a hidden/background tab we DON'T nudge (which
     // would bypass the watermark's own `document.hidden` pause and drive RPC +
     // refetches from a parked tab). Remember it and flush once on focus.
@@ -118,14 +123,19 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
 
     const scheduleReconnect = () => {
       if (cancelled || reconnectTimer) return;
-      // If we've connected several times and never gone live, the channel
-      // isn't available on this deployment — drop to a dormant retry and
-      // report honest `polling` rather than a churning `reconnecting`.
-      const dormant = !everLive && attempt >= GIVE_UP_AFTER;
+      // Go DORMANT (long retry + honest `polling`) when either:
+      //   - the channel is intentionally inactive (hello said ingest is off), or
+      //   - we've tried `GIVE_UP_AFTER` times without (re)reaching live — covers
+      //     both "never available here" AND "was live, then rolled back / the
+      //     route now 503s", so a previously-live tab can't churn `reconnecting`
+      //     at 30s forever. A brief blip reconnects well under that bound and
+      //     stays `reconnecting`.
+      const dormant = intentionalInactive || attempt >= GIVE_UP_AFTER;
+      intentionalInactive = false; // consumed
       const delay = dormant
         ? DORMANT_RETRY_MS
         : Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * 2 ** attempt);
-      setTransport(everLive ? 'reconnecting' : 'polling');
+      setTransport(dormant ? 'polling' : everLive ? 'reconnecting' : 'polling');
       reconnectTimer = setTimeout(() => {
         reconnectTimer = null;
         connect();
@@ -159,7 +169,11 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
             setTransport('live');
           } else {
             // Channel reachable but DO ingest is off — no pushes will come.
-            // Report polling and stop hammering; close and retry dormantly.
+            // Reset the live latch and flag an intentional-inactive close so the
+            // following `onclose` goes dormant + reports honest `polling` (not
+            // `reconnecting` off the now-stale `everLive`).
+            everLive = false;
+            intentionalInactive = true;
             setTransport('polling');
             try {
               socket.close(1000);
