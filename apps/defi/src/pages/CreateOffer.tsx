@@ -321,7 +321,10 @@ export default function CreateOffer() {
   // binding disclosure text changed off-screen — force a fresh acknowledgement
   // by clearing consent. The ref seeds to the initial signature so mount is a
   // no-op; only a real post-mount change clears.
-  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}`;
+  // #796 (Codex r1 P2) — also key on `collateralLiquidityStatus`: an ERC-20
+  // collateral that resolves to `illiquid` flips the in-kind disclosure on, so
+  // a consent ticked before the async liquidity read resolved must re-prompt.
+  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}|${collateralLiquidityStatus}`;
   const disclosureSigRef = useRef(disclosureSig);
   useEffect(() => {
     if (disclosureSigRef.current === disclosureSig) return;
@@ -1553,10 +1556,14 @@ export default function CreateOffer() {
               form.assetType === 'erc20' ? form.useFullTermInterest : undefined
             }
             allowsPartialRepay={form.allowsPartialRepay}
-            /* #796 — NFT collateral always settles in-kind on default (no
-               oracle / no swap); surface the explicit disclosure when the
-               creator picks an NFT collateral leg. */
-            collateralInKind={form.collateralAssetType !== 'erc20'}
+            /* #796 — collateral settles in-kind on default when it's an NFT
+               (no oracle / no swap) OR an ERC-20 the liquidity read reports as
+               illiquid / no-oracle (Codex r1 P2 — the thin-collateral case
+               that drops to the full-collateral-in-kind default path). */
+            collateralInKind={
+              form.collateralAssetType !== 'erc20' ||
+              collateralLiquidityStatus === 'illiquid'
+            }
           />
 
           <label className="checkbox-row" style={{ marginTop: 12 }}>

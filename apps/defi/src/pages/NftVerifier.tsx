@@ -761,13 +761,21 @@ function LiveCard({
   const blockExplorer = chain.blockExplorer;
   const status =
     loanDetails != null ? (Number(loanDetails.status) as LoanStatus) : null;
-  // #796 — this position settles IN-KIND on default (lender receives the
-  // collateral asset itself, not the lending asset, with no DEX swap / LTV
-  // liquidation) when the collateral is an NFT (assetType 1/2) or either leg is
-  // illiquid (no on-chain price). Disclosed below so a buyer of this position
-  // NFT understands the downside-recovery shape before they commit.
+  // #796 — the swap-vs-in-kind settlement disclosure applies only to LENDING
+  // loans (ERC-20 principal). An NFT-principal position is a RENTAL: on the
+  // borrower default path the renter is reset and the lender is paid the
+  // prepaid rental ERC-20 fees while the NFT stays in the lender's vault — NOT
+  // a collateral-in-kind transfer — so we omit the settlement row entirely for
+  // rentals rather than mislabel them (Codex r1 P2).
+  const isLendingLoan =
+    loanDetails != null && Number(loanDetails.assetType) === 0;
+  // Within a lending loan, settlement is IN-KIND on default (lender receives
+  // the collateral asset itself, no DEX swap / LTV liquidation) when the
+  // collateral is an NFT (assetType 1/2) or either leg is illiquid (no on-chain
+  // price). Disclosed below so a buyer of this position NFT understands the
+  // downside-recovery shape before they commit.
   const settlesInKind =
-    loanDetails != null &&
+    isLendingLoan &&
     (Number(loanDetails.collateralAssetType) !== 0 ||
       loanDetails.collateralLiquidity === 1n ||
       loanDetails.principalLiquidity === 1n);
@@ -891,17 +899,21 @@ function LiveCard({
               )}
               {/* #796 — settlement-method disclosure: tell a holder/buyer of
                   this position NFT whether the loan settles by DEX swap or
-                  in-kind (raw collateral) on default. */}
-              <div className="data-row">
-                <span className="data-label">
-                  {t("nftVerifier.settlementLabel")}
-                </span>
-                <span className="data-value">
-                  {settlesInKind
-                    ? t("nftVerifier.settlementInKind")
-                    : t("nftVerifier.settlementLiquid")}
-                </span>
-              </div>
+                  in-kind (raw collateral) on default. Lending loans only —
+                  rentals (NFT principal) use a different default model, so the
+                  row is omitted for them (Codex r1 P2). */}
+              {isLendingLoan && (
+                <div className="data-row">
+                  <span className="data-label">
+                    {t("nftVerifier.settlementLabel")}
+                  </span>
+                  <span className="data-value">
+                    {settlesInKind
+                      ? t("nftVerifier.settlementInKind")
+                      : t("nftVerifier.settlementLiquid")}
+                  </span>
+                </div>
+              )}
               {settlesInKind && (
                 <div
                   className="alert alert-warning"

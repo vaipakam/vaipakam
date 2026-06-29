@@ -970,8 +970,10 @@ export default function LoanDetails() {
               active illiquid / no-oracle loan, not just a buried "Risk" data-row.
               On default the lender receives the raw collateral (no swap, no LTV
               liquidation), so both sides must keep that downside visible for the
-              life of the loan. */}
-          {isIlliquidLoan && (
+              life of the loan. Gated to active / fallback-pending states (Codex
+              r1 P3) — the future-tense "if the borrower defaults" warning would
+              be stale on a Repaid / Settled / Defaulted terminal loan. */}
+          {isIlliquidLoan && canAct && (
             <div
               className="alert alert-warning"
               style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '4px 0 12px' }}
