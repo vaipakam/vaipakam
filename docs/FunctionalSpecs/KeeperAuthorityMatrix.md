@@ -38,9 +38,17 @@ A keeper-accessible function authorises **one** of three callers
 
    Any gate failing reverts `KeeperAccessRequired`.
 
-A pre-loan variant (`requireKeeperForPrincipal`) authorises a solver against the
-**principal** being acted for (used by signed-fill / intent-roll, where no loan
-NFT exists yet).
+A **principal-keyed** variant (`requireKeeperForPrincipal`) authorises a solver
+against the **principal** being acted for, rather than against a per-loan keeper
+toggle. It is used in two distinct situations:
+- **Signed-fill** (`SIGNED_FILL`) — no loan / position NFT exists yet, so there
+  is no per-loan gate to consult; authority is keyed purely to the principal.
+- **Intent-roll** (`AUTO_ROLL`) — acts on an **existing repaid loan**. There is
+  still no per-loan keeper toggle, but the path independently requires that the
+  originating lender (`io.owner`) **still owns the current lender-position NFT**
+  (`ownerOf(loan.lenderTokenId) == io.owner`, and `loan.lender == io.owner`)
+  before the principal-keyed authority applies — so a sold/transferred position
+  routes to the normal claim, not the roll.
 
 The action bits (`LibVaipakam.KEEPER_ACTION_*`, a `uint8` mask;
 `KEEPER_ACTION_ALL = 0xFF`): `COMPLETE_LOAN_SALE`, `COMPLETE_OFFSET`,
@@ -67,7 +75,7 @@ soft-skipped). Neither hands the keeper the user's principal/collateral.
 | Refinance loan | `REFINANCE` | borrower | `RefinanceFacet` |
 | Auto-extend in place | `EXTEND` | **borrower** (the `EXTEND` bit gates the borrower-side call; lender consent comes only from the per-loan caps, so a lender-approved keeper alone cannot drive it) | `AutoLifecycleFacet` |
 | Fill a standing signed intent | `SIGNED_FILL` | lender — **principal-keyed** (`requireKeeperForPrincipal`): no per-loan gate (the loan doesn't exist yet), only global pause + master access + the principal's action bit | `OfferMatchFacet` |
-| Auto-roll a repaid intent loan | `AUTO_ROLL` | lender — **principal-keyed** (same model, no per-loan toggle) | `LenderIntentFacet` |
+| Auto-roll a repaid intent loan | `AUTO_ROLL` | lender — **principal-keyed**, no per-loan toggle, but acts on an **existing repaid loan** and independently requires the originating lender still owns the current lender-position NFT (else routes to the normal claim) | `LenderIntentFacet` |
 
 ## What a delegated keeper CANNOT do — the no-custody boundary
 
@@ -84,7 +92,7 @@ These paths are **owner-only** (gated on current position-NFT ownership) or
 | Direct vault withdrawal (`vaultWithdrawERC20`) | `onlyDiamondInternal` — no external caller, keeper included | (internal-only) | covered by the modifier; exercised across vault flows |
 | Transfer a position NFT | ordinary ERC-721 owner/approval + transfer-lock guards; keeper approval is **not** a transfer right | ERC-721 / lock revert | ERC-721 owner/lock tests |
 | Lower the liquidation min-out floor | oracle-derived floor in the liquidation facet; caller calldata picks routes but cannot set a lower minimum-out | slippage revert | `LiquidationMinOutputInvariantTest::test_Invariant_MinOutputIsOracleDerived` |
-| Redirect claim ownership / recipient | recipients are the loan's lender/borrower (or current NFT holder), never `msg.sender` | n/a | the permissionless-recipient tests below |
+| Redirect claim ownership / recipient | the claim pays the **verified current position-NFT holder** (which on the claim paths is the caller, reached through `msg.sender`); a non-owner caller — keeper included — cannot name a different recipient | `NotNFTOwner` (non-owner caller) | the no-owner `…CannotClaimAs*` tests above + the permissionless-recipient tests below |
 
 ## The permissionless exception (not a delegated-keeper right)
 

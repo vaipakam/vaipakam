@@ -19,8 +19,11 @@ change makes the boundary auditable from one place and pins the strongest case.
   the NFT-owner authority), the allowed delegated surface (action bit →
   function), and the no-custody boundary table (each owner-only /
   diamond-internal gate the keeper bitmask never reaches), plus the
-  permissionless-trigger exception (repay / default / liquidation route value to
-  the loan's parties, never to the caller). Listed in the FunctionalSpecs README.
+  permissionless-trigger exception (repay / default / liquidation route the
+  user's principal / collateral proceeds to the loan's parties — never to the
+  caller — while still allowing the caller a bounded matcher / liquidator bonus
+  or the purchase of seized collateral by paying the debt). Listed in the
+  FunctionalSpecs README.
 - **KEEPER_ACTION_ALL regression tests** — `ClaimFacetTest` now approves a keeper
   with `KEEPER_ACTION_ALL`, enables the master switch, and enables it for the
   specific loan, then proves it is **still** rejected (`NotNFTOwner`) on
@@ -36,8 +39,11 @@ The other boundary rows (partial-withdraw owner gate, `vaultWithdrawERC20`
 diamond-internal, NFT-transfer ERC-721 ownership, oracle-derived liquidation
 min-out) are already pinned by existing tests
 (`AddCollateralFacetTest`, `PartialWithdrawalFacetTest`,
-`LenderIntentCapital.t.sol`, `LiquidationMinOutputInvariant.t.sol`); the matrix
-references them. This is a hardening / regression card — no protocol behaviour
+`LiquidationMinOutputInvariant.t.sol`); the matrix references them.
+(`LenderIntentCapital.t.sol`'s `test_rollIntentLoan_unauthorizedKeeper_reverts`
+is cited separately as **allowed-surface** authorization coverage — proving an
+unapproved keeper can't act on the AUTO_ROLL surface — not as a custody-boundary
+row.) This is a hardening / regression card — no protocol behaviour
 changed (test-only contract change; no `contracts/src/` / selector / ABI change).
 
 Closes #803.
