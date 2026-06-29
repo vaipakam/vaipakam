@@ -23,7 +23,7 @@ import {
   indexedToLoanSummary,
 } from '../lib/indexerClient';
 import { groupLoansByOffer, type OfferGroup } from './useOfferGroupedLoans';
-import type { LoanSummary } from '../types/loan';
+import type { LoanSummary, LoanStatus } from '../types/loan';
 import type { LoanRisk } from './useLoanRisks';
 
 /** Risks only drive the group's `minHf` aggregate; OfferDetails doesn't compute
@@ -34,6 +34,10 @@ const EMPTY_RISKS = new Map<string, LoanRisk>();
 const MAX_CHILD_LOANS = 500;
 const ACTIVITY_PAGE = 100;
 const MAX_ACTIVITY_PAGES = 10;
+/** Per-loan hydration is dispatched in batches of this size so each request's
+ *  abort timer starts when it actually runs (not all at once under a connection
+ *  cap), preventing slow children from timing out and being dropped. */
+const HYDRATE_CONCURRENCY = 8;
 
 interface UseOfferChildLoansResult {
   /** The single grouped row for this offer, or `null` until loaded / if none. */
@@ -103,27 +107,51 @@ export function useOfferChildLoans(
         }
         if (cancelled) return;
 
-        // 2. Hydrate each child loan → LoanSummary (creator-side role).
+        // 2. Hydrate each child loan → LoanSummary (creator-side role). Hydrate
+        //    in BOUNDED batches, not one giant `Promise.all`: each `/loans/:id`
+        //    has its own 4s abort timer that starts on dispatch, so firing 500
+        //    at once means later requests time out (→ null → dropped) before
+        //    they run under a browser/Worker per-origin connection cap, silently
+        //    undercounting the large multi-fill offers this feature targets
+        //    (Codex P2). Per-batch dispatch keeps each request's timer honest.
         const role: 'lender' | 'borrower' =
           offerType === 0 ? 'lender' : 'borrower';
         const ids = Array.from(loanIds).slice(0, MAX_CHILD_LOANS);
-        const hydrated = await Promise.all(
-          ids.map(async (id) => {
-            const il = await fetchLoanById(chain.chainId, id);
-            if (!il) return null;
-            // Force the summary's offerId to the offer being DISPLAYED. A
-            // matcher-driven fill's loan carries the BORROWER offer id on-chain
-            // (`acceptOfferInternal(borrowerOfferId)`), so without this override
-            // `groupLoansByOffer` would bucket it under the borrower offer and
-            // the `groups.find(g => g.offerId === offerId)` below would drop it
-            // — hiding matched children of a lender offer (Codex P2).
-            return { ...indexedToLoanSummary(il, role), offerId };
-          }),
-        );
+        const summaries: LoanSummary[] = [];
+        for (let i = 0; i < ids.length; i += HYDRATE_CONCURRENCY) {
+          if (cancelled) return;
+          const batch = ids.slice(i, i + HYDRATE_CONCURRENCY);
+          const part = await Promise.all(
+            batch.map(async (id) => {
+              const il = await fetchLoanById(chain.chainId, id);
+              if (!il) return null;
+              // Force the summary's offerId to the offer being DISPLAYED. A
+              // matcher-driven fill's loan carries the BORROWER offer id
+              // on-chain (`acceptOfferInternal(borrowerOfferId)`), so without
+              // this override `groupLoansByOffer` would bucket it under the
+              // borrower offer and the `groups.find(g => g.offerId === offerId)`
+              // below would drop it — hiding matched children (Codex P2).
+              //
+              // `liquidationLtvBpsAtInit` / `minHealthFactorAtInit` are init-time
+              // risk snapshots the indexer doesn't carry; default to 0n. The
+              // offer-side grouping + OfferGroupCard never read them (risk is the
+              // empty-map "—"), so the default is inert here.
+              const base = indexedToLoanSummary(il, role);
+              return {
+                ...base,
+                // The mapper types `status` as a plain number; the values it
+                // produces are valid `LoanStatus` members (0–5 via the fixed
+                // INDEXER_STATUS_TO_ENUM), so narrow it for `LoanSummary`.
+                status: base.status as LoanStatus,
+                offerId,
+                liquidationLtvBpsAtInit: 0,
+                minHealthFactorAtInit: 0n,
+              };
+            }),
+          );
+          for (const s of part) if (s) summaries.push(s);
+        }
         if (cancelled) return;
-        const summaries = hydrated.filter(
-          (l): l is LoanSummary => l !== null,
-        );
 
         // 3. Group through the shared logic → the single row for this offer.
         const groups = groupLoansByOffer(summaries, EMPTY_RISKS);

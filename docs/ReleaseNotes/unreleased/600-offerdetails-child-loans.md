@@ -21,11 +21,10 @@ records the lender side so those children surface here too). It reflects all loa
 the offer ever produced regardless of who currently holds them. No on-chain or
 contract changes.
 
-Operational note: the matcher-fill coverage relies on a new indexer field written
-only for activity recorded after this deploys. On an environment that already has
-historical matcher-filled lender offers, those existing rows need a one-time
-re-index to appear in this section (the platform is pre-live, so there is no
-production history to backfill).
+The matcher-fill coverage relies on a new indexer field. A one-time database
+migration backfills that field for any activity already recorded before this
+deploys, so historical matcher-filled lender offers also list their child loans
+without a full re-index.
 
 This also corrects a status-label mapping so terminal loans (liquidated /
 fully-settled) show the right status and counts here and on the public dashboard.
