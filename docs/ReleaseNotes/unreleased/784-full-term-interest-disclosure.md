@@ -16,7 +16,14 @@ specific offer:
   when partial repay is enabled.
 
 The same disclosure now also appears on the borrower-initiated **preclose-offset**
-flow, which creates a replacement lender offer inheriting the loan's interest mode.
+flow, which creates a replacement lender offer inheriting the loan's interest mode
+(that replacement offer is always non-partial-repay, so its wording reflects that).
+
+The line is shown only for interest-bearing **ERC-20** loans — **NFT-rental**
+offers settle prepaid rental fees rather than APR interest, so it's omitted there.
+On the create-offer form, if a disclosure-driving field (interest mode,
+partial-repay, or asset type) changes after the user has ticked the consent box,
+the acknowledgement is cleared so they re-confirm against the updated wording.
 
 The wording is tailored to the actual interest mode of the offer in front of the
 user (sourced from the offer's term-interest setting, not hardcoded), so the

@@ -674,10 +674,15 @@ export default function BorrowerPreclose() {
                   </div>
                   {/* #784 — the offset path CREATES a replacement lender offer
                       whose term-interest mode is inherited from this loan
-                      (PrecloseFacet); disclose it like any other offer-create. */}
+                      (PrecloseFacet `_buildOffsetParams`: `useFullTermInterest =
+                      loan.useFullTermInterest`). It does NOT inherit
+                      `allowsPartialRepay` — that param is left unset, so the new
+                      offer is always non-partial (Codex P2); pass `false`, not
+                      the loan's flag. This block is ERC-20-only, so the line
+                      always applies. */}
                   <RiskDisclosures
                     fullTermInterest={loan?.useFullTermInterest}
-                    allowsPartialRepay={loan?.allowsPartialRepay}
+                    allowsPartialRepay={false}
                   />
                   <label
                     style={{

@@ -1901,8 +1901,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
         {/* #784 — disclose this offer's actual term-interest mode to the
             borrower before they accept (full-term by default). */}
+        {/* #784 — ERC-20 loans only (assetType 0): NFT rentals settle prepaid
+            rental fees, not APR interest, so the term-interest line is omitted
+            (Codex P2). */}
         <RiskDisclosures
-          fullTermInterest={offer.useFullTermInterest}
+          fullTermInterest={
+            offer.assetType === 0 ? offer.useFullTermInterest : undefined
+          }
           allowsPartialRepay={offer.allowsPartialRepay}
         />
 
