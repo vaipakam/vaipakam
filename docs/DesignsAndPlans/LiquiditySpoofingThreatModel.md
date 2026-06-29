@@ -224,7 +224,8 @@ Create Offer, Offer Book, Loan Details, and operator dashboards should expose:
 - qualifying-depth age warning;
 - single-venue warning;
 - current route slippage at floor size;
-- whether the asset was demoted since offer creation.
+- whether the current effective tier is below the offer creation-time snapshot,
+  making the offer stale and unacceptable until re-authored.
 
 Basic mode should not expose every raw metric, but it must show the decision:
 
@@ -242,6 +243,8 @@ Governance and guardian roles should have remove-only or risk-reducing controls:
 - force keeper confidence tier to `0`;
 - enter a safe-mode / freeze that blocks new tiered admissions or forces the
   safest tier, without falling back to a less conservative legacy path;
+- explicitly avoid using the depth-tiered-LTV disable switch as an incident
+  mitigation unless it also enforces the safe-mode behavior above;
 - disable a pool factory / quote asset route family;
 - lower per-tier LTV caps;
 - lower per-asset caps;
