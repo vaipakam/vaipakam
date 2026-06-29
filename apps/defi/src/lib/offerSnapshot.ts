@@ -49,6 +49,9 @@ interface SerializedOffer {
   /** Optional — older snapshots predate this field, so reads must
    *  default to false if absent. */
   allowsPartialRepay?: boolean;
+  /** #784 — optional; older snapshots predate this field, so reads default to
+   *  true (full-term, the protocol default + conservative disclosure). */
+  useFullTermInterest?: boolean;
   /** T-034 — optional; older snapshots predate this field, so reads
    *  must default to 0 (None) if absent. */
   periodicInterestCadence?: number;
@@ -128,6 +131,7 @@ export function writeOfferSnapshot(
     assetType: offer.assetType,
     tokenId: offer.tokenId.toString(),
     allowsPartialRepay: offer.allowsPartialRepay,
+    useFullTermInterest: offer.useFullTermInterest,
     periodicInterestCadence: offer.periodicInterestCadence ?? 0,
     // Codex round-15 P2 #6 — persist the NFT collateral type + token
     // id so a snapshot-recovered sold row renders the proper NFT
@@ -204,6 +208,7 @@ export function readOfferSnapshot(
       assetType: p.assetType,
       tokenId: BigInt(p.tokenId),
       allowsPartialRepay: p.allowsPartialRepay ?? false,
+      useFullTermInterest: p.useFullTermInterest ?? true,
       periodicInterestCadence:
         typeof p.periodicInterestCadence === 'number' ? p.periodicInterestCadence : 0,
       // Codex round-15 P2 #6 — undefined when the snapshot predates

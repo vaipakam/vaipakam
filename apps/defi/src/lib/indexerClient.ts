@@ -649,6 +649,8 @@ export function indexedToRawOffer(o: IndexedOffer): {
   assetType: number;
   tokenId: bigint;
   allowsPartialRepay: boolean;
+  // #784 — creator's term-interest mode, bubbled to the accept-flow disclosure.
+  useFullTermInterest: boolean;
   // #164 / #241 — surfaced for the MyOffers cancel-cooldown
   // predicate, which needs `createdAt` + `amountFilled` to evaluate
   // the 5-minute window. `createdAt` is the ON-CHAIN
@@ -716,6 +718,7 @@ export function indexedToRawOffer(o: IndexedOffer): {
     assetType: o.assetType,
     tokenId: BigInt(o.tokenId),
     allowsPartialRepay: o.allowsPartialRepay,
+    useFullTermInterest: o.useFullTermInterest,
     createdAt: BigInt(o.createdAt ?? 0),
     amountFilled: BigInt(o.amountFilled),
     expiresAt: BigInt(o.expiresAt ?? 0),

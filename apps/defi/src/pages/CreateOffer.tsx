@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { parseAbi, parseUnits, formatUnits, type Abi, type Address, type Hex, encodeFunctionData } from "viem";
@@ -313,6 +313,21 @@ export default function CreateOffer() {
     form.collateralAssetType,
     setField,
   ]);
+
+  // #784 (Codex P2) — the Risk Disclosures term-interest line depends on the
+  // offer's `assetType` (NFT rentals omit it), `useFullTermInterest`, and
+  // `allowsPartialRepay` (the latter rendered BELOW the consent box in Advanced
+  // Options). If any of these change after the user already ticked consent, the
+  // binding disclosure text changed off-screen — force a fresh acknowledgement
+  // by clearing consent. The ref seeds to the initial signature so mount is a
+  // no-op; only a real post-mount change clears.
+  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}`;
+  const disclosureSigRef = useRef(disclosureSig);
+  useEffect(() => {
+    if (disclosureSigRef.current === disclosureSig) return;
+    disclosureSigRef.current = disclosureSig;
+    if (form.riskAndTermsConsent) setField("riskAndTermsConsent", false);
+  }, [disclosureSig, form.riskAndTermsConsent, setField]);
 
   // Live wallet-balance check. Compares the wallet's current balance
   // of the asset that will be pulled at offer-create time (lender →
@@ -1528,7 +1543,17 @@ export default function CreateOffer() {
             {t('createOffer.riskDisclosures')}
           </div>
 
-          <RiskDisclosures />
+          {/* #784 — reflect the term-interest mode this offer is being created
+              with (default full-term), so the creator sees plainly what the
+              borrower commits to. ERC-20 loans only: NFT rentals settle prepaid
+              rental fees, not APR interest, so the line is omitted there (Codex
+              P2) — `undefined` ⇒ RiskDisclosures renders no term-interest line. */}
+          <RiskDisclosures
+            fullTermInterest={
+              form.assetType === 'erc20' ? form.useFullTermInterest : undefined
+            }
+            allowsPartialRepay={form.allowsPartialRepay}
+          />
 
           <label className="checkbox-row" style={{ marginTop: 12 }}>
             <input

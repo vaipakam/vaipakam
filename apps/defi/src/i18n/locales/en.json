@@ -695,7 +695,10 @@
     "consentRequiredHint": "Please check the agreement above to continue.",
     "learnMoreLabel": "Learn how liquidation actually works →",
     "paragraph1": "I understand that in case of market abnormalities or for any other reason liquidation cannot execute safely, the lender may receive collateral in-kind — that is, the collateral asset itself — instead of the lending asset. If oracle pricing is unavailable, or if the loan uses illiquid assets, the lender may receive all collateral regardless of market value and the borrower receives nothing.",
-    "paragraph2": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position."
+    "paragraph2": "By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position.",
+    "fullTermInterest": "Full-term interest: the borrower agrees to pay interest for the entire agreed loan term, even if the loan is repaid early. Repaying before the term ends does NOT reduce the interest owed — the full-term interest amount is due either way.",
+    "fullTermInterestPartial": "Full-term interest: the borrower agrees to pay full-term interest on the loan's outstanding principal. This offer allows partial repayments — paying down principal early lowers the future interest on the remaining balance — but repaying the remaining balance early does NOT reduce the full-term interest owed on it.",
+    "proRataInterest": "Pro-rata interest: interest on this loan accrues only for the time the loan is actually outstanding. If the borrower repays early, only the interest for the elapsed period is owed."
   },
   "nav": {
     "brandHome": "Vaipakam home",

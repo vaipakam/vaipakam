@@ -36,6 +36,14 @@
   margin-bottom: 0;
 }
 
+/* #784 — the term-interest line (full-term vs pro-rata) gets a touch more
+   emphasis so the borrower's interest commitment stands out from the
+   general liquidation copy, without shouting. */
+.risk-disclosures-term-interest {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .risk-consent-terms-link {
   color: var(--brand, #5eead4);
   text-decoration: underline;

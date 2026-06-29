@@ -130,6 +130,10 @@ export interface OfferData {
    *  there's no acceptor-side override. Snapshotted to
    *  `Loan.allowsPartialRepay` at init and gates `RepayFacet.repayPartial`. */
   allowsPartialRepay: boolean;
+  /** #408 / #784 — creator's term-interest mode. `true` (default) = borrower
+   *  owes the FULL-TERM interest even on early repay; `false` = pro-rata to
+   *  elapsed time. Drives the #784 risk-disclosure line on the accept flow. */
+  useFullTermInterest: boolean;
   /** T-034 — lender-set Periodic Interest Payment cadence
    *  (0 = None ... 4 = Annual). Snapshotted onto the loan at acceptance.
    *  Acceptors must explicitly acknowledge non-`None` cadences before
@@ -262,6 +266,9 @@ export type RawOffer = {
   assetType: bigint | number;
   tokenId: bigint;
   allowsPartialRepay?: boolean;
+  /** #784 — optional so any raw shape that omits it defaults to full-term
+   *  (the conservative disclosure) in `toOfferData`. */
+  useFullTermInterest?: boolean;
   periodicInterestCadence?: bigint | number;
   /** #168 / #241 — partial-fill cancel-cooldown driver. */
   createdAt?: bigint;
@@ -312,6 +319,9 @@ export function toOfferData(r: RawOffer): OfferData {
     assetType: Number(r.assetType),
     tokenId: r.tokenId,
     allowsPartialRepay: r.allowsPartialRepay ?? false,
+    // #784 — default true: full-term is the protocol default, and it's the
+    // conservative disclosure if a legacy raw shape omits the field.
+    useFullTermInterest: r.useFullTermInterest ?? true,
     periodicInterestCadence: Number(r.periodicInterestCadence ?? 0),
     // #241 — thread through every field the MyOffers cooldown / GTT
     // chip relies on. Each is optional so any raw shape that omits
@@ -1889,7 +1899,17 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           </div>
         )}
 
-        <RiskDisclosures />
+        {/* #784 — disclose this offer's actual term-interest mode to the
+            borrower before they accept (full-term by default). */}
+        {/* #784 — ERC-20 loans only (assetType 0): NFT rentals settle prepaid
+            rental fees, not APR interest, so the term-interest line is omitted
+            (Codex P2). */}
+        <RiskDisclosures
+          fullTermInterest={
+            offer.assetType === 0 ? offer.useFullTermInterest : undefined
+          }
+          allowsPartialRepay={offer.allowsPartialRepay}
+        />
 
         {/* Phase 7b.1 — UX guard: 0x preflight against the
             collateral → principal pair at the actual offer size.
