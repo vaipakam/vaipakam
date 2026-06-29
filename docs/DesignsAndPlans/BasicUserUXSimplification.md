@@ -113,7 +113,8 @@ Before signing, show whether the flow is currently possible:
 - sanctions/Terms gate status for the connected wallet and, on accept flows, the
   offer creator or relevant counterparty
 - asset liquidity class and default consequence
-- oracle and L2 sequencer-health status for oracle-sensitive actions
+- oracle health, plus L2 sequencer uptime and recovery-window status for
+  oracle-sensitive actions on supported L2s
 - protocol pause or asset pause status
 
 The user should see problems as fixable checklist items rather than opaque
