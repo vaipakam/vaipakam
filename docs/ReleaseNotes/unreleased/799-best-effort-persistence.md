@@ -10,21 +10,30 @@ closes the remaining gaps.
 What changed:
 
 - **Auto-lend intent card** — now carries a persistent best-effort notice
-  (visible at enablement and while enabled) stating that fills and auto-roll
-  depend on matching borrower demand within the lender's bounds and an enabled,
-  funded protocol keeper, so capital may sit idle and the lender stays
-  responsible for monitoring. The card already surfaced the fill-path and
-  keeper-access kill-switch banners; this adds the standing best-effort framing.
+  (visible at enablement and while enabled). It distinguishes the two halves:
+  fills depend on matching borrower demand within the lender's bounds and need
+  no protocol keeper for open intents (any solver may fill — only
+  keeper-restricted fills need one), whereas auto-roll of repaid loans is the
+  keeper-dependent part. So capital may sit idle, deploy, or stop rolling, and
+  the lender stays responsible for monitoring. The card already surfaced the
+  fill-path and keeper-access kill-switch banners; this adds the standing
+  best-effort framing.
 - **Auto-lifecycle caps card** — the best-effort warning is now **persistent
-  while a cap is enabled**, not just shown during the false→true enable
-  transition (it previously disappeared on save). So a borrower/lender who
-  enabled a cap keeps seeing that auto-refinance / auto-extend is best-effort and
-  not default protection for the life of the cap.
-- **Keeper kill-switch visibility on the caps card** — when the connected
-  holder's keeper cannot act (keeper master switch off, or no keeper approved),
-  the card now warns that any enabled auto-refinance / auto-extend cap is inert
-  until keeper access is restored, because those actions are keeper-executed.
-  Loan Details derives this from the per-side keeper status it already reads.
+  while a cap is active**, not just shown during the false→true enable
+  transition (it previously disappeared on save). It is keyed on the saved
+  on-chain state too, so it stays up during a pending (unsaved or failed)
+  disable while the cap is still live. So a borrower/lender keeps seeing that
+  auto-refinance / auto-extend is best-effort and not default protection for the
+  life of the cap.
+- **Keeper kill-switch visibility on the caps card** — when the **borrower**
+  holder's master keeper switch is off (an unambiguous hard gate — both
+  auto-refinance and auto-extend execute against the borrower side), the card
+  warns that any enabled cap is inert until keeper access is restored: the
+  master switch on, a keeper approved with the right permissions, AND that
+  keeper enabled for this specific loan via the per-loan toggles. The lender's
+  keeper is not treated as a blocker (the lender's extend-caps are only their
+  consent surface), and the warning does not infer inertness from the
+  approved-keeper count.
 
 New component tests cover the keeper-unavailable warning (both directions) and
 the persistent best-effort warning while a saved cap is enabled.

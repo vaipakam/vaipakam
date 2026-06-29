@@ -113,11 +113,15 @@ export default function LoanDetails() {
   }, [loadLoan, reloadLien]);
   // Per README §3 lines 190–191 keeper authority follows the current NFT
   // holder. The per-keeper toggles render live state directly; we ALSO consume
-  // the per-side master-switch summary here (#799) to tell the auto-lifecycle
-  // caps card whether the connected holder's keeper can actually act — an
-  // enabled auto-refinance / auto-extend cap is inert if its owner's keeper
-  // master switch is off or no keeper is approved.
-  const { lenderStatus: keeperLenderStatus, borrowerStatus: keeperBorrowerStatus } =
+  // the BORROWER-side master-switch summary here (#799) to tell the
+  // auto-lifecycle caps card whether the keeper can actually act. Both
+  // auto-refinance and auto-extend are executed against the BORROWER side
+  // (`LibAuth.requireKeeperFor(..., lenderSide=false)`), so only the borrower's
+  // keeper master switch gates them — the lender's extend-caps are just the
+  // lender's consent surface and don't depend on the lender's keeper (Codex
+  // #811 r2). We pass both holders so the hook can resolve, but only read the
+  // borrower side.
+  const { borrowerStatus: keeperBorrowerStatus } =
     useKeeperStatus(lenderHolder || null, borrowerHolder || null);
   // Signer-connected ERC-20 contracts for the loan's principal / collateral
   // assets. Used to read decimals() and to approve the Diamond before repay
@@ -204,19 +208,20 @@ export default function LoanDetails() {
   };
   const isLender = !!loan && isHolder(lenderHolder);
   const isBorrower = !!loan && isHolder(borrowerHolder);
-  // #799 — the connected holder's keeper MASTER SWITCH being off is an
-  // unambiguous hard gate: LibAuth refuses every keeper action for a user whose
-  // profile opt-in is false, regardless of which keeper or action bits exist, so
-  // any auto-lifecycle cap they enable is definitively inert. We key the warning
-  // on exactly that (Codex #811 r1 P2): we deliberately do NOT infer inertness
-  // from `approvedCount` — a non-zero count doesn't prove an approved keeper
-  // holds the REFINANCE/EXTEND action bit, and the master switch being ON makes
-  // no false promise here (the per-keeper action detail lives in the keeper
-  // toggles on this same page). Scoped to the user's own held side(s); `null`
-  // status (still loading / no Diamond) ⇒ stay quiet.
+  // #799 — the BORROWER's keeper MASTER SWITCH being off is an unambiguous hard
+  // gate: both auto-refinance and auto-extend are executed against the borrower
+  // side, and LibAuth refuses every keeper action for a borrower whose profile
+  // opt-in is off, regardless of which keeper or action bits exist — so any
+  // auto-lifecycle cap is then definitively inert. We key the warning on exactly
+  // that (Codex #811 r1/r2): we do NOT infer inertness from `approvedCount` (a
+  // non-zero count doesn't prove an approved keeper holds the REFINANCE/EXTEND
+  // bit AND is enabled for this loan — that finer detail lives in the per-keeper
+  // toggles on this page), and we do NOT gate on the LENDER's keeper, since the
+  // lender's extend-caps are only their consent surface, not the execution gate.
+  // Only the borrower holder is warned; `null` status (loading / no Diamond) ⇒
+  // stay quiet.
   const keeperCannotActForUser =
-    (isBorrower && keeperBorrowerStatus?.profileOptIn === false) ||
-    (isLender && keeperLenderStatus?.profileOptIn === false);
+    isBorrower && keeperBorrowerStatus?.profileOptIn === false;
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;

@@ -286,13 +286,15 @@ function RefinanceCapsEditor({
       <div className="stat-label" style={{ marginBottom: 8 }}>
         {t('autoLifecycleLoanCaps.refinanceHint')}
       </div>
-      {/* #799 — best-effort warning is now PERSISTENT while caps are enabled,
-          not only during the false → true transition (T-092/#543). Auto-refinance
-          is best-effort, not default protection: a lender/borrower must keep
-          seeing that while the cap is on, so they don't read an enabled cap as a
-          guaranteed rescue. Shows whenever the box is checked (pending or saved);
-          hides only when the user un-checks it. */}
-      {enabled && (
+      {/* #799 — best-effort warning is PERSISTENT while the cap is active, not
+          only during the false → true transition (T-092/#543). Auto-refinance is
+          best-effort, not default protection, so it must stay visible the whole
+          time the cap is on. Keyed on `enabled || current.enabled` (Codex #811
+          r2): it stays up while the SAVED cap is still active on-chain even if
+          the user has unchecked the box but not yet saved (or the disable tx
+          failed) — that pending-disable window is exactly when the cap is still
+          live, so the disclosure must not vanish prematurely. */}
+      {(enabled || current.enabled) && (
         <div className="alert alert-warning" role="alert" style={{ marginBottom: 8 }}>
           <AlertTriangle size={14} />
           <div>{t('autoLifecycleLoanCaps.bestEffortWarning')}</div>
@@ -405,7 +407,7 @@ function ExtendCapsEditor({
           Extend is best-effort: it only fires if BOTH sides have consent AND
           the keeper fires within grace, so the warning stays up the whole time
           the cap is on. */}
-      {enabled && (
+      {(enabled || current.enabled) && (
         <div className="alert alert-warning" role="alert" style={{ marginBottom: 8 }}>
           <AlertTriangle size={14} />
           <div>{t('autoLifecycleLoanCaps.bestEffortWarning')}</div>
