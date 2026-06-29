@@ -477,7 +477,12 @@ export default function BorrowerPreclose() {
             <div className="action-group">
               <h4 className="action-title">{t('preclose.directPrecloseTitle')}</h4>
               <p className="action-desc">{t('preclose.directPrecloseDesc')}</p>
-              <InterestImplicationWarning kind="preclose-direct" />
+              {/* #797 — Direct preclose settles at the loan's interest mode;
+                  pass it so a pro-rata loan shows pro-rata copy, not full-term. */}
+              <InterestImplicationWarning
+                kind="preclose-direct"
+                fullTermInterest={loan?.useFullTermInterest}
+              />
               <div className="action-row" style={{ marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"

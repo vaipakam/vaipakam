@@ -674,7 +674,18 @@
     "precloseOffsetTitle": "You'll pay accrued interest plus shortfall, and lock new principal",
     "precloseOffsetBody": "The Offset path settles your loan against a fresh lender offer that you create. Up front you pay the interest accrued so far plus any rate shortfall to the original lender, and you must deposit fresh principal as collateral for the offset offer. Your borrower-side NFT is locked until a new borrower accepts the offer or you cancel it.",
     "refinanceTitle": "Old loan closes at full-term interest plus shortfall",
-    "refinanceBody": "Refinancing repays the old lender with principal plus FULL TERM interest (not just accrued) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's. You're effectively paying as if the old loan reached maturity, in exchange for the new terms."
+    "refinanceBody": "Refinancing repays the old lender with principal plus FULL TERM interest (not just accrued) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's. You're effectively paying as if the old loan reached maturity, in exchange for the new terms.",
+    "precloseDirectTitleProRata": "You'll pay interest accrued to date",
+    "precloseDirectBodyProRata": "This loan charges pro-rata interest, so closing now via the Direct path requires only the interest accrued so far — not full-term interest. The lender receives 99% of that accrued interest; 1% goes to the protocol treasury.",
+    "refinanceTitleProRata": "Old loan closes at accrued interest plus shortfall",
+    "refinanceBodyProRata": "This loan charges pro-rata interest, so refinancing repays the old lender with principal plus only the interest accrued to date (not full-term) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's."
+  },
+  "interestMode": {
+    "fullTerm": "Full-term interest",
+    "proRata": "Pro-rata interest",
+    "fullTermTip": "Interest is owed for the entire loan term even if repaid early — repaying early does NOT reduce the interest owed.",
+    "fullTermPartialTip": "Full-term interest on the outstanding principal. Partial repayments lower future interest on the reduced balance, but repaying the remainder early does not reduce the full-term interest owed on it.",
+    "proRataTip": "Interest accrues only while the loan is outstanding — repaying early reduces the total interest owed."
   },
   "transferLockWarning": {
     "preconfirmTitle": "Vaipakam NFT transfer lock",
@@ -963,6 +974,7 @@
     "principal": "Principal",
     "principalAsset": "Principal Asset",
     "interestRateApr": "Interest Rate (APR)",
+    "interestMode": "Interest mode",
     "duration": "Duration",
     "daysSuffix": "days",
     "startDate": "Start Date",
