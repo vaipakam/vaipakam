@@ -22,8 +22,8 @@ Sources of intended behavior:
 - `docs/FunctionalSpecs/ProjectDetailsREADME.md`
 - `docs/FunctionalSpecs/WebsiteReadme.md`
 - `docs/FunctionalSpecs/TokenomicsTechSpec.md`
-- `docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md`
-- `docs/FunctionalSpecs/KeeperAuthorityMatrix.md`
+- `docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md`
+- `docs/DesignsAndPlans/KeeperAuthorityMatrix.md`
 - current user-guide copy under `apps/www/src/content/userguide/`
 - existing test-scope documents under `docs/TestScopes/`
 

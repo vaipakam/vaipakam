@@ -40,7 +40,7 @@ copying what the code does.
 
 | Date | Divergent symbol | Spec section | One-line summary | Status |
 |------|------------------|--------------|------------------|--------|
-| 2026-06-30 | `EarlyWithdrawalFacet.completeLoanSale` / `PrecloseFacet.completeOffset` (completion-path deferred proceeds) | `SanctionsAndTermsGateMatrix.md` § Open gaps (f) tail | The #821 vault-lock + freeze closed the repay/default/liquidation close-outs, but the **completion** paths where a buyer is already committed (`completeLoanSale` / `completeOffset`) were not folded in: a seller/holder flagged after the sale was initiated could still brick the completion (stranding the committed buyer) rather than parking the flagged share locked. Same vault-lock treatment applies; deferred from #821's first pass to keep that PR scoped. Candidate fix: wrap their loan-party deposits in `LibSanctionedLock`. | pending triage — tracked as #831 |
+| 2026-06-30 | `EarlyWithdrawalFacet.completeLoanSale` / `PrecloseFacet.completeOffset` (completion-path deferred proceeds) | `docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md` § Open gaps (f) tail | The #821 vault-lock + freeze closed the repay/default/liquidation close-outs, but the **completion** paths where a buyer is already committed (`completeLoanSale` / `completeOffset`) were not folded in: a seller/holder flagged after the sale was initiated could still brick the completion (stranding the committed buyer) rather than parking the flagged share locked. Same vault-lock treatment applies; deferred from #821's first pass to keep that PR scoped. Candidate fix: wrap their loan-party deposits in `LibSanctionedLock`. | pending triage — tracked as #831 |
 
 ## Resolved findings
 

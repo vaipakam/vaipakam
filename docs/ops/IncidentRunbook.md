@@ -825,7 +825,7 @@ unflagged counterparty cannot extract what they're owed.
 ### Diagnose
 
 This is the **recipient-vault enforcement gap** documented in
-[`docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md`](../FunctionalSpecs/SanctionsAndTermsGateMatrix.md)
+[`docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md`](../DesignsAndPlans/SanctionsAndTermsGateMatrix.md)
 (Open gaps (f)) and logged in
 [`docs/FunctionalSpecs/_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md).
 The close-out deposits the recipient's share through `getOrCreateUserVault`, which
