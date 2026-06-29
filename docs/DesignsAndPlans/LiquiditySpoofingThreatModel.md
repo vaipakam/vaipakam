@@ -88,7 +88,7 @@ Recommended initial policy:
 | Condition | Keeper confidence result |
 | --- | --- |
 | No keeper observation exists | Tier 0; no durable-liquidity credit. |
-| Keeper observation is older than the max-age TTL | Tier 0 or emergency safe tier; prior promotion expires automatically. |
+| Keeper observation is older than the max-age TTL | Tier 0/no-admission; prior promotion expires automatically. |
 | Current route fails floor check | Tier 0 immediately. |
 | Qualifying-depth window below minimum | Tier 0; pool deployment age alone is not enough. |
 | Single venue only | Tier 1 maximum unless governance explicitly accepts single-venue risk. |
@@ -106,10 +106,10 @@ count.
 
 Example defaults for mainnet tuning:
 
-- minimum qualifying-depth age: 24 hours from the first passing floor-sized
-  depth observation, not from pool deployment;
-- minimum observation window before Tier 2: 6 hours and 12 samples;
-- minimum observation window before Tier 3: 24 hours and 48 samples;
+- minimum qualifying-depth age before any nonzero durable tier: 24 hours from
+  the first passing floor-sized depth observation, not from pool deployment;
+- minimum observation window before Tier 2: 24 hours and 12 samples;
+- minimum observation window before Tier 3: 72 hours and 48 samples;
 - max age for any promoted keeper confidence tier: 30 minutes without a fresh
   healthy observation;
 - Tier 3 / blue-chip promotion should require multi-venue or deep canonical
@@ -132,12 +132,15 @@ recompute or re-read the current effective tier at admission:
 - lender-sale buyer admission;
 - obligation-transfer incoming borrower admission.
 
-If the current effective tier is lower than the tier needed by the offer terms,
-the transaction must fail before value moves. A stale offer must not be
-auto-rerouted into the explicit illiquid-consent path, because the original
-terms were calibrated against the higher liquid/tiered assumption. The user must
-re-author or re-accept fresh terms that explicitly reflect the current risk
-state.
+If the current effective tier is lower than the offer creation-time effective
+tier, the transaction must fail before value moves, even when the lower tier
+would still satisfy the numeric LTV cap. If the current risk-config epoch differs
+from the offer creation-time epoch, the transaction must also fail unless the
+changed parameter is explicitly marked fill-compatible by governance. A stale
+offer must not be auto-rerouted into the explicit illiquid-consent path, because
+the original terms were calibrated against the higher liquid/tiered assumption.
+The user must re-author or re-accept fresh terms that explicitly reflect the
+current risk state.
 
 This prevents an attacker from creating offers while liquidity is temporarily
 healthy and filling them after it disappears.
@@ -153,7 +156,8 @@ assumptions:
 - creation-time effective tier;
 - floor sell size used;
 - slippage budget used;
-- route family / quote asset class used for the winning route;
+- concrete winning route identity or route hash, including pool address,
+  factory, fee tier, quote asset, and path hops;
 - timestamp or block of the tier read;
 - risk-terms version / config epoch.
 
@@ -164,29 +168,39 @@ Each admitted loan should also store the risk state used at admission:
 - effective tier;
 - floor sell size used;
 - slippage budget used;
-- route family / quote asset class used for the winning route;
+- concrete winning route identity or route hash, including pool address,
+  factory, fee tier, quote asset, and path hops;
 - timestamp or block of the tier read;
 - risk-terms version / config epoch.
 
 These snapshots should not freeze future liquidation behavior in an unsafe way.
 They are audit trails and terms records. Live liquidations and rescue paths still
-use current prices and current route safety.
+use current prices, current route safety, and current effective tier. If a live
+loan admitted at a higher tier later demotes, the current tier must lower the
+live liquidation threshold/discount-path treatment or force the loan into a
+safe-mode handling path; admission snapshots must never keep a more permissive
+liquidation trigger alive after liquidity confidence has fallen.
 
 ### 6. New Assets Start At Tier 0
 
 New or newly observed assets receive no durable-liquidity credit until keeper
-observations satisfy the promotion window. If governance later allows a
-conservative Tier 1 path for observed-but-limited assets, the caps below are
-mandatory rather than advisory:
+observations satisfy the promotion window. The observation universe must include
+pending offers, requested collateral assets, and governed candidate assets, not
+only assets already backing live loans. A first live loan must not be the seed
+that creates its own durability history.
 
-- per-asset aggregate principal cap while confidence is Tier 1;
-- per-loan principal cap while confidence is Tier 1;
+Capacity controls are mandatory for every measured tier, not only Tier 1:
+
+- per-asset aggregate principal caps derived from the measured floor/tier depth;
+- per-loan principal caps derived from the measured floor/tier depth;
 - no auto-lifecycle enablement by default for new or confidence-limited assets;
 - no treasury backstop Role A / Role B support until a separate governance
   allow decision and oracle-coverage requirements pass.
 
 This means a spoofed pool cannot create immediate liquid-collateral exposure;
-only assets with durable observations can move into capped Tier 1 treatment.
+only assets with durable observations can move into capped nonzero tier
+treatment, and aggregate exposure cannot exceed the depth actually measured for
+that tier.
 
 ### 7. Pool Quality Checks
 
@@ -208,9 +222,13 @@ durable:
 Transfer-restrictable or mutable token behavior is not merely an illiquid-risk
 case. Fee-on-transfer, blacklistable, pausable, rebasing, upgradeable,
 sell-taxed, or otherwise non-standard collateral should be unsupported for new
-collateral unless a specific on-chain support mechanism exists. Treating these
-assets as merely illiquid is insufficient because the illiquid fallback still
-relies on later in-kind transfer and usable recovery.
+collateral unless a specific on-chain support mechanism exists. Assets with
+admin-controlled mutability should be banned by default unless the mutability is
+irrevocably disabled or the support mechanism continuously monitors the token
+and can freeze new admissions plus route existing loans into safe-mode/rescue
+treatment on behavior change. Treating these assets as merely illiquid is
+insufficient because the illiquid fallback still relies on later in-kind transfer
+and usable recovery.
 
 ### 8. UI And Operator Surfaces
 
@@ -240,7 +258,9 @@ Basic mode should not expose every raw metric, but it must show the decision:
 Governance and guardian roles should have remove-only or risk-reducing controls:
 
 - pause new offers for an asset;
-- force keeper confidence tier to `0`;
+- force Tier 0/no-admission through an explicit sentinel or separate freeze flag;
+  the implementation must not rely on the existing keeper-tier zero default if
+  that default maps back to Tier 1;
 - enter a safe-mode / freeze that blocks new tiered admissions or forces the
   safest tier, without falling back to a less conservative legacy path;
 - disable a pool factory / quote asset route family;
@@ -249,8 +269,10 @@ Governance and guardian roles should have remove-only or risk-reducing controls:
 - mark a token behavior profile as unsupported.
 
 These controls should not be able to upgrade an asset above measured and
-confidence-backed depth. The ordinary depth-tiered-LTV disable switch is not an
-incident-response control for liquidity spoofing: unless it also enforces the
+confidence-backed depth.
+
+The ordinary depth-tiered-LTV disable switch is explicitly not an
+incident-response control for liquidity spoofing. Unless it also enforces the
 safe-mode behavior above, disabling tier checks could fall back to a less
 conservative legacy admission path.
 
@@ -261,11 +283,11 @@ conservative legacy admission path.
 | Concentrated liquidity at spot only | Slippage-at-floor rejects if floor sell cannot execute safely. |
 | Pool price moved away from Chainlink-led price | Spot-vs-oracle guard rejects or demotes. |
 | Short-lived real liquidity | Promotion delay and keeper confidence floor prevent immediate high tier. |
-| Liquidity removed after offer creation | Accept-time / admission-time revalidation rejects stale tiered offers. |
+| Liquidity removed or tier demotes after offer creation | Accept-time / admission-time revalidation rejects stale tiered offers, even if lower-tier LTV would pass. |
 | Single attacker-controlled pool | Qualifying-depth age, LP concentration, and single-venue limits cap tier. |
 | Chain-specific shallow liquidity | Active-network-only rule treats the asset as risky on that chain. |
-| Token blocks transfers or taxes sells | Token behavior checks mark the asset unsupported for new collateral. |
-| Keeper unavailable | Promoted confidence expires by TTL and fails closed to Tier 0 / safe tier. |
+| Token blocks transfers or taxes sells | Token behavior checks mark the asset unsupported for new collateral and monitor supported assets after admission. |
+| Keeper unavailable | Promoted confidence expires by TTL and fails closed to Tier 0/no-admission. |
 
 ## Implementation Phases
 
@@ -279,7 +301,8 @@ conservative legacy admission path.
 
 ### Phase 2: Keeper Confidence Floor
 
-- Implement keeper observations and confidence-tier persistence.
+- Implement keeper observations over pending offers, requested collateral assets,
+  governed candidate assets, and live collateral.
 - Add demotion-first update semantics.
 - Add max-age / heartbeat expiry for promoted confidence tiers.
 - Expose read views for current confidence tier, last observation, and reason
@@ -290,10 +313,12 @@ conservative legacy admission path.
 
 - Re-read effective tier at every live-loan admission path.
 - Store offer creation-time risk snapshots and fail stale tiered offers whose
-  current effective tier no longer satisfies the authored terms.
-- Store loan risk snapshots.
-- Enforce per-asset and per-loan caps for low-confidence assets.
-- Add governance-bounded configuration for observation windows and caps.
+  current effective tier is lower than the creation-time tier or whose risk
+  epoch is no longer fill-compatible.
+- Store loan risk snapshots with exact route identity/hashes.
+- Enforce per-asset and per-loan caps tied to measured depth for every tier.
+- Add governance-bounded configuration for observation windows, TTLs, exact
+  Tier 0/no-admission sentinels, safe-mode freezes, and caps.
 
 ### Phase 4: Tests And Simulations
 
@@ -302,10 +327,13 @@ conservative legacy admission path.
 - Integration-test offer creation during high depth followed by acceptance after
   liquidity removal.
 - Fork-test a pool seeded for a short window, then demoted after route failure.
-- Test keeper outage behavior: no promotion and conservative tier floor.
+- Test keeper outage behavior: promoted confidence expires to Tier 0/no-admission.
 - Test stale promoted keeper confidence expiring without fresh observations.
-- Test token behavior rejection for fee-on-transfer / blacklist / pause cases
-  where practical.
+- Test token behavior rejection and post-admission monitoring for fee-on-transfer,
+  blacklist, pause, upgrade, and tax changes where practical.
+- Test risk-config epoch changes making old offers stale.
+- Test live-loan demotion lowering current liquidation treatment or entering
+  safe-mode handling.
 
 ## Open Questions
 
@@ -320,14 +348,17 @@ conservative legacy admission path.
 
 - A short-lived spoofed pool cannot immediately grant high-tier collateral
   treatment.
-- Any loan-creating path revalidates effective liquidity before value moves.
-- Liquidity demotion after offer creation blocks stale offers from becoming
-  live loans under old assumptions.
+- Any loan-creating path revalidates effective liquidity and risk-config epoch
+  compatibility before value moves.
+- Any liquidity demotion after offer creation blocks stale offers from becoming
+  live loans under old assumptions, even when lower-tier LTV would pass.
 - Unobserved assets and expired keeper observations receive no durable-liquidity
   credit.
-- The keeper can only reduce or slowly promote within the on-chain measured tier.
+- The keeper can only reduce or slowly promote within the on-chain measured tier,
+  and promoted confidence expires to Tier 0/no-admission without heartbeat.
 - Transfer-restrictable or mutable collateral tokens are unsupported unless a
   specific support mechanism exists.
-- Users and operators can see why an asset is confidence-limited or demoted.
+- Users and operators can see why an asset is confidence-limited, stale,
+  epoch-incompatible, or demoted.
 - Tests cover temporary depth, pool withdrawal, concentrated liquidity, keeper
-  outage, and stale-offer acceptance.
+  outage, stale-offer acceptance, risk-epoch changes, and live-loan demotion.
