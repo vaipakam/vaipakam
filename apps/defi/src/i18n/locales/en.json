@@ -932,6 +932,11 @@
     }
   },
   "loanDetails": {
+    "preGraceWarning": {
+      "body": "⚠️ Your loan enters its grace period in ~{{hours}}h (at {{endTime}}). Auto-refinance is best-effort — if no compatible lender offer is matched, your loan will default once the grace period expires. Repay before grace expires to avoid liquidation.",
+      "tightenCaps": "Tighten refinance caps",
+      "repayNow": "Repay now"
+    },
     "periodicInterest": {
       "title": "Next interest checkpoint — {{cadence}}",
       "nextCheckpoint": "Period closes",

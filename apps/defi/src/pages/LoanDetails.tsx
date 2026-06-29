@@ -75,6 +75,8 @@ export default function LoanDetails() {
   const { mode } = useMode();
   const showAdvanced = mode === "advanced";
   const diamond = useDiamondContract();
+  // #545 — read-only Diamond for the auto-refinance-caps probe (the banner read).
+  const diamondReadOnly = useDiamondRead();
   const {
     loan,
     lenderHolder,
@@ -128,6 +130,14 @@ export default function LoanDetails() {
   const [txHash, setTxHash] = useState<string | null>(null);
   const [repayConfirming, setRepayConfirming] = useState(false);
   const [addCollateralAmt, setAddCollateralAmt] = useState("");
+  // #545 — whether this loan has borrower auto-refinance caps enabled. Drives
+  // the pre-grace warning banner: auto-refinance is best-effort, so a borrower
+  // relying on it should be warned in-page (mirroring the keeper #532 notify)
+  // when the loan is within 24h of its end without a match.
+  const [autoRefiCapsEnabled, setAutoRefiCapsEnabled] = useState(false);
+  // #545 — bumped by the caps card's onCapsChanged so the banner re-reads
+  // `getAutoRefinanceCaps` the moment the borrower enables/disables caps.
+  const [capsRefreshTick, setCapsRefreshTick] = useState(0);
 
   // Live LTV / Health Factor from RiskFacet. Both scale to 1e18 on-chain.
   const [ltv, setLtv] = useState<bigint | null>(null);
@@ -208,6 +218,48 @@ export default function LoanDetails() {
   const daysRemaining = isActive
     ? Math.max(0, Math.ceil((endTime - now) / 86400))
     : 0;
+
+  // #545 — pre-grace window: the loan is Active and within the final 24h before
+  // its end (after which it enters its grace period, then defaults). `now` is a
+  // per-render snapshot, which is fine at hour granularity for this banner.
+  const PRE_GRACE_WINDOW_S = 86400; // 24h
+  const isInPreGraceWindow =
+    isActive && now >= endTime - PRE_GRACE_WINDOW_S && now < endTime;
+  const hoursToEnd = Math.max(0, Math.ceil((endTime - now) / 3600));
+  // Probe auto-refinance caps only for the borrower of an Active loan in the
+  // pre-grace window — the only state in which the banner can show — so we never
+  // spend an RPC read otherwise. Re-runs if the window/owner/loan changes.
+  useEffect(() => {
+    let cancelled = false;
+    if (!loanId || !isBorrower || !isInPreGraceWindow) {
+      setAutoRefiCapsEnabled(false);
+      return;
+    }
+    (async () => {
+      try {
+        const caps = (await (
+          diamondReadOnly as unknown as {
+            getAutoRefinanceCaps: (
+              id: bigint,
+            ) => Promise<{ enabled: boolean }>;
+          }
+        ).getAutoRefinanceCaps(BigInt(loanId))) as { enabled: boolean };
+        if (!cancelled) setAutoRefiCapsEnabled(Boolean(caps?.enabled));
+      } catch {
+        // Facet not readable on this chain / transient RPC error — treat as
+        // "no caps" so the banner simply doesn't show (fail-quiet).
+        if (!cancelled) setAutoRefiCapsEnabled(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [diamondReadOnly, loanId, isBorrower, isInPreGraceWindow, capsRefreshTick]);
+
+  // The banner shows only to the borrower, for an auto-refinance-capped loan,
+  // inside the pre-grace window.
+  const showPreGraceBanner =
+    isBorrower && autoRefiCapsEnabled && isInPreGraceWindow;
 
   const role: "lender" | "borrower" | undefined = isLender
     ? "lender"
@@ -606,6 +658,67 @@ export default function LoanDetails() {
         />
       )}
 
+      {/* #545 — pre-grace warning. Auto-refinance is best-effort; if no
+          compatible lender offer matches before the loan's end, it enters
+          grace and then defaults. Mirror the keeper-side notify (#532) inline
+          so an unsubscribed borrower still sees it. */}
+      {showPreGraceBanner && (
+        <div
+          className="alert alert-danger"
+          role="alert"
+          style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            marginBottom: 12,
+          }}
+        >
+          <AlertTriangle size={18} style={{ flex: '0 0 auto', marginTop: 2 }} />
+          <div style={{ fontSize: '0.86rem', lineHeight: 1.5 }}>
+            <div>
+              {t('loanDetails.preGraceWarning.body', {
+                hours: hoursToEnd,
+                endTime: formatDate(endTime * 1000, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }),
+              })}
+            </div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => {
+                  document
+                    .getElementById('auto-refinance-caps-editor')
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }}
+              >
+                {t('loanDetails.preGraceWarning.tightenCaps')}
+              </button>
+              {/* #545 (Codex P3) — only show "Repay now" when the repay
+                  actions card actually renders. A wallet holding BOTH position
+                  NFTs resolves as lender (repay hidden), so this CTA would
+                  otherwise scroll to a missing card and do nothing. */}
+              {availability.repay && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    document
+                      .getElementById('loan-actions-card')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    setRepayConfirming(true);
+                  }}
+                >
+                  {t('loanDetails.preGraceWarning.repayNow')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="loan-header">
         <div>
           <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -681,6 +794,9 @@ export default function LoanDetails() {
           caps). The card hides itself when the AutoLifecycle facet
           isn't readable on the current chain. */}
       {(isBorrower || isLender) && (
+        // #545 — scroll anchor for the pre-grace banner's "Tighten refinance
+        // caps" CTA, which jumps the borrower to this caps editor.
+        <div id="auto-refinance-caps-editor">
         <AutoLifecycleLoanCapsCard
           loanId={BigInt(loanId ?? '0')}
           isBorrower={isBorrower}
@@ -693,12 +809,11 @@ export default function LoanDetails() {
             Number(loan.collateralAssetType) === AssetType.ERC721 ||
             Number(loan.collateralAssetType) === AssetType.ERC1155
           }
-          // T-092 (#545) — pass the loan's endTime so the card can
-          // render the in-grace-window pre-grace warning when
-          // applicable. Defaults to 0 (no warning) for non-active
-          // loans.
-          loanEndTime={isActive ? endTime : 0}
+          // #545 — re-read the banner's caps state on save so an
+          // enable/disable in the last-24h reflects immediately.
+          onCapsChanged={() => setCapsRefreshTick((tick) => tick + 1)}
         />
+        </div>
       )}
 
       {isBorrower && Number(loan.assetType) === AssetType.ERC20 && (
