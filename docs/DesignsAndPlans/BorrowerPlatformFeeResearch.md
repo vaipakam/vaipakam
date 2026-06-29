@@ -59,9 +59,13 @@ Current fee surface (verified against `LibVaipakam.sol`, all tunable
 | Liquidation handling | `LIQUIDATION_HANDLING_FEE_BPS` | 200 = 2% of proceeds | defaulting borrower's collateral | event fee |
 | Matcher slice of LIF | `LIF_MATCHER_FEE_BPS` | 100 = 1% of LIF | (keeper reward, out of LIF) | — |
 
-So **today the borrower's all-in cost** on a healthy loan = agreed interest
-(full-term floor, see #784) **+ 0.1% LIF (partly rebated)**. The 1% treasury cut
-is borne by the **lender**, invisible to the borrower.
+So **today the borrower's all-in cost** on a healthy loan = agreed interest **+
+0.1% LIF**. Interest is the full-term floor *by default*, but `useFullTermInterest`
+is a per-offer flag (see #784), so it's pro-rata when the offer opted out — any
+spread design must settle consistently with both modes. The LIF is charged in the
+lending asset by default and is VPFI-paid-and-partly-rebated only on the opt-in
+discount path. The 1% treasury cut is borne by the **lender**, invisible to the
+borrower.
 
 Adding the proposed **+0.5% APR** introduces a *new, third* mechanism and — unlike
 the treasury cut — it is **borrower-facing**. Worked example, lender rate `R`,
@@ -75,8 +79,12 @@ principal `P`, term `t` days:
 
 Two observations:
 
-- **It stays competitive in magnitude.** +0.5% APR is small next to peers' 10–25%
-  reserve factors. Vaipakam would remain one of the cheapest venues even with it.
+- **It stays competitive in absolute magnitude.** +0.5% APR is small next to peers'
+  10–25% reserve factors — Vaipakam would remain one of the cheapest venues. *But*
+  the "small share of interest" only holds at typical rates: Vaipakam permits very
+  low APR offers, and at a 1% lender rate +0.5% APR is ~50% of interest — well above
+  the 10–25% peer band. So the comparison is favourable in absolute APR but breaks
+  down as a *share of interest* on low-rate loans (the regressivity point below).
 - **A flat APR markup is regressive across rate levels.** Expressed as a share of
   interest it is *heavier on low-rate loans* (10% of interest at R=5%, only 2.5% at
   R=20%) — the opposite of how a reserve factor scales. And it produces a **3-fee
@@ -104,6 +112,23 @@ Recommended option **A — consolidated platform APR (single disclosed rate):**
 - Keep the existing 1%-of-interest treasury cut as the **lender-side** reserve
   factor; the spread is the **borrower-side** complement. Two bearers, two clear
   lines — not three.
+
+  Implementation caveats (load-bearing, if Option A is built):
+  - **Snapshot the spread onto the loan at accept**, exactly like the loan's other
+    terms. `platformSpreadBps` is a mutable admin/governance knob; it must NOT be
+    read live at repay/preclose/refinance time, or raising it after accept would
+    retroactively change what an existing borrower owes. The accepted value binds
+    for the life of the loan.
+  - **Bind the borrower-offer ceiling + EIP-712 accept-terms to the all-in APR.**
+    The ERC-20 borrower offer's max-rate ceiling and the signed accept-terms
+    (`OfferAcceptFacet._bindTermsToOffer`, `useAcceptTermsSigning`) currently bound
+    `lenderRate`; with a spread added on top, those checks must be redefined so the
+    ceiling bounds `lenderRate + spread` (the borrower's actual maximum), else the
+    borrower can be bound to more than they agreed to.
+  - **The disclosed figure should fold in the LIF** (or show it as an explicit
+    adjacent line). `lenderRate + spread` alone isn't truly "all-in" — the
+    mandatory 0.1% LIF annualizes materially on short terms, so a genuinely all-in
+    APR (the whole point of Option A) must include it.
 
 Alternatives considered (and why A wins):
 
@@ -136,27 +161,30 @@ major DeFi / DEX / lending venues use, mapped to whether Vaipakam already has it
 could plausibly add it (and where it would fit), or shouldn't (doesn't fit the
 model / retail policy). Magnitudes are typical peer ranges.
 
-### Already in Vaipakam (could be tuned, all are `0 ⇒ default` admin→gov knobs)
+### Already in Vaipakam (mostly tunable `0 ⇒ default` admin→gov knobs; late fee + liquidation discount are NOT knobs — see notes)
 
 | Fee type | Peer example & magnitude | Vaipakam today |
 | --- | --- | --- |
-| **Reserve factor** (% of interest → treasury) | Aave/Compound **10–25% of interest** | `TREASURY_FEE_BPS` = **1% of interest** (lender-side). Lots of headroom to raise. |
-| **Origination fee** (one-time % of principal) | P2P **1–8%**, Maple bespoke | `LOAN_INITIATION_FEE_BPS` = **0.1%** (borrower LIF, VPFI, partly rebated) |
-| **Liquidation handling** (% of proceeds → treasury) | Aave **liquidationProtocolFee** = a cut of the bonus | `LIQUIDATION_HANDLING_FEE_BPS` = **2% of proceeds** |
-| **Late / penalty fee** (overdue) | varies | RepayFacet late fees + grace-period penalty |
-| **Matcher / keeper reward** | Gelato/CL Automation service fees | `LIF_MATCHER_FEE_BPS` = 1% of LIF to the keeper |
+| **Reserve factor** (% of interest → treasury) | Aave/Compound **10–25% of interest** | `TREASURY_FEE_BPS` = **1% of interest** (lender-side), tunable knob. Lots of headroom to raise. |
+| **Origination fee** (one-time % of principal) | P2P **1–8%**, Maple bespoke | `LOAN_INITIATION_FEE_BPS` = **0.1%**, tunable knob. Borrower-side. Default path charges it in the **lending asset**; only when the borrower opts into the VPFI discount path is it paid in VPFI and partly rebated — tier-0 / missing-oracle-or-config / insufficient-vault-VPFI borrowers pay the full fee with no rebate. |
+| **Liquidation handling** (% of proceeds → treasury) | Aave **liquidationProtocolFee** = a cut of the bonus | `LIQUIDATION_HANDLING_FEE_BPS` = **2% of proceeds**, tunable knob |
+| **Liquidation discount / bonus** (borrower-paid liquidator incentive) | Aave/Compound **5–15%** liquidation bonus | **Already implemented** — tier liquidation discounts in `LibVaipakam` + `RiskFacet.triggerLiquidationDiscounted` (the discount the liquidator receives, borne by the defaulting borrower). |
+| **Late / penalty fee** (overdue) | varies | `LibVaipakam.calculateLateFee` — **hard-coded** 1% + 0.5%/day, capped at 5%. NOT a `ProtocolConfig` knob today; making it tunable would itself be a small change. |
+| **Matcher / keeper reward** | Gelato/CL Automation service fees | `LIF_MATCHER_FEE_BPS` = 1% of LIF to the keeper, tunable knob |
 
 ### Standard peer fees Vaipakam could ADD that fit its model
 
 | Candidate fee | Peer example & magnitude | Where it would fit in Vaipakam |
 | --- | --- | --- |
-| **Liquidation bonus / penalty** (borrower-side discount to liquidator) | Aave/Compound **5–15%** liquidation bonus, paid by the defaulter | A borrower default penalty / a protocol slice of the liquidator bonus, alongside the existing 2% handling fee (RiskFacet / DefaultedFacet) |
+| **Protocol slice of the liquidation discount** | Aave routes part of the liquidation bonus to treasury (`liquidationProtocolFee`) | The borrower-paid liquidation discount already exists (above); what's *not* yet taken is a **treasury slice of that discount**. Could add alongside the 2% handling fee (RiskFacet / DefaultedFacet). |
 | **Early-exit / loan-sale fee** (lender exits before term) | secondary-market / vault **exit fees** | A fee on `EarlyWithdrawalFacet` (lender selling the loan via buy-offer) and/or `PrecloseFacet` obligation transfer |
 | **Refinance / extension fee** | rollover fees | A small fee on `RefinanceFacet` / auto-refinance and term-extension paths |
 | **Auto-lend performance fee** (% of yield earned by automation) | Yearn **20% performance + 2% management**, Maple management fees | A performance cut on keeper-earned auto-lend (#625) interest — the closest analog to a vault performance fee |
 | **NFT-rental origination / platform fee** | OpenSea-style **~2%** marketplace fee | A platform fee on NFT-rental loan originations (the rental product), distinct from the ERC-20 LIF |
-| **Cross-chain buy spread** | bridges mark up the messaging/route | A spread on the `VpfiBuyAdapter` fixed-rate buy (today it passes CCIP cost through) |
 | **Borrower platform spread** (the #785 idea) | Sky/Maker stability fee *is* the borrow APR; bank net-interest-margin | **Option A** above — a single disclosed platform APR |
+
+(A cross-chain buy spread was considered but dropped: there is no `VpfiBuyAdapter`
+in the current `contracts/src` tree, so there's no live buy flow to mark up.)
 
 ### Fees that DON'T fit (model / policy mismatch — not recommended)
 
