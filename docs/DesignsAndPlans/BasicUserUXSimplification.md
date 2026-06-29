@@ -289,7 +289,7 @@ controls themselves should live behind Advanced mode or explicit disclosures.
 
 ## Implementation Notes
 
-- Prefer one shared `mode` value in app context.
+- Prefer one shared `mode` value in app context; the concrete storage choice (React context, store, URL, and persistence) belongs to the frontend architecture implementation, but the product requirement is one source of truth that every page reads consistently.
 - Avoid duplicate Basic and Advanced page trees.
 - Use shared review-receipt components across write flows.
 - Use shared eligibility/checklist components before transaction submission.
@@ -298,6 +298,8 @@ controls themselves should live behind Advanced mode or explicit disclosures.
 - Keep Basic-mode copy localized through the existing user-guide/content system.
 
 ## Acceptance Criteria
+
+These criteria are product outcomes. `docs/TestScopes/BasicUserJourneyMap.md` defines the corresponding testable screen-level checks.
 
 A Basic-mode implementation should be considered successful when:
 

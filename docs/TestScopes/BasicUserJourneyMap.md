@@ -88,9 +88,11 @@ The user wants to borrow an asset and is willing to lock collateral.
   repayment.
 - Help links target Basic guide anchors.
 
+Lender-side claim PF-112 is intentionally not part of this borrower-centric journey; it is the symmetric claim step in Journey L1.
+
 ## Journey B2: First-Time Borrower Posts A Request
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-041, PF-023, PF-091, PF-024.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-041, PF-046, PF-023, PF-091, PF-024.
 
 ### User goal
 
@@ -107,6 +109,8 @@ The user wants to borrow, but no existing lender offer fits.
 6. User signs.
 7. App shows `Borrow request posted` and a link to `Your active offers`.
 8. When a lender accepts, Dashboard shows an active loan.
+
+Cancellation branch: PF-046 covers cancelling the posted borrow request before acceptance, releasing locked collateral and updating the offer row.
 
 ### Acceptance checks
 
@@ -166,7 +170,7 @@ The user wants to make funds available for borrowers.
 6. Review receipt appears.
 7. User signs.
 8. App shows `Lending offer posted`.
-9. User can cancel before acceptance or wait for borrower acceptance.
+9. User can cancel before acceptance or wait for borrower acceptance (PF-045 covers the cancellation branch).
 
 ### Acceptance checks
 
@@ -176,7 +180,7 @@ The user wants to make funds available for borrowers.
 
 ## Journey N1: NFT Owner Rents Out An NFT
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-140, PF-142, PF-143.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-043, PF-140, PF-141, PF-142, PF-143.
 
 ### User goal
 
@@ -200,11 +204,11 @@ The user owns a rentable NFT and wants to earn rental fees.
 
 - The app does not describe NFT rental as a debt loan.
 - Ownership vs temporary user rights is clear before signing.
-- The 5% buffer is shown as prepay protection, not hidden in fees.
+- The configured rental buffer is shown as prepay protection, not hidden in fees.
 
 ## Journey N2: User Rents An NFT
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-140, PF-143.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-140, PF-143, PF-144.
 
 ### User goal
 
@@ -221,6 +225,8 @@ The user wants temporary use of an NFT.
 7. User signs.
 8. Loan Details shows active rental, remaining time, and close action.
 9. User closes rental or waits for expiry/default behavior.
+
+Expiry/default branch: PF-144 covers the case where the renter does nothing and rights must reset through the rental expiry/default path.
 
 ### Acceptance checks
 
@@ -266,7 +272,7 @@ The user sees their loan becoming risky and wants to avoid liquidation/default.
 ### Screen sequence
 
 1. Dashboard marks the loan as `Needs attention` or `At risk`.
-2. Loan Details shows why: collateral value, health state, and time/grace state.
+2. Loan Details shows why: collateral value, health state, and how much time is left to act.
 3. Primary action is `Add collateral` or `Repay`, depending on state.
 4. App explains liquidation/default consequence in plain language.
 5. User adds collateral or repays.
@@ -281,7 +287,7 @@ The user sees their loan becoming risky and wants to avoid liquidation/default.
 
 ## Journey C1: User Claims Funds Or Assets
 
-Flow IDs: PF-025, PF-112, PF-113, PF-121.
+Flow IDs: PF-025, PF-112, PF-113, PF-120, PF-121, PF-259.
 
 ### User goal
 
@@ -311,13 +317,14 @@ The user wants to reduce Vaipakam protocol fees, not learn token mechanics.
 
 ### Screen sequence
 
-1. User opens VPFI Vault from Dashboard or nav.
-2. App explains `Optional: hold VPFI in your vault to reduce protocol fees`.
-3. User deposits externally acquired VPFI.
-4. User enables fee-discount consent.
-5. App shows current tier and whether it is active or pending.
-6. User can withdraw free VPFI later, with a warning about fee impact.
-7. Claim Center shows interaction rewards separately.
+1. User opens the Dashboard fee-discount card and sees that VPFI fee discounts are optional.
+2. User follows the `Deposit VPFI` path to the VPFI Vault.
+3. App explains `Optional: hold VPFI in your vault to reduce protocol fees`.
+4. User deposits externally acquired VPFI.
+5. User returns to the Dashboard-owned fee-discount control and enables consent.
+6. App shows current tier and whether it is active or pending.
+7. User can withdraw free VPFI later from the VPFI Vault, with a warning about fee impact.
+8. Claim Center shows interaction rewards separately.
 
 ### Acceptance checks
 
@@ -327,7 +334,7 @@ The user wants to reduce Vaipakam protocol fees, not learn token mechanics.
 
 ## Journey H1: Help And Mode Switching
 
-Flow IDs: frontend-only.
+Flow IDs: PF-022.
 
 ### User goal
 
@@ -344,7 +351,7 @@ The user needs an explanation without losing place.
 
 ### Acceptance checks
 
-- Mode switch does not reset form state unexpectedly.
+- Mode switch preserves in-progress form field values.
 - Deep links preserve the relevant guide anchor.
 - Advanced-only controls hide again when Basic mode resumes.
 
