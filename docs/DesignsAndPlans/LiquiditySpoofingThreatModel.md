@@ -380,8 +380,9 @@ conservative legacy admission path.
   tier.
 - Add demotion-first update semantics.
 - Add max-age / heartbeat expiry for promoted confidence tiers.
-- Expose read views for current confidence tier, last observation, and reason
-  codes.
+- Expose read views for current confidence tier, last on-chain observation,
+  expiry time, whether admission would currently treat the tier as expired, and
+  reason codes.
 - Wire Create Offer / Offer Book / Loan Details to show confidence-limited state.
 
 ### Phase 3: Protocol Admission Enforcement
