@@ -539,6 +539,12 @@ export async function maybeAutonomousLiquidate(
       let attemptQuotes: ServerOrchestrationResult | null =
         effectivePartialQuotes;
       let escalateToFull = false;
+      // True once we've clamped the slice to the close-factor cap. If a
+      // cap-clamped retry then reverts "slice too small to restore HF", the cap
+      // itself prevents any viable partial → escalate to full rather than skip
+      // and recompute the identical too-large→clamp→too-small loop forever
+      // (Codex P1, restoring the pre-#642 InvalidPartialFraction→full path).
+      let clampedToCap = false;
 
       for (
         let attempt = 0;
@@ -581,10 +587,16 @@ export async function maybeAutonomousLiquidate(
           if (msg.includes('PartialOverLiquidates')) {
             const reduced = reducePartialFractionBps(attemptFractionBps);
             if (lastAttempt || reduced < MIN_PARTIAL_FRACTION_BPS) {
+              // Bounded shrink budget exhausted without landing under the
+              // ceiling. Next tick would recompute the SAME initial fraction
+              // from the same loan state and abandon identically, so escalate to
+              // split/full (which has no over-liquidation ceiling) rather than
+              // skip forever (Codex P2).
               console.log(
-                `[keeper] loan=${loanId} chain=${chain.name} partial-over-liquidates and can't shrink further (fraction=${attemptFractionBps}bps) — skipping; recompute next tick`,
+                `[keeper] loan=${loanId} chain=${chain.name} partial-over-liquidates and shrink budget exhausted (fraction=${attemptFractionBps}bps) — escalating to split/full`,
               );
-              return false;
+              escalateToFull = true;
+              break;
             }
             console.log(
               `[keeper] loan=${loanId} chain=${chain.name} partial-over-liquidates (fraction=${attemptFractionBps}bps) — re-sizing to ${reduced}bps and retrying`,
@@ -616,11 +628,30 @@ export async function maybeAutonomousLiquidate(
             );
             attemptFractionBps = clamped;
             attemptQuotes = await reQuotePartial(attemptFractionBps);
+            clampedToCap = true;
             continue;
           }
 
-          // Other re-size errors (too-small slice, route failure, unknown) →
-          // skip this tick; next tick recomputes from fresh HF/quotes.
+          // A cap-clamped slice that now reverts "too small to restore/improve
+          // HF" means the close-factor cap itself precludes a viable partial.
+          // Recomputing next tick yields the identical too-large→clamp→too-small
+          // loop, so escalate to split/full instead of skipping (Codex P1).
+          if (
+            clampedToCap &&
+            (msg.includes('PartialMustRestoreHF') ||
+              msg.includes('PartialMustImproveHF'))
+          ) {
+            console.log(
+              `[keeper] loan=${loanId} chain=${chain.name} capped partial too small to restore HF (fraction=${attemptFractionBps}bps) — escalating to split/full`,
+            );
+            escalateToFull = true;
+            break;
+          }
+
+          // Other re-size errors (a fresh too-small slice, route failure,
+          // unknown) → skip this tick; next tick recomputes from fresh HF/quotes
+          // (these can clear without escalating: a route may recover, and a
+          // non-capped too-small estimate is re-derived from updated state).
           console.log(
             `[keeper] loan=${loanId} chain=${chain.name} partial-reverted-resize (${msg.slice(0, 140)}) — skipping; recompute slice next tick`,
           );
