@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { type Address } from 'viem';
 import {
   useDiamondContract,
@@ -144,13 +144,14 @@ export function useTosAcceptance(): TosAcceptanceState {
     }
   }, [publicClient, diamondAddress, address]);
 
-  useEffect(() => {
+  // #828 r4 — `useLayoutEffect` (commit phase, BEFORE paint) rather than a
+  // passive `useEffect` (after paint). The cleanup bumps `reqSeq` the instant
+  // the deps (wallet / chain / client) change, synchronously during commit, so
+  // an in-flight read from the previous wallet is invalidated before React can
+  // paint with — or a late resolution can apply — stale state. `reload()` is
+  // fire-and-forget here; kicking it off pre-paint is harmless.
+  useLayoutEffect(() => {
     void reload();
-    // #828 r3 — invalidate any in-flight read the MOMENT the deps (wallet /
-    // chain / client) change, not only when the next `reload()` starts. Without
-    // this, an old read could resolve in the render→effect gap — while the
-    // generation still matches — and apply the previous wallet's state before
-    // the new `reload()` bumps the counter.
     return () => {
       reqSeq.current++;
     };
