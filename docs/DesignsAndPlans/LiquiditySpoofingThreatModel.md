@@ -134,6 +134,11 @@ recompute or re-read the current effective tier at admission:
 - lender-sale buyer admission;
 - obligation-transfer incoming borrower admission.
 
+This list is intentionally exhaustive for current known admission paths and must
+be extended whenever a new path can materialize a loan; no lender-intent,
+signed-offer, matcher, or replacement-flow fill is exempt from the same
+effective-tier and cumulative-epoch revalidation.
+
 If the current effective tier is lower than the offer creation-time effective
 tier, the transaction must fail before value moves, even when the lower tier
 would still satisfy the numeric LTV cap. Risk-config compatibility must be
