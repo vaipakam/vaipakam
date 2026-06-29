@@ -114,6 +114,10 @@ type AccountSnapshot = {
   keeperAccess: boolean;
   keeperActions: number | null;
   approvedKeepersCount: number;
+  /** #799 (Codex #811 r4) — global delegated-keeper pause. While ON, both
+   *  auto-roll and keeper-restricted fills are suspended (open intents stay
+   *  fillable by any solver). */
+  keepersPaused: boolean;
 };
 
 /** Fresh pair-level snapshot returned by `reloadPair`. */
@@ -283,6 +287,9 @@ export default function AutoLendIntentCard({
   const [livePrincipal, setLivePrincipal] = useState<bigint | null>(null);
   const [keeperActions, setKeeperActions] = useState<number | null>(null);
   const [keeperAccess, setKeeperAccess] = useState<boolean | null>(null);
+  // #799 (Codex #811 r4) — global delegated-keeper pause; suspends auto-roll
+  // and keeper-restricted fills while ON.
+  const [keepersPaused, setKeepersPaused] = useState<boolean | null>(null);
   // How many keepers the wallet has approved — to pre-flight a full
   // whitelist before recording any consent / master-switch side effects.
   const [approvedKeepersCount, setApprovedKeepersCount] = useState<number | null>(null);
@@ -373,8 +380,9 @@ export default function AutoLendIntentCard({
         getKeeperAccess: (u: string) => Promise<boolean>;
         getKeeperActions: (u: string, k: string) => Promise<bigint | number>;
         getApprovedKeepers: (u: string) => Promise<string[]>;
+        keepersPaused: () => Promise<boolean>;
       };
-      const [adminLend, intentEnabled, partialFill, c, kAccess, acts, keepers] =
+      const [adminLend, intentEnabled, partialFill, c, kAccess, acts, keepers, paused] =
         await Promise.all([
           ro.getAutoLendEnabled(),
           ro.isLenderIntentEnabled(),
@@ -385,6 +393,7 @@ export default function AutoLendIntentCard({
             ? ro.getKeeperActions(address, keeperAddress)
             : Promise.resolve(null),
           ro.getApprovedKeepers(address),
+          ro.keepersPaused(),
         ]);
       // Stale-resolve guard: if a wallet/chain switch happened while this
       // read was in flight, drop it — otherwise a slower response for the
@@ -404,6 +413,7 @@ export default function AutoLendIntentCard({
         keeperAccess: Boolean(kAccess),
         keeperActions: acts === null ? null : Number(acts),
         approvedKeepersCount: Array.isArray(keepers) ? keepers.length : 0,
+        keepersPaused: Boolean(paused),
       };
       setAdminLendEnabled(snap.adminLendEnabled);
       setFillPathEnabled(snap.fillPathEnabled);
@@ -411,6 +421,7 @@ export default function AutoLendIntentCard({
       setKeeperAccess(snap.keeperAccess);
       setKeeperActions(snap.keeperActions);
       setApprovedKeepersCount(snap.approvedKeepersCount);
+      setKeepersPaused(snap.keepersPaused);
       // Stamp the chain+wallet these reads belong to; skip decisions
       // trust them only while this still equals the live id.
       setLoadedAccountKey(capturedAccountKey);
@@ -1158,6 +1169,29 @@ export default function AutoLendIntentCard({
           <p className="stat-label" style={{ margin: '0 0 10px' }}>
             {t('autoLend.body')}
           </p>
+
+          {/* #799 — persistent best-effort disclosure: keeper fills and
+              auto-roll are NOT guaranteed. It stays visible at enablement and
+              while enabled (not just a one-shot banner) so a lender never reads
+              a registered intent as a promise that capital will be deployed or
+              rolled. */}
+          <div className="alert alert-warning" role="note" style={{ marginBottom: 10 }}>
+            <AlertTriangle size={14} />
+            <div>{t('autoLend.bestEffortNotice')}</div>
+          </div>
+
+          {/* #799 (Codex #811 r4) — global delegated-keeper pause. While ON,
+              auto-roll and keeper-restricted fills are suspended (open intents
+              stay fillable by any solver), so surface it as its own banner.
+              Gated on `accountLoaded` (Codex #811 r5) so a stale `true` from a
+              previous chain/account snapshot can't render after a context switch
+              or a failed reload. */}
+          {keepersPaused === true && accountLoaded && (
+            <div className="alert alert-warning" role="alert" style={{ marginBottom: 10 }}>
+              <AlertTriangle size={14} />
+              <div>{t('autoLend.keepersPausedNotice')}</div>
+            </div>
+          )}
 
           {/* Fill-path kill-switch — registered intents won't fill yet. */}
           {fillPathEnabled === false && (

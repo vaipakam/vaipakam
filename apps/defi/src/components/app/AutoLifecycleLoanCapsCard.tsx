@@ -33,6 +33,12 @@ interface Props {
    *  (the LoanDetails pre-grace banner) can re-read `getAutoRefinanceCaps` and
    *  reflect an enable/disable immediately instead of waiting for a reload. */
   onCapsChanged?: () => void;
+  /** #799 — `true` when the connected holder's keeper can't act on this loan
+   *  (keeper master switch off, or no keeper approved). Auto-refinance /
+   *  auto-extend are keeper-executed, so an enabled cap is INERT in this state.
+   *  Surfaces the kill-switch as a card-level warning so the user knows the
+   *  automation they're configuring cannot fire until they fix keeper access. */
+  keeperCannotAct?: boolean;
 }
 
 /** Format unix-seconds to "yyyy-mm-dd" for the date input. */
@@ -86,6 +92,7 @@ export default function AutoLifecycleLoanCapsCard({
   isLender,
   collateralIsNft = false,
   onCapsChanged,
+  keeperCannotAct = false,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondContract();
@@ -136,6 +143,17 @@ export default function AutoLifecycleLoanCapsCard({
       <p className="stat-label" style={{ margin: '0 0 12px' }}>
         {t('autoLifecycleLoanCaps.body')}
       </p>
+
+      {/* #799 — keeper kill-switch visibility: auto-refinance / auto-extend are
+          keeper-executed, so they cannot fire while the holder's keeper master
+          switch is off or no keeper is approved. Show it as a card-level
+          warning so an enabled cap isn't mistaken for active protection. */}
+      {keeperCannotAct && (
+        <div className="alert alert-warning" role="alert" style={{ marginBottom: 12 }}>
+          <AlertTriangle size={14} />
+          <div>{t('autoLifecycleLoanCaps.keeperOffWarning')}</div>
+        </div>
+      )}
 
       {collateralIsNft && (
         <div
@@ -268,13 +286,15 @@ function RefinanceCapsEditor({
       <div className="stat-label" style={{ marginBottom: 8 }}>
         {t('autoLifecycleLoanCaps.refinanceHint')}
       </div>
-      {/* T-092 (#543) — persistent best-effort warning during the
-          false → true transition. Mirrors the Dashboard's two-step
-          confirm pattern (#537) but in a form-friendly shape: the
-          warning stays visible until the user either saves (which
-          refreshes `current.enabled` and clears the transition) or
-          un-checks the box. */}
-      {enabled && !current.enabled && (
+      {/* #799 — best-effort warning is PERSISTENT while the cap is active, not
+          only during the false → true transition (T-092/#543). Auto-refinance is
+          best-effort, not default protection, so it must stay visible the whole
+          time the cap is on. Keyed on `enabled || current.enabled` (Codex #811
+          r2): it stays up while the SAVED cap is still active on-chain even if
+          the user has unchecked the box but not yet saved (or the disable tx
+          failed) — that pending-disable window is exactly when the cap is still
+          live, so the disclosure must not vanish prematurely. */}
+      {(enabled || current.enabled) && (
         <div className="alert alert-warning" role="alert" style={{ marginBottom: 8 }}>
           <AlertTriangle size={14} />
           <div>{t('autoLifecycleLoanCaps.bestEffortWarning')}</div>
@@ -383,11 +403,11 @@ function ExtendCapsEditor({
     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 10 }}>
       <strong>{t(titleKey)}</strong>
       <div className="stat-label" style={{ marginBottom: 8 }}>{t(hintKey)}</div>
-      {/* T-092 (#543) — best-effort warning during false → true
-          transition. Extend has a similar best-effort property: the
-          extension only fires if BOTH sides have consent + the keeper
-          fires within grace. */}
-      {enabled && !current.enabled && (
+      {/* #799 — PERSISTENT while enabled (was transition-only, T-092/#543).
+          Extend is best-effort: it only fires if BOTH sides have consent AND
+          the keeper fires within grace, so the warning stays up the whole time
+          the cap is on. */}
+      {(enabled || current.enabled) && (
         <div className="alert alert-warning" role="alert" style={{ marginBottom: 8 }}>
           <AlertTriangle size={14} />
           <div>{t('autoLifecycleLoanCaps.bestEffortWarning')}</div>

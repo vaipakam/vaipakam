@@ -112,13 +112,20 @@ export default function LoanDetails() {
   const loadLoanAndLien = useCallback(async (): Promise<void> => {
     await Promise.all([loadLoan(), reloadLien()]);
   }, [loadLoan, reloadLien]);
-  // Per README §3 lines 190–191 keeper authority follows the current
-  // Phase 6: the old "whitelist-status" two-layer summary lived next to
-  // the per-side keeper bools on the loan struct. Both are gone; the new
-  // `LoanKeeperPicker` renders live per-keeper state directly so the
-  // useKeeperStatus hook is no longer consumed here. Kept the import
-  // path intact for potential future reuse on other surfaces.
-  useKeeperStatus(lenderHolder || null, borrowerHolder || null);
+  // Per README §3 lines 190–191 keeper authority follows the current NFT
+  // holder. The per-keeper toggles render live state directly; we ALSO consume
+  // the BORROWER-side master-switch summary here (#799) to tell the
+  // auto-lifecycle caps card whether the keeper can actually act. Both
+  // auto-refinance and auto-extend are executed against the BORROWER side
+  // (`LibAuth.requireKeeperFor(..., lenderSide=false)`), so only the borrower's
+  // keeper master switch gates them — the lender's extend-caps are just the
+  // lender's consent surface and don't depend on the lender's keeper (Codex
+  // #811 r2). We pass both holders so the hook can resolve, but only read the
+  // borrower side. We also read the GLOBAL delegated-keeper pause (#811 r3): a
+  // governance pause makes every keeper-driven call revert even when the
+  // borrower's own switch is on.
+  const { borrowerStatus: keeperBorrowerStatus, keepersPaused } =
+    useKeeperStatus(lenderHolder || null, borrowerHolder || null);
   // Signer-connected ERC-20 contracts for the loan's principal / collateral
   // assets. Used to read decimals() and to approve the Diamond before repay
   // and add-collateral, which pull tokens via safeTransferFrom.
@@ -204,6 +211,29 @@ export default function LoanDetails() {
   };
   const isLender = !!loan && isHolder(lenderHolder);
   const isBorrower = !!loan && isHolder(borrowerHolder);
+  // #799 — the BORROWER's keeper MASTER SWITCH being off is an unambiguous hard
+  // gate: both auto-refinance and auto-extend are executed against the borrower
+  // side, and LibAuth refuses every keeper action for a borrower whose profile
+  // opt-in is off, regardless of which keeper or action bits exist — so any
+  // auto-lifecycle cap is then definitively inert. We key the warning on exactly
+  // that (Codex #811 r1/r2): we do NOT infer inertness from `approvedCount` (a
+  // non-zero count doesn't prove an approved keeper holds the REFINANCE/EXTEND
+  // bit AND is enabled for this loan — that finer detail lives in the per-keeper
+  // toggles on this page), and we do NOT gate on the LENDER's keeper, since the
+  // lender's extend-caps are only their consent surface, not the execution gate.
+  // Two distinct gates, with distinct audiences (Codex #811 r3/r4):
+  //  - The BORROWER's master switch off → blocks the borrower-side execution of
+  //    auto-refinance AND auto-extend, so it makes the BORROWER's caps inert.
+  //    Lender-side: a lender's own switch is NOT a gate (auto-extend executes
+  //    against the borrower side), so we don't warn a lender on their own switch.
+  //  - The GLOBAL delegated-keeper pause → `requireKeeperFor` rejects EVERY
+  //    keeper-driven call, so it makes ANY enabled cap inert — including the
+  //    lender's enabled auto-extend cap. So the global-pause warning must reach
+  //    BOTH the borrower and lender holders.
+  // `null` status (loading / no Diamond) ⇒ stay quiet.
+  const keeperCannotActForUser =
+    (isBorrower && keeperBorrowerStatus?.profileOptIn === false) ||
+    ((isBorrower || isLender) && keepersPaused === true);
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;
@@ -802,6 +832,9 @@ export default function LoanDetails() {
           loanId={BigInt(loanId ?? '0')}
           isBorrower={isBorrower}
           isLender={isLender}
+          // #799 — surface the keeper kill-switch state: when the holder's
+          // keeper can't act, an enabled cap can't fire and the card says so.
+          keeperCannotAct={keeperCannotActForUser}
           // T-092-B (#531) — NFT collateral has asymmetric default
           // outcome (full collateral transfer to lender on default,
           // no swap). The card surfaces a stark warning so the
