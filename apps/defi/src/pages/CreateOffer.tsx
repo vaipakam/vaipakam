@@ -321,7 +321,7 @@ export default function CreateOffer() {
   // binding disclosure text changed off-screen — force a fresh acknowledgement
   // by clearing consent. The ref seeds to the initial signature so mount is a
   // no-op; only a real post-mount change clears.
-  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}`;
+  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}`;
   const disclosureSigRef = useRef(disclosureSig);
   useEffect(() => {
     if (disclosureSigRef.current === disclosureSig) return;
@@ -1553,6 +1553,10 @@ export default function CreateOffer() {
               form.assetType === 'erc20' ? form.useFullTermInterest : undefined
             }
             allowsPartialRepay={form.allowsPartialRepay}
+            /* #796 — NFT collateral always settles in-kind on default (no
+               oracle / no swap); surface the explicit disclosure when the
+               creator picks an NFT collateral leg. */
+            collateralInKind={form.collateralAssetType !== 'erc20'}
           />
 
           <label className="checkbox-row" style={{ marginTop: 12 }}>

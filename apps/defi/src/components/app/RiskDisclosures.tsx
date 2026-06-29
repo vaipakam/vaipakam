@@ -65,9 +65,17 @@ export function RiskConsentLabel() {
 export function RiskDisclosures({
   fullTermInterest,
   allowsPartialRepay,
+  collateralInKind,
 }: {
   fullTermInterest?: boolean;
   allowsPartialRepay?: boolean;
+  /** #796 — `true` when THIS offer/loan's collateral settles in-kind on default
+   *  (NFT collateral, or an illiquid / no-oracle leg): the lender receives the
+   *  raw collateral, not the lending asset, with no swap or LTV liquidation.
+   *  Adds an explicit, offer-specific line so the generic paragraph isn't the
+   *  only signal. `undefined`/`false` ⇒ omit (liquid-pair offers, non-offer
+   *  surfaces). */
+  collateralInKind?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [showOriginal, setShowOriginal] = useState(false);
@@ -134,6 +142,12 @@ export function RiskDisclosures({
           </p>
         )}
 
+        {collateralInKind && (
+          <p className="risk-disclosures-paragraph risk-disclosures-term-interest">
+            {t('riskDisclosures.collateralInKind')}
+          </p>
+        )}
+
         <p className="risk-disclosures-learn-more">
           {/*
             Pin the explicit `/en` locale prefix. The marketing app's
@@ -162,6 +176,7 @@ export function RiskDisclosures({
       {showOriginal && (
         <EnglishOriginalModal
           termInterestKey={termInterestKey}
+          collateralInKind={Boolean(collateralInKind)}
           onClose={() => setShowOriginal(false)}
         />
       )}
@@ -178,9 +193,11 @@ export function RiskDisclosures({
  */
 function EnglishOriginalModal({
   termInterestKey,
+  collateralInKind,
   onClose,
 }: {
   termInterestKey: string | null;
+  collateralInKind: boolean;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -258,6 +275,11 @@ function EnglishOriginalModal({
           {termInterestKey && (
             <p className="risk-disclosures-paragraph risk-disclosures-term-interest">
               {en(termInterestKey)}
+            </p>
+          )}
+          {collateralInKind && (
+            <p className="risk-disclosures-paragraph risk-disclosures-term-interest">
+              {en('riskDisclosures.collateralInKind')}
             </p>
           )}
         </div>

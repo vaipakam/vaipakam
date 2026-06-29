@@ -761,6 +761,16 @@ function LiveCard({
   const blockExplorer = chain.blockExplorer;
   const status =
     loanDetails != null ? (Number(loanDetails.status) as LoanStatus) : null;
+  // #796 — this position settles IN-KIND on default (lender receives the
+  // collateral asset itself, not the lending asset, with no DEX swap / LTV
+  // liquidation) when the collateral is an NFT (assetType 1/2) or either leg is
+  // illiquid (no on-chain price). Disclosed below so a buyer of this position
+  // NFT understands the downside-recovery shape before they commit.
+  const settlesInKind =
+    loanDetails != null &&
+    (Number(loanDetails.collateralAssetType) !== 0 ||
+      loanDetails.collateralLiquidity === 1n ||
+      loanDetails.principalLiquidity === 1n);
 
   return (
     <div className="card verifier-result verifier-live">
@@ -877,6 +887,39 @@ function LiveCard({
                 <div className="data-row">
                   <span className="data-label">{t("nftVerifier.ltv")}</span>
                   <span className="data-value">{bpsToPercent(ltv)}</span>
+                </div>
+              )}
+              {/* #796 — settlement-method disclosure: tell a holder/buyer of
+                  this position NFT whether the loan settles by DEX swap or
+                  in-kind (raw collateral) on default. */}
+              <div className="data-row">
+                <span className="data-label">
+                  {t("nftVerifier.settlementLabel")}
+                </span>
+                <span className="data-value">
+                  {settlesInKind
+                    ? t("nftVerifier.settlementInKind")
+                    : t("nftVerifier.settlementLiquid")}
+                </span>
+              </div>
+              {settlesInKind && (
+                <div
+                  className="alert alert-warning"
+                  role="alert"
+                  style={{
+                    marginTop: 8,
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <AlertTriangle
+                    size={14}
+                    style={{ flex: "0 0 auto", marginTop: 2 }}
+                  />
+                  <div style={{ fontSize: "0.82rem", lineHeight: 1.5 }}>
+                    {t("nftVerifier.settlementInKindWarning")}
+                  </div>
                 </div>
               )}
             </>

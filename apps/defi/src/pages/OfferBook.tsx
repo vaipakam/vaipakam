@@ -1909,6 +1909,9 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offer.assetType === 0 ? offer.useFullTermInterest : undefined
           }
           allowsPartialRepay={offer.allowsPartialRepay}
+          /* #796 — when this offer has an illiquid leg, the collateral settles
+             in-kind on default; add the explicit disclosure line. */
+          collateralInKind={illiquid}
         />
 
         {/* Phase 7b.1 — UX guard: 0x preflight against the
