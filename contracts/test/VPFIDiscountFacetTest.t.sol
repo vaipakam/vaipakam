@@ -19,9 +19,11 @@ import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /// @title VPFIDiscountFacetTest
 /// @notice Exercises the borrower VPFI discount mechanism end-to-end
@@ -157,6 +159,54 @@ contract VPFIDiscountFacetTest is SetupTest {
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.InvalidAmount.selector);
         _facet().depositVPFIToVault(0);
+    }
+
+    // ─── #800 — Tier-1 sanctions gate on the VPFI value-in / value-out paths ──
+    //
+    // SanctionsOracle.t.sol can't reach these (its diamond doesn't cut the
+    // VPFIDiscountFacet selectors), so the VPFI deposit/withdraw Tier-1 gates
+    // are pinned here, alongside the rest of the facet's fixture. Deposit is a
+    // fresh value-IN path; withdraw routes vault VPFI back OUT to the caller —
+    // both must revert `SanctionedAddress` for a flagged wallet.
+
+    function test_depositVPFIToVault_RevertsWhenSanctioned() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        vm.prank(borrower);
+        vpfiToken.approve(address(diamond), 100 ether);
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector,
+                borrower
+            )
+        );
+        _facet().depositVPFIToVault(100 ether);
+    }
+
+    function test_withdrawVPFIFromVault_RevertsWhenSanctioned() public {
+        // Deposit while clean, THEN flag — mirrors a wallet added to the SDN
+        // list mid-position. The value-OUT withdraw must still be blocked.
+        uint256 staked = 100 ether;
+        vm.prank(borrower);
+        vpfiToken.approve(address(diamond), staked);
+        vm.prank(borrower);
+        _facet().depositVPFIToVault(staked);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector,
+                borrower
+            )
+        );
+        _facet().withdrawVPFIFromVault(staked);
     }
 
     // ─── #569 §6 F-1 — withdrawVPFIFromVault respects collateral lien ────────

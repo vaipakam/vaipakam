@@ -97,6 +97,11 @@ That gate is what keeps bugs out of the oracle.
   examples for developers.
 - `TokenomicsTechSpec.md` — VPFI token economics + multi-chain model.
 - `WebsiteReadme.md` — website / product UX.
+- `SanctionsAndTermsGateMatrix.md` — cross-cutting action matrix for the two
+  live compliance gates on the retail deploy: address-level sanctions screening
+  (Tier-1 block / Tier-2 wind-down / fail-open) and the versioned Terms-of-Service
+  gate, per action family, plus the UI banner / Terms-prompt rules. (A focused
+  slice of the planned **Compliance** domain below.)
 - `KeeperAuthorityMatrix.md` — cross-cutting matrix of keeper delegation
   authority: the allowed delegated lifecycle surface vs. the no-custody boundary
   (a keeper, even with `KEEPER_ACTION_ALL`, can never claim, withdraw, transfer
