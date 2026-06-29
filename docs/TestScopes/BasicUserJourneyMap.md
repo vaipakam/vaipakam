@@ -220,11 +220,11 @@ The user wants temporary use of an NFT.
 2. User chooses `I want to rent one`.
 3. App shows available rental offers.
 4. User selects a rental.
-5. App shows daily fee, total prepay, buffer, duration, and end behavior.
+5. App shows daily fee, total prepay, configured buffer, duration, and end behavior.
 6. Review receipt appears.
 7. User signs.
 8. Loan Details shows active rental, remaining time, and close action.
-9. User closes rental or waits for expiry/default behavior.
+9. User closes rental normally (PF-143) or waits for expiry/default behavior (PF-144).
 
 Expiry/default branch: PF-144 covers the case where the renter does nothing and rights must reset through the rental expiry/default path.
 
