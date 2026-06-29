@@ -128,7 +128,8 @@ recompute or re-read the current effective tier at admission:
 
 - direct offer acceptance;
 - keeper-driven matching;
-- lender-intent fills such as `matchIntent`;
+- all lender-intent fills, including public `OfferMatchFacet.matchIntent` paths that
+  materialize a lender slice before initiating the loan;
 - refinance / preclose replacement flows that create new exposure;
 - lender-sale buyer admission;
 - obligation-transfer incoming borrower admission.
@@ -150,9 +151,10 @@ healthy and filling them after it disappears.
 
 ### 5. Snapshot Risk State On Offers And Loan Initiation
 
-Each offer should store the risk state visible at creation so the Offer Book and
-accept review can compare current risk against the author's original
-assumptions:
+Every offer, including signed off-chain offers that exist only as EIP-712
+calldata until fill time, should bind the risk state visible at creation so the
+Offer Book and accept review can compare current risk against the author's
+original assumptions:
 
 - creation-time observed on-chain tier;
 - creation-time keeper confidence tier;
@@ -166,10 +168,10 @@ assumptions:
   any intervening risk-config epoch is not fill-compatible, or when the current
   `fillCompatibleFromEpoch` floor is newer than the offer creation-time epoch;
 
-Signed off-chain offers must bind the same creation-time risk snapshot in the
-EIP-712 payload. If the existing typed data cannot carry these fields, old
-signed offers must be invalidated on every non-fill-compatible risk-config
-change and whenever the effective tier falls below the signed creation tier.
+The signed-offer EIP-712 payload must carry these snapshot fields. If the
+existing typed data cannot carry them, old signed offers must be invalidated on
+every non-fill-compatible risk-config change and whenever the effective tier
+falls below the signed creation tier.
 
 Each admitted loan should also store the risk state used at admission:
 
