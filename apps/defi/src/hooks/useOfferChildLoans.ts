@@ -64,30 +64,42 @@ export function useOfferChildLoans(
       return;
     }
     let cancelled = false;
+    // Clear immediately on a keyed (re)load so navigating between offers can't
+    // briefly show the previous offer's children under the new one (Codex P3).
+    setGroup(null);
+    setCount(0);
+    setTruncated(false);
     setLoading(true);
     void (async () => {
       try {
-        // 1. Enumerate child loanIds from the offer's OfferAccepted activity.
+        // 1. Enumerate child loanIds from the offer's activity. DIRECT fills emit
+        //    `OfferAccepted` tagged with this offerId; MATCHER-driven fills of a
+        //    LENDER offer attribute the loan to the borrower offer, so their only
+        //    link to this offer is `OfferMatched` (denormalized to the lender id
+        //    in the indexer). Union both; loanIds dedupe via the Set.
         const loanIds = new Set<number>();
-        let before: string | undefined;
         let hitCap = false;
-        for (let page = 0; page < MAX_ACTIVITY_PAGES; page++) {
-          const res = await fetchActivity(chain.chainId, {
-            offerId: Number(offerId),
-            kind: 'OfferAccepted',
-            limit: ACTIVITY_PAGE,
-            before,
-          });
-          if (!res || res.events.length === 0) break;
-          for (const ev of res.events) {
-            if (ev.loanId !== null) loanIds.add(ev.loanId);
+        for (const kind of ['OfferAccepted', 'OfferMatched'] as const) {
+          let before: string | undefined;
+          for (let page = 0; page < MAX_ACTIVITY_PAGES; page++) {
+            const res = await fetchActivity(chain.chainId, {
+              offerId: Number(offerId),
+              kind,
+              limit: ACTIVITY_PAGE,
+              before,
+            });
+            if (!res || res.events.length === 0) break;
+            for (const ev of res.events) {
+              if (ev.loanId !== null) loanIds.add(ev.loanId);
+            }
+            if (loanIds.size >= MAX_CHILD_LOANS) {
+              hitCap = true;
+              break;
+            }
+            if (!res.nextBefore) break;
+            before = res.nextBefore;
           }
-          if (loanIds.size >= MAX_CHILD_LOANS) {
-            hitCap = true;
-            break;
-          }
-          if (!res.nextBefore) break;
-          before = res.nextBefore;
+          if (hitCap) break;
         }
         if (cancelled) return;
 
