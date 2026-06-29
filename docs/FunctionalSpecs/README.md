@@ -102,6 +102,10 @@ That gate is what keeps bugs out of the oracle.
   (Tier-1 block / Tier-2 wind-down / fail-open) and the versioned Terms-of-Service
   gate, per action family, plus the UI banner / Terms-prompt rules. (A focused
   slice of the planned **Compliance** domain below.)
+- `KeeperAuthorityMatrix.md` — cross-cutting matrix of keeper delegation
+  authority: the allowed delegated lifecycle surface vs. the no-custody boundary
+  (a keeper, even with `KEEPER_ACTION_ALL`, can never claim, withdraw, transfer
+  position NFTs, or redirect funds), plus the permissionless-trigger exception.
 
 **Planned — per-domain functional specs** (authored by the baseline
 epic; see below). One doc per functional domain:
