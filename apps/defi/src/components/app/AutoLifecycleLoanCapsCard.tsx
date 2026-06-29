@@ -29,11 +29,6 @@ interface Props {
    *  100%. The card surfaces a stark warning before enabling caps
    *  so the user consciously consents to that tail-risk. */
   collateralIsNft?: boolean;
-  /** T-092 (#545) — the loan's `endTime` in unix seconds. Used to
-   *  render an in-grace-window warning when the borrower has caps
-   *  enabled but their loan is approaching grace expiry without a
-   *  match in the book. Pass 0 (or omit) to disable the warning. */
-  loanEndTime?: number;
 }
 
 /** Format unix-seconds to "yyyy-mm-dd" for the date input. */
@@ -86,7 +81,6 @@ export default function AutoLifecycleLoanCapsCard({
   isBorrower,
   isLender,
   collateralIsNft = false,
-  loanEndTime = 0,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondContract();
@@ -149,32 +143,10 @@ export default function AutoLifecycleLoanCapsCard({
         </div>
       )}
 
-      {/* T-092 (#545) — pre-grace warning banner. Fires when the
-          borrower has caps enabled AND the loan's `endTime` is
-          within 24h. Mirrors the keeper-side `runPreGraceWatcher`
-          notification (#532) but shows in the dapp regardless of
-          subscription state. Hours-to-end is computed live so the
-          banner stays accurate as time passes within the window. */}
-      {(() => {
-        if (!refinanceCaps?.enabled) return null;
-        if (loanEndTime === 0) return null;
-        const nowSec = Math.floor(Date.now() / 1000);
-        if (loanEndTime <= nowSec) return null; // already past
-        if (loanEndTime - nowSec > 24 * 60 * 60) return null; // too early
-        const hoursToEnd = Math.max(0, Math.floor((loanEndTime - nowSec) / 3600));
-        return (
-          <div
-            className="alert alert-danger"
-            role="alert"
-            style={{ marginBottom: 12 }}
-          >
-            <AlertTriangle size={14} />
-            <div>
-              {t('autoLifecycleLoanCaps.preGraceWarning', { hours: hoursToEnd })}
-            </div>
-          </div>
-        );
-      })()}
+      {/* #545 — the pre-grace warning now lives as a prominent banner near the
+          loan title on LoanDetails (with "Tighten refinance caps" + "Repay now"
+          CTAs, the latter scrolling here). The earlier in-card duplicate was
+          removed to avoid two identical warnings on the same page. */}
 
       {isBorrower && refinanceCaps && (
         <RefinanceCapsEditor

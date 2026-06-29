@@ -15,3 +15,7 @@ the caps if the market has moved) or open the repay flow directly.
 This mirrors the existing keeper-side pre-grace notification so the warning reaches
 anyone who opens the page, not only notification subscribers. It is advisory and
 changes no on-chain behaviour or repayment obligation.
+
+It also replaces the earlier, less prominent in-card pre-grace note (which had no
+call-to-action and sat lower on the page) so the borrower sees a single, clear,
+actionable warning rather than two duplicates.

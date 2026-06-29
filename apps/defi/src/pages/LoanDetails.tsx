@@ -800,11 +800,6 @@ export default function LoanDetails() {
             Number(loan.collateralAssetType) === AssetType.ERC721 ||
             Number(loan.collateralAssetType) === AssetType.ERC1155
           }
-          // T-092 (#545) — pass the loan's endTime so the card can
-          // render the in-grace-window pre-grace warning when
-          // applicable. Defaults to 0 (no warning) for non-active
-          // loans.
-          loanEndTime={isActive ? endTime : 0}
         />
         </div>
       )}
