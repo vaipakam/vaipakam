@@ -97,6 +97,10 @@ That gate is what keeps bugs out of the oracle.
   examples for developers.
 - `TokenomicsTechSpec.md` — VPFI token economics + multi-chain model.
 - `WebsiteReadme.md` — website / product UX.
+- `KeeperAuthorityMatrix.md` — cross-cutting matrix of keeper delegation
+  authority: the allowed delegated lifecycle surface vs. the no-custody boundary
+  (a keeper, even with `KEEPER_ACTION_ALL`, can never claim, withdraw, transfer
+  position NFTs, or redirect funds), plus the permissionless-trigger exception.
 
 **Planned — per-domain functional specs** (authored by the baseline
 epic; see below). One doc per functional domain:
