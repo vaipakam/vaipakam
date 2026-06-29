@@ -9,6 +9,7 @@ import { WalletProvider } from './context/WalletContext'
 import { ChainProvider } from './context/ChainContext'
 import { ModeProvider } from './context/ModeContext'
 import { WatermarkProvider } from './context/WatermarkContext'
+import { RealtimePushProvider } from './context/RealtimePushContext'
 import { DataFreshnessProvider } from './context/DataFreshnessContext'
 import { WalletConnectingOverlay } from './components/app/WalletConnectingOverlay'
 import './i18n' // initialise i18next before any component renders
@@ -110,18 +111,26 @@ createRoot(document.getElementById('root')!).render(
                     subscriber under here shares ONE probe loop instead
                     of spawning its own timer. */}
                 <WatermarkProvider>
-                  {/* DataFreshnessProvider sits under WatermarkProvider
-                      (the badge reads both) and under ChainProvider (it
-                      resets on chain switch). Data hooks report their
-                      scanned-through block + loading flag into it; the
-                      IndexerStatusBadge derives its 3-state colour from
-                      the max frontier vs the watermark's chain-safe
-                      head, gated by "is anything still loading". */}
-                  <DataFreshnessProvider>
-                    <ModeProvider>
-                      <App />
-                    </ModeProvider>
-                  </DataFreshnessProvider>
+                  {/* RealtimePushProvider sits under WatermarkProvider (it
+                      calls `nudge()` on a push) and under ChainProvider (it
+                      opens the WS to the active chain's ingest DO). Purely
+                      additive: the watermark poll keeps running underneath,
+                      so a missing/dropped socket degrades to today's polling
+                      behaviour. (#757 Phase B.) */}
+                  <RealtimePushProvider>
+                    {/* DataFreshnessProvider sits under WatermarkProvider
+                        (the badge reads both) and under ChainProvider (it
+                        resets on chain switch). Data hooks report their
+                        scanned-through block + loading flag into it; the
+                        IndexerStatusBadge derives its 3-state colour from
+                        the max frontier vs the watermark's chain-safe
+                        head, gated by "is anything still loading". */}
+                    <DataFreshnessProvider>
+                      <ModeProvider>
+                        <App />
+                      </ModeProvider>
+                    </DataFreshnessProvider>
+                  </RealtimePushProvider>
                 </WatermarkProvider>
               </ChainProvider>
             </WalletProvider>

@@ -68,6 +68,17 @@ interface WatermarkContextValue {
   register: (opts: UseLiveWatermarkOptions) => number;
   /** Subscriber deregistration. */
   unregister: (id: number) => void;
+  /**
+   * #757 Phase B — fire an immediate probe and FORCE a `version` bump, even
+   * when the lifetime counters didn't move. The realtime WS push calls this
+   * when the indexer signals a state change: status-only mutations (repay,
+   * default, cancel, transfer) don't advance `getGlobalCounts`, so the normal
+   * advance-gated bump would miss them — `nudge()` guarantees subscribers
+   * refetch. Also refreshes `snapshot.safeBlock` first so the refetch's RPC
+   * catch-up window includes the just-confirmed block. Coalesce bursts at the
+   * call site (the WS client debounces).
+   */
+  nudge: () => void;
 }
 
 const WatermarkContext = createContext<WatermarkContextValue | null>(null);
@@ -118,6 +129,11 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   // slow tick.
   const rescheduleRef = useRef<() => void>(() => {});
 
+  // #757 Phase B — imperative "probe now + force a version bump", injected by
+  // the probe-loop effect (closure over the live publicClient/diamond). No-op
+  // until a probe loop is active. `nudge()` pokes through this.
+  const probeNowRef = useRef<() => void>(() => {});
+
   const register = useCallback((opts: UseLiveWatermarkOptions) => {
     const id = nextSubscriberId++;
     subscribersRef.current.set(id, opts);
@@ -127,6 +143,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   const unregister = useCallback((id: number) => {
     subscribersRef.current.delete(id);
     rescheduleRef.current();
+  }, []);
+  // Stable identity for consumers (the WS push provider lists it in deps).
+  const nudge = useCallback(() => {
+    probeNowRef.current();
   }, []);
 
   useEffect(() => {
@@ -158,6 +178,14 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     };
     let lastActivityAt = Date.now();
     let lastActivityWriteAt = 0;
+    // #757 Phase B — single-probe funnel guarding the singleton-poller
+    // invariant: at most ONE probe (timer- OR push-driven) runs at a time, and
+    // at most ONE timer is ever armed. A trigger arriving mid-probe sets a
+    // pending flag consumed when the in-flight probe settles. Without this, a
+    // push nudge landing during a slow timer probe (or vice-versa) armed a
+    // second poll loop, multiplying background RPC traffic.
+    let probeInFlight = false;
+    let pendingForce = false; // a push nudge arrived mid-probe
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -197,7 +225,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       return tierInterval;
     }
 
-    async function probe(): Promise<void> {
+    async function probe(opts?: { forceBump?: boolean }): Promise<void> {
       try {
         const result = (await publicClient.readContract({
           address: diamond as Address,
@@ -237,9 +265,55 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
           };
         });
         setStatus('live');
-        if (advanced) setVersion((v) => v + 1);
+        // `forceBump` (the Phase B WS nudge) bumps even when the counters held,
+        // so a status-only mutation (repay/default/cancel/transfer) still drives
+        // subscribers to refetch.
+        if (advanced || opts?.forceBump) setVersion((v) => v + 1);
       } catch {
-        if (!cancelled) setStatus('unreachable');
+        if (!cancelled) {
+          setStatus('unreachable');
+          // #757 Phase B (P3) — a forced (push-driven) probe whose `getGlobalCounts`
+          // / safe-block read transiently fails STILL bumps `version`. The indexer
+          // already wrote D1 and pushed the invalidation; subscribers should
+          // refetch the (indexer-backed) slice now rather than wait for the next
+          // poll just because the user's RPC hiccupped. Status is separately
+          // marked `unreachable`.
+          if (opts?.forceBump) setVersion((v) => v + 1);
+        }
+      }
+    }
+
+    // The single funnel every probe goes through (timer tick, push nudge,
+    // visibility/activity). `forceBump` is true only for push-driven nudges.
+    // Serializes against itself: a trigger while a probe is in flight is folded
+    // into ONE follow-up (a forced follow-up wins, so a status-only mutation
+    // isn't lost). On settle it either services the pending nudge or arms the
+    // next timer — never both, never a duplicate timer.
+    async function runProbe(forceBump: boolean): Promise<void> {
+      if (probeInFlight) {
+        // A tick arriving mid-probe is folded in: a push nudge must not be lost
+        // (it force-bumps), so remember it; a plain timer/visibility tick needs
+        // nothing — the in-flight probe's `finally` always reschedules.
+        if (forceBump) pendingForce = true;
+        return;
+      }
+      probeInFlight = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      try {
+        await probe({ forceBump });
+      } finally {
+        probeInFlight = false;
+        if (!cancelled) {
+          if (pendingForce) {
+            pendingForce = false;
+            void runProbe(true); // a nudge landed mid-probe — service it next
+          } else {
+            schedule(); // arm the next timer (self-clears any stale one)
+          }
+        }
       }
     }
 
@@ -248,22 +322,28 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       if (document.hidden) return; // visibility-pause
       const interval = chooseInterval();
       if (interval === null) return; // no subscribers / all paused
-      timer = setTimeout(async () => {
-        await probe();
-        schedule();
+      if (timer) {
+        clearTimeout(timer); // never stack timers
+        timer = null;
+      }
+      timer = setTimeout(() => {
+        void runProbe(false);
       }, interval);
     }
 
-    // Imperative restart: clear the pending timer and rebuild against
-    // the now-current subscriber set + activity state. Bound into
-    // rescheduleRef so register/unregister/onActivity can call it.
+    // Imperative restart: rebuild the timer against the now-current subscriber
+    // set + activity state. `schedule()` self-clears, so this is a thin alias
+    // kept for the register/unregister call sites.
     rescheduleRef.current = () => {
       if (cancelled) return;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
       schedule();
+    };
+
+    // #757 Phase B — "probe now + force a version bump". Funnels through
+    // `runProbe`, so a push nudge is fully serialized with the timer probe and
+    // with other nudges — exactly one probe runs and one timer is armed.
+    probeNowRef.current = () => {
+      void runProbe(true);
     };
 
     function onVisibility(): void {
@@ -276,9 +356,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       }
       // Re-focused — count as fresh activity and fire an immediate probe.
       lastActivityAt = Date.now();
-      void probe().then(() => {
-        if (!cancelled) schedule();
-      });
+      void runProbe(false);
     }
 
     function onActivity(): void {
@@ -293,16 +371,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       );
       lastActivityAt = now;
       if (wasPaused && !cancelled && !document.hidden && !timer) {
-        void probe().then(() => {
-          if (!cancelled && !timer) schedule();
-        });
+        void runProbe(false);
       }
     }
 
-    // Initial fire + schedule.
-    void probe().then(() => {
-      if (!cancelled) schedule();
-    });
+    // Initial fire + schedule (through the funnel).
+    void runProbe(false);
     document.addEventListener('visibilitychange', onVisibility);
     const activityOpts = { passive: true } as const;
     document.addEventListener('mousemove', onActivity, activityOpts);
@@ -319,12 +393,13 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('scroll', onActivity);
       document.removeEventListener('touchstart', onActivity);
       rescheduleRef.current = () => {};
+      probeNowRef.current = () => {};
     };
   }, [publicClient, diamond]);
 
   const value = useMemo<WatermarkContextValue>(
-    () => ({ version, snapshot, status, register, unregister }),
-    [version, snapshot, status, register, unregister],
+    () => ({ version, snapshot, status, register, unregister, nudge }),
+    [version, snapshot, status, register, unregister, nudge],
   );
 
   return <WatermarkContext.Provider value={value}>{children}</WatermarkContext.Provider>;

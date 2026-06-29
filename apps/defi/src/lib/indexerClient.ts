@@ -35,6 +35,23 @@ export function indexerOrigin(): string | null {
   return baseUrl();
 }
 
+/**
+ * #757 Phase B — the WebSocket origin for the realtime push channel. Prefers an
+ * explicit `VITE_INDEXER_WS_ORIGIN` (lets an operator front the WS on a separate
+ * host); otherwise derives it from `VITE_INDEXER_ORIGIN` by swapping the scheme
+ * (`https→wss`, `http→ws`). Returns `null` when no indexer origin is configured
+ * at all — the realtime layer then stays disabled and the dapp keeps polling.
+ */
+export function indexerWsOrigin(): string | null {
+  const explicit = import.meta.env.VITE_INDEXER_WS_ORIGIN as string | undefined;
+  if (explicit) return explicit.replace(/\/$/, '');
+  const http = baseUrl();
+  if (!http) return null;
+  if (http.startsWith('https://')) return 'wss://' + http.slice('https://'.length);
+  if (http.startsWith('http://')) return 'ws://' + http.slice('http://'.length);
+  return null; // non-http origin — can't derive a ws scheme.
+}
+
 async function getJson<T>(path: string): Promise<T | null> {
   const root = baseUrl();
   if (!root) return null;

@@ -55,6 +55,7 @@ import {
   type WorkerEnv,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   pruneOldCancelledOffers,
   pruneOldWebhookDeliveries,
@@ -192,6 +193,41 @@ export default {
     // the body, and HMAC-verifies before any further work.
     if (url.pathname === '/hooks/chain-event' && req.method === 'POST') {
       return handleChainEventWebhook(req, env);
+    }
+
+    // #757 Phase B — browser WebSocket subscribe: `GET /ws/chain/:chainId` with
+    // an `Upgrade: websocket` header. Dispatched BEFORE `resolveEnv` (the DO
+    // resolves its own env; no Secrets-Store fetch needed just to route the
+    // upgrade) and forwarded to that chain's ingest DO, which holds the
+    // Hibernatable sockets. Degradable by construction: with no DO binding (or
+    // DO ingest disabled) the socket is silent and the dapp keeps polling.
+    const wsMatch = url.pathname.match(/^\/ws\/chain\/(\d+)$/);
+    if (wsMatch) {
+      if (req.headers.get('Upgrade') !== 'websocket') {
+        return new Response('expected websocket upgrade', { status: 426 });
+      }
+      // Reject inactive subscriptions BEFORE touching the DO (Codex P2). While
+      // DO ingest is off (the default rollout state) there's no push channel —
+      // returning 503 keeps the client honestly on polling and avoids the DO
+      // resolving secrets + accepting a never-fed socket on every app load.
+      if (!doIngestEnabled(env) || !env.CHAIN_INGEST_DO) {
+        return new Response('realtime push unavailable', { status: 503 });
+      }
+      const chainId = Number(wsMatch[1]);
+      // Reject unknown chains BEFORE `idFromName`, so a client can't spray
+      // `/ws/chain/<random>` and spin up per-id DO instances. `getDeployment`
+      // is the static (no-secret) "is this a real Vaipakam chain" gate.
+      if (!getDeployment(chainId)) {
+        return new Response('unknown chain', { status: 404 });
+      }
+      const ns = env.CHAIN_INGEST_DO;
+      const stub = ns.get(ns.idFromName(String(chainId)));
+      // Reconstruct the request against the DO-internal URL so the DO can read
+      // `?chain=` for its `hello` frame; `new Request(url, req)` preserves the
+      // upgrade headers that signal the WebSocket handshake.
+      return stub.fetch(
+        new Request(`https://chain-ingest-do/ws?chain=${chainId}`, req),
+      );
     }
 
     // T-078 — resolve the Secrets Store RPC bindings once, at the
