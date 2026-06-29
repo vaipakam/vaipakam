@@ -2,8 +2,8 @@
 
 **Status:** intended-behaviour specification (the test oracle). Sourced from the
 keeper-delegation design (Phase 6) and the security boundary documented across
-`docs/FunctionalSpecs/WebsiteReadme.md` (keeper UX) and `docs/IncidentRunbook.md`
-— not transcribed from the contracts. The "Verified at" / "Tested by" columns
+`docs/FunctionalSpecs/WebsiteReadme.md` (keeper UX) and
+`docs/ops/IncidentRunbook.md` — not transcribed from the contracts. The "Verified at" / "Tested by" columns
 reference where each rule is enforced and exercised; a divergence between this
 matrix and the code is a bug to be logged in `_CodeVsDocsAudit.md`, not a reason
 to edit the matrix.
@@ -44,20 +44,25 @@ The action bits (`LibVaipakam.KEEPER_ACTION_*`, a `uint8` mask;
 
 ## What a delegated keeper CAN do (the allowed surface)
 
-Each row is reachable by a keeper holding the listed action bit (plus the three
-gates above). Every one is a **lifecycle/automation** action that routes value to
-the loan's own parties — never to the keeper.
+Each row is reachable by a keeper holding the listed action bit (plus the gates
+above). Every one is a **lifecycle/automation** action whose loan PROCEEDS route
+to the loan's own parties, never to the keeper as principal — though a
+keeper-driven action may (a) move the obligation the user already owes from the
+user's own vault to the counterparty (e.g. auto-extend pays the lender/treasury
+the interest + late fee the borrower owes), and (b) earn the keeper the bounded
+VPFI **housekeeping reward** (`LibKeeperReward.payVpfiReward`, itself sanctions
+soft-skipped). Neither hands the keeper the user's principal/collateral.
 
-| Delegated action | Action bit | Entitled side | Enforced at |
+| Delegated action | Action bit | Authorized side (keeper whitelist resolves against this NFT owner) | Enforced at |
 | --- | --- | --- | --- |
 | Initiate early withdrawal / loan-sale listing | `INIT_EARLY_WITHDRAW` | lender | `EarlyWithdrawalFacet` |
 | Complete loan sale | `COMPLETE_LOAN_SALE` | lender | `EarlyWithdrawalFacet` |
 | Initiate preclose (direct / transfer / offset) | `INIT_PRECLOSE` | borrower | `PrecloseFacet` |
-| Complete offset | `COMPLETE_OFFSET` | lender | `PrecloseFacet` |
+| Complete offset | `COMPLETE_OFFSET` | **borrower** (`requireKeeperFor(..., lenderSide=false)`) | `PrecloseFacet` |
 | Refinance loan | `REFINANCE` | borrower | `RefinanceFacet` |
-| Auto-extend in place | `EXTEND` | both (per-loan caps) | `AutoLifecycleFacet` |
-| Fill a standing signed intent | `SIGNED_FILL` | lender (principal-keyed) | `OfferMatchFacet` |
-| Auto-roll a repaid intent loan | `AUTO_ROLL` | lender (principal-keyed) | `LenderIntentFacet` |
+| Auto-extend in place | `EXTEND` | **borrower** (the `EXTEND` bit gates the borrower-side call; lender consent comes only from the per-loan caps, so a lender-approved keeper alone cannot drive it) | `AutoLifecycleFacet` |
+| Fill a standing signed intent | `SIGNED_FILL` | lender — **principal-keyed** (`requireKeeperForPrincipal`): no per-loan gate (the loan doesn't exist yet), only global pause + master access + the principal's action bit | `OfferMatchFacet` |
+| Auto-roll a repaid intent loan | `AUTO_ROLL` | lender — **principal-keyed** (same model, no per-loan toggle) | `LenderIntentFacet` |
 
 ## What a delegated keeper CANNOT do — the no-custody boundary
 
@@ -86,16 +91,31 @@ incidentally, a keeper address — because they are safety/close-out paths whose
   loan's lender (current lender-NFT holder) and collateral back to the borrower
   side, **never to `msg.sender`**. A lender is explicitly barred from repaying
   their own loan (`LenderCannotRepayOwnLoan`).
-- `DefaultedFacet.markDefaulted` / `triggerDefault` — anyone may trigger a
-  time-based default; settlement routes to the stored parties / treasury.
-- `RiskFacet.triggerLiquidation` — permissionless HF-based liquidation; the
-  liquidation settlement routes to the position-NFT holders, and only the
-  separate liquidator *bonus* goes to the caller (a bounded skim, not a custody
-  transfer of the loan's funds), and the min-out floor stays oracle-derived.
+- `DefaultedFacet.triggerDefault` — anyone may trigger a time-based default;
+  settlement routes to the stored parties / treasury. One caller incentive
+  exists: if the default finds an internal-match candidate
+  (`attemptInternalMatchAutoDispatch`), the caller earns the bounded 1% matcher
+  bonus — a bounded incentive, not custody of the loan's principal/collateral.
+- `RiskFacet.triggerLiquidation` (and the partial / split paths) — permissionless
+  HF-based liquidation; the liquidation settlement routes to the position-NFT
+  holders, and only the separate liquidator *bonus* goes to the caller (a bounded
+  skim, not a custody transfer of the loan's funds); the min-out floor stays
+  oracle-derived.
+- `RiskFacet.triggerLiquidationDiscounted` (when the discounted path is enabled)
+  — permissionless, and the caller acts as the liquidator: they **pay the debt**
+  and pass a `recipient` for the **seized collateral they purchased**. This is a
+  liquidation *purchase* (value-for-value), not a custody redirect of someone
+  else's funds — the caller cannot take collateral without paying, and the
+  borrower's surplus / lender's proceeds still settle to the loan's parties — but
+  the matrix calls it out so "no power to redirect custody" is not read as
+  forbidding a paying liquidator from naming where the bought collateral lands.
 
-Calling one of these as a keeper address gives the caller **no claim ownership
-and no power to redirect custody or weaken a gate** — it is the same call any
-address can make. This is distinct from the delegated-keeper surface above.
+Calling one of these as a keeper address gives the caller **no claim to the
+user's principal or collateral and no power to redirect a user's custody or
+weaken a safety gate** — the only value a caller can earn is a bounded,
+documented incentive (matcher / liquidator bonus) or collateral they paid the
+debt to purchase. It is the same call any address can make, distinct from the
+delegated-keeper surface above.
 
 ## UI rule
 
