@@ -20,6 +20,15 @@
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
 }
 
+/* #822 — compact centered variant for the loading / read-error hold states. */
+.legal-gate-card--status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
 .legal-gate-head {
   display: flex;
   gap: 14px;

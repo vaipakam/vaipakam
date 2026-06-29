@@ -186,20 +186,21 @@ accepted the current Terms (version + hash), the app prompts for acceptance
 before the gated routes; a version/hash change re-prompts. While disabled
 (`currentTosVersion == 0`) the app does not prompt.
 
-**Terms gate — read-failure / loading posture (intended fail-CLOSED; the dapp
-currently fails OPEN — a confirmed divergence).** Unlike sanctions, the Terms gate
-has **no per-action on-chain revert** — it is a dapp-side routing gate over the
-on-chain acceptance record, so there is no protocol backstop if the gate is
-bypassed in the UI. The **intended** behaviour when the gate is enabled but the
-acceptance/version read is still loading or fails is **fail-CLOSED** (hold the
-gated routes behind the prompt / a neutral loading state until the read resolves)
-— the opposite of the sanctions banner's fail-open, because here a fail-open lets
-a non-accepting wallet reach gated routes with nothing else stopping it.
-**Current code diverges:** `LegalGate` renders `children` during `loading`, and
-on a read error `useTosAcceptance` leaves `currentVersion` at its default `0`,
-which makes `hasAccepted` evaluate `true` (the gate-disabled branch) — so a
-loading or failed read currently lets the gated route render. This is a confirmed
-route-gate bypass logged in `_CodeVsDocsAudit.md` (see Open gaps).
+**Terms gate — read-failure / loading posture (fail-CLOSED, #822).** Unlike
+sanctions, the Terms gate has **no per-action on-chain revert** — it is a
+dapp-side routing gate over the on-chain acceptance record, so there is no
+protocol backstop if the gate is bypassed in the UI. It therefore **fails
+CLOSED** when the gate is enabled but the acceptance/version read is still
+loading or fails — the opposite of the sanctions banner's fail-open, because here
+a fail-open would let a non-accepting wallet reach gated routes with nothing else
+stopping it. `useTosAcceptance` gates `hasAccepted` on a `readOk` flag (true only
+after a successful read) and resets `currentVersion = 0` on a read error, so the
+unread/errored default is never mistaken for the genuine gate-disabled state;
+`LegalGate` renders a neutral loading state while `loading` and a retry state on
+a failed read, passing the gated routes through only after a successful read
+shows accepted (or genuinely disabled). (Pre-#822 it rendered `children` during
+`loading` and treated the errored default `currentVersion = 0` as
+gate-disabled — a route-gate bypass.)
 
 ## Test coverage & gaps
 
@@ -273,14 +274,6 @@ route-gate bypass logged in `_CodeVsDocsAudit.md` (see Open gaps).
   is a held-proceeds escrow on these paths (mirroring the consolidation-move-out
   exemption) so the close-out completes and the flagged recipient's share waits
   behind a Tier-1 claim. Tracked under #821.
-- **Terms-gate read-failure currently fails OPEN (confirmed divergence).** The
-  Terms gate has no on-chain per-action backstop (it is a dapp routing gate). The
-  intended posture is fail-CLOSED, but `LegalGate` renders the gated routes while
-  the read is `loading` and on a read error `useTosAcceptance` leaves
-  `currentVersion = 0`, so `hasAccepted` is `true` (gate-disabled branch) and the
-  route renders — a live route-gate bypass on loading / read-failure paths. Logged
-  in `_CodeVsDocsAudit.md`; fix = hold closed (don't render children until the read
-  resolves successfully; treat an unread/errored version as not-accepted).
 - **UI submit-disable on the flagged signal.** Pages warn via `SanctionsBanner`
   but do not yet disable their submit buttons on `useSanctionsCheck().isSanctioned`;
   wiring that (so the app never offers a clickable Tier-1 action to a flagged

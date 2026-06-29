@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { type Address } from 'viem';
 import {
   useDiamondContract,
@@ -24,8 +24,15 @@ import { beginStep } from '../lib/journeyLog';
 export interface TosAcceptanceState {
   /** True iff the wallet has accepted the current on-chain ToS version.
    *  Also true when the gate is disabled (currentTosVersion == 0) so the
-   *  frontend can render `/app` routes unconditionally in that state. */
+   *  frontend can render the connected-app routes unconditionally in that
+   *  state. **Only ever true after a SUCCESSFUL read** (see `readOk`) — a
+   *  still-loading or errored read leaves this `false` so the gate fails
+   *  CLOSED rather than mistaking the unread default version (0) for the
+   *  gate-disabled state (#822). */
   hasAccepted: boolean;
+  /** True once an on-chain read has completed successfully. While this is
+   *  false (initial load, or after a read error) the gate must not open. */
+  readOk: boolean;
   /** Current in-force ToS version. 0 means the gate is disabled. */
   currentVersion: number;
   /** Current in-force ToS content hash. */
@@ -60,48 +67,94 @@ export function useTosAcceptance(): TosAcceptanceState {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // #822 — the gate must fail CLOSED until a read actually succeeds. Without
+  // this, a read error left `currentVersion` at its default 0, which the
+  // gate-disabled check (`currentVersion === 0`) read as "accepted", silently
+  // opening the gated routes on any RPC failure.
+  const [readOk, setReadOk] = useState(false);
+  // #828 r2 — monotonic request counter. Each `reload()` claims the next value;
+  // a read that resolves after a newer `reload()` has started is stale (the
+  // wallet / chain changed mid-flight) and must NOT apply its result, or it
+  // would clobber the current wallet's state with the previous one's.
+  const reqSeq = useRef(0);
 
   const reload = useCallback(async () => {
-    if (!diamondAddress) return;
+    const seq = ++reqSeq.current;
+    // #828 r1 — reset the success flag on every (re)load so that when the
+    // connected wallet or read chain changes, the gate can't keep reporting the
+    // PREVIOUS wallet's acceptance until the new read lands; it holds closed
+    // (verifying) during the transition.
+    setReadOk(false);
     setLoading(true);
     setError(null);
+    // #828 r1 — no diamond deployed on this chain ⇒ there is no on-chain Terms
+    // gate to enforce. Treat as gate-disabled (pass through) rather than leaving
+    // `loading` true forever, which would pin the gate on its "verifying" state.
+    if (!diamondAddress) {
+      setCurrentVersion(0);
+      setReadOk(true);
+      setLoading(false);
+      return;
+    }
     try {
-      const [curr, user] = await Promise.all([
-        publicClient.readContract({
-          address: diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getCurrentTos',
-        }) as Promise<readonly [number, `0x${string}`]>,
-        address
-          ? (publicClient.readContract({
-              address: diamondAddress,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: 'getUserTosAcceptance',
-              args: [address as Address],
-            }) as Promise<{
-              version: number;
-              hash: `0x${string}`;
-              acceptedAt: bigint;
-            }>)
-          : Promise.resolve({
-              version: 0,
-              hash: ZERO_HASH,
-              acceptedAt: 0n,
-            }),
-      ]);
-      setCurrentVersion(Number(curr[0]));
+      const curr = (await publicClient.readContract({
+        address: diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getCurrentTos',
+      })) as readonly [number, `0x${string}`];
+      // #828 r2 — drop a stale in-flight read superseded by a newer reload().
+      if (seq !== reqSeq.current) return;
+      const version = Number(curr[0]);
+      setCurrentVersion(version);
       setCurrentHash(curr[1]);
+      // #828 r3 — when the gate is disabled (`currentTosVersion === 0`) the
+      // wallet's own acceptance record is irrelevant (everyone is implicitly
+      // accepted), so short-circuit before the second read rather than issuing
+      // a `getUserTosAcceptance` call whose result is discarded.
+      if (version === 0) {
+        setUserVersion(0);
+        setReadOk(true);
+        return; // `finally` clears `loading` for the current request
+      }
+      const user = address
+        ? ((await publicClient.readContract({
+            address: diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getUserTosAcceptance',
+            args: [address as Address],
+          })) as { version: number; hash: `0x${string}`; acceptedAt: bigint })
+        : { version: 0, hash: ZERO_HASH, acceptedAt: 0n };
+      // Re-check: the wallet/chain may have changed during the second read.
+      if (seq !== reqSeq.current) return;
       setUserVersion(Number(user.version));
       setUserHash(user.hash);
+      setReadOk(true);
     } catch (e) {
+      if (seq !== reqSeq.current) return;
+      // Fail CLOSED: drop `readOk` so a stale prior success can't keep the
+      // gate open through an RPC outage, and reset the version so nothing
+      // downstream mistakes the unread value for a real "gate disabled".
+      setReadOk(false);
+      setCurrentVersion(0);
       setError((e as Error)?.message ?? 'Failed to read ToS state');
     } finally {
-      setLoading(false);
+      // Only the current request owns `loading`; a stale one clearing it would
+      // prematurely reveal the gate while the live read is still in flight.
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [publicClient, diamondAddress, address]);
 
-  useEffect(() => {
+  // #828 r4 — `useLayoutEffect` (commit phase, BEFORE paint) rather than a
+  // passive `useEffect` (after paint). The cleanup bumps `reqSeq` the instant
+  // the deps (wallet / chain / client) change, synchronously during commit, so
+  // an in-flight read from the previous wallet is invalidated before React can
+  // paint with — or a late resolution can apply — stale state. `reload()` is
+  // fire-and-forget here; kicking it off pre-paint is harmless.
+  useLayoutEffect(() => {
     void reload();
+    return () => {
+      reqSeq.current++;
+    };
   }, [reload]);
 
   const accept = useCallback(async () => {
@@ -137,12 +190,17 @@ export function useTosAcceptance(): TosAcceptanceState {
 
   // Gate disabled (currentVersion=0) → everyone is accepted.
   // Otherwise: user version + hash must both match current.
+  // #822 — gated on `readOk` so the unread/errored default (version 0) is NOT
+  // mistaken for the genuine gate-disabled state. Only a SUCCESSFUL read of a
+  // real on-chain 0 opens the gate via the disabled branch.
   const hasAccepted =
-    currentVersion === 0 ||
-    (userVersion === currentVersion && userHash === currentHash);
+    readOk &&
+    (currentVersion === 0 ||
+      (userVersion === currentVersion && userHash === currentHash));
 
   return {
     hasAccepted,
+    readOk,
     currentVersion,
     currentHash,
     userVersion,
