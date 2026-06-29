@@ -156,9 +156,9 @@ Existing positive script coverage:
 | --- | --- | --- | --- | --- | --- |
 | PF-140 | Basic | ERC-721 rental offer accepted. | NFT remains vault-custodied; renter user rights set; prepay+buffer locked. | scripted | Keep. |
 | PF-141 | Basic | ERC-1155 rental offer accepted. | Quantity remains vault-custodied; renter rights set; prepay+buffer locked. | scripted | Keep. |
-| PF-142 | Basic | Daily rental deduction succeeds. | Lender/treasury allocation recorded; rental remains active or closes at end. | scripted | Keep. |
+| PF-142 | Basic | Daily rental deduction succeeds. | Lender/treasury allocation recorded; rental remains active or closes at end. | unit/integration | Add harness/script coverage for `autoDeductDaily`; current scripts only accept and close rentals. |
 | PF-143 | Basic | Renter closes rental normally. | Rights reset; unused prepay/buffer returned as specified; lender can reclaim NFT. | scripted | Keep. |
-| PF-144 | Basic | Rental reaches default/expiry and lender reclaims. | Rights reset; lender receives rental entitlement and NFT return path. | scripted | Keep. |
+| PF-144 | Basic | Rental reaches default/expiry and lender reclaims. | Rights reset; lender receives rental entitlement and NFT return path. | unit/integration | Add default-capable harness/script; current scripts do not call `triggerDefault`. |
 | PF-145 | Advanced | NFT rental marketplace / prepay listing positive sale path. | Listing fill settles loan/rental and routes proceeds correctly. | unit/integration + fork | Add fork/script fixture if stable. |
 | PF-146 | Advanced | Cancel active prepay listing. | Listing state cleared; loan/rental remains coherent. | unit/integration | not core positive script. |
 | PF-147 | Advanced | Cancel expired prepay listing cleanup. | Stale listing marked cleanup-eligible/closed. | unit/integration | not broadcast-script friendly. |
@@ -180,7 +180,7 @@ Existing positive script coverage:
 | ID | Audience | Positive flow | Expected end state | Current coverage | Script need |
 | --- | --- | --- | --- | --- | --- |
 | PF-180 | Basic | Time-based default on liquid collateral after grace. | Collateral liquidated/swapped or fallback snapshot created; claims recorded. | unit/integration | not scriptable without time; keep tests. |
-| PF-181 | Basic | Time-based default on illiquid collateral. | Full collateral claim/transfer to lender path available. | scripted | Keep. |
+| PF-181 | Basic | Time-based default on illiquid collateral. | Full collateral claim/transfer to lender path available. | unit/integration | Add default-capable harness/script; current scripts repay illiquid loans rather than defaulting them. |
 | PF-182 | Advanced | HF-based liquidation on liquid collateral. | Liquidator triggers swap; lender/borrower/liquidator/treasury allocations recorded. | unit/integration | not broadcast-script friendly unless mock price can change without time. |
 | PF-183 | Advanced | Liquidation fallback pending when swap fails. | Snapshot recorded; borrower cure and lender claim paths available. | unit/integration | Add script with mock failing adapter if safe. |
 | PF-184 | Advanced | Borrower cures fallback by full repay before lender claim. | Loan closes repaid; snapshot deleted; collateral returned. | unit/integration | Add script if possible. |
@@ -253,7 +253,7 @@ Existing positive script coverage:
 | PF-301 | Advanced | User edits keeper actions. | Permission mask updates without changing unrelated keepers. | unit/integration | Add script assertion. |
 | PF-302 | Advanced | User revokes keeper. | Keeper can no longer perform delegated actions. | unit/integration | Optional positive/negative split. |
 | PF-303 | Advanced | Keeper executes allowed lifecycle action for current position holder. | Action succeeds only within explicit authority. | scripted | Keep; add current-holder transfer case. |
-| PF-304 | Advanced | Global delegated-keeper pause toggles off and back on. | Keeper calls inert while paused; direct owner actions remain available. | scripted for pause, unit for keeper semantics | Add combined script. |
+| PF-304 | Advanced | Global delegated-keeper pause toggles off and back on. | Keeper calls inert while paused; direct owner actions remain available. | unit/integration | Add combined script for delegated-keeper pause; current positive scripts cover general pause smoke only. |
 | PF-305 | Basic | Permissionless liquidation/default trigger succeeds even without keeper delegation. | Caller can move loan to terminal state but cannot redirect funds. | unit/integration | Keep focused tests. |
 
 ### Admin, Governance, Treasury, Oracle, And Deployment
@@ -262,8 +262,8 @@ Existing positive script coverage:
 | --- | --- | --- | --- | --- | --- |
 | PF-320 | Operator | Fresh Diamond deploys born paused, configures facets, then unpauses. | No public mutation before explicit unpause. | unit/integration + deploy scripts | Keep deploy rehearsal. |
 | PF-321 | Operator | Role handover to multisig/timelock removes deployer powers. | Deployer zero-role invariant holds. | unit/integration + scripts | Keep. |
-| PF-322 | Operator | Global pause and unpause. | State-changing entrypoints pause, then resume. | scripted | Keep. |
-| PF-323 | Operator | Per-asset pause and unpause. | New flows for asset pause, then resume. | scripted | Keep; add asymmetric role assertions. |
+| PF-322 | Operator | Global pause and unpause. | State-changing entrypoints are blocked while paused, then resume after unpause. | scripted smoke + unit/integration enforcement | Add enforcement harness/script if broadcast-safe; current script toggles and resumes but does not submit expected-revert calls while paused. |
+| PF-323 | Operator | Per-asset pause and unpause. | New flows for the paused asset are blocked while paused, then resume after unpause. | scripted smoke + unit/integration enforcement | Add enforcement harness/script if broadcast-safe; current script toggles and resumes but does not submit expected-revert calls while paused. |
 | PF-324 | Operator | Admin config knob update inside bounds. | New config visible through getters and affects future flow. | unit/integration | Add targeted scripts for release gates only. |
 | PF-325 | Operator | Oracle config with Chainlink + V3 liquidity classifies asset liquid. | Price/HF paths work for supported asset. | scripted setup + unit | Keep setup assertions. |
 | PF-326 | Operator | Secondary oracle quorum accepts healthy Chainlink deviation. | Operations continue when quorum agrees. | unit/integration | not ordinary script. |
