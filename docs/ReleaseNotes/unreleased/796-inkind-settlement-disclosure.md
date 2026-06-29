@@ -30,6 +30,14 @@ What changed, surface by surface:
   warning, so a prospective buyer of the position sees the downside before
   acquiring it.
 
+All of these disclosures are scoped to **lending loans** (ERC-20 principal) and
+fire for an NFT collateral leg or any illiquid / no-oracle leg — collateral OR
+lending asset. NFT-principal rentals are deliberately excluded: their default
+model is renter-reset + prepaid-fee payout, not a collateral-in-kind transfer,
+so the in-kind copy would mislead. On Create Offer, submit is held while an
+ERC-20 leg's liquidity read is still resolving, so the disclosure can't be
+skipped by ticking consent before the read lands.
+
 The Advanced User Guide's "How Liquidation Actually Works" section (four
 fallback branches with worked examples) and the public FAQ's `fallback-mechanics`
 and `default` entries already cover the in-kind mechanics in plain language, so

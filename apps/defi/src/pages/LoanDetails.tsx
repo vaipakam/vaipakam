@@ -972,8 +972,12 @@ export default function LoanDetails() {
               liquidation), so both sides must keep that downside visible for the
               life of the loan. Gated to active / fallback-pending states (Codex
               r1 P3) — the future-tense "if the borrower defaults" warning would
-              be stale on a Repaid / Settled / Defaulted terminal loan. */}
-          {isIlliquidLoan && canAct && (
+              be stale on a Repaid / Settled / Defaulted terminal loan. Also
+              gated to ERC-20 (lending) loans (Codex r2 P2): an NFT-principal
+              rental satisfies `isIlliquidLoan` via its NFT leg, but a rental's
+              default model is renter-reset + prepaid-fee payout, not a
+              borrower-default collateral transfer, so the banner would mislead. */}
+          {isIlliquidLoan && canAct && Number(loan.assetType) === 0 && (
             <div
               className="alert alert-warning"
               style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '4px 0 12px' }}

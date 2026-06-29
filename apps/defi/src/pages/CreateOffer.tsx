@@ -259,6 +259,12 @@ export default function CreateOffer() {
   const collateralLiquidityStatus = useAssetLiquidity(
     form.collateralAssetType === "erc20" ? form.collateralAsset || null : null,
   );
+  // #796 (Codex r2 P2) — an illiquid ERC-20 LENDING leg also drops the loan to
+  // the full-collateral-in-kind default path, so read its liquidity too and
+  // feed it into the in-kind disclosure + the submit gate below.
+  const lendingLiquidityStatus = useAssetLiquidity(
+    form.assetType === "erc20" ? form.lendingAsset || null : null,
+  );
 
   useEffect(() => {
     if (lockAssetContinuity) return;
@@ -321,10 +327,11 @@ export default function CreateOffer() {
   // binding disclosure text changed off-screen — force a fresh acknowledgement
   // by clearing consent. The ref seeds to the initial signature so mount is a
   // no-op; only a real post-mount change clears.
-  // #796 (Codex r1 P2) — also key on `collateralLiquidityStatus`: an ERC-20
-  // collateral that resolves to `illiquid` flips the in-kind disclosure on, so
-  // a consent ticked before the async liquidity read resolved must re-prompt.
-  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}|${collateralLiquidityStatus}`;
+  // #796 (Codex r1 P2 + r2 P2) — also key on BOTH legs' liquidity status: an
+  // ERC-20 collateral OR lending asset that resolves to `illiquid` flips the
+  // in-kind disclosure on, so a consent ticked before the async reads resolved
+  // must re-prompt.
+  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}|${collateralLiquidityStatus}|${lendingLiquidityStatus}`;
   const disclosureSigRef = useRef(disclosureSig);
   useEffect(() => {
     if (disclosureSigRef.current === disclosureSig) return;
@@ -1557,12 +1564,14 @@ export default function CreateOffer() {
             }
             allowsPartialRepay={form.allowsPartialRepay}
             /* #796 — collateral settles in-kind on default when it's an NFT
-               (no oracle / no swap) OR an ERC-20 the liquidity read reports as
-               illiquid / no-oracle (Codex r1 P2 — the thin-collateral case
-               that drops to the full-collateral-in-kind default path). */
+               (no oracle / no swap), OR an ERC-20 collateral the liquidity read
+               reports as illiquid (Codex r1 P2), OR an illiquid ERC-20 lending
+               leg (Codex r2 P2) — any of these drops the loan to the
+               full-collateral-in-kind default path. */
             collateralInKind={
               form.collateralAssetType !== 'erc20' ||
-              collateralLiquidityStatus === 'illiquid'
+              collateralLiquidityStatus === 'illiquid' ||
+              lendingLiquidityStatus === 'illiquid'
             }
           />
 
@@ -1824,12 +1833,27 @@ export default function CreateOffer() {
             const midTierBlocked = midTierGate.blocked;
             const midTierUnknown = createPair !== null && !midTierGate.known;
             const illiquidConsent = midTierGate.illiquidConsentNeeded;
+            // #796 (Codex r2 P2) — close the in-kind-disclosure race: while an
+            // ERC-20 leg's liquidity read is still `loading`, the in-kind line
+            // can't render, so a fast creator could tick consent and submit
+            // before the read resolves to `illiquid`. Block submit until both
+            // ERC-20 legs' reads settle (terminal `liquid`/`illiquid`/`unknown`
+            // unblock; `unknown`/invalid addresses are already caught by
+            // `validate()` and the no-diamond case can't submit anyway).
+            const liquidityPending =
+              (form.collateralAssetType === "erc20" &&
+                !!form.collateralAsset &&
+                collateralLiquidityStatus === "loading") ||
+              (form.assetType === "erc20" &&
+                !!form.lendingAsset &&
+                lendingLiquidityStatus === "loading");
             const riskBlocked =
               tierTooLow ||
               tierUnknown ||
               midTierBlocked ||
               midTierUnknown ||
-              illiquidConsent;
+              illiquidConsent ||
+              liquidityPending;
             const tooltip = step === "form" && validationError
               ? formatValidationError(validationError)
               : step === "form" && tierTooLow
@@ -1840,7 +1864,9 @@ export default function CreateOffer() {
                     ? "Record the strict-mode mid-tier acknowledgement for this pair first."
                     : step === "form" && (tierUnknown || midTierUnknown)
                       ? "Checking the progressive-risk requirements…"
-                      : undefined;
+                      : step === "form" && liquidityPending
+                        ? "Checking asset liquidity to finalise the risk disclosures…"
+                        : undefined;
             return (
               <button
                 type="submit"

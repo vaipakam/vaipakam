@@ -1909,9 +1909,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offer.assetType === 0 ? offer.useFullTermInterest : undefined
           }
           allowsPartialRepay={offer.allowsPartialRepay}
-          /* #796 — when this offer has an illiquid leg, the collateral settles
-             in-kind on default; add the explicit disclosure line. */
-          collateralInKind={illiquid}
+          /* #796 — when an ERC-20 (lending) offer has an illiquid leg, the
+             collateral settles in-kind on default; add the explicit disclosure
+             line. Gated to ERC-20 principal (Codex r2 P2): an NFT-principal
+             rental's `illiquid` flag is true for its NFT lending leg, but a
+             rental's default model is renter-reset + prepaid-fee payout, not
+             collateral-in-kind, so it must not show this line. */
+          collateralInKind={offer.assetType === 0 && illiquid}
         />
 
         {/* Phase 7b.1 — UX guard: 0x preflight against the

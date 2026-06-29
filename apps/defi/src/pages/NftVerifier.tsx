@@ -774,11 +774,14 @@ function LiveCard({
   // collateral is an NFT (assetType 1/2) or either leg is illiquid (no on-chain
   // price). Disclosed below so a buyer of this position NFT understands the
   // downside-recovery shape before they commit.
+  // NB: this card reads `getLoanDetails` through viem, so the `uint8` liquidity
+  // enums arrive as JS numbers — compare with `Number(...) === 1`, never `=== 1n`
+  // (a number-vs-bigint strict compare is always false; Codex r2 P2).
   const settlesInKind =
     isLendingLoan &&
     (Number(loanDetails.collateralAssetType) !== 0 ||
-      loanDetails.collateralLiquidity === 1n ||
-      loanDetails.principalLiquidity === 1n);
+      Number(loanDetails.collateralLiquidity) === 1 ||
+      Number(loanDetails.principalLiquidity) === 1);
 
   return (
     <div className="card verifier-result verifier-live">
