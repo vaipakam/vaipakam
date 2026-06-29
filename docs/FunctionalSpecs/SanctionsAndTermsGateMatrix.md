@@ -96,17 +96,23 @@ gate). Read-only screen: `LibVaipakam.isSanctionedAddress(who)` (also exposed as
 
 **Invariant (intent):** no Tier-1 path may route fresh value to a flagged wallet,
 and no Tier-2 path may be turned into a fresh-value path for a flagged wallet.
-The *intended* mechanism is that value owed to a flagged recipient on a wind-down
-path defers to a Tier-1 claim. **Current reality — the invariant is NOT fully
-upheld; the Open gaps split into two kinds:**
+The mechanism is that value owed to a flagged recipient on a wind-down path is
+**parked in that recipient's own vault, LOCKED** behind the Tier-1 claim gate
+(see #821 below), so the close-out completes (the unflagged counterparty is made
+whole) without routing spendable value to the flagged wallet. The remaining gaps
+are now of one kind:
 
-- **Liveness bricks (no value moves, the path just reverts).** The
-  recipient-vault deferral only holds where an explicit held-proceeds escrow or
-  the consolidation-move-out exemption applies; on the direct-deposit close-out
-  branches the `getOrCreateUserVault` recipient screen instead **reverts** when
-  the recipient loan party is flagged, so the unflagged counterparty is not made
-  whole until the flag clears (gap (f)). No fresh value reaches a flagged wallet
-  here — it is purely a liveness failure.
+- **Liveness bricks (#821: RESOLVED for repay/default/liquidation).** The
+  wind-down close-outs (`repayLoan` full, `triggerDefault`, HF-based liquidation)
+  used to **revert** when the recipient loan party was flagged (the
+  `getOrCreateUserVault` recipient screen), bricking the close-out. Now a
+  receive-side exemption parks the flagged recipient's share in their own
+  existing vault, frozen behind the claim-side stored-owner screen, so the
+  counterparty is made whole. `cancelOffer` intentionally still reverts (the
+  creator's own escrow → freeze, no counterparty to make whole). The one
+  remaining liveness residual is the `completeLoanSale` / `completeOffset`
+  **completion** paths (a committed buyer) — a tracked follow-up in
+  `_CodeVsDocsAudit.md`.
 - **Value-to-flagged bypasses (the safe direction is also breached).** Several
   gaps let value actually reach or benefit a flagged wallet: a flagged
   `triggerLiquidationDiscounted` `recipient` receives the bought collateral
@@ -259,21 +265,27 @@ gate-disabled — a route-gate bypass.)
   external/FallbackPending path) but **zeroes the 1% incentive**, folding it into
   the lenders' shares, so no bonus reaches the flagged wallet — #817. (e) `addCollateral` now screens the payer / current holder, not just the
   stored `loan.borrower` — #820.
-- **Enforcement gap — liveness brick + deferred-proceeds (OPEN, #821).**
-  (f) **Cross-cutting recipient-vault brick:** the wind-down close-outs
-  (`repayLoan` full, `triggerDefault`, HF-based liquidation, and the
-  `cancelOffer` refund) deposit/refund the recipient's share through
-  `getOrCreateUserVault`, which screens the vault **owner**. So a flagged
-  *recipient loan party* (lender on repay/liquidation/default, surplus borrower on
-  liquidation/default, or the offer creator on cancel) makes the whole close-out
-  **revert** instead of the value deferring to a Tier-1 claim — the unflagged
-  counterparty is not made whole until the flag clears. The same deferred-proceeds
-  treatment covers the **completion** paths left out of (b): a holder flagged
-  *after* listing on `completeLoanSale` / `completeOffset`, where a buyer is
-  already committed, so a naive revert would strand the buyer. The principled fix
-  is a held-proceeds escrow on these paths (mirroring the consolidation-move-out
-  exemption) so the close-out completes and the flagged recipient's share waits
-  behind a Tier-1 claim. Tracked under #821.
+- **Enforcement gap — liveness brick (CLOSED, #821: vault-lock + freeze).**
+  (f) The wind-down close-outs (`repayLoan` full, `triggerDefault`, HF-based
+  liquidation) deposit the recipient's share through `getOrCreateUserVault`,
+  which screens the vault **owner** — previously a flagged *recipient loan party*
+  bricked the whole close-out. **Resolved by parking the share in the recipient's
+  OWN vault, LOCKED:** a receive-side `getOrCreateUserVault` exemption
+  (`sanctionedDepositExemptUser`, mirroring the move-out pin; never mints a new
+  vault for a flagged wallet) lets the close-out complete so the unflagged
+  counterparty is made whole, while `claimAsLender` / `claimAsBorrower` now screen
+  the **stored vault owner**, so a flagged party's vault assets don't move — even
+  to a clean current NFT holder (closing the transfer-position-then-claim
+  loophole; protocol position sales migrate the stored party, so legitimate
+  buyers settle to their own vault unaffected). The vault is isolated per-user, so
+  nothing commingles in the Diamond. A `SanctionedProceedsLocked` event records
+  each park. The parallel-sale `recordOfferSaleProceeds` live-lender-holder leg is
+  screened at fill (atomic, no stranding). **`cancelOffer` is intentionally NOT
+  vault-locked:** its refund returns the creator's OWN escrowed funds (a move-OUT
+  from their own vault), so with no counterparty to make whole the existing revert
+  IS the desired freeze — the flagged creator's escrow stays put until the flag
+  clears. (The `completeLoanSale` / `completeOffset` completion-path residual from
+  (b) remains the one open follow-up — see the new `_CodeVsDocsAudit.md` finding.)
 - **UI submit-disable on the flagged signal.** Pages warn via `SanctionsBanner`
   but do not yet disable their submit buttons on `useSanctionsCheck().isSanctioned`;
   wiring that (so the app never offers a clickable Tier-1 action to a flagged
