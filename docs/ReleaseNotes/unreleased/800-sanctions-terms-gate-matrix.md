@@ -36,10 +36,11 @@ always recovers" guarantee does **not** fully hold: because `getOrCreateUserVaul
 screens the recipient vault owner, a flagged *recipient loan party* (e.g. a
 flagged lender on full `repayLoan`, or a surplus borrower on liquidation/default)
 currently makes the close-out **revert** rather than deferring to a Tier-1 claim.
-Other gaps: ungated prepay-listing post/update, keeper preclose / early-withdrawal
-paths screening only `msg.sender` (not the current NFT holder), an unscreened
-`triggerLiquidationDiscounted` recipient, and the default auto-dispatch matcher
-bonus. These are recorded in the matrix's *Open gaps* section and in
+Other gaps: `addCollateral` screening only the stored `loan.borrower` (not the
+payer / current holder), ungated prepay-listing post/update, keeper preclose /
+early-withdrawal paths screening only `msg.sender` (not the current NFT holder),
+an unscreened `triggerLiquidationDiscounted` recipient, and the default
+auto-dispatch matcher bonus. These are recorded in the matrix's *Open gaps* section and in
 `_CodeVsDocsAudit.md` for triage — they are not closed by this change.
 
 The sanctions Tier-1/Tier-2 split (borrower-flagged direction), the
