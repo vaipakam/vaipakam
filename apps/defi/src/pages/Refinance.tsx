@@ -289,20 +289,20 @@ export default function Refinance() {
                   <Link to={`/offers/${offerIdStr}`}>#{offerIdStr}</Link>
                 </span>
               </div>
+              {/* #797 (Codex #810 r1 P1) — refinance is NOT mode-aware: the
+                  on-chain RefinanceFacet computes the old-loan payoff as
+                  `LibEntitlement.fullTermInterest(...)` UNCONDITIONALLY, so the
+                  old lender is always repaid full-term interest regardless of
+                  the old loan's stored interest mode. Keep the always-full-term
+                  copy here so the pre-sign disclosure matches what the tx pulls. */}
               <p className="action-desc" style={{ marginTop: 12 }}>
-                {/* #797 — the old lender is repaid at the OLD loan's interest
-                    mode: full-term interest for a full-term loan, only
-                    accrued (pro-rata) interest for a pro-rata loan. Reflect the
-                    actual mode so the payout copy doesn't overstate the cost of
-                    refinancing a pro-rata loan. */}
-                {loan.useFullTermInterest === false
-                  ? `Clicking Confirm atomically repays the old lender (principal + interest accrued to date + any rate shortfall + treasury fee) and releases your original collateral in a single transaction — no NFT transfer-lock is needed because there is no intermediate state to protect.`
-                  : `Clicking Confirm atomically repays the old lender (principal + full-term interest + any rate shortfall + treasury fee) and releases your original collateral in a single transaction — no NFT transfer-lock is needed because there is no intermediate state to protect.`}
+                Clicking Confirm atomically repays the old lender (principal +
+                full-term interest + any rate shortfall + treasury fee) and
+                releases your original collateral in a single transaction — no
+                NFT transfer-lock is needed because there is no intermediate
+                state to protect.
               </p>
-              <InterestImplicationWarning
-                kind="refinance"
-                fullTermInterest={loan.useFullTermInterest}
-              />
+              <InterestImplicationWarning kind="refinance" />
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"

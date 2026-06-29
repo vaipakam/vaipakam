@@ -29,11 +29,14 @@ describe('InterestImplicationWarning — #797 mode-aware copy', () => {
     expect(screen.getByText('interestWarning.refinanceTitle')).toBeInTheDocument();
   });
 
-  it('refinance swaps to the pro-rata body for a pro-rata loan', () => {
+  it('refinance is NOT mode-aware — always full-term, even for a pro-rata loan (Codex #810 r1 P1)', () => {
+    // The on-chain RefinanceFacet always computes the old-loan payoff via
+    // fullTermInterest(), so refinance copy must never switch to pro-rata.
     render(<InterestImplicationWarning kind="refinance" fullTermInterest={false} />);
-    expect(screen.getByText('interestWarning.refinanceBodyProRata')).toBeInTheDocument();
-    expect(screen.getByText('interestWarning.refinanceTitleProRata')).toBeInTheDocument();
-    expect(screen.queryByText('interestWarning.refinanceBody')).not.toBeInTheDocument();
+    expect(screen.getByText('interestWarning.refinanceBody')).toBeInTheDocument();
+    expect(
+      screen.queryByText('interestWarning.refinanceBodyProRata'),
+    ).not.toBeInTheDocument();
   });
 
   it('preclose-direct swaps to the pro-rata body for a pro-rata loan', () => {

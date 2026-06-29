@@ -676,9 +676,7 @@
     "refinanceTitle": "Old loan closes at full-term interest plus shortfall",
     "refinanceBody": "Refinancing repays the old lender with principal plus FULL TERM interest (not just accrued) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's. You're effectively paying as if the old loan reached maturity, in exchange for the new terms.",
     "precloseDirectTitleProRata": "You'll pay interest accrued to date",
-    "precloseDirectBodyProRata": "This loan charges pro-rata interest, so closing now via the Direct path requires only the interest accrued so far — not full-term interest. The lender receives 99% of that accrued interest; 1% goes to the protocol treasury.",
-    "refinanceTitleProRata": "Old loan closes at accrued interest plus shortfall",
-    "refinanceBodyProRata": "This loan charges pro-rata interest, so refinancing repays the old lender with principal plus only the interest accrued to date (not full-term) plus any rate shortfall — payable when the new offer's expected interest is lower than the old loan's."
+    "precloseDirectBodyProRata": "This loan charges pro-rata interest, so closing now via the Direct path requires only the interest accrued so far — not full-term interest. The lender receives 99% of that accrued interest; 1% goes to the protocol treasury."
   },
   "interestMode": {
     "fullTerm": "Full-term interest",
@@ -1033,6 +1031,7 @@
     "repayNonBorrowerWarning": "Repaying this loan does not grant collateral rights. Collateral is claimable only by the current holder of borrower NFT #{{tokenId}}.",
     "confirmFullRepayment": "Confirm Full Repayment",
     "repayConfirmBody": "This will repay principal plus accrued interest for the full outstanding balance and close (or cure) the loan.",
+    "repayConfirmBodyFullTerm": "This is a full-term-interest loan: repaying now settles principal plus the FULL-TERM interest (interest for the entire agreed term, not just the time elapsed) and closes the loan. Repaying early does not reduce the interest owed.",
     "repayConfirmReminderHead": "Reminder:",
     "repayConfirmReminderBody": "repaying this loan does not grant collateral rights. Collateral is claimable only by the current holder of borrower NFT #{{tokenId}}.",
     "addCollateralFallbackDesc": "Top up collateral to cure the fallback. The loan reactivates once Health Factor and LTV are back within their initiation thresholds.",

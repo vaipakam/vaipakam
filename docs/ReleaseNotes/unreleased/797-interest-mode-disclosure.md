@@ -15,23 +15,29 @@ What changed:
   consequence. It self-suppresses for non-ERC-20 principal, where the
   distinction isn't meaningful. The chip now appears on **Offer Book** rows
   (next to the rate), **Loan Details** (in the loan terms, for the life of the
-  loan), and the **swap-to-repay** surface (a full close honours the loan's
-  mode).
-- **Mode-aware exit warnings** — `InterestImplicationWarning` gained an optional
-  `fullTermInterest` input. The Direct-preclose and Refinance warnings now swap
-  to pro-rata-specific copy when the loan charges pro-rata, instead of always
-  asserting full-term. The refinance review's explicit old-lender-payout
-  sentence is likewise mode-aware, so it no longer overstates the cost of
-  refinancing a pro-rata loan. Kinds whose copy isn't full-term-specific
-  (early-withdrawal, preclose transfer/offset) are unchanged. When the mode is
-  unknown the warnings keep the full-term copy as the conservative default.
+  loan), and **both swap-to-repay** surfaces — the atomic panel and the
+  best-price intent panel (a full close honours the loan's mode).
+- **Mode-aware Direct-preclose warning** — `InterestImplicationWarning` gained an
+  optional `fullTermInterest` input. The Direct-preclose warning swaps to
+  pro-rata-specific copy when an ERC-20 loan charges pro-rata, instead of always
+  asserting full-term. Gated to ERC-20 principal: NFT-rental preclose always
+  settles the full rental, so it keeps the full-term-style copy.
+- **Refinance stays full-term (deliberately not mode-aware)** — the on-chain
+  `RefinanceFacet` computes the old-loan payoff via `LibEntitlement.fullTermInterest`
+  unconditionally, so the refinance screen always discloses full-term interest
+  (plus any rate shortfall) and never switches to pro-rata copy — the pre-sign
+  disclosure must match what the transaction actually pulls.
+- **Repay-in-Full confirmation** — for a full-term ERC-20 loan, the confirm copy
+  now states that repaying settles the full-term interest (not just accrued),
+  replacing the generic "principal plus accrued interest" line.
 
 New component tests cover the full-term / pro-rata / partial-repay combinations
-for both the badge (label + tooltip selection + the suppressed undefined case)
-and the warning (mode-aware body/title swap for refinance and preclose-direct,
+for the badge (label + tooltip selection + the suppressed undefined case) and the
+warning (the Direct-preclose mode-aware swap, refinance staying full-term, and
 no-op for the other kinds).
 
 Spec: `docs/FunctionalSpecs/WebsiteReadme.md` gains intent bullets for the
-at-a-glance interest-mode indicator and the mode-aware exit warnings.
+at-a-glance interest-mode indicator, the mode-aware Direct-preclose warning, the
+always-full-term refinance exception, and the mode-aware repay confirmation.
 
 Closes #797.

@@ -1258,8 +1258,14 @@ export default function LoanDetails() {
                   <span className="data-label">{t('loanDetails.loanLabel')}</span>
                   <span className="data-value">#{loan.id.toString()}</span>
                 </div>
+                {/* #797 (Codex #810 r1 P2) — a full-term ERC-20 loan settles
+                    through the full-term interest floor, so the generic "accrued
+                    interest" copy under-discloses. Show mode-specific copy for
+                    ERC-20 loans; keep the generic line for NFT rentals. */}
                 <p style={{ marginTop: 8 }}>
-                  {t('loanDetails.repayConfirmBody')}
+                  {Number(loan.assetType) === 0 && loan.useFullTermInterest
+                    ? t('loanDetails.repayConfirmBodyFullTerm')
+                    : t('loanDetails.repayConfirmBody')}
                 </p>
                 {!isBorrower && (
                   <p style={{ marginTop: 8 }}>
@@ -1388,6 +1394,12 @@ export default function LoanDetails() {
                   prepayGraceSeconds === null
                     ? endTime
                     : endTime + Number(prepayGraceSeconds)
+                }
+                /* #797 (Codex #810 r1 P2) — the intent route is also a
+                   full close honouring the loan's mode; show the same chip. */
+                fullTermInterest={loan.useFullTermInterest}
+                allowsPartialRepay={
+                  (loan as { allowsPartialRepay?: boolean }).allowsPartialRepay
                 }
                 actionLoading={actionLoading}
                 onActionLoadingChange={setActionLoading}

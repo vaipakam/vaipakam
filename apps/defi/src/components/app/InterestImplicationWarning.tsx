@@ -24,21 +24,24 @@ const BODY_KEY: Record<InterestImplicationKind, string> = {
   refinance: 'interestWarning.refinanceBody',
 };
 
-// #797 — the Direct-preclose and Refinance payouts settle the OLD loan at its
-// own interest mode: a full-term loan owes interest as if it ran to maturity,
-// but a pro-rata loan owes only interest accrued to date. The default copy
-// (above) describes the full-term case; when the loan is known to be pro-rata
-// we swap in a pro-rata-specific title/body so the warning never overstates
-// the cost of exiting a pro-rata loan. Kinds whose copy isn't full-term-
-// specific (early-withdrawal / transfer / offset) have no pro-rata variant.
+// #797 — the Direct-preclose payout settles the OLD loan at its own interest
+// mode: a full-term loan owes interest as if it ran to maturity, but a pro-rata
+// loan owes only interest accrued to date. The default copy (above) describes
+// the full-term case; when the loan is known to be pro-rata we swap in a
+// pro-rata-specific title/body so the warning never overstates the cost.
+//
+// Refinance is deliberately NOT here (Codex #810 r1 P1): the on-chain
+// RefinanceFacet always computes the old-loan payoff via
+// `LibEntitlement.fullTermInterest(...)` regardless of the loan's stored mode,
+// so refinance is always full-term and must never show pro-rata copy. Kinds
+// whose copy isn't full-term-specific (early-withdrawal / transfer / offset)
+// also have no pro-rata variant.
 const PRORATA_TITLE_KEY: Partial<Record<InterestImplicationKind, string>> = {
   'preclose-direct': 'interestWarning.precloseDirectTitleProRata',
-  refinance: 'interestWarning.refinanceTitleProRata',
 };
 
 const PRORATA_BODY_KEY: Partial<Record<InterestImplicationKind, string>> = {
   'preclose-direct': 'interestWarning.precloseDirectBodyProRata',
-  refinance: 'interestWarning.refinanceBodyProRata',
 };
 
 interface Props {
