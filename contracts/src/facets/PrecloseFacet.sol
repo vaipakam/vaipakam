@@ -15,6 +15,7 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibOfferMatch} from "../libraries/LibOfferMatch.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {RiskFacet} from "./RiskFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibMetricsHooks} from "../libraries/LibMetricsHooks.sol";
@@ -499,8 +500,12 @@ contract PrecloseFacet is
         // collateral is withdrawn INLINE to that holder later in this function.
         // Screen it here at entry: the replacement offer is required to be
         // un-accepted (below), so no counterparty is committed and an atomic
-        // revert strands nothing.
-        LibVaipakam._assertNotSanctioned(LibERC721.ownerOf(loan.borrowerTokenId));
+        // revert strands nothing. Resolve the holder via the same
+        // `IERC721(address(this)).ownerOf` authority source `requireKeeperFor`
+        // uses (the current owner, not the latched `loan.borrower`).
+        LibVaipakam._assertNotSanctioned(
+            IERC721(address(this)).ownerOf(loan.borrowerTokenId)
+        );
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 

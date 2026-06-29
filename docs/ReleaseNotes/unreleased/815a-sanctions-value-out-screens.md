@@ -11,10 +11,12 @@ closed; behaviour for clean wallets is unchanged.
   collateral to a flagged address. The recipient is now screened too.
 - **Default / liquidation auto-dispatch bonus (#817).** When an internal-match
   candidate exists, closing out a defaulting or under-water loan pays the caller
-  a 1% matcher bonus. That caller was unscreened. A flagged caller now simply
-  does **not** receive the bonus: the internal-match dispatch is skipped and the
-  close-out completes via the normal path instead — the loan still closes (the
-  permissionless wind-down stays open), but no value reaches the flagged wallet.
+  a 1% matcher bonus. That caller was unscreened. The objective internal match
+  now **still executes** for a flagged caller — skipping it would let a flagged
+  caller degrade settlement by forcing the loan onto the external-swap /
+  FallbackPending path — but the bonus is **denied**: the incentive is zeroed and
+  folded into each lender's share, so the honest counterparty is made fully whole
+  and no value reaches the flagged wallet.
 - **Prepay collateral-sale listings (#818).** The manual fixed-price and Dutch
   "post" / "update" listing paths only checked position ownership, while the
   atomic and auto-list paths already screened sanctions. A flagged holder could
