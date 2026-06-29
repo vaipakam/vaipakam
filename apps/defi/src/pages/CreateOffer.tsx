@@ -548,15 +548,19 @@ export default function CreateOffer() {
       return;
     }
 
-    // #796 (Codex #809 r3 P2) — mirror the button's `liquidityPending` block
+    // #796 (Codex #809 r3/r5 P2) — mirror the button's `liquidityPending` block
     // here too: an Enter keypress / programmatic submit could otherwise fire
-    // `onSubmit` while the ERC-20 collateral's liquidity read is still `loading`,
+    // `onSubmit` while the ERC-20 collateral's liquidity read is unresolved,
     // before the in-kind disclosure line has had a chance to render and
-    // (re)clear a prematurely-ticked consent.
+    // (re)clear a prematurely-ticked consent. We treat BOTH `loading` and
+    // `unknown` as unresolved (r5): a transient read failure returns `unknown`
+    // for a valid ERC-20 the on-chain `checkLiquidity` may still classify
+    // illiquid, so don't let submit slip through on it — a retry re-reads.
     if (
       form.collateralAssetType === "erc20" &&
       !!form.collateralAsset &&
-      collateralLiquidityStatus === "loading"
+      (collateralLiquidityStatus === "loading" ||
+        collateralLiquidityStatus === "unknown")
     ) {
       const msg = "Checking asset liquidity to finalise the risk disclosures — try again in a moment.";
       setError(msg);
@@ -1858,17 +1862,20 @@ export default function CreateOffer() {
             const midTierBlocked = midTierGate.blocked;
             const midTierUnknown = createPair !== null && !midTierGate.known;
             const illiquidConsent = midTierGate.illiquidConsentNeeded;
-            // #796 (Codex r2 P2) — close the in-kind-disclosure race: while an
-            // ERC-20 leg's liquidity read is still `loading`, the in-kind line
-            // can't render, so a fast creator could tick consent and submit
-            // before the read resolves to `illiquid`. Block submit until both
-            // ERC-20 legs' reads settle (terminal `liquid`/`illiquid`/`unknown`
-            // unblock; `unknown`/invalid addresses are already caught by
-            // `validate()` and the no-diamond case can't submit anyway).
+            // #796 (Codex r2/r5 P2) — close the in-kind-disclosure race: while
+            // the ERC-20 collateral's liquidity read is unresolved the in-kind
+            // line can't render, so a fast creator could tick consent and submit
+            // before it resolves to `illiquid`. Block submit until the read
+            // settles to a definite `liquid`/`illiquid`. `unknown` is treated as
+            // unresolved (r5): a transient read failure on a valid ERC-20 can
+            // still be classified illiquid on-chain, so don't let it through;
+            // an invalid collateral address is already caught by `validate()`,
+            // and a no-diamond chain can't submit anyway.
             const liquidityPending =
               form.collateralAssetType === "erc20" &&
               !!form.collateralAsset &&
-              collateralLiquidityStatus === "loading";
+              (collateralLiquidityStatus === "loading" ||
+                collateralLiquidityStatus === "unknown");
             const riskBlocked =
               tierTooLow ||
               tierUnknown ||

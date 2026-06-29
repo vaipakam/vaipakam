@@ -699,7 +699,7 @@
     "fullTermInterest": "Full-term interest: the borrower agrees to pay interest for the entire agreed loan term, even if the loan is repaid early. Repaying before the term ends does NOT reduce the interest owed — the full-term interest amount is due either way.",
     "fullTermInterestPartial": "Full-term interest: the borrower agrees to pay full-term interest on the loan's outstanding principal. This offer allows partial repayments — paying down principal early lowers the future interest on the remaining balance — but repaying the remaining balance early does NOT reduce the full-term interest owed on it.",
     "proRataInterest": "Pro-rata interest: interest on this loan accrues only for the time the loan is actually outstanding. If the borrower repays early, only the interest for the elapsed period is owed.",
-    "collateralInKind": "In-kind settlement: this offer has an NFT collateral leg, or an illiquid / no-oracle leg (the collateral or the lending asset), so on default the lender receives the collateral asset itself — NOT the lending asset, and regardless of market value. There is no DEX swap and no LTV-based liquidation; both sides accept the full-collateral-on-default outcome for this pair."
+    "collateralInKind": "In-kind settlement: this offer's collateral is an NFT or an illiquid / no-oracle asset, so on default the lender receives the collateral asset itself — NOT the lending asset, and regardless of market value. There is no DEX swap and no LTV-based liquidation; both sides accept the full-collateral-on-default outcome for this pair."
   },
   "nav": {
     "brandHome": "Vaipakam home",

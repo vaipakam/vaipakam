@@ -1914,15 +1914,19 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
              (Codex r2 P2): a rental's default model is renter-reset + prepaid-fee
              payout, not collateral-in-kind. The decision is collateral-driven
              (Codex r4 P2), and `LoanFacet.initiateLoan` re-checks liquidity at
-             accept time — so we re-read the collateral's LIVE liquidity here
-             rather than trust the offer's stored snapshot (Codex r4 P2): NFT
-             collateral, OR a live-illiquid ERC-20 collateral, with the stored
-             snapshot kept as a conservative fallback while the live read loads. */
+             accept time, so we PREFER the collateral's LIVE liquidity (Codex r5):
+             NFT collateral always; otherwise the live read wins — once it
+             resolves to `liquid` the in-kind line is suppressed even if the
+             offer was created while the collateral was illiquid. The stored
+             snapshot is used only as a conservative fallback while the live read
+             is still loading / unreadable. */
           collateralInKind={
             offer.assetType === 0 &&
             (offer.collateralAssetType !== 0 ||
               collateralChainLiquidity === 'illiquid' ||
-              collateralIlliquid)
+              ((collateralChainLiquidity === 'loading' ||
+                collateralChainLiquidity === 'unknown') &&
+                collateralIlliquid))
           }
         />
 

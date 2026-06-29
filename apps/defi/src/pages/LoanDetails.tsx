@@ -967,17 +967,22 @@ export default function LoanDetails() {
             <CardInfo id="loan-details.collateral-risk" role={role} />
           </div>
           {/* #796 — make the in-kind settlement outcome impossible to miss on an
-              active illiquid / no-oracle loan, not just a buried "Risk" data-row.
-              On default the lender receives the raw collateral (no swap, no LTV
-              liquidation), so both sides must keep that downside visible for the
-              life of the loan. Gated to active / fallback-pending states (Codex
-              r1 P3) — the future-tense "if the borrower defaults" warning would
-              be stale on a Repaid / Settled / Defaulted terminal loan. Also
-              gated to ERC-20 (lending) loans (Codex r2 P2): an NFT-principal
-              rental satisfies `isIlliquidLoan` via its NFT leg, but a rental's
-              default model is renter-reset + prepaid-fee payout, not a
-              borrower-default collateral transfer, so the banner would mislead. */}
-          {isIlliquidLoan && canAct && Number(loan.assetType) === 0 && (
+              active loan whose COLLATERAL settles in-kind, not just a buried
+              "Risk" data-row. On default the lender receives the raw collateral
+              (no swap, no LTV liquidation), so both sides must keep that downside
+              visible for the life of the loan. Gating:
+              - active / fallback-pending only (Codex r1 P3) — the future-tense
+                "if the borrower defaults" warning is stale on a terminal loan;
+              - ERC-20 (lending) loans only (Codex r2 P2) — an NFT-principal
+                rental's default model is renter-reset + prepaid-fee payout;
+              - COLLATERAL-driven only (Codex r5 P2): `DefaultedFacet` routes on
+                the collateral's liquidity, so we key on NFT collateral OR an
+                illiquid COLLATERAL leg, NOT `isIlliquidLoan` (which also trips on
+                an illiquid principal whose liquid collateral would still swap). */}
+          {canAct &&
+            Number(loan.assetType) === 0 &&
+            (Number(loan.collateralAssetType) !== 0 ||
+              Number(loan.collateralLiquidity) === 1) && (
             <div
               className="alert alert-warning"
               style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '4px 0 12px' }}
