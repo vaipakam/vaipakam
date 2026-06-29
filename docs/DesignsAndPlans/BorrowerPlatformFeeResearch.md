@@ -129,6 +129,56 @@ securities, or yield-promise framing.)
 
 ---
 
+## Appendix — the full menu of fees peers charge (what Vaipakam *could* levy)
+
+Beyond the borrower APR question, here is the broader catalogue of fee types
+major DeFi / DEX / lending venues use, mapped to whether Vaipakam already has it,
+could plausibly add it (and where it would fit), or shouldn't (doesn't fit the
+model / retail policy). Magnitudes are typical peer ranges.
+
+### Already in Vaipakam (could be tuned, all are `0 ⇒ default` admin→gov knobs)
+
+| Fee type | Peer example & magnitude | Vaipakam today |
+| --- | --- | --- |
+| **Reserve factor** (% of interest → treasury) | Aave/Compound **10–25% of interest** | `TREASURY_FEE_BPS` = **1% of interest** (lender-side). Lots of headroom to raise. |
+| **Origination fee** (one-time % of principal) | P2P **1–8%**, Maple bespoke | `LOAN_INITIATION_FEE_BPS` = **0.1%** (borrower LIF, VPFI, partly rebated) |
+| **Liquidation handling** (% of proceeds → treasury) | Aave **liquidationProtocolFee** = a cut of the bonus | `LIQUIDATION_HANDLING_FEE_BPS` = **2% of proceeds** |
+| **Late / penalty fee** (overdue) | varies | RepayFacet late fees + grace-period penalty |
+| **Matcher / keeper reward** | Gelato/CL Automation service fees | `LIF_MATCHER_FEE_BPS` = 1% of LIF to the keeper |
+
+### Standard peer fees Vaipakam could ADD that fit its model
+
+| Candidate fee | Peer example & magnitude | Where it would fit in Vaipakam |
+| --- | --- | --- |
+| **Liquidation bonus / penalty** (borrower-side discount to liquidator) | Aave/Compound **5–15%** liquidation bonus, paid by the defaulter | A borrower default penalty / a protocol slice of the liquidator bonus, alongside the existing 2% handling fee (RiskFacet / DefaultedFacet) |
+| **Early-exit / loan-sale fee** (lender exits before term) | secondary-market / vault **exit fees** | A fee on `EarlyWithdrawalFacet` (lender selling the loan via buy-offer) and/or `PrecloseFacet` obligation transfer |
+| **Refinance / extension fee** | rollover fees | A small fee on `RefinanceFacet` / auto-refinance and term-extension paths |
+| **Auto-lend performance fee** (% of yield earned by automation) | Yearn **20% performance + 2% management**, Maple management fees | A performance cut on keeper-earned auto-lend (#625) interest — the closest analog to a vault performance fee |
+| **NFT-rental origination / platform fee** | OpenSea-style **~2%** marketplace fee | A platform fee on NFT-rental loan originations (the rental product), distinct from the ERC-20 LIF |
+| **Cross-chain buy spread** | bridges mark up the messaging/route | A spread on the `VpfiBuyAdapter` fixed-rate buy (today it passes CCIP cost through) |
+| **Borrower platform spread** (the #785 idea) | Sky/Maker stability fee *is* the borrow APR; bank net-interest-margin | **Option A** above — a single disclosed platform APR |
+
+### Fees that DON'T fit (model / policy mismatch — not recommended)
+
+- **Swap/trading fee (bps on notional)** and **perp taker/maker + funding/borrow
+  fees** (Uniswap / dYdX / GMX): Vaipakam isn't a spot DEX or a perps venue; its
+  only swaps are liquidation routes through external aggregators (0x/1inch), whose
+  fees are already the aggregator's, not Vaipakam's.
+- **User-facing flash-loan fee** (Aave 0.05%): Vaipakam uses flash loans internally
+  for liquidation but doesn't *offer* user flash loans — nothing to charge unless
+  that product is added.
+- **Subscription / membership / gas-token-gating**: rare in DeFi and cuts against
+  the retail permissionless posture (no KYC/identity gating per retail policy).
+
+**Takeaway:** the highest-leverage, lowest-friction levers Vaipakam already owns
+are (1) **raising the reserve factor** (1% → peers run 10–25%) and (2) the
+**origination fee** (0.1% → peers run 1–8%) — both are existing, well-understood,
+single-mechanism knobs. New *borrower-side* revenue is best added as the **Option A
+platform spread** rather than a third stacked APR line. Liquidation-side, auto-lend
+performance, early-exit, and rental-origination fees are all legitimate, model-fit
+candidates to layer in later — each as its own capped, default-off, admin→gov knob,
+and each disclosed on the surface it applies to (avoid silent effective-cost drift).
+
 ## Sources
 
 - [Aave interest rate model / reserve factor — RareSkills](https://rareskills.io/post/aave-interest-rate-model)
