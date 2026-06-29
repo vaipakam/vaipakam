@@ -130,13 +130,37 @@ Recommended option **A — consolidated platform APR (single disclosed rate):**
     mandatory 0.1% LIF annualizes materially on short terms, so a genuinely all-in
     APR (the whole point of Option A) must include it.
 
+  Further implementation-time requirements (deferred to the implementation card —
+  recorded here so they aren't lost; the owner's decision on this note is **Hold /
+  research-only**, so none of this is built yet):
+  - **Account for the spread separately from `lenderRate` on the loan.** The
+    snapshot must store the lender rate and the platform spread as distinct fields,
+    so settlement pays the lender on `lenderRate` and routes the spread to treasury
+    — not one blended rate that would over-pay the lender.
+  - **Bind the spread on the matched + automated paths too**, not just direct
+    accept. `LibOfferMatch.previewMatch` / the matcher and the auto-lend/auto-refi
+    keeper paths bind terms without going through `_bindTermsToOffer`; each must
+    apply the same all-in ceiling + snapshot, or those paths bypass the borrower's
+    agreed maximum.
+  - **Keep the all-in APR within `MAX_INTEREST_BPS` (10,000).** A standalone spread
+    cap could push `lenderRate + spread` past the protocol's existing max-interest
+    ceiling for offers already near it; the spread must be clamped so the all-in
+    rate still respects `MAX_INTEREST_BPS`.
+  - **Snapshot the LIF bps at accept if it's folded into the all-in APR.**
+    `cfgLoanInitiationFeeBps` is itself mutable, so an all-in APR that includes the
+    LIF must bind the LIF rate at acceptance for the figure to stay truthful.
+
 Alternatives considered (and why A wins):
 
 - **B — raise the existing reserve factor** (`TREASURY_FEE_BPS`) instead. Simplest
   (no new mechanism), and it's the DeFi-canonical form. But it's **lender-side** —
   it reduces lender yield, it does not charge the borrower. If the explicit goal is
   borrower-side revenue, B doesn't achieve it. (If the goal is just "more protocol
-  revenue, don't care which side," B is the lowest-complexity choice.)
+  revenue, don't care which side," B is the lowest-complexity choice.) Note: today
+  `setFeesConfig` writes `protocolCfg.treasuryFeeBps` and settlement reads it
+  **live**, so a raise applies to **existing** loans, not just new ones — if that
+  retroactivity is undesirable, B would also need an accept-time snapshot of the
+  reserve factor (a behaviour change of its own).
 - **C — the literal proposal: a flat +0.5% APR as a distinct third line.** Modest
   and transparent in isolation, but it's the 3-fee-stack / regressive / non-standard
   *form* problem above. If chosen anyway, at least express it as a **% of the lender
@@ -161,14 +185,14 @@ major DeFi / DEX / lending venues use, mapped to whether Vaipakam already has it
 could plausibly add it (and where it would fit), or shouldn't (doesn't fit the
 model / retail policy). Magnitudes are typical peer ranges.
 
-### Already in Vaipakam (mostly tunable `0 ⇒ default` admin→gov knobs; late fee + liquidation discount are NOT knobs — see notes)
+### Already in Vaipakam (mostly tunable admin→gov knobs; the late fee is the one hard-coded exception — see notes)
 
 | Fee type | Peer example & magnitude | Vaipakam today |
 | --- | --- | --- |
 | **Reserve factor** (% of interest → treasury) | Aave/Compound **10–25% of interest** | `TREASURY_FEE_BPS` = **1% of interest** (lender-side), tunable knob. Lots of headroom to raise. |
 | **Origination fee** (one-time % of principal) | P2P **1–8%**, Maple bespoke | `LOAN_INITIATION_FEE_BPS` = **0.1%**, tunable knob. Borrower-side. Default path charges it in the **lending asset**; only when the borrower opts into the VPFI discount path is it paid in VPFI and partly rebated — tier-0 / missing-oracle-or-config / insufficient-vault-VPFI borrowers pay the full fee with no rebate. |
 | **Liquidation handling** (% of proceeds → treasury) | Aave **liquidationProtocolFee** = a cut of the bonus | `LIQUIDATION_HANDLING_FEE_BPS` = **2% of proceeds**, tunable knob |
-| **Liquidation discount / bonus** (borrower-paid liquidator incentive) | Aave/Compound **5–15%** liquidation bonus | **Already implemented** — tier liquidation discounts in `LibVaipakam` + `RiskFacet.triggerLiquidationDiscounted` (the discount the liquidator receives, borne by the defaulting borrower). |
+| **Liquidation discount / bonus** (borrower-paid liquidator incentive) | Aave/Compound **5–15%** liquidation bonus | **Already implemented and configurable** — tier liquidation discounts in `LibVaipakam` + `RiskFacet.triggerLiquidationDiscounted`, toggled by `ConfigFacet.setDiscountPathEnabled` and set per-tier via `setTierLiqDiscountBps` (the discount the liquidator receives, borne by the defaulting borrower). |
 | **Late / penalty fee** (overdue) | varies | `LibVaipakam.calculateLateFee` — **hard-coded** 1% + 0.5%/day, capped at 5%. NOT a `ProtocolConfig` knob today; making it tunable would itself be a small change. |
 | **Matcher / keeper reward** | Gelato/CL Automation service fees | `LIF_MATCHER_FEE_BPS` = 1% of LIF to the keeper, tunable knob |
 
