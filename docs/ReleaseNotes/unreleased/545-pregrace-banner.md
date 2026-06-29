@@ -1,0 +1,17 @@
+## Pre-grace warning banner on the loan detail page (#545)
+
+Borrowers who rely on auto-refinance to roll their loan now see an inline warning
+on the loan detail page when the loan is close to defaulting — even if they never
+subscribed to Telegram or push notifications.
+
+When the connected wallet is the loan's borrower, the loan has auto-refinance caps
+enabled, and the loan is within the final 24 hours before it enters its grace
+period, a prominent banner appears near the loan title. It explains that
+auto-refinance is best-effort — if no compatible lender offer is matched before
+grace expires, the loan will default — states how many hours remain and the
+deadline, and offers two shortcuts: jump to the refinance-caps editor (to widen
+the caps if the market has moved) or open the repay flow directly.
+
+This mirrors the existing keeper-side pre-grace notification so the warning reaches
+anyone who opens the page, not only notification subscribers. It is advisory and
+changes no on-chain behaviour or repayment obligation.
