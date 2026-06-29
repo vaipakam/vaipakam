@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useReadyDiamond } from '../contracts/useDiamond';
 
 /**
@@ -37,10 +37,19 @@ export function useKeeperStatus(
   const [keepersPaused, setKeepersPaused] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // #811 r5 — stale-resolve guard. `LoanDetails` is reused across `/loans/:id`
+  // navigations, so a slow read for the PREVIOUS loan's holders can resolve
+  // after the new loan has loaded; without this, that late response would
+  // overwrite state with a different address's keeper status and the caller
+  // would render an inert-cap warning keyed on the wrong wallet. We stamp the
+  // request key (holders) and drop any response whose key no longer matches.
+  const reqKeyRef = useRef('');
 
   const load = useCallback(async () => {
     if (!lenderHolder || !borrowerHolder) return;
     if (!diamond) return;  // chain has no Diamond — bail before zero-address read
+    const reqKey = `${lenderHolder}:${borrowerHolder}`;
+    reqKeyRef.current = reqKey;
     setLoading(true);
     setError(null);
     try {
@@ -52,18 +61,29 @@ export function useKeeperStatus(
         (diamond as unknown as { keepersPaused: () => Promise<boolean> })
           .keepersPaused() as Promise<boolean>,
       ]);
+      if (reqKeyRef.current !== reqKey) return; // a newer read superseded this one
       setLenderStatus({ profileOptIn: lOpt, approvedCount: lList.length });
       setBorrowerStatus({ profileOptIn: bOpt, approvedCount: bList.length });
       setKeepersPaused(Boolean(paused));
     } catch (err) {
+      if (reqKeyRef.current !== reqKey) return;
       setError(err instanceof Error ? err.message : 'Keeper status read failed');
       setLenderStatus(null);
       setBorrowerStatus(null);
       setKeepersPaused(null);
     } finally {
-      setLoading(false);
+      if (reqKeyRef.current === reqKey) setLoading(false);
     }
   }, [lenderHolder, borrowerHolder, diamond]);
+
+  // Drop any prior loan's status the moment the holders change, so a consumer
+  // never reads the previous loan's keeper state during the gap before the new
+  // read lands (#811 r5).
+  useEffect(() => {
+    setLenderStatus(null);
+    setBorrowerStatus(null);
+    setKeepersPaused(null);
+  }, [lenderHolder, borrowerHolder]);
 
   useEffect(() => { load(); }, [load]);
 

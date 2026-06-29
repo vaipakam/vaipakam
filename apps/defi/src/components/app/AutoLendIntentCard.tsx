@@ -1182,8 +1182,11 @@ export default function AutoLendIntentCard({
 
           {/* #799 (Codex #811 r4) — global delegated-keeper pause. While ON,
               auto-roll and keeper-restricted fills are suspended (open intents
-              stay fillable by any solver), so surface it as its own banner. */}
-          {keepersPaused === true && (
+              stay fillable by any solver), so surface it as its own banner.
+              Gated on `accountLoaded` (Codex #811 r5) so a stale `true` from a
+              previous chain/account snapshot can't render after a context switch
+              or a failed reload. */}
+          {keepersPaused === true && accountLoaded && (
             <div className="alert alert-warning" role="alert" style={{ marginBottom: 10 }}>
               <AlertTriangle size={14} />
               <div>{t('autoLend.keepersPausedNotice')}</div>
