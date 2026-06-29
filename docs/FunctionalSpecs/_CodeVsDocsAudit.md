@@ -30,18 +30,24 @@ copying what the code does.
      intent-decision note + the closing spec-update PR.
 3. Open findings count is itself audit-relevant — a growing list signals
    drift; auditors will read this file.
+4. **Keep row state current.** When a finding's linked issue / PR is
+   verified and closed, move the row from **Open findings** to **Resolved
+   findings** in that same cleanup pass (with the closing PR and, where
+   useful, the verification command) — don't leave fixed launch-blockers
+   sitting under Open, where readers mistake them for live.
 
 ## Open findings
 
 | Date | Divergent symbol | Spec section | One-line summary | Status |
 |------|------------------|--------------|------------------|--------|
-| 2026-06-13 | `VPFIDiscountFacet.withdrawVPFIFromVault` | ProjectDetailsREADME §"Phase 1 Additions → Allow Borrower to Withdraw Excess Collateral (Health Factor)" | VPFI staking-unwind drains vault VPFI guarded only by raw `balanceOf` — if that VPFI backs a live loan as ERC-20 collateral, it exits with no HF check and no revert, bypassing the collateral-protection invariant the risk-checked withdrawal path enforces. **Triaged 2026-06-13: code-wrong** (VPFI IS collateral-eligible — safe under P2P + lender discretion; reflexivity spiral is a pooled-protocol risk that doesn't apply here). Fix: route through `LibEncumbrance.freeBalance` (subtract the caller's VPFI encumbrance), scope VPFI-as-ERC-20-collateral. Bug card #570; fix lands with #565 (T-407-B v2). Detail in `docs/DesignsAndPlans/EncumbranceLifecycleMap.md` §6 F-1. | triaged: code-wrong → #570 |
-| 2026-06-14 | `ClaimFacet._claimAsLenderImpl` (VPFI lender-proceeds reservation release) | ProjectDetailsREADME §928 current-NFT-holder claim authority + §612 settlement-follows-NFT | The #585 reservation reserved + released keyed on `loan.principalAsset`, but the claimable asset is authoritatively `lenderClaims[loanId].asset` — the COLLATERAL asset on an in-kind/illiquid default (VPFI is collateral-eligible). So a VPFI-collateral default left the deferred VPFI claim unreserved (and a principal-keyed release would free the wrong `encumbered` bucket), leaving the #592 unstake-drain open for that terminal. **Code-wrong.** Fix (`docs/DesignsAndPlans/LenderProceedsReservationV2.md` §4.1): reserve on the deposited asset, RECORD that asset per loan (`s.lenderProceedsEncumberedAsset[loanId]`), and release under the recorded asset (not principal, not the claim record's asset — both can mismatch). Lands with #592 (PR #596). | code-wrong → #592 |
+| — | _(none currently open)_ | — | — | — |
 
 ## Resolved findings
 
 | Date opened | Divergent symbol | Resolution | Closed by |
 |-------------|------------------|------------|-----------|
+| 2026-06-13 | `VPFIDiscountFacet.withdrawVPFIFromVault` | VPFI vault withdrawal now checks free balance through the encumbrance ledger (`LibEncumbrance.freeBalance`, subtracting the caller's VPFI encumbrance) before releasing, so VPFI backing a live loan as ERC-20 collateral can't exit the vault without the HF-checked path — closing the staking-unwind drain. Verified: `forge test --match-contract VPFIDiscountFacetTest --match-test test_F1_withdrawVPFIFromVault -vv`. | PR #572 (#565, T-407-B v2); bug card #570; blocker-verify #794 |
+| 2026-06-14 | `ClaimFacet._claimAsLenderImpl` (VPFI lender-proceeds reservation release) | The #585 lender-proceeds reservation now records and releases under the **actual** encumbered asset (`s.lenderProceedsEncumberedAsset[loanId]`), not `loan.principalAsset`, so the in-kind / illiquid VPFI-collateral default terminal reserves + frees the correct bucket. Verified: `forge test --match-contract Vpfi592LenderProceedsTest -vv`. | #592 (PR #596; verified + closed under #795) |
 | 2026-05-22 | `ADR-0004` "every cross-chain contract carries `GuardianPausable`" (over-broad — `VpfiPoolRateGovernor` does not extend it) AND `ConfigureCcip._setGuardians` does not wire `VPFIMirrorToken` | **Both directions addressed.** ADR-0004 wording qualified to "every cross-chain contract with a runtime send / receive path" + enumerated the contracts that carry the pause base + named `VpfiPoolRateGovernor` as the intentional exception (rate-limit admin only, no runtime send/receive). `ConfigureCcip._setGuardians` extended to wire `VPFIMirrorToken` on mirror chains (the canonical `VPFIToken` is OFT-shaped and paused via its own AccessControl path, not the cross-chain guardian — left untouched). | #200 + #201 |
 
 ---
