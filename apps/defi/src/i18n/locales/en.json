@@ -1389,6 +1389,7 @@
     "offsetTooltipPhase1": "Offset path is ERC-20 only in Phase 1",
     "directPrecloseTitle": "Direct Preclose",
     "directPrecloseDesc": "Pay principal plus full-term interest now. The loan closes immediately and the borrower's collateral becomes claimable. No Vaipakam NFT lock — this path is atomic.",
+    "directPrecloseDescProRata": "Pay principal plus the interest accrued to date now (this loan charges pro-rata interest). The loan closes immediately and the borrower's collateral becomes claimable. No Vaipakam NFT lock — this path is atomic.",
     "borrowerOfferIdLabel": "Borrower offer ID",
     "transferReviewBody": "Confirm moves the loan obligation to the new borrower atomically: the borrower repays accrued interest + any rate shortfall + treasury fee, the new borrower's collateral (already locked in their vault) backs the live loan, and the original collateral becomes claimable — all in one transaction. No NFT transfer-lock is required.",
     "transferIntroBody": "Pick an existing Borrower Offer from the Offer Book and hand off this loan to its creator. Contract-enforced rules (PrecloseFacet.transferObligationViaOffer):",

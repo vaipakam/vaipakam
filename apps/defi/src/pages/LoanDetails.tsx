@@ -1260,14 +1260,17 @@ export default function LoanDetails() {
                 </div>
                 {/* #797 (Codex #810 r1/r2 P2) — pick the most accurate repay
                     confirmation:
-                    - Overdue (past maturity, still in grace): settlement uses
-                      max(elapsed, term) days AND adds a late fee, so it can
-                      exceed full-term — disclose the grace accrual + late fee.
+                    - Overdue but still inside grace (`!pastPrepayGrace`):
+                      settlement uses max(elapsed, term) days AND adds a late fee,
+                      so it can exceed full-term — disclose the grace accrual +
+                      late fee. Gated on `!pastPrepayGrace` (Codex #810 r3): past
+                      grace `repayLoan` reverts, so the "inside its grace period"
+                      copy would be wrong — fall through to the standard copy.
                     - Full-term ERC-20 (not overdue): settles the full-term floor,
                       so the generic "accrued interest" copy under-discloses.
                     - Otherwise (pro-rata ERC-20, NFT rental): the generic line. */}
                 <p style={{ marginTop: 8 }}>
-                  {isOverdue
+                  {isOverdue && !pastPrepayGrace
                     ? t('loanDetails.repayConfirmBodyOverdue')
                     : Number(loan.assetType) === 0 && loan.useFullTermInterest
                       ? t('loanDetails.repayConfirmBodyFullTerm')
