@@ -90,6 +90,18 @@ contract MockVaipakamDiamond is IVaipakamPrepayContext, IVaipakamPrepayCallbacks
         sanctionsOfferId = offerId;
         sanctionsWallet = borrowerWallet;
     }
+
+    // #825-r3 — the executor's fill-time re-screen calls
+    // `IVaipakamSanctionsView(diamond).isSanctionedAddress(...)`; the mock
+    // answers it (default clean) so existing fill tests are unaffected, and a
+    // test can flag a recipient via `setSanctioned`.
+    mapping(address => bool) public sanctioned;
+    function setSanctioned(address who, bool v) external {
+        sanctioned[who] = v;
+    }
+    function isSanctionedAddress(address who) external view returns (bool) {
+        return sanctioned[who];
+    }
 }
 
 contract CollateralListingExecutorTest is Test {
@@ -526,6 +538,80 @@ contract CollateralListingExecutorTest is Test {
         vm.prank(buyer);
         vm.expectRevert(CollateralListingExecutor.NotSeaport.selector);
         executor.validateOrder(p);
+    }
+
+    /// @notice #825-r3 (P1) — fill-time re-screen of the CURRENT borrower
+    ///         recipient. Clean at post time, flagged before fill → the Seaport
+    ///         zone callback aborts the fill (no buyer funds committed).
+    function test_authorizeOrder_revertsWhenBorrowerRecipientSanctioned() public {
+        _setDefaultContext();
+        _recordValidOrder();
+        diamond.setSanctioned(borrowerHolder, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingRecipient.selector,
+                borrowerHolder
+            )
+        );
+        executor.authorizeOrder(p);
+    }
+
+    /// @notice #825-r4 (P1) — fill-time re-screen of the live LENDER recipient
+    ///         (`consideration[0]` is paid directly to `pctx.lenderNftOwner`).
+    ///         Clean at post time, flagged before fill → fill aborts.
+    function test_authorizeOrder_revertsWhenLenderRecipientSanctioned() public {
+        _setDefaultContext();
+        _recordValidOrder();
+        diamond.setSanctioned(lenderHolder, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingRecipient.selector,
+                lenderHolder
+            )
+        );
+        executor.authorizeOrder(p);
+    }
+
+    /// @notice #825-r3 (P1) — fill-time re-screen of a recorded FEE-LEG
+    ///         recipient. Clean at post time, flagged before fill → fill aborts.
+    function test_authorizeOrder_revertsWhenFeeLegRecipientSanctioned() public {
+        _setDefaultContext();
+        address flaggedFee = makeAddr("flaggedFeeRecipientFill");
+        FeeLeg[] memory legs = new FeeLeg[](1);
+        legs[0] = FeeLeg({recipient: flaggedFee, startAmount: 1, endAmount: 1});
+        vm.prank(address(diamond));
+        executor.recordOrder(
+            TEST_ORDER_HASH,
+            TEST_LOAN_ID,
+            conduit,
+            bytes32(0),
+            uint256(0),
+            uint256(block.timestamp),
+            TEST_ASK_PRICE,
+            TEST_ASK_PRICE,
+            0,
+            PREPAY_MODE_FIXED_PRICE,
+            legs,
+            uint256(0),
+            uint256(0)
+        );
+        diamond.setSanctioned(flaggedFee, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingRecipient.selector,
+                flaggedFee
+            )
+        );
+        executor.authorizeOrder(p);
     }
 
     // ─── Precondition stack (via validateOrder for assertion coverage) ──

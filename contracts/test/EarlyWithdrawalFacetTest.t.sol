@@ -17,6 +17,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
@@ -455,6 +456,34 @@ contract EarlyWithdrawalFacetTest is Test {
             abi.encodeWithSignature("ERC721NonexistentToken(uint256)", 0)
         );
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(999, 500, true);
+    }
+
+    /// @notice #819 — a CLEAN keeper acting for a SANCTIONED lender-position
+    ///         holder cannot create a loan-sale listing. The pre-existing
+    ///         `_assertNotSanctioned(msg.sender)` only screened the caller; the
+    ///         eventual sale proceeds settle to the holder, so the holder must
+    ///         be screened too. Screened at listing creation (no buyer
+    ///         committed yet → atomic revert strands nothing).
+    function test_createLoanSaleOffer_RevertsWhenLenderHolderSanctioned_viaKeeper() public {
+        address keeper = makeAddr("ew-keeper-sanctions");
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper, LibVaipakam.KEEPER_ACTION_INIT_EARLY_WITHDRAW
+        );
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true); // the HOLDER, not the keeper caller
+
+        vm.prank(keeper); // clean caller
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender)
+        );
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
     }
 
     // ─── createLoanSaleOffer success ─────────────────────────────────────────

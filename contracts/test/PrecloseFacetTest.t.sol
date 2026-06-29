@@ -15,7 +15,9 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -376,6 +378,50 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+    }
+
+    /// @notice #819 — a CLEAN keeper acting for a SANCTIONED borrower-position
+    ///         holder cannot transfer the obligation. The position is
+    ///         TRANSFERRED to a fresh flagged holder while the stored
+    ///         `loan.borrower` stays clean, so the later inline
+    ///         `vaultWithdrawERC20(loan.borrower → exitingHolder)` would NOT
+    ///         revert on its own (it sends to the flagged holder without a
+    ///         recipient-vault screen) — only the new entry holder-screen
+    ///         catches it. This isolates the #819 keeper gap: drop the screen
+    ///         and the collateral would route to the flagged holder.
+    function test_transferObligationViaOffer_RevertsWhenTransferredHolderSanctioned_viaKeeper() public {
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        address flaggedHolder = makeAddr("preclose-flagged-holder");
+
+        // Simulate the position sitting with a different (flagged) holder; the
+        // stored loan.borrower stays clean. Both `requireKeeperFor` and the #819
+        // screen resolve the holder via this same `IERC721.ownerOf` call.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, loan.borrowerTokenId),
+            abi.encode(flaggedHolder)
+        );
+
+        // The (current) holder approves a clean keeper for the preclose action.
+        address keeper = makeAddr("preclose-keeper-transferred");
+        vm.prank(flaggedHolder);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(flaggedHolder);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        vm.prank(flaggedHolder);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedHolder, true); // current holder, NOT stored borrower, NOT keeper
+
+        vm.prank(keeper); // clean caller
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedHolder)
+        );
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
     }
 

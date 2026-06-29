@@ -33,6 +33,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -451,5 +452,39 @@ contract AddCollateralFacetTest is Test {
         AddCollateralFacet(address(diamond)).addCollateral(loanId, addAmount);
 
         vm.clearMockedCalls();
+    }
+
+    /// @notice #820 — a sanctioned payer / current borrower-NFT holder cannot
+    ///         top up collateral. The position is TRANSFERRED to a fresh flagged
+    ///         holder while the stored `loan.borrower` stays clean, so the
+    ///         pre-existing `getOrCreateUserVault(loan.borrower)` deposit screen
+    ///         (on the clean stored borrower) does NOT fire — only the new
+    ///         payer/holder screen catches it. This isolates the #820 fix: drop
+    ///         the screen and this test would pass the deposit and then fail.
+    function test_addCollateral_RevertsWhenTransferredHolderSanctioned() public {
+        uint256 loanId = _createActiveLiquidLoan();
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(loanId);
+
+        // Simulate the position sitting with a different (flagged) holder:
+        // ownerOf(borrowerTokenId) → flaggedHolder, while the stored
+        // loan.borrower stays clean. `requireBorrowerNftOwner` reads this same
+        // `IERC721.ownerOf` call, so the flagged holder passes ownership and the
+        // new payer screen is the only thing left to catch them.
+        address flaggedHolder = makeAddr("flaggedTopupHolder");
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(IERC721.ownerOf.selector, loan.borrowerTokenId),
+            abi.encode(flaggedHolder)
+        );
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedHolder, true); // ONLY the current holder, not loan.borrower
+
+        vm.prank(flaggedHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedHolder)
+        );
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, 500 ether);
     }
 }

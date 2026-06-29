@@ -503,6 +503,16 @@ contract NFTPrepayListingFacet is
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
+        // #818 Tier-1 sanctions — posting a collateral-sale listing creates
+        // fresh state that routes value to the holder on fill. The atomic-match
+        // / auto-list / executor-callback paths are already gated; the manual
+        // post/update paths were not. `holder == msg.sender` here, so screening
+        // the caller screens the listing's beneficiary.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #825-r2 (P1) — also screen every fee-leg recipient: a fee leg pays an
+        // arbitrary caller-supplied address on fill, so the holder screen alone
+        // would leave that value-to-flagged route open.
+        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
 
         // #656b (#594) — consolidate the borrower side to the current holder
         // before the order is built + the vault cached, so the listing binds the
@@ -706,6 +716,10 @@ contract NFTPrepayListingFacet is
         if (holder != msg.sender) {
             revert NotPositionHolder(loanId, msg.sender, holder);
         }
+        // #818 Tier-1 sanctions — see `postPrepayListing`. `holder == msg.sender`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #825-r2 (P1) — screen fee-leg recipients (see `postPrepayListing`).
+        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
 
         bytes32 oldOrderHash = s.prepayListingOrderHash[loanId];
         if (oldOrderHash == bytes32(0)) {

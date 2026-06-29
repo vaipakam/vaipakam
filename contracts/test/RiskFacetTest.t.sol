@@ -31,6 +31,7 @@ import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
@@ -3594,6 +3595,31 @@ contract RiskFacetTest is Test {
         RiskFacet(address(diamond)).triggerLiquidationDiscounted(
             999_999,
             address(this),
+            ""
+        );
+    }
+
+    /// @dev #816 — a sanctioned seized-collateral `recipient` is rejected even
+    ///      when the caller (`msg.sender`) is clean. The discounted path
+    ///      delivers the bought collateral to a caller-chosen `recipient`, so
+    ///      screening only the caller would let a clean liquidator route fresh
+    ///      value to a flagged wallet. The recipient screen fires right after
+    ///      the zero-recipient guard, before any loan/HF read.
+    function test_triggerLiquidationDiscounted_RevertsWhenRecipientSanctioned() public {
+        uint256 loanId = createAndAcceptOffer();
+        TestMutatorFacet(address(diamond)).setDiscountPathEnabledRaw(true);
+
+        address flaggedRecipient = makeAddr("flaggedRecipient");
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedRecipient, true);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedRecipient)
+        );
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(
+            loanId,
+            flaggedRecipient,
             ""
         );
     }

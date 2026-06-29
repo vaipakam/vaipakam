@@ -193,6 +193,12 @@ contract NFTPrepayDutchListingFacet is
 
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
+        // #818 Tier-1 sanctions — posting a Dutch collateral-sale listing routes
+        // value to the holder on fill; `holder == msg.sender`. See the fixed-price
+        // `postPrepayListing` for the rationale.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #825-r2 (P1) — screen fee-leg recipients (see `postPrepayListing`).
+        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
 
         // #656c (#594) — consolidate the borrower side to the current holder
         // before the order is built + the vault cached, so the listing binds the
@@ -267,6 +273,10 @@ contract NFTPrepayDutchListingFacet is
 
         address holder = VaipakamNFTFacet(address(this)).ownerOf(loan.borrowerTokenId);
         if (holder != msg.sender) revert NotPositionHolder(loanId, msg.sender, holder);
+        // #818 Tier-1 sanctions — see `postPrepayDutchListing`. `holder == msg.sender`.
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        // #825-r2 (P1) — screen fee-leg recipients (see `postPrepayListing`).
+        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
 
         bytes32 oldOrderHash = s.prepayListingOrderHash[loanId];
         if (oldOrderHash == bytes32(0)) revert PrepayListingNotFound(loanId);

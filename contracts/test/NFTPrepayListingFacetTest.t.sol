@@ -7,6 +7,8 @@ import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibERC721} from "../src/libraries/LibERC721.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
 import {NFTPrepayDutchListingFacet} from "../src/facets/NFTPrepayDutchListingFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {
     FeeLeg,
     PREPAY_MODE_FIXED_PRICE,
@@ -411,6 +413,56 @@ contract NFTPrepayListingFacetTest is SetupTest {
             uint8(VaipakamNFTFacet(address(diamond)).positionLock(BORROWER_TOKEN_ID)),
             uint8(LibERC721.LockReason.PrepayCollateralListing),
             "borrower NFT locked with PrepayCollateralListing reason"
+        );
+    }
+
+    /// @notice #818 — a sanctioned borrower-NFT holder cannot POST a fixed-price
+    ///         prepay collateral-sale listing. The manual post/update paths
+    ///         previously checked only NFT ownership (`holder == msg.sender`);
+    ///         the screen now matches the atomic / auto-list paths.
+    function test_postPrepayListing_revertsWhenHolderSanctioned() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrowerHolder, true);
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrowerHolder)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
+    }
+
+    /// @notice #825-r2 (P1) — a CLEAN holder cannot post a listing whose fee leg
+    ///         pays a SANCTIONED recipient. A fee leg becomes a Seaport
+    ///         consideration item payable to an arbitrary caller-supplied
+    ///         address on fill, so the holder screen alone would leave that
+    ///         value-to-flagged route open. Holder is clean here; only the fee
+    ///         recipient is flagged.
+    function test_postPrepayListing_revertsWhenFeeLegRecipientSanctioned() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+
+        address flaggedFee = makeAddr("flaggedFeeRecipient");
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedFee, true);
+
+        FeeLeg[] memory feeLegs = new FeeLeg[](1);
+        feeLegs[0] = FeeLeg({recipient: flaggedFee, startAmount: 1, endAmount: 1});
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedFee)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, feeLegs
         );
     }
 
@@ -1334,6 +1386,26 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
 
         _assertConsolidatedToHolder(holder, holderVault);
+    }
+
+    /// @notice #818 — a sanctioned borrower-NFT holder cannot POST a Dutch
+    ///         prepay collateral-sale listing either. Same screen as the
+    ///         fixed-price path; `holder == msg.sender`.
+    function test_postPrepayDutchListing_revertsWhenHolderSanctioned() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrowerHolder, true);
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrowerHolder)
+        );
+        NFTPrepayDutchListingFacet(address(diamond)).postPrepayDutchListing(
+            LOAN_ID, 110 ether, 104 ether, _dutchAuctionEnd(), TEST_SALT_A, conduitKey, _emptyFeeLegs()
+        );
     }
 
     function test_postPrepayDutchListing_transferredPosition_consolidatesToHolder() public {

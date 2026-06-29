@@ -10,6 +10,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {ISeaportZone, ZoneParameters, ReceivedItem, ItemType} from "./ISeaportZone.sol";
 import {IVaipakamPrepayCallbacks} from "./IVaipakamPrepayCallbacks.sol";
 import {IVaipakamPrepayContext} from "./IVaipakamPrepayContext.sol";
+import {IVaipakamSanctionsView} from "./IVaipakamSanctionsView.sol";
 import {ISeaportOrderHash, ISeaportCancel, OrderComponents} from "./ISeaportOrderHash.sol";
 import {
     FeeLeg,
@@ -406,6 +407,9 @@ contract CollateralListingExecutor is
     error WrongOfferCount(uint256 expected, uint256 actual);
     error WrongLenderRecipient(bytes32 orderHash);
     error WrongBorrowerRecipient(bytes32 orderHash);
+    /// @notice #825-r3 (P1) — a fill recipient (current borrower holder or a
+    ///         recorded fee-leg recipient) is sanctions-flagged at fill time.
+    error SanctionedListingRecipient(address recipient);
     error WrongTreasuryRecipient(bytes32 orderHash);
     error WrongConsiderationItemType(uint256 idx, ItemType expected, ItemType actual);
     error WrongConsiderationToken(uint256 idx, address expected, address actual);
@@ -1474,6 +1478,26 @@ contract CollateralListingExecutor is
         // address (round-3 against Raja P1 #3 + Codex round-2 P1 #4).
         IVaipakamPrepayCallbacks(vaipakamDiamond)
             .assertOfferFillNotSanctioned(ctx.offerId, ctx.borrowerWallet);
+        // #825-r4 (P1) — that callback screens the borrower wallet, but the
+        // offer-branch (parallel-sale) order ALSO carries fee legs paid directly
+        // by Seaport on fill; re-screen each recorded fee-leg recipient live, so
+        // a fee recipient flagged after the listing was recorded can't be paid.
+        // (The diamond-side lender / borrower-remainder settlement screening is
+        // tracked under #821's diamond-side recipient handling.)
+        {
+            FeeLeg[] memory offerLegs = _offerFeeLegs[params.orderHash];
+            for (uint256 i = 0; i < offerLegs.length; ) {
+                if (
+                    IVaipakamSanctionsView(vaipakamDiamond)
+                        .isSanctionedAddress(offerLegs[i].recipient)
+                ) {
+                    revert SanctionedListingRecipient(offerLegs[i].recipient);
+                }
+                unchecked {
+                    ++i;
+                }
+            }
+        }
 
         // ── Offerer check ───────────────────────────────────────────
         // Same defense-in-depth as the loan-keyed branch: the order's
@@ -1616,6 +1640,44 @@ contract CollateralListingExecutor is
         // was already callable at the tick, which the
         // `DefaultedFacet:217` check above shows is wrong.
         if (block.timestamp > pctx.graceEnd) revert GraceExpired(loanId);
+
+        // ── Fill-time sanctions re-screen (#825-r3/r4 P1) ───────────────
+        // The post/update entry points screen recipients at SIGN time only. If
+        // a Seaport consideration recipient is clean at post time but flagged
+        // before the order fills, Seaport would still pay that leg directly.
+        // Re-screen the LIVE recipients here — this runs from both
+        // `authorizeOrder` and the `Seaport.validate()` pre-registration path —
+        // so a flagged recipient aborts the fill. The buyer's funds are never
+        // committed (Seaport reverts the whole fill atomically), so nothing is
+        // stranded. The loan-keyed consideration pays the live lender holder
+        // (consideration[0]) and the borrower-remainder holder (consideration[2])
+        // directly, plus the recorded fee legs; treasury is the protocol (no
+        // screen). (#821 covers the diamond-side close-out deposits on the
+        // non-fill paths.)
+        if (
+            IVaipakamSanctionsView(vaipakamDiamond)
+                .isSanctionedAddress(pctx.lenderNftOwner)
+        ) {
+            revert SanctionedListingRecipient(pctx.lenderNftOwner);
+        }
+        if (
+            IVaipakamSanctionsView(vaipakamDiamond)
+                .isSanctionedAddress(pctx.borrowerNftOwner)
+        ) {
+            revert SanctionedListingRecipient(pctx.borrowerNftOwner);
+        }
+        FeeLeg[] memory liveFeeLegs = _orderFeeLegs[params.orderHash];
+        for (uint256 i = 0; i < liveFeeLegs.length; ) {
+            if (
+                IVaipakamSanctionsView(vaipakamDiamond)
+                    .isSanctionedAddress(liveFeeLegs[i].recipient)
+            ) {
+                revert SanctionedListingRecipient(liveFeeLegs[i].recipient);
+            }
+            unchecked {
+                ++i;
+            }
+        }
 
         // ── Offer-side schema check ─────────────────────────────────────
         // The order MUST be selling EXACTLY the loan's collateral NFT.

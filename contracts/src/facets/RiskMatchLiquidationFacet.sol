@@ -414,6 +414,10 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
 
         {
             uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+            // #817 — see `_executeTwoWayMatch`: a sanctioned matcher (auto-dispatch
+            // only) gets a zeroed incentive, folded into each lender's share, so
+            // the match still settles and no value reaches the flagged wallet.
+            if (LibVaipakam.isSanctionedAddress(matcher)) incentiveBps = 0;
             r.incentiveX = (r.movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
             r.incentiveY = (r.movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
             r.incentiveZ = (r.movedZ * incentiveBps) / LibVaipakam.BASIS_POINTS;
@@ -599,6 +603,13 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
 
         {
             uint256 incentiveBps = LibVaipakam.cfgInternalMatchIncentivePerLegBps();
+            // #817 — deny the matcher bonus to a sanctioned caller (only reachable
+            // on the auto-dispatch path; the explicit entry reverts a sanctioned
+            // `msg.sender`). Zeroing the incentive folds it into each lender's
+            // share, so the objective match still settles with no DEX risk, the
+            // honest counterparty is made fully whole, and no fresh value reaches
+            // the flagged wallet.
+            if (LibVaipakam.isSanctionedAddress(matcher)) incentiveBps = 0;
             r.incentiveX = (r.movedX * incentiveBps) / LibVaipakam.BASIS_POINTS;
             r.incentiveY = (r.movedY * incentiveBps) / LibVaipakam.BASIS_POINTS;
         }
@@ -1106,6 +1117,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.internalMatchEnabled) return false;
+
+        // #817 — a sanctioned matcher does NOT skip the dispatch (that would let
+        // a flagged caller degrade settlement: an empty/failing `adapterCalls`
+        // on the fall-through external path could push an internally-matchable
+        // loan into FallbackPending). Instead the objective internal match still
+        // runs and the 1% bonus is denied to the flagged matcher inside
+        // `_executeTwoWayMatch` (the incentive is zeroed, folding it into the
+        // honest lender's share). See the `isSanctionedAddress(matcher)` guard
+        // there. The explicit `triggerInternalMatchLiquidation` entry still
+        // reverts a sanctioned `msg.sender` (the caller chose that path purely
+        // to earn the incentive); only this auto-dispatch path keeps going.
 
         (bool found, uint256 candidateId) = MetricsFacet(address(this))
             .hasInternalMatchCandidate(loanId);
