@@ -65,6 +65,11 @@ type Verdict =
        *  `0` = Liquid, `1` = Illiquid; `null` = not read (NFT collateral,
        *  non-Active, or read failed → caller falls back to the loan snapshot). */
       collateralLiquidityLive: number | null;
+      /** #821 — true when the current position holder (`owner`) is
+       *  sanctions-flagged. While flagged the position's payout is frozen
+       *  (the proceeds are locked in the stored party's vault and the claim
+       *  paths screen that owner), so a buyer must be warned it's unclaimable. */
+      ownerSanctioned: boolean;
     }
   | {
       kind: "burned";
@@ -341,6 +346,24 @@ export default function NftVerifier() {
         }
       }
 
+      // #821 — surface the owner's sanctions status. While the holder is
+      // flagged, the position's payout is FROZEN: the proceeds sit in the
+      // (stored) party's vault and `claimAsLender` / `claimAsBorrower` screen
+      // that owner, so a prospective buyer must know the position is currently
+      // unclaimable. Fail-open (treat as clean) on a read error, matching the
+      // protocol's fail-open posture.
+      let ownerSanctioned = false;
+      try {
+        ownerSanctioned = (await publicClient.readContract({
+          address,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: "isSanctionedAddress",
+          args: [owner as Address],
+        })) as boolean;
+      } catch {
+        // Read failed — leave false (fail-open), as elsewhere in the app.
+      }
+
       setVerdict({
         kind: "live",
         chain,
@@ -352,6 +375,7 @@ export default function NftVerifier() {
         hf,
         ltv,
         collateralLiquidityLive,
+        ownerSanctioned,
       });
       step.success();
     } catch (err) {
@@ -788,7 +812,7 @@ function LiveCard({
   verdict: Extract<Verdict, { kind: "live" }>;
 }) {
   const { t } = useTranslation();
-  const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv, collateralLiquidityLive } =
+  const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv, collateralLiquidityLive, ownerSanctioned } =
     verdict;
   const blockExplorer = chain.blockExplorer;
   const status =
@@ -868,6 +892,24 @@ function LiveCard({
               {owner} <ExternalLink size={12} />
             </a>
           </div>
+          {ownerSanctioned && (
+            <div
+              className="data-row"
+              style={{
+                background: "var(--danger-muted, rgba(220, 38, 38, 0.08))",
+                borderRadius: "8px",
+                padding: "10px 12px",
+                marginTop: "6px",
+              }}
+            >
+              <span
+                className="data-value"
+                style={{ color: "var(--danger, #dc2626)", fontSize: "0.82rem" }}
+              >
+                {t("nftVerifier.ownerSanctioned")}
+              </span>
+            </div>
+          )}
           {role && (
             <div className="data-row">
               <span className="data-label">{t("common.role")}</span>
