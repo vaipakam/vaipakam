@@ -243,15 +243,16 @@ Governance and guardian roles should have remove-only or risk-reducing controls:
 - force keeper confidence tier to `0`;
 - enter a safe-mode / freeze that blocks new tiered admissions or forces the
   safest tier, without falling back to a less conservative legacy path;
-- explicitly avoid using the depth-tiered-LTV disable switch as an incident
-  mitigation unless it also enforces the safe-mode behavior above;
 - disable a pool factory / quote asset route family;
 - lower per-tier LTV caps;
 - lower per-asset caps;
 - mark a token behavior profile as unsupported.
 
 These controls should not be able to upgrade an asset above measured and
-confidence-backed depth.
+confidence-backed depth. The ordinary depth-tiered-LTV disable switch is not an
+incident-response control for liquidity spoofing: unless it also enforces the
+safe-mode behavior above, disabling tier checks could fall back to a less
+conservative legacy admission path.
 
 ## Attack Handling Matrix
 
