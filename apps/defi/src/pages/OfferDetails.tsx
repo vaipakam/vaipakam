@@ -30,6 +30,9 @@ import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { PerThingKeeperToggles } from '../components/app/PerThingKeeperToggles';
 import { useLogIndex } from '../hooks/useLogIndex';
 import { type Encumbrance } from '../types/encumbrance';
+import { useOfferChildLoans } from '../hooks/useOfferChildLoans';
+import { OfferGroupCard } from '../components/OfferGroupCard';
+import '../components/OfferGroupCard.css';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
@@ -339,6 +342,15 @@ export default function OfferDetails() {
     indexed && indexed.status === 'accepted' && indexed.positionTokenId
       ? indexed.positionTokenId
       : null;
+
+  // #600 — every child loan spawned by this offer (a range / partial-fill offer
+  // can produce many). Single-child offers keep the header "View loan" link as
+  // the affordance; the section below only renders for genuine multi-fill.
+  const {
+    group: childLoanGroup,
+    count: childLoanCount,
+    truncated: childLoansTruncated,
+  } = useOfferChildLoans(offerIdBig, offerForDisplay?.offerType ?? null);
 
   return (
     <div className="loan-details-page">
@@ -902,6 +914,42 @@ export default function OfferDetails() {
                   })}
             </div>
           </div>
+
+          {/* #600 — "Loans from this offer". A range / partial-fill offer can
+              spawn many loans; list them all (reusing the Dashboard's grouped
+              row + aggregates). Shown for genuine multi-fill, AND for a single
+              child when the header "View loan #N" link is absent (a still-open
+              partial-fill offer whose `indexed.status` isn't yet 'accepted', so
+              `linkedLoanId` is null) — otherwise that lone loan would have no
+              link at all (Codex P2). When the header link already covers the
+              single child, the section is suppressed to avoid duplication. */}
+          {(childLoanCount > 1 ||
+            (childLoanCount === 1 && !linkedLoanId)) &&
+            childLoanGroup && (
+            <div style={{ marginTop: 16 }}>
+              <h3 className="section-title" style={{ marginBottom: 8 }}>
+                {t('offerDetails.loansFromOffer', {
+                  defaultValue: 'Loans from this offer',
+                })}
+              </h3>
+              <OfferGroupCard group={childLoanGroup} defaultExpanded />
+              {childLoansTruncated && (
+                <p
+                  style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--text-secondary)',
+                    marginTop: 8,
+                  }}
+                >
+                  {t('offerDetails.loansFromOfferTruncated', {
+                    defaultValue:
+                      'Showing the first {{count}} loans from this offer.',
+                    count: childLoanCount,
+                  })}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Per-offer keeper toggles (gate 3 of the Phase-6 keeper
               auth model). Creator-only, hidden post-acceptance — see

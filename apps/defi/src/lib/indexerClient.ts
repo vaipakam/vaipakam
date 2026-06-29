@@ -229,7 +229,14 @@ export interface IndexedLoan {
   chainId: number;
   loanId: number;
   offerId: number;
-  status: 'active' | 'repaid' | 'defaulted' | 'liquidated' | 'settled';
+  status:
+    | 'active'
+    | 'repaid'
+    | 'defaulted'
+    | 'liquidated'
+    | 'settled'
+    | 'fallback_pending'
+    | 'internal_matched';
   lender: string;
   borrower: string;
   principal: string;
@@ -266,12 +273,20 @@ export interface IndexedLoan {
  * Status mapping: indexer's string status ('active', 'repaid', etc.)
  * → numeric LoanStatus enum used by the rendering pipeline.
  */
+// Map the indexer's status STRINGS to the app's `LoanStatus` enum
+// (Active 0, Repaid 1, Defaulted 2, Settled 3, FallbackPending 4,
+// InternalMatched 5). The app has no distinct "Liquidated" status —
+// an HF/time liquidation is a default-driven terminal, so it maps to
+// Defaulted. (#600 fix: previously `liquidated→3` mis-labelled as
+// Settled and `settled→4` mis-labelled as Fallback Pending.)
 export const INDEXER_STATUS_TO_ENUM: Record<string, number> = {
   active: 0,
   repaid: 1,
   defaulted: 2,
-  liquidated: 3,
-  settled: 4,
+  liquidated: 2,
+  settled: 3,
+  fallback_pending: 4,
+  internal_matched: 5,
 };
 
 export function indexedToLoanSummary(
@@ -279,6 +294,9 @@ export function indexedToLoanSummary(
   role: 'lender' | 'borrower',
 ): {
   id: bigint;
+  /** #600 — originating offer id, required by `groupLoansByOffer`. Previously
+   *  omitted, which made every grouping call throw on `loan.offerId.toString()`. */
+  offerId: bigint;
   principal: bigint;
   principalAsset: string;
   assetType: number;
@@ -298,6 +316,7 @@ export function indexedToLoanSummary(
 } {
   return {
     id: BigInt(o.loanId),
+    offerId: BigInt(o.offerId),
     principal: BigInt(o.principal),
     principalAsset: o.lendingAsset,
     assetType: o.assetType,

@@ -3113,6 +3113,19 @@ function pluckActivityRefs(
         loanId: Number(args.loanId as bigint),
         offerId: Number(args.offerId as bigint),
       };
+    case 'OfferMatched':
+      // #600 — a matcher-driven fill calls `acceptOfferInternal(borrowerOfferId)`,
+      // so the companion `OfferAccepted` (and the loan's own `offerId`) attribute
+      // the loan to the BORROWER offer. The LENDER offer's only link to the child
+      // loan is this event, which carries both `lenderOfferId` and `loanId`.
+      // Denormalize the row to the LENDER offer so `/activity?offerId=<lenderId>&
+      // kind=OfferMatched` enumerates its matched children (the borrower side is
+      // already covered by `OfferAccepted`).
+      return {
+        actor: (args.matcher as string)?.toLowerCase() ?? null,
+        loanId: Number(args.loanId as bigint),
+        offerId: Number(args.lenderOfferId as bigint),
+      };
     case 'OfferCanceled':
       return {
         actor: (args.creator as string)?.toLowerCase() ?? null,
