@@ -111,8 +111,8 @@ export default function Refinance() {
     });
     try {
       // Borrower must repay old lender (principal + full-term interest +
-      // shortfall + treasury fee). We don't know shortfall client-side, so
-      // request max allowance — user can revoke afterwards.
+      // treasury fee). The exact total isn't known client-side (rounding in
+      // the fee split), so request max allowance — user can revoke afterwards.
       await ensureAllowance(MaxUint256);
       const tx = await diamond.refinanceLoan(loan.id, offerId);
       setTxHash(tx.hash);
@@ -297,10 +297,9 @@ export default function Refinance() {
                   copy here so the pre-sign disclosure matches what the tx pulls. */}
               <p className="action-desc" style={{ marginTop: 12 }}>
                 Clicking Confirm atomically repays the old lender (principal +
-                full-term interest + any rate shortfall + treasury fee) and
-                releases your original collateral in a single transaction — no
-                NFT transfer-lock is needed because there is no intermediate
-                state to protect.
+                full-term interest + treasury fee) and releases your original
+                collateral in a single transaction — no NFT transfer-lock is
+                needed because there is no intermediate state to protect.
               </p>
               <InterestImplicationWarning kind="refinance" />
               <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>

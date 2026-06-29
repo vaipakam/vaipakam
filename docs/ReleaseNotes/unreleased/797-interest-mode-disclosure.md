@@ -25,11 +25,17 @@ What changed:
 - **Refinance stays full-term (deliberately not mode-aware)** — the on-chain
   `RefinanceFacet` computes the old-loan payoff via `LibEntitlement.fullTermInterest`
   unconditionally, so the refinance screen always discloses full-term interest
-  (plus any rate shortfall) and never switches to pro-rata copy — the pre-sign
-  disclosure must match what the transaction actually pulls.
-- **Repay-in-Full confirmation** — for a full-term ERC-20 loan, the confirm copy
-  now states that repaying settles the full-term interest (not just accrued),
-  replacing the generic "principal plus accrued interest" line.
+  and never switches to pro-rata copy — the pre-sign disclosure must match what
+  the transaction actually pulls. The stale "rate shortfall" wording was also
+  dropped from the refinance copy: that path no longer pulls a shortfall
+  (`shortfall = 0`).
+- **Repay-in-Full confirmation** — the confirm copy now picks the most accurate
+  wording: an overdue (in-grace) loan settles through-today interest plus a late
+  fee (which can exceed full-term), a full-term ERC-20 loan settles the full-term
+  interest (not just accrued), and other cases keep the generic line.
+- **Treasury-fee wording** — the preclose interest warnings no longer hard-code a
+  99% / 1% lender/treasury split (the treasury fee is governance-configurable);
+  they now refer to "the configured protocol treasury fee".
 
 New component tests cover the full-term / pro-rata / partial-repay combinations
 for the badge (label + tooltip selection + the suppressed undefined case) and the

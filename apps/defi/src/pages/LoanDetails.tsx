@@ -1258,14 +1258,20 @@ export default function LoanDetails() {
                   <span className="data-label">{t('loanDetails.loanLabel')}</span>
                   <span className="data-value">#{loan.id.toString()}</span>
                 </div>
-                {/* #797 (Codex #810 r1 P2) — a full-term ERC-20 loan settles
-                    through the full-term interest floor, so the generic "accrued
-                    interest" copy under-discloses. Show mode-specific copy for
-                    ERC-20 loans; keep the generic line for NFT rentals. */}
+                {/* #797 (Codex #810 r1/r2 P2) — pick the most accurate repay
+                    confirmation:
+                    - Overdue (past maturity, still in grace): settlement uses
+                      max(elapsed, term) days AND adds a late fee, so it can
+                      exceed full-term — disclose the grace accrual + late fee.
+                    - Full-term ERC-20 (not overdue): settles the full-term floor,
+                      so the generic "accrued interest" copy under-discloses.
+                    - Otherwise (pro-rata ERC-20, NFT rental): the generic line. */}
                 <p style={{ marginTop: 8 }}>
-                  {Number(loan.assetType) === 0 && loan.useFullTermInterest
-                    ? t('loanDetails.repayConfirmBodyFullTerm')
-                    : t('loanDetails.repayConfirmBody')}
+                  {isOverdue
+                    ? t('loanDetails.repayConfirmBodyOverdue')
+                    : Number(loan.assetType) === 0 && loan.useFullTermInterest
+                      ? t('loanDetails.repayConfirmBodyFullTerm')
+                      : t('loanDetails.repayConfirmBody')}
                 </p>
                 {!isBorrower && (
                   <p style={{ marginTop: 8 }}>
