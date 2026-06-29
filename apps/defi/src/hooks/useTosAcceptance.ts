@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { type Address } from 'viem';
 import {
   useDiamondContract,
@@ -72,8 +72,14 @@ export function useTosAcceptance(): TosAcceptanceState {
   // gate-disabled check (`currentVersion === 0`) read as "accepted", silently
   // opening the gated routes on any RPC failure.
   const [readOk, setReadOk] = useState(false);
+  // #828 r2 — monotonic request counter. Each `reload()` claims the next value;
+  // a read that resolves after a newer `reload()` has started is stale (the
+  // wallet / chain changed mid-flight) and must NOT apply its result, or it
+  // would clobber the current wallet's state with the previous one's.
+  const reqSeq = useRef(0);
 
   const reload = useCallback(async () => {
+    const seq = ++reqSeq.current;
     // #828 r1 — reset the success flag on every (re)load so that when the
     // connected wallet or read chain changes, the gate can't keep reporting the
     // PREVIOUS wallet's acceptance until the new read lands; it holds closed
@@ -114,12 +120,15 @@ export function useTosAcceptance(): TosAcceptanceState {
               acceptedAt: 0n,
             }),
       ]);
+      // #828 r2 — drop a stale in-flight read superseded by a newer reload().
+      if (seq !== reqSeq.current) return;
       setCurrentVersion(Number(curr[0]));
       setCurrentHash(curr[1]);
       setUserVersion(Number(user.version));
       setUserHash(user.hash);
       setReadOk(true);
     } catch (e) {
+      if (seq !== reqSeq.current) return;
       // Fail CLOSED: drop `readOk` so a stale prior success can't keep the
       // gate open through an RPC outage, and reset the version so nothing
       // downstream mistakes the unread value for a real "gate disabled".
@@ -127,7 +136,9 @@ export function useTosAcceptance(): TosAcceptanceState {
       setCurrentVersion(0);
       setError((e as Error)?.message ?? 'Failed to read ToS state');
     } finally {
-      setLoading(false);
+      // Only the current request owns `loading`; a stale one clearing it would
+      // prematurely reveal the gate while the live read is still in flight.
+      if (seq === reqSeq.current) setLoading(false);
     }
   }, [publicClient, diamondAddress, address]);
 
