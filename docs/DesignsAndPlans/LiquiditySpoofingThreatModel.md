@@ -152,7 +152,9 @@ effective-tier and cumulative-epoch revalidation.
 
 If the current effective tier is lower than the offer creation-time effective
 tier, the transaction must fail before value moves, even when the lower tier
-would still satisfy the numeric LTV cap. Risk-config compatibility must be
+would still satisfy the numeric LTV cap, and the same fail-closed rule applies
+when the offer/intent snapshot predates the latest liquidity-demotion epoch or
+qualifying-window restart. Risk-config compatibility must be
 cumulative over the full interval from offer creation to fill: an offer may fill
 only if every intervening risk-config change is fill-compatible, or if the
 current config exposes a monotonic non-decreasing `fillCompatibleFromEpoch`
@@ -373,7 +375,9 @@ conservative legacy admission path.
   standing lender intents, requested collateral assets, governed candidate
   assets, and live collateral.
 - Enforce promoted-confidence TTL on-chain through an observation timestamp,
-  expiry sentinel, or equivalent automatic no-admission state.
+  expiry sentinel, or equivalent automatic no-admission state that the
+  effective-tier admission read must check before honoring a promoted keeper
+  tier.
 - Add demotion-first update semantics.
 - Add max-age / heartbeat expiry for promoted confidence tiers.
 - Expose read views for current confidence tier, last observation, and reason
