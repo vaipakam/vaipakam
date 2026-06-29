@@ -627,6 +627,17 @@ contract ClaimFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
+        // #821 — FREEZE: also screen the STORED vault owner (`loan.lender`),
+        // whose vault the payout withdraws from. While that wallet is flagged,
+        // its vault assets do not move — even to a clean current NFT holder.
+        // This closes the transfer-position-to-a-clean-wallet-then-claim
+        // loophole: a flagged lender can't monetize via an off-protocol NFT
+        // sale, because the funds sit in THEIR (frozen) vault. A genuine
+        // protocol loan-sale migrates `loan.lender` to the buyer
+        // (`LibLoan.migrateLenderPosition`), so a clean buyer settles to their
+        // OWN vault and is unaffected; only the stored-flagged case freezes.
+        LibVaipakam._assertNotSanctioned(loan.lender);
+
         // Loan must be resolved (Repaid, Defaulted, FallbackPending awaiting
         // the lender's one-shot retry, or InternalMatched). Active or already
         // Settled is rejected.
@@ -995,6 +1006,12 @@ contract ClaimFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // #821 — FREEZE the stored vault owner (`loan.borrower`), whose vault the
+        // collateral/surplus payout withdraws from. See `_claimAsLenderImpl` for
+        // the rationale; a protocol position migration moves `loan.borrower` to
+        // the new holder, so only the stored-flagged case freezes.
+        LibVaipakam._assertNotSanctioned(loan.borrower);
 
         // Borrower can only claim after the loan is terminally Repaid,
         // Defaulted, or InternalMatched. FallbackPending is explicitly

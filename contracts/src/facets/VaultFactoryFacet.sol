@@ -151,6 +151,12 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
     /// @dev Stuck-recovery rejected: target user has never had an
     ///      vault created (no proxy address recorded).
     error UserHasNoVault();
+    /// @notice #821 — a wind-down close-out tried to deposit a flagged
+    ///         recipient's locked share but the recipient has no existing vault,
+    ///         and the receive-side exemption refuses to mint one for a
+    ///         sanctioned wallet. Unreachable for real loan parties (they all
+    ///         have a vault by close-out time); a defensive backstop.
+    error SanctionedRecipientHasNoVault(address recipient);
 
     /// @notice Emitted when an admin recovers tokens that landed in a
     ///         user's vault outside the protocol deposit flow (e.g. a
@@ -217,11 +223,27 @@ contract VaultFactoryFacet is DiamondAccessControl, IVaipakamErrors {
         // wallet's vault through this exemption. `address(0)` exempts no one.
         // See the `consolidationMoveFromUser` natspec.
         address exemptUser = s.consolidationMoveFromUser;
-        if (!(exemptUser != address(0) && user == exemptUser)) {
+        bool moveOutExempt = exemptUser != address(0) && user == exemptUser;
+        // #821 — receive-side exemption: a wind-down close-out depositing the
+        // flagged recipient's LOCKED share into their EXISTING vault. Skip the
+        // screen for the exact pinned recipient (the proceeds are claim-gated —
+        // see the `sanctionedDepositExemptUser` natspec), but NEVER mint a new
+        // vault for a sanctioned wallet under it (guard below).
+        address depositExempt = s.sanctionedDepositExemptUser;
+        bool receiveExempt = depositExempt != address(0) && user == depositExempt;
+        if (!moveOutExempt && !receiveExempt) {
             LibVaipakam._assertNotSanctioned(user);
         }
         proxy = s.userVaipakamVaults[user];
         if (proxy == address(0)) {
+            // #821 — under the receive-side exemption, refuse to CREATE a vault
+            // for a SANCTIONED recipient (policy: no vault for a flagged wallet).
+            // A clean recipient with no vault yet still gets one created normally;
+            // every real loan party already has a vault by close-out time, so
+            // this revert is a defensive backstop, not a routine path.
+            if (receiveExempt && LibVaipakam.isSanctionedAddress(user)) {
+                revert SanctionedRecipientHasNoVault(user);
+            }
             bytes memory _data = abi.encodeCall(
                 VaipakamVaultImplementation.initialize, // Function signature
                 (s.diamondAddress, s.vaipakamVaultTemplate) // Arguments

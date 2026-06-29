@@ -9,6 +9,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -313,6 +314,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // ensures the protocolTrackedVaultBalance counter ticks
             // up under the LENDER (the owner of the receiving vault,
             // not the borrower who's the payer).
+            // #821 — vault-lock: a flagged stored lender would otherwise brick
+            // this deposit (the receiving-vault screen reverts). Pin the
+            // receive-side exemption to `loan.lender` so the close-out completes
+            // and the borrower's debt clears; the proceeds land in the lender's
+            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
+            // (the `claimAsLender` stored-owner screen) until the flag clears.
+            LibSanctionedLock.begin(s, loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -322,6 +330,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     plan.lenderDue
                 ),
                 VaultDepositFailed.selector
+            );
+            LibSanctionedLock.end(
+                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
             );
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.

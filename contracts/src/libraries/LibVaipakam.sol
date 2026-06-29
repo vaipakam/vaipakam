@@ -4399,6 +4399,25 @@ library LibVaipakam {
         ///      closes that. `address(0)` (the default) exempts no one. Packs
         ///      into the same slot region as `consolidationInFlight`.
         address consolidationMoveFromUser;
+        /// @dev #821 — RECEIVE-side mirror of `consolidationMoveFromUser`. The
+        ///      exact recipient whose EXISTING vault a wind-down close-out
+        ///      deposit may resolve through despite a sanctions flag. Unlike the
+        ///      move-out exemption (where the flagged party loses custody), here
+        ///      the flagged party RECEIVES — but the proceeds are LOCKED: the
+        ///      deposit is protocol-tracked (so `recoverStuckERC20` can't reach
+        ///      it) and `claimAsLender` / `claimAsBorrower` screen the stored
+        ///      vault owner, so nothing leaves the vault until the flag clears.
+        ///      This lets a Tier-2 close-out complete (the unflagged counterparty
+        ///      is made whole) without routing fresh, spendable value to the
+        ///      flagged wallet, and without commingling in the Diamond.
+        ///
+        ///      Same exact-address pinning as the move-out exemption (a reentrant
+        ///      transfer can't resolve a DIFFERENT flagged wallet's vault), and
+        ///      `getOrCreateUserVault` still refuses to CREATE a new vault for a
+        ///      sanctioned recipient under this exemption — it only resolves an
+        ///      already-existing one (every real loan party has one by close-out
+        ///      time). `address(0)` (default) exempts no one.
+        address sanctionedDepositExemptUser;
         /// @dev #661 — borrower-side mirror of `lenderProceedsEncumbered` (#592).
         ///      A liquid default / liquidation can return a VPFI surplus to the
         ///      borrower's vault; like the lender proceeds it must be reserved
