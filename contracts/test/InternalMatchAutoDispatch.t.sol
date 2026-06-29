@@ -14,6 +14,8 @@ import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {ERC20Mock} from "./mocks/ERC20Mock.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /**
  * @title InternalMatchAutoDispatch.t.sol
@@ -183,6 +185,43 @@ contract InternalMatchAutoDispatchTest is SetupTest {
         assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 10, "leg-Y incentive to the threaded matcher");
         assertEq(IERC20(mockERC20).balanceOf(address(diamond)), 0, "incentive must not strand on the Diamond");
         assertEq(IERC20(mockCollateralERC20).balanceOf(address(diamond)), 0, "incentive must not strand on the Diamond");
+    }
+
+    /// @notice #817 — a sanctioned matcher (the auto-dispatch bonus recipient)
+    ///         must SKIP the dispatch (return false) rather than revert, so the
+    ///         outer Tier-2 close-out still completes via the external path and
+    ///         no 1% bonus reaches the flagged wallet. With an otherwise-valid
+    ///         opposing candidate present, the only reason dispatch is skipped
+    ///         here is the matcher screen.
+    function test_attemptAutoDispatch_sanctionedMatcher_returnsFalse() public {
+        _seedLoan(LOAN_A, lender, borrower, mockERC20, 1000, mockCollateralERC20, 1000);
+        _seedLoan(LOAN_B, lenderB, borrowerB, mockCollateralERC20, 1000, mockERC20, 1000);
+        _mockLtv(LOAN_A, 9_000);
+        _mockLtv(LOAN_B, 9_000);
+
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(matcher, true);
+
+        vm.prank(address(diamond));
+        bool dispatched = RiskMatchLiquidationFacet(address(diamond))
+            .attemptInternalMatchAutoDispatch(LOAN_A, matcher);
+        assertFalse(dispatched, "sanctioned matcher must skip the dispatch");
+
+        // Both legs untouched — still Active (the close-out falls through to
+        // the external-swap path; no internal-match settlement happened).
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(LOAN_A).status),
+            uint8(LibVaipakam.LoanStatus.Active)
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(LOAN_B).status),
+            uint8(LibVaipakam.LoanStatus.Active)
+        );
+        // No bonus reached the flagged matcher.
+        assertEq(IERC20(mockERC20).balanceOf(matcher), 0);
+        assertEq(IERC20(mockCollateralERC20).balanceOf(matcher), 0);
     }
 
     // ─── LTV-floor gate on Active candidates ────────────────────────

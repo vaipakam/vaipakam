@@ -467,6 +467,14 @@ contract EarlyWithdrawalFacet is
             loan,
             /* lenderSide */ true
         );
+        // #819 Tier-1 sanctions on the LENDER-position holder. `requireKeeperFor`
+        // authorises against the lender NFT owner, but a keeper caller leaves
+        // that holder unscreened — and the eventual sale proceeds settle to the
+        // seller (that holder). Screen the holder here at listing CREATION: no
+        // buyer is committed yet, so an atomic revert strands no counterparty.
+        // (The flagged-after-listing residual on `completeLoanSale` is the
+        // deferred-proceeds liveness case tracked under #821.)
+        LibVaipakam._assertNotSanctioned(LibERC721.ownerOf(loan.lenderTokenId));
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rental lender-sale not supported in Phase 1

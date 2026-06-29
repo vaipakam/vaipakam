@@ -493,6 +493,14 @@ contract PrecloseFacet is
             loan,
             /* lenderSide */ false
         );
+        // #819 Tier-1 sanctions on the EXITING borrower-position holder.
+        // `requireKeeperFor` authorises against the borrower NFT owner, but a
+        // keeper caller leaves that holder unscreened — and the exiting
+        // collateral is withdrawn INLINE to that holder later in this function.
+        // Screen it here at entry: the replacement offer is required to be
+        // un-accepted (below), so no counterparty is committed and an atomic
+        // revert strands nothing.
+        LibVaipakam._assertNotSanctioned(LibERC721.ownerOf(loan.borrowerTokenId));
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
 

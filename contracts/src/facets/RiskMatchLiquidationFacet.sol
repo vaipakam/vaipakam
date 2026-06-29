@@ -1107,6 +1107,18 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         if (!s.protocolCfg.internalMatchEnabled) return false;
 
+        // #817 Tier-1 sanctions — deny the 1% matcher bonus to a flagged
+        // caller WITHOUT reverting the Tier-2 close-out. Unlike the explicit
+        // `triggerInternalMatchLiquidation` entry point (where the caller chose
+        // that path purely to earn the incentive, so a sanctioned caller
+        // reverts), here the caller is closing out a defaulting / under-water
+        // loan and the matcher bonus is incidental. Skipping the internal-match
+        // dispatch (returning false) lets the outer `triggerDefault` /
+        // `triggerLiquidation` complete via the normal external-swap path — the
+        // close-out still happens, but no fresh value reaches the flagged
+        // wallet. Read-only screen (never reverts) so liveness is preserved.
+        if (LibVaipakam.isSanctionedAddress(matcher)) return false;
+
         (bool found, uint256 candidateId) = MetricsFacet(address(this))
             .hasInternalMatchCandidate(loanId);
         if (!found) return false;

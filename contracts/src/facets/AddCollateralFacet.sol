@@ -100,6 +100,17 @@ contract AddCollateralFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
         LibAuth.requireBorrowerNftOwner(loan);
+        // #820 Tier-1 sanctions on the payer / current borrower-NFT holder.
+        // `requireBorrowerNftOwner` makes `msg.sender` the current holder, and
+        // the top-up is pulled from `msg.sender` below; but the only vault
+        // screen otherwise is on the STORED `loan.borrower` (the `Tier2CloseOut`
+        // consolidation context deliberately skips screening the current
+        // holder). Without this a sanctioned current holder could still
+        // interact with the protocol by topping up. Intent-decision note: this
+        // blocks a flagged holder from curing/strengthening their own position,
+        // which can let the loan proceed to liquidation — consistent with the
+        // Tier-1 "no protocol interaction by a flagged wallet" posture.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         // FallbackPending is accepted: README allows the borrower to cure a
         // failed liquidation by topping up collateral until the lender claims.
         if (

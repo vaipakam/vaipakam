@@ -1413,9 +1413,8 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (LibVaipakam.storageSlot().intentCommits[loanId].orderHash != bytes32(0)) {
             SwapToRepayIntentFacet(address(this)).forceCancelIntentIfHFBelowOrRevert(loanId);
         }
-        // Tier-1 sanctions gate — `msg.sender` authored the trade; the
-        // seizure flows to `recipient` but the caller is the one
-        // earning the discount-net-of-execution-cost profit.
+        // Tier-1 sanctions gate — `msg.sender` authored the trade and
+        // earns the discount-net-of-execution-cost profit.
         LibVaipakam._assertNotSanctioned(msg.sender);
 
         // Master kill-switch — discount path off by default.
@@ -1423,6 +1422,13 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Recipient sanity — zero would burn the collateral.
         if (recipient == address(0)) revert ZeroRecipient();
+
+        // #816 Tier-1 sanctions gate on the SEIZED-COLLATERAL recipient. The
+        // discounted path delivers the bought collateral to `recipient` (a
+        // caller-chosen address, not necessarily `msg.sender`), so screening
+        // only the caller would let a clean liquidator route fresh value to a
+        // flagged wallet. No fresh value may reach a sanctioned recipient.
+        LibVaipakam._assertNotSanctioned(recipient);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];

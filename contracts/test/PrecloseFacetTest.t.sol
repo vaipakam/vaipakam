@@ -16,6 +16,7 @@ import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {RiskFacet} from "../src/facets/RiskFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
@@ -376,6 +377,34 @@ contract PrecloseFacetTest is Test {
 
         vm.prank(borrower);
         vm.expectRevert(IVaipakamErrors.LoanNotActive.selector);
+        PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
+    }
+
+    /// @notice #819 — a CLEAN keeper acting for a SANCTIONED borrower-position
+    ///         holder cannot transfer the obligation. The exiting collateral is
+    ///         withdrawn INLINE to that holder, so the holder (not just the
+    ///         caller) must be screened. Screened at entry, before the
+    ///         replacement offer (required un-accepted) is touched → atomic
+    ///         revert strands no counterparty.
+    function test_transferObligationViaOffer_RevertsWhenBorrowerHolderSanctioned_viaKeeper() public {
+        address keeper = makeAddr("preclose-keeper-sanctions");
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper, LibVaipakam.KEEPER_ACTION_INIT_PRECLOSE
+        );
+        vm.prank(borrower);
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(activeLoanId, keeper, true);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true); // the HOLDER, not the keeper caller
+
+        vm.prank(keeper); // clean caller
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
         PrecloseFacet(address(diamond)).transferObligationViaOffer(activeLoanId, 1);
     }
 

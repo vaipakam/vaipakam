@@ -33,6 +33,7 @@ import {ERC20Mock} from "../test/mocks/ERC20Mock.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {ZeroExProxyMock} from "./mocks/ZeroExProxyMock.sol";
 import {MockZeroExLegacyAdapter} from "./mocks/MockZeroExLegacyAdapter.sol";
 import {MockRentableNFT721} from "./mocks/MockRentableNFT721.sol";
@@ -451,5 +452,24 @@ contract AddCollateralFacetTest is Test {
         AddCollateralFacet(address(diamond)).addCollateral(loanId, addAmount);
 
         vm.clearMockedCalls();
+    }
+
+    /// @notice #820 — a sanctioned payer / current borrower-NFT holder cannot
+    ///         top up collateral. Without the screen the only sanctions gate was
+    ///         on the stored `loan.borrower` vault; the `Tier2CloseOut`
+    ///         consolidation context skips the current holder, so a flagged
+    ///         caller previously slipped through.
+    function test_addCollateral_RevertsWhenPayerSanctioned() public {
+        uint256 loanId = _createActiveLiquidLoan();
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(borrower, true);
+
+        vm.prank(borrower);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, borrower)
+        );
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, 500 ether);
     }
 }
