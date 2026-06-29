@@ -30,13 +30,19 @@ What changed, surface by surface:
   warning, so a prospective buyer of the position sees the downside before
   acquiring it.
 
-All of these disclosures are scoped to **lending loans** (ERC-20 principal) and
-fire for an NFT collateral leg or any illiquid / no-oracle leg — collateral OR
-lending asset. NFT-principal rentals are deliberately excluded: their default
-model is renter-reset + prepaid-fee payout, not a collateral-in-kind transfer,
-so the in-kind copy would mislead. On Create Offer, submit is held while an
-ERC-20 leg's liquidity read is still resolving, so the disclosure can't be
-skipped by ticking consent before the read lands.
+All of these disclosures are scoped to **lending loans** (ERC-20 principal).
+NFT-principal rentals are deliberately excluded everywhere (Create, Accept, Loan
+Details, Verifier): their default model is renter-reset + prepaid-fee payout, not
+a collateral-in-kind transfer, so the in-kind copy would mislead. The pre-commit
+offer disclosures (Create / Accept) take the conservative either-leg view (NFT
+collateral, or an illiquid collateral OR lending leg). The NFT Verifier's
+"Settlement on default" line is the factual, collateral-driven view — the
+time-default fallback is chosen from the collateral's liquidity, so a liquid
+collateral with only an illiquid principal is shown as a swap, not in-kind — and
+it renders only while the loan is still Active (a terminal loan can't default).
+On Create Offer, submit is held while an ERC-20 leg's liquidity read is still
+resolving, so the disclosure can't be skipped by ticking consent before the read
+lands.
 
 The Advanced User Guide's "How Liquidation Actually Works" section (four
 fallback branches with worked examples) and the public FAQ's `fallback-mechanics`

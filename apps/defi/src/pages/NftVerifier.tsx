@@ -769,19 +769,26 @@ function LiveCard({
   // rentals rather than mislabel them (Codex r1 P2).
   const isLendingLoan =
     loanDetails != null && Number(loanDetails.assetType) === 0;
-  // Within a lending loan, settlement is IN-KIND on default (lender receives
-  // the collateral asset itself, no DEX swap / LTV liquidation) when the
-  // collateral is an NFT (assetType 1/2) or either leg is illiquid (no on-chain
-  // price). Disclosed below so a buyer of this position NFT understands the
-  // downside-recovery shape before they commit.
+  // The forward-looking "Settlement on default" disclosure only makes sense
+  // while the loan can still default — once it's Repaid / Defaulted / Settled
+  // (even if the position NFT is live until claim), no future default can occur,
+  // so the prospective "if it defaults" framing would mislead a buyer (Codex r3
+  // P2). Gate the row + warning on the live Active state.
+  const loanStillDefaultable =
+    isLendingLoan && status === LoanStatus.Active;
+  // Within a lending loan, settlement is IN-KIND on default (lender receives the
+  // collateral asset itself, no DEX swap) when the COLLATERAL is an NFT or an
+  // illiquid / no-oracle ERC-20. The decision is collateral-driven: the
+  // time-default fallback is chosen from the collateral's liquidity, so a liquid
+  // collateral is swapped even if the principal leg is illiquid — principal
+  // liquidity must NOT flip this to in-kind (Codex r3 P2).
   // NB: this card reads `getLoanDetails` through viem, so the `uint8` liquidity
   // enums arrive as JS numbers — compare with `Number(...) === 1`, never `=== 1n`
   // (a number-vs-bigint strict compare is always false; Codex r2 P2).
   const settlesInKind =
     isLendingLoan &&
     (Number(loanDetails.collateralAssetType) !== 0 ||
-      Number(loanDetails.collateralLiquidity) === 1 ||
-      Number(loanDetails.principalLiquidity) === 1);
+      Number(loanDetails.collateralLiquidity) === 1);
 
   return (
     <div className="card verifier-result verifier-live">
@@ -903,9 +910,11 @@ function LiveCard({
               {/* #796 — settlement-method disclosure: tell a holder/buyer of
                   this position NFT whether the loan settles by DEX swap or
                   in-kind (raw collateral) on default. Lending loans only —
-                  rentals (NFT principal) use a different default model, so the
-                  row is omitted for them (Codex r1 P2). */}
-              {isLendingLoan && (
+                  rentals (NFT principal) use a different default model (Codex r1
+                  P2) — and only while the loan can still default, i.e. Active
+                  (Codex r3 P2); a terminal loan can't default, so the row is
+                  hidden once it settles. */}
+              {loanStillDefaultable && (
                 <div className="data-row">
                   <span className="data-label">
                     {t("nftVerifier.settlementLabel")}
@@ -917,7 +926,7 @@ function LiveCard({
                   </span>
                 </div>
               )}
-              {settlesInKind && (
+              {loanStillDefaultable && settlesInKind && (
                 <div
                   className="alert alert-warning"
                   role="alert"

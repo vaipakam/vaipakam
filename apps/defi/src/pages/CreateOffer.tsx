@@ -549,6 +549,31 @@ export default function CreateOffer() {
       return;
     }
 
+    // #796 (Codex #809 r3 P2) — mirror the button's `liquidityPending` block
+    // here too: an Enter keypress / programmatic submit could otherwise fire
+    // `onSubmit` while an ERC-20 leg's liquidity read is still `loading`, before
+    // the in-kind disclosure line has had a chance to render and (re)clear a
+    // prematurely-ticked consent.
+    if (
+      (form.collateralAssetType === "erc20" &&
+        !!form.collateralAsset &&
+        collateralLiquidityStatus === "loading") ||
+      (form.assetType === "erc20" &&
+        !!form.lendingAsset &&
+        lendingLiquidityStatus === "loading")
+    ) {
+      const msg = "Checking asset liquidity to finalise the risk disclosures — try again in a moment.";
+      setError(msg);
+      emit({
+        ...ctx,
+        step: "validate-form",
+        status: "failure",
+        errorType: "validation",
+        errorMessage: msg,
+      });
+      return;
+    }
+
     const submit = beginStep({ ...ctx, step: "submit" });
     try {
       // Resolve on-chain decimals for both assets so "100" in the form maps
@@ -1563,15 +1588,20 @@ export default function CreateOffer() {
               form.assetType === 'erc20' ? form.useFullTermInterest : undefined
             }
             allowsPartialRepay={form.allowsPartialRepay}
-            /* #796 — collateral settles in-kind on default when it's an NFT
-               (no oracle / no swap), OR an ERC-20 collateral the liquidity read
-               reports as illiquid (Codex r1 P2), OR an illiquid ERC-20 lending
-               leg (Codex r2 P2) — any of these drops the loan to the
-               full-collateral-in-kind default path. */
+            /* #796 — collateral settles in-kind on default ONLY for ERC-20
+               (lending) offers (`form.assetType === 'erc20'`): an NFT-principal
+               rental doesn't use the collateral-in-kind default path — it resets
+               the renter and pays out prepaid fees — so the line must not show
+               for rentals even if their collateral leg is an NFT / illiquid
+               (Codex r3 P2). Within an ERC-20 offer it fires when the collateral
+               is an NFT (no oracle / no swap), OR an ERC-20 collateral the
+               liquidity read reports as illiquid (Codex r1 P2), OR an illiquid
+               ERC-20 lending leg (Codex r2 P2). */
             collateralInKind={
-              form.collateralAssetType !== 'erc20' ||
-              collateralLiquidityStatus === 'illiquid' ||
-              lendingLiquidityStatus === 'illiquid'
+              form.assetType === 'erc20' &&
+              (form.collateralAssetType !== 'erc20' ||
+                collateralLiquidityStatus === 'illiquid' ||
+                lendingLiquidityStatus === 'illiquid')
             }
           />
 
