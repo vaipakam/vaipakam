@@ -6,6 +6,8 @@ import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
+import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
 
 /**
  * @title  LibSanctionedLock
@@ -82,6 +84,38 @@ library LibSanctionedLock {
 
     /// @dev Clear the from-side move-out exemption armed by `beginMoveOut`.
     function endMoveOut(LibVaipakam.Storage storage s) internal {
+        s.consolidationMoveFromUser = address(0);
+    }
+
+    /// @dev Single-call ERC-20 vault WITHDRAW under the from-side move-out
+    ///      exemption: folds `beginMoveOut` + the `vaultWithdrawERC20` cross-facet
+    ///      call + `endMoveOut` into one shared subroutine for the common
+    ///      wind-down case where a forced default / liquidation pulls a
+    ///      (possibly-flagged) `payer`'s collateral OUT to an already-screened
+    ///      `recipient`. Folding the call here keeps each site a single CALL,
+    ///      which matters for the EIP-170-tight liquidation facets (RiskFacet et
+    ///      al.). Use the raw `beginMoveOut`/`endMoveOut` window directly where
+    ///      several withdrawals — or the ERC-721/1155 variants — must share one
+    ///      exemption span. Reverts `VaultWithdrawFailed` on a failed withdraw,
+    ///      matching the inline call sites this replaces.
+    function vaultWithdrawERC20MoveOut(
+        LibVaipakam.Storage storage s,
+        address payer,
+        address asset,
+        address recipient,
+        uint256 amount
+    ) internal {
+        s.consolidationMoveFromUser = payer;
+        LibFacet.crossFacetCall(
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                payer,
+                asset,
+                recipient,
+                amount
+            ),
+            IVaipakamErrors.VaultWithdrawFailed.selector
+        );
         s.consolidationMoveFromUser = address(0);
     }
 

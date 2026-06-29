@@ -179,16 +179,16 @@ contract RiskSplitLiquidationFacet is
             }
         }
 
-        // Withdraw collateral to Diamond for the split swap.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                loan.collateralAmount
-            ),
-            VaultWithdrawFailed.selector
+        // Withdraw collateral to Diamond for the split swap. #821 (Codex #832 r3
+        // P1) — move-out-exempt so a borrower flagged after init doesn't brick
+        // the split liquidation (collateral pushed OUT to the already-screened
+        // swap recipients).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
         // the full pre-liquidation VPFI balance; re-stamp after the withdrawal

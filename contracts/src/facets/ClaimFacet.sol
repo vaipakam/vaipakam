@@ -360,12 +360,6 @@ contract ClaimFacet is
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
-        // #821 (Codex #832 P1) — also enforce the stored-owner FREEZE here, the
-        // same gate `_claimAsLenderImpl` applies: a flagged stored `loan.lender`
-        // must not monetize through the backstop by transferring the lender NFT
-        // to a clean wallet (the cash buyout + any `heldForLender` withdraw from
-        // the stored lender's vault would otherwise be a freeze bypass).
-        LibVaipakam._assertNotSanctioned(loan.lender);
 
         // ── Resolution-first. The internal-match auto-dispatch is calldata-free
         //    and objective; it always runs. A FULL match clears `snap.active`
@@ -374,6 +368,16 @@ contract ClaimFacet is
         RiskMatchLiquidationFacet(address(this))
             .attemptInternalMatchAutoDispatch(loanId, msg.sender);
         if (!snap.active) return;
+
+        // #821 (Codex #832 r3 P2) — enforce the stored-owner FREEZE here, AFTER
+        // the objective internal-match auto-dispatch (which now vault-locks a
+        // flagged receiving lender via `_settleLeg`, so an available match safely
+        // closes the loan without paying the flagged wallet) but BEFORE any
+        // retry-swap or backstop CASH payout. A flagged stored `loan.lender` must
+        // not monetize through those payout branches by transferring the lender
+        // NFT to a clean wallet (the cash buyout + any `heldForLender` withdraw
+        // from the stored lender's vault would otherwise be a freeze bypass).
+        LibVaipakam._assertNotSanctioned(loan.lender);
 
         // The keeper's best-effort retry swap. Success → distribute principal
         // proceeds + go terminal; lender claims normally (no backstop spend).

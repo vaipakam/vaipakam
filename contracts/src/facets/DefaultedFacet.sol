@@ -330,16 +330,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // but time-based defaults are independent — the README treats non-repayment
                 // after grace as a separate default trigger regardless of collateral health.
 
-                // Withdraw collateral from borrower's vault
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        address(this),
-                        loan.collateralAmount
-                    ),
-                    VaultWithdrawFailed.selector
+                // Withdraw collateral from borrower's vault. #821 (Codex #832 r3
+                // P1) — move-out-exempt so a borrower flagged after init doesn't
+                // brick the liquid time-based default (collateral pushed OUT to
+                // the already-screened swap recipients).
+                LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                    s,
+                    loan.borrower,
+                    loan.collateralAsset,
+                    address(this),
+                    loan.collateralAmount
                 );
 
                 // README §3 lines 140–141 + §7 line 263: compute the oracle-
@@ -592,6 +592,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // NFT stays in vault — returned to lender via ClaimFacet.claimAsLender
             // (NFT-gated: lender must own the Vaipakam position NFT to claim).
 
+            // #821 (Codex #832 r3 P1) — both prepay withdrawals below pull from
+            // the borrower's vault on the NFT-rental default. Arm the move-out
+            // exemption so a borrower flagged after init doesn't brick the default
+            // (the prepay is pushed OUT to the already-screened treasury / lender).
+            LibSanctionedLock.beginMoveOut(s, loan.borrower);
             // Buffer to treasury immediately (no claim needed for treasury)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -620,6 +625,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 ),
                 VaultWithdrawFailed.selector
             );
+            LibSanctionedLock.endMoveOut(s);
 
             // Treasury fee from rental portion
             IERC20(loan.prepayAsset).safeTransfer(treasury, treasuryFee);

@@ -708,16 +708,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert NonLiquidAsset();
 
-        // Withdraw collateral to Diamond for swap
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                loan.collateralAmount
-            ),
-            VaultWithdrawFailed.selector
+        // Withdraw collateral to Diamond for swap. #821 (Codex #832 r3 P1) — the
+        // move-out-exempt withdraw so a borrower flagged after init doesn't brick
+        // the liquidation (collateral pushed OUT to the already-screened swap
+        // recipients; the flagged party loses custody).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
         // the full pre-liquidation VPFI balance; the withdrawal just above
@@ -1118,16 +1118,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Withdraw only the slice from the borrower's vault. If the
         // swap reverts downstream, the wrapping `revert` here unwinds
         // the withdraw too (single tx, all storage rolled back) — no
-        // manual refund needed.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                swappedCollateral
-            ),
-            VaultWithdrawFailed.selector
+        // manual refund needed. #821 (Codex #832 r3 P1) — move-out-exempt so a
+        // borrower flagged after init doesn't brick the partial liquidation
+        // (collateral pushed OUT to screened swap recipients).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            swappedCollateral
         );
         // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
         // the partial collateral slice leaves the vault. No-op for non-VPFI.
@@ -1597,15 +1596,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // borrower-position NFT holder via `ClaimFacet.claimAsBorrower`
         // (which releases the residual lien atomically with the payout).
         if (collateralSeized > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    loan.collateralAsset,
-                    recipient,
-                    collateralSeized
-                ),
-                VaultWithdrawFailed.selector
+            // #821 (Codex #832 r3 P1) — move-out-exempt so a borrower flagged
+            // after init doesn't brick the discounted liquidation; the seized
+            // collateral is pushed OUT to the already-screened `recipient`.
+            LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                LibVaipakam.storageSlot(),
+                loan.borrower,
+                loan.collateralAsset,
+                recipient,
+                collateralSeized
             );
         }
         // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after

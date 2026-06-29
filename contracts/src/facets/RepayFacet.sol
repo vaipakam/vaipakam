@@ -432,6 +432,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 totalDue
             );
 
+            // #821 (Codex #832 r3 P1) — both withdrawals below pull the prepay
+            // from the repayer's (`msg.sender`) own vault. Arm the move-out
+            // exemption so a borrower flagged after init can still settle the
+            // rental repayment (Tier-2 stays open) — the prepay is pushed OUT to
+            // the already-screened treasury / lender, the payer loses custody.
+            LibSanctionedLock.beginMoveOut(s, msg.sender);
             // Treasury share: immediate from borrower's vault
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -456,6 +462,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 VaultWithdrawFailed.selector
             );
+            LibSanctionedLock.endMoveOut(s);
             // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
             // flagged stored lender doesn't brick the rental repayment; the share
             // lands in the lender's OWN vault, frozen behind the claim gate
@@ -817,6 +824,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
+            // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
+            // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
+            // borrower flagged after init can still service the partial rental
+            // (Tier-2 stays open) — the prepay is pushed OUT to the lender /
+            // treasury, the payer loses custody.
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -839,6 +852,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 TreasuryTransferFailed.selector
             );
+            LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
             unchecked {
