@@ -4,7 +4,9 @@ Sanctions screening and the versioned Terms-of-Service gate touch many action
 families across the protocol and the dapp, and inconsistent gating is a real
 risk class: a compliance bypass, a falsely-blocked recovery path, or a UI that
 offers a transaction the protocol will revert. This change captures the intended
-behaviour in one place and closes the remaining test gaps.
+behaviour in one place, closes two representative test gaps, and — importantly —
+records the **enforcement gaps and remaining test gaps that stay open** as
+tracked follow-ups rather than papering over them.
 
 - **New action-matrix spec** —
   `docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md` documents, per action
@@ -19,7 +21,7 @@ behaviour in one place and closes the remaining test gaps.
   specs (ProjectDetailsREADME § Regulatory Compliance Considerations and
   WebsiteReadme), with "verified at / tested by" references to the enforcement
   sites and tests.
-- **Contract test gaps closed** — Tier-1 sanctions reverts on the VPFI
+- **Two contract test gaps closed** — Tier-1 sanctions reverts on the VPFI
   **deposit** (value-in) and **withdraw** (value-out) paths, which the existing
   `SanctionsOracle.t.sol` suite couldn't reach (its diamond doesn't cut the
   VPFIDiscountFacet selectors). Added in `VPFIDiscountFacetTest.t.sol`.
@@ -27,10 +29,23 @@ behaviour in one place and closes the remaining test gaps.
   address and stays silent for a clean address, while the read is loading, and
   when no wallet is connected (the fail-open posture).
 
-The sanctions Tier-1/Tier-2 split, the wind-down "lender still recovers"
-invariant, the blocked-claim-by-flagged-recipient case, and the full Terms-gate
-lifecycle (disabled / accept / version-bump + hash-drift invalidation) were
-already covered by `SanctionsOracle.t.sol` and `LegalFacet.t.sol` /
-`LibAcceptTermsTest.t.sol`; the matrix references those as the existing oracle.
+**What the matrix surfaced (now documented, not yet fixed).** Authoring the
+matrix from the canonical specs and comparing against the code surfaced several
+**enforcement gaps** — most notably that the wind-down "unflagged counterparty
+always recovers" guarantee does **not** fully hold: because `getOrCreateUserVault`
+screens the recipient vault owner, a flagged *recipient loan party* (e.g. a
+flagged lender on full `repayLoan`, or a surplus borrower on liquidation/default)
+currently makes the close-out **revert** rather than deferring to a Tier-1 claim.
+Other gaps: ungated prepay-listing post/update, keeper preclose / early-withdrawal
+paths screening only `msg.sender` (not the current NFT holder), an unscreened
+`triggerLiquidationDiscounted` recipient, and the default auto-dispatch matcher
+bonus. These are recorded in the matrix's *Open gaps* section and in
+`_CodeVsDocsAudit.md` for triage — they are not closed by this change.
+
+The sanctions Tier-1/Tier-2 split (borrower-flagged direction), the
+blocked-claim-by-flagged-claimant case, and the full Terms-gate lifecycle
+(disabled / accept / version-bump + hash-drift invalidation) remain covered by
+`SanctionsOracle.t.sol` and `LegalFacet.t.sol` / `LibAcceptTermsTest.t.sol`; the
+matrix references those as the existing oracle.
 
 Closes #800.
