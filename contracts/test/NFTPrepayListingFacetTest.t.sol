@@ -438,6 +438,34 @@ contract NFTPrepayListingFacetTest is SetupTest {
         );
     }
 
+    /// @notice #825-r2 (P1) — a CLEAN holder cannot post a listing whose fee leg
+    ///         pays a SANCTIONED recipient. A fee leg becomes a Seaport
+    ///         consideration item payable to an arbitrary caller-supplied
+    ///         address on fill, so the holder screen alone would leave that
+    ///         value-to-flagged route open. Holder is clean here; only the fee
+    ///         recipient is flagged.
+    function test_postPrepayListing_revertsWhenFeeLegRecipientSanctioned() public {
+        _scaffoldActiveLoan({allowsPrepay: true});
+        uint256 ask = _floorPlusBuffer();
+
+        address flaggedFee = makeAddr("flaggedFeeRecipient");
+        MockSanctionsList m = new MockSanctionsList();
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(flaggedFee, true);
+
+        FeeLeg[] memory feeLegs = new FeeLeg[](1);
+        feeLegs[0] = FeeLeg({recipient: flaggedFee, startAmount: 1, endAmount: 1});
+
+        vm.prank(borrowerHolder);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, flaggedFee)
+        );
+        NFTPrepayListingFacet(address(diamond)).postPrepayListing(
+            LOAN_ID, ask, TEST_SALT_A, conduitKey, feeLegs
+        );
+    }
+
     // ─── 3. updatePrepayListing ─────────────────────────────────────────
 
     function test_updatePrepayListing_revertsListingNotFound() public {
