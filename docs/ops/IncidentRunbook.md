@@ -814,6 +814,55 @@ triage instead.
 
 ---
 
+## 7. Sanctioned loan party bricks a close-out (added 2026-06-29)
+
+### Symptom
+
+A `repayLoan`, `triggerDefault`, HF-based liquidation, or `cancelOffer` refund
+reverts `SanctionedAddress(who)` even though the *caller* is clean — and the
+unflagged counterparty cannot extract what they're owed.
+
+### Diagnose
+
+This is the **recipient-vault enforcement gap** documented in
+[`docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md`](../FunctionalSpecs/SanctionsAndTermsGateMatrix.md)
+(Open gaps (f)) and logged in
+[`docs/FunctionalSpecs/_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md).
+The close-out deposits the recipient's share through `getOrCreateUserVault`, which
+screens the **vault owner** — so when the *recipient loan party* is flagged
+(a flagged `loan.lender` on repay/liquidation/default, a surplus-recipient
+`loan.borrower`, or the creator on `cancelOffer`), the whole path reverts. The
+policy intent is Tier-2 "the unflagged counterparty is always made whole"; the
+current implementation does not achieve that on the direct-deposit branches.
+
+Confirm with `ProfileFacet.isSanctionedAddress(<loan party>)` for each party of
+the stuck loan/offer; the flagged party is the recipient, not necessarily the
+caller.
+
+### Decide / Execute
+
+- There is **no operator lever** that completes the close-out while the recipient
+  is flagged — by design, no fresh value may reach a flagged wallet. Do **not**
+  attempt to route around the screen.
+- The unflagged counterparty's recovery waits on either (a) the flag clearing at
+  the sanctions oracle, or (b) the code fix (a held-proceeds escrow mirroring the
+  consolidation-move-out exemption, so the close-out completes and the flagged
+  recipient's share waits behind a Tier-1 claim). Track the fix via the
+  `_CodeVsDocsAudit.md` finding.
+- This is a **liveness** issue (funds are stuck, not lost or mis-routed); it does
+  **not** warrant an emergency pause.
+
+### Note — the value-out gaps are different
+
+The matrix also records gaps where value can reach a flagged wallet (unscreened
+`triggerLiquidationDiscounted` recipient, the default auto-dispatch matcher bonus,
+a flagged holder posting a prepay listing, etc.). Those are value-out compliance
+bypasses, not liveness bricks — if one is being actively exploited, treat it as a
+§3.5 / §3.6 targeted snap-off candidate (asset- or path-level disable) and page
+the on-call.
+
+---
+
 ## Deployment log
 
 Append here on every mainnet deploy / upgrade. Format: `YYYY-MM-DD  chain  tag  diamond-address  summary`.
