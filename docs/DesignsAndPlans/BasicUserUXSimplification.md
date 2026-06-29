@@ -107,10 +107,13 @@ Before signing, show whether the flow is currently possible:
 - allowance/Permit2 readiness
 - collateral is enough for required safety
 - progressive risk-access requirements pass where that gate is enabled; the
-  create/accept preview must call out vault-tier limits, stale tier anchors, and
-  missing per-pair consent as blockers before the user signs
-- sanctions/Terms gate status
+  create/accept preview must call out vault-tier limits, stale tier anchors,
+  missing illiquid per-pair consent, and strict-mode mid-tier acknowledgement
+  blockers before the user signs
+- sanctions/Terms gate status for the connected wallet and, on accept flows, the
+  offer creator or relevant counterparty
 - asset liquidity class and default consequence
+- oracle and L2 sequencer-health status for oracle-sensitive actions
 - protocol pause or asset pause status
 
 The user should see problems as fixable checklist items rather than opaque
@@ -241,7 +244,8 @@ Vaipakam.
 
 Basic wording:
 
-- `Optional: hold VPFI in your vault to reduce protocol fees.`
+- `Optional: hold VPFI in your vault to reduce protocol fees on eligible liquid
+  loans.`
 - `Your VPFI discount does not reduce network gas.`
 - `Withdrawing VPFI can lower future fee discounts.`
 

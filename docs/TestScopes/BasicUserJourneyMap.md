@@ -120,7 +120,8 @@ Cancellation branch: PF-046 covers cancelling the posted borrow request before a
 
 ## Journey L1: First-Time Lender Funds Existing Borrower Offer
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-091, PF-024, PF-112.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-091, PF-024, PF-110,
+PF-112.
 
 ### User goal
 
@@ -137,8 +138,9 @@ The user wants to lend and earn interest without building an offer from scratch.
 6. Review receipt appears.
 7. User signs.
 8. Loan Details opens with role `Lender` and status `Active`.
-9. After borrower repayment/default, Claim Center shows claimable funds.
-10. User claims.
+9. Borrower repayment moves the loan to repaid/claimable state (PF-110).
+10. Claim Center shows claimable lender funds.
+11. User claims (PF-112).
 
 ### Required Basic copy
 
@@ -180,7 +182,8 @@ The user wants to make funds available for borrowers.
 
 ## Journey N1: NFT Owner Rents Out An NFT
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-043, PF-140, PF-141, PF-142, PF-143, PF-112.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-043, PF-140, PF-141,
+PF-142, PF-143.
 
 ### User goal
 
@@ -198,8 +201,10 @@ The user owns a rentable NFT and wants to earn rental fees.
 7. User signs.
 8. App shows active rental offer.
 9. When renter accepts, Loan Details shows rental state and daily fee status.
-10. On normal close, renter rights reset and the lender claim becomes available.
-11. Lender claims through Claim Center or Loan Details to receive earned fees and reclaim the vaulted NFT.
+10. On normal close, renter rights reset and the rental reclaim path becomes
+    available.
+11. Lender follows the rental reclaim state in Loan Details to receive earned fees
+    and reclaim the vaulted NFT.
 
 ### Acceptance checks
 
@@ -210,7 +215,8 @@ The user owns a rentable NFT and wants to earn rental fees.
 
 ## Journey N2: User Rents An NFT
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-140, PF-143, PF-144.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-023, PF-044, PF-140, PF-141,
+PF-143, PF-144.
 
 ### User goal
 
@@ -220,11 +226,12 @@ The user wants temporary use of an NFT.
 
 1. User selects `Rent or lend an NFT`.
 2. User chooses `I want to rent one`.
-3. App shows available rental offers.
-4. User selects a rental.
+3. App shows available ERC-721 and ERC-1155 rental offers, or offers to post
+   a rental request when no listing fits (PF-044).
+4. User selects an ERC-721 or ERC-1155 rental offer.
 5. App shows daily fee, total prepay, configured buffer, duration, and end behavior.
 6. Review receipt appears.
-7. User signs.
+7. User signs to accept the selected rental offer (PF-140 or PF-141).
 8. Loan Details shows active rental, remaining time, and close action.
 9. User closes rental normally (PF-143) or waits for expiry/default behavior (PF-144).
 
@@ -233,6 +240,8 @@ Expiry/default branch: PF-144 covers the case where the renter does nothing and 
 ### Acceptance checks
 
 - The user sees total prepay before signing.
+- ERC-721 listings, ERC-1155 listings, and renter-posted demand offers are
+  covered.
 - The app says the user receives temporary use rights, not ownership.
 - Close/expiry state resets rights and shows any claimable amount.
 
@@ -265,7 +274,7 @@ The user already has a loan and wants to know what to do.
 
 ## Journey M2: Borrower Handles A Risky Loan
 
-Flow IDs: PF-024, PF-160, PF-180.
+Flow IDs: PF-024, PF-110, PF-160, PF-180.
 
 ### User goal
 
@@ -274,11 +283,15 @@ The user sees their loan becoming risky and wants to avoid liquidation/default.
 ### Screen sequence
 
 1. Dashboard marks the loan as `Needs attention` or `At risk`.
-2. Loan Details shows why: collateral value, health state, and how much time is left to act.
+2. Loan Details shows why: collateral value, health state, and how much time is
+   left to act.
 3. Primary action is `Add collateral` or `Repay`, depending on state.
 4. App explains liquidation/default consequence in plain language.
-5. User adds collateral or repays.
+5. User adds collateral (PF-160) or repays (PF-110).
 6. App confirms the loan is healthier or closed.
+
+Default branch: PF-180 covers the case where the borrower does nothing and the
+loan reaches the time-based default path.
 
 ### Acceptance checks
 
@@ -315,20 +328,25 @@ Flow IDs: PF-250, PF-251, PF-252, PF-259.
 
 ### User goal
 
-The user wants to set up optional VPFI fee-discount eligibility, not prove settlement economics or learn token mechanics.
+The user wants to set up optional VPFI fee-discount eligibility for eligible
+liquid loans, not prove settlement economics or learn token mechanics.
 
 ### Screen sequence
 
-1. User opens the Dashboard fee-discount card and sees that VPFI fee discounts are optional.
+1. User opens the Dashboard fee-discount card and sees that VPFI fee discounts
+   are optional.
 2. User follows the `Deposit VPFI` path to the VPFI Vault.
-3. App explains `Optional: hold VPFI in your vault to reduce protocol fees`.
+3. App explains `Optional: hold VPFI in your vault to reduce protocol fees on
+   eligible liquid loans`.
 4. User deposits externally acquired VPFI.
 5. User returns to the Dashboard-owned fee-discount control and enables consent.
 6. App shows current tier and whether it is active or pending.
-7. User can withdraw free VPFI later from the VPFI Vault, with a warning about fee impact.
+7. User can withdraw free VPFI later from the VPFI Vault, with a warning about
+   fee impact.
 8. Claim Center shows interaction rewards separately.
 
-Settlement economics such as lender yield-fee discount and borrower LIF rebate are covered by borrow/lend settlement journeys, not this vault-only setup journey.
+Settlement economics such as lender yield-fee discount and borrower LIF rebate are
+covered by borrow/lend settlement journeys, not this vault-only setup journey.
 
 ### Acceptance checks
 
