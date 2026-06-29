@@ -24,8 +24,34 @@ const BODY_KEY: Record<InterestImplicationKind, string> = {
   refinance: 'interestWarning.refinanceBody',
 };
 
+// #797 — the Direct-preclose payout settles the OLD loan at its own interest
+// mode: a full-term loan owes interest as if it ran to maturity, but a pro-rata
+// loan owes only interest accrued to date. The default copy (above) describes
+// the full-term case; when the loan is known to be pro-rata we swap in a
+// pro-rata-specific title/body so the warning never overstates the cost.
+//
+// Refinance is deliberately NOT here (Codex #810 r1 P1): the on-chain
+// RefinanceFacet always computes the old-loan payoff via
+// `LibEntitlement.fullTermInterest(...)` regardless of the loan's stored mode,
+// so refinance is always full-term and must never show pro-rata copy. Kinds
+// whose copy isn't full-term-specific (early-withdrawal / transfer / offset)
+// also have no pro-rata variant.
+const PRORATA_TITLE_KEY: Partial<Record<InterestImplicationKind, string>> = {
+  'preclose-direct': 'interestWarning.precloseDirectTitleProRata',
+};
+
+const PRORATA_BODY_KEY: Partial<Record<InterestImplicationKind, string>> = {
+  'preclose-direct': 'interestWarning.precloseDirectBodyProRata',
+};
+
 interface Props {
   kind: InterestImplicationKind;
+  /**
+   * #797 — the affected loan's interest mode. `false` (pro-rata) selects the
+   * pro-rata copy for the full-term-specific kinds; `true`/`undefined` keeps
+   * the default full-term copy (the conservative, higher-cost disclosure).
+   */
+  fullTermInterest?: boolean;
 }
 
 /**
@@ -44,15 +70,19 @@ interface Props {
  * Same `alert alert-warning` chrome as `<TransferLockWarning>` so the visual
  * language stays consistent across pre-confirm callouts.
  */
-export function InterestImplicationWarning({ kind }: Props) {
+export function InterestImplicationWarning({ kind, fullTermInterest }: Props) {
   const { t } = useTranslation();
+  const proRata = fullTermInterest === false;
+  const titleKey =
+    (proRata && PRORATA_TITLE_KEY[kind]) || TITLE_KEY[kind];
+  const bodyKey = (proRata && PRORATA_BODY_KEY[kind]) || BODY_KEY[kind];
   return (
     <div className="alert alert-warning" style={{ display: 'block', marginTop: 12 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
         <AlertTriangle size={18} />
-        <strong>{t(TITLE_KEY[kind])}</strong>
+        <strong>{t(titleKey)}</strong>
       </div>
-      <p style={{ margin: 0 }}>{t(BODY_KEY[kind])}</p>
+      <p style={{ margin: 0 }}>{t(bodyKey)}</p>
     </div>
   );
 }

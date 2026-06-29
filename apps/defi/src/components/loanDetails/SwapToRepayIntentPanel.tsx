@@ -6,6 +6,7 @@ import { useChainOverride } from '../../context/ChainContext';
 import { useDiamondContract } from '../../contracts/useDiamond';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
+import { InterestModeBadge } from '../app/InterestModeBadge';
 
 /**
  * T-090 v1.1 (#389) Sub 3 (#418) — intent-based swap-to-repay
@@ -59,6 +60,12 @@ interface Props {
   onAfterSuccess?: () => void | Promise<void>;
   actionLoading?: boolean;
   onActionLoadingChange?: (loading: boolean) => void;
+  /** #797 (Codex #810 r1 P2) — the loan's interest mode. This best-price
+   *  intent route is also a full close that honours the loan's full-term /
+   *  pro-rata mode, so it must surface the same chip as the atomic panel.
+   *  `undefined` ⇒ omit (non-ERC-20). */
+  fullTermInterest?: boolean;
+  allowsPartialRepay?: boolean;
 }
 
 const INDEXER_ORIGIN =
@@ -131,6 +138,8 @@ export function SwapToRepayIntentPanel({
   onAfterSuccess,
   actionLoading = false,
   onActionLoadingChange,
+  fullTermInterest,
+  allowsPartialRepay,
 }: Props) {
   const { address, isCorrectChain } = useWallet();
   const { viewChainId } = useChainOverride();
@@ -687,6 +696,18 @@ export function SwapToRepayIntentPanel({
         can cancel after the deadline and the custodial collateral
         returns to your vault.
       </div>
+
+      {/* #797 (Codex #810 r1 P2) — this full close honours the loan's interest
+          mode, so disclose it here too, matching the atomic swap-to-repay panel. */}
+      {fullTermInterest !== undefined && (
+        <div>
+          <InterestModeBadge
+            fullTermInterest={fullTermInterest}
+            allowsPartialRepay={allowsPartialRepay}
+            compact
+          />
+        </div>
+      )}
 
       {loadingIntent && (
         <div style={{ fontSize: '0.82rem', opacity: 0.7 }}>

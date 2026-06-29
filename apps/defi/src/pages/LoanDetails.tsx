@@ -54,6 +54,7 @@ import { PrepayListingBanner } from "../components/loanDetails/PrepayListingBann
 import { PrepayListingActions } from "../components/loanDetails/PrepayListingActions";
 import { OpenSeaOffersSection } from "../components/loanDetails/OpenSeaOffersSection";
 import { SwapToRepayPanel } from "../components/loanDetails/SwapToRepayPanel";
+import { InterestModeBadge } from "../components/app/InterestModeBadge";
 import { SwapToRepayIntentPanel } from "../components/loanDetails/SwapToRepayIntentPanel";
 import { useNFTPrepayListing } from "../hooks/useNFTPrepayListing";
 import "./LoanDetails.css";
@@ -935,6 +936,22 @@ export default function LoanDetails() {
               {bpsToPercent(loan.interestRateBps)}
             </span>
           </div>
+          {/* #797 — keep the full-term-vs-pro-rata interest mode visible for the
+              life of the loan, not only at offer time. Only meaningful for
+              ERC-20 principal loans (the chip self-suppresses otherwise). */}
+          {Number(loan.assetType) === 0 && (
+            <div className="data-row">
+              <span className="data-label">{t('loanDetails.interestMode')}</span>
+              <span className="data-value">
+                <InterestModeBadge
+                  fullTermInterest={loan.useFullTermInterest}
+                  allowsPartialRepay={
+                    (loan as { allowsPartialRepay?: boolean }).allowsPartialRepay
+                  }
+                />
+              </span>
+            </div>
+          )}
           <div className="data-row">
             <span className="data-label">{t('loanDetails.duration')}</span>
             <span className="data-value">
@@ -1241,8 +1258,23 @@ export default function LoanDetails() {
                   <span className="data-label">{t('loanDetails.loanLabel')}</span>
                   <span className="data-value">#{loan.id.toString()}</span>
                 </div>
+                {/* #797 (Codex #810 r1/r2 P2) — pick the most accurate repay
+                    confirmation:
+                    - Overdue but still inside grace (`!pastPrepayGrace`):
+                      settlement uses max(elapsed, term) days AND adds a late fee,
+                      so it can exceed full-term — disclose the grace accrual +
+                      late fee. Gated on `!pastPrepayGrace` (Codex #810 r3): past
+                      grace `repayLoan` reverts, so the "inside its grace period"
+                      copy would be wrong — fall through to the standard copy.
+                    - Full-term ERC-20 (not overdue): settles the full-term floor,
+                      so the generic "accrued interest" copy under-discloses.
+                    - Otherwise (pro-rata ERC-20, NFT rental): the generic line. */}
                 <p style={{ marginTop: 8 }}>
-                  {t('loanDetails.repayConfirmBody')}
+                  {isOverdue && !pastPrepayGrace
+                    ? t('loanDetails.repayConfirmBodyOverdue')
+                    : Number(loan.assetType) === 0 && loan.useFullTermInterest
+                      ? t('loanDetails.repayConfirmBodyFullTerm')
+                      : t('loanDetails.repayConfirmBody')}
                 </p>
                 {!isBorrower && (
                   <p style={{ marginTop: 8 }}>
@@ -1317,6 +1349,12 @@ export default function LoanDetails() {
                     ? endTime
                     : endTime + Number(prepayGraceSeconds)
                 }
+                /* #797 — a full close honours the loan's interest mode, so
+                   surface it on the swap-to-repay surface too. */
+                fullTermInterest={loan.useFullTermInterest}
+                allowsPartialRepay={
+                  (loan as { allowsPartialRepay?: boolean }).allowsPartialRepay
+                }
                 actionLoading={actionLoading}
                 onActionLoadingChange={setActionLoading}
                 onAfterSuccess={loadLoanAndLien}
@@ -1365,6 +1403,12 @@ export default function LoanDetails() {
                   prepayGraceSeconds === null
                     ? endTime
                     : endTime + Number(prepayGraceSeconds)
+                }
+                /* #797 (Codex #810 r1 P2) — the intent route is also a
+                   full close honouring the loan's mode; show the same chip. */
+                fullTermInterest={loan.useFullTermInterest}
+                allowsPartialRepay={
+                  (loan as { allowsPartialRepay?: boolean }).allowsPartialRepay
                 }
                 actionLoading={actionLoading}
                 onActionLoadingChange={setActionLoading}

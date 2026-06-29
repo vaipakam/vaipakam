@@ -476,8 +476,29 @@ export default function BorrowerPreclose() {
           {opt === "direct" && (
             <div className="action-group">
               <h4 className="action-title">{t('preclose.directPrecloseTitle')}</h4>
-              <p className="action-desc">{t('preclose.directPrecloseDesc')}</p>
-              <InterestImplicationWarning kind="preclose-direct" />
+              {/* #797 (Codex #810 r3 P2) — the section intro must agree with the
+                  mode-aware warning below: a pro-rata ERC-20 loan pays only
+                  accrued interest, so the default "full-term interest" intro
+                  would contradict the pro-rata warning. */}
+              <p className="action-desc">
+                {loan && Number(loan.assetType) === 0 && loan.useFullTermInterest === false
+                  ? t('preclose.directPrecloseDescProRata')
+                  : t('preclose.directPrecloseDesc')}
+              </p>
+              {/* #797 — Direct preclose settles an ERC-20 loan at its interest
+                  mode (pro-rata loans show pro-rata copy). Gated to ERC-20
+                  principal (Codex #810 r1 P2): the NFT-rental branch of
+                  `PrecloseFacet.precloseDirect` ignores the mode and always
+                  splits the full rental, so pass `undefined` (full-term default)
+                  for non-ERC-20 loans — mirrors the badge/RiskDisclosures guard. */}
+              <InterestImplicationWarning
+                kind="preclose-direct"
+                fullTermInterest={
+                  loan && Number(loan.assetType) === 0
+                    ? loan.useFullTermInterest
+                    : undefined
+                }
+              />
               <div className="action-row" style={{ marginTop: 12 }}>
                 <button
                   className="btn btn-primary btn-sm"

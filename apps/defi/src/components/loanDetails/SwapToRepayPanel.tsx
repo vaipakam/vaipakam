@@ -8,6 +8,7 @@ import { useLiquidationQuotes } from '../../hooks/useLiquidationQuotes';
 import type { OrchestratedQuotes } from '../../lib/swapQuoteService';
 import { decodeContractError } from '@vaipakam/lib/decodeContractError';
 import { beginStep } from '../../lib/journeyLog';
+import { InterestModeBadge } from '../app/InterestModeBadge';
 
 interface SwapToRepayPanelProps {
   /** Loan being repaid. Must be Active + ERC20-on-ERC20 + the
@@ -44,6 +45,12 @@ interface SwapToRepayPanelProps {
    *  own transaction is in flight, so the parent page's repay /
    *  add-collateral buttons also disable. */
   onActionLoadingChange?: (loading: boolean) => void;
+  /** #797 — the loan's interest mode. A full close honours it, so the panel
+   *  discloses whether settlement charges full-term or pro-rata interest.
+   *  `undefined` ⇒ omit (non-ERC-20, though this panel is ERC-20-only). */
+  fullTermInterest?: boolean;
+  /** Refines the full-term chip's tooltip when partial repayment is allowed. */
+  allowsPartialRepay?: boolean;
 }
 
 const WORKER_ORIGIN =
@@ -100,6 +107,8 @@ export function SwapToRepayPanel({
   onAfterSuccess,
   actionLoading = false,
   onActionLoadingChange,
+  fullTermInterest,
+  allowsPartialRepay,
 }: SwapToRepayPanelProps) {
   const { address, isCorrectChain } = useWallet();
   // Codex PR #409 round-2 P2 #2 — when a user has the public-dashboard
@@ -243,6 +252,19 @@ export function SwapToRepayPanel({
         the live cap, the transaction reverts and you can retry
         with fresher routing.
       </div>
+
+      {/* #797 — a full close settles at the loan's interest mode; show it so
+          the borrower isn't surprised that a full-term loan still owes
+          full-term interest on this early close. */}
+      {fullTermInterest !== undefined && (
+        <div>
+          <InterestModeBadge
+            fullTermInterest={fullTermInterest}
+            allowsPartialRepay={allowsPartialRepay}
+            compact
+          />
+        </div>
+      )}
 
       {status === 'loading' && (
         <div

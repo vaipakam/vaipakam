@@ -21,6 +21,7 @@ import { Picker } from '@vaipakam/ui/Picker';
 import { ErrorAlert } from '../components/app/ErrorAlert';
 import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import { RiskDisclosures, RiskConsentLabel } from '../components/app/RiskDisclosures';
+import { InterestModeBadge } from '../components/app/InterestModeBadge';
 import { DEFAULT_CHAIN } from '../contracts/config';
 import { beginStep, emit } from '../lib/journeyLog';
 import { decodeContractError, extractRevertSelector } from '@vaipakam/lib/decodeContractError';
@@ -2431,6 +2432,18 @@ export function OfferTable({ title, subtitle, offers, anchorRateBps, address, ac
                           ({signedDelta > 0n ? '+' : '−'}{bpsToPercent(signedDelta > 0n ? signedDelta : -signedDelta)})
                         </span>
                       )}
+                      {/* #797 — at-a-glance full-term vs pro-rata chip so a
+                          borrower sees the interest mode before opening the
+                          offer. Only meaningful for ERC-20 principal offers. */}
+                      <div style={{ marginTop: 4 }}>
+                        <InterestModeBadge
+                          fullTermInterest={
+                            offer.assetType === 0 ? offer.useFullTermInterest : undefined
+                          }
+                          allowsPartialRepay={offer.allowsPartialRepay}
+                          compact
+                        />
+                      </div>
                     </td>
                     <td>{offer.durationDays.toString()} {t('loanDetails.daysSuffix')}</td>
                     <td>
