@@ -385,7 +385,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](47);
+        selectors = new bytes4[](48);
         selectors[0] = AdminFacet.setTreasury.selector;
         selectors[1] = AdminFacet.getTreasury.selector;
         selectors[2] = AdminFacet.setZeroExProxy.selector;
@@ -440,6 +440,7 @@ contract HelperTest {
         selectors[44] = AdminFacet.disableRateModel.selector;
         selectors[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
         selectors[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
+        selectors[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
         return selectors;
     }
 

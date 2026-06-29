@@ -931,7 +931,7 @@ contract DeployDiamond is Script {
     }
 
     function _getAdminSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](47);
+        s = new bytes4[](48);
         s[0] = AdminFacet.setTreasury.selector;
         s[1] = AdminFacet.getTreasury.selector;
         s[2] = AdminFacet.setZeroExProxy.selector;
@@ -991,6 +991,7 @@ contract DeployDiamond is Script {
         s[44] = AdminFacet.disableRateModel.selector;
         s[45] = AdminFacet.setRateModelMaxDeviationBps.selector;
         s[46] = AdminFacet.getRateModelMaxDeviationBps.selector;
+        s[47] = AdminFacet.getMaxPartialLiquidationCloseFactorBps.selector;
     }
 
     function _getProfileSelectors() internal pure returns (bytes4[] memory s) {
