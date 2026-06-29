@@ -229,7 +229,14 @@ export interface IndexedLoan {
   chainId: number;
   loanId: number;
   offerId: number;
-  status: 'active' | 'repaid' | 'defaulted' | 'liquidated' | 'settled';
+  status:
+    | 'active'
+    | 'repaid'
+    | 'defaulted'
+    | 'liquidated'
+    | 'settled'
+    | 'fallback_pending'
+    | 'internal_matched';
   lender: string;
   borrower: string;
   principal: string;
@@ -278,6 +285,8 @@ export const INDEXER_STATUS_TO_ENUM: Record<string, number> = {
   defaulted: 2,
   liquidated: 2,
   settled: 3,
+  fallback_pending: 4,
+  internal_matched: 5,
 };
 
 export function indexedToLoanSummary(

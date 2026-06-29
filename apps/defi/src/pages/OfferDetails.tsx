@@ -917,9 +917,15 @@ export default function OfferDetails() {
 
           {/* #600 — "Loans from this offer". A range / partial-fill offer can
               spawn many loans; list them all (reusing the Dashboard's grouped
-              row + aggregates). Only for genuine multi-fill — a single child
-              keeps the header "View loan #N" affordance, no duplicate section. */}
-          {childLoanCount > 1 && childLoanGroup && (
+              row + aggregates). Shown for genuine multi-fill, AND for a single
+              child when the header "View loan #N" link is absent (a still-open
+              partial-fill offer whose `indexed.status` isn't yet 'accepted', so
+              `linkedLoanId` is null) — otherwise that lone loan would have no
+              link at all (Codex P2). When the header link already covers the
+              single child, the section is suppressed to avoid duplication. */}
+          {(childLoanCount > 1 ||
+            (childLoanCount === 1 && !linkedLoanId)) &&
+            childLoanGroup && (
             <div style={{ marginTop: 16 }}>
               <h3 className="section-title" style={{ marginBottom: 8 }}>
                 {t('offerDetails.loansFromOffer', {

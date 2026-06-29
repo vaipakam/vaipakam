@@ -110,7 +110,14 @@ export function useOfferChildLoans(
         const hydrated = await Promise.all(
           ids.map(async (id) => {
             const il = await fetchLoanById(chain.chainId, id);
-            return il ? indexedToLoanSummary(il, role) : null;
+            if (!il) return null;
+            // Force the summary's offerId to the offer being DISPLAYED. A
+            // matcher-driven fill's loan carries the BORROWER offer id on-chain
+            // (`acceptOfferInternal(borrowerOfferId)`), so without this override
+            // `groupLoansByOffer` would bucket it under the borrower offer and
+            // the `groups.find(g => g.offerId === offerId)` below would drop it
+            // — hiding matched children of a lender offer (Codex P2).
+            return { ...indexedToLoanSummary(il, role), offerId };
           }),
         );
         if (cancelled) return;
