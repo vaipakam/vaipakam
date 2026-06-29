@@ -1910,6 +1910,25 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
             offer.assetType === 0 ? offer.useFullTermInterest : undefined
           }
           allowsPartialRepay={offer.allowsPartialRepay}
+          /* #796 — show the in-kind line for an ERC-20 (lending) offer whose
+             COLLATERAL settles in-kind on default. Gated to ERC-20 principal
+             (Codex r2 P2): a rental's default model is renter-reset + prepaid-fee
+             payout, not collateral-in-kind. The decision is collateral-driven
+             (Codex r4 P2), and `LoanFacet.initiateLoan` re-checks liquidity at
+             accept time, so we PREFER the collateral's LIVE liquidity (Codex r5):
+             NFT collateral always; otherwise the live read wins — once it
+             resolves to `liquid` the in-kind line is suppressed even if the
+             offer was created while the collateral was illiquid. The stored
+             snapshot is used only as a conservative fallback while the live read
+             is still loading / unreadable. */
+          collateralInKind={
+            offer.assetType === 0 &&
+            (offer.collateralAssetType !== 0 ||
+              collateralChainLiquidity === 'illiquid' ||
+              ((collateralChainLiquidity === 'loading' ||
+                collateralChainLiquidity === 'unknown') &&
+                collateralIlliquid))
+          }
         />
 
         {/* Phase 7b.1 — UX guard: 0x preflight against the

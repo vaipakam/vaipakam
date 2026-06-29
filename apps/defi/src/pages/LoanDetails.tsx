@@ -983,6 +983,31 @@ export default function LoanDetails() {
             {t('loanDetails.collateralAndRisk')}
             <CardInfo id="loan-details.collateral-risk" role={role} />
           </div>
+          {/* #796 — make the in-kind settlement outcome impossible to miss on an
+              active loan whose COLLATERAL settles in-kind, not just a buried
+              "Risk" data-row. On default the lender receives the raw collateral
+              (no swap, no LTV liquidation), so both sides must keep that downside
+              visible for the life of the loan. Gating:
+              - active / fallback-pending only (Codex r1 P3) — the future-tense
+                "if the borrower defaults" warning is stale on a terminal loan;
+              - ERC-20 (lending) loans only (Codex r2 P2) — an NFT-principal
+                rental's default model is renter-reset + prepaid-fee payout;
+              - COLLATERAL-driven only (Codex r5 P2): `DefaultedFacet` routes on
+                the collateral's liquidity, so we key on NFT collateral OR an
+                illiquid COLLATERAL leg, NOT `isIlliquidLoan` (which also trips on
+                an illiquid principal whose liquid collateral would still swap). */}
+          {canAct &&
+            Number(loan.assetType) === 0 &&
+            (Number(loan.collateralAssetType) !== 0 ||
+              Number(loan.collateralLiquidity) === 1) && (
+            <div
+              className="alert alert-warning"
+              style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '4px 0 12px' }}
+            >
+              <AlertTriangle size={16} style={{ flex: '0 0 auto', marginTop: 2 }} aria-hidden />
+              <span>{t('loanDetails.inKindSettlementWarning')}</span>
+            </div>
+          )}
           <div className="data-row">
             <span className="data-label">{t('loanDetails.collateralAmount')}</span>
             <span className="data-value mono">
