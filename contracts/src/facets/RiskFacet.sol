@@ -862,16 +862,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
 
         // Lender's proceeds deposited into lender's vault for claim. #821 —
-        // vault-lock so a flagged stored lender doesn't brick the liquidation.
-        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+        // vault-lock so a flagged stored lender doesn't brick the liquidation
+        // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+        LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            // T-051 — Diamond-side transfer to vault ticks the
-            // protocolTrackedVaultBalance counter.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -893,11 +888,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibSanctionedLock.getOrCreateVaultLocked(
+            LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
@@ -1250,13 +1243,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        if (lenderProceeds > 0) {
-            address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
-                s, loan.lender, loanId, loan.principalAsset, lenderProceeds
-            );
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
+        // #821 — vault-lock the lender's share (self-guards a zero amount).
+        LibSanctionedLock.depositLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
         // BEFORE the mutation below. The dust waiver keys off this pre-existing
@@ -1568,13 +1558,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         }
 
         // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
-        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+        LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
 
         // Record lender claim metadata for NFT-state tracking.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

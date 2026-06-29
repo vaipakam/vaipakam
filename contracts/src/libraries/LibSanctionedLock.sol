@@ -4,6 +4,8 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibFacet} from "./LibFacet.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
  * @title  LibSanctionedLock
@@ -38,6 +40,8 @@ import {LibFacet} from "./LibFacet.sol";
  *         fires for a genuinely sanctioned recipient.
  */
 library LibSanctionedLock {
+    using SafeERC20 for IERC20;
+
     /// @notice A wind-down close-out deposited a sanctioned recipient's share
     ///         into their own vault, where it stays locked behind the Tier-1
     ///         claim gate until the sanction clears.
@@ -95,6 +99,39 @@ library LibSanctionedLock {
         vault = LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
         if (amount > 0 && LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
+        }
+    }
+
+    /// @dev Single-call ERC-20 close-out deposit for the common case where a
+    ///      wind-down settlement holds the share in the Diamond and pushes it
+    ///      to a loan party's vault: resolves `owner`'s vault behind the pinned
+    ///      receive-side exemption (so a flagged `owner` doesn't brick the
+    ///      close-out), `safeTransfer`s `amount` of `asset` from the Diamond
+    ///      into that vault, ticks the protocol-tracked balance, and emits the
+    ///      lock event when `owner` is flagged. Folds the
+    ///      `getOrCreateVaultLocked` + `safeTransfer` + `recordVaultDeposit`
+    ///      trio into one shared subroutine so each call site stays a single
+    ///      `CALL` (keeps the close-out facets under the EIP-170 size limit) —
+    ///      use this where the share is a plain ERC-20 sitting in the Diamond;
+    ///      use `getOrCreateVaultLocked` directly when the move is in-kind /
+    ///      vault-to-vault / NFT and the caller needs the vault address.
+    ///      A zero `amount` is a no-op (no vault is force-created, nothing is
+    ///      transferred, no event) — matching the prior `if (amount > 0)` guards.
+    function depositLocked(
+        LibVaipakam.Storage storage s,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal {
+        if (amount == 0) return;
+        s.sanctionedDepositExemptUser = owner;
+        address vault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        IERC20(asset).safeTransfer(vault, amount);
+        LibVaipakam.recordVaultDeposit(owner, asset, amount);
+        if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, amount);
         }
     }
