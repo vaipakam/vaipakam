@@ -96,13 +96,15 @@ Recommended initial policy:
 | Stable passing observations across window | May promote up to observed on-chain tier. |
 
 The keeper must never raise above the tier currently proven by the on-chain
-route and manipulation guards.
+route and manipulation guards. The effective-tier read used by admission must
+check an on-chain observation timestamp or expiry sentinel; keeper-side D1 state
+or operator dashboards are not sufficient to expire a promoted tier.
 
 ### 3. Promotion Is Delayed, Demotion Is Fast
 
 Promotion from illiquid / low tier to a higher tier must require durable
-observations. The observation window should include both elapsed time and sample
-count.
+observations. The observation window should include elapsed time, sample
+count, and continuous-depth evidence between samples.
 
 Example defaults for mainnet tuning:
 
@@ -115,8 +117,12 @@ Example defaults for mainnet tuning:
 - Tier 3 / blue-chip promotion should require multi-venue or deep canonical
   venue evidence;
 - any failed current route, large slippage jump, oracle divergence, pool history
-  failure, material LP churn, or material liquidity removal demotes immediately
-  and restarts the qualifying-depth window.
+  failure, material LP churn, or material liquidity removal demotes immediately,
+  increments the asset's liquidity-demotion epoch, and restarts the
+  qualifying-depth window;
+- continuous-depth evidence must come from time-weighted minimum-depth checks,
+  LP mint/burn/churn event monitoring, or unpredictable sampling so liquidity
+  added only around predictable keeper samples cannot qualify.
 
 These values are intentionally governance-tunable. The invariant is asymmetric:
 promotion is slow, demotion is immediate.
@@ -132,9 +138,12 @@ recompute or re-read the current effective tier at admission:
   materialize a lender slice before initiating the loan;
 - refinance / preclose replacement flows that create new exposure;
 - lender-sale buyer admission;
-- obligation-transfer incoming borrower admission, plus any other current or future
-  path that can materialize a loan from an offer, signed payload, lender intent,
-  matcher action, or replacement flow.
+- obligation-transfer incoming borrower admission;
+- in-place lifecycle extensions or renewals, including auto-extend paths such as
+  `AutoLifecycleFacet.extendLoanInPlace`;
+- any other current or future path that can materialize, renew, or lengthen loan
+  exposure from an offer, signed payload, lender intent, matcher action, or
+  replacement flow.
 
 This list is intentionally exhaustive for current known admission paths and must
 be extended whenever a new path can materialize a loan; no lender-intent,
@@ -146,22 +155,35 @@ tier, the transaction must fail before value moves, even when the lower tier
 would still satisfy the numeric LTV cap. Risk-config compatibility must be
 cumulative over the full interval from offer creation to fill: an offer may fill
 only if every intervening risk-config change is fill-compatible, or if the
-current config exposes a `fillCompatibleFromEpoch` floor that is less than or
-equal to the offer creation-time epoch. A stale
-offer must not be auto-rerouted into the explicit illiquid-consent path, because
-the original terms were calibrated against the higher liquid/tiered assumption.
+current config exposes a monotonic non-decreasing `fillCompatibleFromEpoch`
+floor that is less than or equal to the offer creation-time epoch. That floor
+must never be reset behind an intervening incompatible epoch; alternatively,
+admission must retain enough epoch history to prove cumulative compatibility.
+A stale offer must not be auto-rerouted into the explicit illiquid-consent
+path, because the original terms were calibrated against the higher liquid/tiered assumption.
 The user must re-author or re-accept fresh terms that explicitly reflect the
-current risk state.
+current risk state. The same rejection applies when the offer or intent snapshot
+predates the asset's latest liquidity-demotion epoch or qualifying-window
+restart, even if the asset later re-promotes to the same numeric tier.
 
 This prevents an attacker from creating offers while liquidity is temporarily
 healthy and filling them after it disappears.
 
+`fillCompatibleFromEpoch` is a risk-config storage value updated only by the
+risk-governance path that publishes liquidity-tier parameters. It is monotonic
+non-decreasing. A governance action that changes floor sizes, slippage budgets,
+route families, tier caps, or other admission-critical parameters must either
+advance the risk-config epoch without moving this floor past incompatible prior
+epochs, or explicitly mark the new epoch as fill-compatible. Admission compares
+the offer/intent creation epoch against this floor or against retained epoch
+history before any value moves.
+
 ### 5. Snapshot Risk State On Offers And Loan Initiation
 
-Every offer, including signed off-chain offers that exist only as EIP-712
-calldata until fill time, should bind the risk state visible at creation so the
-Offer Book and accept review can compare current risk against the author's
-original assumptions:
+Every offer and standing lender intent, including signed off-chain offers that
+exist only as EIP-712 calldata until fill time, should bind the risk state
+visible at creation or registration so the Offer Book, intent fill, and accept
+review can compare current risk against the author's original assumptions:
 
 - creation-time observed on-chain tier;
 - creation-time keeper confidence tier;
@@ -173,12 +195,21 @@ original assumptions:
 - timestamp or block of the tier read;
 - risk-terms version / config epoch, with cumulative admission rejection when
   any intervening risk-config epoch is not fill-compatible, or when the current
-  `fillCompatibleFromEpoch` floor is newer than the offer creation-time epoch;
+  monotonic `fillCompatibleFromEpoch` floor is newer than the offer/intent
+  creation-time epoch;
+- asset liquidity-demotion epoch or qualifying-window-start marker, with
+  rejection when the current marker is newer than the offer/intent snapshot;
 
 The signed-offer EIP-712 payload must carry these snapshot fields. If the
-existing typed data cannot carry them, old signed offers must be invalidated on
-every non-fill-compatible risk-config change and whenever the effective tier
-falls below the signed creation tier.
+existing typed data cannot carry them, the implementation must introduce an
+explicit schema-version cutoff that blanket-invalidates pre-snapshot signed
+orders involving the asset until they are re-signed with the new fields. Legacy
+signatures cannot be selectively checked for demotion because they carry no
+creation-tier or creation-epoch value.
+
+Pre-snapshot on-chain offers and standing intents must likewise require
+cancellation and re-authoring/re-registration before fill; zero or empty
+snapshot fields must not default into compatibility.
 
 Each admitted loan should also store the risk state used at admission:
 
@@ -205,15 +236,25 @@ separate borrower-protective safe-mode rule is explicitly defined.
 ### 6. New Assets Start At Tier 0
 
 New or newly observed assets receive no durable-liquidity credit until keeper
-observations satisfy the promotion window. The observation universe must include
-pending offers, requested collateral assets, and governed candidate assets, not
-only assets already backing live loans. A first live loan must not be the seed
+observations satisfy the promotion window. Implementations should add an explicit
+`hasKeeperObservation`/observation-expiry flag or equivalent sentinel so
+"never observed" and "explicitly Tier 1" are distinguishable; changing a
+zero-default keeper tier into Tier 0 by implication is not acceptable without a
+separate migration plan for existing deployments.
+
+The observation universe must include
+pending offers, signed-order/indexer feeds, standing lender intents, requested
+collateral assets, and governed candidate assets, not only assets already
+backing live loans. A first live loan must not be the seed
 that creates its own durability history.
 
 Capacity controls are mandatory for every measured tier, not only Tier 1:
 
-- per-asset aggregate principal caps derived from the measured floor/tier depth;
-- per-loan principal caps derived from the measured floor/tier depth;
+- per-asset aggregate principal caps derived as a governance-bounded fraction of
+  the measured floor/tier depth, net of already-open exposure;
+- per-loan principal caps derived as a smaller governance-bounded fraction of
+  the measured floor/tier depth, so one loan cannot consume the whole measured
+  exit route;
 - no auto-lifecycle enablement by default for new or confidence-limited assets;
 - no treasury backstop Role A / Role B support until a separate governance
   allow decision and oracle-coverage requirements pass.
@@ -231,7 +272,8 @@ durable:
 - qualifying-depth age, measured from the first passing floor-sized depth
   observation and reset by material liquidity removal or LP churn;
 - number of independent venues and quote assets;
-- LP concentration and recent LP churn;
+- LP concentration and recent LP churn, with material churn thresholds defined by
+  governance or left explicitly as a ratification item before code;
 - depth distribution for V3-style concentrated liquidity;
 - token transfer behavior, including fee-on-transfer, blacklist, pause, rebase,
   upgradeability, and abnormal decimals;
@@ -291,7 +333,11 @@ Governance and guardian roles should have remove-only or risk-reducing controls:
 - mark a token behavior profile as unsupported.
 
 These controls should not be able to upgrade an asset above measured and
-confidence-backed depth.
+confidence-backed depth. Safe-mode means new admissions and in-place extensions
+are blocked, stale offers/intents cannot fill, unsafe old-depth discount or swap
+liquidation paths are disabled or tightened, affected users are warned, and
+ordinary borrower-protective exits such as repay, add collateral, and claim flows
+remain available where safe.
 
 The ordinary depth-tiered-LTV disable switch is explicitly not an
 incident-response control for liquidity spoofing. Unless it also enforces the
@@ -323,8 +369,11 @@ conservative legacy admission path.
 
 ### Phase 2: Keeper Confidence Floor
 
-- Implement keeper observations over pending offers, requested collateral assets,
-  governed candidate assets, and live collateral.
+- Implement keeper observations over pending offers, signed-order/indexer feeds,
+  standing lender intents, requested collateral assets, governed candidate
+  assets, and live collateral.
+- Enforce promoted-confidence TTL on-chain through an observation timestamp,
+  expiry sentinel, or equivalent automatic no-admission state.
 - Add demotion-first update semantics.
 - Add max-age / heartbeat expiry for promoted confidence tiers.
 - Expose read views for current confidence tier, last observation, and reason
@@ -333,18 +382,21 @@ conservative legacy admission path.
 
 ### Phase 3: Protocol Admission Enforcement
 
-- Re-read effective tier at every live-loan admission path, including direct
-  accepts, signed-offer fills, keeper matches, lender-intent fills, refinance
-  / preclose replacements, lender-sale buyers, and obligation-transfer incoming
-  borrowers.
-- Store offer creation-time risk snapshots, bind the same snapshot into signed
-  offer typed data or invalidate old signed offers, and fail stale tiered offers
-  whose current effective tier is lower than the creation-time tier or whose
-  cumulative risk-config interval is no longer fill-compatible.
+- Re-read effective tier at every live-loan admission or exposure-extension path,
+  including direct accepts, signed-offer fills, keeper matches, lender-intent
+  fills, refinance / preclose replacements, lender-sale buyers, obligation-
+  transfer incoming borrowers, and in-place auto-extend/renewal paths.
+- Store offer and standing-intent creation-time risk snapshots, bind the same
+  snapshot into signed-offer typed data or blanket-invalidate pre-snapshot signed
+  schemas, and fail stale tiered offers/intents whose current effective tier is
+  lower than the creation-time tier, whose cumulative risk-config interval is no
+  longer fill-compatible, or whose snapshot predates the latest demotion epoch.
 - Store loan risk snapshots with exact route identity/hashes.
 - Enforce per-asset and per-loan caps tied to measured depth for every tier.
-- Add governance-bounded configuration for observation windows, TTLs, exact
-  Tier 0/no-admission sentinels, safe-mode freezes, and caps.
+- Add governance-bounded configuration for observation windows, TTLs, monotonic
+  fill-compatible epoch floors or epoch history, explicit keeper-observation
+  sentinels, exact Tier 0/no-admission sentinels, safe-mode freezes, material
+  churn thresholds, and cap fractions.
 
 ### Phase 4: Tests And Simulations
 
@@ -358,10 +410,14 @@ conservative legacy admission path.
 - Test token behavior rejection and post-admission monitoring for fee-on-transfer,
   blacklist, pause, upgrade, and tax changes where practical.
 - Test cumulative risk-config epoch changes making old offers stale, including
-  incompatible-then-compatible epoch sequences.
+  incompatible-then-compatible epoch sequences and monotonic floor behavior.
 - Test live-loan demotion preserving borrower liquidation thresholds while
   blocking unsafe old-depth liquidation/discount paths or entering safe-mode
   handling.
+- Test in-place auto-extend/renewal blocked or safe-moded after liquidity
+  demotion or confidence expiry.
+- Test pre-snapshot on-chain offers, standing intents, and legacy signed orders
+  cannot fill without re-authoring under the snapshot schema.
 
 ## Open Questions
 
@@ -371,24 +427,30 @@ conservative legacy admission path.
   operator tooling?
 - What emergency SLA should operators commit to for demotion after a public
   liquidity incident?
+- What concrete thresholds define material LP churn and material liquidity
+  removal for each route family?
+- Should V2-only liquidity be capped at Tier 1 unless an external TWAP/durability
+  mechanism is available?
 
 ## Acceptance Criteria
 
 - A short-lived spoofed pool cannot immediately grant high-tier collateral
   treatment.
-- Any loan-creating path, including signed-offer and lender-intent fills,
-  revalidates effective liquidity and cumulative risk-config compatibility
-  before value moves.
+- Any loan-creating or exposure-extension path, including signed-offer,
+  lender-intent, matcher, and auto-extend/renewal fills, revalidates effective
+  liquidity and cumulative risk-config compatibility before value moves.
 - Any liquidity demotion after offer creation blocks stale offers from becoming
   live loans under old assumptions, even when lower-tier LTV would pass.
 - Unobserved assets and expired keeper observations receive no durable-liquidity
   credit.
 - The keeper can only reduce or slowly promote within the on-chain measured tier,
-  and promoted confidence expires to Tier 0/no-admission without heartbeat.
+  and promoted confidence expires on-chain to Tier 0/no-admission without
+  heartbeat.
 - Transfer-restrictable or mutable collateral tokens are unsupported unless a
   specific support mechanism exists.
 - Users and operators can see why an asset is confidence-limited, stale,
   epoch-incompatible, or demoted.
-- Tests cover temporary depth, pool withdrawal, concentrated liquidity, keeper
-  outage, stale-offer acceptance, signed-offer risk binding, lender-intent fills,
-  cumulative risk-epoch changes, and live-loan demotion.
+- Tests cover temporary depth, pool withdrawal, intermittent-liquidity sampling,
+  concentrated liquidity, keeper outage, stale-offer acceptance, signed-offer
+  risk binding, standing-intent snapshots, lender-intent fills, cumulative
+  risk-epoch changes, auto-extend gating, and live-loan demotion.
