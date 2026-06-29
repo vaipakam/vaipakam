@@ -106,7 +106,7 @@ Before signing, show whether the flow is currently possible:
 - wallet has enough token balance
 - allowance/Permit2 readiness
 - collateral is enough for required safety
-- progressive risk-access requirements pass where that gate is enabled, including vault tier, fresh tier anchor, and required per-pair acknowledgement
+- progressive risk-access requirements pass where that gate is enabled; the checklist should call out vault-tier limits, stale tier anchors, and missing per-pair acknowledgements before the user signs
 - sanctions/Terms gate status
 - asset liquidity class and default consequence
 - protocol pause or asset pause status
