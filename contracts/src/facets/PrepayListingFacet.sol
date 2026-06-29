@@ -457,6 +457,14 @@ contract PrepayListingFacet is
         // Distribute proceeds.
         address lenderHolder = VaipakamNFTFacet(address(this))
             .ownerOf(loan.lenderTokenId);
+        // #821 (#825-r4 residual) — this Scenario-B settlement pays the LIVE
+        // lender holder its leg directly from the parallel-sale proceeds. The
+        // sign-time screen on the offer can't see this diamond-resolved holder,
+        // so a holder flagged after the listing was recorded would be paid here.
+        // Screen it at fill: the settlement runs inside the atomic Seaport fill
+        // (via the executor zone callback), so a revert aborts the whole fill —
+        // the buyer's funds are never committed, nothing is stranded.
+        LibVaipakam._assertNotSanctioned(lenderHolder);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
