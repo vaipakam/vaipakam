@@ -559,6 +559,25 @@ contract CollateralListingExecutorTest is Test {
         executor.authorizeOrder(p);
     }
 
+    /// @notice #825-r4 (P1) — fill-time re-screen of the live LENDER recipient
+    ///         (`consideration[0]` is paid directly to `pctx.lenderNftOwner`).
+    ///         Clean at post time, flagged before fill → fill aborts.
+    function test_authorizeOrder_revertsWhenLenderRecipientSanctioned() public {
+        _setDefaultContext();
+        _recordValidOrder();
+        diamond.setSanctioned(lenderHolder, true);
+
+        ZoneParameters memory p = _validZoneParams();
+        vm.prank(seaport);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                CollateralListingExecutor.SanctionedListingRecipient.selector,
+                lenderHolder
+            )
+        );
+        executor.authorizeOrder(p);
+    }
+
     /// @notice #825-r3 (P1) — fill-time re-screen of a recorded FEE-LEG
     ///         recipient. Clean at post time, flagged before fill → fill aborts.
     function test_authorizeOrder_revertsWhenFeeLegRecipientSanctioned() public {

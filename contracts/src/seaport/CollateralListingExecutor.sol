@@ -1478,6 +1478,26 @@ contract CollateralListingExecutor is
         // address (round-3 against Raja P1 #3 + Codex round-2 P1 #4).
         IVaipakamPrepayCallbacks(vaipakamDiamond)
             .assertOfferFillNotSanctioned(ctx.offerId, ctx.borrowerWallet);
+        // #825-r4 (P1) — that callback screens the borrower wallet, but the
+        // offer-branch (parallel-sale) order ALSO carries fee legs paid directly
+        // by Seaport on fill; re-screen each recorded fee-leg recipient live, so
+        // a fee recipient flagged after the listing was recorded can't be paid.
+        // (The diamond-side lender / borrower-remainder settlement screening is
+        // tracked under #821's diamond-side recipient handling.)
+        {
+            FeeLeg[] memory offerLegs = _offerFeeLegs[params.orderHash];
+            for (uint256 i = 0; i < offerLegs.length; ) {
+                if (
+                    IVaipakamSanctionsView(vaipakamDiamond)
+                        .isSanctionedAddress(offerLegs[i].recipient)
+                ) {
+                    revert SanctionedListingRecipient(offerLegs[i].recipient);
+                }
+                unchecked {
+                    ++i;
+                }
+            }
+        }
 
         // ── Offerer check ───────────────────────────────────────────
         // Same defense-in-depth as the loan-keyed branch: the order's
@@ -1621,17 +1641,25 @@ contract CollateralListingExecutor is
         // `DefaultedFacet:217` check above shows is wrong.
         if (block.timestamp > pctx.graceEnd) revert GraceExpired(loanId);
 
-        // ── Fill-time sanctions re-screen (#825-r3 P1) ──────────────────
-        // The post/update entry points screen recipients at SIGN time only.
-        // If the current borrower recipient or a recorded fee-leg recipient is
-        // clean at post time but flagged before the order fills, Seaport would
-        // still pay those consideration legs directly. Re-screen the LIVE
-        // recipients here — this runs from both `authorizeOrder` and the
-        // `Seaport.validate()` pre-registration path — so a flagged recipient
-        // aborts the fill. The buyer's funds are never committed (Seaport
-        // reverts the whole fill atomically), so nothing is stranded. The
-        // lender / treasury legs settle through the diamond, where the close-out
-        // sanctions handling (#821) applies.
+        // ── Fill-time sanctions re-screen (#825-r3/r4 P1) ───────────────
+        // The post/update entry points screen recipients at SIGN time only. If
+        // a Seaport consideration recipient is clean at post time but flagged
+        // before the order fills, Seaport would still pay that leg directly.
+        // Re-screen the LIVE recipients here — this runs from both
+        // `authorizeOrder` and the `Seaport.validate()` pre-registration path —
+        // so a flagged recipient aborts the fill. The buyer's funds are never
+        // committed (Seaport reverts the whole fill atomically), so nothing is
+        // stranded. The loan-keyed consideration pays the live lender holder
+        // (consideration[0]) and the borrower-remainder holder (consideration[2])
+        // directly, plus the recorded fee legs; treasury is the protocol (no
+        // screen). (#821 covers the diamond-side close-out deposits on the
+        // non-fill paths.)
+        if (
+            IVaipakamSanctionsView(vaipakamDiamond)
+                .isSanctionedAddress(pctx.lenderNftOwner)
+        ) {
+            revert SanctionedListingRecipient(pctx.lenderNftOwner);
+        }
         if (
             IVaipakamSanctionsView(vaipakamDiamond)
                 .isSanctionedAddress(pctx.borrowerNftOwner)
