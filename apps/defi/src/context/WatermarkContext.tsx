@@ -68,6 +68,17 @@ interface WatermarkContextValue {
   register: (opts: UseLiveWatermarkOptions) => number;
   /** Subscriber deregistration. */
   unregister: (id: number) => void;
+  /**
+   * #757 Phase B — fire an immediate probe and FORCE a `version` bump, even
+   * when the lifetime counters didn't move. The realtime WS push calls this
+   * when the indexer signals a state change: status-only mutations (repay,
+   * default, cancel, transfer) don't advance `getGlobalCounts`, so the normal
+   * advance-gated bump would miss them — `nudge()` guarantees subscribers
+   * refetch. Also refreshes `snapshot.safeBlock` first so the refetch's RPC
+   * catch-up window includes the just-confirmed block. Coalesce bursts at the
+   * call site (the WS client debounces).
+   */
+  nudge: () => void;
 }
 
 const WatermarkContext = createContext<WatermarkContextValue | null>(null);
@@ -118,6 +129,11 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   // slow tick.
   const rescheduleRef = useRef<() => void>(() => {});
 
+  // #757 Phase B — imperative "probe now + force a version bump", injected by
+  // the probe-loop effect (closure over the live publicClient/diamond). No-op
+  // until a probe loop is active. `nudge()` pokes through this.
+  const probeNowRef = useRef<() => void>(() => {});
+
   const register = useCallback((opts: UseLiveWatermarkOptions) => {
     const id = nextSubscriberId++;
     subscribersRef.current.set(id, opts);
@@ -127,6 +143,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   const unregister = useCallback((id: number) => {
     subscribersRef.current.delete(id);
     rescheduleRef.current();
+  }, []);
+  // Stable identity for consumers (the WS push provider lists it in deps).
+  const nudge = useCallback(() => {
+    probeNowRef.current();
   }, []);
 
   useEffect(() => {
@@ -197,7 +217,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       return tierInterval;
     }
 
-    async function probe(): Promise<void> {
+    async function probe(opts?: { forceBump?: boolean }): Promise<void> {
       try {
         const result = (await publicClient.readContract({
           address: diamond as Address,
@@ -237,7 +257,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
           };
         });
         setStatus('live');
-        if (advanced) setVersion((v) => v + 1);
+        // `forceBump` (the Phase B WS nudge) bumps even when the counters held,
+        // so a status-only mutation (repay/default/cancel/transfer) still drives
+        // subscribers to refetch.
+        if (advanced || opts?.forceBump) setVersion((v) => v + 1);
       } catch {
         if (!cancelled) setStatus('unreachable');
       }
@@ -264,6 +287,20 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         timer = null;
       }
       schedule();
+    };
+
+    // #757 Phase B — "probe now + force a version bump". Clears the pending
+    // timer (so we don't stack two), runs one forced probe, then reschedules
+    // off the now-current state. Mirrors the focus-path in `onVisibility`.
+    probeNowRef.current = () => {
+      if (cancelled) return;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      void probe({ forceBump: true }).then(() => {
+        if (!cancelled) schedule();
+      });
     };
 
     function onVisibility(): void {
@@ -319,12 +356,13 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('scroll', onActivity);
       document.removeEventListener('touchstart', onActivity);
       rescheduleRef.current = () => {};
+      probeNowRef.current = () => {};
     };
   }, [publicClient, diamond]);
 
   const value = useMemo<WatermarkContextValue>(
-    () => ({ version, snapshot, status, register, unregister }),
-    [version, snapshot, status, register, unregister],
+    () => ({ version, snapshot, status, register, unregister, nudge }),
+    [version, snapshot, status, register, unregister, nudge],
   );
 
   return <WatermarkContext.Provider value={value}>{children}</WatermarkContext.Provider>;

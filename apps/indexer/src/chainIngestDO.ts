@@ -38,7 +38,10 @@
  */
 
 import { resolveEnv, getChainConfigs, type WorkerEnv } from './env';
-import { runChainIndexerForChain } from './chainIndexer';
+import {
+  runChainIndexerForChain,
+  type ChainIndexerResult,
+} from './chainIndexer';
 
 /** Max alarm iterations per single-flight session before deferring the rest to
  *  the cron backstop (bounds subrequest/wall cost; a deep backlog finalizes
@@ -47,14 +50,44 @@ const MAX_ALARM_ATTEMPTS = 12;
 /** Delay between catch-up iterations — cheap wait while a target finalizes. */
 const ALARM_DELAY_MS = 3_000;
 
-interface ChainIngestState {
-  storage: DurableObjectStorage;
-  getWebSockets?: () => WebSocket[];
-}
-
 interface TriggerBody {
   chainId?: number;
   targetBlock?: string; // bigint as decimal string
+}
+
+/**
+ * #757 Phase B — the typed invalidation keys the DO pushes to subscribed dapp
+ * clients after each D1 write. Each key names a coarse data slice that changed;
+ * the client maps it to a refetch (it carries the SIGNAL, never authoritative
+ * data — the client re-reads via the existing REST/RPC surface, so the trust
+ * model is unchanged). Derived from the scan's `ChainIndexerResult` counts.
+ */
+export type InvalidationKey =
+  | 'offer.created'
+  | 'offer.changed' // cancel / accept / detail refresh (coarse — no per-id yet)
+  | 'loan.created'
+  | 'loan.updated' // repay / default / liquidation / transfer
+  | 'activity.appended';
+
+/** Push frame the DO `ws.send`s. `t` discriminates the frame kind. */
+type PushFrame =
+  | { t: 'hello'; chainId: number | null; ingestActive: boolean }
+  | { t: 'invalidate'; chainId: number; keys: InvalidationKey[]; scannedTo: string };
+
+/** Map a completed scan's result counts → the coarse invalidation keys to push.
+ *  Pure + exported so the shape is unit-reasoned and testable in isolation. */
+export function invalidationKeysFromResult(
+  result: ChainIndexerResult,
+): InvalidationKey[] {
+  const keys: InvalidationKey[] = [];
+  if (result.newOffers > 0) keys.push('offer.created');
+  if (result.statusUpdates > 0 || result.detailRefreshes > 0) {
+    keys.push('offer.changed');
+  }
+  if (result.newLoans > 0) keys.push('loan.created');
+  if (result.loanStatusUpdates > 0) keys.push('loan.updated');
+  if (result.activityEvents > 0) keys.push('activity.appended');
+  return keys;
 }
 
 export class ChainIngestDO {
@@ -70,18 +103,33 @@ export class ChainIngestDO {
   private scanRunning = false;
 
   constructor(
-    private readonly state: ChainIngestState,
+    private readonly state: DurableObjectState,
     private readonly env: WorkerEnv,
-  ) {}
+  ) {
+    // #757 Phase B — keep idle subscribers cheap. The runtime answers a
+    // client `ping` with `pong` WITHOUT waking the Hibernating DO, so a
+    // browser keepalive never costs a wall-clock charge. Idempotent; safe to
+    // set on every (re)instantiation.
+    this.state.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair('ping', 'pong'),
+    );
+  }
 
   /**
-   * Enqueue-only trigger from the webhook route / cron ping. Durably raises
-   * `pendingTarget` and arms the catch-up loop if it isn't already running,
-   * then returns a fast ack — the scan happens in `alarm()`. This is what lets
-   * the webhook Worker await a durable accept before recording its dedupe row
-   * and returning 200 (design §3.3).
+   * Two roles on one object (design §3.2):
+   *   - `Upgrade: websocket` → #757 Phase B subscribe: accept a Hibernatable
+   *     browser socket so `broadcast()` can push invalidation keys to it.
+   *   - otherwise → the enqueue-only TRIGGER from the webhook route / cron ping:
+   *     durably raise `pendingTarget`, arm the catch-up loop if idle, and return
+   *     a fast ack — the scan happens in `alarm()`. This is what lets the webhook
+   *     Worker await a durable accept before recording its dedupe row and
+   *     returning 200 (design §3.3).
    */
   async fetch(req: Request): Promise<Response> {
+    if (req.headers.get('Upgrade') === 'websocket') {
+      return this.handleWebSocketUpgrade(req);
+    }
+
     let body: TriggerBody = {};
     try {
       body = (await req.json()) as TriggerBody;
@@ -171,8 +219,9 @@ export class ChainIngestDO {
         // `>= target`, e.g. target 0 for a block-less webhook) for success and
         // drop the already-acked webhook's only retry until the next cron tick.
         retryableFailure = result.skipped === 'rpc-error';
-        // Phase B hook — broadcast an invalidation to subscribed clients after
-        // the D1 write. No-op stub until Phase B wires the WebSocket fan-out.
+        // #757 Phase B — broadcast the coarse invalidation keys to subscribed
+        // clients AFTER the D1 write, so a connected dapp refetches the changed
+        // slice within seconds instead of waiting for its next poll.
         this.broadcast(chainId, result);
       } catch (err) {
         // Retry (bounded) on failure; the event re-processes next iteration /
@@ -211,10 +260,97 @@ export class ChainIngestDO {
     await this.state.storage.delete('attempts');
   }
 
-  /** Phase B placeholder — broadcast a lightweight invalidation key to the DO's
-   *  Hibernating WebSocket clients. Intentionally a no-op in Phase A. */
-  private broadcast(_chainId: number, _result: unknown): void {
-    // Phase B: derive the invalidation key(s) from `_result` and
-    // `this.state.getWebSockets()?.forEach(ws => ws.send(...))`.
+  /**
+   * #757 Phase B — accept a browser WebSocket as a Hibernatable subscriber.
+   * `acceptWebSocket` hands the socket to the runtime, so an idle subscriber
+   * costs nothing (the DO can evict from memory and is re-instantiated on the
+   * next event); `getWebSockets()` re-materialises them in `broadcast()`. We
+   * immediately send a `hello` frame so the client can distinguish a LIVE push
+   * channel (DO ingest enabled) from a connected-but-silent one (ingest off →
+   * the client keeps polling and shows "Polling", never a false "Live").
+   */
+  private handleWebSocketUpgrade(req: Request): Response {
+    const chainParam = Number(new URL(req.url).searchParams.get('chain'));
+    const chainId =
+      Number.isInteger(chainParam) && chainParam > 0 ? chainParam : null;
+
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    this.state.acceptWebSocket(server);
+
+    const hello: PushFrame = {
+      t: 'hello',
+      chainId,
+      ingestActive: this.env.CHAIN_INGEST_VIA_DO === 'true',
+    };
+    try {
+      server.send(JSON.stringify(hello));
+    } catch {
+      // A socket that dies between accept and the first send is reaped by the
+      // runtime; nothing to clean up here.
+    }
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * #757 Phase B — after a scan's D1 write, push the coarse invalidation keys to
+   * every subscribed client for this chain. Carries the SIGNAL only (which slice
+   * changed + the scanned-through block), never the data, so the client refetches
+   * via the existing REST/RPC surface and the trust model is unchanged. A scan
+   * that changed nothing pushes nothing (no wake, no traffic). Per-socket `send`
+   * is wrapped so one dead socket can't abort the fan-out.
+   */
+  private broadcast(chainId: number, result: ChainIndexerResult): void {
+    const keys = invalidationKeysFromResult(result);
+    if (keys.length === 0) return;
+    const sockets = this.state.getWebSockets();
+    if (sockets.length === 0) return;
+    const frame: PushFrame = {
+      t: 'invalidate',
+      chainId,
+      keys,
+      scannedTo: result.scannedTo.toString(),
+    };
+    const payload = JSON.stringify(frame);
+    for (const ws of sockets) {
+      try {
+        ws.send(payload);
+      } catch {
+        // Dead/closing socket — the runtime reaps it; skip and keep fanning out.
+      }
+    }
+  }
+
+  /**
+   * Hibernation message handler. The push channel is server→client only; the
+   * sole expected inbound is a `ping` keepalive, which `setWebSocketAutoResponse`
+   * already answers without waking us. Anything else is ignored (defensive —
+   * a client must not be able to drive DO work over the subscribe socket).
+   */
+  async webSocketMessage(_ws: WebSocket, _message: ArrayBuffer | string): Promise<void> {
+    // No-op: subscribers never command the DO. Auto-response handles `ping`.
+  }
+
+  /** Hibernation close handler — acknowledge the close so the socket is freed. */
+  async webSocketClose(
+    ws: WebSocket,
+    code: number,
+    _reason: string,
+    _wasClean: boolean,
+  ): Promise<void> {
+    try {
+      // 1000–4999 are the app-closable range; 1006 (abnormal) must not be
+      // echoed back as a close code or the runtime throws.
+      ws.close(code >= 1000 && code < 5000 ? code : 1000);
+    } catch {
+      // Already closing — nothing to do.
+    }
+  }
+
+  /** Hibernation error handler — log and let the runtime drop the socket. */
+  async webSocketError(_ws: WebSocket, error: unknown): Promise<void> {
+    // eslint-disable-next-line no-console
+    console.error('[chainIngestDO] websocket error', error);
   }
 }

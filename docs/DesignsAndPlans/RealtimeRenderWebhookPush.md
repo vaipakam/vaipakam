@@ -1,8 +1,16 @@
 # Near-real-time render — inbound chain webhook + DO single-writer + browser push (#757)
 
-**Status:** design. Architecture is **owner-locked** (issue #757, sign-off
-2026-06-27) for the *trigger* (Alchemy webhook) and the *push* (Cloudflare
-Durable Object + Hibernation). This doc is the *implementation* design.
+**Status:** Phase A shipped (PR #764). **Phase B shipped (PR #783)** — the DO is
+now a Hibernatable WebSocket hub: a dapp opens `GET /ws/chain/:chainId`, and after
+each scan's D1 write the DO pushes coarse invalidation keys
+(`offer.created` · `offer.changed` · `loan.created` · `loan.updated` ·
+`activity.appended`) that nudge the dapp's watermark to refetch the changed slice.
+Additive + degradable: with no WS / DO-ingest off, the dapp keeps polling. v1
+uses coarse per-category keys (not per-id) and does NOT yet back off the poll
+cadence when live — both are follow-ups. Architecture is **owner-locked**
+(issue #757, sign-off 2026-06-27) for the *trigger* (Alchemy webhook) and the
+*push* (Cloudflare Durable Object + Hibernation). This doc is the *implementation*
+design.
 
 > **Design evolution (PR #759 review history).** Early drafts had the webhook
 > **Worker** write D1 directly, concurrently with the cron. Codex review showed

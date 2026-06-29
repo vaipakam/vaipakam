@@ -50,6 +50,7 @@ import { useDiamondPublicClient, useReadChain } from '../../contracts/useDiamond
 import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
+import { useRealtimePush } from '../../context/RealtimePushContext';
 import './IndexerStatusBadge.css';
 
 /** Block-space thresholds — single source of truth here AND mirrored
@@ -108,6 +109,10 @@ export function IndexerStatusBadge({ compact }: Props) {
   // instead of 30 s — 6× less background RPC for no UX cost.
   const { snapshot: watermarkSnapshot } = useLiveWatermark(watermarkPolicy('cool'));
   const { maxFrontier, anyLoading } = useDataFreshness();
+  // #757 Phase B — orthogonal "transport" dimension: is the page being PUSHED
+  // updates (Live) or relying on the always-on background poll (Polling)?
+  // Independent of data freshness (which is about block-space lag).
+  const { transport } = useRealtimePush();
   const [popoverOpen, setPopoverOpen] = useState(false);
   // Live chain safe-head — polled directly only while the popover is
   // open. `null` until the first poll resolves (the popover seeds the
@@ -351,6 +356,18 @@ export function IndexerStatusBadge({ compact }: Props) {
           <dl className="indexer-badge-popover-status">
             <Row label={t('indexerBadge.statusState')} value={popover.stateLabel} />
             <Row label={t('indexerBadge.statusChain')} value={chainLabel} />
+            <Row
+              label={t('indexerBadge.statusTransport')}
+              value={
+                <span title={t('indexerBadge.statusTransportTooltip')}>
+                  {transport === 'live'
+                    ? t('indexerBadge.statusTransportLive')
+                    : transport === 'reconnecting'
+                      ? t('indexerBadge.statusTransportReconnecting')
+                      : t('indexerBadge.statusTransportPolling')}
+                </span>
+              }
+            />
             {/* Popover is the glance surface — only the "what block is
                 the page current to?" summary lives here. The per-lane
                 breakdown (indexer frontier vs. each RPC tail-scan

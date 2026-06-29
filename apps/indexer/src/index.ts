@@ -194,6 +194,32 @@ export default {
       return handleChainEventWebhook(req, env);
     }
 
+    // #757 Phase B — browser WebSocket subscribe: `GET /ws/chain/:chainId` with
+    // an `Upgrade: websocket` header. Dispatched BEFORE `resolveEnv` (the DO
+    // resolves its own env; no Secrets-Store fetch needed just to route the
+    // upgrade) and forwarded to that chain's ingest DO, which holds the
+    // Hibernatable sockets. Degradable by construction: with no DO binding (or
+    // DO ingest disabled) the socket is silent and the dapp keeps polling.
+    const wsMatch = url.pathname.match(/^\/ws\/chain\/(\d+)$/);
+    if (wsMatch) {
+      if (req.headers.get('Upgrade') !== 'websocket') {
+        return new Response('expected websocket upgrade', { status: 426 });
+      }
+      if (!env.CHAIN_INGEST_DO) {
+        // No realtime channel on this deployment — client falls back to polling.
+        return new Response('realtime push unavailable', { status: 503 });
+      }
+      const chainId = Number(wsMatch[1]);
+      const ns = env.CHAIN_INGEST_DO;
+      const stub = ns.get(ns.idFromName(String(chainId)));
+      // Reconstruct the request against the DO-internal URL so the DO can read
+      // `?chain=` for its `hello` frame; `new Request(url, req)` preserves the
+      // upgrade headers that signal the WebSocket handshake.
+      return stub.fetch(
+        new Request(`https://chain-ingest-do/ws?chain=${chainId}`, req),
+      );
+    }
+
     // T-078 — resolve the Secrets Store RPC bindings once, at the
     // boundary; every route handler receives the plain resolved env.
     const resolved = await resolveEnv(env);
