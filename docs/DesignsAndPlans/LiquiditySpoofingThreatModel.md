@@ -159,7 +159,9 @@ assumptions:
 - concrete winning route identity or route hash, including pool address,
   factory, fee tier, quote asset, and path hops;
 - timestamp or block of the tier read;
-- risk-terms version / config epoch.
+- risk-terms version / config epoch, with admission rejection when the
+  current epoch differs unless governance has marked the changed parameters
+  fill-compatible.
 
 Each admitted loan should also store the risk state used at admission:
 
@@ -263,7 +265,8 @@ Governance and guardian roles should have remove-only or risk-reducing controls:
   that default maps back to Tier 1;
 - enter a safe-mode / freeze that blocks new tiered admissions or forces the
   safest tier, without falling back to a less conservative legacy path;
-- disable a pool factory / quote asset route family;
+- remove a specific pool factory or quote-asset route family from future route
+  search;
 - lower per-tier LTV caps;
 - lower per-asset caps;
 - mark a token behavior profile as unsupported.
