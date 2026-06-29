@@ -1528,7 +1528,10 @@ export default function CreateOffer() {
             {t('createOffer.riskDisclosures')}
           </div>
 
-          <RiskDisclosures />
+          {/* #784 — reflect the term-interest mode this offer is being created
+              with (default full-term), so the creator sees plainly what the
+              borrower commits to. */}
+          <RiskDisclosures fullTermInterest={form.useFullTermInterest} />
 
           <label className="checkbox-row" style={{ marginTop: 12 }}>
             <input

@@ -51,11 +51,27 @@ export function RiskConsentLabel() {
  *
  * Callers own the "I agree" checkbox state (see CreateOffer, the
  * Accept-Review modal in OfferBook, and LenderEarlyWithdrawal).
+ *
+ * `fullTermInterest` (#784) tailors an extra term-interest line to the specific
+ * offer: `true` → the borrower owes the FULL-TERM interest even on early repay;
+ * `false` → interest is pro-rata to time elapsed; `undefined` → omit the line
+ * (for non-offer surfaces like LenderEarlyWithdrawal). Sourced from the offer's
+ * `useFullTermInterest` (default `true`), never hardcoded.
  */
-export function RiskDisclosures() {
+export function RiskDisclosures({
+  fullTermInterest,
+}: {
+  fullTermInterest?: boolean;
+}) {
   const { t, i18n } = useTranslation();
   const [showOriginal, setShowOriginal] = useState(false);
   const isEnglish = i18n.resolvedLanguage === 'en';
+  const termInterestKey =
+    fullTermInterest === true
+      ? 'riskDisclosures.fullTermInterest'
+      : fullTermInterest === false
+        ? 'riskDisclosures.proRataInterest'
+        : null;
 
   return (
     <>
@@ -104,6 +120,12 @@ export function RiskDisclosures() {
           </p>
         ))}
 
+        {termInterestKey && (
+          <p className="risk-disclosures-paragraph risk-disclosures-term-interest">
+            {t(termInterestKey)}
+          </p>
+        )}
+
         <p className="risk-disclosures-learn-more">
           {/*
             Pin the explicit `/en` locale prefix. The marketing app's
@@ -129,7 +151,12 @@ export function RiskDisclosures() {
         </p>
       </div>
 
-      {showOriginal && <EnglishOriginalModal onClose={() => setShowOriginal(false)} />}
+      {showOriginal && (
+        <EnglishOriginalModal
+          termInterestKey={termInterestKey}
+          onClose={() => setShowOriginal(false)}
+        />
+      )}
     </>
   );
 }
@@ -141,7 +168,13 @@ export function RiskDisclosures() {
  * Tamil. Closed by clicking the backdrop, the X button, or pressing
  * Escape on the close button.
  */
-function EnglishOriginalModal({ onClose }: { onClose: () => void }) {
+function EnglishOriginalModal({
+  termInterestKey,
+  onClose,
+}: {
+  termInterestKey: string | null;
+  onClose: () => void;
+}) {
   const { t } = useTranslation();
   const en = (key: string) => t(key, { lng: 'en' });
 
@@ -214,6 +247,11 @@ function EnglishOriginalModal({ onClose }: { onClose: () => void }) {
               {en(key)}
             </p>
           ))}
+          {termInterestKey && (
+            <p className="risk-disclosures-paragraph risk-disclosures-term-interest">
+              {en(termInterestKey)}
+            </p>
+          )}
         </div>
         <div style={{ marginTop: 16, textAlign: 'right' }}>
           <button
