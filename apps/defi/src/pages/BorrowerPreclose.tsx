@@ -672,7 +672,13 @@ export default function BorrowerPreclose() {
                       <span className="form-hint">{t('preclose.amountWholeTokensHint')}</span>
                     </div>
                   </div>
-                  <RiskDisclosures />
+                  {/* #784 — the offset path CREATES a replacement lender offer
+                      whose term-interest mode is inherited from this loan
+                      (PrecloseFacet); disclose it like any other offer-create. */}
+                  <RiskDisclosures
+                    fullTermInterest={loan?.useFullTermInterest}
+                    allowsPartialRepay={loan?.allowsPartialRepay}
+                  />
                   <label
                     style={{
                       display: "flex",

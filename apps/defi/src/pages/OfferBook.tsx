@@ -1901,7 +1901,10 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
         {/* #784 — disclose this offer's actual term-interest mode to the
             borrower before they accept (full-term by default). */}
-        <RiskDisclosures fullTermInterest={offer.useFullTermInterest} />
+        <RiskDisclosures
+          fullTermInterest={offer.useFullTermInterest}
+          allowsPartialRepay={offer.allowsPartialRepay}
+        />
 
         {/* Phase 7b.1 — UX guard: 0x preflight against the
             collateral → principal pair at the actual offer size.

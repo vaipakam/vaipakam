@@ -96,6 +96,11 @@ export interface LoanDetails {
    *  init. Gates `RepayFacet.repayPartial` — when false, partial-repay
    *  attempts revert with `PartialRepayNotAllowed`. */
   allowsPartialRepay: boolean;
+  /** #408 / #784 — term-interest mode snapshotted from the source offer at
+   *  loan init (`LoanFacet:942`). `true` = full-term interest floor; `false` =
+   *  pro-rata. Returned by `getLoanDetails` (full `Loan` struct), surfaced for
+   *  the #784 risk disclosure on the preclose-offset offer-creation flow. */
+  useFullTermInterest: boolean;
   /** Per-tier liquidation threshold snapshotted onto the loan at
    *  `initiateLoan`. PR2 of internal-match work
    *  (`docs/DesignsAndPlans/InternalLiquidationLedger.md`). Read

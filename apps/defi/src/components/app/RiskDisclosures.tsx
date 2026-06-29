@@ -55,20 +55,28 @@ export function RiskConsentLabel() {
  * `fullTermInterest` (#784) tailors an extra term-interest line to the specific
  * offer: `true` → the borrower owes the FULL-TERM interest even on early repay;
  * `false` → interest is pro-rata to time elapsed; `undefined` → omit the line
- * (for non-offer surfaces like LenderEarlyWithdrawal). Sourced from the offer's
- * `useFullTermInterest` (default `true`), never hardcoded.
+ * (for non-offer surfaces like LenderEarlyWithdrawal). `allowsPartialRepay`
+ * refines the full-term wording: when partial repay is enabled, paying down
+ * principal early DOES lower future interest on the reduced balance, so the copy
+ * must not claim early repayment can never reduce interest (Codex P2). Both are
+ * sourced from the offer/loan (`useFullTermInterest` defaults `true`), never
+ * hardcoded.
  */
 export function RiskDisclosures({
   fullTermInterest,
+  allowsPartialRepay,
 }: {
   fullTermInterest?: boolean;
+  allowsPartialRepay?: boolean;
 }) {
   const { t, i18n } = useTranslation();
   const [showOriginal, setShowOriginal] = useState(false);
   const isEnglish = i18n.resolvedLanguage === 'en';
   const termInterestKey =
     fullTermInterest === true
-      ? 'riskDisclosures.fullTermInterest'
+      ? allowsPartialRepay === true
+        ? 'riskDisclosures.fullTermInterestPartial'
+        : 'riskDisclosures.fullTermInterest'
       : fullTermInterest === false
         ? 'riskDisclosures.proRataInterest'
         : null;

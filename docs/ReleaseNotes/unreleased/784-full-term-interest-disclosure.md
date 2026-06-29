@@ -9,6 +9,14 @@ specific offer:
   loan is repaid early** — repaying early does not reduce the interest owed.
 - For an offer that opted into **pro-rata** interest, it says interest accrues
   only for the time the loan is actually outstanding.
+- For a full-term offer that **also allows partial repayment**, the wording is
+  qualified: paying down principal early does lower the future interest on the
+  reduced balance, while the full-term amount still applies to whatever principal
+  remains — so borrowers aren't told early repayment can never reduce interest
+  when partial repay is enabled.
+
+The same disclosure now also appears on the borrower-initiated **preclose-offset**
+flow, which creates a replacement lender offer inheriting the loan's interest mode.
 
 The wording is tailored to the actual interest mode of the offer in front of the
 user (sourced from the offer's term-interest setting, not hardcoded), so the
