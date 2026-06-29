@@ -106,6 +106,7 @@ Before signing, show whether the flow is currently possible:
 - wallet has enough token balance
 - allowance/Permit2 readiness
 - collateral is enough for required safety
+- progressive risk-access requirements pass where that gate is enabled, including vault tier, fresh tier anchor, and required per-pair acknowledgement
 - sanctions/Terms gate status
 - asset liquidity class and default consequence
 - protocol pause or asset pause status
@@ -181,7 +182,7 @@ Recommended shape:
 1. User selects `Earn by lending`.
 2. User chooses asset, amount, desired return, duration, and accepted collateral.
 3. App shows borrower-side collateral requirement in plain words.
-4. App warns when collateral is illiquid or cannot be liquidated by price.
+4. App warns when collateral is illiquid, cannot be liquidated by price, or may fall back to in-kind collateral recovery if a liquid-collateral liquidation cannot execute safely.
 5. App shows expected earning and protocol fee separately.
 6. User posts offer or funds a borrower offer.
 7. App routes to active offer or Loan Details.

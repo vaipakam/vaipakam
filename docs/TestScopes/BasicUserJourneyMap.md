@@ -180,7 +180,7 @@ The user wants to make funds available for borrowers.
 
 ## Journey N1: NFT Owner Rents Out An NFT
 
-Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-043, PF-140, PF-141, PF-142, PF-143.
+Flow IDs: PF-001, PF-002, PF-003, PF-004, PF-042, PF-043, PF-140, PF-141, PF-142, PF-143, PF-112.
 
 ### User goal
 
@@ -198,13 +198,15 @@ The user owns a rentable NFT and wants to earn rental fees.
 7. User signs.
 8. App shows active rental offer.
 9. When renter accepts, Loan Details shows rental state and daily fee status.
-10. On normal close, lender reclaims NFT and earned fees.
+10. On normal close, renter rights reset and the lender claim becomes available.
+11. Lender claims through Claim Center or Loan Details to receive earned fees and reclaim the vaulted NFT.
 
 ### Acceptance checks
 
 - The app does not describe NFT rental as a debt loan.
 - Ownership vs temporary user rights is clear before signing.
 - The configured rental buffer is shown as prepay protection, not hidden in fees.
+- Normal rental close and lender claim are separate states/actions.
 
 ## Journey N2: User Rents An NFT
 
@@ -263,7 +265,7 @@ The user already has a loan and wants to know what to do.
 
 ## Journey M2: Borrower Handles A Risky Loan
 
-Flow IDs: PF-024, PF-160, PF-180, PF-182.
+Flow IDs: PF-024, PF-160, PF-180.
 
 ### User goal
 
@@ -309,11 +311,11 @@ The user wants to collect money, collateral, NFT, surplus, or rewards.
 
 ## Journey V1: Optional VPFI Fee Discount
 
-Flow IDs: PF-250, PF-251, PF-252, PF-253, PF-254, PF-259.
+Flow IDs: PF-250, PF-251, PF-252, PF-259.
 
 ### User goal
 
-The user wants to reduce Vaipakam protocol fees, not learn token mechanics.
+The user wants to set up optional VPFI fee-discount eligibility, not prove settlement economics or learn token mechanics.
 
 ### Screen sequence
 
@@ -325,6 +327,8 @@ The user wants to reduce Vaipakam protocol fees, not learn token mechanics.
 6. App shows current tier and whether it is active or pending.
 7. User can withdraw free VPFI later from the VPFI Vault, with a warning about fee impact.
 8. Claim Center shows interaction rewards separately.
+
+Settlement economics such as lender yield-fee discount and borrower LIF rebate are covered by borrow/lend settlement journeys, not this vault-only setup journey.
 
 ### Acceptance checks
 
