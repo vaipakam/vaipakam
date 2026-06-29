@@ -8,9 +8,13 @@ When the connected wallet is the loan's borrower, the loan has auto-refinance ca
 enabled, and the loan is within the final 24 hours before it enters its grace
 period, a prominent banner appears near the loan title. It explains that
 auto-refinance is best-effort — if no compatible lender offer is matched before
-grace expires, the loan will default — states how many hours remain and the
-deadline, and offers two shortcuts: jump to the refinance-caps editor (to widen
-the caps if the market has moved) or open the repay flow directly.
+grace expires, the loan will default — states how many hours remain until grace
+begins, and makes clear repayment is accepted until the grace period itself
+expires (not merely until maturity). It offers two shortcuts: jump to the
+refinance-caps editor (to widen the caps if the market has moved) or open the
+repay flow directly. The banner reflects a caps enable/disable immediately, and
+the repay shortcut only appears when the repay action is actually available to
+the connected wallet.
 
 This mirrors the existing keeper-side pre-grace notification so the warning reaches
 anyone who opens the page, not only notification subscribers. It is advisory and

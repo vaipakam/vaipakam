@@ -135,6 +135,9 @@ export default function LoanDetails() {
   // relying on it should be warned in-page (mirroring the keeper #532 notify)
   // when the loan is within 24h of its end without a match.
   const [autoRefiCapsEnabled, setAutoRefiCapsEnabled] = useState(false);
+  // #545 — bumped by the caps card's onCapsChanged so the banner re-reads
+  // `getAutoRefinanceCaps` the moment the borrower enables/disables caps.
+  const [capsRefreshTick, setCapsRefreshTick] = useState(0);
 
   // Live LTV / Health Factor from RiskFacet. Both scale to 1e18 on-chain.
   const [ltv, setLtv] = useState<bigint | null>(null);
@@ -251,7 +254,7 @@ export default function LoanDetails() {
     return () => {
       cancelled = true;
     };
-  }, [diamondReadOnly, loanId, isBorrower, isInPreGraceWindow]);
+  }, [diamondReadOnly, loanId, isBorrower, isInPreGraceWindow, capsRefreshTick]);
 
   // The banner shows only to the borrower, for an auto-refinance-capped loan,
   // inside the pre-grace window.
@@ -693,18 +696,24 @@ export default function LoanDetails() {
               >
                 {t('loanDetails.preGraceWarning.tightenCaps')}
               </button>
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={() => {
-                  document
-                    .getElementById('loan-actions-card')
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                  setRepayConfirming(true);
-                }}
-              >
-                {t('loanDetails.preGraceWarning.repayNow')}
-              </button>
+              {/* #545 (Codex P3) — only show "Repay now" when the repay
+                  actions card actually renders. A wallet holding BOTH position
+                  NFTs resolves as lender (repay hidden), so this CTA would
+                  otherwise scroll to a missing card and do nothing. */}
+              {availability.repay && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => {
+                    document
+                      .getElementById('loan-actions-card')
+                      ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    setRepayConfirming(true);
+                  }}
+                >
+                  {t('loanDetails.preGraceWarning.repayNow')}
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -800,6 +809,9 @@ export default function LoanDetails() {
             Number(loan.collateralAssetType) === AssetType.ERC721 ||
             Number(loan.collateralAssetType) === AssetType.ERC1155
           }
+          // #545 — re-read the banner's caps state on save so an
+          // enable/disable in the last-24h reflects immediately.
+          onCapsChanged={() => setCapsRefreshTick((tick) => tick + 1)}
         />
         </div>
       )}

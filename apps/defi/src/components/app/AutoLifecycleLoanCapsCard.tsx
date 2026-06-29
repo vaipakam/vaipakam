@@ -29,6 +29,10 @@ interface Props {
    *  100%. The card surfaces a stark warning before enabling caps
    *  so the user consciously consents to that tail-risk. */
   collateralIsNft?: boolean;
+  /** #545 — fired after the borrower saves their refinance caps, so a parent
+   *  (the LoanDetails pre-grace banner) can re-read `getAutoRefinanceCaps` and
+   *  reflect an enable/disable immediately instead of waiting for a reload. */
+  onCapsChanged?: () => void;
 }
 
 /** Format unix-seconds to "yyyy-mm-dd" for the date input. */
@@ -81,6 +85,7 @@ export default function AutoLifecycleLoanCapsCard({
   isBorrower,
   isLender,
   collateralIsNft = false,
+  onCapsChanged,
 }: Props) {
   const { t } = useTranslation();
   const diamond = useDiamondContract();
@@ -153,7 +158,10 @@ export default function AutoLifecycleLoanCapsCard({
           loanId={loanId}
           current={refinanceCaps}
           diamond={diamond}
-          onSaved={() => void reload()}
+          onSaved={() => {
+            void reload();
+            onCapsChanged?.(); // #545 — let the LoanDetails banner re-read caps
+          }}
         />
       )}
 
