@@ -204,18 +204,19 @@ export default function LoanDetails() {
   };
   const isLender = !!loan && isHolder(lenderHolder);
   const isBorrower = !!loan && isHolder(borrowerHolder);
-  // #799 — the connected holder's keeper can't execute auto-lifecycle automation
-  // when their keeper master switch is off OR they've approved no keeper (LibAuth
-  // gates keeper actions on profile opt-in + a whitelisted keeper). When that's
-  // the case for the role(s) the user holds, an enabled cap is inert; the caps
-  // card surfaces it. `null` status (still loading / no Diamond) ⇒ stay quiet.
+  // #799 — the connected holder's keeper MASTER SWITCH being off is an
+  // unambiguous hard gate: LibAuth refuses every keeper action for a user whose
+  // profile opt-in is false, regardless of which keeper or action bits exist, so
+  // any auto-lifecycle cap they enable is definitively inert. We key the warning
+  // on exactly that (Codex #811 r1 P2): we deliberately do NOT infer inertness
+  // from `approvedCount` — a non-zero count doesn't prove an approved keeper
+  // holds the REFINANCE/EXTEND action bit, and the master switch being ON makes
+  // no false promise here (the per-keeper action detail lives in the keeper
+  // toggles on this same page). Scoped to the user's own held side(s); `null`
+  // status (still loading / no Diamond) ⇒ stay quiet.
   const keeperCannotActForUser =
-    (isBorrower &&
-      keeperBorrowerStatus != null &&
-      (!keeperBorrowerStatus.profileOptIn || keeperBorrowerStatus.approvedCount === 0)) ||
-    (isLender &&
-      keeperLenderStatus != null &&
-      (!keeperLenderStatus.profileOptIn || keeperLenderStatus.approvedCount === 0));
+    (isBorrower && keeperBorrowerStatus?.profileOptIn === false) ||
+    (isLender && keeperLenderStatus?.profileOptIn === false);
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;
