@@ -220,14 +220,19 @@ export default function LoanDetails() {
   // bit AND is enabled for this loan — that finer detail lives in the per-keeper
   // toggles on this page), and we do NOT gate on the LENDER's keeper, since the
   // lender's extend-caps are only their consent surface, not the execution gate.
-  // We DO additionally gate on the global delegated-keeper pause (Codex #811
-  // r3): when governance pauses keepers, `requireKeeperFor` rejects every
-  // keeper-driven refinance/extend even with the borrower's switch on, so the
-  // cap is inert — exactly when the borrower needs to know. Only the borrower
-  // holder is warned; `null` status (loading / no Diamond) ⇒ stay quiet.
+  // Two distinct gates, with distinct audiences (Codex #811 r3/r4):
+  //  - The BORROWER's master switch off → blocks the borrower-side execution of
+  //    auto-refinance AND auto-extend, so it makes the BORROWER's caps inert.
+  //    Lender-side: a lender's own switch is NOT a gate (auto-extend executes
+  //    against the borrower side), so we don't warn a lender on their own switch.
+  //  - The GLOBAL delegated-keeper pause → `requireKeeperFor` rejects EVERY
+  //    keeper-driven call, so it makes ANY enabled cap inert — including the
+  //    lender's enabled auto-extend cap. So the global-pause warning must reach
+  //    BOTH the borrower and lender holders.
+  // `null` status (loading / no Diamond) ⇒ stay quiet.
   const keeperCannotActForUser =
-    isBorrower &&
-    (keeperBorrowerStatus?.profileOptIn === false || keepersPaused === true);
+    (isBorrower && keeperBorrowerStatus?.profileOptIn === false) ||
+    ((isBorrower || isLender) && keepersPaused === true);
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;

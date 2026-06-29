@@ -17,7 +17,9 @@ What changed:
   keeper-dependent part. So capital may sit idle, deploy, or stop rolling, and
   the lender stays responsible for monitoring. The card already surfaced the
   fill-path and keeper-access kill-switch banners; this adds the standing
-  best-effort framing.
+  best-effort framing, plus a banner for the live global delegated-keeper pause
+  (auto-roll + keeper-restricted fills suspended while paused; open intents stay
+  fillable by any solver).
 - **Auto-lifecycle caps card** — the best-effort warning is now **persistent
   while a cap is active**, not just shown during the false→true enable
   transition (it previously disappeared on save). It is keyed on the saved
@@ -32,10 +34,13 @@ What changed:
   every keeper call while paused), the card warns that any enabled cap is inert
   until keeper automation can run again: the master switch on, a keeper approved
   with the right permissions, AND that keeper enabled for this specific loan via
-  the per-loan toggles (and a global pause lifted by governance). The lender's
-  keeper is not treated as a blocker (the lender's extend-caps are only their
-  consent surface), and the warning does not infer inertness from the
-  approved-keeper count.
+  the per-loan toggles (and a global pause lifted by governance). The two gates
+  have different audiences: the master-switch case warns only the borrower
+  holder, but the global-pause case warns BOTH the borrower and the lender
+  holder, since a global pause makes a lender's own enabled auto-extend cap
+  equally inert. The lender's own keeper switch is not treated as a blocker (the
+  lender's extend-caps are only their consent surface), and the warning does not
+  infer inertness from the approved-keeper count.
 
 New component tests cover the keeper-unavailable warning (both directions) and
 the persistent best-effort warning while a saved cap is enabled.
