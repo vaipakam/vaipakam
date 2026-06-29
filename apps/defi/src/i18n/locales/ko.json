@@ -485,7 +485,6 @@
   "rewardsSummary": {
     "title": "내 VPFI 보상",
     "totalEarnedLabel": "총 획득액",
-    "stakingSubtitle": "Vault에 있는 VPFI에서 프로토콜 APR을 획득합니다.",
     "interactionTitle": "플랫폼 상호작용 보상",
     "interactionSubtitle": "참여하는 모든 대출에 대해 매일 VPFI 지분을 획득합니다.",
     "pendingLabel": "대기 중",

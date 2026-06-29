@@ -485,7 +485,6 @@
   "rewardsSummary": {
     "title": "您的 VPFI 奖励",
     "totalEarnedLabel": "总收益",
-    "stakingSubtitle": "在您Vault中的 VPFI 上赚取协议 APR。",
     "interactionTitle": "平台交互奖励",
     "interactionSubtitle": "为您参与的每笔贷款赚取每日 VPFI 份额。",
     "pendingLabel": "待领取",

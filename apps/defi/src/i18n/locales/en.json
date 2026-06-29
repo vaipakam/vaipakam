@@ -1244,7 +1244,6 @@
     "title": "Your VPFI rewards",
     "totalEarnedLabel": "Total earned",
     "freshUserHint": "You haven't earned any VPFI rewards yet. Deposit VPFI in your vault to unlock fee discounts, or take a loan to start accruing platform-interaction rewards.",
-    "stakingSubtitle": "Earn the protocol APR on VPFI sitting in your vault.",
     "interactionTitle": "Platform-interaction rewards",
     "interactionSubtitle": "Earn a daily VPFI share for every loan you participate in.",
     "pendingLabel": "Pending",
@@ -1760,7 +1759,7 @@
       },
       "chains": {
         "q": "Which blockchains are supported?",
-        "a1": "Phase 1 targets <s>Base</s>, <s>Polygon</s>, <s>Arbitrum</s>, <s>Optimism</s>, and <s>Ethereum mainnet</s>. Base is the canonical chain for VPFI (where the token is minted and the fixed-price buy lives), but the in-app Buy VPFI page works from every supported chain — it auto-selects a direct buy on Base, or a CCIP-bridged buy from any mirror chain, so the user never has to switch networks just to top up.",
+        "a1": "Phase 1 targets <s>Base</s>, <s>Polygon</s>, <s>Arbitrum</s>, <s>Optimism</s>, and <s>Ethereum mainnet</s>. Base is the canonical chain for VPFI — where the token is minted and your fee-discount tier is settled. There is no protocol VPFI sale: you acquire VPFI on the open market or bridge it yourself, then use the in-app VPFI Vault on any supported chain to deposit and hold it for fee discounts, so you never have to switch networks just to manage your balance.",
         "a2": "The live deployment today is <s>Sepolia</s> while additional chains are being rolled out. All aspects of a single loan must occur on the same network."
       },
       "sequencer": {

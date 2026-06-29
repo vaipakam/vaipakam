@@ -69,9 +69,9 @@
     "security": "பாதுகாப்பு",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI பற்றி அறிக",
-    "vpfiStakeUnstake": "Stake / Unstake",
-    "vpfiStake": "Stake",
-    "vpfiUnstake": "Unstake",
+    "vpfiStakeUnstake": "Deposit / Withdraw",
+    "vpfiStake": "Deposit",
+    "vpfiUnstake": "Withdraw",
     "launchApp": "Vaipakam-ஐத் திற",
     "toggleMenu": "மெனுவைத் திற / மூடு",
     "switchNetwork": "நெட்வொர்க் மாற்றவும்",
@@ -1177,10 +1177,10 @@
     "durationMins": "{{mins}}நி",
     "durationSecs": "{{seconds}}வி",
     "consentMissingTitle": "Discount tier முடக்கப்பட்டுள்ளது",
-    "consentMissingBody": "இந்த loan-இல் fee discounts-க்காக staked / deposited VPFI பயன்படுத்த நீங்கள் consent அளிக்கவில்லை. Discount tier opt-in — Dashboard-இல் அதை enable செய்யும் வரை settlement நேரத்தில் yield-fee முழு {{treasuryFee}}% ஆக வசூலிக்கப்படும்; VPFI rebate இருக்காது.",
+    "consentMissingBody": "இந்த loan-இல் fee discounts-க்காக deposited VPFI பயன்படுத்த நீங்கள் consent அளிக்கவில்லை. Discount tier opt-in — Dashboard-இல் அதை enable செய்யும் வரை settlement நேரத்தில் yield-fee முழு {{treasuryFee}}% ஆக வசூலிக்கப்படும்; VPFI rebate இருக்காது.",
     "consentMissingCta": "Dashboard-இல் Enable செய்",
     "consentEnabledNoVpfiTitle": "Consent enabled, தகுதியான VPFI இல்லை",
-    "consentEnabledNoVpfiBody": "நீங்கள் consent அளித்துள்ளீர்கள், ஆனால் இந்த செயினில் உங்கள் vault-வில் தற்போது தகுதியான staked / deposited VPFI இல்லை. Yield fee-யில் time-weighted discount ஈட்ட VPFI top up செய்யவும்."
+    "consentEnabledNoVpfiBody": "நீங்கள் consent அளித்துள்ளீர்கள், ஆனால் இந்த செயினில் உங்கள் vault-வில் தற்போது தகுதியான deposited VPFI இல்லை. Yield fee-யில் time-weighted discount ஈட்ட VPFI top up செய்யவும்."
   },
   "vpfiTokenCard": {
     "title": "VPFI டோக்கன் (இந்த செயின்)",

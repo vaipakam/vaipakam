@@ -202,7 +202,7 @@
     "buyVpfiOverview": "Acquire VPFI on the open market or bridge it in. VPFI is a Chainlink CCIP cross-chain token, so it moves between supported chains using the official bridge and lands in the wallet on the chain connected from — no chain switch required.",
     "buyVpfiDiscountStatus": "The active VPFI fee-discount tier on this chain. Tier is set by the vault VPFI balance: Tier 1 ≥{{tier1Min}}, Tier 2 ≥{{tier2Min}}, Tier 3 ≥{{tier3Min}}, Tier 4 >{{tier4Min}}. Discount only applies on liquid loans and only while the platform-level consent toggle on the Dashboard is on.",
     "buyVpfiDeposit": "Move VPFI from the wallet into the vault on this chain. Always an explicit user action: the protocol never auto-funds the vault. Required to qualify for fee discounts. Permit2 is used when available so a single signature replaces the approve + transfer pair.",
-    "buyVpfiUnstake": "Move VPFI from the vault back to the wallet on this chain. Reduces the discount tier in real time — the time-weighted accumulator re-stamps every open loan at the new (lower) balance immediately, so an unstake is effective for fee-discount math from this moment forward.",
+    "buyVpfiUnstake": "Move VPFI from the vault back to the wallet on this chain. Reduces the discount tier in real time — the time-weighted accumulator re-stamps every open loan at the new (lower) balance immediately, so a withdrawal is effective for fee-discount math from this moment forward.",
     "rewardsOverview": "The interaction-reward stream accrues on this chain: every USD of interest settled on a loan earns a daily share of the interaction pool. Rewards are minted directly on the current chain when claimed — no bridging.",
     "rewardsClaim": "Mints any pending interaction-reward VPFI into the wallet, on the current chain, in one transaction. The interaction pool finalizes daily — pending interaction rewards become claimable shortly after each settlement window closes.",
     "rewardsWithdrawStaked": "Move VPFI out of the vault back to the wallet. Withdrawn VPFI no longer counts toward the fee-discount tier — the time-weighted accumulator immediately re-stamps every open loan at the new (lower) balance.",
@@ -247,10 +247,10 @@
     "durationMins": "{{mins}}m",
     "durationSecs": "{{seconds}}s",
     "consentMissingTitle": "Discount tier disabled",
-    "consentMissingBody": "You haven't given consent to use staked / deposited VPFI for fee discounts on this loan. The discount tier is opt-in — until you enable it on the Dashboard, the yield-fee on settlement will be charged at the full {{treasuryFee}}% with no VPFI rebate.",
+    "consentMissingBody": "You haven't given consent to use deposited VPFI for fee discounts on this loan. The discount tier is opt-in — until you enable it on the Dashboard, the yield-fee on settlement will be charged at the full {{treasuryFee}}% with no VPFI rebate.",
     "consentMissingCta": "Enable on Dashboard",
     "consentEnabledNoVpfiTitle": "Consent enabled, no eligible VPFI",
-    "consentEnabledNoVpfiBody": "You've given consent, but no eligible VPFI is currently staked / deposited in your vault on this chain. Top up VPFI to start earning a time-weighted discount on the yield fee."
+    "consentEnabledNoVpfiBody": "You've given consent, but no eligible VPFI is currently deposited in your vault on this chain. Top up VPFI to start earning a time-weighted discount on the yield fee."
   },
   "vpfiTokenCard": {
     "title": "VPFI Token (this chain)",
@@ -264,7 +264,7 @@
     "notRegistered": "VPFI is not yet registered with the Diamond on {{chain}}. Once the admin calls setVPFIToken, balances and activity will appear here.",
     "walletBalance": "Wallet VPFI balance",
     "vaultBalance": "Vault VPFI balance",
-    "vaultTooltip": "VPFI currently staked in the Vaipakam Vault on this chain. Counts toward the borrower fee discount tier.",
+    "vaultTooltip": "VPFI currently held in the Vaipakam Vault on this chain. Counts toward the borrower fee discount tier.",
     "shareCirculating": "Share of circulating",
     "shareTooltip": "Effective ownership of this chain's VPFI supply — wallet balance plus vault-locked balance, divided by circulating. Vault VPFI is still owned by the user; it's just locked toward the fee-discount tier.",
     "circulatingThisChain": "Circulating (this chain)",
@@ -317,10 +317,10 @@
     "depositAmount": "VPFI amount to deposit",
     "useMaxVpfi": "Use max ({{amount}} VPFI)",
     "depositButton": "Deposit into Vault",
-    "unstakeTitle": "Unstake VPFI from vault",
+    "unstakeTitle": "Withdraw VPFI from vault",
     "unstakeSubtitle": "Move VPFI from the vault on {{chain}} back to the wallet. If the vault balance falls below a tier threshold, the discount tier drops too.",
-    "unstakeAmount": "VPFI amount to unstake",
-    "unstakeWarning": "Vault VPFI counts toward the borrower fee discount tier. Unstaking moves tokens back to the wallet — if the remaining vault balance drops below a tier threshold the discount drops with it on the next loan.",
+    "unstakeAmount": "VPFI amount to withdraw",
+    "unstakeWarning": "Vault VPFI counts toward the borrower fee discount tier. Withdrawing moves tokens back to the wallet — if the remaining vault balance drops below a tier threshold the discount drops with it on the next loan.",
     "unstakeButton": "Withdraw to wallet"
   },
   "alertsPage": {
@@ -549,9 +549,9 @@
     "vpfi": "VPFI",
     "vpfiLearn": "Learn about VPFI",
     "vpfiBuy": "VPFI",
-    "vpfiStakeUnstake": "Stake / Unstake",
-    "vpfiStake": "Stake",
-    "vpfiUnstake": "Unstake",
+    "vpfiStakeUnstake": "Deposit / Withdraw",
+    "vpfiStake": "Deposit",
+    "vpfiUnstake": "Withdraw",
     "launchApp": "Launch Vaipakam",
     "toggleMenu": "Toggle menu",
     "switchNetwork": "Switch Network",
@@ -832,7 +832,7 @@
   "buyVpfi": {
     "title": "VPFI",
     "preconnect": {
-      "tagline": "Stake VPFI in your vault to pay lower fees on every loan.",
+      "tagline": "Deposit VPFI in your vault to pay lower fees on every loan.",
       "whatTitle": "What is VPFI?",
       "whatBody1": "VPFI is Vaipakam's protocol token — acquire it on the open market or bridge it in, hold it in your Vaipakam Vault, and use it across the platform. No lockup period, freely transferable.",
       "whatBody2": "Holding VPFI in your vault ties you to the protocol's success in two practical ways: it earns you discounts on the fees Vaipakam charges (so you keep more of what you lend, and pay less when you borrow), and you earn a share of the daily interaction-reward pool for every loan you take part in.",
@@ -845,7 +845,7 @@
       "howBody": "Acquire VPFI on the open market or bridge it in, then deposit it into your vault to start earning the fee discount. Cross-chain routing is handled for you — VPFI lands on whichever chain you bridged to.",
       "analyticsHint": "Looking for protocol-wide stats and circulating supply? See the",
       "analyticsLink": "Analytics page",
-      "launchAppCta": "Launch Vaipakam to Stake / Unstake",
+      "launchAppCta": "Launch Vaipakam to Deposit / Withdraw",
       "launchAppHint": "Opens the app in a new tab. The deposit and withdraw controls live there once your wallet is connected."
     },
     "connectTitle": "Connect Your Wallet",
@@ -866,11 +866,11 @@
     "approvingVpfi": "Approving VPFI…",
     "depositToVault": "Deposit to vault",
     "depositing": "Depositing…",
-    "unstakeToWallet": "Unstake to wallet",
-    "unstaking": "Unstaking…",
+    "unstakeToWallet": "Withdraw to wallet",
+    "unstaking": "Withdrawing…",
     "buyFailed": "Buy failed",
     "depositFailed": "Deposit failed",
-    "unstakeFailed": "Unstake failed",
+    "unstakeFailed": "Withdrawal failed",
     "buyTimedOut": "Buy timed out — funds returned",
     "vaultBalanceZero": "Your Vaipakam Vault VPFI balance is 0 — deposit VPFI first."
   },
@@ -1735,7 +1735,7 @@
     },
     "buyVpfi": {
       "title": "VPFI — Vaipakam's Native Token",
-      "description": "Stake VPFI in your Vaipakam Vault to unlock up to 24% protocol-fee discounts and earn a share of the daily interaction-reward pool."
+      "description": "Deposit VPFI in your Vaipakam Vault to unlock up to 24% protocol-fee discounts and earn a share of the daily interaction-reward pool."
     },
     "discord": {
       "title": "Join the Vaipakam Discord — Community & Support",
