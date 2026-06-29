@@ -1159,6 +1159,16 @@ export default function AutoLendIntentCard({
             {t('autoLend.body')}
           </p>
 
+          {/* #799 — persistent best-effort disclosure: keeper fills and
+              auto-roll are NOT guaranteed. It stays visible at enablement and
+              while enabled (not just a one-shot banner) so a lender never reads
+              a registered intent as a promise that capital will be deployed or
+              rolled. */}
+          <div className="alert alert-warning" role="note" style={{ marginBottom: 10 }}>
+            <AlertTriangle size={14} />
+            <div>{t('autoLend.bestEffortNotice')}</div>
+          </div>
+
           {/* Fill-path kill-switch — registered intents won't fill yet. */}
           {fillPathEnabled === false && (
             <div className="alert alert-info" role="status" style={{ marginBottom: 10 }}>

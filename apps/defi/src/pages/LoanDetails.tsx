@@ -111,13 +111,14 @@ export default function LoanDetails() {
   const loadLoanAndLien = useCallback(async (): Promise<void> => {
     await Promise.all([loadLoan(), reloadLien()]);
   }, [loadLoan, reloadLien]);
-  // Per README §3 lines 190–191 keeper authority follows the current
-  // Phase 6: the old "whitelist-status" two-layer summary lived next to
-  // the per-side keeper bools on the loan struct. Both are gone; the new
-  // `LoanKeeperPicker` renders live per-keeper state directly so the
-  // useKeeperStatus hook is no longer consumed here. Kept the import
-  // path intact for potential future reuse on other surfaces.
-  useKeeperStatus(lenderHolder || null, borrowerHolder || null);
+  // Per README §3 lines 190–191 keeper authority follows the current NFT
+  // holder. The per-keeper toggles render live state directly; we ALSO consume
+  // the per-side master-switch summary here (#799) to tell the auto-lifecycle
+  // caps card whether the connected holder's keeper can actually act — an
+  // enabled auto-refinance / auto-extend cap is inert if its owner's keeper
+  // master switch is off or no keeper is approved.
+  const { lenderStatus: keeperLenderStatus, borrowerStatus: keeperBorrowerStatus } =
+    useKeeperStatus(lenderHolder || null, borrowerHolder || null);
   // Signer-connected ERC-20 contracts for the loan's principal / collateral
   // assets. Used to read decimals() and to approve the Diamond before repay
   // and add-collateral, which pull tokens via safeTransferFrom.
@@ -203,6 +204,18 @@ export default function LoanDetails() {
   };
   const isLender = !!loan && isHolder(lenderHolder);
   const isBorrower = !!loan && isHolder(borrowerHolder);
+  // #799 — the connected holder's keeper can't execute auto-lifecycle automation
+  // when their keeper master switch is off OR they've approved no keeper (LibAuth
+  // gates keeper actions on profile opt-in + a whitelisted keeper). When that's
+  // the case for the role(s) the user holds, an enabled cap is inert; the caps
+  // card surfaces it. `null` status (still loading / no Diamond) ⇒ stay quiet.
+  const keeperCannotActForUser =
+    (isBorrower &&
+      keeperBorrowerStatus != null &&
+      (!keeperBorrowerStatus.profileOptIn || keeperBorrowerStatus.approvedCount === 0)) ||
+    (isLender &&
+      keeperLenderStatus != null &&
+      (!keeperLenderStatus.profileOptIn || keeperLenderStatus.approvedCount === 0));
   const isActive = !!loan && Number(loan.status) === LoanStatus.Active;
   const isFallbackPending =
     !!loan && Number(loan.status) === LoanStatus.FallbackPending;
@@ -801,6 +814,9 @@ export default function LoanDetails() {
           loanId={BigInt(loanId ?? '0')}
           isBorrower={isBorrower}
           isLender={isLender}
+          // #799 — surface the keeper kill-switch state: when the holder's
+          // keeper can't act, an enabled cap can't fire and the card says so.
+          keeperCannotAct={keeperCannotActForUser}
           // T-092-B (#531) — NFT collateral has asymmetric default
           // outcome (full collateral transfer to lender on default,
           // no swap). The card surfaces a stark warning so the

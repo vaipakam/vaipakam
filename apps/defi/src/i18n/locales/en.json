@@ -483,6 +483,7 @@
     "body": "Pre-approve keeper-driven refinance and in-place extension on this loan. The protocol enforces these caps; outside them, the actions revert.",
     "nftCollateralWarning": "⚠️ This loan's collateral is an NFT. If no compatible refinance offer is found before the grace period ends, your NFT will transfer in full to the lender (no market swap, no surplus). Auto-refinance is best-effort, not a guarantee. Consider repaying directly instead.",
     "bestEffortWarning": "⚠️ Auto-refinance and auto-extend are best-effort. If no compatible counterparty consent is found before this loan's grace period ends, the loan may be liquidated. You remain responsible for monitoring and repaying manually if needed.",
+    "keeperOffWarning": "⚠️ Your keeper access is currently off (the master keeper switch is disabled, or no keeper is approved). Auto-refinance and auto-extend are keeper-executed, so any cap you enable here cannot fire until you turn keeper access on and approve a keeper at Keeper Settings. Until then, monitor and repay manually.",
     "preGraceWarning": "⚠️ This loan enters its grace period in ~{{hours}}h. Auto-refinance is best-effort — if no compatible lender offer is matched before grace expires, your loan will default. Repay manually or tighten your refinance caps if the market has moved.",
     "refinanceTitle": "Refinance offer posting (borrower side)",
     "refinanceHint": "When enabled, the dapp may post a refinance-tagged borrower offer on your behalf, and a keeper may then refinance this loan if a matching lender offer fits below your rate ceiling and within your expiry cap. If no compatible offer is found before grace, your loan defaults — review T-092-C pre-grace warnings.",
@@ -517,6 +518,7 @@
   "autoLend": {
     "title": "Auto-lend (standing intent)",
     "body": "Register a standing lend intent on an asset pair and fund working capital. The protocol keeper fills matching borrower demand under your bounds and — once you delegate it — auto-rolls fully-repaid loans straight back into your capital, with no manual claim round-trip. You stay in control: pause, top up, or withdraw any time.",
+    "bestEffortNotice": "Best-effort, not guaranteed: fills and auto-roll depend on matching borrower demand within your bounds and an enabled, funded protocol keeper. There is no guarantee your capital is deployed, kept deployed, or rolled — it may sit idle, and an in-flight loan still follows its own terms. Monitor your positions; pause, top up, or withdraw any time.",
     "fillPathOff": "Intent filling is paused by admin on this chain. You can register and fund now; the keeper starts filling automatically once it's re-enabled.",
     "activeSummary": "Active intent — {{capital}} working capital funded.",
     "consentRevokedTag": "consent marker revoked (this intent is still active & fillable — use Withdraw & stop to fully stop it)",
