@@ -128,15 +128,18 @@ recompute or re-read the current effective tier at admission:
 
 - direct offer acceptance;
 - keeper-driven matching;
+- lender-intent fills such as `matchIntent`;
 - refinance / preclose replacement flows that create new exposure;
 - lender-sale buyer admission;
 - obligation-transfer incoming borrower admission.
 
 If the current effective tier is lower than the offer creation-time effective
 tier, the transaction must fail before value moves, even when the lower tier
-would still satisfy the numeric LTV cap. If the current risk-config epoch differs
-from the offer creation-time epoch, the transaction must also fail unless the
-changed parameter is explicitly marked fill-compatible by governance. A stale
+would still satisfy the numeric LTV cap. Risk-config compatibility must be
+cumulative over the full interval from offer creation to fill: an offer may fill
+only if every intervening risk-config change is fill-compatible, or if the
+current config exposes a `fillCompatibleFromEpoch` floor that is less than or
+equal to the offer creation-time epoch. A stale
 offer must not be auto-rerouted into the explicit illiquid-consent path, because
 the original terms were calibrated against the higher liquid/tiered assumption.
 The user must re-author or re-accept fresh terms that explicitly reflect the
@@ -159,9 +162,14 @@ assumptions:
 - concrete winning route identity or route hash, including pool address,
   factory, fee tier, quote asset, and path hops;
 - timestamp or block of the tier read;
-- risk-terms version / config epoch, with admission rejection when the
-  current epoch differs unless governance has marked the changed parameters
-  fill-compatible.
+- risk-terms version / config epoch, with cumulative admission rejection when
+  any intervening risk-config epoch is not fill-compatible, or when the current
+  `fillCompatibleFromEpoch` floor is newer than the offer creation-time epoch;
+
+Signed off-chain offers must bind the same creation-time risk snapshot in the
+EIP-712 payload. If the existing typed data cannot carry these fields, old
+signed offers must be invalidated on every non-fill-compatible risk-config
+change and whenever the effective tier falls below the signed creation tier.
 
 Each admitted loan should also store the risk state used at admission:
 
@@ -177,11 +185,13 @@ Each admitted loan should also store the risk state used at admission:
 
 These snapshots should not freeze future liquidation behavior in an unsafe way.
 They are audit trails and terms records. Live liquidations and rescue paths still
-use current prices, current route safety, and current effective tier. If a live
-loan admitted at a higher tier later demotes, the current tier must lower the
-live liquidation threshold/discount-path treatment or force the loan into a
-safe-mode handling path; admission snapshots must never keep a more permissive
-liquidation trigger alive after liquidity confidence has fallen.
+use current prices and current route safety. A post-admission demotion must not
+make an otherwise healthy borrower liquidatable solely by lowering the loan's
+admitted liquidation threshold. Instead, demotion should block new admissions,
+block or tighten unsafe discount/swap liquidation paths that depend on the old
+depth assumption, and route affected open loans into an explicit safe-mode or
+rescue treatment. The admitted liquidation threshold remains in force unless a
+separate borrower-protective safe-mode rule is explicitly defined.
 
 ### 6. New Assets Start At Tier 0
 
@@ -314,10 +324,14 @@ conservative legacy admission path.
 
 ### Phase 3: Protocol Admission Enforcement
 
-- Re-read effective tier at every live-loan admission path.
-- Store offer creation-time risk snapshots and fail stale tiered offers whose
-  current effective tier is lower than the creation-time tier or whose risk
-  epoch is no longer fill-compatible.
+- Re-read effective tier at every live-loan admission path, including direct
+  accepts, signed-offer fills, keeper matches, lender-intent fills, refinance
+  / preclose replacements, lender-sale buyers, and obligation-transfer incoming
+  borrowers.
+- Store offer creation-time risk snapshots, bind the same snapshot into signed
+  offer typed data or invalidate old signed offers, and fail stale tiered offers
+  whose current effective tier is lower than the creation-time tier or whose
+  cumulative risk-config interval is no longer fill-compatible.
 - Store loan risk snapshots with exact route identity/hashes.
 - Enforce per-asset and per-loan caps tied to measured depth for every tier.
 - Add governance-bounded configuration for observation windows, TTLs, exact
@@ -334,9 +348,11 @@ conservative legacy admission path.
 - Test stale promoted keeper confidence expiring without fresh observations.
 - Test token behavior rejection and post-admission monitoring for fee-on-transfer,
   blacklist, pause, upgrade, and tax changes where practical.
-- Test risk-config epoch changes making old offers stale.
-- Test live-loan demotion lowering current liquidation treatment or entering
-  safe-mode handling.
+- Test cumulative risk-config epoch changes making old offers stale, including
+  incompatible-then-compatible epoch sequences.
+- Test live-loan demotion preserving borrower liquidation thresholds while
+  blocking unsafe old-depth liquidation/discount paths or entering safe-mode
+  handling.
 
 ## Open Questions
 
@@ -351,8 +367,9 @@ conservative legacy admission path.
 
 - A short-lived spoofed pool cannot immediately grant high-tier collateral
   treatment.
-- Any loan-creating path revalidates effective liquidity and risk-config epoch
-  compatibility before value moves.
+- Any loan-creating path, including signed-offer and lender-intent fills,
+  revalidates effective liquidity and cumulative risk-config compatibility
+  before value moves.
 - Any liquidity demotion after offer creation blocks stale offers from becoming
   live loans under old assumptions, even when lower-tier LTV would pass.
 - Unobserved assets and expired keeper observations receive no durable-liquidity
@@ -364,4 +381,5 @@ conservative legacy admission path.
 - Users and operators can see why an asset is confidence-limited, stale,
   epoch-incompatible, or demoted.
 - Tests cover temporary depth, pool withdrawal, concentrated liquidity, keeper
-  outage, stale-offer acceptance, risk-epoch changes, and live-loan demotion.
+  outage, stale-offer acceptance, signed-offer risk binding, lender-intent fills,
+  cumulative risk-epoch changes, and live-loan demotion.
