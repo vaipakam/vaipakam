@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
+import {LibFacet} from "./LibFacet.sol";
 
 /**
  * @title  LibSanctionedLock
@@ -70,6 +71,31 @@ library LibSanctionedLock {
         s.sanctionedDepositExemptUser = address(0);
         if (LibVaipakam.isSanctionedAddress(recipient)) {
             emit SanctionedProceedsLocked(loanId, recipient, asset, amount);
+        }
+    }
+
+    /// @dev Drop-in replacement for `LibFacet.getOrCreateVault(owner)` at a
+    ///      wind-down close-out settlement site that resolves a loan party's
+    ///      vault and then `safeTransfer`s + `recordVaultDeposit`s their share
+    ///      (default / liquidation / cancel). Pins the receive-side exemption
+    ///      around the resolution so a flagged `owner`'s EXISTING vault resolves
+    ///      (instead of bricking the close-out), then emits the lock event when
+    ///      `owner` is flagged AND a non-zero amount is being parked. The lock
+    ///      is enforced by the claim-side stored-owner screen (see
+    ///      `ClaimFacet`). `loanId` is the loan (or, for an offer-cancel refund,
+    ///      the offer id cast to uint256) for the audit trail.
+    function getOrCreateVaultLocked(
+        LibVaipakam.Storage storage s,
+        address owner,
+        uint256 loanId,
+        address asset,
+        uint256 amount
+    ) internal returns (address vault) {
+        s.sanctionedDepositExemptUser = owner;
+        vault = LibFacet.getOrCreateVault(owner);
+        s.sanctionedDepositExemptUser = address(0);
+        if (amount > 0 && LibVaipakam.isSanctionedAddress(owner)) {
+            emit SanctionedProceedsLocked(loanId, owner, asset, amount);
         }
     }
 }

@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -294,7 +295,12 @@ contract RiskSplitLiquidationFacet is
             IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        // #821 — vault-lock: resolve the lender's vault through the receive-side
+        // exemption so a flagged stored lender doesn't brick the liquidation;
+        // the proceeds park locked behind the claim-side freeze.
+        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
             LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
@@ -315,7 +321,9 @@ contract RiskSplitLiquidationFacet is
             );
         }
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            address borrowerVault = LibSanctionedLock.getOrCreateVaultLocked(
+                s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
+            );
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
             // #661 — reserve a VPFI surplus against the unstake path until the

@@ -8,6 +8,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -860,8 +861,11 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
 
-        // Lender's proceeds deposited into lender's vault for claim
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        // Lender's proceeds deposited into lender's vault for claim. #821 —
+        // vault-lock so a flagged stored lender doesn't brick the liquidation.
+        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
             // T-051 — Diamond-side transfer to vault ticks the
@@ -889,7 +893,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
+            address borrowerVault = LibSanctionedLock.getOrCreateVaultLocked(
+                s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
+            );
             IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
             LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
             // #661 — reserve a VPFI surplus against the unstake path until the
@@ -1245,7 +1251,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // claim flow runs at proper close / full liquidation / default).
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
         if (lenderProceeds > 0) {
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+            address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+                s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+            );
             IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
             LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
         }
@@ -1559,8 +1567,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryInterestFee);
         }
 
-        // Lender's proceeds to their vault.
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+        // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
+        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
         if (lenderProceeds > 0) {
             IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
             LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
