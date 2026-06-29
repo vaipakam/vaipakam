@@ -274,14 +274,6 @@ gate-disabled — a route-gate bypass.)
   is a held-proceeds escrow on these paths (mirroring the consolidation-move-out
   exemption) so the close-out completes and the flagged recipient's share waits
   behind a Tier-1 claim. Tracked under #821.
-- **Terms-gate read-failure now fails CLOSED (#822, fixed).** The Terms gate has
-  no on-chain per-action backstop (it is a dapp routing gate), so it must fail
-  closed. `useTosAcceptance` now gates `hasAccepted` on a `readOk` flag (true only
-  after a successful read) and resets `currentVersion = 0` on a read error, and
-  `LegalGate` renders a neutral loading state while loading and a retry state on a
-  failed read — passing the gated routes through only after a successful read. The
-  prior loading/read-failure fail-open bypass is closed (moved to Resolved in
-  `_CodeVsDocsAudit.md`).
 - **UI submit-disable on the flagged signal.** Pages warn via `SanctionsBanner`
   but do not yet disable their submit buttons on `useSanctionsCheck().isSanctioned`;
   wiring that (so the app never offers a clickable Tier-1 action to a flagged

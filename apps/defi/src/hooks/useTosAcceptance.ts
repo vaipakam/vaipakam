@@ -74,9 +74,22 @@ export function useTosAcceptance(): TosAcceptanceState {
   const [readOk, setReadOk] = useState(false);
 
   const reload = useCallback(async () => {
-    if (!diamondAddress) return;
+    // #828 r1 — reset the success flag on every (re)load so that when the
+    // connected wallet or read chain changes, the gate can't keep reporting the
+    // PREVIOUS wallet's acceptance until the new read lands; it holds closed
+    // (verifying) during the transition.
+    setReadOk(false);
     setLoading(true);
     setError(null);
+    // #828 r1 — no diamond deployed on this chain ⇒ there is no on-chain Terms
+    // gate to enforce. Treat as gate-disabled (pass through) rather than leaving
+    // `loading` true forever, which would pin the gate on its "verifying" state.
+    if (!diamondAddress) {
+      setCurrentVersion(0);
+      setReadOk(true);
+      setLoading(false);
+      return;
+    }
     try {
       const [curr, user] = await Promise.all([
         publicClient.readContract({
