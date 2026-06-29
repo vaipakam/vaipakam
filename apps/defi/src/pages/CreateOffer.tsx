@@ -256,14 +256,14 @@ export default function CreateOffer() {
   // expected-illiquid — the cross-chain "thin here" warning only makes
   // sense for an ERC-20 we'd expect to be liquid but isn't on this
   // chain). Drives the warning banner below.
+  // #796 — drives the in-kind disclosure + submit gate. The default swap-vs-
+  // in-kind decision is COLLATERAL-driven on-chain (`DefaultedFacet.triggerDefault`
+  // routes on `checkLiquidityOnActiveNetwork(loan.collateralAsset)`), so only the
+  // collateral's live liquidity matters here — an illiquid lending leg does NOT
+  // force in-kind when the collateral is liquid (Codex r4 P2, superseding the r2
+  // lending-leg read which has been removed).
   const collateralLiquidityStatus = useAssetLiquidity(
     form.collateralAssetType === "erc20" ? form.collateralAsset || null : null,
-  );
-  // #796 (Codex r2 P2) — an illiquid ERC-20 LENDING leg also drops the loan to
-  // the full-collateral-in-kind default path, so read its liquidity too and
-  // feed it into the in-kind disclosure + the submit gate below.
-  const lendingLiquidityStatus = useAssetLiquidity(
-    form.assetType === "erc20" ? form.lendingAsset || null : null,
   );
 
   useEffect(() => {
@@ -327,11 +327,10 @@ export default function CreateOffer() {
   // binding disclosure text changed off-screen — force a fresh acknowledgement
   // by clearing consent. The ref seeds to the initial signature so mount is a
   // no-op; only a real post-mount change clears.
-  // #796 (Codex r1 P2 + r2 P2) — also key on BOTH legs' liquidity status: an
-  // ERC-20 collateral OR lending asset that resolves to `illiquid` flips the
-  // in-kind disclosure on, so a consent ticked before the async reads resolved
-  // must re-prompt.
-  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}|${collateralLiquidityStatus}|${lendingLiquidityStatus}`;
+  // #796 (Codex r1 P2) — also key on the collateral's liquidity status: an
+  // ERC-20 collateral that resolves to `illiquid` flips the in-kind disclosure
+  // on, so a consent ticked before the async read resolved must re-prompt.
+  const disclosureSig = `${form.assetType}|${form.useFullTermInterest}|${form.allowsPartialRepay}|${form.collateralAssetType}|${collateralLiquidityStatus}`;
   const disclosureSigRef = useRef(disclosureSig);
   useEffect(() => {
     if (disclosureSigRef.current === disclosureSig) return;
@@ -551,16 +550,13 @@ export default function CreateOffer() {
 
     // #796 (Codex #809 r3 P2) — mirror the button's `liquidityPending` block
     // here too: an Enter keypress / programmatic submit could otherwise fire
-    // `onSubmit` while an ERC-20 leg's liquidity read is still `loading`, before
-    // the in-kind disclosure line has had a chance to render and (re)clear a
-    // prematurely-ticked consent.
+    // `onSubmit` while the ERC-20 collateral's liquidity read is still `loading`,
+    // before the in-kind disclosure line has had a chance to render and
+    // (re)clear a prematurely-ticked consent.
     if (
-      (form.collateralAssetType === "erc20" &&
-        !!form.collateralAsset &&
-        collateralLiquidityStatus === "loading") ||
-      (form.assetType === "erc20" &&
-        !!form.lendingAsset &&
-        lendingLiquidityStatus === "loading")
+      form.collateralAssetType === "erc20" &&
+      !!form.collateralAsset &&
+      collateralLiquidityStatus === "loading"
     ) {
       const msg = "Checking asset liquidity to finalise the risk disclosures — try again in a moment.";
       setError(msg);
@@ -1592,16 +1588,15 @@ export default function CreateOffer() {
                (lending) offers (`form.assetType === 'erc20'`): an NFT-principal
                rental doesn't use the collateral-in-kind default path — it resets
                the renter and pays out prepaid fees — so the line must not show
-               for rentals even if their collateral leg is an NFT / illiquid
-               (Codex r3 P2). Within an ERC-20 offer it fires when the collateral
-               is an NFT (no oracle / no swap), OR an ERC-20 collateral the
-               liquidity read reports as illiquid (Codex r1 P2), OR an illiquid
-               ERC-20 lending leg (Codex r2 P2). */
+               for rentals (Codex r3 P2). The decision is COLLATERAL-driven
+               (`DefaultedFacet.triggerDefault` routes on the collateral's
+               liquidity), so within an ERC-20 offer it fires when the COLLATERAL
+               is an NFT (no oracle / no swap) or an illiquid ERC-20 — NOT for an
+               illiquid lending leg with liquid collateral (Codex r4 P2). */
             collateralInKind={
               form.assetType === 'erc20' &&
               (form.collateralAssetType !== 'erc20' ||
-                collateralLiquidityStatus === 'illiquid' ||
-                lendingLiquidityStatus === 'illiquid')
+                collateralLiquidityStatus === 'illiquid')
             }
           />
 
@@ -1871,12 +1866,9 @@ export default function CreateOffer() {
             // unblock; `unknown`/invalid addresses are already caught by
             // `validate()` and the no-diamond case can't submit anyway).
             const liquidityPending =
-              (form.collateralAssetType === "erc20" &&
-                !!form.collateralAsset &&
-                collateralLiquidityStatus === "loading") ||
-              (form.assetType === "erc20" &&
-                !!form.lendingAsset &&
-                lendingLiquidityStatus === "loading");
+              form.collateralAssetType === "erc20" &&
+              !!form.collateralAsset &&
+              collateralLiquidityStatus === "loading";
             const riskBlocked =
               tierTooLow ||
               tierUnknown ||

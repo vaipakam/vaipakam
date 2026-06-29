@@ -33,16 +33,19 @@ What changed, surface by surface:
 All of these disclosures are scoped to **lending loans** (ERC-20 principal).
 NFT-principal rentals are deliberately excluded everywhere (Create, Accept, Loan
 Details, Verifier): their default model is renter-reset + prepaid-fee payout, not
-a collateral-in-kind transfer, so the in-kind copy would mislead. The pre-commit
-offer disclosures (Create / Accept) take the conservative either-leg view (NFT
-collateral, or an illiquid collateral OR lending leg). The NFT Verifier's
-"Settlement on default" line is the factual, collateral-driven view — the
-time-default fallback is chosen from the collateral's liquidity, so a liquid
-collateral with only an illiquid principal is shown as a swap, not in-kind — and
-it renders only while the loan is still Active (a terminal loan can't default).
-On Create Offer, submit is held while an ERC-20 leg's liquidity read is still
-resolving, so the disclosure can't be skipped by ticking consent before the read
-lands.
+a collateral-in-kind transfer, so the in-kind copy would mislead. The in-kind
+determination is **collateral-driven** — `DefaultedFacet.triggerDefault` routes
+the swap-vs-in-kind decision on the collateral's liquidity, so it fires for NFT
+collateral or an illiquid ERC-20 collateral, NOT for a liquid collateral whose
+only illiquid leg is the principal (so the lending-leg read added in an earlier
+round was removed). Create-time uses the collateral's live liquidity; the Accept
+review and the NFT Verifier re-read the collateral's LIVE active-network
+liquidity (the exact value the default path routes on) rather than the offer/
+loan's stored snapshot, which can go stale before accept/default. The Verifier
+line renders only while the loan is still Active (a terminal loan can't default).
+On Create Offer, submit is held while the ERC-20 collateral's liquidity read is
+still resolving, so the disclosure can't be skipped by ticking consent before the
+read lands.
 
 The Advanced User Guide's "How Liquidation Actually Works" section (four
 fallback branches with worked examples) and the public FAQ's `fallback-mechanics`

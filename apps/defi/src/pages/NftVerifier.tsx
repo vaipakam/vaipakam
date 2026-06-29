@@ -59,6 +59,12 @@ type Verdict =
       loanDetails: LoanDetails | null;
       hf: bigint | null;
       ltv: bigint | null;
+      /** #796 (Codex #809 r4) — the collateral's LIVE active-network liquidity
+       *  (`checkLiquidityOnActiveNetwork`, the exact value `DefaultedFacet`
+       *  routes on at default time), for an Active ERC-20-collateral loan.
+       *  `0` = Liquid, `1` = Illiquid; `null` = not read (NFT collateral,
+       *  non-Active, or read failed → caller falls back to the loan snapshot). */
+      collateralLiquidityLive: number | null;
     }
   | {
       kind: "burned";
@@ -310,6 +316,31 @@ export default function NftVerifier() {
         }
       }
 
+      // #796 (Codex #809 r4) — for an Active ERC-20-collateral loan, read the
+      // collateral's LIVE active-network liquidity, the exact value
+      // `DefaultedFacet.triggerDefault` routes the swap-vs-in-kind decision on.
+      // The loan struct's `collateralLiquidity` is only the init-time snapshot,
+      // which can go stale if the asset's liquidity changes before default.
+      let collateralLiquidityLive: number | null = null;
+      if (
+        loanDetails &&
+        Number(loanDetails.status) === LoanStatus.Active &&
+        Number(loanDetails.assetType) === 0 &&
+        Number(loanDetails.collateralAssetType) === 0
+      ) {
+        try {
+          const liq = (await publicClient.readContract({
+            address,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: "checkLiquidityOnActiveNetwork",
+            args: [loanDetails.collateralAsset],
+          })) as number | bigint;
+          collateralLiquidityLive = Number(liq);
+        } catch {
+          // Read failed — leave null so the renderer falls back to the snapshot.
+        }
+      }
+
       setVerdict({
         kind: "live",
         chain,
@@ -320,6 +351,7 @@ export default function NftVerifier() {
         loanDetails,
         hf,
         ltv,
+        collateralLiquidityLive,
       });
       step.success();
     } catch (err) {
@@ -756,7 +788,7 @@ function LiveCard({
   verdict: Extract<Verdict, { kind: "live" }>;
 }) {
   const { t } = useTranslation();
-  const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv } =
+  const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv, collateralLiquidityLive } =
     verdict;
   const blockExplorer = chain.blockExplorer;
   const status =
@@ -782,13 +814,19 @@ function LiveCard({
   // time-default fallback is chosen from the collateral's liquidity, so a liquid
   // collateral is swapped even if the principal leg is illiquid — principal
   // liquidity must NOT flip this to in-kind (Codex r3 P2).
-  // NB: this card reads `getLoanDetails` through viem, so the `uint8` liquidity
-  // enums arrive as JS numbers — compare with `Number(...) === 1`, never `=== 1n`
-  // (a number-vs-bigint strict compare is always false; Codex r2 P2).
+  // We prefer the LIVE collateral liquidity (`collateralLiquidityLive`, the exact
+  // value `DefaultedFacet` routes on at default time; 1 = Illiquid) over the
+  // loan's init-time `collateralLiquidity` snapshot, which can go stale before
+  // default (Codex r4 P2); fall back to the snapshot only when the live read
+  // wasn't available. NB: viem returns the `uint8` enums as JS numbers, so
+  // compare with `=== 1`, never `=== 1n`.
+  const collateralIsIlliquid =
+    collateralLiquidityLive != null
+      ? collateralLiquidityLive === 1
+      : loanDetails != null && Number(loanDetails.collateralLiquidity) === 1;
   const settlesInKind =
     isLendingLoan &&
-    (Number(loanDetails.collateralAssetType) !== 0 ||
-      Number(loanDetails.collateralLiquidity) === 1);
+    (Number(loanDetails.collateralAssetType) !== 0 || collateralIsIlliquid);
 
   return (
     <div className="card verifier-result verifier-live">
