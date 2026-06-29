@@ -97,13 +97,29 @@ gate). Read-only screen: `LibVaipakam.isSanctionedAddress(who)` (also exposed as
 **Invariant (intent):** no Tier-1 path may route fresh value to a flagged wallet,
 and no Tier-2 path may be turned into a fresh-value path for a flagged wallet.
 The *intended* mechanism is that value owed to a flagged recipient on a wind-down
-path defers to a Tier-1 claim. **Current reality (gap):** that deferral only
-holds where an explicit held-proceeds escrow or the consolidation-move-out
-exemption applies; on the direct-deposit close-out branches the recipient-vault
-screen in `getOrCreateUserVault` instead causes the path to **revert** when the
-recipient loan party is flagged. So the invariant is upheld in the safe direction
-(no fresh value reaches a flagged wallet) but the liveness half (unflagged
-counterparty always made whole) is **not** yet guaranteed — see Open gaps.
+path defers to a Tier-1 claim. **Current reality — the invariant is NOT fully
+upheld; the Open gaps split into two kinds:**
+
+- **Liveness bricks (no value moves, the path just reverts).** The
+  recipient-vault deferral only holds where an explicit held-proceeds escrow or
+  the consolidation-move-out exemption applies; on the direct-deposit close-out
+  branches the `getOrCreateUserVault` recipient screen instead **reverts** when
+  the recipient loan party is flagged, so the unflagged counterparty is not made
+  whole until the flag clears (gap (f)). No fresh value reaches a flagged wallet
+  here — it is purely a liveness failure.
+- **Value-to-flagged bypasses (the safe direction is also breached).** Several
+  gaps let value actually reach or benefit a flagged wallet: a flagged
+  `triggerLiquidationDiscounted` `recipient` receives the bought collateral
+  (gap (c)); the default auto-dispatch pays an unscreened caller the matcher
+  bonus (gap (d)); a flagged borrower-NFT holder can post/update a
+  collateral-sale listing (gap (a)); a sanctioned current holder can top up
+  collateral (gap (e)); and the keeper preclose / early-withdrawal paths can
+  route exiting collateral to a flagged holder (gap (b)). These are
+  value-out compliance bypasses, not liveness-only issues.
+
+So the invariant holds on the **centralised Tier-1 entry points** but is broken
+by the enumerated enforcement gaps in both directions — see Open gaps and the
+`_CodeVsDocsAudit.md` findings.
 
 ## Action matrix — Terms-of-Service gate
 
