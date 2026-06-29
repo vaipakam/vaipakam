@@ -426,6 +426,27 @@ contract AdminFacet is DiamondAccessControl, IVaipakamErrors {
         dustFloorNumeraire = LibVaipakam.cfgLiquidationDustFloorNumeraire();
     }
 
+    /// @notice Effective per-liquidation close-factor cap — the maximum slice of
+    ///         a loan a single partial liquidation may close, in BPS of the loan
+    ///         (10_000 == 100%, i.e. no cap below full).
+    /// @dev    #642 — exposes `LibVaipakam.cfgMaxPartialLiquidationCloseFactorBps`
+    ///         so an off-chain keeper can read the live cap (e.g. after a
+    ///         governance lowering via
+    ///         `ConfigFacet.setMaxPartialLiquidationCloseFactorBps`) and CLAMP
+    ///         its requested fraction to it, rather than tripping
+    ///         `RiskFacet.triggerPartialLiquidation`'s `InvalidPartialFraction`
+    ///         revert and escalating straight to a full liquidation. The library
+    ///         already resolves the `0 ⇒ 10_000` default, so callers get the
+    ///         effective value directly.
+    /// @return capBps Effective close-factor cap in BPS (1..10_000).
+    function getMaxPartialLiquidationCloseFactorBps()
+        external
+        view
+        returns (uint256 capBps)
+    {
+        capBps = LibVaipakam.cfgMaxPartialLiquidationCloseFactorBps();
+    }
+
     /// @notice Emitted on every change to the #400 quote-time rate model.
     /// @custom:event-category informational/config
     event RateModelSet(address indexed previousModel, address indexed newModel);

@@ -95,4 +95,30 @@ contract AdminKillSwitchTest is SetupTest {
         AdminFacet(address(diamond)).setSwapAdapterDisabled(STRANGER, true);
         vm.stopPrank();
     }
+
+    // #642 — AdminFacet.getMaxPartialLiquidationCloseFactorBps exposes the live
+    // close-factor cap so the keeper can clamp its partial-liquidation fraction
+    // to it. Round-trips the ConfigFacet setter through the new AdminFacet
+    // getter, including the `0 ⇒ 10_000` default-resolution semantics.
+    function test_getMaxPartialLiquidationCloseFactorBps_roundTrip() public {
+        // Default (no setter called) resolves to 100% (no cap).
+        assertEq(
+            AdminFacet(address(diamond)).getMaxPartialLiquidationCloseFactorBps(),
+            10_000
+        );
+
+        // Governance tightens to Aave's classic 50% close-factor.
+        ConfigFacet(address(diamond)).setMaxPartialLiquidationCloseFactorBps(5_000);
+        assertEq(
+            AdminFacet(address(diamond)).getMaxPartialLiquidationCloseFactorBps(),
+            5_000
+        );
+
+        // Reset to 0 falls back to the 10_000 default via the getter.
+        ConfigFacet(address(diamond)).setMaxPartialLiquidationCloseFactorBps(0);
+        assertEq(
+            AdminFacet(address(diamond)).getMaxPartialLiquidationCloseFactorBps(),
+            10_000
+        );
+    }
 }
