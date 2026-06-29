@@ -178,6 +178,13 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     };
     let lastActivityAt = Date.now();
     let lastActivityWriteAt = 0;
+    // #757 Phase B — serialize forced (push-nudge) probes. Without this, two
+    // nudges arriving while the first `probe()` is still awaiting a slow RPC
+    // both reach `.then(schedule())` and arm a second timer without clearing
+    // the first — duplicating the singleton poll loop. `forcedInFlight`
+    // coalesces concurrent nudges into one trailing re-run.
+    let forcedInFlight = false;
+    let forcedPending = false;
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -262,7 +269,16 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         // subscribers to refetch.
         if (advanced || opts?.forceBump) setVersion((v) => v + 1);
       } catch {
-        if (!cancelled) setStatus('unreachable');
+        if (!cancelled) {
+          setStatus('unreachable');
+          // #757 Phase B (P3) — a forced (push-driven) probe whose `getGlobalCounts`
+          // / safe-block read transiently fails STILL bumps `version`. The indexer
+          // already wrote D1 and pushed the invalidation; subscribers should
+          // refetch the (indexer-backed) slice now rather than wait for the next
+          // poll just because the user's RPC hiccupped. Status is separately
+          // marked `unreachable`.
+          if (opts?.forceBump) setVersion((v) => v + 1);
+        }
       }
     }
 
@@ -289,17 +305,31 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       schedule();
     };
 
-    // #757 Phase B — "probe now + force a version bump". Clears the pending
-    // timer (so we don't stack two), runs one forced probe, then reschedules
-    // off the now-current state. Mirrors the focus-path in `onVisibility`.
+    // #757 Phase B — "probe now + force a version bump". Coalesces concurrent
+    // nudges (only ONE forced probe runs at a time; later nudges set
+    // `forcedPending` and trigger a single trailing re-run), and always
+    // restarts the loop via `rescheduleRef` — which clears any existing timer
+    // first — so a burst of push frames can never leave duplicate timers.
     probeNowRef.current = () => {
       if (cancelled) return;
+      if (forcedInFlight) {
+        forcedPending = true; // fold into the in-flight probe's trailing re-run
+        return;
+      }
+      forcedInFlight = true;
       if (timer) {
         clearTimeout(timer);
         timer = null;
       }
       void probe({ forceBump: true }).then(() => {
-        if (!cancelled) schedule();
+        forcedInFlight = false;
+        if (cancelled) return;
+        if (forcedPending) {
+          forcedPending = false;
+          probeNowRef.current(); // absorb nudges that arrived mid-flight
+        } else {
+          rescheduleRef.current(); // single timer (clears any existing first)
+        }
       });
     };
 

@@ -139,6 +139,10 @@ export interface ChainIndexerResult {
   detailRefreshes: number;
   newLoans: number;
   loanStatusUpdates: number;
+  /** Stub loan rows healed to canonical state this scan (`refreshStubLoans`).
+   *  A heal-only pass changes existing loan metadata without a new loan or a
+   *  status transition, so #757 Phase B maps this to a `loan.updated` push. */
+  loanDetailRefreshes: number;
   activityEvents: number;
   skipped?: string;
 }
@@ -433,6 +437,7 @@ export async function runChainIndexerForChain(
       detailRefreshes: 0,
       newLoans: 0,
       loanStatusUpdates: 0,
+      loanDetailRefreshes: 0,
       activityEvents: 0,
       skipped: 'caught-up',
     };
@@ -503,6 +508,7 @@ export async function runChainIndexerForChain(
         detailRefreshes: 0,
         newLoans: 0,
         loanStatusUpdates: 0,
+        loanDetailRefreshes: 0,
         activityEvents: 0,
         skipped: 'rpc-error',
       };
@@ -564,7 +570,12 @@ export async function runChainIndexerForChain(
   // getLoanDetails call per loan, batched per tick. After bootstrap
   // the values are immutable for the loan's lifetime; the next tick
   // skips them via the `lender_token_id = '0'` predicate.
-  await refreshStubLoans(client, diamond, chainId, env);
+  const loanDetailRefreshes = await refreshStubLoans(
+    client,
+    diamond,
+    chainId,
+    env,
+  );
 
   // Advance cursor only after every step succeeded — atomic from the
   // cron's perspective. #757 (Codex #764): the advance is MONOTONIC —
@@ -595,6 +606,7 @@ export async function runChainIndexerForChain(
     detailRefreshes,
     newLoans: loanStats.newLoans,
     loanStatusUpdates: loanStats.statusUpdates,
+    loanDetailRefreshes,
     activityEvents,
   };
 }
@@ -1345,7 +1357,8 @@ async function refreshStubLoans(
   diamond: Address,
   chainId: number,
   env: Env,
-): Promise<void> {
+): Promise<number> {
+  let healed = 0;
   const stale = await env.DB.prepare(
     `SELECT loan_id FROM loans
      WHERE chain_id = ? AND is_stub = 1
@@ -1389,7 +1402,7 @@ async function refreshStubLoans(
       // `getLoanDetails` return now carries everything, so a single
       // RPC + UPDATE restores the row to canonical state and flips
       // is_stub back to 0.
-      await env.DB.prepare(
+      const updated = await env.DB.prepare(
         `UPDATE loans SET asset_type = ?, collateral_asset_type = ?,
                           lending_asset = ?, collateral_asset = ?,
                           duration_days = ?, token_id = ?,
@@ -1426,11 +1439,13 @@ async function refreshStubLoans(
           row.loan_id,
         )
         .run();
+      if ((updated.meta?.changes ?? 0) > 0) healed++;
     } catch (err) {
       console.error(`[chainIndexer] getLoanDetails(${row.loan_id}) failed`, err);
       // Soft-skip: leave row at is_stub = 1, next tick retries.
     }
   }
+  return healed;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -3363,6 +3378,7 @@ function emptyResult(skipped: string): ChainIndexerResult {
     detailRefreshes: 0,
     newLoans: 0,
     loanStatusUpdates: 0,
+    loanDetailRefreshes: 0,
     activityEvents: 0,
     skipped,
   };

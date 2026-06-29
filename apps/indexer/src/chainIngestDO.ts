@@ -85,7 +85,12 @@ export function invalidationKeysFromResult(
     keys.push('offer.changed');
   }
   if (result.newLoans > 0) keys.push('loan.created');
-  if (result.loanStatusUpdates > 0) keys.push('loan.updated');
+  // `loanStatusUpdates` = a status transition; `loanDetailRefreshes` = a stub
+  // row healed to canonical metadata (P3 — a heal-only pass would otherwise
+  // push nothing, leaving clients on incomplete loan data until a slow poll).
+  if (result.loanStatusUpdates > 0 || result.loanDetailRefreshes > 0) {
+    keys.push('loan.updated');
+  }
   if (result.activityEvents > 0) keys.push('activity.appended');
   return keys;
 }
@@ -127,7 +132,7 @@ export class ChainIngestDO {
    */
   async fetch(req: Request): Promise<Response> {
     if (req.headers.get('Upgrade') === 'websocket') {
-      return this.handleWebSocketUpgrade(req);
+      return await this.handleWebSocketUpgrade(req);
     }
 
     let body: TriggerBody = {};
@@ -269,10 +274,27 @@ export class ChainIngestDO {
    * channel (DO ingest enabled) from a connected-but-silent one (ingest off →
    * the client keeps polling and shows "Polling", never a false "Live").
    */
-  private handleWebSocketUpgrade(req: Request): Response {
+  private async handleWebSocketUpgrade(req: Request): Promise<Response> {
     const chainParam = Number(new URL(req.url).searchParams.get('chain'));
     const chainId =
       Number.isInteger(chainParam) && chainParam > 0 ? chainParam : null;
+
+    // `ingestActive` must reflect whether THIS chain will actually be scanned +
+    // broadcast, not just the global rollout flag (Codex P2). The public route
+    // forwards any numeric chain id, but cron/webhook only scan chains in
+    // `getChainConfigs` (RPC secret + deployment both present). A chain missing
+    // either — local Anvil (31337), an app chain without an indexer RPC — would
+    // otherwise show a permanent false "Live"; report `false` so the client
+    // stays on honest polling. Mirrors the same gate the alarm uses.
+    let ingestActive = false;
+    if (this.env.CHAIN_INGEST_VIA_DO === 'true' && chainId !== null) {
+      try {
+        const resolved = await resolveEnv(this.env);
+        ingestActive = getChainConfigs(resolved).some((c) => c.id === chainId);
+      } catch {
+        ingestActive = false; // env resolution failed → honest polling
+      }
+    }
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -282,7 +304,7 @@ export class ChainIngestDO {
     const hello: PushFrame = {
       t: 'hello',
       chainId,
-      ingestActive: this.env.CHAIN_INGEST_VIA_DO === 'true',
+      ingestActive,
     };
     try {
       server.send(JSON.stringify(hello));

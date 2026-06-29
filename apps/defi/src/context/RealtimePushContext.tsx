@@ -91,13 +91,29 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
     let everLive = false;
+    // When a frame arrives in a hidden/background tab we DON'T nudge (which
+    // would bypass the watermark's own `document.hidden` pause and drive RPC +
+    // refetches from a parked tab). Remember it and flush once on focus.
+    let hiddenDirty = false;
 
     const scheduleNudge = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        hiddenDirty = true;
+        return;
+      }
       if (nudgeTimer) return; // already pending — coalesce
       nudgeTimer = setTimeout(() => {
         nudgeTimer = null;
         if (!cancelled) nudgeRef.current();
       }, NUDGE_DEBOUNCE_MS);
+    };
+
+    const onVisibility = () => {
+      if (cancelled) return;
+      if (!document.hidden && hiddenDirty) {
+        hiddenDirty = false;
+        scheduleNudge(); // one coalesced refetch for everything missed while hidden
+      }
     };
 
     const scheduleReconnect = () => {
@@ -169,9 +185,11 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     };
 
     connect();
+    document.addEventListener('visibilitychange', onVisibility);
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisibility);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (nudgeTimer) clearTimeout(nudgeTimer);
       if (ws) {
