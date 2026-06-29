@@ -393,6 +393,17 @@ export default function KeeperSettings() {
         {t('keeperSettings.perLoanGatesAlert')}
       </div>
 
+      {/* #803 — make the no-custody boundary explicit: a keeper is an
+          automation agent, never a custodian. Even one approved for every
+          action cannot claim, withdraw, transfer your position NFT, or
+          redirect vault funds. */}
+      <div
+        className="alert alert-info"
+        style={{ maxWidth: 720, margin: "1rem 0" }}
+      >
+        {t('keeperSettings.noCustodyBoundary')}
+      </div>
+
       {!supported && (
         <ErrorAlert
           style={{ margin: "1rem 0" }}

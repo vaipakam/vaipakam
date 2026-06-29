@@ -503,6 +503,70 @@ contract ClaimFacetTest is Test {
         ClaimFacet(address(diamond)).claimAsBorrower(loanId);
     }
 
+    // ─── #803 — the keeper NO-CUSTODY boundary (KEEPER_ACTION_ALL) ────────────
+    //
+    // The reverts above use a non-keeper non-owner caller. These prove the
+    // stronger property the keeper-authority matrix pins: a keeper the position
+    // holder has approved with EVERY action bit (`KEEPER_ACTION_ALL`), with the
+    // master switch on AND enabled for this specific loan, is STILL rejected on
+    // the custody paths — the action bitmask never reaches claim / add-collateral
+    // (those gate on `requireLender/BorrowerNftOwner`, not on keeper authority).
+
+    /// @dev Approve `keeper` for `owner` with every action bit + per-loan enable.
+    function _fullyApproveKeeper(
+        address owner,
+        address keeper,
+        uint256 loanId
+    ) internal {
+        vm.startPrank(owner);
+        ProfileFacet(address(diamond)).setKeeperAccess(true);
+        ProfileFacet(address(diamond)).approveKeeper(
+            keeper,
+            LibVaipakam.KEEPER_ACTION_ALL
+        );
+        ProfileFacet(address(diamond)).setLoanKeeperEnabled(loanId, keeper, true);
+        vm.stopPrank();
+    }
+
+    function test_KeeperActionAll_CannotClaimAsLender() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        _repayLoan(loanId);
+
+        address keeper = makeAddr("keeperAll");
+        _fullyApproveKeeper(lender, keeper, loanId);
+
+        // KEEPER_ACTION_ALL still cannot claim the lender's funds.
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+    }
+
+    function test_KeeperActionAll_CannotClaimAsBorrower() public {
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+        _repayLoan(loanId);
+
+        address keeper = makeAddr("keeperAll");
+        _fullyApproveKeeper(borrower, keeper, loanId);
+
+        // KEEPER_ACTION_ALL still cannot claim the borrower's collateral.
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        ClaimFacet(address(diamond)).claimAsBorrower(loanId);
+    }
+
+    function test_KeeperActionAll_CannotAddCollateral() public {
+        // Active loan (no repay) — add-collateral is a borrower money-in path
+        // that is still owner-only; the owner gate reverts before any transfer.
+        uint256 loanId = _createAndAcceptErc20Loan(1000 ether, 1500 ether, 30);
+
+        address keeper = makeAddr("keeperAll");
+        _fullyApproveKeeper(borrower, keeper, loanId);
+
+        vm.prank(keeper);
+        vm.expectRevert(IVaipakamErrors.NotNFTOwner.selector);
+        AddCollateralFacet(address(diamond)).addCollateral(loanId, 1 ether);
+    }
+
     // ─── Loan Settled ─────────────────────────────────────────────────────────
 
     function testLoanSettledAfterBothClaim() public {
