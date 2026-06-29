@@ -64,16 +64,19 @@ gate). Read-only screen: `LibVaipakam.isSanctionedAddress(who)` (also exposed as
 | Offer accept | **Tier-1 BLOCK** | acceptor **and** offer creator (so a creator flagged after posting can't drag in an unflagged acceptor) | `OfferAcceptFacet` | `…::test_acceptOffer_RevertsWhenAcceptorSanctioned`, `…::test_acceptOffer_RevertsWhenCreatorSanctionedAfterPosting` |
 | Permissionless matcher fills | **Tier-1 BLOCK** | the matcher (LIF/incentive recipient) | `RiskMatchLiquidationFacet` | `MatchOffersScaffoldTest.t.sol::test_matchOffers_sanctionedMatcher_reverts` |
 | VPFI deposit / withdraw | **Tier-1 BLOCK** | the caller (value in/out) | `VPFIDiscountFacet` | `VPFIDiscountFacetTest.t.sol::test_depositVPFIToVault_RevertsWhenSanctioned`, `…::test_withdrawVPFIFromVault_RevertsWhenSanctioned` |
-| VPFI tier-poke broadcast (`pokeMyTier`) | **Tier-1 BLOCK** | the caller — a user-initiated state mutation that can drive a protocol-funded CCIP tier broadcast | `VPFIDiscountFacet.pokeMyTier` | gap — see Open gaps |
-| HF-based liquidation (`triggerLiquidation`, partial, discounted, split) | **Tier-1 BLOCK** | the liquidator (3% bonus recipient) | `RiskFacet`, `RiskSplitLiquidationFacet` | `…::test_triggerLiquidation_RevertsWhenSanctionedLiquidator`, `…::testPartialLiq_SanctionedCallerReverts` |
-| Time-based default (`triggerDefault`) | **Tier-2 ALLOW** | not caller-gated — value flows to the lender, not the caller; protects the unflagged lender (the caller earns only a bounded internal-match bonus where one applies) | `DefaultedFacet` (no gate) | covered indirectly via the wind-down repay test + design intent |
+| VPFI tier-poke broadcast (`pokeMyTier`) | **Tier-1 BLOCK** | the caller — a user-initiated state mutation that can drive a protocol-funded CCIP tier broadcast | `VPFIDiscountFacet.pokeMyTier` | `PokeMyTierTest.t.sol::test_PokeMyTier_SanctionedCaller_Reverts` |
+| Collateral top-up (`addCollateral`) | **Tier-1 BLOCK** | the caller / current borrower-NFT holder — takes new value into the vault | `AddCollateralFacet` | gap — see Open gaps |
+| Offer mutation (`setOfferAmount` / `setOfferRate` / `setOfferCollateral` / `modifyOffer`) | **Tier-1 BLOCK** | the offer creator | `OfferMutateFacet` | gap — see Open gaps |
+| HF-based liquidation (`triggerLiquidation`, partial, split) | **Tier-1 BLOCK** | the liquidator (3% bonus recipient) | `RiskFacet`, `RiskSplitLiquidationFacet` | `…::test_triggerLiquidation_RevertsWhenSanctionedLiquidator`, `…::testPartialLiq_SanctionedCallerReverts` |
+| HF-based liquidation — discounted (`triggerLiquidationDiscounted`) | **Tier-1 on the caller**, but the seized collateral goes to an arbitrary `recipient` arg that is **not separately screened** — a flagged `recipient` can receive the bought collateral. Recipient-screening is an enforcement **gap** | the caller (recipient unscreened) | `RiskFacet.triggerLiquidationDiscounted` | gap — see Open gaps |
+| Time-based default (`triggerDefault`) | **Tier-2 ALLOW** | not caller-gated — settlement value flows to the loan's parties, not the caller. Two caller incentives exist (bounded, not custody of the loan's funds): the internal-match auto-dispatch (`attemptInternalMatchAutoDispatch`) pays the caller the 1% matcher bonus, and that auto-dispatch path does **not** screen the caller — an enforcement **gap** for a flagged caller earning the bonus | the caller for the match-bonus path is **unscreened** | `DefaultedFacet` (no gate) | covered indirectly via the wind-down repay test + design intent; match-dispatch screening is a gap |
 | Repayment — full (`repayLoan`) | **Tier-2 ALLOW** for a flagged **borrower** (full repay stays open); a flagged current **lender recipient** does not receive inline — the proceeds defer to a (Tier-1-gated) claim | `RepayFacet.repayLoan` | `SanctionsOracle.t.sol::test_SanctionedBorrower_CanStillRepay_LenderRecovers` |
-| Repayment — periodic / direct-partial (`autoDeductDaily`, `settlePeriodicInterest`, `repayPartial`) | **Tier-1 screen on the lender recipient** — these transfer to the resolved lender holder INLINE, so a flagged lender makes the attempt **revert** (no deferred claim); a flagged borrower can still drive them (the recipient is the lender) | `RepayPeriodicFacet`, `RepayFacet.repayPartial` (gate on `lenderRecipient`) | gap — see Open gaps |
+| Repayment — periodic / direct-partial (`autoDeductDaily`, `settlePeriodicInterest`, `repayPartial`) | **Tier-1 screen on the lender recipient** — these transfer to the resolved lender holder INLINE, so a flagged lender makes the attempt **revert** (no deferred claim). NOTE this is NOT a borrower wind-down escape: unlike full `repayLoan`, a flagged borrower trying to self-settle an overdue `settlePeriodicInterest` loan ALSO reverts when the lender recipient is flagged — there is no deferred-claim fallback on these inline paths | the lender recipient (inline) | `RepayPeriodicFacet`, `RepayFacet.repayPartial` (gate on `lenderRecipient`) | gap — see Open gaps |
 | Claims (`claimAsLender`, `claimAsBorrower`, backstop opt-in) | **Tier-1 BLOCK** | the **claimant** (recipient) — unconditional, before any distribution | `ClaimFacet` | `…::test_claimAsLender_RevertsWhenSanctioned`, `…::test_claimAsBorrower_RevertsWhenSanctioned` |
 | Refinance (`refinanceLoan`) | **Tier-1 BLOCK** | the borrower **and** the current borrower-NFT holder | `RefinanceFacet` | gap — see Open gaps |
 | Obligation transfer / preclose | **Tier-1 on the caller** (`_assertNotSanctioned(msg.sender)`) — but the current NFT **holder is not separately screened**: an unsanctioned keeper acting for a flagged borrower-holder can still withdraw exiting collateral to that flagged holder. Holder-screening is an enforcement **gap** | the caller (holder unscreened) | `PrecloseFacet` | gap — see Open gaps |
-| Loan-sale / prepay listing & settlement | **Mixed — enforcement gap.** The atomic-match, auto-list, and executor-callback paths ARE Tier-1 gated, but `postPrepayListing` / `postPrepayDutchListing` / `updatePrepayDutchListing` only check borrower-NFT ownership and do **NOT** call `_assertNotSanctioned`, so a flagged holder can post/update a fixed/Dutch collateral-sale listing | the caller / borrower (post + update **unscreened**) | `NFTPrepayListingAtomicFacet` + auto-list/executor (gated); `NFTPrepayListingFacet` / `NFTPrepayDutchListingFacet` post/update (**ungated gap**) | gap — see Open gaps |
-| Early withdrawal | **Tier-1 BLOCK** | the lender (early-withdrawal recipient) | `EarlyWithdrawalFacet` | gap — see Open gaps |
+| Loan-sale / prepay listing & settlement | **Mixed — enforcement gap.** The atomic-match, auto-list, and executor-callback paths ARE Tier-1 gated, but the fixed-price `postPrepayListing` / `updatePrepayListing` AND the Dutch `postPrepayDutchListing` / `updatePrepayDutchListing` paths only check borrower-NFT ownership and do **NOT** call `_assertNotSanctioned`, so a flagged holder can post/update a fixed or Dutch collateral-sale listing | the caller / borrower (post + update **unscreened**) | `NFTPrepayListingAtomicFacet` + auto-list/executor (gated); `NFTPrepayListingFacet` / `NFTPrepayDutchListingFacet` post+update (**ungated gap**) | gap — see Open gaps |
+| Early withdrawal | **Tier-1 on the caller** (`_assertNotSanctioned(msg.sender)`) — but, like preclose, the current NFT **holder is not separately screened**: a keeper invoking `createLoanSaleOffer` / `completeLoanSale` for a flagged lender-holder passes only the caller screen. Holder-screening is an enforcement **gap** | the caller (holder unscreened) | `EarlyWithdrawalFacet` | gap — see Open gaps |
 | Keeper-driven auto-lifecycle (auto-refinance / auto-extend) | **Tier-1 BLOCK** | the keeper **and** the participating NFT holders | `AutoLifecycleFacet`, `LenderIntentFacet` | gap — see Open gaps |
 | Keeper reward payout (VPFI housekeeping reward) | **Soft-skip (NOT a revert)** — when the keeper is flagged the reward is forfeited (returns 0 + emits `KeeperRewardSkipped("sanctioned-keeper")`) so the housekeeping/sweep tx still completes; liveness is preserved and no value reaches the flagged keeper | the keeper (reward recipient) | `LibKeeperReward.payVpfiReward` | gap — see Open gaps |
 | Offer cancel | **Not sanctions-gated** — the creator may cancel their own offer unconditionally (anyone after expiry), returning the creator's OWN escrowed funds; this is a wind-down/recovery of one's own capital, so there is no sanctions revert today | n/a | `OfferCancelFacet.cancelOffer` (no gate) | n/a |
@@ -91,7 +94,7 @@ change invalidates every prior acceptance.
 
 | State | `hasAcceptedCurrentTerms` | UI behaviour | Tested by |
 | --- | --- | --- | --- |
-| Disabled (`currentTosVersion == 0`) — testnet / pre-launch | `true` for everyone | no prompt; `/app/*` routes open | `LegalFacet.t.sol::test_Initial_GateDisabled_EveryoneTreatedAsAccepted` |
+| Disabled (`currentTosVersion == 0`) — testnet / pre-launch | `true` for everyone | no prompt; the connected-app routes stay open | `LegalFacet.t.sol::test_Initial_GateDisabled_EveryoneTreatedAsAccepted` |
 | Enabled, user accepted current (version + hash match) | `true` | routes open | `…::test_acceptTerms_Success_EmitsEvent` |
 | Enabled, user never accepted | `false` | prompt to accept before gated routes | `…::test_acceptTerms_RevertOnVersionMismatch` / `…RevertOnHashMismatch` |
 | Stale — Terms re-published (version bumped) since acceptance | `false` | prompt to re-accept | `…::test_VersionBump_InvalidatesPriorAcceptance`, `…::test_SameVersion_HashDrift_InvalidatesAcceptance` |
@@ -176,29 +179,36 @@ before the gated routes; a version/hash change re-prompts. While disabled
 **Open gaps (tracked follow-up, not blockers):**
 
 - **Test gaps (gate exists, no dedicated test yet).** The Tier-1 rows marked
-  "gap" in the Tested-by column (tier-poke `pokeMyTier`, refinance, early
-  withdrawal, auto-lifecycle, and the periodic / direct-partial repay
+  "gap" in the Tested-by column (collateral top-up, offer mutation, refinance,
+  early withdrawal, auto-lifecycle, and the periodic / direct-partial repay
   lender-recipient screen) share the identical centralised `_assertNotSanctioned`
   Tier-1 pattern already proven across the representative families (vault / offer
-  / matcher fill / liquidation / claims / VPFI deposit+withdraw). The gate helper
-  is uniformly applied, so the result is the same; a per-row scenario test is
-  low-priority follow-up.
+  / matcher fill / liquidation / claims / VPFI deposit+withdraw / `pokeMyTier`).
+  The gate helper is uniformly applied, so the result is the same; a per-row
+  scenario test is low-priority follow-up.
 - **Enforcement gaps (the code does NOT gate — these are real, not just untested).**
-  (a) `postPrepayListing` / `postPrepayDutchListing` / `updatePrepayDutchListing`
-  do not call `_assertNotSanctioned`, so a flagged borrower-NFT holder can post /
-  update a collateral-sale listing. (b) The preclose / obligation-transfer paths
-  screen only `msg.sender`, not the current NFT holder, so a keeper acting for a
-  flagged holder can route exiting collateral to that holder. Both should either
-  add the missing screen or be consciously accepted; this matrix records them so
-  they aren't mistaken for covered.
+  (a) the fixed-price `postPrepayListing` / `updatePrepayListing` and the Dutch
+  `postPrepayDutchListing` / `updatePrepayDutchListing` paths don't call
+  `_assertNotSanctioned`, so a flagged borrower-NFT holder can post/update a
+  collateral-sale listing. (b) The preclose / obligation-transfer **and** the
+  early-withdrawal (`createLoanSaleOffer` / `completeLoanSale`) keeper paths screen
+  only `msg.sender`, not the current NFT holder, so a keeper acting for a flagged
+  holder can route exiting collateral / proceeds to that holder. (c)
+  `triggerLiquidationDiscounted` screens the caller but not the seized-collateral
+  `recipient` arg. (d) `triggerDefault`'s internal-match auto-dispatch
+  (`attemptInternalMatchAutoDispatch`) pays the caller the 1% matcher bonus
+  without screening that caller. Each should either add the missing screen or be
+  consciously accepted; this matrix records them so they aren't mistaken for
+  covered.
 - **UI submit-disable on the flagged signal.** Pages warn via `SanctionsBanner`
   but do not yet disable their submit buttons on `useSanctionsCheck().isSanctioned`;
   wiring that (so the app never offers a clickable Tier-1 action to a flagged
   wallet) is a recommended hardening.
-- **Banner not mounted on the Offer Book list, Offer Detail (`/offers/:offerId`),
-  or vault-recovery (`/recover`).** The banner is on the Offer Book accept modal
-  but not the list page; adding it to the list + those two routes closes the
-  not-yet-covered surfaces.
+- **Banner not mounted on several action surfaces.** The banner is on the Offer
+  Book accept modal but not the offer-list page, and not on Offer Detail
+  (`/offers/:offerId`), vault-recovery (`/recover`), or the routed action pages
+  (`/loans/:loanId/preclose`, `/early-withdrawal`, `/refinance`). Adding it to
+  those closes the not-yet-covered surfaces.
 - The keeper-reward **soft-skip** and the **offer-cancel ungated** rows are
   documentation of current behaviour (not value-to-a-flagged-wallet paths), so
   they need no Tier-1 revert test.
