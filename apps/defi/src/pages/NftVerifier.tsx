@@ -863,10 +863,14 @@ function LiveCard({
     ownerSanctioned,
     storedPartySanctioned,
   } = verdict;
-  // #821 (Codex #832 P2) — the position's payout is frozen when EITHER the
-  // current holder is flagged (they personally can't claim — `msg.sender` gate)
-  // OR the stored loan party is flagged (NOBODY can claim — stored-owner freeze,
-  // including a clean buyer of a transferred NFT). Either way: unclaimable.
+  // #821 (Codex #832 P2) — two DISTINCT conditions, shown with distinct copy:
+  //  • storedPartySanctioned → the position is frozen for ANYONE who holds the
+  //    NFT (the claim paths screen the stored `loan.lender`/`loan.borrower`),
+  //    incl. a clean buyer of a transferred NFT — the strong "do not buy" case.
+  //  • ownerSanctioned only (stored party clean) → only the CURRENT holder is
+  //    blocked (`msg.sender` gate); the position is NOT frozen for a clean buyer,
+  //    who could claim after acquiring it — a softer, owner-scoped warning.
+  // The stored-party case takes precedence in the banner copy below.
   const payoutFrozen = ownerSanctioned || storedPartySanctioned;
   const blockExplorer = chain.blockExplorer;
   const status =
@@ -960,9 +964,9 @@ function LiveCard({
                 className="data-value"
                 style={{ color: "var(--danger, #dc2626)", fontSize: "0.82rem" }}
               >
-                {ownerSanctioned
-                  ? t("nftVerifier.ownerSanctioned")
-                  : t("nftVerifier.storedPartySanctioned")}
+                {storedPartySanctioned
+                  ? t("nftVerifier.storedPartySanctioned")
+                  : t("nftVerifier.ownerSanctioned")}
               </span>
             </div>
           )}

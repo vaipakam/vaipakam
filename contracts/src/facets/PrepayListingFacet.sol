@@ -465,6 +465,15 @@ contract PrepayListingFacet is
         // (via the executor zone callback), so a revert aborts the whole fill —
         // the buyer's funds are never committed, nothing is stranded.
         LibVaipakam._assertNotSanctioned(lenderHolder);
+        // #821 (Codex #832 r2 P1) — ALSO screen the STORED `loan.lender` for
+        // freeze parity with the claim / backstop paths. This leg pays the live
+        // holder directly (not via the locked vault), so without this a flagged
+        // stored lender who moved the lender NFT to a clean wallet could monetize
+        // the position through a sale fill — exactly the transfer-to-clean-wallet
+        // bypass the stored-owner freeze closes everywhere else. A genuine
+        // protocol position sale migrates `loan.lender` to the buyer, so a
+        // legitimate clean holder is unaffected.
+        LibVaipakam._assertNotSanctioned(loan.lender);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);

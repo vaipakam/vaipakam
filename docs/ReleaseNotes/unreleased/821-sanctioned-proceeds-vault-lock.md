@@ -16,13 +16,22 @@ the vault*:
   into their **own** per-user vault (an isolated, protocol-tracked balance) so
   the debt clears and the unflagged counterparty is made whole. Nothing is held
   in the shared protocol contract — no commingling of sanctioned-linked funds.
+  This holds across **every** wind-down branch: the ERC-20 lender payment, the
+  NFT-rental lender share, the fallback-cure collateral restore, the in-kind /
+  NFT collateral transfer on default and liquidation, and the internal-match
+  settlement. Where the close-out has to *withdraw* a flagged borrower's
+  collateral out of their vault (the in-kind and internal-match paths), that
+  withdrawal is permitted too — the flagged party is losing custody to the
+  unflagged counterparty, not receiving — so the forced default/liquidation can
+  never be bricked by flagging either party after the loan was struck.
 - **Frozen — nothing leaves.** While the wallet is flagged, the assets in its
   vault do **not** move. The claim paths now check the vault's stored owner, so a
   flagged party's proceeds can't be withdrawn — not even by transferring the
-  position NFT to a clean wallet and claiming from there, and not through the
-  keeper-assisted backstop buyout either (both loopholes are now closed). A
-  genuine protocol sale of a position re-points it to the buyer, so a legitimate
-  buyer's funds settle to their own vault and are unaffected.
+  position NFT to a clean wallet and claiming from there, nor through the
+  keeper-assisted backstop buyout, nor through a parallel collateral-sale fill
+  (all three loopholes are now closed). A genuine protocol sale of a position
+  re-points it to the buyer, so a legitimate buyer's funds settle to their own
+  vault and are unaffected.
 - When the sanction is lifted, the preserved proceeds become claimable as normal.
 - A new on-chain event records each time a close-out parks locked proceeds, so
   operators can reconcile them when a flag clears.

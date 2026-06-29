@@ -63,6 +63,28 @@ library LibSanctionedLock {
         s.sanctionedDepositExemptUser = recipient;
     }
 
+    /// @dev Arm the FROM-side move-out exemption (`consolidationMoveFromUser`)
+    ///      for `payer` around a wind-down vault WITHDRAWAL (Codex #832 P1). The
+    ///      in-kind / vault-to-vault default, liquidation and internal-match
+    ///      settlements pull the paying borrower's collateral OUT of their vault
+    ///      via `VaultFactoryFacet.vaultWithdraw*`, which resolves that vault
+    ///      through the Tier-1-gated `getOrCreateUserVault`. A borrower flagged
+    ///      AFTER loan-init would otherwise brick the forced close-out here. The
+    ///      payer is LOSING custody (asset pushed to the already-screened
+    ///      recipient), so the receive-side gate must not apply; their vault
+    ///      already exists, so no proxy is minted for a flagged wallet. Pinned to
+    ///      the exact `payer` so a reentrant transfer can't resolve a DIFFERENT
+    ///      flagged vault — the same window `LibConsolidation` opens around its
+    ///      move-out. `endMoveOut` clears it; always pair them.
+    function beginMoveOut(LibVaipakam.Storage storage s, address payer) internal {
+        s.consolidationMoveFromUser = payer;
+    }
+
+    /// @dev Clear the from-side move-out exemption armed by `beginMoveOut`.
+    function endMoveOut(LibVaipakam.Storage storage s) internal {
+        s.consolidationMoveFromUser = address(0);
+    }
+
     /// @dev Clear the pin and, when `recipient` is sanctions-flagged, emit the
     ///      audit event recording that this close-out parked locked proceeds.
     function end(

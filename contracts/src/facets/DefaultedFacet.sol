@@ -493,6 +493,12 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     s, loan.lender, loanId, loan.collateralAsset, loan.collateralAmount
                 );
 
+                // #821 (Codex #832 r2 P1) — the in-kind move WITHDRAWS the
+                // collateral from the borrower's vault, which resolves through the
+                // Tier-1-gated `getOrCreateUserVault`. Arm the from-side move-out
+                // exemption so a borrower flagged after init doesn't brick the
+                // default (the collateral is pushed OUT to the lender's vault).
+                LibSanctionedLock.beginMoveOut(s, loan.borrower);
                 if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
@@ -532,6 +538,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         VaultWithdrawFailed.selector
                     );
                 }
+                LibSanctionedLock.endMoveOut(s);
 
                 // Record collateral claim for the lender
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

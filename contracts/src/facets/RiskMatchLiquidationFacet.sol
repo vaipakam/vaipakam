@@ -517,6 +517,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         bool fromDiamondCustody
     ) private {
         if (moved == 0) return;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         uint256 lenderShare = moved - incentive;
         // #821 (Codex #832 P1) — resolve the receiving (stored) lender's vault
         // under the receive-side sanctions exemption so a lender flagged after
@@ -524,8 +525,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
         // still frozen (the claim-side stored-owner gate in `ClaimFacet`), and a
         // `SanctionedProceedsLocked` event is emitted when the lender is flagged.
         address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
-            LibVaipakam.storageSlot(), receivingLender, loanId, asset, lenderShare
+            s, receivingLender, loanId, asset, lenderShare
         );
+        // #821 (Codex #832 r2 P1) — a non-custody leg WITHDRAWS from the paying
+        // borrower's vault (Tier-1-gated). Arm the from-side move-out exemption
+        // for the whole withdraw span so a borrower flagged after init doesn't
+        // brick the internal-match settlement (collateral pushed OUT to the
+        // already-screened lender / matcher). No-op for a Diamond-custody leg.
+        if (!fromDiamondCustody) LibSanctionedLock.beginMoveOut(s, payingBorrower);
         if (lenderShare > 0) {
             if (fromDiamondCustody) {
                 IERC20(asset).safeTransfer(lenderVault, lenderShare);
@@ -550,6 +557,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                 );
             }
         }
+        if (!fromDiamondCustody) LibSanctionedLock.endMoveOut(s);
     }
 
     /// @dev Execute the partial-match α swap between two opposing

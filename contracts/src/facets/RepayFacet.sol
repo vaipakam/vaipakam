@@ -456,12 +456,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 VaultWithdrawFailed.selector
             );
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.prepayAsset).safeTransfer(lenderVault, lenderShare);
-            // T-051 — Diamond-side transfer to lender's vault ticks
-            // the protocolTrackedVaultBalance counter so the
-            // subsequent claim's vaultWithdrawERC20 doesn't underflow.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, lenderShare);
+            // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
+            // flagged stored lender doesn't brick the rental repayment; the share
+            // lands in the lender's OWN vault, frozen behind the claim gate
+            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
+            // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
+            LibSanctionedLock.depositLocked(
+                s, loan.lender, loanId, loan.prepayAsset, lenderShare
+            );
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -571,11 +573,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 snap.treasuryCollateral +
                 snap.borrowerCollateral;
             if (held > 0) {
-                address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-                IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
-                // T-051 — Diamond-side transfer to vault ticks the
-                // protocolTrackedVaultBalance counter.
-                LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, held);
+                // #821 (Codex #832 r2 P1) — vault-lock the restored collateral so
+                // a flagged stored borrower doesn't brick the fallback cure; it
+                // lands in the borrower's OWN vault, frozen behind the claim gate
+                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+                LibSanctionedLock.depositLocked(
+                    s, loan.borrower, loanId, loan.collateralAsset, held
+                );
                 // #569 Codex #572 round-5 P1 — RE-LIEN the restored
                 // collateral. The lien was released at default-entry
                 // (when the loan went FallbackPending), so the snapshot
