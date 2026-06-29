@@ -95,6 +95,15 @@ export function invalidationKeysFromResult(
   return keys;
 }
 
+/** Coarse "refetch everything" set used to recover a push that was lost when a
+ *  prior post-write scan threw (its counts never reached `broadcast()`). The
+ *  client's nudge is global, so this just guarantees a refetch. */
+const RECOVERY_KEYS: InvalidationKey[] = [
+  'offer.changed',
+  'loan.updated',
+  'activity.appended',
+];
+
 export class ChainIngestDO {
   /**
    * `true` only while THIS instance's `alarm()` is actively scanning. This is
@@ -226,11 +235,23 @@ export class ChainIngestDO {
         retryableFailure = result.skipped === 'rpc-error';
         // #757 Phase B — broadcast the coarse invalidation keys to subscribed
         // clients AFTER the D1 write, so a connected dapp refetches the changed
-        // slice within seconds instead of waiting for its next poll.
-        this.broadcast(chainId, result);
+        // slice within seconds instead of waiting for its next poll. If a PRIOR
+        // attempt wrote D1 then threw before returning (P3), its counts were
+        // lost and this idempotent retry yields zero — so a pending flag forces
+        // a recovery broadcast even when this pass's counts are empty.
+        const pendingBroadcast =
+          (await this.state.storage.get<boolean>('pendingBroadcast')) ?? false;
+        this.broadcast(chainId, result, pendingBroadcast);
+        if (pendingBroadcast) {
+          await this.state.storage.delete('pendingBroadcast');
+        }
       } catch (err) {
         // Retry (bounded) on failure; the event re-processes next iteration /
-        // next cron tick (handlers are re-scan-idempotent, #760).
+        // next cron tick (handlers are re-scan-idempotent, #760). A throw may
+        // have landed AFTER some D1 writes (e.g. the final cursor advance), so
+        // mark a pending broadcast: the next successful pass will emit a
+        // recovery invalidation even though its idempotent re-scan counts zero.
+        await this.state.storage.put({ pendingBroadcast: true });
         // eslint-disable-next-line no-console
         console.error(`[chainIngestDO] scan failed for chain ${chainId}`, err);
         await this.rearmOrFinish(attempts);
@@ -323,9 +344,18 @@ export class ChainIngestDO {
    * that changed nothing pushes nothing (no wake, no traffic). Per-socket `send`
    * is wrapped so one dead socket can't abort the fan-out.
    */
-  private broadcast(chainId: number, result: ChainIndexerResult): void {
-    const keys = invalidationKeysFromResult(result);
-    if (keys.length === 0) return;
+  private broadcast(
+    chainId: number,
+    result: ChainIndexerResult,
+    recoverPending = false,
+  ): void {
+    let keys = invalidationKeysFromResult(result);
+    if (keys.length === 0) {
+      // Nothing changed THIS pass. Only push if a prior post-write failure left
+      // a pending recovery — then fan out the coarse "refetch everything" set.
+      if (!recoverPending) return;
+      keys = RECOVERY_KEYS;
+    }
     const sockets = this.state.getWebSockets();
     if (sockets.length === 0) return;
     const frame: PushFrame = {

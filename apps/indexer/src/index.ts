@@ -55,6 +55,7 @@ import {
   type WorkerEnv,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import {
   pruneOldCancelledOffers,
   pruneOldWebhookDeliveries,
@@ -205,11 +206,20 @@ export default {
       if (req.headers.get('Upgrade') !== 'websocket') {
         return new Response('expected websocket upgrade', { status: 426 });
       }
-      if (!env.CHAIN_INGEST_DO) {
-        // No realtime channel on this deployment — client falls back to polling.
+      // Reject inactive subscriptions BEFORE touching the DO (Codex P2). While
+      // DO ingest is off (the default rollout state) there's no push channel —
+      // returning 503 keeps the client honestly on polling and avoids the DO
+      // resolving secrets + accepting a never-fed socket on every app load.
+      if (!doIngestEnabled(env) || !env.CHAIN_INGEST_DO) {
         return new Response('realtime push unavailable', { status: 503 });
       }
       const chainId = Number(wsMatch[1]);
+      // Reject unknown chains BEFORE `idFromName`, so a client can't spray
+      // `/ws/chain/<random>` and spin up per-id DO instances. `getDeployment`
+      // is the static (no-secret) "is this a real Vaipakam chain" gate.
+      if (!getDeployment(chainId)) {
+        return new Response('unknown chain', { status: 404 });
+      }
       const ns = env.CHAIN_INGEST_DO;
       const stub = ns.get(ns.idFromName(String(chainId)));
       // Reconstruct the request against the DO-internal URL so the DO can read

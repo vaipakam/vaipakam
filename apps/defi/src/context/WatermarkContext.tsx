@@ -178,13 +178,14 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     };
     let lastActivityAt = Date.now();
     let lastActivityWriteAt = 0;
-    // #757 Phase B — serialize forced (push-nudge) probes. Without this, two
-    // nudges arriving while the first `probe()` is still awaiting a slow RPC
-    // both reach `.then(schedule())` and arm a second timer without clearing
-    // the first — duplicating the singleton poll loop. `forcedInFlight`
-    // coalesces concurrent nudges into one trailing re-run.
-    let forcedInFlight = false;
-    let forcedPending = false;
+    // #757 Phase B — single-probe funnel guarding the singleton-poller
+    // invariant: at most ONE probe (timer- OR push-driven) runs at a time, and
+    // at most ONE timer is ever armed. A trigger arriving mid-probe sets a
+    // pending flag consumed when the in-flight probe settles. Without this, a
+    // push nudge landing during a slow timer probe (or vice-versa) armed a
+    // second poll loop, multiplying background RPC traffic.
+    let probeInFlight = false;
+    let pendingForce = false; // a push nudge arrived mid-probe
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -282,55 +283,67 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    // The single funnel every probe goes through (timer tick, push nudge,
+    // visibility/activity). `forceBump` is true only for push-driven nudges.
+    // Serializes against itself: a trigger while a probe is in flight is folded
+    // into ONE follow-up (a forced follow-up wins, so a status-only mutation
+    // isn't lost). On settle it either services the pending nudge or arms the
+    // next timer — never both, never a duplicate timer.
+    async function runProbe(forceBump: boolean): Promise<void> {
+      if (probeInFlight) {
+        // A tick arriving mid-probe is folded in: a push nudge must not be lost
+        // (it force-bumps), so remember it; a plain timer/visibility tick needs
+        // nothing — the in-flight probe's `finally` always reschedules.
+        if (forceBump) pendingForce = true;
+        return;
+      }
+      probeInFlight = true;
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      try {
+        await probe({ forceBump });
+      } finally {
+        probeInFlight = false;
+        if (!cancelled) {
+          if (pendingForce) {
+            pendingForce = false;
+            void runProbe(true); // a nudge landed mid-probe — service it next
+          } else {
+            schedule(); // arm the next timer (self-clears any stale one)
+          }
+        }
+      }
+    }
+
     function schedule(): void {
       if (cancelled) return;
       if (document.hidden) return; // visibility-pause
       const interval = chooseInterval();
       if (interval === null) return; // no subscribers / all paused
-      timer = setTimeout(async () => {
-        await probe();
-        schedule();
+      if (timer) {
+        clearTimeout(timer); // never stack timers
+        timer = null;
+      }
+      timer = setTimeout(() => {
+        void runProbe(false);
       }, interval);
     }
 
-    // Imperative restart: clear the pending timer and rebuild against
-    // the now-current subscriber set + activity state. Bound into
-    // rescheduleRef so register/unregister/onActivity can call it.
+    // Imperative restart: rebuild the timer against the now-current subscriber
+    // set + activity state. `schedule()` self-clears, so this is a thin alias
+    // kept for the register/unregister call sites.
     rescheduleRef.current = () => {
       if (cancelled) return;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
       schedule();
     };
 
-    // #757 Phase B — "probe now + force a version bump". Coalesces concurrent
-    // nudges (only ONE forced probe runs at a time; later nudges set
-    // `forcedPending` and trigger a single trailing re-run), and always
-    // restarts the loop via `rescheduleRef` — which clears any existing timer
-    // first — so a burst of push frames can never leave duplicate timers.
+    // #757 Phase B — "probe now + force a version bump". Funnels through
+    // `runProbe`, so a push nudge is fully serialized with the timer probe and
+    // with other nudges — exactly one probe runs and one timer is armed.
     probeNowRef.current = () => {
-      if (cancelled) return;
-      if (forcedInFlight) {
-        forcedPending = true; // fold into the in-flight probe's trailing re-run
-        return;
-      }
-      forcedInFlight = true;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      void probe({ forceBump: true }).then(() => {
-        forcedInFlight = false;
-        if (cancelled) return;
-        if (forcedPending) {
-          forcedPending = false;
-          probeNowRef.current(); // absorb nudges that arrived mid-flight
-        } else {
-          rescheduleRef.current(); // single timer (clears any existing first)
-        }
-      });
+      void runProbe(true);
     };
 
     function onVisibility(): void {
@@ -343,9 +356,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       }
       // Re-focused — count as fresh activity and fire an immediate probe.
       lastActivityAt = Date.now();
-      void probe().then(() => {
-        if (!cancelled) schedule();
-      });
+      void runProbe(false);
     }
 
     function onActivity(): void {
@@ -360,16 +371,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       );
       lastActivityAt = now;
       if (wasPaused && !cancelled && !document.hidden && !timer) {
-        void probe().then(() => {
-          if (!cancelled && !timer) schedule();
-        });
+        void runProbe(false);
       }
     }
 
-    // Initial fire + schedule.
-    void probe().then(() => {
-      if (!cancelled) schedule();
-    });
+    // Initial fire + schedule (through the funnel).
+    void runProbe(false);
     document.addEventListener('visibilitychange', onVisibility);
     const activityOpts = { passive: true } as const;
     document.addEventListener('mousemove', onActivity, activityOpts);
