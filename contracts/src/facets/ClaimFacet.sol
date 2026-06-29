@@ -360,6 +360,12 @@ contract ClaimFacet is
         // Sanctions: the executing keeper AND the cash recipient (current NFT owner).
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam._assertNotSanctioned(nftOwner);
+        // #821 (Codex #832 P1) — also enforce the stored-owner FREEZE here, the
+        // same gate `_claimAsLenderImpl` applies: a flagged stored `loan.lender`
+        // must not monetize through the backstop by transferring the lender NFT
+        // to a clean wallet (the cash buyout + any `heldForLender` withdraw from
+        // the stored lender's vault would otherwise be a freeze bypass).
+        LibVaipakam._assertNotSanctioned(loan.lender);
 
         // ── Resolution-first. The internal-match auto-dispatch is calldata-free
         //    and objective; it always runs. A FULL match clears `snap.active`

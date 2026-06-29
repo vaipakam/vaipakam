@@ -1340,6 +1340,7 @@
     "tokenIdLabelShort": "Token ID",
     "currentOwner": "Current Owner",
     "ownerSanctioned": "This position's current owner is sanctions-flagged. While the flag is in place the position's payout is frozen — its proceeds stay locked in the owner's vault and cannot be claimed until the sanction is lifted. Do not buy this position expecting to claim it.",
+    "storedPartySanctioned": "This position's payout is frozen. The original loan party of record is sanctions-flagged, so the proceeds stay locked in that party's vault and the claim is blocked for ANYONE who holds this NFT — including the current owner — until the sanction is lifted. Do not buy this position expecting to claim it.",
     "lenderPosition": "Lender position",
     "borrowerPosition": "Borrower position",
     "unknown": "Unknown",

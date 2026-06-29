@@ -98,7 +98,15 @@ library LibSanctionedLock {
         s.sanctionedDepositExemptUser = owner;
         vault = LibFacet.getOrCreateVault(owner);
         s.sanctionedDepositExemptUser = address(0);
-        if (amount > 0 && LibVaipakam.isSanctionedAddress(owner)) {
+        // Emit whenever `owner` is flagged — unlike `depositLocked` there is NO
+        // `amount > 0` gate here. This is the in-kind / vault-to-vault / NFT
+        // helper: the caller parks a real asset regardless of the numeric
+        // `amount` (an ERC-721 carries its payload in `tokenId` with a
+        // structurally-zero `collateralAmount`), so the parked-proceeds audit
+        // event must still fire (Codex #832 P3). Callers pass the most
+        // descriptive amount they have (token amount, NFT quantity, or 0 for a
+        // bare ERC-721).
+        if (LibVaipakam.isSanctionedAddress(owner)) {
             emit SanctionedProceedsLocked(loanId, owner, asset, amount);
         }
     }

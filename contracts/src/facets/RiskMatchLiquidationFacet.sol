@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
@@ -431,17 +432,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             LibEncumbrance.decrementCollateralLien(loanIdB, r.movedX);
         }
         // Leg X: B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
+        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
         if (!cFromDiamond) {
             LibEncumbrance.decrementCollateralLien(loanIdC, r.movedY);
         }
         // Leg Y: C's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, cFromDiamond);
+        _settleLeg(loanIdB, lc.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, cFromDiamond);
         if (!aFromDiamond) {
             LibEncumbrance.decrementCollateralLien(loanIdA, r.movedZ);
         }
         // Leg Z: A's collateral (= C's principal asset) → C.lender + matcher.
-        _settleLeg(la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher, aFromDiamond);
+        _settleLeg(loanIdC, la.borrower, lc.principalAsset, lc.lender, r.movedZ, r.incentiveZ, matcher, aFromDiamond);
 
         // State updates — each loan's principal cleared by its leg,
         // each borrower's collateral debited by the NEXT loan's leg.
@@ -506,6 +507,7 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ///        there would strand it on the Diamond instead of the
     ///        keeper / lender who triggered settlement.
     function _settleLeg(
+        uint256 loanId,
         address payingBorrower,
         address asset,
         address receivingLender,
@@ -516,8 +518,14 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
     ) private {
         if (moved == 0) return;
         uint256 lenderShare = moved - incentive;
-        address lenderVault = VaultFactoryFacet(address(this))
-            .getOrCreateUserVault(receivingLender);
+        // #821 (Codex #832 P1) — resolve the receiving (stored) lender's vault
+        // under the receive-side sanctions exemption so a lender flagged after
+        // loan-init doesn't BRICK the internal-match settlement. The share is
+        // still frozen (the claim-side stored-owner gate in `ClaimFacet`), and a
+        // `SanctionedProceedsLocked` event is emitted when the lender is flagged.
+        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+            LibVaipakam.storageSlot(), receivingLender, loanId, asset, lenderShare
+        );
         if (lenderShare > 0) {
             if (fromDiamondCustody) {
                 IERC20(asset).safeTransfer(lenderVault, lenderShare);
@@ -626,12 +634,12 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
             LibEncumbrance.decrementCollateralLien(loanIdB, r.movedX);
         }
         // Leg X — B's collateral (= A's principal asset) → A.lender + matcher.
-        _settleLeg(lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
+        _settleLeg(loanIdA, lb.borrower, la.principalAsset, la.lender, r.movedX, r.incentiveX, matcher, bFromDiamond);
         if (!aFromDiamond) {
             LibEncumbrance.decrementCollateralLien(loanIdA, r.movedY);
         }
         // Leg Y — A's collateral (= B's principal asset) → B.lender + matcher.
-        _settleLeg(la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, aFromDiamond);
+        _settleLeg(loanIdB, la.borrower, lb.principalAsset, lb.lender, r.movedY, r.incentiveY, matcher, aFromDiamond);
 
         // State updates — debt cleared by the gross moved amount
         // (borrower forfeits the full amount; the incentive % they

@@ -70,6 +70,13 @@ type Verdict =
        *  (the proceeds are locked in the stored party's vault and the claim
        *  paths screen that owner), so a buyer must be warned it's unclaimable. */
       ownerSanctioned: boolean;
+      /** #821 (Codex #832 P2) — true when the STORED loan party for this NFT's
+       *  role (`loanDetails.lender` for a lender NFT, `loanDetails.borrower` for
+       *  a borrower NFT) is sanctions-flagged. This is the actual freeze
+       *  condition: `claimAsLender` / `claimAsBorrower` screen the stored owner,
+       *  so the payout is frozen for ANYONE — even a clean buyer the flagged
+       *  party transferred the NFT to (where `ownerSanctioned` is false). */
+      storedPartySanctioned: boolean;
     }
   | {
       kind: "burned";
@@ -364,6 +371,36 @@ export default function NftVerifier() {
         // Read failed — leave false (fail-open), as elsewhere in the app.
       }
 
+      // #821 (Codex #832 P2) — the freeze keys on the STORED party for this
+      // NFT's role, not the current holder. A flagged stored party who moved the
+      // position NFT to a clean wallet still has the payout frozen (the claim
+      // paths screen `loan.lender` / `loan.borrower`), so warn on that too —
+      // otherwise a buyer of the transferred NFT sees no warning yet can't claim.
+      const storedParty =
+        role === "lender"
+          ? loanDetails?.lender ?? null
+          : role === "borrower"
+            ? loanDetails?.borrower ?? null
+            : null;
+      let storedPartySanctioned = false;
+      if (storedParty) {
+        if (storedParty.toLowerCase() === owner.toLowerCase()) {
+          // Same address — reuse the holder read, no extra RPC.
+          storedPartySanctioned = ownerSanctioned;
+        } else {
+          try {
+            storedPartySanctioned = (await publicClient.readContract({
+              address,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: "isSanctionedAddress",
+              args: [storedParty as Address],
+            })) as boolean;
+          } catch {
+            // Fail-open, matching the holder read above.
+          }
+        }
+      }
+
       setVerdict({
         kind: "live",
         chain,
@@ -376,6 +413,7 @@ export default function NftVerifier() {
         ltv,
         collateralLiquidityLive,
         ownerSanctioned,
+        storedPartySanctioned,
       });
       step.success();
     } catch (err) {
@@ -812,8 +850,24 @@ function LiveCard({
   verdict: Extract<Verdict, { kind: "live" }>;
 }) {
   const { t } = useTranslation();
-  const { chain, tokenId, owner, metadata, role, loanDetails, hf, ltv, collateralLiquidityLive, ownerSanctioned } =
-    verdict;
+  const {
+    chain,
+    tokenId,
+    owner,
+    metadata,
+    role,
+    loanDetails,
+    hf,
+    ltv,
+    collateralLiquidityLive,
+    ownerSanctioned,
+    storedPartySanctioned,
+  } = verdict;
+  // #821 (Codex #832 P2) — the position's payout is frozen when EITHER the
+  // current holder is flagged (they personally can't claim — `msg.sender` gate)
+  // OR the stored loan party is flagged (NOBODY can claim — stored-owner freeze,
+  // including a clean buyer of a transferred NFT). Either way: unclaimable.
+  const payoutFrozen = ownerSanctioned || storedPartySanctioned;
   const blockExplorer = chain.blockExplorer;
   const status =
     loanDetails != null ? (Number(loanDetails.status) as LoanStatus) : null;
@@ -892,7 +946,7 @@ function LiveCard({
               {owner} <ExternalLink size={12} />
             </a>
           </div>
-          {ownerSanctioned && (
+          {payoutFrozen && (
             <div
               className="data-row"
               style={{
@@ -906,7 +960,9 @@ function LiveCard({
                 className="data-value"
                 style={{ color: "var(--danger, #dc2626)", fontSize: "0.82rem" }}
               >
-                {t("nftVerifier.ownerSanctioned")}
+                {ownerSanctioned
+                  ? t("nftVerifier.ownerSanctioned")
+                  : t("nftVerifier.storedPartySanctioned")}
               </span>
             </div>
           )}

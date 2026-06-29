@@ -432,16 +432,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 }
 
                 // Deposit lender proceeds into lender's vault for claim. #821 —
-                // vault-lock so a flagged stored lender doesn't brick the default.
-                address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+                // vault-lock so a flagged stored lender doesn't brick the default
+                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+                LibSanctionedLock.depositLocked(
                     s, loan.lender, loanId, loan.principalAsset, lenderProceeds
                 );
-                if (lenderProceeds > 0) {
-                    IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-                    // T-051 — Diamond-side transfer to vault ticks
-                    // the protocolTrackedVaultBalance counter.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-                }
 
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
@@ -464,11 +459,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
                 // Borrower surplus
                 if (borrowerSurplus > 0) {
-                    address borrowerVault = LibSanctionedLock.getOrCreateVaultLocked(
+                    LibSanctionedLock.depositLocked(
                         s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
                     );
-                    IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-                    LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
                     // #661 — reserve a VPFI surplus against the unstake path until
                     // the current borrower-position holder claims it (mirror of
                     // the #592 lender-proceeds reserve above). No-op for non-VPFI.
@@ -625,14 +618,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             IERC20(loan.prepayAsset).safeTransfer(treasury, treasuryFee);
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
 
-            // Lender gets remainder. #821 — vault-lock for a flagged stored lender.
-            address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+            // Lender gets remainder. #821 — vault-lock for a flagged stored lender
+            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+            LibSanctionedLock.depositLocked(
                 s, loan.lender, loanId, loan.prepayAsset, prepayToLender
             );
-            IERC20(loan.prepayAsset).safeTransfer(lenderVault, prepayToLender);
-            // T-051 — Diamond-side transfer to lender's vault ticks
-            // the protocolTrackedVaultBalance counter.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, prepayToLender);
 
             // Record lender's claimable prepay fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({

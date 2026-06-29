@@ -295,16 +295,12 @@ contract RiskSplitLiquidationFacet is
             IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
-        // #821 — vault-lock: resolve the lender's vault through the receive-side
-        // exemption so a flagged stored lender doesn't brick the liquidation;
-        // the proceeds park locked behind the claim-side freeze.
-        address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+        // #821 — vault-lock the lender's share through the receive-side exemption
+        // so a flagged stored lender doesn't brick the liquidation; the proceeds
+        // park locked behind the claim-side freeze (self-guards a zero amount).
+        LibSanctionedLock.depositLocked(
             s, loan.lender, loanId, loan.principalAsset, lenderProceeds
         );
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderProceeds,
@@ -321,11 +317,9 @@ contract RiskSplitLiquidationFacet is
             );
         }
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibSanctionedLock.getOrCreateVaultLocked(
+            LibSanctionedLock.depositLocked(
                 s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
             );
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
