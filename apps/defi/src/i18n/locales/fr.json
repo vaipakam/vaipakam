@@ -485,7 +485,6 @@
   "rewardsSummary": {
     "title": "Vos récompenses VPFI",
     "totalEarnedLabel": "Total gagné",
-    "stakingSubtitle": "Gagnez l'APR du protocole sur le VPFI de votre Vaipakam Vault.",
     "interactionTitle": "Récompenses d'interaction avec la plateforme",
     "interactionSubtitle": "Gagnez une part quotidienne de VPFI pour chaque prêt auquel vous participez.",
     "pendingLabel": "En attente",

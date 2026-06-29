@@ -70,8 +70,8 @@
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI के बारे में जानें",
     "vpfiStakeUnstake": "Stake / Unstake करें",
-    "vpfiStake": "Stake",
-    "vpfiUnstake": "Unstake",
+    "vpfiStake": "Deposit",
+    "vpfiUnstake": "Withdraw",
     "launchApp": "Vaipakam खोलें",
     "toggleMenu": "मेनू खोलें या बंद करें",
     "switchNetwork": "नेटवर्क बदलें",
@@ -1177,10 +1177,10 @@
     "durationMins": "{{mins}}मि",
     "durationSecs": "{{seconds}}से",
     "consentMissingTitle": "Discount tier बंद है",
-    "consentMissingBody": "आपने इस loan पर fee discounts के लिए staked / deposited VPFI उपयोग करने की consent नहीं दी है। Discount tier opt-in है — जब तक आप Dashboard पर इसे enable नहीं करते, settlement पर yield fee पूरे {{treasuryFee}}% rate पर लगेगी, VPFI rebate के बिना।",
+    "consentMissingBody": "आपने इस loan पर fee discounts के लिए deposited VPFI उपयोग करने की consent नहीं दी है। Discount tier opt-in है — जब तक आप Dashboard पर इसे enable नहीं करते, settlement पर yield fee पूरे {{treasuryFee}}% rate पर लगेगी, VPFI rebate के बिना।",
     "consentMissingCta": "Dashboard में enable करें",
     "consentEnabledNoVpfiTitle": "Consent active है, eligible VPFI नहीं",
-    "consentEnabledNoVpfiBody": "आपने consent दे दी है, लेकिन इस chain पर आपके vault में अभी कोई eligible staked / deposited VPFI नहीं है। Yield fee पर time-weighted discount कमाना शुरू करने के लिए VPFI जोड़ें।"
+    "consentEnabledNoVpfiBody": "आपने consent दे दी है, लेकिन इस chain पर आपके vault में अभी कोई eligible deposited VPFI नहीं है। Yield fee पर time-weighted discount कमाना शुरू करने के लिए VPFI जोड़ें।"
   },
   "vpfiTokenCard": {
     "title": "VPFI टोकन (यह चेन)",

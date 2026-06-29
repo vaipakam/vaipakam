@@ -1177,10 +1177,10 @@
     "durationMins": "{{mins}}分",
     "durationSecs": "{{seconds}}秒",
     "consentMissingTitle": "割引Tierが無効です",
-    "consentMissingBody": "このローンの手数料割引に、staked / deposited VPFIを使用する同意がありません。割引Tierはopt-inです — Dashboardで有効化するまで、決済時のYield Feeは{{treasuryFee}}%の通常レートで課され、VPFIリベートはありません。",
+    "consentMissingBody": "このローンの手数料割引に、deposited VPFIを使用する同意がありません。割引Tierはopt-inです — Dashboardで有効化するまで、決済時のYield Feeは{{treasuryFee}}%の通常レートで課され、VPFIリベートはありません。",
     "consentMissingCta": "Dashboardで有効化",
     "consentEnabledNoVpfiTitle": "同意は有効ですが、対象VPFIがありません",
-    "consentEnabledNoVpfiBody": "同意は有効ですが、このチェーンのVaultに対象となるstaked / deposited VPFIがありません。Yield Feeの時間加重割引を得るにはVPFIを追加してください。"
+    "consentEnabledNoVpfiBody": "同意は有効ですが、このチェーンのVaultに対象となるdeposited VPFIがありません。Yield Feeの時間加重割引を得るにはVPFIを追加してください。"
   },
   "vpfiTokenCard": {
     "title": "VPFIトークン（このチェーン）",

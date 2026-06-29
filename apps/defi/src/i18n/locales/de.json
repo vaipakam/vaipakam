@@ -485,7 +485,6 @@
   "rewardsSummary": {
     "title": "Ihre VPFI-Belohnungen",
     "totalEarnedLabel": "Insgesamt verdient",
-    "stakingSubtitle": "Verdienen Sie den Protokoll-APR auf VPFI in Ihrem Vault.",
     "interactionTitle": "Plattform-Interaktions-Belohnungen",
     "interactionSubtitle": "Verdienen Sie täglich VPFI-Anteile für jeden Kredit, an dem Sie teilnehmen.",
     "pendingLabel": "Ausstehend",

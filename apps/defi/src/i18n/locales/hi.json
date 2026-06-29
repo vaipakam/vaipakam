@@ -484,7 +484,6 @@
   "rewardsSummary": {
     "title": "आपके VPFI पुरस्कार",
     "totalEarnedLabel": "कुल अर्जित",
-    "stakingSubtitle": "अपने Vault में रखे VPFI पर प्रोटोकॉल APR कमाएं।",
     "interactionTitle": "प्लेटफ़ॉर्म-इंटरैक्शन पुरस्कार",
     "interactionSubtitle": "हर ऋण के लिए जिसमें आप भाग लेते हैं, दैनिक VPFI हिस्सा कमाएं।",
     "pendingLabel": "लंबित",
