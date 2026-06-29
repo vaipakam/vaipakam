@@ -2,12 +2,17 @@
 
 Delegated keepers automate lifecycle actions (refinance, auto-extend, preclose,
 intent fill/roll, early-withdrawal/loan-sale completion), but they must never be
-custodians: a keeper cannot claim funds, move money out of a vault, transfer a
-position NFT, redirect proceeds, or weaken a safety gate. That boundary was
-enforced and correct in the code, but it was reconstructable only from comments
-scattered across facets, and there was no test proving it holds for a keeper
-approved with **every** action bit. This change makes the boundary auditable
-from one place and pins the strongest case.
+custodians: a keeper cannot claim a user's funds, make an owner-only vault
+withdrawal, transfer a position NFT, redirect a payout to itself, or weaken a
+safety gate. (A keeper-driven action can still move the obligation the user
+already owes — e.g. auto-extend forwards the borrower's accrued interest from
+their vault to the lender/treasury — and earn the bounded VPFI housekeeping
+reward; and a permissionless caller can earn a bounded matcher/liquidator bonus
+or buy seized collateral by paying the debt — none of which hands over a user's
+principal/collateral.) That boundary was enforced and correct in the code, but it
+was reconstructable only from comments scattered across facets, and there was no
+test proving it holds for a keeper approved with **every** action bit. This
+change makes the boundary auditable from one place and pins the strongest case.
 
 - **New matrix spec** — `docs/FunctionalSpecs/KeeperAuthorityMatrix.md` states
   the keeper delegation model (the three per-keeper gates + the global pause +

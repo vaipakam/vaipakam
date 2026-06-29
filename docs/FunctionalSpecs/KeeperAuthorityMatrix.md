@@ -12,8 +12,13 @@ This addresses GitHub issue #803 — so a reviewer can audit keeper authority fr
 **one** matrix instead of reconstructing it from comments scattered across
 facets. The load-bearing claim it pins: **a delegated keeper is an automation
 agent, never a custodian.** Even a keeper a user has approved with *every* action
-bit (`KEEPER_ACTION_ALL`) cannot claim funds, move money out of a vault, transfer
-a position NFT, redirect proceeds, or weaken a safety gate.
+bit (`KEEPER_ACTION_ALL`) cannot claim a user's funds, make an owner-only vault
+withdrawal, transfer a position NFT, redirect a payout to itself, or weaken a
+safety gate. (It CAN drive granted automation that moves the obligation the user
+already owes — e.g. auto-extend forwards the borrower's accrued interest from
+their vault to the lender/treasury — and earn the bounded VPFI housekeeping
+reward; neither hands the keeper the user's principal/collateral. The allowed
+surface + permissionless-exception sections give the precise economics.)
 
 ## The delegation model
 
@@ -127,11 +132,18 @@ separately, per the keeper-state visibility rules in `WebsiteReadme.md`.)
 
 ## Test coverage
 
-**Existing (boundary proven for a non-owner caller):**
+**Existing — no-custody boundary proven for a non-owner caller:**
 `ClaimFacetTest` (claim NFT-owner gates), `AddCollateralFacetTest`,
-`PartialWithdrawalFacetTest`, `LenderIntentCapital.t.sol`
-(`test_rollIntentLoan_unauthorizedKeeper_reverts` — keeper without the bit is
-denied), `LiquidationMinOutputInvariant.t.sol` (oracle-derived min-out).
+`PartialWithdrawalFacetTest` (owner-only collateral ops), and
+`LiquidationMinOutputInvariant.t.sol` (oracle-derived min-out, caller cannot
+lower the floor).
+
+**Existing — allowed-surface authorization (a keeper without the action bit is
+denied):** `LenderIntentCapital.t.sol::test_rollIntentLoan_unauthorizedKeeper_reverts`.
+Note this exercises the AUTO_ROLL bit-gate on an *allowed* path — it does NOT
+cover a custody-boundary row (vault withdrawal, NFT transfer, recipient routing);
+those rows are pinned by the owner-only / `onlyDiamondInternal` tests above and by
+the new `KEEPER_ACTION_ALL` tests below.
 
 **Added with this matrix (the `KEEPER_ACTION_ALL` boundary — the novel case):**
 `ClaimFacetTest` gains tests that approve a keeper with `KEEPER_ACTION_ALL`,
