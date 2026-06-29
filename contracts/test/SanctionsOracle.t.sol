@@ -315,6 +315,42 @@ contract SanctionsOracleTest is RiskFacetTest {
         // even though the counterparty was sanctioned mid-loan.
     }
 
+    /// @notice #821 — when the LENDER is flagged after loan-init, full repay must
+    ///         still COMPLETE (vault-lock: the proceeds land in the lender's own
+    ///         vault, not bricking the close-out) but the lender's claim is
+    ///         FROZEN until the sanction clears, then succeeds. Proves the two
+    ///         halves compose: deposit-in (exemption) + freeze-on-claim
+    ///         (stored-owner screen).
+    function test_SanctionedLender_RepayLocksProceeds_ClaimFreezesUntilCleared() public {
+        MockSanctionsList m = _installSanctions();
+        uint256 loanId = createAndAcceptOffer();
+        m.setFlagged(lender, true); // lender flagged AFTER loan-init
+
+        LibVaipakam.Loan memory loan =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        uint256 owed = loan.principal + (loan.principal * 1000) / 10000;
+        ERC20Mock(loan.principalAsset).mint(borrower, owed);
+        vm.prank(borrower);
+        ERC20Mock(loan.principalAsset).approve(address(diamond), owed);
+
+        // Vault-lock IN: repay completes despite the flagged stored lender —
+        // previously the receiving-vault screen would have reverted (bricked).
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayLoan(loanId);
+
+        // Freeze: the flagged lender's proceeds are locked — claim reverts.
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender)
+        );
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+
+        // Sanction lifted ⇒ the preserved proceeds become claimable.
+        m.setFlagged(lender, false);
+        vm.prank(lender);
+        ClaimFacet(address(diamond)).claimAsLender(loanId);
+    }
+
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     function _buildLenderOfferParams()
