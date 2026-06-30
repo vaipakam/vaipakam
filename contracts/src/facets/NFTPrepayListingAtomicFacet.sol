@@ -991,7 +991,7 @@ contract NFTPrepayListingAtomicFacet is DiamondReentrancyGuard, DiamondPausable 
         returns (uint256)
     {
         uint256 endTime = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
-        return endTime + LibVaipakam.loanGracePeriod(loan);
+        return endTime + LibVaipakam.gracePeriod(loan.durationDays);
     }
 
     function _seaport(LibVaipakam.Storage storage s) private view returns (address) {

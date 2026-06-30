@@ -752,12 +752,12 @@ contract PrecloseFacet is
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
-        // #641 — offset re-originates the obligation under a new term; snapshot
-        // the term + maturity (validated 1..365 ⇒ uint16 exact).
-        loan.originalDurationDays = uint16(offer.durationDays);
-        loan.originalEndTime = uint64(block.timestamp + offer.durationDays * 1 days);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
+        // #641 — offset re-originates the obligation under a new term; mirror
+        // the interest-accrual clock onto it (validated 1..365 ⇒ uint16 exact).
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(offer.durationDays);
         loan.interestRateBps = offer.interestRateBps;
 
         // #569 Codex #572 P1 #3 (2026-06-13) — verify the incoming

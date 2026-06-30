@@ -1061,14 +1061,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // loan matures, late fees apply and the cleaner close-out is
         // full liquidation or time-based default. Excludes late-fee
         // accounting from this path entirely (safe simplification).
-        // #641 — seed the original term/maturity (legacy guard, no-op for loans
-        // created with the fields set) and gate the partial on the ORIGINAL
-        // maturity: a partial is in-term only before the agreed deadline, and
-        // rounding the re-stamped term from this stable reference (below) keeps
-        // the maturity bounded to `< 1 day` of drift across repeated partials.
-        uint256 originalMaturity = LibVaipakam.seedOriginalTermIfUnset(loan);
-        if (block.timestamp >= originalMaturity) {
-            revert PartialAfterMaturity(originalMaturity, block.timestamp);
+        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
+        if (block.timestamp >= endTime) {
+            revert PartialAfterMaturity(endTime, block.timestamp);
         }
 
         LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
@@ -1262,35 +1257,22 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         (uint256 preDebtNum, uint256 preCollNum) = _computeNumeraireValues(loan);
 
         // Mutate the loan: reduce collateral + principal and restart the
-        // interest-accrual clock at `now` on the reduced principal.
+        // INTEREST-ACCRUAL clock at now on the reduced principal.
         //
-        // #641 — `durationDays` is whole-day-granular and is overloaded for
-        // three jobs: maturity (`startTime + durationDays*1 days`), the grace
-        // bucket (`gracePeriod(durationDays)`), and interest accrual. The old
-        // code floored `durationDays = (endTime - now)/1 days`, which (a)
-        // dropped the sub-day remainder and pulled `endTime` EARLIER, and (b)
-        // shrank the value the grace bucket keys off — both accelerating the
-        // borrower's default / late-fee exposure and clipping the lender's
-        // coupon window. Two-part fix:
-        //   • Maturity: `startTime` stays at `now` (the clean accrual origin —
-        //     the reduced principal must accrue strictly from the partial), and
-        //     the remaining term is rounded UP to whole days from the STABLE
-        //     `originalMaturity` captured above (NOT the live, possibly-drifted
-        //     `endTime`). That keeps the re-stamped maturity in
-        //     `[originalMaturity, originalMaturity + 1 day)` no matter how many
-        //     partials fire — NEVER earlier (the #641 harm), at most ~1 day
-        //     later in total (borrower-favourable), never compounding out.
-        //   • Grace: keyed off the immutable `originalDurationDays`
-        //     (`LibVaipakam.loanGracePeriod`), seeded above, so shrinking the
-        //     live `durationDays` here can't collapse the grace window.
-        // The pre-partial coupon was already settled interest-first from the
-        // swap proceeds above. `originalMaturity > block.timestamp` is
-        // guaranteed by the in-term gate, so the subtraction can't underflow.
+        // #641 — the term tuple (`startTime` + `durationDays`) is left
+        // UNTOUCHED, so the loan's maturity (`startTime + durationDays*1 days`)
+        // and grace bucket (`gracePeriod(durationDays)`) are preserved exactly:
+        // a partial can no longer pull the default / late-fee deadline earlier
+        // or collapse the grace window. The accrual clock lives in the dedicated
+        // `interestAccrualStart` / `interestRemainingDays` fields instead — the
+        // reduced principal accrues from `now` over the whole days remaining to
+        // maturity. The pre-partial coupon was already settled interest-first
+        // from the swap proceeds above.
         loan.collateralAmount -= swappedCollateral;
         loan.principal -= principalRepaid;
-        loan.startTime = uint64(block.timestamp);
-        loan.durationDays =
-            (originalMaturity - block.timestamp + (1 days - 1)) / 1 days;
+        uint256 remainingDays = (endTime - block.timestamp) / 1 days;
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(remainingDays);
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this

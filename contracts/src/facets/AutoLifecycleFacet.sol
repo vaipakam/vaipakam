@@ -611,7 +611,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // below but using the grace-aware threshold.
         if (
             block.timestamp >
-            oldEndTime + LibVaipakam.loanGracePeriod(loan)
+            oldEndTime + LibVaipakam.gracePeriod(loan.durationDays)
         ) {
             revert ExtensionGraceExpired();
         }
@@ -738,11 +738,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
-        // #641 — auto-refinance commits a NEW term; re-snapshot the term +
-        // maturity so the grace bucket and the partial-liquidation maturity
-        // reference track the refinanced term (validated 1..365).
-        loan.originalDurationDays = uint16(newDurationDays);
-        loan.originalEndTime = uint64(block.timestamp + newDurationDays * 1 days);
+        // #641 — auto-refinance commits a NEW term; mirror the interest-accrual
+        // clock onto it (validated 1..365 ⇒ uint16 exact).
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(newDurationDays);
         // Codex round-8 P2 — only re-register when the extension is
         // in-term. After `oldEndTime`, the borrower side is forfeited
         // and `loanBorrowerEntryId[loanId]` must stay pointed at the

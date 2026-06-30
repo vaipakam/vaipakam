@@ -855,15 +855,12 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // Safe through year 2554; every reader implicitly widens.
         loan.startTime = uint64(block.timestamp);
         loan.durationDays = offer.durationDays;
-        // #641 — snapshot the committed term + maturity. A later partial
-        // liquidation / repay shrinks `durationDays` (the interest-accrual
-        // remaining term); grace stays keyed off the ORIGINAL term, and a
-        // partial liquidation rounds its re-stamped maturity from the ORIGINAL
-        // maturity, so neither the grace window nor the deadline is pulled
-        // earlier (or drifts outward across repeated partials). `durationDays`
-        // is validated to 1..365, so the uint16 cast is exact.
-        loan.originalDurationDays = uint16(offer.durationDays);
-        loan.originalEndTime = uint64(block.timestamp + offer.durationDays * 1 days);
+        // #641 — seed the interest-accrual clock to mirror the term at
+        // origination. A later partial liquidation / repay re-stamps THESE
+        // fields (not startTime/durationDays), keeping maturity + grace intact.
+        // `durationDays` is validated 1..365 ⇒ the uint16 cast is exact.
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(offer.durationDays);
         // Range Orders Phase 1 — when matchOffers (PR3-B) is in flight,
         // the per-tx `matchOverride` slot carries the midpoint match
         // terms (amount / rate / collateral) and the matcher address.

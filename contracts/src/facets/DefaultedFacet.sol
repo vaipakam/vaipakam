@@ -241,7 +241,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         }
 
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan); // #641 — original-term grace
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         if (block.timestamp <= graceEnd) revert NotDefaultedYet();
 
         address treasury = LibFacet.getTreasury();
@@ -717,7 +717,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         if (loan.status != LibVaipakam.LoanStatus.Active) return false;
 
         uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan); // #641 — original-term grace
+        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
         return block.timestamp > graceEnd;
     }
 

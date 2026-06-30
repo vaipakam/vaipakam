@@ -255,14 +255,14 @@
             "internalType": "uint16"
           },
           {
-            "name": "originalDurationDays",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "originalEndTime",
+            "name": "interestAccrualStart",
             "type": "uint64",
             "internalType": "uint64"
+          },
+          {
+            "name": "interestRemainingDays",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }
