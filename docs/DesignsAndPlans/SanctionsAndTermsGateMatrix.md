@@ -273,17 +273,20 @@ gate-disabled — a route-gate bypass.)
   OWN vault, LOCKED:** a receive-side `getOrCreateUserVault` exemption
   (`sanctionedDepositExemptUser`, mirroring the move-out pin; never mints a new
   vault for a flagged wallet) lets the close-out complete so the unflagged
-  counterparty is made whole, while `claimAsLender` / `claimAsBorrower` screen the
-  **stored vault owner** so a flagged party's vault assets don't move. The
-  transfer-position-then-claim loophole is closed **at the source** by a
+  counterparty is made whole. The freeze itself is enforced **at the source** by a
   **position-NFT transfer restriction** (`VaipakamNFTFacet.transferFrom` /
   `safeTransferFrom` screen both `from` and `to`): a flagged wallet can't move a
   position into or out of itself, so its position is frozen in place and can't be
-  laundered to a clean wallet. Mint / burn / protocol-internal settlement use
-  separate authorized paths (so a flagged party's loan still settles + burns at
-  terminal), and a transfer made before any later flag (a legitimate
-  secondary-market buyer) is unaffected — the clean holder is made whole as
-  normal. The vault is isolated per-user, so nothing commingles in the Diamond. A
+  laundered to a clean wallet, while the claim paths screen the **live claimant**
+  (`msg.sender` / `nftOwner`) — so a flagged wallet that holds its own position
+  can't claim either. The claim paths do **NOT** screen the stored
+  `loan.lender` / `loan.borrower`: for an NFT-rental / non-ERC-20 loan the
+  close-out isn't consolidated, so a stale stored field left by a **legitimate
+  pre-flag secondary-market transfer** must not freeze the clean current holder —
+  the claim-time vault withdrawal arms the exact-address move-out exemption so that
+  clean holder is paid out of the (stale-flagged) stored vault as normal. Mint /
+  burn / protocol-internal settlement use separate authorized paths (so a flagged
+  party's loan still settles + burns at terminal). The vault is isolated per-user, so nothing commingles in the Diamond. A
   `SanctionedProceedsLocked` event records each park. The parallel-sale
   `recordOfferSaleProceeds` live-lender-holder leg is screened at fill (atomic,
   no stranding). **`cancelOffer` is intentionally NOT

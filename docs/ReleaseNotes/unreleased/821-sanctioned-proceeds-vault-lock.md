@@ -1,11 +1,14 @@
 ## Sanctioned-recipient wind-down: vault-lock + freeze (#821)
 
-Closing the last gap the #800 sanctions audit surfaced. Previously, if a loan
-party became sanctions-flagged *after* a loan was struck, the wind-down
-close-outs (full repayment, time-based default, HF-based liquidation, and the
-internal-match settlement that liquidation/default try first) could **revert** —
-because depositing that party's share routes through the receiving vault, which
-is screened. A flagged lender could brick repayment; the unflagged counterparty
+Closing the repay / default / liquidation gaps the #800 sanctions audit surfaced.
+(One audit item remains deferred: the **completion** paths where a buyer is
+already committed — `completeLoanSale` / `completeOffset` — are tracked separately
+as **#831** and are not part of this change.) Previously, if a loan party became
+sanctions-flagged *after* a loan was struck, the wind-down close-outs (full
+repayment, time-based default, HF-based liquidation, and the internal-match
+settlement that liquidation/default try first) could **revert** — because
+depositing that party's share routes through the receiving vault, which is
+screened. A flagged lender could brick repayment; the unflagged counterparty
 couldn't be made whole until the flag lifted.
 
 The protocol now keeps these close-outs working **without ever handing spendable
