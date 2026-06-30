@@ -34,7 +34,11 @@
 #   CHUNK_SIZE=20 bash contracts/script/build-and-regress.sh # smaller chunks if one trips
 #
 set -uo pipefail
-cd "$(dirname "$0")/.."   # -> contracts/
+# Capture the script's own directory as an ABSOLUTE path BEFORE any `cd`, so the
+# `run-regression.sh` exec below resolves correctly no matter the caller's cwd
+# (e.g. `bash contracts/script/build-and-regress.sh` from the repo root).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR/.."   # -> contracts/
 
 export FOUNDRY_PROFILE=default
 # IO-priority boost only (ionice). `nice -n -10` needs privileges sandboxes
@@ -48,4 +52,4 @@ if ! "${PREFIX[@]}" forge build --skip test; then
 fi
 
 echo "===== [2/2] chunked regression (run-regression.sh) ====="
-exec bash "$(dirname "$0")/run-regression.sh" "$@"
+exec bash "$SCRIPT_DIR/run-regression.sh" "$@"
