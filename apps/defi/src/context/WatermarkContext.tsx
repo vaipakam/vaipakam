@@ -388,7 +388,11 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         await probe({ forceBump });
       } finally {
         probeInFlight = false;
-        if (startedAt) {
+        // #845 Codex P3 — `diagnosticsRef` is shared across chains. If this
+        // probe was still awaiting RPC when a chain switch tore the effect down
+        // (`cancelled`), the new chain has already cleared this field; don't let
+        // the stale resolution repopulate it with the previous chain's latency.
+        if (startedAt && !cancelled) {
           diagnosticsRef.current.lastNudgeLatencyMs = Date.now() - startedAt;
         }
         if (!cancelled) {
