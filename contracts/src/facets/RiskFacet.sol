@@ -1256,27 +1256,36 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // position that can't partial cleanly falls back to full liquidation.
         (uint256 preDebtNum, uint256 preCollNum) = _computeNumeraireValues(loan);
 
-        // Mutate the loan: reduce collateral + principal and restart the
-        // interest clock at now, re-stamping `durationDays` so the loan's
-        // maturity is never pulled earlier.
+        // Mutate the loan: reduce collateral + principal and re-stamp the
+        // interest-accrual clock onto the reduced principal WITHOUT disturbing
+        // the loan's contractual maturity or grace window.
         //
-        // #641 — `durationDays` is whole-day-granular, so the previous
-        // `floor((endTime - now) / 1 days)` silently DROPPED the sub-day
-        // remainder and moved `endTime` EARLIER (e.g. a partial 12h into a
-        // 30-day loan re-stamped to 29 days → matured ~12h early), exposing
-        // the borrower to the default / late-fee buckets sooner and clipping
-        // the lender's coupon window — and repeated partials compounded the
-        // shortening. Round the remaining term UP instead: the re-stamped
-        // `endTime` (`now + remainingDays * 1 days`) is the original maturity
-        // rounded up to the next whole day — never earlier, at most ~1 day
-        // later (borrower-favourable), and repeated partials stay monotonic
-        // (`endTime` only ever holds or grows, never shrinks). `block.timestamp
-        // < endTime` is guaranteed above, so `remainingDays >= 1`.
+        // #641 — `durationDays` is whole-day-granular and is overloaded for
+        // three jobs: maturity (`startTime + durationDays*1 days`), the grace
+        // bucket (`gracePeriod(durationDays)`), and interest accrual. The old
+        // code reset `startTime = now` and floored `durationDays =
+        // (endTime - now)/1 days`, which (a) dropped the sub-day remainder and
+        // pulled `endTime` EARLIER, and (b) shrank the value the grace bucket
+        // keys off — both accelerating the borrower's default / late-fee
+        // exposure and clipping the lender's coupon window. Two-part fix:
+        //   • Maturity: round the remaining term UP to whole days, then
+        //     BACK-DATE `startTime` to `endTime - remainingDays*1 days` so
+        //     `startTime + durationDays*1 days == endTime` holds EXACTLY. Every
+        //     maturity reader is unchanged and sees the original deadline; the
+        //     invariant is self-preserving across repeated partials (no drift).
+        //   • Grace: read off the immutable `originalDurationDays`
+        //     (`LibVaipakam.loanGracePeriod`), so shrinking the live
+        //     `durationDays` here can't collapse the grace window.
+        // The interest clock now accrues on the reduced principal over the
+        // rounded remaining term; the pre-partial coupon was already settled
+        // interest-first from the swap proceeds above. `block.timestamp <
+        // endTime` is guaranteed above, so `remainingDays >= 1` and the
+        // back-dated `startTime <= block.timestamp`.
         loan.collateralAmount -= swappedCollateral;
         loan.principal -= principalRepaid;
         uint256 remainingDays = (endTime - block.timestamp + (1 days - 1)) / 1 days;
-        loan.startTime = uint64(block.timestamp);
         loan.durationDays = remainingDays;
+        loan.startTime = uint64(endTime - remainingDays * 1 days);
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this

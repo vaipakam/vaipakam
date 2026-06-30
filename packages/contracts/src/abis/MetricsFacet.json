@@ -978,6 +978,11 @@
             "name": "initLtvCapBpsAtInit",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "originalDurationDays",
+            "type": "uint16",
+            "internalType": "uint16"
           }
         ]
       }

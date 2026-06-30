@@ -752,6 +752,9 @@ contract PrecloseFacet is
         loan.collateralTokenId = offer.collateralTokenId;
         loan.collateralQuantity = offer.collateralQuantity;
         loan.durationDays = offer.durationDays;
+        // #641 — offset re-originates the obligation under a new term; snapshot
+        // it for the grace-bucket schedule (validated 1..365 ⇒ uint16 exact).
+        loan.originalDurationDays = uint16(offer.durationDays);
         // T-034 — startTime downsized to uint64; explicit cast.
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = offer.interestRateBps;

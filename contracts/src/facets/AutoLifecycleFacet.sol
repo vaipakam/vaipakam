@@ -738,6 +738,9 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
+        // #641 — auto-refinance commits a NEW term; re-snapshot it so the
+        // grace bucket tracks the refinanced duration (validated 1..365).
+        loan.originalDurationDays = uint16(newDurationDays);
         // Codex round-8 P2 — only re-register when the extension is
         // in-term. After `oldEndTime`, the borrower side is forfeited
         // and `loanBorrowerEntryId[loanId]` must stay pointed at the

@@ -241,7 +241,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 endTime = loan.startTime +
             loan.durationDays *
             LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan); // #641 — original-term grace
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         uint256 interest; // Or rental fee
@@ -670,7 +670,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         uint256 endTime = loan.startTime +
             loan.durationDays *
             LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan); // #641 — original-term grace
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
         address treasury = LibFacet.getTreasury();
 

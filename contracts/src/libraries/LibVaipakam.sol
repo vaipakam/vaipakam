@@ -1904,6 +1904,17 @@ library LibVaipakam {
         // snapshot alone doesn't bound LTV. `0` (illiquid or pre-#394 loan) ⇒
         // fall back to the live per-asset `loanInitMaxLtvBps`. Append-only tail.
         uint16 initLtvCapBpsAtInit;
+        // #641 — the loan's ORIGINAL committed term in days, snapshotted at
+        // origination / re-origination (offset, refinance) and NEVER touched
+        // by mid-term accrual re-stamps (partial liquidation, partial repay).
+        // The grace-bucket schedule (`gracePeriod`) is keyed off this so a
+        // partial that shrinks the live `durationDays` (the interest-accrual
+        // remaining term) cannot collapse the loan's grace window and pull the
+        // default / late-fee deadline earlier. Read via `loanGracePeriod`,
+        // which falls back to the live `durationDays` when this is `0` (a
+        // pre-#641 loan). Packs into the slot above (`uint16` ≫ the 365-day
+        // `durationDays` ceiling). Append-only tail field.
+        uint16 originalDurationDays;
     }
 
     /**
@@ -5728,6 +5739,25 @@ library LibVaipakam {
         return buckets[len - 1].graceSeconds;
     }
 
+    /// @notice #641 — a loan's grace period keyed off its ORIGINAL committed
+    ///         term, not the live (possibly partial-shrunk) `durationDays`.
+    /// @dev    A partial liquidation / repay re-stamps `durationDays` down to
+    ///         the remaining interest-accrual term. Reading the grace bucket
+    ///         off that shrunken value would collapse the grace window (e.g. a
+    ///         90-day loan's 3-day bucket → 1 day, or a near-maturity partial →
+    ///         1 hour) and pull the default / late-fee deadline EARLIER —
+    ///         exactly the acceleration #641 forbids. Every default- and
+    ///         late-fee-timing site reads grace through this helper so the
+    ///         window is fixed at the term the borrower agreed to. Falls back
+    ///         to the live `durationDays` when `originalDurationDays` is `0`
+    ///         (a loan originated before this field existed).
+    function loanGracePeriod(Loan storage loan) internal view returns (uint256) {
+        uint256 termDays = loan.originalDurationDays != 0
+            ? uint256(loan.originalDurationDays)
+            : loan.durationDays;
+        return gracePeriod(termDays);
+    }
+
     /// @notice T-086 Round-7 (Issue #355) — canonical "is loan in its
     ///         grace window" predicate: `loanEnd <= block.timestamp <
     ///         gracePeriodEnd`. Used by `cancelPrepayListing` (sets the
@@ -5746,7 +5776,9 @@ library LibVaipakam {
     ///         fix on PR #356).
     function isGraceWindow(Loan storage loan) internal view returns (bool) {
         uint256 loanEnd = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
-        uint256 gracePeriodEnd = loanEnd + gracePeriod(loan.durationDays);
+        // #641 — grace keyed off the original term (see `loanGracePeriod`); the
+        // partial-preserved `loanEnd` stays exact via the start-time back-shift.
+        uint256 gracePeriodEnd = loanEnd + loanGracePeriod(loan);
         return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }
 
