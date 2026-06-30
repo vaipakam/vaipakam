@@ -11,10 +11,12 @@
  *   - **Additive, never load-bearing.** The push carries a SIGNAL only (which
  *     slice changed), never authoritative data — the refetch goes through the
  *     existing REST/RPC surface, so the trust model is unchanged. The watermark
- *     poll keeps running underneath at its normal cadence; if the socket never
+ *     poll keeps running underneath as a BACKSTOP; if the socket never
  *     connects, drops, or the deployment has no DO, the UI is exactly as fresh
- *     as it was pre-Phase-B. We do NOT suppress polling in v1 (that adaptive
- *     back-off is a follow-up) — correctness first.
+ *     as it was pre-Phase-B. #843 delta 1: while push is healthy the poll
+ *     relaxes to a longer backstop cadence (`setPushHealthy` →
+ *     `pushBackedInterval`); any drop / fallback restores the tier cadence
+ *     immediately. Correctness is unchanged — the poll only slows, never stops.
  *   - **Honest transport state.** A connected-but-silent socket (DO ingest
  *     disabled) is reported as `polling`, never a false `live`, so the badge
  *     can't claim realtime it isn't getting. Only a `hello` with
@@ -44,6 +46,10 @@ interface RealtimePushContextValue {
   transport: RealtimeTransport;
   /** UNIX-ms of the last invalidation frame received, or `null`. */
   lastEventAt: number | null;
+  /** #843 delta 2 — how many times a LIVE socket has dropped and reconnected
+   *  (diagnostics only). Initial connects + intentional ingest-off closes don't
+   *  count — only the loss of an established live channel. */
+  reconnectCount: number;
 }
 
 const RealtimePushContext = createContext<RealtimePushContextValue | null>(null);
@@ -66,11 +72,20 @@ const DORMANT_RETRY_MS = 300_000; // 5 min
 export function RealtimePushProvider({ children }: { children: ReactNode }) {
   const chain = useReadChain();
   const chainId = chain.chainId;
-  const { nudge } = useWatermarkContext();
+  const { nudge, setPushHealthy } = useWatermarkContext();
   const wsOrigin = indexerWsOrigin();
 
   const [transport, setTransport] = useState<RealtimeTransport>('polling');
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
+  const [reconnectCount, setReconnectCount] = useState(0);
+
+  // #843 delta 1 — tell the watermark poll loop when push is carrying us so it
+  // relaxes to the backstop cadence; restore the tier cadence on any drop /
+  // fallback, and on unmount.
+  useEffect(() => {
+    setPushHealthy(transport === 'live');
+    return () => setPushHealthy(false);
+  }, [transport, setPushHealthy]);
 
   // Keep the latest `nudge` reachable from the long-lived effect without
   // re-running it (re-running would tear down and rebuild the socket).
@@ -190,6 +205,10 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
       socket.onclose = () => {
         if (cancelled) return;
         ws = null;
+        // #843 delta 2 — count only the loss of an ESTABLISHED live channel.
+        // The ingest-off path resets `everLive=false` before closing, and
+        // initial (never-live) connects leave it false — neither counts.
+        if (everLive) setReconnectCount((c) => c + 1);
         scheduleReconnect();
       };
       socket.onerror = () => {
@@ -220,8 +239,8 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
   }, [wsOrigin, chainId]);
 
   const value = useMemo<RealtimePushContextValue>(
-    () => ({ transport, lastEventAt }),
-    [transport, lastEventAt],
+    () => ({ transport, lastEventAt, reconnectCount }),
+    [transport, lastEventAt, reconnectCount],
   );
 
   return (
@@ -235,5 +254,5 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
  *  a static `polling` posture so callers never need a null guard. */
 export function useRealtimePush(): RealtimePushContextValue {
   const ctx = useContext(RealtimePushContext);
-  return ctx ?? { transport: 'polling', lastEventAt: null };
+  return ctx ?? { transport: 'polling', lastEventAt: null, reconnectCount: 0 };
 }
