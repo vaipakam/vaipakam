@@ -539,6 +539,14 @@ contract ClaimFacet is
         // NOT re-paid from the absorb bucket (§5). FallbackPending ⇒ ERC20 loan.
         uint256 held = s.heldForLender[loanId];
         if (held > 0) {
+            // #821 (Codex #832 r8 P2) — the heldForLender funds sit in the STORED
+            // `loan.lender`'s vault. For a legitimately pre-flag-transferred
+            // position that stored lender can be flagged, so arm the from-side
+            // move-out exemption around this withdraw (mirroring the normal claim
+            // payout) — otherwise `getOrCreateUserVault(loan.lender)` would brick
+            // the clean current holder's backstop absorb. The stored party loses
+            // custody to the (already-screened) NFT owner.
+            LibSanctionedLock.beginMoveOut(s, loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -549,6 +557,7 @@ contract ClaimFacet is
                 ),
                 VaultWithdrawFailed.selector
             );
+            LibSanctionedLock.endMoveOut(s);
         }
 
         s.lenderBackstopOptIn[loanId] = address(0);

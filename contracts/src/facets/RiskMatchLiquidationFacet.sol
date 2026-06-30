@@ -975,13 +975,17 @@ contract RiskMatchLiquidationFacet is DiamondReentrancyGuard, DiamondPausable {
                     // fresh lien on the released at-fallback row when no
                     // top-up exists, i.e. `topUp == 0`).
                     if (diamondAfter > 0) {
-                        address borrowerVault = VaultFactoryFacet(address(this))
-                            .getOrCreateUserVault(loan.borrower);
-                        IERC20(loan.collateralAsset).safeTransfer(
-                            borrowerVault, diamondAfter
-                        );
-                        LibVaipakam.recordVaultDeposit(
-                            loan.borrower, loan.collateralAsset, diamondAfter
+                        // #821 (Codex #832 r8 P2) — vault-lock the borrower
+                        // residual so a borrower flagged AFTER entering fallback
+                        // doesn't brick the match: it parks frozen in their OWN
+                        // vault behind the claim-side screen instead of reverting
+                        // the receiving-vault resolution.
+                        LibSanctionedLock.depositLocked(
+                            LibVaipakam.storageSlot(),
+                            loan.borrower,
+                            loan.id,
+                            loan.collateralAsset,
+                            diamondAfter
                         );
                         LibEncumbrance.incrementCollateralLien(loan.id, diamondAfter);
                     }
