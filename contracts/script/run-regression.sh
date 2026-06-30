@@ -80,9 +80,22 @@ for stem in "${TOP[@]}"; do
 done
 ci=$((ci+1)); flush "$ci"
 
-# ── Subdirectory suites ──────────────────────────────────────────────────────
-sub_join=$(IFS=,; echo "${SUBDIRS[*]}")
-run "subdirs (${sub_join})" "test/{$sub_join}/*.t.sol"
+# ── Subdirectory suites — one chunk PER subdir ───────────────────────────────
+# Running all subdirs in a single `test/{scenarios,deploy,fork,seaport,token}/
+# *.t.sol` glob compiles them as ONE unit, which trips the viaIR whole-unit
+# stack ceiling ("Variable size is N too deep") — the heavy fork + deploy +
+# seaport sources together exceed it (the #601/#603 ceiling), even though every
+# test passes. Per-subdir invocations keep each compile unit small AND are
+# future-proof: a newly-added subdir gets its own ceiling-safe chunk
+# automatically and can never recombine with the others to re-trip the limit.
+# Foundry caches src/ artifacts across invocations, so this is the same total
+# compile, just split into units that each stay under the ceiling. (Verified
+# 2026-07-01: the combined glob trips at "1 too deep"; the two halves
+# {scenarios,deploy,token} = 58 tests and {fork,seaport} = 59 tests both
+# compile + pass — per-subdir is strictly smaller still.)
+for sub in "${SUBDIRS[@]}"; do
+  run "subdir ($sub)" "test/$sub/*.t.sol"
+done
 
 # ── Optional invariants pass ─────────────────────────────────────────────────
 if (( RUN_INVARIANTS )); then
