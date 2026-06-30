@@ -54,30 +54,11 @@ import {RiskFacet} from "./RiskFacet.sol";
  *         (rounds 1-12 + Sub 1 deferrals) live in
  *         `docs/DesignsAndPlans/SwapToRepayIntentBased.md`.
  *
- *         This file is the **skeleton kickoff** for Sub 1 (#416).
- *         Entry-point signatures + custom errors + events are
- *         load-bearing for the surrounding deploy-sanity wiring +
- *         the ABI export; bodies are `revert NotYetImplemented()`
- *         placeholders that subsequent commits on the
- *         `feature/t090-416-intent-facet-contracts` branch fill in
- *         per the design doc sections cited in each function's
- *         natspec.
- *
- *         Sub 1 implementation order (per Sub 1 #416 + design §11):
- *           1. {commitSwapToRepayIntent} — full §5.1 commit sequence.
- *           2. {preInteraction} + {postInteraction} — transient-storage
- *              baseline + atomic settlement waterfall.
- *           3. {cancelSwapToRepayIntent} + {cancelExpiredIntent} —
- *              already-filled pre-check + safeTransfer-before-
- *              recordVaultDeposit (Codex round-11 P1 #1).
- *           4. {isValidSignature} — pure ERC-1271 binding check.
- *           5. {getIntentCommit} — projection for the dapp's
- *              read-back-then-post pattern (Codex round-7 P1 #4).
- *           6. The 13 `IntentPending` guards on voluntary-close /
- *              collateral-mutating facet entry points.
- *           7. The 6+1 force-cancel branches on HF-liquidation +
- *              time-default entry points.
- *           8. Tests.
+ *         Sub 1 (#416) is implemented: this facet now owns the
+ *         borrower-facing commit / cancel / force-cancel surface,
+ *         while Fusion preInteraction / postInteraction /
+ *         ERC-1271 dispatch was extracted to `IntentDispatchFacet`
+ *         and `LibSwapToRepayIntentSettlement`.
  */
 contract SwapToRepayIntentFacet is
     DiamondReentrancyGuard,
@@ -288,10 +269,6 @@ contract SwapToRepayIntentFacet is
     ///      principal balance delta measured via the transient
     ///      baseline) is below the recomputed live floor.
     error IntentDeliveredBelowLiveFloor(uint256 actualDelivered, uint256 liveFloor);
-    /// @dev Sub 1 scaffolding placeholder. Subsequent commits on
-    ///      this branch replace each `revert NotYetImplemented()`
-    ///      with the body documented inline against the design doc.
-    error NotYetImplemented();
     /// @dev Mirrors `SwapToRepayFacet.UnsupportedLoanShape` (the v1
     ///      sibling keeps this error facet-local rather than on
     ///      `IVaipakamErrors`). v1.1 uses the same conditions: both

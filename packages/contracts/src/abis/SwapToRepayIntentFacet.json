@@ -952,11 +952,6 @@
   },
   {
     "type": "error",
-    "name": "NotYetImplemented",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "NumeraireSwapDisabled",
     "inputs": []
   },
