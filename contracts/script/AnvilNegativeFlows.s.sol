@@ -269,6 +269,13 @@ contract AnvilNegativeFlows is Script {
         // Tiny collateral — way below the floor. With LOAN_AMOUNT=1k USDC,
         // WETH @ $2000, 8500bps liqThreshold, minimum is ~0.59 WETH.
         p.collateralAmount = 1e15; // 0.001 WETH — well below floor
+        // Keep collateralAmountMax in lock-step. Lenders require
+        // collateralAmountMax == collateralAmount, and that range guard
+        // (LenderCollateralRangeNotAllowed) is checked BEFORE the collateral
+        // floor. Without this the offer would revert on the range mismatch and
+        // NEG-9 would pass vacuously without ever exercising
+        // MinCollateralBelowFloor.
+        p.collateralAmountMax = 1e15;
         bool ok = _simulateCreateOffer(lender, p);
         require(!ok, "NEG-9: should revert");
         console.log(">>> NEG-9 PASSED <<<");
@@ -377,9 +384,9 @@ contract AnvilNegativeFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS,
+            collateralAmountMax: COLLATERAL_AMOUNT,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,

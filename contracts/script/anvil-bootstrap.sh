@@ -22,8 +22,12 @@
 #
 # What it does NOT do:
 #   - Doesn't start anvil for you. Anvil must already be running on
-#     localhost:8545 with chain-id 31337. Run `anvil --chain-id 31337`
-#     in a separate terminal before invoking this script.
+#     localhost:8545 with chain-id 31337. For interactive UI testing run
+#     `anvil --chain-id 31337 --block-time 1` in a separate terminal — the
+#     interval mining keeps the head advancing so offers/loans you create
+#     from the dapp clear the frontend's safe-block buffer and show up.
+#     (Plain `anvil --chain-id 31337` works too; this script mines a buffer
+#     after seeding, but a frozen head hides anything you create afterward.)
 #   - Doesn't run the bot. The bot lives in the sibling repo and is
 #     started independently so you can iterate on it without
 #     re-bootstrapping the chain.
@@ -88,6 +92,48 @@ export TREASURY_ADDRESS="$TREASURY_ADDR"
 echo "[1/6] DeployDiamond"
 forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
 
+# Stamp the REAL diamond-creation block into addresses.json.
+#
+# `forge script` evaluates the script body (including
+# `Deployments.writeDeployBlock()` → `block.number`) during the SIMULATION
+# pass, which runs against the chain head BEFORE the collected txs are
+# broadcast. On a freshly-started anvil that head is block 0, so deployBlock is
+# recorded as 0 even though the Diamond proxy is actually created dozens of
+# blocks later once the broadcast lands. The frontend's logIndex scanner treats
+# `deployBlock <= 0` as "chain config unresolved" and SKIPS the event scan
+# entirely (a guard meant to avoid genesis-scanning a real chain), so the dapp
+# shows an empty Dashboard / Offer Book even though offers + loans exist
+# on-chain. Read the Diamond's creation block back out of the broadcast receipt
+# and overwrite deployBlock so the scan runs from the right height. (Live
+# testnet/mainnet deploys don't hit this — there the simulation head is a real
+# recent block, a harmless few blocks before creation.)
+DIAMOND_ADDR=$(jq -r '.diamond // empty' deployments/anvil/addresses.json 2>/dev/null || echo "")
+DEPLOY_BLOCK=$(python3 - "$DIAMOND_ADDR" <<'PY'
+import json, sys
+diamond = (sys.argv[1] or "").lower()
+try:
+    d = json.load(open("broadcast/DeployDiamond.s.sol/31337/run-latest.json"))
+except Exception:
+    print(0); sys.exit(0)
+blk = None
+for r in d.get("receipts", []):
+    if (r.get("contractAddress") or "").lower() == diamond:
+        blk = int(r["blockNumber"], 16); break
+if blk is None and d.get("receipts"):
+    # Fall back to the first deploy tx's block — still a safe lower bound.
+    blk = min(int(r["blockNumber"], 16) for r in d["receipts"])
+print(blk or 0)
+PY
+)
+if [ "${DEPLOY_BLOCK:-0}" -gt 0 ]; then
+  tmp=$(mktemp)
+  jq --argjson b "$DEPLOY_BLOCK" '.deployBlock = $b' deployments/anvil/addresses.json > "$tmp" \
+    && mv "$tmp" deployments/anvil/addresses.json
+  echo "    deployBlock stamped from broadcast receipt: $DEPLOY_BLOCK"
+else
+  echo "    WARN: could not resolve Diamond creation block — frontend may skip the logIndex scan" >&2
+fi
+
 echo "[2/6] DeployTestnetLiquidityMocks (mUSDC, mWBTC, mock WETH, oracles, Univ3)"
 forge script script/DeployTestnetLiquidityMocks.s.sol --rpc-url "$RPC" --broadcast --slow
 
@@ -126,6 +172,25 @@ forge script script/BootstrapAnvil.s.sol --rpc-url "$RPC" --broadcast --slow
 
 echo "[5/6] SeedAnvilOffers (one matchable lender + borrower pair)"
 forge script script/SeedAnvilOffers.s.sol --rpc-url "$RPC" --broadcast --slow
+
+# Advance the chain past the frontend's safe-block confirmation buffer.
+#
+# The dapp's logIndex scanner only indexes up to a "safe block" = head minus a
+# reorg-confirmation depth (~32). On a live chain new blocks keep arriving so
+# the safe block marches past freshly-created offers within seconds. A default
+# anvil only mines on a transaction, so once bootstrap finishes the head FREEZES
+# — and everything created in the final ~32 blocks (i.e. the seeded offers
+# themselves) sits permanently in the unconfirmed tail, invisible in the Offer
+# Book even though it's on-chain. Mine a buffer of empty blocks so the seeded
+# state clears the safe-block threshold immediately.
+#
+# NOTE: this only fixes the SEEDED offers. For interactive testing (creating
+# offers/loans from the UI), start anvil with interval mining so the head keeps
+# advancing: `anvil --chain-id 31337 --block-time 1`. Otherwise each UI action
+# lands at a frozen head and stays unconfirmed until you mine again.
+echo "    mining 40 blocks so seeded offers clear the frontend safe-block buffer"
+cast rpc anvil_mine 40 --rpc-url "$RPC" >/dev/null 2>&1 \
+  || echo "    WARN: anvil_mine failed — seeded offers may stay below the safe block until more blocks are mined" >&2
 
 # [6/6] Sync ABI bundles + consolidated deployments JSON to dependent
 # repos so the frontend (apps/{defi,labs}) + Workers (apps/{keeper,
