@@ -1434,10 +1434,11 @@ contract LoanFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
-    /// @dev Switch on, Tier 2 (cap 62% per library defaults), LTV at
-    ///      6300 = 63% just above the cap → reverts `InitLtvAboveTier
-    ///      (63%, 62%)`. Pins the Tier-2 boundary explicitly so a
-    ///      future cap change shows up as a failed assertion.
+    /// @dev Switch on, Tier 2 (cap 60% per library defaults —
+    ///      `TIER2_MAX_INIT_LTV_BPS_DEFAULT = 6000`), LTV at 6300 = 63% just
+    ///      above the cap → reverts `InitLtvAboveTier(63%, 60%)`. Pins the
+    ///      Tier-2 boundary explicitly so a future cap change shows up as a
+    ///      failed assertion.
     function testDepthTier_initGate_revertsAboveTier2Cap() public {
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
         vm.mockCall(
@@ -1471,20 +1472,19 @@ contract LoanFacetTest is Test {
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
                 uint256(6300),
-                uint256(6200)
+                uint256(6000)
             )
         );
         vm.prank(borrower);
         OfferAcceptFacet(address(diamond)).acceptOffer(offerId, _t, _sig);
     }
 
-    /// @dev Switch on, Tier 3 (cap 73% per library defaults), LTV
-    ///      7400 = 74% just above the cap → reverts `InitLtvAboveTier
-    ///      (74%, 73%)`. Pins the Tier-3 boundary explicitly so a
-    ///      future cap change shows up as a failed assertion. (The
-    ///      library default for Tier-3 is 73% from the autonomous
-    ///      tier-LTV cache fallback — `effectiveTierMaxInitLtvBps(3)`
-    ///      reads the cache if fresh, else the library default.)
+    /// @dev Switch on, Tier 3 (cap 65% per library defaults —
+    ///      `TIER3_MAX_INIT_LTV_BPS_DEFAULT = 6500`), LTV 7400 = 74% just above
+    ///      the cap → reverts `InitLtvAboveTier(74%, 65%)`. Pins the Tier-3
+    ///      boundary explicitly so a future cap change shows up as a failed
+    ///      assertion. (`effectiveTierMaxInitLtvBps(3)` reads the autonomous
+    ///      tier-LTV cache if fresh, else the 6500 library default.)
     function testDepthTier_initGate_revertsAboveTier3Cap() public {
         ConfigFacet(address(diamond)).setDepthTieredLtvEnabled(true);
         vm.mockCall(
@@ -1518,7 +1518,7 @@ contract LoanFacetTest is Test {
             abi.encodeWithSelector(
                 IVaipakamErrors.InitLtvAboveTier.selector,
                 uint256(7400),
-                uint256(7300)
+                uint256(6500)
             )
         );
         vm.prank(borrower);
