@@ -40,14 +40,40 @@ library LibEntitlement {
             (LibVaipakam.DAYS_PER_YEAR * LibVaipakam.BASIS_POINTS);
     }
 
-    /// @notice Pro-rata interest accrued on an ERC-20 loan from `loan.startTime`
-    ///         to `nowTime`, rounded down to whole days.
+    /// @notice #641 — a loan's interest-accrual origin: the dedicated
+    ///         `interestAccrualStart` clock (re-stamped by partials WITHOUT
+    ///         moving the term/maturity), falling back to `startTime` for loans
+    ///         that predate the field. `interestAccrualStart` is set to a real
+    ///         timestamp at origination, so `!= 0` cleanly distinguishes a
+    ///         post-#641 loan (use the clock, even if `interestRemainingDays`
+    ///         legitimately reached 0) from a legacy one.
+    function _accrualStart(LibVaipakam.Loan storage loan) private view returns (uint256) {
+        return loan.interestAccrualStart != 0
+            ? uint256(loan.interestAccrualStart)
+            : uint256(loan.startTime);
+    }
+
+    /// @notice #641 — a loan's remaining interest term in days: the dedicated
+    ///         `interestRemainingDays` (re-stamped by partials), falling back to
+    ///         the live `durationDays` for pre-field loans. Gated on
+    ///         `interestAccrualStart` (NOT `interestRemainingDays != 0`) so a
+    ///         post-#641 loan whose remaining term has reached 0 isn't mistaken
+    ///         for a legacy loan.
+    function _remainingTermDays(LibVaipakam.Loan storage loan) private view returns (uint256) {
+        return loan.interestAccrualStart != 0
+            ? uint256(loan.interestRemainingDays)
+            : loan.durationDays;
+    }
+
+    /// @notice Pro-rata interest accrued on an ERC-20 loan from its interest-
+    ///         accrual clock to `nowTime`, rounded down to whole days.
     function accruedInterestToTime(
         LibVaipakam.Loan storage loan,
         uint256 nowTime
     ) internal view returns (uint256) {
-        if (nowTime <= loan.startTime) return 0;
-        uint256 elapsedDays = (nowTime - loan.startTime) / LibVaipakam.ONE_DAY;
+        uint256 accrualStart = _accrualStart(loan);
+        if (nowTime <= accrualStart) return 0;
+        uint256 elapsedDays = (nowTime - accrualStart) / LibVaipakam.ONE_DAY;
         return proRataInterest(loan.principal, loan.interestRateBps, elapsedDays);
     }
 
@@ -68,7 +94,14 @@ library LibEntitlement {
     function currentBorrowBalance(
         LibVaipakam.Loan memory loan
     ) internal view returns (uint256) {
-        uint256 elapsed = block.timestamp - loan.startTime;
+        // #641 — accrue from the interest clock (see `_accrualStart`); inlined
+        // here because this overload takes `Loan memory`, not storage.
+        uint256 accrualStart = loan.interestAccrualStart != 0
+            ? uint256(loan.interestAccrualStart)
+            : uint256(loan.startTime);
+        uint256 elapsed = block.timestamp > accrualStart
+            ? block.timestamp - accrualStart
+            : 0;
         uint256 accruedInterest = (loan.principal *
             loan.interestRateBps *
             elapsed) / (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
@@ -109,18 +142,22 @@ library LibEntitlement {
     ///         (ignored `interestSettled`). The floor + accumulator-
     ///         credit pair fixes both.
     ///
-    ///         Partial-repay accounting (Option A): `durationDays` is
-    ///         decremented in `RepayFacet.repayPartial` by elapsed-
-    ///         since-last-segment, so `floorDays` here always reflects
-    ///         the borrower's REMAINING commitment, not the original.
+    ///         Partial-repay accounting (Option A): #641 moved the
+    ///         remaining-term counter off `durationDays` onto the dedicated
+    ///         `interestRemainingDays` (decremented in `RepayFacet.repayPartial`
+    ///         / partial liquidation / swap-to-repay by elapsed-since-last-
+    ///         segment) so `floorDays` here reflects the borrower's REMAINING
+    ///         commitment WITHOUT shrinking the term tuple that defines
+    ///         maturity + grace. Read via `_remainingTermDays`.
     function settlementInterest(
         LibVaipakam.Loan storage loan,
         uint256 nowTime
     ) internal view returns (uint256) {
-        uint256 elapsedDays = nowTime > loan.startTime
-            ? (nowTime - loan.startTime) / LibVaipakam.ONE_DAY
+        uint256 accrualStart = _accrualStart(loan);
+        uint256 elapsedDays = nowTime > accrualStart
+            ? (nowTime - accrualStart) / LibVaipakam.ONE_DAY
             : 0;
-        uint256 floorDays = loan.useFullTermInterest ? loan.durationDays : 0;
+        uint256 floorDays = loan.useFullTermInterest ? _remainingTermDays(loan) : 0;
         uint256 effectiveDays = elapsedDays > floorDays ? elapsedDays : floorDays;
         return proRataInterest(loan.principal, loan.interestRateBps, effectiveDays);
     }

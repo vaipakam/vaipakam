@@ -627,15 +627,19 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // (otherwise a borrower-controlled keeper could repeatedly
         // extend just before the daily boundary and erase ~23h of
         // accrual on every cycle).
+        // #641 — interest reads the dedicated accrual clock (remaining term /
+        // accrual origin), not the immutable term tuple, so a previously
+        // partial-repaid/liquidated loan extends on its true remaining accrual.
         uint256 accruedInterest;
         if (loan.useFullTermInterest) {
             accruedInterest = LibEntitlement.fullTermInterest(
                 loan.principal,
                 loan.interestRateBps,
-                loan.durationDays
+                LibVaipakam.interestRemainingDaysOf(loan)
             );
         } else {
-            uint256 elapsedSeconds = block.timestamp - uint256(loan.startTime);
+            uint256 elapsedSeconds =
+                block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
             accruedInterest =
                 (loan.principal * loan.interestRateBps * elapsedSeconds) /
                 (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
@@ -738,6 +742,10 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         loan.startTime = uint64(block.timestamp);
         loan.interestRateBps = newRateBps;
         loan.durationDays = newDurationDays;
+        // #641 — auto-refinance commits a NEW term; mirror the interest-accrual
+        // clock onto it (validated 1..365 ⇒ uint16 exact).
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(newDurationDays);
         // Codex round-8 P2 — only re-register when the extension is
         // in-term. After `oldEndTime`, the borrower side is forfeited
         // and `loanBorrowerEntryId[loanId]` must stay pointed at the

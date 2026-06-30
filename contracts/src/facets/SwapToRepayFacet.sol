@@ -746,22 +746,31 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // committed-term tracking on this partial-repay entry point
         // too. Without it, a full-term loan partially repaid via
         // collateral swap would compute the floor on the reduced
-        // principal but over the ORIGINAL `durationDays`, drifting
-        // out of sync with the formula `RepayFacet.repayPartial`
-        // uses on the same loan state shape.
+        // principal but over the ORIGINAL term, drifting out of sync
+        // with the formula `RepayFacet.repayPartial` uses on the same
+        // loan state shape.
+        //
+        // #641 — the re-stamp lands on the dedicated INTEREST clock
+        // (`interestAccrualStart` / `interestRemainingDays`); the term tuple
+        // (`startTime` + `durationDays` → maturity + grace) is LEFT UNTOUCHED,
+        // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
+        // any loan that predates the fields before reading elapsed.
+        LibVaipakam.seedInterestClockIfUnset(loan);
         uint256 elapsedSinceSegmentStart;
         unchecked {
             elapsedSinceSegmentStart =
-                (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
+                (block.timestamp - loan.interestAccrualStart) / LibVaipakam.ONE_DAY;
         }
-        if (elapsedSinceSegmentStart >= loan.durationDays) {
-            loan.durationDays = 0;
+        if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
+            loan.interestRemainingDays = 0;
         } else {
             unchecked {
-                loan.durationDays -= elapsedSinceSegmentStart;
+                loan.interestRemainingDays = uint16(
+                    uint256(loan.interestRemainingDays) - elapsedSinceSegmentStart
+                );
             }
         }
-        loan.startTime = uint64(block.timestamp); // reset accrual clock
+        loan.interestAccrualStart = uint64(block.timestamp); // reset accrual clock
 
         // ── T-034 §4.5 — periodic-interest checkpoint advance
         //    (mirror RepayFacet:679-706) ────────────────────────────

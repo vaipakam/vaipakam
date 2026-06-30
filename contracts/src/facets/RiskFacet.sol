@@ -1256,21 +1256,27 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // position that can't partial cleanly falls back to full liquidation.
         (uint256 preDebtNum, uint256 preCollNum) = _computeNumeraireValues(loan);
 
-        // Mutate the loan: reduce collateral + principal, restart the
-        // interest clock at now, shorten `durationDays` so `endTime` is
-        // preserved exactly. The lender's term is unchanged.
+        // Mutate the loan: reduce collateral + principal and restart the
+        // INTEREST-ACCRUAL clock at now on the reduced principal.
+        //
+        // #641 — the term tuple (`startTime` + `durationDays`) is left
+        // UNTOUCHED, so the loan's maturity (`startTime + durationDays*1 days`)
+        // and grace bucket (`gracePeriod(durationDays)`) are preserved exactly:
+        // a partial can no longer pull the default / late-fee deadline earlier
+        // or collapse the grace window. The accrual clock lives in the dedicated
+        // `interestAccrualStart` / `interestRemainingDays` fields instead — the
+        // reduced principal accrues from `now` over the whole days remaining to
+        // maturity. The pre-partial coupon was already settled interest-first
+        // from the swap proceeds above.
         loan.collateralAmount -= swappedCollateral;
         loan.principal -= principalRepaid;
         uint256 remainingDays = (endTime - block.timestamp) / 1 days;
-        loan.startTime = uint64(block.timestamp);
-        loan.durationDays = remainingDays;
+        loan.interestAccrualStart = uint64(block.timestamp);
+        loan.interestRemainingDays = uint16(remainingDays);
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
-        // If `remainingDays` rounded down to 0 (partial in the loan's
-        // last sub-day), the loan effectively matures next block — the
-        // HF read is still correct since `currentBorrow` re-derives from
-        // the now-tiny principal, so this branch reverts naturally if
-        // HF is still below 1.
+        // `currentBorrow` re-derives from the now-reduced principal, so this
+        // branch reverts naturally if HF is still below 1.
         uint256 hfAfter = RiskFacet(address(this)).calculateHealthFactor(loanId);
         if (hfAfter <= hfBefore) revert PartialMustImproveHF(hfBefore, hfAfter);
         if (hfAfter < LibVaipakam.HF_SCALE) revert PartialMustRestoreHF(hfAfter);

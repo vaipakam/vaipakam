@@ -391,7 +391,10 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // Distribute: principal + accrued interest + late fees.
                 // Treasury fee is split out of the interest/late portion (not added on top).
                 // Lender bears loss if proceeds are insufficient (per README).
-                uint256 elapsed = block.timestamp - loan.startTime;
+                // #641 — accrue from the interest clock (post-partial origin),
+                // not the immutable term start.
+                uint256 elapsed =
+                    block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
                 uint256 accruedInterest = (loan.principal * loan.interestRateBps * elapsed) /
                     (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
                 uint256 lateFee = LibVaipakam.calculateLateFee(loanId, endTime);

@@ -3075,10 +3075,10 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Time-warp before the partial so the `endTime` preservation
-    ///      math actually exercises (`startTime ← now`, `durationDays ← (endTime - now) / 1 days`).
-    ///      Without the warp, the partial happens at `startTime` so the
-    ///      mutation is a no-op on those fields.
+    /// @dev #641 — a partial leaves the loan's term tuple (`startTime` +
+    ///      `durationDays`) untouched, so its maturity is preserved exactly;
+    ///      only the dedicated interest clock re-stamps. Time-warped 10 days in
+    ///      so the interest re-stamp is observable.
     function testPartialLiq_PreservesEndTimeAcrossPartial() public {
         uint256 loanId = createAndAcceptOffer();
         LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
@@ -3117,19 +3117,21 @@ contract RiskFacetTest is Test {
         LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
             .getLoanDetails(loanId);
 
-        // startTime resets to now — interest accrues on the reduced
+        // The interest clock restarts at now — interest accrues on the reduced
         // principal from this moment forward.
         assertEq(
-            uint256(loanAfter.startTime),
+            uint256(loanAfter.interestAccrualStart),
             block.timestamp,
-            "startTime must reset to now"
+            "interest accrual must restart at now"
         );
 
-        // endTime must be preserved (lender's term unchanged). Allow
-        // for the durationDays sub-day rounding-down: the on-chain math
-        // is `durationDays = (endTime - now) / 1 days`, which truncates
-        // any partial-day remainder. Here `now = startTime + 10 days`
-        // exactly so the truncation is 0 and the equality is exact.
+        // The term tuple is untouched, so the maturity is preserved exactly.
+        assertEq(
+            uint256(loanAfter.startTime),
+            uint256(loanBefore.startTime),
+            "startTime (term) unchanged by a partial"
+        );
+        assertEq(loanAfter.durationDays, 30, "durationDays (term) unchanged by a partial");
         uint256 endTimeAfter = uint256(loanAfter.startTime) +
             loanAfter.durationDays *
             1 days;
@@ -3138,8 +3140,212 @@ contract RiskFacetTest is Test {
             endTimeBefore,
             "endTime must be preserved exactly across partial"
         );
-        // durationDays should be 20 (30 - 10).
-        assertEq(loanAfter.durationDays, 20, "durationDays = remaining whole days");
+        // Interest remaining = 20 whole days (30 − 10 elapsed).
+        assertEq(loanAfter.interestRemainingDays, 20, "interest remaining = whole days left");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #641 regression — a partial at a SUB-DAY offset must preserve the
+    ///      loan's maturity EXACTLY. The old code reset `startTime = now` and
+    ///      floored `durationDays`, dropping the sub-day remainder and maturing
+    ///      a 10.5-days-in 30-day loan 12h EARLY. The fix re-stamps only the
+    ///      dedicated INTEREST clock (`interestAccrualStart` /
+    ///      `interestRemainingDays`) and leaves the term tuple
+    ///      (`startTime` + `durationDays`) untouched, so the maturity is
+    ///      preserved to the second.
+    function testPartialLiq_SubDayRemainder_NeverShortensMaturity() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeBefore = uint256(loanBefore.startTime) +
+            loanBefore.durationDays *
+            1 days;
+
+        // 10 days + 12h into the loan → remaining = 19.5 days (a genuine
+        // sub-day remainder the whole-day term can't represent).
+        vm.warp(uint256(loanBefore.startTime) + 10 days + 12 hours);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        // The term tuple is untouched → maturity preserved EXACTLY (the old
+        // floor would have produced an earlier endTime).
+        assertEq(
+            uint256(loanAfter.startTime),
+            uint256(loanBefore.startTime),
+            "startTime (term) unchanged by a partial"
+        );
+        assertEq(loanAfter.durationDays, 30, "durationDays (term) unchanged by a partial");
+        uint256 endTimeAfter = uint256(loanAfter.startTime) +
+            loanAfter.durationDays *
+            1 days;
+        assertEq(endTimeAfter, endTimeBefore, "maturity preserved exactly across a sub-day partial");
+
+        // The INTEREST clock re-stamps: origin = now, remaining = floor(19.5).
+        assertEq(
+            uint256(loanAfter.interestAccrualStart),
+            block.timestamp,
+            "interest accrual restarts at now"
+        );
+        assertEq(loanAfter.interestRemainingDays, 19, "interest remaining = whole days left");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #641 — repeated sub-day partials preserve maturity EXACTLY: each
+    ///      re-stamps only the interest clock and never touches the term tuple,
+    ///      so `endTime` holds at the original across any number of partials (no
+    ///      shortening, no drift). Mirrors `MultiPartialRegression`'s gentle 10%
+    ///      sweeps + price ladder, but warps to SUB-DAY offsets.
+    function testPartialLiq_RepeatedSubDayPartials_MaturityMonotonic() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan0 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeOriginal = uint256(loan0.startTime) +
+            loan0.durationDays *
+            1 days;
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // Partial #1 — distress @ $0.65, 10% sweep, 5 days + 7h in (sub-day).
+        vm.warp(uint256(loan0.startTime) + 5 days + 7 hours);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loan1 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTime1 = uint256(loan1.startTime) + loan1.durationDays * 1 days;
+        assertEq(endTime1, endTimeOriginal, "partial #1 preserves maturity exactly");
+
+        // Drop price to $0.55 so HF dips below 1 on the reduced position,
+        // then a further sub-day warp (10 days + 13h total elapsed).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.55e8, 8)
+        );
+        vm.warp(uint256(loan0.startTime) + 10 days + 13 hours);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTime2 = uint256(loan2.startTime) + loan2.durationDays * 1 days;
+        // Exact across both partials — the term tuple is never touched, so there
+        // is no shortening AND no drift in either direction.
+        assertEq(endTime2, endTimeOriginal, "maturity preserved exactly across both partials");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #641 (Codex P1) — a partial liquidation must NOT collapse the grace
+    ///      window. Because the term tuple is left untouched, `durationDays`
+    ///      stays at its original value, so `gracePeriod(durationDays)` keeps
+    ///      the original bucket and the default deadline stays fixed at
+    ///      `originalMaturity + grace`. A 30-day loan sits in the `<90d ⇒ 3-day`
+    ///      bucket; the OLD code shrank `durationDays` to ~5 days (`<7d ⇒ 1-hour`
+    ///      bucket), so the borrower could be defaulted ~1h after maturity
+    ///      instead of the agreed 3 days. Probed via the `isLoanDefaultable` view.
+    function testPartialLiq_PreservesGraceWindowAcrossPartial() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan0 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(loan0.durationDays, 30, "fixture is a 30-day loan");
+        uint256 origEndTime = uint256(loan0.startTime) + loan0.durationDays * 1 days;
+
+        // Partial deep into the term (25d6h in) — the OLD code would have shrunk
+        // the live term to ~5 days (the sub-7-day / 1-hour grace tier).
+        vm.warp(uint256(loan0.startTime) + 25 days + 6 hours);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        // The term tuple is untouched: durationDays stays 30 → grace bucket
+        // unchanged. Only the interest remaining-term shrank.
+        assertEq(loanAfter.durationDays, 30, "durationDays (term) unchanged - grace bucket unchanged");
+        assertLt(loanAfter.interestRemainingDays, 7, "interest remaining-term shrank (grace doesn't key off it)");
+
+        // Maturity preserved exactly; default deadline = origMaturity + 3-day
+        // bucket, NOT the collapsed 1-hour bucket the OLD live-term would imply.
+        uint256 endTimeAfter = uint256(loanAfter.startTime) +
+            loanAfter.durationDays *
+            1 days;
+        assertEq(endTimeAfter, origEndTime, "maturity preserved exactly");
+        // Past the would-be-collapsed 1-hour bucket but well inside the 3-day
+        // grace: must NOT be defaultable (the bug would report defaultable).
+        vm.warp(origEndTime + 1 hours + 1);
+        assertFalse(
+            DefaultedFacet(address(diamond)).isLoanDefaultable(loanId),
+            "still in original 3-day grace window - not defaultable"
+        );
+        // Past the original 3-day grace: defaultable.
+        vm.warp(origEndTime + 3 days + 1);
+        assertTrue(
+            DefaultedFacet(address(diamond)).isLoanDefaultable(loanId),
+            "past original 3-day grace - now defaultable"
+        );
 
         vm.clearMockedCalls();
     }
@@ -3360,7 +3566,9 @@ contract RiskFacetTest is Test {
         );
         assertLt(loanAfter1.collateralAmount, loanInit.collateralAmount);
         assertLt(loanAfter1.principal, loanInit.principal);
-        assertEq(uint256(loanAfter1.startTime), block.timestamp);
+        // #641 — the interest clock restarts at now; the term tuple is unchanged.
+        assertEq(uint256(loanAfter1.interestAccrualStart), block.timestamp);
+        assertEq(uint256(loanAfter1.startTime), uint256(loanInit.startTime), "startTime (term) unchanged");
         assertEq(
             uint256(loanAfter1.startTime) + loanAfter1.durationDays * 1 days,
             endTimeInit,
@@ -3409,14 +3617,15 @@ contract RiskFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Active),
             "loan stays Active after second partial"
         );
-        // endTime preserved across BOTH partials.
+        // endTime preserved across BOTH partials (term tuple untouched).
         assertEq(
             uint256(loanAfter2.startTime) + loanAfter2.durationDays * 1 days,
             endTimeInit,
             "endTime preserved across both partials"
         );
-        // durationDays now = 20 (30 - 10 elapsed).
-        assertEq(loanAfter2.durationDays, 20);
+        // term unchanged (30); interest remaining-term = 20 (30 - 10 elapsed).
+        assertEq(loanAfter2.durationDays, 30, "durationDays (term) unchanged across both partials");
+        assertEq(loanAfter2.interestRemainingDays, 20, "interest remaining = 20 after 10 days elapsed");
 
         // HF restored above 1.0 after the second partial.
         uint256 hfAfter2 = RiskFacet(address(diamond)).calculateHealthFactor(loanId);

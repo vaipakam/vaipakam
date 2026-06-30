@@ -733,45 +733,60 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             }
             // #408 / #410 / #413 (2026-06-12) — Option A: track
             // remaining committed term. The accrual clock reset
-            // below (`loan.startTime = now`) measures `elapsedDays`
+            // below (`interestAccrualStart = now`) measures `elapsedDays`
             // from the most recent partial. To keep the floor in
             // `LibEntitlement.settlementInterest` reflecting the
             // borrower's REMAINING commitment (not the original),
-            // decrement `durationDays` by the elapsed days since the
-            // segment's start. After this, `max(elapsed, duration)`
-            // in the floor uses the post-partial remaining term as
-            // the lower bound.
+            // decrement `interestRemainingDays` by the elapsed days since
+            // the segment's start. After this, `max(elapsed, remaining)`
+            // in the floor uses the post-partial remaining term as the
+            // lower bound.
+            //
+            // #641 — the re-stamp now lands on the dedicated INTEREST clock
+            // (`interestAccrualStart` / `interestRemainingDays`); the term
+            // tuple (`startTime` + `durationDays`) is LEFT UNTOUCHED so the
+            // loan's maturity + grace window are preserved. (Pre-#641 this
+            // reset `startTime` and shrank `durationDays`, which silently
+            // pulled the default deadline earlier and — fatally — let a tiny
+            // post-maturity partial reset the grace clock and roll the
+            // lender's recovery deadline.)
             //
             // Codex round-1 P1 (PR #559): DO NOT credit
             // `loan.interestSettled` here. The combined state reset
-            // (`principal -=`, `durationDays -=`, `startTime =`)
-            // already encodes the partial's effect on future
-            // settlements: at the next settlement, `gross =
-            // proRataInterest(remainingPrincipal, rate,
-            // remainingDuration)` is the borrower's FUTURE-ONLY
-            // entitlement to the lender. Adding the partial's
-            // already-paid interest to the accumulator AND
-            // subtracting it from a future-only gross would
-            // double-count the partial's settlement, underpaying
-            // the lender. `interestSettled` is the right tool only
-            // when state ISN'T reset (periodic-settle auto-liq path).
+            // (`principal -=`, `interestRemainingDays -=`,
+            // `interestAccrualStart =`) already encodes the partial's effect
+            // on future settlements: at the next settlement, `gross =
+            // proRataInterest(remainingPrincipal, rate, remainingDays)` is the
+            // borrower's FUTURE-ONLY entitlement to the lender. Adding the
+            // partial's already-paid interest to the accumulator AND
+            // subtracting it from a future-only gross would double-count the
+            // partial's settlement, underpaying the lender. `interestSettled`
+            // is the right tool only when state ISN'T reset (periodic-settle
+            // auto-liq path).
+            //
+            // #641 — seed the interest clock from the term for any loan that
+            // predates the fields, so the elapsed math below doesn't compute
+            // from timestamp 0 and zero out the remaining term.
+            LibVaipakam.seedInterestClockIfUnset(loan);
             uint256 elapsedSinceSegmentStart;
             unchecked {
                 elapsedSinceSegmentStart =
-                    (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
+                    (block.timestamp - loan.interestAccrualStart) / LibVaipakam.ONE_DAY;
             }
-            if (elapsedSinceSegmentStart >= loan.durationDays) {
-                loan.durationDays = 0;
+            if (elapsedSinceSegmentStart >= loan.interestRemainingDays) {
+                loan.interestRemainingDays = 0;
             } else {
                 unchecked {
-                    loan.durationDays -= elapsedSinceSegmentStart;
+                    loan.interestRemainingDays = uint16(
+                        uint256(loan.interestRemainingDays) - elapsedSinceSegmentStart
+                    );
                 }
             }
-            // T-034 — startTime downsized to uint64; explicit cast.
-            loan.startTime = uint64(block.timestamp); // Reset accrual start
+            // T-034 — interestAccrualStart downsized to uint64; explicit cast.
+            loan.interestAccrualStart = uint64(block.timestamp); // Reset accrual start
 
-            // §3.10 — accrual clock reset right above (loan.startTime =
-            // block.timestamp), so accruedInterest at emit is 0.
+            // §3.10 — accrual clock reset right above (loan.interestAccrualStart
+            // = block.timestamp), so accruedInterest at emit is 0.
             emit PartialRepaid(loanId, partialAmount, loan.principal, /* accruedInterest */ 0);
 
             // T-034 §4.5 — track the interest portion that just settled
