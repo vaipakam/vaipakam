@@ -815,6 +815,15 @@ contract ClaimFacet is
         // the reserve ticked, even when the claim record's asset differs.
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
 
+        // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
+        // `loan.lender`'s vault to the (already-screened) current claimer. For an
+        // NFT-rental / non-ERC-20 loan the close-out doesn't consolidate the
+        // stored field, so a LEGITIMATE pre-flag transfer can leave `loan.lender`
+        // stale-and-later-flagged; arm the from-side move-out exemption so that
+        // doesn't brick the clean current holder's claim (the stored party is
+        // losing custody, not receiving). Pinned to the exact `loan.lender`.
+        LibSanctionedLock.beginMoveOut(s, loan.lender);
+
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             if (claim.amount > 0) {
@@ -926,6 +935,7 @@ contract ClaimFacet is
                 VaultTransferFailed.selector
             );
         }
+        LibSanctionedLock.endMoveOut(s);
 
         // Update lender's NFT to "Loan Closed" before burning (per README)
         LibFacet.crossFacetCall(
@@ -1108,6 +1118,15 @@ contract ClaimFacet is
         // that never reserved a surplus (non-VPFI, or no liquid-default surplus).
         LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
 
+        // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
+        // `loan.borrower`'s vault to the (already-screened) current claimer. As
+        // with the lender claim, an NFT-rental / non-ERC-20 loan isn't
+        // consolidated, so a legitimate pre-flag transfer can leave `loan.borrower`
+        // stale-and-later-flagged; arm the from-side move-out exemption so the
+        // clean current holder's claim isn't bricked (the stored party is losing
+        // custody). Pinned to the exact `loan.borrower`; covers the restamp below.
+        LibSanctionedLock.beginMoveOut(s, loan.borrower);
+
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             LibFacet.crossFacetCall(
@@ -1198,6 +1217,7 @@ contract ClaimFacet is
                 bytes4(0)
             );
         }
+        LibSanctionedLock.endMoveOut(s);
 
         // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
         // The Diamond custody-holds the rebate slice between settlement

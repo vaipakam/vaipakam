@@ -829,12 +829,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #821 (Codex #832) — this branch pays the lender share DIRECTLY to
-            // `loan.lender` (the RECIPIENT — the field is kept current by the
-            // eager consolidation at this function's start), so screen it to
-            // refuse streaming rental value to a flagged recipient. (The ERC-20
-            // branch above pays `ownerOf` and screens that instead.)
-            LibVaipakam._assertNotSanctioned(loan.lender);
+            // #821 (Codex #832 r7 P2) — pay the LIVE lender-NFT holder, NOT the
+            // stored `loan.lender`. NFT-rental loans skip the eager consolidation
+            // at this function's start (`_isExcludedLive` non-ERC-20), so
+            // `loan.lender` can be a stale pre-transfer party; resolve + screen
+            // `ownerOf(lenderTokenId)` (matching the ERC-20 branch) so a flagged
+            // live holder is refused while a legitimate clean holder is paid.
+            address lenderRecipient =
+                IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            LibVaipakam._assertNotSanctioned(lenderRecipient);
             // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
             // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
             // borrower flagged after init can still service the partial rental
@@ -847,7 +850,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
-                    loan.lender,
+                    lenderRecipient,
                     lenderShare
                 ),
                 VaultWithdrawFailed.selector

@@ -488,9 +488,19 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
                 // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
                 // #821 — vault-lock the in-kind collateral into a flagged stored
-                // lender's vault rather than bricking the default.
+                // lender's vault rather than bricking the default. #832 r7 P3 —
+                // report the real parked payload in the lock event: ERC-1155
+                // carries its amount in `collateralQuantity` (`collateralAmount`
+                // is structurally zero for non-ERC-20 collateral), so pass the
+                // quantity for ERC-1155 to keep the reconciliation trail accurate.
                 address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
-                    s, loan.lender, loanId, loan.collateralAsset, loan.collateralAmount
+                    s,
+                    loan.lender,
+                    loanId,
+                    loan.collateralAsset,
+                    loan.collateralAssetType == LibVaipakam.AssetType.ERC1155
+                        ? loan.collateralQuantity
+                        : loan.collateralAmount
                 );
 
                 // #821 (Codex #832 r2 P1) — the in-kind move WITHDRAWS the
