@@ -3125,11 +3125,13 @@ contract RiskFacetTest is Test {
             "startTime must reset to now"
         );
 
-        // endTime must be preserved (lender's term unchanged). Allow
-        // for the durationDays sub-day rounding-down: the on-chain math
-        // is `durationDays = (endTime - now) / 1 days`, which truncates
-        // any partial-day remainder. Here `now = startTime + 10 days`
-        // exactly so the truncation is 0 and the equality is exact.
+        // endTime must be preserved (lender's term unchanged). The on-chain
+        // math (#641) rounds the remaining term UP — `durationDays =
+        // ceil((endTime - now) / 1 days)` — so `endTime` is never pulled
+        // earlier. Here `now = startTime + 10 days` exactly, so there is no
+        // sub-day remainder to round and the preservation is exact. The
+        // dedicated sub-day case is covered by
+        // `testPartialLiq_SubDayRemainder_NeverShortensMaturity`.
         uint256 endTimeAfter = uint256(loanAfter.startTime) +
             loanAfter.durationDays *
             1 days;
@@ -3140,6 +3142,140 @@ contract RiskFacetTest is Test {
         );
         // durationDays should be 20 (30 - 10).
         assertEq(loanAfter.durationDays, 20, "durationDays = remaining whole days");
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #641 regression — a partial at a SUB-DAY offset must never pull
+    ///      the loan's maturity earlier. With the old `floor` math a partial
+    ///      10.5 days into a 30-day loan re-stamped 19 remaining days
+    ///      (`floor(19.5)`), maturing 12h EARLY; the fix rounds UP to 20 so
+    ///      `endTime` is preserved-or-later, never shorter.
+    function testPartialLiq_SubDayRemainder_NeverShortensMaturity() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loanBefore = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeBefore = uint256(loanBefore.startTime) +
+            loanBefore.durationDays *
+            1 days;
+
+        // 10 days + 12h into the loan → remaining = 19.5 days (a genuine
+        // sub-day remainder the whole-day `durationDays` can't represent).
+        vm.warp(uint256(loanBefore.startTime) + 10 days + 12 hours);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 2_000);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            5_000,
+            defaultAdapterCalls()
+        );
+
+        LibVaipakam.Loan memory loanAfter = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        assertEq(
+            uint256(loanAfter.startTime),
+            block.timestamp,
+            "startTime resets to now"
+        );
+
+        uint256 endTimeAfter = uint256(loanAfter.startTime) +
+            loanAfter.durationDays *
+            1 days;
+        // The old floor would have produced endTimeAfter < endTimeBefore.
+        assertGe(
+            endTimeAfter,
+            endTimeBefore,
+            "maturity must never move earlier across a sub-day partial"
+        );
+        // Rounded UP: 19.5 → 20 remaining days, so endTime is 12h later.
+        assertEq(loanAfter.durationDays, 20, "remaining rounds up to next whole day");
+        assertEq(
+            endTimeAfter,
+            endTimeBefore + 12 hours,
+            "endTime lands at the original maturity rounded up to the next whole day"
+        );
+
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #641 — repeated sub-day partials stay monotonic: each re-stamp
+    ///      rounds the (already-rounded) remaining term up again, so `endTime`
+    ///      only ever holds or grows — the old floor compounded the shortening
+    ///      across successive partials. Mirrors `MultiPartialRegression`'s
+    ///      gentle 10% sweeps + price ladder, but warps to SUB-DAY offsets so
+    ///      the rounding path is actually exercised.
+    function testPartialLiq_RepeatedSubDayPartials_MaturityMonotonic() public {
+        uint256 loanId = createAndAcceptOffer();
+        LibVaipakam.Loan memory loan0 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTimeOriginal = uint256(loan0.startTime) +
+            loan0.durationDays *
+            1 days;
+
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+        deal(mockERC20, address(diamond), 5_000 ether);
+
+        // Partial #1 — distress @ $0.65, 10% sweep, 5 days + 7h in (sub-day).
+        vm.warp(uint256(loan0.startTime) + 5 days + 7 hours);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.65e8, 8)
+        );
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loan1 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTime1 = uint256(loan1.startTime) + loan1.durationDays * 1 days;
+        assertGe(endTime1, endTimeOriginal, "partial #1 must not shorten maturity");
+
+        // Drop price to $0.55 so HF dips below 1 on the reduced position,
+        // then a further sub-day warp (10 days + 13h total elapsed).
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector,
+                mockCollateralERC20
+            ),
+            abi.encode(0.55e8, 8)
+        );
+        vm.warp(uint256(loan0.startTime) + 10 days + 13 hours);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId,
+            1_000,
+            defaultAdapterCalls()
+        );
+        LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond))
+            .getLoanDetails(loanId);
+        uint256 endTime2 = uint256(loan2.startTime) + loan2.durationDays * 1 days;
+        // Monotonic and never below the original maturity.
+        assertGe(endTime2, endTime1, "partial #2 must not shorten maturity vs #1");
+        assertGe(endTime2, endTimeOriginal, "maturity stays >= original across both");
 
         vm.clearMockedCalls();
     }
