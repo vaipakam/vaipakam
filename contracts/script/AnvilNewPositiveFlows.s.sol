@@ -57,7 +57,7 @@ import {Deployments} from "./lib/Deployments.sol";
  *
  *         Subsequent waves (separate iterations):
  *           N1, N2, N5, N6  — range match, periodic interest, preclose Opt2/3
- *           N8, N9, N10, N11, N12 — recovery-ban, disown, VPFI staking
+ *           N8, N9, N10, N11, N12 — recovery-ban, disown, VPFI deposit
  *                                   + discount, sanctions Tier-1, keeper
  *                                   per-action authorization
  *
@@ -124,9 +124,9 @@ contract AnvilNewPositiveFlows is Script {
         _scenarioN9Disown();
         _scenarioN11SanctionsTier1Deny();
         _scenarioN12KeeperPerAction();
-        _scenarioN10VpfiStakingDiscount();
+        _scenarioN10VpfiDepositDiscount();
         // #687-B: N13 (staking-rewards claim) removed with the 5% staking yield.
-        _scenarioN14UnstakeVpfi();
+        _scenarioN14WithdrawVpfi();
         _restoreVpfiConfig();
         _scenarioN18PauseAsset();
         _scenarioN19GlobalPause();
@@ -999,7 +999,7 @@ contract AnvilNewPositiveFlows is Script {
             allowsParallelSale: false,
             amountMax: amtMax,
             interestRateBpsMax: rMax,
-            collateralAmountMax: 0,
+            collateralAmountMax: collateralFloor,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -1041,9 +1041,9 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,         // single-point amount
-            interestRateBpsMax: 0,// single-point rate
-            collateralAmountMax: 0, // #164 — single-point collateral
+            amountMax: amount, // single-point amount
+            interestRateBpsMax: rateBps, // single-point rate
+            collateralAmountMax: collateralAmount, // #164 — single-point collateral
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -1154,9 +1154,9 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS,
+            collateralAmountMax: COLLATERAL_AMOUNT,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -1261,7 +1261,7 @@ contract AnvilNewPositiveFlows is Script {
         console.log(">>> N6 PASSED <<<");
     }
 
-    // ─── N10: VPFI Staking + Fee-Discount + Claim Rebate ─────────────────
+    // ─── N10: VPFI Deposit + Fee-Discount + Claim Rebate ─────────────────
 
     /// @dev End-to-end Phase 5 borrower-LIF rebate flow:
     ///        1. Deploy a VPFI ERC20 mock; admin sets it on the
@@ -1295,7 +1295,7 @@ contract AnvilNewPositiveFlows is Script {
     ///      best-effort (logged, not required).
     // ─── VPFI-config snapshot fields (set in N10, restored after N14) ───
     //
-    // N10 + N13 + N14 form a single VPFI-discount + staking sequence
+    // N10 + N13 + N14 form a single VPFI-discount + deposit sequence
     // that requires a mock VPFI token wired on the diamond throughout.
     // Restoring inside N10 would break N13/N14 because they read
     // `s.vpfiToken` and expect to find the mock. So the snapshot is
@@ -1310,9 +1310,9 @@ contract AnvilNewPositiveFlows is Script {
     bool private _n10SavedBorrowerConsent;
     bool private _n10SnapshotTaken;
 
-    function _scenarioN10VpfiStakingDiscount() internal {
+    function _scenarioN10VpfiDepositDiscount() internal {
         console.log("");
-        console.log("=== N10: VPFI Staking + Fee-Discount + Claim Rebate ===");
+        console.log("=== N10: VPFI Deposit + Fee-Discount + Claim Rebate ===");
 
         // Snapshot — see _restoreVpfiConfig() called after N14.
         _n10SavedVpfiToken = VPFITokenFacet(diamond).getVPFIToken();
@@ -1395,7 +1395,7 @@ contract AnvilNewPositiveFlows is Script {
     /// @dev Restore the VPFI-discount config to its pre-N10 state.
     ///      Called from `run()` after N14 exits — N13 and N14 depend
     ///      on the mock VPFI being wired on the diamond throughout
-    ///      the staking + discount + unstake sequence, so the restore
+    ///      the deposit + discount + withdraw sequence, so the restore
     ///      can't fire inside N10. On a fresh anvil diamond every
     ///      saved slot is zero/false and the restore is a sequence
     ///      of no-ops; on real testnets the canonical proxy + rate +
@@ -1429,35 +1429,35 @@ contract AnvilNewPositiveFlows is Script {
         console.log("Pre-N10 VPFI config restored (testnet-safe).");
     }
 
-    // ─── N14: Unstake VPFI (withdraw from vault) ───────────────────────
+    // ─── N14: Withdraw VPFI (from vault) ───────────────────────
 
-    /// @dev N10 left ~2,000 VPFI (Tier-2) in `borrower`'s vault. Unstake by
+    /// @dev N10 left ~2,000 VPFI (Tier-2) in `borrower`'s vault. Withdraw by
     ///      calling `withdrawVPFIFromVault` and verify the wallet grows by the
-    ///      unstaked amount. This also exercises T-051's
+    ///      withdrawn amount. This also exercises T-051's
     ///      `protocolTrackedVaultBalance` decrement on the VPFI side.
     ///      (#687-B: the staked-counter assertion was removed with the 5%
     ///      staking yield; the wallet-delta assertion is the live observable.)
-    function _scenarioN14UnstakeVpfi() internal {
+    function _scenarioN14WithdrawVpfi() internal {
         console.log("");
-        console.log("=== N14: Unstake VPFI from vault ===");
+        console.log("=== N14: Withdraw VPFI from vault ===");
 
         uint256 walletBefore = vpfi.balanceOf(borrower);
 
         // Withdraw a fixed amount strictly smaller than the 2,000 VPFI N10
         // deposited. A partial-but-known-safe amount sidesteps the exact-
         // balance race where a 1-wei broadcast-time divergence reverts.
-        uint256 unstakeAmt = 1_000e18;
+        uint256 withdrawAmt = 1_000e18;
 
         vm.startBroadcast(borrowerKey);
-        VPFIDiscountFacet(diamond).withdrawVPFIFromVault(unstakeAmt);
+        VPFIDiscountFacet(diamond).withdrawVPFIFromVault(withdrawAmt);
         vm.stopBroadcast();
 
         uint256 walletAfter = vpfi.balanceOf(borrower);
         console.log("VPFI wallet pre / post:", walletBefore, walletAfter);
 
         require(
-            walletAfter == walletBefore + unstakeAmt,
-            "N14: wallet should grow by exactly the unstaked amount"
+            walletAfter == walletBefore + withdrawAmt,
+            "N14: wallet should grow by exactly the withdrawn amount"
         );
 
         console.log(">>> N14 PASSED <<<");
@@ -1661,6 +1661,9 @@ contract AnvilNewPositiveFlows is Script {
         LibVaipakam.CreateOfferParams memory params = _lenderOfferStandard();
         params.amountMax = LOAN_AMOUNT * 2;
         params.collateralAmount = 2 * COLLATERAL_AMOUNT;
+        // Lender offers require collateralAmountMax == collateralAmount
+        // (LenderCollateralRangeNotAllowed) — keep it in lock-step.
+        params.collateralAmountMax = 2 * COLLATERAL_AMOUNT;
         vm.startBroadcast(lenderKey);
         usdc.approve(diamond, LOAN_AMOUNT * 2);
         uint256 offerId = OfferCreateFacet(diamond).createOffer(params);
@@ -1766,9 +1769,9 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS,
+            collateralAmountMax: COLLATERAL_AMOUNT,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,
@@ -1805,9 +1808,9 @@ contract AnvilNewPositiveFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS / 2,
+            collateralAmountMax: COLLATERAL_AMOUNT,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,

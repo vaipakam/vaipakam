@@ -40,7 +40,8 @@
 
 #
 
-# Phase 1 testnet trio (Base canonical, Arb + OP mirrors). Diamond
+# Phase 1 testnet trio (Base canonical, Arb + BNB mirrors) + anvil local.
+# Diamond
 
 # addresses are NOT listed here — the canonical source is each chain's
 
@@ -51,10 +52,12 @@
 # drift-prone (stale after every fresh redeploy).
 
 31337 # anvil (local devnet — included so flow scripts and the consolidated registry pick up the local deploy)
-84532 # base-sepolia
+84532 # base-sepolia (canonical-VPFI)
 
-# 421614 # arb-sepolia
+421614 # arb-sepolia (mirror)
 
-11155111 # Sepolia
+97 # bnb-testnet (mirror — native-gas mode acceptable on testnet)
 
-# 11155420 # op-sepolia
+# 11155111 # Sepolia (retired — not in the Phase-1 testnet trio)
+
+# 11155420 # op-sepolia (retired — not in the Phase-1 testnet trio)

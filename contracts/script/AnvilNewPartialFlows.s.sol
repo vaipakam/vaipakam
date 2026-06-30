@@ -227,6 +227,10 @@ contract AnvilNewPartialFlows is Script {
         rangeP.amountMax = LOAN_AMOUNT * 5;
         // Floor scales with amountMax — provide 5 WETH (above ~4.4 floor).
         rangeP.collateralAmount = 5 * COLLATERAL_AMOUNT;
+        // Lender offers require collateralAmountMax == collateralAmount
+        // (LenderCollateralRangeNotAllowed); keep it in lock-step with the
+        // bumped collateral so the range-amount offer still validates.
+        rangeP.collateralAmountMax = 5 * COLLATERAL_AMOUNT;
         vm.startBroadcast(newLenderKey);
         usdc.approve(diamond, LOAN_AMOUNT * 5);
         uint256 rangeOfferId = OfferCreateFacet(diamond).createOffer(rangeP);
@@ -560,9 +564,9 @@ contract AnvilNewPartialFlows is Script {
             allowsPartialRepay: false,
             allowsPrepayListing: false,
             allowsParallelSale: false,
-            amountMax: 0,
-            interestRateBpsMax: 0,
-            collateralAmountMax: 0,
+            amountMax: LOAN_AMOUNT,
+            interestRateBpsMax: INTEREST_BPS,
+            collateralAmountMax: COLLATERAL_AMOUNT,
             periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
             expiresAt: 0,
             fillMode: LibVaipakam.FillMode.Partial,

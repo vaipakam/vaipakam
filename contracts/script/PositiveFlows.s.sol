@@ -41,8 +41,8 @@ import {AnvilNewPositiveFlows} from "./AnvilNewPositiveFlows.s.sol";
  *           - Disown (vault ownership transfer).
  *           - Sanctions Tier-1 vs Tier-2 gating semantics.
  *           - Keeper per-action authorization.
- *           - VPFI staking + discount accumulator + claim rebate +
- *             unstake.
+ *           - VPFI deposit + discount accumulator + claim rebate +
+ *             withdraw.
  *           - Per-asset pause + global pause + master-flag dormancy.
  *           - Treasury accrual.
  *           - sellLoanViaBuyOffer (lender early-withdrawal via buy
