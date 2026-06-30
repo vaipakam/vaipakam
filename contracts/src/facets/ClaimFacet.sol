@@ -416,17 +416,12 @@ contract ClaimFacet is
         // always runs regardless; this gate adds the swap leg.
         if (!snap.retryAttempted) revert BackstopRetryRequired();
 
-        // #821 (Codex #832 r4 P2) — the stored-owner FREEZE belongs HERE, gating
-        // ONLY the backstop CASH buyout. Every objective rescue above runs first
-        // for a flagged stored lender: the internal-match auto-dispatch (full →
-        // returns; partial → zero-slice return below, recorded in heldForLender)
-        // and the retry swap both settle into the LOCKED vault / a claim, never
-        // paying the flagged wallet. Only `_absorbLenderSlice` pays cash + may
-        // withdraw `heldForLender` from the stored lender's vault — that is the
-        // monetization a flagged lender could reach by transferring the lender NFT
-        // to a clean wallet, so it (and nothing earlier) is frozen.
-        LibVaipakam._assertNotSanctioned(loan.lender);
-
+        // #821 — the freeze is the position-NFT transfer restriction + the
+        // `msg.sender`/`nftOwner` screens above (both gate the live holder, who a
+        // flagged wallet can't be post-flag). No stored-`loan.lender` screen: a
+        // FallbackPending loan is excluded from eager consolidation, so a stale
+        // `loan.lender` from a LEGITIMATE pre-flag transfer would wrongly freeze
+        // the clean current holder's buyout (Codex #832 r6 P2).
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }
@@ -641,16 +636,15 @@ contract ClaimFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // #821 — FREEZE: also screen the STORED vault owner (`loan.lender`),
-        // whose vault the payout withdraws from. While that wallet is flagged,
-        // its vault assets do not move — even to a clean current NFT holder.
-        // This closes the transfer-position-to-a-clean-wallet-then-claim
-        // loophole: a flagged lender can't monetize via an off-protocol NFT
-        // sale, because the funds sit in THEIR (frozen) vault. A genuine
-        // protocol loan-sale migrates `loan.lender` to the buyer
-        // (`LibLoan.migrateLenderPosition`), so a clean buyer settles to their
-        // OWN vault and is unaffected; only the stored-flagged case freezes.
-        LibVaipakam._assertNotSanctioned(loan.lender);
+        // #821 — the FREEZE is enforced by the position-NFT transfer restriction
+        // (a flagged wallet can't move a position in or out of itself) plus the
+        // `msg.sender` screen above (a flagged holder can't call claim). No
+        // stored-`loan.lender` screen here: for NFT-rental loans the close-out
+        // does NOT consolidate the stored field (`_isExcludedLive` skips
+        // non-ERC-20), so a stale `loan.lender` left by a LEGITIMATE pre-flag
+        // secondary-market transfer would wrongly freeze the clean current holder
+        // (Codex #832 r6 P2). The transfer restriction guarantees a flagged party
+        // can't be that holder, so screening the live caller is sufficient.
 
         // Loan must be resolved (Repaid, Defaulted, FallbackPending awaiting
         // the lender's one-shot retry, or InternalMatched). Active or already
@@ -1021,11 +1015,12 @@ contract ClaimFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
-        // #821 — FREEZE the stored vault owner (`loan.borrower`), whose vault the
-        // collateral/surplus payout withdraws from. See `_claimAsLenderImpl` for
-        // the rationale; a protocol position migration moves `loan.borrower` to
-        // the new holder, so only the stored-flagged case freezes.
-        LibVaipakam._assertNotSanctioned(loan.borrower);
+        // #821 — the FREEZE is the position-NFT transfer restriction plus the
+        // `msg.sender` screen below (a flagged wallet can't hold/claim a borrower
+        // position). No stored-`loan.borrower` screen: for NFT-rental / non-ERC-20
+        // loans the close-out doesn't consolidate the stored field, so a stale
+        // `loan.borrower` from a LEGITIMATE pre-flag transfer would wrongly freeze
+        // the clean current holder (Codex #832 r6 P2).
 
         // Borrower can only claim after the loan is terminally Repaid,
         // Defaulted, or InternalMatched. FallbackPending is explicitly

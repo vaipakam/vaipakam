@@ -41,9 +41,11 @@ the vault*:
 - When the sanction is lifted, the preserved proceeds become claimable as normal.
 - A new on-chain event records each time a close-out parks locked proceeds, so
   operators can reconcile them when a flag clears.
-- The **NFT Verifier** warns when a position's payout is frozen — both when the
-  current owner is flagged and when the loan party of record is flagged — so a
-  prospective buyer knows the position is currently unclaimable.
+- The **NFT Verifier** warns when a position's current owner is sanctions-flagged
+  — meaning the position is frozen (the owner can neither claim it nor transfer
+  it) and can't be bought or claimed until the owner is delisted. (A stale
+  original loan party is *not* flagged as frozen: a transfer made before any
+  later flag is a legitimate secondary-market sale that settles normally.)
 - Cancelling an unfilled offer is intentionally left to revert for a flagged
   creator: that refund returns the creator's *own* escrowed funds, so with no
   counterparty to protect, the revert is simply the freeze — the escrow stays put

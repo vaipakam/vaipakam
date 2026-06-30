@@ -66,17 +66,13 @@ type Verdict =
        *  non-Active, or read failed → caller falls back to the loan snapshot). */
       collateralLiquidityLive: number | null;
       /** #821 — true when the current position holder (`owner`) is
-       *  sanctions-flagged. While flagged the position's payout is frozen
-       *  (the proceeds are locked in the stored party's vault and the claim
-       *  paths screen that owner), so a buyer must be warned it's unclaimable. */
+       *  sanctions-flagged. This is the freeze condition under the position-NFT
+       *  transfer restriction: a flagged owner can neither transfer the position
+       *  out (the NFT is frozen in place) nor claim its payout, so it's stuck
+       *  until the flag clears. (A stale stored loan party is NOT a freeze
+       *  signal — a pre-flag secondary-market transfer is legitimate and the
+       *  close-out consolidates / pays the clean current holder.) */
       ownerSanctioned: boolean;
-      /** #821 (Codex #832 P2) — true when the STORED loan party for this NFT's
-       *  role (`loanDetails.lender` for a lender NFT, `loanDetails.borrower` for
-       *  a borrower NFT) is sanctions-flagged. This is the actual freeze
-       *  condition: `claimAsLender` / `claimAsBorrower` screen the stored owner,
-       *  so the payout is frozen for ANYONE — even a clean buyer the flagged
-       *  party transferred the NFT to (where `ownerSanctioned` is false). */
-      storedPartySanctioned: boolean;
     }
   | {
       kind: "burned";
@@ -371,36 +367,6 @@ export default function NftVerifier() {
         // Read failed — leave false (fail-open), as elsewhere in the app.
       }
 
-      // #821 (Codex #832 P2) — the freeze keys on the STORED party for this
-      // NFT's role, not the current holder. A flagged stored party who moved the
-      // position NFT to a clean wallet still has the payout frozen (the claim
-      // paths screen `loan.lender` / `loan.borrower`), so warn on that too —
-      // otherwise a buyer of the transferred NFT sees no warning yet can't claim.
-      const storedParty =
-        role === "lender"
-          ? loanDetails?.lender ?? null
-          : role === "borrower"
-            ? loanDetails?.borrower ?? null
-            : null;
-      let storedPartySanctioned = false;
-      if (storedParty) {
-        if (storedParty.toLowerCase() === owner.toLowerCase()) {
-          // Same address — reuse the holder read, no extra RPC.
-          storedPartySanctioned = ownerSanctioned;
-        } else {
-          try {
-            storedPartySanctioned = (await publicClient.readContract({
-              address,
-              abi: DIAMOND_ABI_VIEM,
-              functionName: "isSanctionedAddress",
-              args: [storedParty as Address],
-            })) as boolean;
-          } catch {
-            // Fail-open, matching the holder read above.
-          }
-        }
-      }
-
       setVerdict({
         kind: "live",
         chain,
@@ -413,7 +379,6 @@ export default function NftVerifier() {
         ltv,
         collateralLiquidityLive,
         ownerSanctioned,
-        storedPartySanctioned,
       });
       step.success();
     } catch (err) {
@@ -861,17 +826,7 @@ function LiveCard({
     ltv,
     collateralLiquidityLive,
     ownerSanctioned,
-    storedPartySanctioned,
   } = verdict;
-  // #821 (Codex #832 P2) — two DISTINCT conditions, shown with distinct copy:
-  //  • storedPartySanctioned → the position is frozen for ANYONE who holds the
-  //    NFT (the claim paths screen the stored `loan.lender`/`loan.borrower`),
-  //    incl. a clean buyer of a transferred NFT — the strong "do not buy" case.
-  //  • ownerSanctioned only (stored party clean) → only the CURRENT holder is
-  //    blocked (`msg.sender` gate); the position is NOT frozen for a clean buyer,
-  //    who could claim after acquiring it — a softer, owner-scoped warning.
-  // The stored-party case takes precedence in the banner copy below.
-  const payoutFrozen = ownerSanctioned || storedPartySanctioned;
   const blockExplorer = chain.blockExplorer;
   const status =
     loanDetails != null ? (Number(loanDetails.status) as LoanStatus) : null;
@@ -950,7 +905,7 @@ function LiveCard({
               {owner} <ExternalLink size={12} />
             </a>
           </div>
-          {payoutFrozen && (
+          {ownerSanctioned && (
             <div
               className="data-row"
               style={{
@@ -964,9 +919,7 @@ function LiveCard({
                 className="data-value"
                 style={{ color: "var(--danger, #dc2626)", fontSize: "0.82rem" }}
               >
-                {storedPartySanctioned
-                  ? t("nftVerifier.storedPartySanctioned")
-                  : t("nftVerifier.ownerSanctioned")}
+                {t("nftVerifier.ownerSanctioned")}
               </span>
             </div>
           )}
