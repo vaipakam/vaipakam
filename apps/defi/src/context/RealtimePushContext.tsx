@@ -95,8 +95,21 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
   }, [nudge]);
 
   useEffect(() => {
+    // #845 Codex P2/P3 — a new chain (or wsOrigin) is a brand-new channel: the
+    // prior chain's `live` posture and `lastEventAt` are meaningless here and
+    // must NOT carry over. Reset up front, before the new socket reports, so
+    //   - the watermark poll un-relaxes immediately (transport→`polling` drives
+    //     `setPushHealthy(false)` via the effect above) instead of staying at
+    //     the 60s push-backed floor on a chain that hasn't connected yet, and
+    //   - the diagnostics drawer can't show the previous chain's "Last push
+    //     event" / reconnect count for the newly-selected one.
+    // The new connection re-establishes `live` + a fresh `lastEventAt` only once
+    // THIS chain's DO actually reports ingest active.
+    setTransport('polling');
+    setLastEventAt(null);
+    setReconnectCount(0);
+
     if (!wsOrigin || !chainId) {
-      setTransport('polling');
       return;
     }
 
@@ -104,6 +117,11 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     let ws: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let nudgeTimer: ReturnType<typeof setTimeout> | null = null;
+    // #845 Codex P3 — earliest invalidation-frame time in the current debounce
+    // window, carried into the watermark nudge so "Push→refetch latency" is
+    // measured from when the frame ARRIVED, not from when the (debounced,
+    // possibly deferred-behind-an-in-flight-probe) refetch starts.
+    let pendingNudgeAt: number | null = null;
     let attempt = 0;
     let everLive = false;
     // Set when a reconnect learns the channel is INTENTIONALLY inactive
@@ -116,15 +134,25 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     // refetches from a parked tab). Remember it and flush once on focus.
     let hiddenDirty = false;
 
-    const scheduleNudge = () => {
+    const scheduleNudge = (eventAt?: number) => {
       if (typeof document !== 'undefined' && document.hidden) {
         hiddenDirty = true;
         return;
       }
+      // Coalesce a burst into one nudge, carrying the EARLIEST frame time so the
+      // reported latency is worst-case-honest. The hidden→focus flush passes no
+      // `eventAt` (the deliberate defer isn't a latency to surface), so the
+      // probe is then measured from its own start.
+      if (eventAt != null) {
+        pendingNudgeAt =
+          pendingNudgeAt == null ? eventAt : Math.min(pendingNudgeAt, eventAt);
+      }
       if (nudgeTimer) return; // already pending — coalesce
       nudgeTimer = setTimeout(() => {
         nudgeTimer = null;
-        if (!cancelled) nudgeRef.current();
+        const at = pendingNudgeAt;
+        pendingNudgeAt = null;
+        if (!cancelled) nudgeRef.current(at ?? undefined);
       }, NUDGE_DEBOUNCE_MS);
     };
 
@@ -197,8 +225,9 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
             }
           }
         } else if (frame.t === 'invalidate') {
-          setLastEventAt(Date.now());
-          scheduleNudge();
+          const arrivedAt = Date.now();
+          setLastEventAt(arrivedAt);
+          scheduleNudge(arrivedAt);
         }
       };
 

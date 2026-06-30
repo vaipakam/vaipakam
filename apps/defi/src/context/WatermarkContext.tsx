@@ -104,8 +104,14 @@ interface WatermarkContextValue {
    * refetch. Also refreshes `snapshot.safeBlock` first so the refetch's RPC
    * catch-up window includes the just-confirmed block. Coalesce bursts at the
    * call site (the WS client debounces).
+   *
+   * #845 Codex P3 — `eventAt` (UNIX-ms of the invalidation frame that triggered
+   * the nudge) lets the diagnostics drawer report "Push→refetch latency" from
+   * the frame's ARRIVAL rather than the probe's start, so the debounce window
+   * and any wait behind an in-flight probe are included. Omitted (push-agnostic
+   * callers) → the probe is measured from its own start, as before.
    */
-  nudge: () => void;
+  nudge: (eventAt?: number) => void;
 }
 
 const WatermarkContext = createContext<WatermarkContextValue | null>(null);
@@ -159,7 +165,7 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   // #757 Phase B — imperative "probe now + force a version bump", injected by
   // the probe-loop effect (closure over the live publicClient/diamond). No-op
   // until a probe loop is active. `nudge()` pokes through this.
-  const probeNowRef = useRef<() => void>(() => {});
+  const probeNowRef = useRef<(eventAt?: number) => void>(() => {});
 
   // #843 delta 1 — whether the realtime push transport is currently healthy.
   // Read inside the probe loop's `chooseInterval` (a ref so flipping it doesn't
@@ -183,8 +189,8 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     rescheduleRef.current();
   }, []);
   // Stable identity for consumers (the WS push provider lists it in deps).
-  const nudge = useCallback(() => {
-    probeNowRef.current();
+  const nudge = useCallback((eventAt?: number) => {
+    probeNowRef.current(eventAt);
   }, []);
   // #843 delta 1 — toggle the push-backed cadence. Re-arms the timer at the new
   // floor immediately on change so a disconnect restores today's cadence (and a
@@ -211,6 +217,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // key effects on it are already re-keyed on chain/diamond too.
     setSnapshot(null);
     setStatus('idle');
+    // #845 Codex P3 — the prior chain's push-latency reading is meaningless on
+    // the new chain; clear it so the drawer doesn't attribute it to a channel
+    // that hasn't received a push yet. `effectivePollIntervalMs` is recomputed
+    // by the first `schedule()`; `pushBacked` is re-driven by the push
+    // provider's transport reset (which reports `polling` for the new chain).
+    diagnosticsRef.current.lastNudgeLatencyMs = null;
     // useDiamondPublicClient always returns a non-null client (wagmi
     // client OR a transport-only http fallback), so we only need to
     // gate on the diamond address being known for this chain.
@@ -233,6 +245,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // second poll loop, multiplying background RPC traffic.
     let probeInFlight = false;
     let pendingForce = false; // a push nudge arrived mid-probe
+    // #845 Codex P3 — invalidation-frame time to attribute the NEXT forced
+    // probe's latency to (the earliest pending frame; worst-case-honest). `null`
+    // when the pending force has no frame time (e.g. a non-push force).
+    let pendingForceAt: number | null = null;
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -341,19 +357,29 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // into ONE follow-up (a forced follow-up wins, so a status-only mutation
     // isn't lost). On settle it either services the pending nudge or arms the
     // next timer — never both, never a duplicate timer.
-    async function runProbe(forceBump: boolean): Promise<void> {
+    async function runProbe(forceBump: boolean, eventAt?: number): Promise<void> {
       if (probeInFlight) {
         // A tick arriving mid-probe is folded in: a push nudge must not be lost
         // (it force-bumps), so remember it; a plain timer/visibility tick needs
         // nothing — the in-flight probe's `finally` always reschedules.
-        if (forceBump) pendingForce = true;
+        if (forceBump) {
+          pendingForce = true;
+          // Keep the earliest frame time so the deferred probe's reported
+          // latency includes the full wait behind THIS in-flight probe.
+          if (eventAt != null) {
+            pendingForceAt =
+              pendingForceAt == null ? eventAt : Math.min(pendingForceAt, eventAt);
+          }
+        }
         return;
       }
       probeInFlight = true;
-      // #843 delta 2 — measure how long a push-nudge-driven probe takes to
-      // settle (the event→refetch latency surfaced in the diagnostics drawer).
-      // Timer/visibility probes (forceBump=false) aren't measured.
-      const startedAt = forceBump ? Date.now() : 0;
+      // #843 delta 2 / #845 Codex P3 — measure event→refetch latency for a
+      // push-nudge-driven probe. Anchor it to the invalidation-frame time when
+      // the push provider supplied one (so the debounce + any wait behind a
+      // prior in-flight probe count), else to the probe's own start; timer/
+      // visibility probes (forceBump=false) aren't measured.
+      const startedAt = forceBump ? (eventAt ?? Date.now()) : 0;
       if (timer) {
         clearTimeout(timer);
         timer = null;
@@ -368,7 +394,9 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         if (!cancelled) {
           if (pendingForce) {
             pendingForce = false;
-            void runProbe(true); // a nudge landed mid-probe — service it next
+            const carryAt = pendingForceAt ?? undefined;
+            pendingForceAt = null;
+            void runProbe(true, carryAt); // a nudge landed mid-probe — service it next
           } else {
             schedule(); // arm the next timer (self-clears any stale one)
           }
@@ -405,8 +433,8 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // #757 Phase B — "probe now + force a version bump". Funnels through
     // `runProbe`, so a push nudge is fully serialized with the timer probe and
     // with other nudges — exactly one probe runs and one timer is armed.
-    probeNowRef.current = () => {
-      void runProbe(true);
+    probeNowRef.current = (eventAt?: number) => {
+      void runProbe(true, eventAt);
     };
 
     function onVisibility(): void {
