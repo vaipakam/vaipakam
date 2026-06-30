@@ -60,3 +60,43 @@ const POLICIES: Record<WatermarkTier, UseLiveWatermarkOptions> = {
 export function watermarkPolicy(tier: WatermarkTier): UseLiveWatermarkOptions {
   return POLICIES[tier];
 }
+
+/**
+ * #843 delta 1 — push-backed cadence floor.
+ *
+ * When the realtime push transport is HEALTHY (`live`), the background
+ * watermark poll is no longer the primary freshness mechanism — the WS
+ * invalidation frames nudge a refetch within seconds of any state change. The
+ * poll becomes a BACKSTOP for a (rare) missed push, so we relax it to a longer
+ * floor. On ANY disconnect / polling fallback the floor is dropped and the
+ * tier cadence resumes immediately (the watermark provider reschedules on the
+ * `setPushHealthy` toggle).
+ *
+ * 60 s catches a dropped push within a minute while cutting the hot-tier 5 s
+ * heartbeat 12× and the warm 30 s 2×; the cool 180 s tier is already slower, so
+ * the floor is a no-op there. This is the main RPC/Worker-load win from #757's
+ * push investment — v1 deliberately left polling at full cadence.
+ */
+export const PUSH_BACKED_MIN_INTERVAL_MS = 60_000;
+
+/**
+ * Apply the push-backed floor to a chosen poll interval.
+ *
+ *   - `tierInterval === null` (no subscriber demand / all paused) → `null`.
+ *     Push being healthy NEVER creates poll demand.
+ *   - push unhealthy → the tier interval, unchanged (today's cadence restored).
+ *   - push healthy → `max(tierInterval, PUSH_BACKED_MIN_INTERVAL_MS)` — never
+ *     faster than the tier asked for, only relaxed.
+ *
+ * Pure + exported so the cadence-switching behaviour is unit-testable without
+ * standing up the whole watermark provider + WebSocket.
+ */
+export function pushBackedInterval(
+  tierInterval: number | null,
+  pushHealthy: boolean,
+): number | null {
+  if (tierInterval === null) return null;
+  return pushHealthy
+    ? Math.max(tierInterval, PUSH_BACKED_MIN_INTERVAL_MS)
+    : tierInterval;
+}

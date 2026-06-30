@@ -56,6 +56,24 @@ import {
   type WatermarkSnapshot,
   type WatermarkStatus,
 } from '../hooks/watermarkInternals';
+import { pushBackedInterval } from '../hooks/watermarkPolicy';
+
+/**
+ * #843 delta 2 — realtime-poll diagnostics, exposed via a STABLE ref so reads
+ * don't churn the hot context value (every watermark subscriber reads it). The
+ * provider mutates `.current` imperatively each schedule / push-driven probe;
+ * the diagnostics drawer polls it on a tick while open.
+ */
+export interface WatermarkDiagnostics {
+  /** The cadence (ms) the next probe is armed at, after the push-backed floor;
+   *  `null` when no timer is armed (no subscribers / all paused / tab hidden). */
+  effectivePollIntervalMs: number | null;
+  /** Whether the push-backed floor is currently relaxing the cadence. */
+  pushBacked: boolean;
+  /** Duration (ms) of the most recent push-nudge-driven probe (event→refetch
+   *  settle), or `null` if no push-driven probe has run. */
+  lastNudgeLatencyMs: number | null;
+}
 
 interface WatermarkContextValue {
   /** Bumps every time either lifetime counter advances. */
@@ -69,6 +87,15 @@ interface WatermarkContextValue {
   /** Subscriber deregistration. */
   unregister: (id: number) => void;
   /**
+   * #843 delta 1 — the realtime push provider calls this when its transport
+   * flips. While push is healthy (`true`) the poll cadence relaxes to the
+   * push-backed floor (`pushBackedInterval`); `false` restores the tier cadence
+   * immediately (an in-flight timer is rescheduled). Stable identity.
+   */
+  setPushHealthy: (healthy: boolean) => void;
+  /** #843 delta 2 — stable ref of realtime-poll diagnostics (see type). */
+  diagnosticsRef: { readonly current: WatermarkDiagnostics };
+  /**
    * #757 Phase B — fire an immediate probe and FORCE a `version` bump, even
    * when the lifetime counters didn't move. The realtime WS push calls this
    * when the indexer signals a state change: status-only mutations (repay,
@@ -77,8 +104,14 @@ interface WatermarkContextValue {
    * refetch. Also refreshes `snapshot.safeBlock` first so the refetch's RPC
    * catch-up window includes the just-confirmed block. Coalesce bursts at the
    * call site (the WS client debounces).
+   *
+   * #845 Codex P3 — `eventAt` (UNIX-ms of the invalidation frame that triggered
+   * the nudge) lets the diagnostics drawer report "Push→refetch latency" from
+   * the frame's ARRIVAL rather than the probe's start, so the debounce window
+   * and any wait behind an in-flight probe are included. Omitted (push-agnostic
+   * callers) → the probe is measured from its own start, as before.
    */
-  nudge: () => void;
+  nudge: (eventAt?: number) => void;
 }
 
 const WatermarkContext = createContext<WatermarkContextValue | null>(null);
@@ -132,7 +165,18 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   // #757 Phase B — imperative "probe now + force a version bump", injected by
   // the probe-loop effect (closure over the live publicClient/diamond). No-op
   // until a probe loop is active. `nudge()` pokes through this.
-  const probeNowRef = useRef<() => void>(() => {});
+  const probeNowRef = useRef<(eventAt?: number) => void>(() => {});
+
+  // #843 delta 1 — whether the realtime push transport is currently healthy.
+  // Read inside the probe loop's `chooseInterval` (a ref so flipping it doesn't
+  // re-run the effect / tear down the loop); flipped via `setPushHealthy`.
+  const pushHealthyRef = useRef(false);
+  // #843 delta 2 — diagnostics surface, mutated imperatively by the probe loop.
+  const diagnosticsRef = useRef<WatermarkDiagnostics>({
+    effectivePollIntervalMs: null,
+    pushBacked: false,
+    lastNudgeLatencyMs: null,
+  });
 
   const register = useCallback((opts: UseLiveWatermarkOptions) => {
     const id = nextSubscriberId++;
@@ -145,8 +189,17 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     rescheduleRef.current();
   }, []);
   // Stable identity for consumers (the WS push provider lists it in deps).
-  const nudge = useCallback(() => {
-    probeNowRef.current();
+  const nudge = useCallback((eventAt?: number) => {
+    probeNowRef.current(eventAt);
+  }, []);
+  // #843 delta 1 — toggle the push-backed cadence. Re-arms the timer at the new
+  // floor immediately on change so a disconnect restores today's cadence (and a
+  // connect relaxes it) without waiting for the current tick to elapse.
+  const setPushHealthy = useCallback((healthy: boolean) => {
+    if (pushHealthyRef.current === healthy) return;
+    pushHealthyRef.current = healthy;
+    diagnosticsRef.current.pushBacked = healthy;
+    rescheduleRef.current();
   }, []);
 
   useEffect(() => {
@@ -164,10 +217,23 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // key effects on it are already re-keyed on chain/diamond too.
     setSnapshot(null);
     setStatus('idle');
+    // #845 Codex P3 — the prior chain's push-latency reading is meaningless on
+    // the new chain; clear it so the drawer doesn't attribute it to a channel
+    // that hasn't received a push yet. `effectivePollIntervalMs` is recomputed
+    // by the first `schedule()`; `pushBacked` is re-driven by the push
+    // provider's transport reset (which reports `polling` for the new chain).
+    diagnosticsRef.current.lastNudgeLatencyMs = null;
     // useDiamondPublicClient always returns a non-null client (wagmi
     // client OR a transport-only http fallback), so we only need to
     // gate on the diamond address being known for this chain.
     if (!diamond) {
+      // #845 Codex P3 — this early return skips `schedule()`, so nothing else
+      // rewrites the poll diagnostics. The poller is disabled on a no-Diamond
+      // chain (e.g. an undeployed registry entry), so clear the interval +
+      // push-backed flag here; otherwise the drawer keeps showing the previous
+      // chain's cadence for the whole unsupported-chain session.
+      diagnosticsRef.current.effectivePollIntervalMs = null;
+      diagnosticsRef.current.pushBacked = false;
       rescheduleRef.current = () => {};
       return;
     }
@@ -186,6 +252,10 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // second poll loop, multiplying background RPC traffic.
     let probeInFlight = false;
     let pendingForce = false; // a push nudge arrived mid-probe
+    // #845 Codex P3 — invalidation-frame time to attribute the NEXT forced
+    // probe's latency to (the earliest pending frame; worst-case-honest). `null`
+    // when the pending force has no frame time (e.g. a non-push force).
+    let pendingForceAt: number | null = null;
 
     // Pick the next cadence by taking the min over all subscribers'
     // currently-effective active interval. Activity gating is per-
@@ -219,10 +289,15 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
       // until the first probe completes — until then we use the tier
       // cadence so the initial probe fires promptly.
       const lp = lastProbe.current;
-      if (lp && lp.nextOfferId === 0n && lp.nextLoanId === 0n) {
-        return Math.max(tierInterval, COLD_CHAIN_INTERVAL_MS);
-      }
-      return tierInterval;
+      const base =
+        lp && lp.nextOfferId === 0n && lp.nextLoanId === 0n
+          ? Math.max(tierInterval, COLD_CHAIN_INTERVAL_MS)
+          : tierInterval;
+      // #843 delta 1 — relax to the push-backed floor while push is healthy
+      // (the poll is then just a backstop for a missed WS frame). Applied last
+      // so it composes with the cold-chain stretch — both only ever SLOW the
+      // cadence, never speed it past what a tier asked for.
+      return pushBackedInterval(base, pushHealthyRef.current);
     }
 
     async function probe(opts?: { forceBump?: boolean }): Promise<void> {
@@ -289,15 +364,29 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // into ONE follow-up (a forced follow-up wins, so a status-only mutation
     // isn't lost). On settle it either services the pending nudge or arms the
     // next timer — never both, never a duplicate timer.
-    async function runProbe(forceBump: boolean): Promise<void> {
+    async function runProbe(forceBump: boolean, eventAt?: number): Promise<void> {
       if (probeInFlight) {
         // A tick arriving mid-probe is folded in: a push nudge must not be lost
         // (it force-bumps), so remember it; a plain timer/visibility tick needs
         // nothing — the in-flight probe's `finally` always reschedules.
-        if (forceBump) pendingForce = true;
+        if (forceBump) {
+          pendingForce = true;
+          // Keep the earliest frame time so the deferred probe's reported
+          // latency includes the full wait behind THIS in-flight probe.
+          if (eventAt != null) {
+            pendingForceAt =
+              pendingForceAt == null ? eventAt : Math.min(pendingForceAt, eventAt);
+          }
+        }
         return;
       }
       probeInFlight = true;
+      // #843 delta 2 / #845 Codex P3 — measure event→refetch latency for a
+      // push-nudge-driven probe. Anchor it to the invalidation-frame time when
+      // the push provider supplied one (so the debounce + any wait behind a
+      // prior in-flight probe count), else to the probe's own start; timer/
+      // visibility probes (forceBump=false) aren't measured.
+      const startedAt = forceBump ? (eventAt ?? Date.now()) : 0;
       if (timer) {
         clearTimeout(timer);
         timer = null;
@@ -306,10 +395,19 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
         await probe({ forceBump });
       } finally {
         probeInFlight = false;
+        // #845 Codex P3 — `diagnosticsRef` is shared across chains. If this
+        // probe was still awaiting RPC when a chain switch tore the effect down
+        // (`cancelled`), the new chain has already cleared this field; don't let
+        // the stale resolution repopulate it with the previous chain's latency.
+        if (startedAt && !cancelled) {
+          diagnosticsRef.current.lastNudgeLatencyMs = Date.now() - startedAt;
+        }
         if (!cancelled) {
           if (pendingForce) {
             pendingForce = false;
-            void runProbe(true); // a nudge landed mid-probe — service it next
+            const carryAt = pendingForceAt ?? undefined;
+            pendingForceAt = null;
+            void runProbe(true, carryAt); // a nudge landed mid-probe — service it next
           } else {
             schedule(); // arm the next timer (self-clears any stale one)
           }
@@ -319,8 +417,12 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
 
     function schedule(): void {
       if (cancelled) return;
-      if (document.hidden) return; // visibility-pause
+      if (document.hidden) {
+        diagnosticsRef.current.effectivePollIntervalMs = null; // timer paused
+        return;
+      }
       const interval = chooseInterval();
+      diagnosticsRef.current.effectivePollIntervalMs = interval; // #843 delta 2
       if (interval === null) return; // no subscribers / all paused
       if (timer) {
         clearTimeout(timer); // never stack timers
@@ -342,8 +444,8 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // #757 Phase B — "probe now + force a version bump". Funnels through
     // `runProbe`, so a push nudge is fully serialized with the timer probe and
     // with other nudges — exactly one probe runs and one timer is armed.
-    probeNowRef.current = () => {
-      void runProbe(true);
+    probeNowRef.current = (eventAt?: number) => {
+      void runProbe(true, eventAt);
     };
 
     function onVisibility(): void {
@@ -398,8 +500,17 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
   }, [publicClient, diamond]);
 
   const value = useMemo<WatermarkContextValue>(
-    () => ({ version, snapshot, status, register, unregister, nudge }),
-    [version, snapshot, status, register, unregister, nudge],
+    () => ({
+      version,
+      snapshot,
+      status,
+      register,
+      unregister,
+      setPushHealthy,
+      diagnosticsRef, // stable ref identity — never triggers a value change
+      nudge,
+    }),
+    [version, snapshot, status, register, unregister, setPushHealthy, nudge],
   );
 
   return <WatermarkContext.Provider value={value}>{children}</WatermarkContext.Provider>;

@@ -25,6 +25,8 @@ import { useLiveWatermark } from '../../hooks/useLiveWatermark';
 import { watermarkPolicy } from '../../hooks/watermarkPolicy';
 import { useMode } from '../../context/ModeContext';
 import { useDataFreshness } from '../../context/DataFreshnessContext';
+import { useRealtimePush } from '../../context/RealtimePushContext';
+import { useWatermarkContext } from '../../context/WatermarkContext';
 
 /** Mirror the badge's block-space thresholds — single source of truth
  *  in the badge file would be cleaner, but keeping the constants local
@@ -93,6 +95,21 @@ function formatBytes(n: number | undefined): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GiB`;
 }
 
+/** #843 delta 2 — UNIX-ms → "Ns ago" / "Nm ago" / "—". `nowMs` is passed in
+ *  (snapshotted on the panel's tick) so this stays pure for render. */
+function formatAgo(unixMs: number | null, nowMs: number): string {
+  if (unixMs === null) return '—';
+  const sec = Math.max(0, Math.round((nowMs - unixMs) / 1000));
+  if (sec < 60) return `${sec}s ago`;
+  return `${Math.round(sec / 60)}m ago`;
+}
+
+/** #843 delta 2 — duration ms → "N s" / "N ms" / "—". */
+function formatDurationMs(ms: number | null): string {
+  if (ms === null) return '—';
+  return ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${Math.round(ms)} ms`;
+}
+
 export function ChainDiagnosticsPanel() {
   const { t } = useTranslation();
   const { mode } = useMode();
@@ -104,6 +121,16 @@ export function ChainDiagnosticsPanel() {
   const { snapshot: watermarkSnapshot } = useLiveWatermark(
     watermarkPolicy('warm'),
   );
+  // #843 delta 2 — realtime "Live updates" section inputs. Transport metrics
+  // come from the push context (reactive); the effective poll interval + push
+  // latency come from the watermark provider's stable diagnostics ref (read on
+  // the `diagTick` below, so the hot context value isn't churned).
+  const {
+    transport,
+    lastEventAt: pushLastEventAt,
+    reconnectCount,
+  } = useRealtimePush();
+  const { diagnosticsRef } = useWatermarkContext();
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
   const [storageError, setStorageError] = useState<boolean>(false);
   // Collapsed by default — operators usually open the drawer to inspect
@@ -138,6 +165,31 @@ export function ChainDiagnosticsPanel() {
       if (timer) clearTimeout(timer);
     };
   }, [expanded, publicClient]);
+  // #843 delta 2 — 1 s heartbeat while the panel is open. Each tick SNAPSHOTS
+  // the watermark diagnostics ref (effective interval, push latency) + the
+  // current time into state, so the "Live updates" rows render from state
+  // (never reading the ref or calling Date.now() during render) and the hot
+  // watermark context value is never churned. Stops when the drawer is closed.
+  const [liveSnap, setLiveSnap] = useState<{
+    effectivePollIntervalMs: number | null;
+    pushBacked: boolean;
+    lastNudgeLatencyMs: number | null;
+    nowMs: number;
+  }>({
+    effectivePollIntervalMs: null,
+    pushBacked: false,
+    lastNudgeLatencyMs: null,
+    nowMs: 0,
+  });
+  useEffect(() => {
+    if (!expanded) return;
+    const snap = () =>
+      setLiveSnap({ ...diagnosticsRef.current, nowMs: Date.now() });
+    snap(); // immediate, so the section isn't blank for the first second
+    const id = setInterval(snap, 1_000);
+    return () => clearInterval(id);
+    // diagnosticsRef identity is stable (a ref); read inside `snap`, not render.
+  }, [expanded, diagnosticsRef]);
   // Purge state — only used when `mode === 'advanced'` (the dev / debug
   // toggle on the user-mode picker). Tri-state UI:
   //   - 'idle': default, button enabled.
@@ -378,6 +430,63 @@ export function ChainDiagnosticsPanel() {
       </div>
       <p className="chain-diag-body">{body}</p>
       <dl className="chain-diag-rows">
+        {/* #843 delta 2 — realtime push transport details. Quantitative numbers
+            live HERE in the drawer; the always-visible IndexerStatusBadge stays
+            glance-only (no ticking latency). Refreshes on the 1 s diagTick. */}
+        <Row
+          label={t('chainDiagnostics.liveUpdatesHeading', {
+            defaultValue: 'Live updates',
+          })}
+          value={
+            <span className="chain-diag-source-count">
+              {transport === 'live'
+                ? t('chainDiagnostics.liveTransportLive', {
+                    defaultValue: 'Live (pushed)',
+                  })
+                : transport === 'reconnecting'
+                ? t('chainDiagnostics.liveTransportReconnecting', {
+                    defaultValue: 'Reconnecting…',
+                  })
+                : t('chainDiagnostics.liveTransportPolling', {
+                    defaultValue: 'Polling',
+                  })}
+            </span>
+          }
+        />
+        <Row
+          label={`· ${t('chainDiagnostics.liveLastEvent', {
+            defaultValue: 'Last push event',
+          })}`}
+          value={formatAgo(pushLastEventAt, liveSnap.nowMs)}
+        />
+        <Row
+          label={`· ${t('chainDiagnostics.liveReconnects', {
+            defaultValue: 'Reconnects (session)',
+          })}`}
+          value={String(reconnectCount)}
+        />
+        <Row
+          label={`· ${t('chainDiagnostics.liveEffectiveInterval', {
+            defaultValue: 'Effective poll interval',
+          })}`}
+          value={
+            liveSnap.effectivePollIntervalMs === null
+              ? t('chainDiagnostics.livePollPaused', { defaultValue: 'paused' })
+              : `${formatDurationMs(liveSnap.effectivePollIntervalMs)}${
+                  liveSnap.pushBacked
+                    ? ` ${t('chainDiagnostics.livePushBacked', {
+                        defaultValue: '(push-backed)',
+                      })}`
+                    : ''
+                }`
+          }
+        />
+        <Row
+          label={`· ${t('chainDiagnostics.liveLatency', {
+            defaultValue: 'Push→refetch latency',
+          })}`}
+          value={formatDurationMs(liveSnap.lastNudgeLatencyMs)}
+        />
         <Row
           label={t('indexerBadge.statusChain', { defaultValue: 'Chain' })}
           value={chainLabel}
