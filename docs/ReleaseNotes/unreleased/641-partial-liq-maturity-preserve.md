@@ -23,11 +23,15 @@ late-fee windows and clipped the lender's coupon window.
 The fix:
 
 - **Maturity** — the remaining term is now rounded **up** to whole days,
-  with the accrual clock kept at the partial's timestamp. The re-stamped
-  maturity is the original maturity rounded up to the next whole day:
-  never earlier than the agreed end date (the actual harm), at most about
-  a day later (borrower-favourable), and never compounding earlier across
-  repeated partials. Keeping the accrual clock at the partial's moment
+  measured against the loan's **original maturity** (snapshotted at
+  origination), with the accrual clock kept at the partial's timestamp.
+  The re-stamped maturity is the original maturity rounded up to the next
+  whole day: never earlier than the agreed end date (the actual harm), at
+  most about a day later (borrower-favourable). Because each partial
+  rounds from the stable original maturity rather than the already-rounded
+  live deadline, the total drift stays bounded to under a day no matter
+  how many partials fire — repeated partials can't keep pushing the
+  deadline outward. Keeping the accrual clock at the partial's moment
   means the reduced principal never pre-accrues interest from before the
   partial.
 - **Grace** — the grace window is now sized from the loan's **original
@@ -49,9 +53,9 @@ Closes #641. Surfaced during the #395 partial-liquidation sizing review
 and deepened by the Codex review, which showed the maturity rounding was
 only half the problem — the grace-tier collapse was the load-bearing
 defect, and it had to be honoured on every recovery path, not just the
-default path. A new `originalDurationDays` field on the loan carries the
-immutable committed term; loans that predate the field (none in
-production — the platform is pre-live) have it seeded from the live term
-before the first duration shrink. The loan-detail ABI gains the new
-field; frontend and keeper ABI bundles are re-exported in the same
-change.
+default path. New `originalDurationDays` and `originalEndTime` fields on
+the loan carry the immutable committed term and maturity; loans that
+predate the fields (none in production — the platform is pre-live) have
+them seeded from the live values, at every duration-shrink path, before
+the first shrink. The loan-detail ABI gains the new fields; frontend and
+keeper ABI bundles are re-exported in the same change.

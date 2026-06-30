@@ -754,6 +754,10 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             elapsedSinceSegmentStart =
                 (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
         }
+        // #641 — swap-to-repay partial shrinks the live `durationDays`; seed the
+        // original term + maturity for any pre-field loan BEFORE the shrink so
+        // its grace bucket can't collapse on the default / listing paths.
+        LibVaipakam.seedOriginalTermIfUnset(loan);
         if (elapsedSinceSegmentStart >= loan.durationDays) {
             loan.durationDays = 0;
         } else {

@@ -3277,9 +3277,16 @@ contract RiskFacetTest is Test {
         LibVaipakam.Loan memory loan2 = LoanFacet(address(diamond))
             .getLoanDetails(loanId);
         uint256 endTime2 = uint256(loan2.startTime) + loan2.durationDays * 1 days;
-        // Monotonic and never below the original maturity across both partials.
-        assertGe(endTime2, endTime1, "partial #2 must not shorten maturity vs #1");
+        // Never below the original maturity across both partials...
         assertGe(endTime2, endTimeOriginal, "maturity stays >= original across both");
+        // ...and BOUNDED: each partial rounds up from the STABLE original
+        // maturity (not the already-drifted endTime), so the total drift can
+        // never exceed one day no matter how many partials fire.
+        assertLt(
+            endTime2,
+            endTimeOriginal + 1 days,
+            "maturity drift bounded to < 1 day total across repeated partials"
+        );
 
         vm.clearMockedCalls();
     }

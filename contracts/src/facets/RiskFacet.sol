@@ -1061,9 +1061,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // loan matures, late fees apply and the cleaner close-out is
         // full liquidation or time-based default. Excludes late-fee
         // accounting from this path entirely (safe simplification).
-        uint256 endTime = loan.startTime + loan.durationDays * 1 days;
-        if (block.timestamp >= endTime) {
-            revert PartialAfterMaturity(endTime, block.timestamp);
+        // #641 — seed the original term/maturity (legacy guard, no-op for loans
+        // created with the fields set) and gate the partial on the ORIGINAL
+        // maturity: a partial is in-term only before the agreed deadline, and
+        // rounding the re-stamped term from this stable reference (below) keeps
+        // the maturity bounded to `< 1 day` of drift across repeated partials.
+        uint256 originalMaturity = LibVaipakam.seedOriginalTermIfUnset(loan);
+        if (block.timestamp >= originalMaturity) {
+            revert PartialAfterMaturity(originalMaturity, block.timestamp);
         }
 
         LibVaipakam.LiquidityStatus liquidity = OracleFacet(address(this))
@@ -1267,30 +1272,25 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // shrank the value the grace bucket keys off — both accelerating the
         // borrower's default / late-fee exposure and clipping the lender's
         // coupon window. Two-part fix:
-        //   • Maturity: round the remaining term UP to whole days. `startTime`
-        //     stays at `now` (the clean accrual origin — the reduced principal
-        //     must accrue strictly from the partial, never before it), so the
-        //     re-stamped `endTime` (`now + remainingDays*1 days`) is the
-        //     original maturity rounded up to the next whole day — NEVER
-        //     earlier (the #641 harm), at most ~1 day later (borrower-
-        //     favourable), and monotonic across repeated partials.
+        //   • Maturity: `startTime` stays at `now` (the clean accrual origin —
+        //     the reduced principal must accrue strictly from the partial), and
+        //     the remaining term is rounded UP to whole days from the STABLE
+        //     `originalMaturity` captured above (NOT the live, possibly-drifted
+        //     `endTime`). That keeps the re-stamped maturity in
+        //     `[originalMaturity, originalMaturity + 1 day)` no matter how many
+        //     partials fire — NEVER earlier (the #641 harm), at most ~1 day
+        //     later in total (borrower-favourable), never compounding out.
         //   • Grace: keyed off the immutable `originalDurationDays`
-        //     (`LibVaipakam.loanGracePeriod`), seeded just below, so shrinking
-        //     the live `durationDays` here can't collapse the grace window.
+        //     (`LibVaipakam.loanGracePeriod`), seeded above, so shrinking the
+        //     live `durationDays` here can't collapse the grace window.
         // The pre-partial coupon was already settled interest-first from the
-        // swap proceeds above. `block.timestamp < endTime` is guaranteed above,
-        // so `remainingDays >= 1`.
+        // swap proceeds above. `originalMaturity > block.timestamp` is
+        // guaranteed by the in-term gate, so the subtraction can't underflow.
         loan.collateralAmount -= swappedCollateral;
         loan.principal -= principalRepaid;
-        // Seed the original-term snapshot for any loan that predates the field
-        // (zero) BEFORE we shrink the live term, so its grace bucket can't
-        // collapse either.
-        if (loan.originalDurationDays == 0) {
-            loan.originalDurationDays = uint16(loan.durationDays);
-        }
-        uint256 remainingDays = (endTime - block.timestamp + (1 days - 1)) / 1 days;
         loan.startTime = uint64(block.timestamp);
-        loan.durationDays = remainingDays;
+        loan.durationDays =
+            (originalMaturity - block.timestamp + (1 days - 1)) / 1 days;
 
         // Post-mutation HF check. Strictly improves AND must reach >= 1.
         // `currentBorrow` re-derives from the now-reduced principal, so this

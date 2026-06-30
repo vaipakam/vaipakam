@@ -1915,6 +1915,17 @@ library LibVaipakam {
         // pre-#641 loan). Packs into the slot above (`uint16` ≫ the 365-day
         // `durationDays` ceiling). Append-only tail field.
         uint16 originalDurationDays;
+        // #641 — the loan's ORIGINAL maturity timestamp (`startTime +
+        // durationDays*1 days` at origination / re-origination), snapshotted
+        // once and NEVER touched by a partial. A partial liquidation rounds its
+        // re-stamped maturity UP from THIS stable reference (not the live,
+        // already-rounded `endTime`), so repeated partials keep the loan's
+        // maturity bounded to `[originalEndTime, originalEndTime + 1 day)` —
+        // never earlier, and never compounding outward. Falls back to the live
+        // `startTime + durationDays*1 days` when `0` (a pre-#641 loan), seeded
+        // before the first shrink. Packs into the slot above (uint16 + uint64).
+        // Append-only tail field.
+        uint64 originalEndTime;
     }
 
     /**
@@ -5756,6 +5767,32 @@ library LibVaipakam {
             ? uint256(loan.originalDurationDays)
             : loan.durationDays;
         return gracePeriod(termDays);
+    }
+
+    /// @notice #641 — snapshot a loan's original term + maturity if unset,
+    ///         returning the (now-guaranteed-set) original maturity timestamp.
+    /// @dev    Idempotent guard called at EVERY site that shrinks the live
+    ///         `durationDays` (partial liquidation, ERC-20 / NFT partial repay,
+    ///         swap-to-repay partial) BEFORE the shrink. New loans set both
+    ///         fields at origination, so this is a no-op for them; it only
+    ///         catches a loan that predated the fields, freezing its true
+    ///         original term/maturity from the live values before the first
+    ///         shrink corrupts them. Keeps the grace bucket and the partial-
+    ///         liquidation maturity reference correct for such loans on every
+    ///         path, not just whichever shrink happens to fire first. The
+    ///         return value (the stable original maturity) lets the partial-
+    ///         liquidation caller gate on it and round the re-stamped term from
+    ///         it without a second read.
+    function seedOriginalTermIfUnset(Loan storage loan) internal returns (uint256) {
+        if (loan.originalDurationDays == 0) {
+            loan.originalDurationDays = uint16(loan.durationDays);
+        }
+        if (loan.originalEndTime == 0) {
+            loan.originalEndTime = uint64(
+                uint256(loan.startTime) + loan.durationDays * 1 days
+            );
+        }
+        return uint256(loan.originalEndTime);
     }
 
     /// @notice T-086 Round-7 (Issue #355) — canonical "is loan in its

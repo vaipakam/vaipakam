@@ -761,11 +761,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
             }
             // #641 — partial repay shrinks the live `durationDays` too; seed the
-            // original-term snapshot for any pre-field loan BEFORE the shrink so
-            // its grace bucket (`LibVaipakam.loanGracePeriod`) can't collapse.
-            if (loan.originalDurationDays == 0) {
-                loan.originalDurationDays = uint16(loan.durationDays);
-            }
+            // original term + maturity for any pre-field loan BEFORE the shrink
+            // so its grace bucket (`LibVaipakam.loanGracePeriod`) and maturity
+            // reference can't collapse.
+            LibVaipakam.seedOriginalTermIfUnset(loan);
             if (elapsedSinceSegmentStart >= loan.durationDays) {
                 loan.durationDays = 0;
             } else {
@@ -875,6 +874,10 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
+            // #641 — seed the original term + maturity for any pre-field loan
+            // before shrinking the NFT-rental term, so its grace bucket can't
+            // collapse on the listing / default paths.
+            LibVaipakam.seedOriginalTermIfUnset(loan);
             unchecked {
                 loan.prepayAmount -= accrued;
                 loan.durationDays -= partialAmount;

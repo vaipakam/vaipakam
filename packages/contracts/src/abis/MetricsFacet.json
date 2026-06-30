@@ -983,6 +983,11 @@
             "name": "originalDurationDays",
             "type": "uint16",
             "internalType": "uint16"
+          },
+          {
+            "name": "originalEndTime",
+            "type": "uint64",
+            "internalType": "uint64"
           }
         ]
       }
