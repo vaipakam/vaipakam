@@ -1306,7 +1306,19 @@ Then, once per chain:
 
 ### 5a. Local Anvil regression sweep (run BEFORE every deploy)
 
-The Anvil sweep exercises every recent feature against a freshly-bootstrapped
+First, validate the build + the unit-test surface with one command:
+
+```bash
+# Compile (src + script) then run the WHOLE unit suite (minus invariants) in
+# compile-bounded `--match-path` chunks, so the viaIR whole-unit stack ceiling
+# is never tripped. `--match-path` (NOT `--match-contract`) is what keeps each
+# chunk's COMPILATION sparse; the chunk set is find-derived + exhaustiveness-
+# guarded, so a new suite can't be silently skipped. (Wraps run-regression.sh
+# with a `forge build --skip test` pre-step.)
+bash contracts/script/build-and-regress.sh
+```
+
+Then the Anvil sweep exercises every recent feature against a freshly-bootstrapped
 diamond on a local Anvil instance. It catches `viaIR` codegen drift, missing
 selectors in `DeployDiamond.s.sol`, cross-facet reentrancy bugs, and gate
 regressions before any testnet RPC is touched. All three scripts run end-to-end
