@@ -474,6 +474,13 @@ contract PrepayListingFacet is
         // protocol position sale migrates `loan.lender` to the buyer, so a
         // legitimate clean holder is unaffected.
         LibVaipakam._assertNotSanctioned(loan.lender);
+        // #821 (Codex #832 r4 P1) — same freeze parity for the BORROWER side: the
+        // settlement later credits the remainder to the current borrower-position
+        // holder, so a flagged stored `loan.borrower` who moved the borrower NFT
+        // to a clean wallet could otherwise monetize the surplus through a sale
+        // fill (bypassing the `claimAsBorrower` stored-owner freeze). A genuine
+        // protocol sale migrates `loan.borrower`, so a clean holder is unaffected.
+        LibVaipakam._assertNotSanctioned(loan.borrower);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);

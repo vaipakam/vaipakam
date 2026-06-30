@@ -824,6 +824,16 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
+            // #821 (Codex #832 r4 P1) — the periodic rental deduction pays the
+            // lender share DIRECTLY to `loan.lender` (no claim record, no vault
+            // lock — there is no periodic-accrual claim lane to defer into), so
+            // FREEZE a flagged stored lender here: refuse the partial rather than
+            // stream fresh value to the flagged wallet. (Full repay parks the
+            // lender share via `depositLocked`; the periodic stream has no such
+            // lane, so the screen is the freeze — consistent with the cancel-offer
+            // posture.) A genuine position sale migrates `loan.lender` to the
+            // buyer, so a legitimate clean lender is unaffected.
+            LibVaipakam._assertNotSanctioned(loan.lender);
             // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
             // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
             // borrower flagged after init can still service the partial rental
