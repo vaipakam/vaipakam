@@ -608,8 +608,10 @@ contract PrecloseFacet is
         // ── 1. Calculate what alice owes ────────────────────────────────────
         // Seconds-based math across accrued, original-remaining, and
         // new-expected to keep rounding symmetric (README §8/§9).
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 totalSecs = loan.durationDays * 1 days;
+        // #641 — the accrued/remaining split reads the interest clock (post-
+        // partial origin + remaining term), not the immutable term tuple.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
         uint256 newSecs = offer.durationDays * 1 days;
         uint256 accruedInterest = (loan.principal *
@@ -1086,8 +1088,9 @@ contract PrecloseFacet is
         uint256 treasuryFee;
         uint256 interestToLender;
         {
-            uint256 elapsed = block.timestamp - loan.startTime;
-            uint256 totalSecs = loan.durationDays * 1 days;
+            // #641 — read the interest clock, not the immutable term tuple.
+            uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+            uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
             uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
             uint256 accruedInterest = (loan.principal *
                 loan.interestRateBps *

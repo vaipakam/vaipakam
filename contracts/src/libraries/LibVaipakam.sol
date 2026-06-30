@@ -5767,6 +5767,48 @@ library LibVaipakam {
         return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }
 
+    /// @notice #641 — a loan's interest-accrual ORIGIN: the dedicated
+    ///         `interestAccrualStart` clock (re-stamped by a partial WITHOUT
+    ///         moving the term/maturity), falling back to the immutable
+    ///         `startTime` for loans that predate the field. The canonical
+    ///         accessor every interest computation (in `LibEntitlement` AND the
+    ///         inline ones in Preclose / EarlyWithdrawal / AutoLifecycle /
+    ///         Defaulted / Refinance) reads, so a partial's reduced-principal
+    ///         re-anchor is honoured everywhere. `interestAccrualStart` is set
+    ///         to a real timestamp at origination, so `!= 0` cleanly tells a
+    ///         post-#641 loan (use the clock, even if `interestRemainingDays`
+    ///         legitimately reached 0) from a legacy one.
+    function interestAccrualStartOf(Loan storage loan) internal view returns (uint256) {
+        return loan.interestAccrualStart != 0
+            ? uint256(loan.interestAccrualStart)
+            : uint256(loan.startTime);
+    }
+
+    /// @notice #641 — a loan's REMAINING interest term in days: the dedicated
+    ///         `interestRemainingDays` (re-stamped by a partial), falling back
+    ///         to the immutable `durationDays` for pre-field loans. Gated on
+    ///         `interestAccrualStart` (NOT `interestRemainingDays != 0`) so a
+    ///         post-#641 loan whose remaining term reached 0 isn't mistaken for
+    ///         legacy.
+    function interestRemainingDaysOf(Loan storage loan) internal view returns (uint256) {
+        return loan.interestAccrualStart != 0
+            ? uint256(loan.interestRemainingDays)
+            : loan.durationDays;
+    }
+
+    /// @notice #641 — seed the interest clock from the term for a loan that
+    ///         predates the fields, BEFORE the first partial re-stamps it. A
+    ///         no-op for loans originated with the clock set. Called at the head
+    ///         of every interest-clock re-stamp (partial liquidation, partial
+    ///         repay, swap-to-repay) so a legacy loan's first partial doesn't
+    ///         compute elapsed from timestamp 0 and zero out the remaining term.
+    function seedInterestClockIfUnset(Loan storage loan) internal {
+        if (loan.interestAccrualStart == 0) {
+            loan.interestAccrualStart = loan.startTime;
+            loan.interestRemainingDays = uint16(loan.durationDays);
+        }
+    }
+
     /// @notice T-034 — interval-in-days lookup for a cadence enum value.
     /// @dev Pure helper (no storage reads) so callers can fold it inline
     ///      cheaply. Returns 0 for `None` (the no-cadence sentinel) so

@@ -753,8 +753,9 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         // #641 — the re-stamp lands on the dedicated INTEREST clock
         // (`interestAccrualStart` / `interestRemainingDays`); the term tuple
         // (`startTime` + `durationDays` → maturity + grace) is LEFT UNTOUCHED,
-        // mirroring `RepayFacet.repayPartial`. New loans always have the
-        // interest clock set at origination, so it is read directly here.
+        // mirroring `RepayFacet.repayPartial`. Seed the clock from the term for
+        // any loan that predates the fields before reading elapsed.
+        LibVaipakam.seedInterestClockIfUnset(loan);
         uint256 elapsedSinceSegmentStart;
         unchecked {
             elapsedSinceSegmentStart =

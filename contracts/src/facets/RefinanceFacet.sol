@@ -316,10 +316,14 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // (Early-repayment rules — the exiting lender receives full-term
         // interest, which is the maximum they could have earned on this
         // loan, so they are strictly whole.)
+        // #641 — full-term interest on the old loan's REMAINING committed term
+        // (the interest clock), not the immutable original `durationDays`, so a
+        // previously partial-repaid/liquidated loan refinances on its true
+        // remaining commitment.
         uint256 oldInterest = LibEntitlement.fullTermInterest(
             oldLoan.principal,
             oldLoan.interestRateBps,
-            oldLoan.durationDays
+            LibVaipakam.interestRemainingDaysOf(oldLoan)
         );
 
         // #411 fix (2026-06-12) — DROPPED the rate-shortfall addend

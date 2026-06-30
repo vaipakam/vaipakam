@@ -762,8 +762,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // subtracting it from a future-only gross would double-count the
             // partial's settlement, underpaying the lender. `interestSettled`
             // is the right tool only when state ISN'T reset (periodic-settle
-            // auto-liq path). New loans always have the interest clock set at
-            // origination, so it is read directly here.
+            // auto-liq path).
+            //
+            // #641 — seed the interest clock from the term for any loan that
+            // predates the fields, so the elapsed math below doesn't compute
+            // from timestamp 0 and zero out the remaining term.
+            LibVaipakam.seedInterestClockIfUnset(loan);
             uint256 elapsedSinceSegmentStart;
             unchecked {
                 elapsedSinceSegmentStart =

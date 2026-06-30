@@ -145,7 +145,10 @@ library LibFallback {
             bool oracleAvailable
         )
     {
-        uint256 elapsed = block.timestamp - loan.startTime;
+        // #641 — accrue from the interest clock (post-partial origin), not the
+        // immutable term start, so a previously partial-liquidated loan's
+        // fallback split is computed on its true post-partial accrual.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
         // Prospective fallback split: read from the values snapshotted at

@@ -249,8 +249,10 @@ contract EarlyWithdrawalFacet is
         // Unified seconds-based precision: both accrued and remaining use
         // SECONDS_PER_YEAR so any sub-day remainder is preserved and rounding
         // is symmetric across the two sides of the net settlement.
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 totalSecs = loan.durationDays * 1 days;
+        // #641 — accrued/remaining split reads the interest clock (post-partial
+        // origin + remaining term), not the immutable term tuple.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
 
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
@@ -677,8 +679,10 @@ contract EarlyWithdrawalFacet is
         // "Forfeited accrued" means liam absorbs the cost — the borrower has
         // not paid this interest yet.  liam must fund every token that gets
         // routed to treasury or Noah.
-        uint256 elapsed = block.timestamp - loan.startTime;
-        uint256 totalSecs = loan.durationDays * 1 days;
+        // #641 — accrued/remaining split reads the interest clock (post-partial
+        // origin + remaining term), not the immutable term tuple.
+        uint256 elapsed = block.timestamp - LibVaipakam.interestAccrualStartOf(loan);
+        uint256 totalSecs = LibVaipakam.interestRemainingDaysOf(loan) * 1 days;
         uint256 remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0;
         uint256 accrued = (loan.principal * loan.interestRateBps * elapsed) /
             (LibVaipakam.SECONDS_PER_YEAR * LibVaipakam.BASIS_POINTS);
