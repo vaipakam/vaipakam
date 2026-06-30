@@ -264,15 +264,42 @@ contract VaipakamNFTFacet is IERC721, IERC721Metadata, IERC721Enumerable, Diamon
     // state write. Not a vuln — standard ERC-721 semantic.
     // slither-disable-next-line arbitrary-send-erc20
     function transferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
+        _assertTransferNotSanctioned(from, to);
         LibERC721.transferFrom(from, to, tokenId);
     }
 
     function safeTransferFrom(address from, address to, uint256 tokenId) external override nonReentrant {
+        _assertTransferNotSanctioned(from, to);
         LibERC721.safeTransferFrom(from, to, tokenId, "");
     }
 
     function safeTransferFrom(address from, address to, uint256 tokenId, bytes calldata data) external override nonReentrant {
+        _assertTransferNotSanctioned(from, to);
         LibERC721.safeTransferFrom(from, to, tokenId, data);
+    }
+
+    /**
+     * @dev #821 (Codex #832) — FREEZE-AT-SOURCE for sanctioned wallets. A user-
+     *      initiated position-NFT transfer must not move a position into OR out
+     *      of a sanctions-flagged wallet: blocking the SENDER stops a flagged
+     *      party laundering its position to a clean wallet to escape the payout
+     *      freeze (the laundering vector Codex flagged), and blocking the
+     *      RECIPIENT stops a position from being parked on a flagged wallet. This
+     *      is the single source-level guard that lets the close-out paths trust
+     *      `ownerOf` == the economic owner: a flagged wallet's position is frozen
+     *      IN PLACE until the flag clears, while a position transferred BEFORE a
+     *      later flag (a legitimate secondary-market buyer) is unaffected.
+     *
+     *      Scope: ONLY these external user-facing transfer entrypoints. Mint
+     *      (`mintNFT`), burn (`burnNFT`), status updates, and protocol-internal
+     *      position moves use separate authorized functions / `LibERC721`
+     *      directly, so the protocol can still mint to / burn / settle a flagged
+     *      party's position at terminal (the Tier-2 close-out must complete).
+     *      No-op while the sanctions oracle is unset.
+     */
+    function _assertTransferNotSanctioned(address from, address to) private view {
+        LibVaipakam._assertNotSanctioned(from);
+        LibVaipakam._assertNotSanctioned(to);
     }
 
     // ==================== Vaipakam NFT Logic ====================

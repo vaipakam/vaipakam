@@ -181,6 +181,11 @@ contract RepayPeriodicFacet is DiamondReentrancyGuard, DiamondPausable, IVaipaka
         address lenderRecipient = IERC721(address(this)).ownerOf(
             loan.lenderTokenId
         );
+        // The recipient is `ownerOf` (the current holder); #821's position-NFT
+        // transfer restriction means a flagged wallet can't be that holder via a
+        // post-flag transfer, so screening the live recipient is sufficient (a
+        // stale stored-`loan.lender` screen would wrongly freeze a legitimate
+        // pre-flag secondary-market buyer).
         LibVaipakam._assertNotSanctioned(lenderRecipient);
 
         LibFacet.crossFacetCall(

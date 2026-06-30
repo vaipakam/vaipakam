@@ -24,22 +24,26 @@ the vault*:
   withdrawal is permitted too — the flagged party is losing custody to the
   unflagged counterparty, not receiving — so the forced default/liquidation can
   never be bricked by flagging either party after the loan was struck.
-- **Frozen — nothing leaves.** While the wallet is flagged, the assets in its
-  vault do **not** move. The claim paths now check the vault's stored owner, so a
-  flagged party's proceeds can't be withdrawn — not even by transferring the
-  position NFT to a clean wallet and claiming from there, nor through the
-  keeper-assisted backstop buyout, nor through a parallel collateral-sale fill
-  (all three loopholes are now closed). A genuine protocol sale of a position
-  re-points it to the buyer, so a legitimate buyer's funds settle to their own
-  vault and are unaffected.
+- **Frozen at the source — positions can't move.** A position NFT (lender or
+  borrower) can no longer be transferred **into or out of** a sanctions-flagged
+  wallet. This is the primary freeze mechanism: it stops a flagged party from
+  laundering its position to a clean wallet to escape the payout freeze, and it
+  means a flagged wallet's position is simply frozen in place until the flag
+  clears. (Minting, burning, and protocol-internal settlement use separate
+  authorized paths, so a flagged party's loan can still be settled and its
+  position burned at terminal — the close-out always completes.) A position
+  transferred while both parties were clean — a legitimate secondary-market sale
+  made *before* any later flag — is unaffected.
+- **Frozen on payout — nothing leaves the flagged vault.** With the position
+  pinned in place, a flagged wallet that holds its own position can't extract the
+  payout either: the claim paths screen the live recipient, and the proceeds sit
+  vault-locked behind that screen until the flag clears.
 - When the sanction is lifted, the preserved proceeds become claimable as normal.
 - A new on-chain event records each time a close-out parks locked proceeds, so
   operators can reconcile them when a flag clears.
-- The **NFT Verifier** now warns when a position's payout is frozen — both when
-  the current owner is flagged and when the original loan party of record is
-  flagged (the case where a flagged party moved the position NFT to a clean
-  wallet), so a prospective buyer knows the position is currently unclaimable for
-  anyone holding it.
+- The **NFT Verifier** warns when a position's payout is frozen — both when the
+  current owner is flagged and when the loan party of record is flagged — so a
+  prospective buyer knows the position is currently unclaimable.
 - Cancelling an unfilled offer is intentionally left to revert for a flagged
   creator: that refund returns the creator's *own* escrowed funds, so with no
   counterparty to protect, the revert is simply the freeze — the escrow stays put

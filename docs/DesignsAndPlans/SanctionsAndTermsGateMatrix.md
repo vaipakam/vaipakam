@@ -273,14 +273,20 @@ gate-disabled — a route-gate bypass.)
   OWN vault, LOCKED:** a receive-side `getOrCreateUserVault` exemption
   (`sanctionedDepositExemptUser`, mirroring the move-out pin; never mints a new
   vault for a flagged wallet) lets the close-out complete so the unflagged
-  counterparty is made whole, while `claimAsLender` / `claimAsBorrower` now screen
-  the **stored vault owner**, so a flagged party's vault assets don't move — even
-  to a clean current NFT holder (closing the transfer-position-then-claim
-  loophole; protocol position sales migrate the stored party, so legitimate
-  buyers settle to their own vault unaffected). The vault is isolated per-user, so
-  nothing commingles in the Diamond. A `SanctionedProceedsLocked` event records
-  each park. The parallel-sale `recordOfferSaleProceeds` live-lender-holder leg is
-  screened at fill (atomic, no stranding). **`cancelOffer` is intentionally NOT
+  counterparty is made whole, while `claimAsLender` / `claimAsBorrower` screen the
+  **stored vault owner** so a flagged party's vault assets don't move. The
+  transfer-position-then-claim loophole is closed **at the source** by a
+  **position-NFT transfer restriction** (`VaipakamNFTFacet.transferFrom` /
+  `safeTransferFrom` screen both `from` and `to`): a flagged wallet can't move a
+  position into or out of itself, so its position is frozen in place and can't be
+  laundered to a clean wallet. Mint / burn / protocol-internal settlement use
+  separate authorized paths (so a flagged party's loan still settles + burns at
+  terminal), and a transfer made before any later flag (a legitimate
+  secondary-market buyer) is unaffected — the clean holder is made whole as
+  normal. The vault is isolated per-user, so nothing commingles in the Diamond. A
+  `SanctionedProceedsLocked` event records each park. The parallel-sale
+  `recordOfferSaleProceeds` live-lender-holder leg is screened at fill (atomic,
+  no stranding). **`cancelOffer` is intentionally NOT
   vault-locked:** its refund returns the creator's OWN escrowed funds (a move-OUT
   from their own vault), so with no counterparty to make whole the existing revert
   IS the desired freeze — the flagged creator's escrow stays put until the flag

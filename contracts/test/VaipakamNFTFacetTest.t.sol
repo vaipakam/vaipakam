@@ -13,6 +13,8 @@ import {IERC721Metadata} from "@openzeppelin/contracts/token/ERC721/extensions/I
 import {DiamondCutFacet} from "../src/facets/DiamondCutFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {MetricsFacet} from "../src/facets/MetricsFacet.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 import {HelperTest} from "./HelperTest.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
@@ -30,6 +32,7 @@ contract VaipakamNFTFacetTest is Test {
     VaipakamNFTFacet nftFacet;
     AccessControlFacet accessControlFacet;
     MetricsFacet metricsFacet;
+    ProfileFacet profileFacet;
     HelperTest helperTest;
 
     // Token IDs used across tests
@@ -72,9 +75,10 @@ contract VaipakamNFTFacetTest is Test {
         // for the live position read (Range Orders Phase 1 follow-up).
         // Cut MetricsFacet so tokenURI tests can resolve that selector.
         metricsFacet = new MetricsFacet();
+        profileFacet = new ProfileFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](3);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](4);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(nftFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -89,6 +93,13 @@ contract VaipakamNFTFacetTest is Test {
             facetAddress: address(metricsFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getMetricsFacetSelectors()
+        });
+        // #821 — ProfileFacet provides `setSanctionsOracle` so the freeze-at-
+        // source transfer-restriction test can install a sanctions oracle.
+        cuts[3] = IDiamondCut.FacetCut({
+            facetAddress: address(profileFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getProfileFacetSelectors()
         });
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -418,6 +429,61 @@ contract VaipakamNFTFacetTest is Test {
         vm.prank(user);
         vm.expectRevert();
         VaipakamNFTFacet(address(diamond)).initializeNFT();
+    }
+
+    // ─── #821 freeze-at-source: position-NFT transfer restriction ─────────────
+
+    /// @notice A position NFT cannot be transferred INTO or OUT OF a sanctions-
+    ///         flagged wallet — the primary mechanism that stops a flagged party
+    ///         laundering its position to a clean wallet to escape the #821
+    ///         payout freeze. A transfer made while both parties are clean (a
+    ///         legitimate secondary-market sale) is unaffected. Mint / burn /
+    ///         protocol-internal moves use separate authorized paths and are NOT
+    ///         gated here, so a flagged party's position can still be settled +
+    ///         burned at terminal.
+    function test_SanctionedWallet_CannotTransferPositionNFT() public {
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+
+        _mintViaProxy(user, TOKEN_ID_1, true, LibVaipakam.LoanPositionStatus.LoanInitiated);
+        address cleanBuyer = makeAddr("clean-buyer");
+
+        // 1. A flagged SENDER cannot move its position NFT out.
+        m.setFlagged(user, true);
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, user)
+        );
+        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+
+        // 2. A flagged RECIPIENT cannot receive a position NFT.
+        m.setFlagged(user, false);
+        m.setFlagged(cleanBuyer, true);
+        vm.prank(user);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibVaipakam.SanctionedAddress.selector, cleanBuyer
+            )
+        );
+        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+
+        // 3. Clean → clean transfer (legitimate secondary-market sale) works.
+        m.setFlagged(cleanBuyer, false);
+        vm.prank(user);
+        IERC721(address(diamond)).transferFrom(user, cleanBuyer, TOKEN_ID_1);
+        assertEq(
+            IERC721(address(diamond)).ownerOf(TOKEN_ID_1),
+            cleanBuyer,
+            "clean secondary-market transfer succeeds"
+        );
+
+        // 4. The oracle being unset fail-opens (no gate) — sanity that the screen
+        //    is oracle-driven, not unconditional.
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(0));
+        m.setFlagged(cleanBuyer, true); // still "flagged" in the now-detached oracle
+        vm.prank(cleanBuyer);
+        IERC721(address(diamond)).transferFrom(cleanBuyer, user, TOKEN_ID_1);
+        assertEq(IERC721(address(diamond)).ownerOf(TOKEN_ID_1), user, "fail-open when oracle unset");
     }
 }
 

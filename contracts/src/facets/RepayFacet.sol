@@ -709,7 +709,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lender-holder cannot receive protocol funds. Reverts
             // `SanctionedAddress`; the borrower's Tier-2 escape is a full
             // `repayLoan` (stays open, defers the lender proceeds to a
-            // sanctions-gated claim). No-op while the oracle is unset.
+            // sanctions-gated claim). No-op while the oracle is unset. The
+            // recipient is `ownerOf` (the current holder), and #821's position-NFT
+            // transfer restriction means a flagged wallet can't be that holder via
+            // a post-flag transfer — so screening the live recipient is sufficient;
+            // no stale stored-`loan.lender` screen is needed (it would wrongly
+            // freeze a legitimate pre-flag secondary-market buyer).
             LibVaipakam._assertNotSanctioned(lenderRecipient);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
@@ -824,15 +829,11 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
-            // #821 (Codex #832 r4 P1) — the periodic rental deduction pays the
-            // lender share DIRECTLY to `loan.lender` (no claim record, no vault
-            // lock — there is no periodic-accrual claim lane to defer into), so
-            // FREEZE a flagged stored lender here: refuse the partial rather than
-            // stream fresh value to the flagged wallet. (Full repay parks the
-            // lender share via `depositLocked`; the periodic stream has no such
-            // lane, so the screen is the freeze — consistent with the cancel-offer
-            // posture.) A genuine position sale migrates `loan.lender` to the
-            // buyer, so a legitimate clean lender is unaffected.
+            // #821 (Codex #832) — this branch pays the lender share DIRECTLY to
+            // `loan.lender` (the RECIPIENT — the field is kept current by the
+            // eager consolidation at this function's start), so screen it to
+            // refuse streaming rental value to a flagged recipient. (The ERC-20
+            // branch above pays `ownerOf` and screens that instead.)
             LibVaipakam._assertNotSanctioned(loan.lender);
             // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
             // payer's (`msg.sender`) own vault. Arm the move-out exemption so a

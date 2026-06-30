@@ -351,6 +351,10 @@ contract SanctionsOracleTest is RiskFacetTest {
         ClaimFacet(address(diamond)).claimAsLender(loanId);
     }
 
+    // The freeze-at-source position-NFT transfer restriction is unit-tested in
+    // `VaipakamNFTFacetTest` (that fixture cuts the `transferFrom` selector; the
+    // RiskFacetTest harness this contract extends does not).
+
     // ─── Helpers ───────────────────────────────────────────────────────────
 
     function _buildLenderOfferParams()

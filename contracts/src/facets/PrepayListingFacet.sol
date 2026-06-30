@@ -464,23 +464,15 @@ contract PrepayListingFacet is
         // Screen it at fill: the settlement runs inside the atomic Seaport fill
         // (via the executor zone callback), so a revert aborts the whole fill —
         // the buyer's funds are never committed, nothing is stranded.
+        // #821 (Codex #832) — screen the LIVE lender holder (the direct recipient
+        // of this leg). The borrower remainder leg below resolves the current
+        // borrower-position holder through `getOrCreateUserVault`, which screens
+        // that recipient too. No stale stored-party (`loan.lender`/`loan.borrower`)
+        // screen is needed: #821's position-NFT transfer restriction stops a
+        // flagged wallet from becoming a holder via a post-flag transfer, so a
+        // flagged party can't be paid here, while a legitimate pre-flag buyer
+        // (whom a stored-party screen would wrongly freeze) settles cleanly.
         LibVaipakam._assertNotSanctioned(lenderHolder);
-        // #821 (Codex #832 r2 P1) — ALSO screen the STORED `loan.lender` for
-        // freeze parity with the claim / backstop paths. This leg pays the live
-        // holder directly (not via the locked vault), so without this a flagged
-        // stored lender who moved the lender NFT to a clean wallet could monetize
-        // the position through a sale fill — exactly the transfer-to-clean-wallet
-        // bypass the stored-owner freeze closes everywhere else. A genuine
-        // protocol position sale migrates `loan.lender` to the buyer, so a
-        // legitimate clean holder is unaffected.
-        LibVaipakam._assertNotSanctioned(loan.lender);
-        // #821 (Codex #832 r4 P1) — same freeze parity for the BORROWER side: the
-        // settlement later credits the remainder to the current borrower-position
-        // holder, so a flagged stored `loan.borrower` who moved the borrower NFT
-        // to a clean wallet could otherwise monetize the surplus through a sale
-        // fill (bypassing the `claimAsBorrower` stored-owner freeze). A genuine
-        // protocol sale migrates `loan.borrower`, so a clean holder is unaffected.
-        LibVaipakam._assertNotSanctioned(loan.borrower);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);
