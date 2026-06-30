@@ -1,0 +1,782 @@
+[
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connecting..."
+        }
+      ],
+      "executionContextId": 5,
+      "timestamp": 1782775979311.333,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 826,
+            "columnNumber": 8
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connected."
+        }
+      ],
+      "executionContextId": 5,
+      "timestamp": 1782775979340.184,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "handleMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 930,
+            "columnNumber": 11
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 41
+          },
+          {
+            "functionName": "dequeue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 467,
+            "columnNumber": 7
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 459,
+            "columnNumber": 8
+          },
+          {
+            "functionName": "enqueue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 453,
+            "columnNumber": 9
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 27
+          },
+          {
+            "functionName": "onMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 293,
+            "columnNumber": 5
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 401,
+            "columnNumber": 4
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "info",
+      "args": [
+        {
+          "type": "string",
+          "value": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools"
+        },
+        {
+          "type": "string",
+          "value": "font-weight:bold"
+        }
+      ],
+      "executionContextId": 5,
+      "timestamp": 1782775980092.762,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14337,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14374,
+            "columnNumber": 3
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14379,
+            "columnNumber": 18
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14382,
+            "columnNumber": 15
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "warning",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vaipakam] VITE_WALLETCONNECT_PROJECT_ID is not set. Mobile wallet deep-links will not work — users will only see a QR code. Configure the env var on your Cloudflare build to restore the mobile flow."
+        }
+      ],
+      "executionContextId": 5,
+      "timestamp": 1782775980207.516,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "9",
+            "url": "http://localhost:5173/src/main.tsx",
+            "lineNumber": 28,
+            "columnNumber": 9
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775980834.418,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775980834.571,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2816"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775980854.382,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775980854.543,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2817"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775982317.027,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775982317.215,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2851"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775982331.741,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775982331.94,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2850"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775982827.549,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775982827.764,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2853"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775982846.392,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775982846.607,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2852"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775983629.76,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775983629.957,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2854"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "javascript",
+        "level": "error",
+        "text": "Access to fetch at 'https://eth.llamarpc.com/' from origin 'http://localhost:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "category": "cors",
+        "timestamp": 1782775983651.945,
+        "url": "http://localhost:5173/create-offer"
+      }
+    }
+  },
+  {
+    "method": "Log.entryAdded",
+    "params": {
+      "entry": {
+        "source": "network",
+        "level": "error",
+        "text": "Failed to load resource: net::ERR_FAILED",
+        "category": "cors",
+        "timestamp": 1782775983652.13,
+        "url": "https://eth.llamarpc.com/",
+        "networkRequestId": "2602786.2855"
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connecting..."
+        }
+      ],
+      "executionContextId": 6,
+      "timestamp": 1782777451646.484,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 826,
+            "columnNumber": 8
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connected."
+        }
+      ],
+      "executionContextId": 6,
+      "timestamp": 1782777451651.866,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "handleMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 930,
+            "columnNumber": 11
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 41
+          },
+          {
+            "functionName": "dequeue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 467,
+            "columnNumber": 7
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 459,
+            "columnNumber": 8
+          },
+          {
+            "functionName": "enqueue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 453,
+            "columnNumber": 9
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 27
+          },
+          {
+            "functionName": "onMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 293,
+            "columnNumber": 5
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 401,
+            "columnNumber": 4
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "info",
+      "args": [
+        {
+          "type": "string",
+          "value": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools"
+        },
+        {
+          "type": "string",
+          "value": "font-weight:bold"
+        }
+      ],
+      "executionContextId": 6,
+      "timestamp": 1782777452398.946,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14337,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14374,
+            "columnNumber": 3
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14379,
+            "columnNumber": 18
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14382,
+            "columnNumber": 15
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "warning",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vaipakam] VITE_WALLETCONNECT_PROJECT_ID is not set. Mobile wallet deep-links will not work — users will only see a QR code. Configure the env var on your Cloudflare build to restore the mobile flow."
+        }
+      ],
+      "executionContextId": 6,
+      "timestamp": 1782777452543.418,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "9",
+            "url": "http://localhost:5173/src/main.tsx",
+            "lineNumber": 28,
+            "columnNumber": 9
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connecting..."
+        }
+      ],
+      "executionContextId": 7,
+      "timestamp": 1782777476723.902,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 826,
+            "columnNumber": 8
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "debug",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vite] connected."
+        }
+      ],
+      "executionContextId": 7,
+      "timestamp": 1782777476732.805,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "handleMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 930,
+            "columnNumber": 11
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 41
+          },
+          {
+            "functionName": "dequeue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 467,
+            "columnNumber": 7
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 459,
+            "columnNumber": 8
+          },
+          {
+            "functionName": "enqueue",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 453,
+            "columnNumber": 9
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 445,
+            "columnNumber": 27
+          },
+          {
+            "functionName": "onMessage",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 293,
+            "columnNumber": 5
+          },
+          {
+            "functionName": "",
+            "scriptId": "8",
+            "url": "http://localhost:5173/@vite/client",
+            "lineNumber": 401,
+            "columnNumber": 4
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "info",
+      "args": [
+        {
+          "type": "string",
+          "value": "%cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools"
+        },
+        {
+          "type": "string",
+          "value": "font-weight:bold"
+        }
+      ],
+      "executionContextId": 7,
+      "timestamp": 1782777477450.681,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14337,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14374,
+            "columnNumber": 3
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14379,
+            "columnNumber": 18
+          },
+          {
+            "functionName": "",
+            "scriptId": "31",
+            "url": "http://localhost:5173/node_modules/.vite/deps/chunk-CE2zB9OQ.js?v=0b4d94d4",
+            "lineNumber": 8,
+            "columnNumber": 48
+          },
+          {
+            "functionName": "",
+            "scriptId": "12",
+            "url": "http://localhost:5173/node_modules/.vite/deps/react-dom_client.js?v=88fbe376",
+            "lineNumber": 14382,
+            "columnNumber": 15
+          }
+        ]
+      }
+    }
+  },
+  {
+    "method": "Runtime.consoleAPICalled",
+    "params": {
+      "type": "warning",
+      "args": [
+        {
+          "type": "string",
+          "value": "[vaipakam] VITE_WALLETCONNECT_PROJECT_ID is not set. Mobile wallet deep-links will not work — users will only see a QR code. Configure the env var on your Cloudflare build to restore the mobile flow."
+        }
+      ],
+      "executionContextId": 7,
+      "timestamp": 1782777477550.048,
+      "stackTrace": {
+        "callFrames": [
+          {
+            "functionName": "",
+            "scriptId": "9",
+            "url": "http://localhost:5173/src/main.tsx",
+            "lineNumber": 28,
+            "columnNumber": 9
+          }
+        ]
+      }
+    }
+  }
+]
