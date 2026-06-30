@@ -611,7 +611,7 @@ contract AutoLifecycleFacet is DiamondReentrancyGuard, DiamondPausable {
         // below but using the grace-aware threshold.
         if (
             block.timestamp >
-            oldEndTime + LibVaipakam.gracePeriod(loan.durationDays)
+            oldEndTime + LibVaipakam.loanGracePeriod(loan)
         ) {
             revert ExtensionGraceExpired();
         }

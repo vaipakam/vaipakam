@@ -162,7 +162,7 @@ contract NFTPrepayAutoListFacet is DiamondPausable, DiamondReentrancyGuard {
         if (block.timestamp < loanEnd) {
             revert GraceNotStarted(loanId, block.timestamp, loanEnd);
         }
-        uint256 gracePeriodEnd = loanEnd + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 gracePeriodEnd = loanEnd + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp >= gracePeriodEnd) {
             revert GraceExpired(loanId, block.timestamp, gracePeriodEnd);
         }

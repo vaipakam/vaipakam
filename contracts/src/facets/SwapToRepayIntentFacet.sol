@@ -444,7 +444,7 @@ contract SwapToRepayIntentFacet is
         if (IERC721(address(this)).ownerOf(loan.lenderTokenId) == msg.sender)
             revert IVaipakamErrors.LenderCannotRepayOwnLoan();
         uint256 endTime = uint256(loan.startTime) + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // ── §5.1 step 2: field + makerTraits binding checks ─────────
@@ -870,7 +870,7 @@ contract SwapToRepayIntentFacet is
         LibVaipakam.Loan storage loan = s.loans[loanId];
         uint256 endTime = uint256(loan.startTime)
             + uint256(loan.durationDays) * LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp < graceEnd) {
             revert IVaipakamErrors.IntentPending(loanId);
         }

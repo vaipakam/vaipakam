@@ -242,7 +242,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert InvalidAmount();
 
         uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // #658 PR-B — swap-to-repay-full is a both-side close-out: it pays the
@@ -593,7 +593,7 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
             revert InvalidAmount();
 
         uint256 endTime = loan.startTime + loan.durationDays * LibVaipakam.ONE_DAY;
-        uint256 graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        uint256 graceEnd = endTime + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp > graceEnd) revert RepaymentPastGracePeriod();
 
         // ── Slippage floor pre-flight ────────────────────────────────

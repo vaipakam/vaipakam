@@ -138,7 +138,7 @@ contract PrepayListingFacet is
         // The duration-tiered grace bucket is governance-tunable via
         // `ConfigFacet.setGraceBuckets`; we honor the live config.
         uint256 endTime = uint256(loan.startTime) + (loan.durationDays * 1 days);
-        ctx.graceEnd = endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        ctx.graceEnd = endTime + LibVaipakam.loanGracePeriod(loan);
 
         // Current position-NFT holders. Reads the diamond's own NFT
         // surface via the same `VaipakamNFTFacet.ownerOf` selector
@@ -434,7 +434,7 @@ contract PrepayListingFacet is
         // pre-empt a default that's already overdue.
         uint256 graceEnd = uint256(loan.startTime)
             + (uint256(loan.durationDays) * 1 days)
-            + LibVaipakam.gracePeriod(loan.durationDays);
+            + LibVaipakam.loanGracePeriod(loan);
         if (block.timestamp > graceEnd) {
             revert ParallelSaleFillPastGrace(offerId, block.timestamp, graceEnd);
         }

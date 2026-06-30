@@ -5776,8 +5776,8 @@ library LibVaipakam {
     ///         fix on PR #356).
     function isGraceWindow(Loan storage loan) internal view returns (bool) {
         uint256 loanEnd = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
-        // #641 — grace keyed off the original term (see `loanGracePeriod`); the
-        // partial-preserved `loanEnd` stays exact via the start-time back-shift.
+        // #641 — grace is keyed off the loan's ORIGINAL term (see
+        // `loanGracePeriod`), not the live (partial-shrunk) `durationDays`.
         uint256 gracePeriodEnd = loanEnd + loanGracePeriod(loan);
         return block.timestamp >= loanEnd && block.timestamp < gracePeriodEnd;
     }

@@ -332,7 +332,7 @@ contract NFTPrepayDutchListingFacet is
     ///      same value from the same loan record.
     function _gracePeriodEnd(LibVaipakam.Loan storage loan) private view returns (uint256) {
         uint256 endTime = uint256(loan.startTime) + (uint256(loan.durationDays) * 1 days);
-        return endTime + LibVaipakam.gracePeriod(loan.durationDays);
+        return endTime + LibVaipakam.loanGracePeriod(loan);
     }
 
     function _requireExecutor(LibVaipakam.Storage storage s)

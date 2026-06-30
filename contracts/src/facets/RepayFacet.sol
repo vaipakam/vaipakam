@@ -760,6 +760,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 elapsedSinceSegmentStart =
                     (block.timestamp - loan.startTime) / LibVaipakam.ONE_DAY;
             }
+            // #641 — partial repay shrinks the live `durationDays` too; seed the
+            // original-term snapshot for any pre-field loan BEFORE the shrink so
+            // its grace bucket (`LibVaipakam.loanGracePeriod`) can't collapse.
+            if (loan.originalDurationDays == 0) {
+                loan.originalDurationDays = uint16(loan.durationDays);
+            }
             if (elapsedSinceSegmentStart >= loan.durationDays) {
                 loan.durationDays = 0;
             } else {
