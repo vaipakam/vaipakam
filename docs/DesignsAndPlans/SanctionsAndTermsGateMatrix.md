@@ -1,13 +1,15 @@
 # Sanctions & Terms-Gate Action Matrix
 
-**Status:** intended-behaviour specification (the test oracle). This document is
-sourced from the canonical specs — `docs/FunctionalSpecs/ProjectDetailsREADME.md`
-§ *Regulatory Compliance Considerations* and `docs/FunctionalSpecs/WebsiteReadme.md`
-§ *Legal and data-rights requirements* / *Sanctions-screening UX* — not
-transcribed from the contracts. The "Verified at" / "Tested by" columns are
-references to where the behaviour is enforced and exercised today; if the code
-ever diverges from the intended behaviour below, that divergence is a bug to be
-logged in `_CodeVsDocsAudit.md`, not a reason to edit this matrix.
+**Status:** cross-cutting **analysis matrix** (action × actor) — a design/analysis
+doc, NOT a code-independent intended-behaviour test oracle. It cross-references the
+canonical compliance specs (`docs/FunctionalSpecs/ProjectDetailsREADME.md` §
+*Regulatory Compliance Considerations*, `docs/FunctionalSpecs/WebsiteReadme.md` §
+*Legal and data-rights requirements* / *Sanctions-screening UX*) with how each
+action's screening behaves per actor today, so it necessarily tracks the
+implementation. The "Verified at" / "Tested by" columns point to where the
+behaviour is enforced and exercised. A genuine spec-vs-code divergence still
+belongs in `_CodeVsDocsAudit.md` against the canonical FunctionalSpecs; this
+matrix is updated to stay accurate as the code evolves.
 
 This addresses GitHub issue #800 (sanctions + Terms-gate consistency across
 protocol and UI). It is the single place that states, per action family, what
@@ -107,25 +109,28 @@ are now of one kind:
   used to **revert** when the recipient loan party was flagged (the
   `getOrCreateUserVault` recipient screen), bricking the close-out. Now a
   receive-side exemption parks the flagged recipient's share in their own
-  existing vault, frozen behind the claim-side stored-owner screen, so the
-  counterparty is made whole. `cancelOffer` intentionally still reverts (the
+  existing vault, frozen behind the position-NFT transfer restriction + the
+  live-claimant (`msg.sender`/`nftOwner`) screens, so the counterparty is made
+  whole. `cancelOffer` intentionally still reverts (the
   creator's own escrow → freeze, no counterparty to make whole). The one
   remaining liveness residual is the `completeLoanSale` / `completeOffset`
   **completion** paths (a committed buyer) — a tracked follow-up in
   `_CodeVsDocsAudit.md`.
-- **Value-to-flagged bypasses (the safe direction is also breached).** Several
-  gaps let value actually reach or benefit a flagged wallet: a flagged
-  `triggerLiquidationDiscounted` `recipient` receives the bought collateral
-  (gap (c)); the default auto-dispatch pays an unscreened caller the matcher
-  bonus (gap (d)); a flagged borrower-NFT holder can post/update a
-  collateral-sale listing (gap (a)); a sanctioned current holder can top up
-  collateral (gap (e)); and the keeper preclose / early-withdrawal paths can
-  route exiting collateral to a flagged holder (gap (b)). These are
-  value-out compliance bypasses, not liveness-only issues.
+- **Value-to-flagged bypasses — CLOSED (#816–#820).** These were the original
+  audit gaps where value could reach or benefit a flagged wallet; all are now
+  fixed and screened, and are retained here only as historical record (see Open
+  gaps for the per-gap closure note): the `triggerLiquidationDiscounted`
+  `recipient` screen (#816, gap (c)); the default auto-dispatch matcher-bonus
+  zeroing for a flagged matcher (#817, gap (d)); the collateral-sale listing
+  holder screen (#818, gap (a)); the `addCollateral` payer/holder screen (#820,
+  gap (e)); and the keeper preclose / early-withdrawal initiation holder screens
+  (#819, gap (b)). The wind-down liveness brick (gap (f)) is closed by the #821
+  vault-lock + position-NFT transfer restriction.
 
-So the invariant holds on the **centralised Tier-1 entry points** but is broken
-by the enumerated enforcement gaps in both directions — see Open gaps and the
-`_CodeVsDocsAudit.md` findings.
+So the invariant holds on the **centralised Tier-1 entry points** and the
+enumerated value-out and liveness gaps are all closed; the one deferred residual
+is the `completeLoanSale` / `completeOffset` completion path (#831) — see Open
+gaps and the `_CodeVsDocsAudit.md` findings.
 
 ## Action matrix — Terms-of-Service gate
 
