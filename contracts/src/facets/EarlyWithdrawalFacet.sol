@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
@@ -709,6 +710,11 @@ contract EarlyWithdrawalFacet is
                     loan.principalAsset,
                     excessAccrued
                 );
+                // #831 — vault-lock the buyer's (newLender) receive: a buyer
+                // flagged AFTER committing the sale must not brick the completion
+                // (which would strand the committed seller). The shortfall parks
+                // frozen in the buyer's OWN vault behind the #821 freeze.
+                LibSanctionedLock.begin(s, newLender);
                 LibFacet.depositFromPayerForLender(
                     loan.principalAsset,
                     originalLender,
@@ -716,15 +722,23 @@ contract EarlyWithdrawalFacet is
                     shortfall,
                     loanId
                 );
+                LibSanctionedLock.end(
+                    s, newLender, loanId, loan.principalAsset, shortfall
+                );
             } else {
                 uint256 remainingShortfall = shortfall - accrued;
                 uint256 totalFromLiam = accrued + remainingShortfall;
+                // #831 — same buyer-receive vault-lock as the branch above.
+                LibSanctionedLock.begin(s, newLender);
                 LibFacet.depositFromPayerForLender(
                     loan.principalAsset,
                     originalLender,
                     newLender,
                     totalFromLiam,
                     loanId
+                );
+                LibSanctionedLock.end(
+                    s, newLender, loanId, loan.principalAsset, totalFromLiam
                 );
             }
         } else {
@@ -770,11 +784,15 @@ contract EarlyWithdrawalFacet is
                     VaultWithdrawFailed.selector
                 );
                 s.consolidationMoveFromUser = address(0);
-                address newVault = LibFacet.getOrCreateVault(newLender);
-                IERC20(payAsset).safeTransfer(newVault, priorHeldSale);
-                // T-051 — Diamond-side transfer to new lender's
-                // vault ticks the counter.
-                LibVaipakam.recordVaultDeposit(newLender, payAsset, priorHeldSale);
+                // #831 — vault-lock the held migration into the buyer's
+                // (newLender) vault: a buyer flagged after committing must not
+                // brick the completion. `depositLocked` resolves the buyer vault
+                // under the receive-side exemption, pushes the held from Diamond
+                // custody, and emits `SanctionedProceedsLocked` when flagged
+                // (T-051 — the Diamond-side transfer ticks the tracked counter).
+                LibSanctionedLock.depositLocked(
+                    s, newLender, loanId, payAsset, priorHeldSale
+                );
             }
         }
 

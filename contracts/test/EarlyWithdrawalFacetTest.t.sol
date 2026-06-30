@@ -1472,6 +1472,48 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #831 — a BUYER (`newLender`) flagged AFTER committing the sale must
+    ///      not brick `completeLoanSale` (which would strand the committed seller).
+    ///      The shortfall deposit routes through the buyer's vault, which is
+    ///      screened; the vault-lock receive-side exemption lets the completion
+    ///      finish and parks the buyer's share frozen behind the #821 freeze.
+    function test_completeLoanSale_FlaggedBuyer_CompletesNotBricked() public {
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true);
+        vm.clearMockedCalls();
+
+        _setOfferAcceptedAndRate(50, 1000);
+        TestMutatorFacet(address(diamond)).setOfferIdToLoanIdRaw(50, 2);
+        _setupTempLoan(2);
+
+        // The buyer already holds a vault from accepting (create it, then flag) —
+        // the exemption resolves an EXISTING vault, never mints one for a flagged
+        // wallet (`SanctionedRecipientHasNoVault` guard).
+        vm.prank(newLender);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+
+        vm.warp(block.timestamp + 5 days);
+
+        // Flag the buyer AFTER the sale was committed.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(newLender, true);
+
+        // Pre-#831 this reverted `SanctionedAddress(newLender)` from the buyer's
+        // vault deposit; now it completes (proceeds parked frozen).
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSale(activeLoanId);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(loan.lender, newLender, "sale completes despite flagged buyer");
+        vm.clearMockedCalls();
+    }
+
     /// @dev Covers completeLoanSale no-shortfall path (lower rate)
     function testCompleteLoanSaleNoShortfall() public {
         vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
