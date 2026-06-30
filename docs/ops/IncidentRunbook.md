@@ -814,52 +814,44 @@ triage instead.
 
 ---
 
-## 7. Sanctioned loan party bricks a close-out (added 2026-06-29)
+## 7. Sanctioned loan party — close-out behaviour (added 2026-06-29; #821-resolved 2026-06-30)
 
-### Symptom
+### Status — RESOLVED for repay / default / liquidation (#821)
 
-A `repayLoan`, `triggerDefault`, HF-based liquidation, or `cancelOffer` refund
-reverts `SanctionedAddress(who)` even though the *caller* is clean — and the
-unflagged counterparty cannot extract what they're owed.
+The wind-down close-outs (`repayLoan` full, `triggerDefault`, HF-based and split
+liquidation, the internal-match settlement) **no longer brick** when a loan party
+is sanctions-flagged. They now complete via a vault-lock: the flagged party's
+share is parked in their **own** per-user vault (frozen behind the live-claimant
+screen), so the unflagged counterparty is made whole and a
+`SanctionedProceedsLocked` event records each park. A flagged wallet's **position
+NFT is frozen in place** — `VaipakamNFTFacet.transferFrom`/`safeTransferFrom`
+reject a flagged `from`/`to` — so it can't be laundered to a clean wallet, while a
+position transferred *before* a later flag (a legitimate buyer) is unaffected.
 
-### Diagnose
+### Still expected to revert (by design)
 
-This is the **recipient-vault enforcement gap** documented in
-[`docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md`](../FunctionalSpecs/SanctionsAndTermsGateMatrix.md)
-(Open gaps (f)) and logged in
-[`docs/FunctionalSpecs/_CodeVsDocsAudit.md`](../FunctionalSpecs/_CodeVsDocsAudit.md).
-The close-out deposits the recipient's share through `getOrCreateUserVault`, which
-screens the **vault owner** — so when the *recipient loan party* is flagged
-(a flagged `loan.lender` on repay/liquidation/default, a surplus-recipient
-`loan.borrower`, or the creator on `cancelOffer`), the whole path reverts. The
-policy intent is Tier-2 "the unflagged counterparty is always made whole"; the
-current implementation does not achieve that on the direct-deposit branches.
+- **`cancelOffer` for a flagged creator** — the refund returns the creator's OWN
+  escrowed funds, so with no counterparty to make whole the revert IS the freeze.
+  Recovery waits on the flag clearing. Not an incident.
+- **A flagged wallet that holds its own live position** trying to `claim*` or
+  `transfer` the NFT — frozen by design until delisted. Not an incident.
 
-Confirm with `ProfileFacet.isSanctionedAddress(<loan party>)` for each party of
-the stuck loan/offer; the flagged party is the recipient, not necessarily the
-caller.
+### Residual open work
 
-### Decide / Execute
+The **completion** paths where a buyer is already committed
+(`EarlyWithdrawalFacet.completeLoanSale` / `PrecloseFacet.completeOffset`) are the
+one remaining deferred case — tracked as a `_CodeVsDocsAudit.md` finding (#831),
+not a live operator concern. The full per-action matrix is in
+[`docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md`](../DesignsAndPlans/SanctionsAndTermsGateMatrix.md).
 
-- There is **no operator lever** that completes the close-out while the recipient
-  is flagged — by design, no fresh value may reach a flagged wallet. Do **not**
-  attempt to route around the screen.
-- The unflagged counterparty's recovery waits on either (a) the flag clearing at
-  the sanctions oracle, or (b) the code fix (a held-proceeds escrow mirroring the
-  consolidation-move-out exemption, so the close-out completes and the flagged
-  recipient's share waits behind a Tier-1 claim). Track the fix via the
-  `_CodeVsDocsAudit.md` finding.
-- This is a **liveness** issue (funds are stuck, not lost or mis-routed); it does
-  **not** warrant an emergency pause.
+### Diagnose / Decide
 
-### Note — the value-out gaps are different
-
-The matrix also records gaps where value can reach a flagged wallet (unscreened
-`triggerLiquidationDiscounted` recipient, the default auto-dispatch matcher bonus,
-a flagged holder posting a prepay listing, etc.). Those are value-out compliance
-bypasses, not liveness bricks — if one is being actively exploited, treat it as a
-§3.5 / §3.6 targeted snap-off candidate (asset- or path-level disable) and page
-the on-call.
+If a close-out unexpectedly reverts `SanctionedAddress(who)` post-#821, confirm
+with `ProfileFacet.isSanctionedAddress(<party>)` for each party. A genuine stuck
+case is now limited to `cancelOffer` (intentional) or the completion paths above —
+recovery waits on the flag clearing, **not** an operator lever. This is a
+**liveness** matter (funds parked, not lost/mis-routed); it does **not** warrant
+an emergency pause. Do **not** route around the screen.
 
 ---
 

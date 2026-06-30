@@ -1339,6 +1339,7 @@
     "offerCanceled": "Canceled",
     "tokenIdLabelShort": "Token ID",
     "currentOwner": "Current Owner",
+    "ownerSanctioned": "This position's current owner is sanctions-flagged, so the position is frozen: while the flag is in place the owner can neither claim its payout nor transfer the NFT to anyone else (transfers into or out of a sanctioned wallet are blocked on-chain). It cannot be bought or claimed until the owner is delisted.",
     "lenderPosition": "Lender position",
     "borrowerPosition": "Borrower position",
     "unknown": "Unknown",

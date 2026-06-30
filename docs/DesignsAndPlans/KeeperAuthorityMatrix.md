@@ -1,12 +1,14 @@
 # Keeper Authority Matrix — the no-custody boundary
 
-**Status:** intended-behaviour specification (the test oracle). Sourced from the
-keeper-delegation design (Phase 6) and the security boundary documented across
-`docs/FunctionalSpecs/WebsiteReadme.md` (keeper UX) and
-`docs/ops/IncidentRunbook.md` — not transcribed from the contracts. The "Verified at" / "Tested by" columns
-reference where each rule is enforced and exercised; a divergence between this
-matrix and the code is a bug to be logged in `_CodeVsDocsAudit.md`, not a reason
-to edit the matrix.
+**Status:** cross-cutting **analysis matrix** (the keeper no-custody boundary) — a
+design/analysis doc, NOT a code-independent intended-behaviour test oracle. It
+cross-references the keeper-delegation design (Phase 6) and the security boundary
+documented across `docs/FunctionalSpecs/WebsiteReadme.md` (keeper UX) and
+`docs/ops/IncidentRunbook.md` with how the delegated surface behaves today, so it
+tracks the implementation. The "Verified at" / "Tested by" columns reference where
+each rule is enforced and exercised; a genuine spec-vs-code divergence belongs in
+`_CodeVsDocsAudit.md` against the canonical FunctionalSpecs, and this matrix is
+updated to stay accurate as the code evolves.
 
 This addresses GitHub issue #803 — so a reviewer can audit keeper authority from
 **one** matrix instead of reconstructing it from comments scattered across

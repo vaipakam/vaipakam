@@ -721,7 +721,7 @@ records the **enforcement gaps and remaining test gaps that stay open** as
 tracked follow-ups rather than papering over them.
 
 - **New action-matrix spec** —
-  `docs/FunctionalSpecs/SanctionsAndTermsGateMatrix.md` documents, per action
+  `docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md` documents, per action
   family, the expected sanctions behaviour (Tier-1 BLOCK fresh-value / claims;
   Tier-2 ALLOW wind-down so an unflagged counterparty can be made whole; fail-
   open while the oracle is unset) and the Terms-gate states (disabled at
@@ -779,7 +779,7 @@ was reconstructable only from comments scattered across facets, and there was no
 test proving it holds for a keeper approved with **every** action bit. This
 change makes the boundary auditable from one place and pins the strongest case.
 
-- **New matrix spec** — `docs/FunctionalSpecs/KeeperAuthorityMatrix.md` states
+- **New matrix spec** — `docs/DesignsAndPlans/KeeperAuthorityMatrix.md` states
   the keeper delegation model (the three per-keeper gates + the global pause +
   the NFT-owner authority), the allowed delegated surface (action bit →
   function), and the no-custody boundary table (each owner-only /

@@ -1,13 +1,15 @@
 # Sanctions & Terms-Gate Action Matrix
 
-**Status:** intended-behaviour specification (the test oracle). This document is
-sourced from the canonical specs — `docs/FunctionalSpecs/ProjectDetailsREADME.md`
-§ *Regulatory Compliance Considerations* and `docs/FunctionalSpecs/WebsiteReadme.md`
-§ *Legal and data-rights requirements* / *Sanctions-screening UX* — not
-transcribed from the contracts. The "Verified at" / "Tested by" columns are
-references to where the behaviour is enforced and exercised today; if the code
-ever diverges from the intended behaviour below, that divergence is a bug to be
-logged in `_CodeVsDocsAudit.md`, not a reason to edit this matrix.
+**Status:** cross-cutting **analysis matrix** (action × actor) — a design/analysis
+doc, NOT a code-independent intended-behaviour test oracle. It cross-references the
+canonical compliance specs (`docs/FunctionalSpecs/ProjectDetailsREADME.md` §
+*Regulatory Compliance Considerations*, `docs/FunctionalSpecs/WebsiteReadme.md` §
+*Legal and data-rights requirements* / *Sanctions-screening UX*) with how each
+action's screening behaves per actor today, so it necessarily tracks the
+implementation. The "Verified at" / "Tested by" columns point to where the
+behaviour is enforced and exercised. A genuine spec-vs-code divergence still
+belongs in `_CodeVsDocsAudit.md` against the canonical FunctionalSpecs; this
+matrix is updated to stay accurate as the code evolves.
 
 This addresses GitHub issue #800 (sanctions + Terms-gate consistency across
 protocol and UI). It is the single place that states, per action family, what
@@ -80,10 +82,10 @@ gate). Read-only screen: `LibVaipakam.isSanctionedAddress(who)` (also exposed as
 | VPFI tier-poke broadcast (`pokeMyTier`) | **Tier-1 BLOCK** | the caller — a user-initiated state mutation that can drive a protocol-funded CCIP tier broadcast | `VPFIDiscountFacet.pokeMyTier` | `PokeMyTierTest.t.sol::test_PokeMyTier_SanctionedCaller_Reverts` |
 | Collateral top-up (`addCollateral`) | **Tier-1 BLOCK** (#820) — screens the payer / current borrower-NFT holder (`_assertNotSanctioned(msg.sender)`, who `requireBorrowerNftOwner` binds to the current holder) in addition to the stored `loan.borrower` vault screen | the payer / current borrower-NFT holder | `AddCollateralFacet` | `AddCollateralFacetTest.t.sol::test_addCollateral_RevertsWhenTransferredHolderSanctioned` |
 | Offer mutation (`setOfferAmount` / `setOfferRate` / `setOfferCollateral` / `modifyOffer`) | **Tier-1 BLOCK** | the offer creator | `OfferMutateFacet` | `OfferModificationTest.t.sol` (sanctions cases) |
-| HF-based liquidation (`triggerLiquidation`, partial, split) | **Tier-1 BLOCK on the liquidator** (3% bonus recipient). Note the same loan-party divergence as default: the settlement branch resolves `loan.lender`'s (and any surplus `loan.borrower`'s) vault via `getOrCreateVault` → `getOrCreateUserVault`, which screens that owner, so a **flagged loan party bricks the liquidation** rather than deferring — an enforcement gap | the liquidator (Tier-1); flagged **loan party bricks** settlement (gap) | `RiskFacet`, `RiskSplitLiquidationFacet` | `…::test_triggerLiquidation_RevertsWhenSanctionedLiquidator`, `…::testPartialLiq_SanctionedCallerReverts` |
-| HF-based liquidation — discounted (`triggerLiquidationDiscounted`) | **Tier-1 BLOCK on the caller AND the seized-collateral `recipient`** (#816) — both are screened (`_assertNotSanctioned`), so a clean liquidator can't route bought collateral to a flagged recipient. (The loan-party-vault brick on the lender/borrower settlement side is the cross-cutting #821 gap, as in the atomic liquidation row.) | the caller and the `recipient` | `RiskFacet.triggerLiquidationDiscounted` | `RiskFacetTest.t.sol::test_triggerLiquidationDiscounted_RevertsWhenRecipientSanctioned` |
-| Time-based default (`triggerDefault`) | **Tier-2 ALLOW (intended)** — not caller-gated; settlement value flows to the loan's parties, not the caller. The internal-match auto-dispatch matcher bonus is now **screened (#817)**: for a sanctioned matcher the objective match still executes (skipping it would let a flagged caller degrade settlement to the external/FallbackPending path) but the 1% incentive is zeroed and folded into the lenders' shares, so no bonus reaches the flagged wallet. **Remaining divergence (#821):** the settlement branches call `LibFacet.getOrCreateVault(loan.lender)` and, on surplus, `getOrCreateVault(loan.borrower)`, which screen those vault owners — so a **flagged loan party (lender, or surplus-recipient borrower) bricks the default** rather than deferring cleanly | not the caller (bonus skipped for a flagged matcher); flagged **loan party bricks** settlement (#821) | `DefaultedFacet` (no caller gate); auto-dispatch screen in `RiskMatchLiquidationFacet` | `InternalMatchAutoDispatch.t.sol::test_attemptAutoDispatch_sanctionedMatcher_settlesWithoutBonus`; loan-party-brick tracked under #821 |
-| Repayment — full (`repayLoan`) | **Tier-2 ALLOW for a flagged borrower** (full repay stays open — tested). **Flagged lender diverges from intent:** in the common case where the current lender is still `loan.lender`, the path deposits `plan.lenderDue` via `vaultDepositERC20From(…, loan.lender, …)` → `getOrCreateUserVault(loan.lender)`, which screens and **reverts** for a flagged `loan.lender`. So a flagged lender currently **bricks full repay** rather than the proceeds deferring to a Tier-1 claim — an enforcement gap, not the clean deferral originally intended | flagged **borrower** OK (tested); flagged **lender bricks** repay (gap) | `RepayFacet.repayLoan` | `SanctionsOracle.t.sol::test_SanctionedBorrower_CanStillRepay_LenderRecovers` (borrower-flagged direction only) |
+| HF-based liquidation (`triggerLiquidation`, partial, split) | **Tier-1 BLOCK on the liquidator** (3% bonus recipient). The loan-party settlement side is now **#821 vault-locked**: a flagged `loan.lender`'s (and any surplus `loan.borrower`'s) share is parked in their OWN vault via `LibSanctionedLock` and frozen behind the claim freeze, so the liquidation **stays live** instead of bricking. The internal-match settlement path (`RiskMatchLiquidationFacet._settleLeg`) is covered too — receive-side exemption for the stored lender + move-out exemption for the paying borrower's withdraw | the liquidator (Tier-1); flagged loan party's share **parked + frozen** (#821) | `RiskFacet`, `RiskSplitLiquidationFacet`, `RiskMatchLiquidationFacet` | `…::test_triggerLiquidation_RevertsWhenSanctionedLiquidator`, `…::testPartialLiq_SanctionedCallerReverts`, `SanctionsOracle.t.sol::test_SanctionedLender_RepayLocksProceeds_ClaimFreezesUntilCleared` |
+| HF-based liquidation — discounted (`triggerLiquidationDiscounted`) | **Tier-1 BLOCK on the caller AND the seized-collateral `recipient`** (#816) — both are screened (`_assertNotSanctioned`), so a clean liquidator can't route bought collateral to a flagged recipient. (The lender/borrower settlement side is now **#821 vault-locked** — parked + frozen — as in the atomic liquidation row.) | the caller and the `recipient` | `RiskFacet.triggerLiquidationDiscounted` | `RiskFacetTest.t.sol::test_triggerLiquidationDiscounted_RevertsWhenRecipientSanctioned` |
+| Time-based default (`triggerDefault`) | **Tier-2 ALLOW (intended)** — not caller-gated; settlement value flows to the loan's parties, not the caller. The internal-match auto-dispatch matcher bonus is now **screened (#817)**: for a sanctioned matcher the objective match still executes (skipping it would let a flagged caller degrade settlement to the external/FallbackPending path) but the 1% incentive is zeroed and folded into the lenders' shares, so no bonus reaches the flagged wallet. **#821 (resolved):** the settlement branches now **vault-lock** a flagged loan party's share — the liquid lender/borrower deposits route through `LibSanctionedLock.depositLocked`, the in-kind collateral move arms both the receive-side (lender) and move-out (paying borrower) exemptions, and the internal-match `_settleLeg` does the same — so the share is parked in the party's OWN vault and frozen behind the claim freeze, and the default **stays live** | not the caller (bonus skipped for a flagged matcher); flagged loan party's share **parked + frozen** (#821) | `DefaultedFacet`, `RiskMatchLiquidationFacet` | `InternalMatchAutoDispatch.t.sol::test_attemptAutoDispatch_sanctionedMatcher_settlesWithoutBonus`; `SanctionsOracle.t.sol::test_SanctionedLender_RepayLocksProceeds_ClaimFreezesUntilCleared` |
+| Repayment — full (`repayLoan`) | **Tier-2 ALLOW for a flagged borrower** (full repay stays open — tested). **Flagged lender is now #821 vault-locked:** the ERC-20 lender payment (`vaultDepositERC20From`), the NFT-rental lender share, and the FallbackPending cure's borrower collateral restore all route through `LibSanctionedLock` (begin/end or `depositLocked`), so a flagged loan party's share is parked in their OWN vault and frozen behind the claim freeze rather than bricking — full repay **stays live** in every branch | flagged **borrower** OK (tested); flagged **lender's** proceeds **parked + frozen** (#821) | `RepayFacet.repayLoan` | `SanctionsOracle.t.sol::test_SanctionedBorrower_CanStillRepay_LenderRecovers`, `…::test_SanctionedLender_RepayLocksProceeds_ClaimFreezesUntilCleared` |
 | Repayment — periodic / direct-partial (`autoDeductDaily`, `settlePeriodicInterest`, `repayPartial`) | **Per-entry-point, branch-dependent.** `settlePeriodicInterest` screens the **settler (`msg.sender`) first**; then if `shortfall == 0` it only advances the checkpoint and returns (**no lender screen** on that just-stamp path), and the lender recipient is screened **only in the auto-liquidate payout branch** (a flagged lender makes that branch **revert**, no deferred claim). `autoDeductDaily` (permissionless NFT-rental deduction) does **NOT** screen the caller at all — it screens **only the resolved `lenderRecipient`** on the inline transfer. `repayPartial` likewise screens the resolved lender recipient inline | `settlePeriodicInterest`: settler **and** (payout-branch) lender; `autoDeductDaily` / `repayPartial`: lender recipient only (**caller unscreened**) | `RepayPeriodicFacet` (`autoDeductDaily` L184 lender-only; `settlePeriodicInterest` L431 settler + payout-branch lender), `RepayFacet.repayPartial` | gap — see Open gaps |
 | Claims (`claimAsLender`, `claimAsBorrower`, backstop opt-in) | **Tier-1 BLOCK** | the **claimant** (recipient) — unconditional, before any distribution | `ClaimFacet` | `…::test_claimAsLender_RevertsWhenSanctioned`, `…::test_claimAsBorrower_RevertsWhenSanctioned` (the **backstop opt-in** entry point shares the same gate but has **no dedicated test** — see test gaps) |
 | Refinance (`refinanceLoan`) | **Tier-1 BLOCK** | the borrower **and** the current borrower-NFT holder | `RefinanceFacet` | gap — see Open gaps |
@@ -96,30 +98,39 @@ gate). Read-only screen: `LibVaipakam.isSanctionedAddress(who)` (also exposed as
 
 **Invariant (intent):** no Tier-1 path may route fresh value to a flagged wallet,
 and no Tier-2 path may be turned into a fresh-value path for a flagged wallet.
-The *intended* mechanism is that value owed to a flagged recipient on a wind-down
-path defers to a Tier-1 claim. **Current reality — the invariant is NOT fully
-upheld; the Open gaps split into two kinds:**
+The mechanism is that value owed to a flagged recipient on a wind-down path is
+**parked in that recipient's own vault, LOCKED** behind the Tier-1 claim gate
+(see #821 below), so the close-out completes (the unflagged counterparty is made
+whole) without routing spendable value to the flagged wallet. The remaining gaps
+are now of one kind:
 
-- **Liveness bricks (no value moves, the path just reverts).** The
-  recipient-vault deferral only holds where an explicit held-proceeds escrow or
-  the consolidation-move-out exemption applies; on the direct-deposit close-out
-  branches the `getOrCreateUserVault` recipient screen instead **reverts** when
-  the recipient loan party is flagged, so the unflagged counterparty is not made
-  whole until the flag clears (gap (f)). No fresh value reaches a flagged wallet
-  here — it is purely a liveness failure.
-- **Value-to-flagged bypasses (the safe direction is also breached).** Several
-  gaps let value actually reach or benefit a flagged wallet: a flagged
-  `triggerLiquidationDiscounted` `recipient` receives the bought collateral
-  (gap (c)); the default auto-dispatch pays an unscreened caller the matcher
-  bonus (gap (d)); a flagged borrower-NFT holder can post/update a
-  collateral-sale listing (gap (a)); a sanctioned current holder can top up
-  collateral (gap (e)); and the keeper preclose / early-withdrawal paths can
-  route exiting collateral to a flagged holder (gap (b)). These are
-  value-out compliance bypasses, not liveness-only issues.
+- **Liveness bricks (#821: RESOLVED for repay/default/liquidation).** The
+  wind-down close-outs (`repayLoan` full, `triggerDefault`, HF-based liquidation)
+  used to **revert** when the recipient loan party was flagged (the
+  `getOrCreateUserVault` recipient screen), bricking the close-out. Now a
+  receive-side exemption parks the flagged recipient's share in their own
+  existing vault, frozen behind the position-NFT transfer restriction + the
+  live-claimant (`msg.sender`/`nftOwner`) screens, so the counterparty is made
+  whole. `cancelOffer` intentionally still reverts (the
+  creator's own escrow → freeze, no counterparty to make whole). The one
+  remaining liveness residual is the `completeLoanSale` / `completeOffset`
+  **completion** paths (a committed buyer) — a tracked follow-up in
+  `_CodeVsDocsAudit.md`.
+- **Value-to-flagged bypasses — CLOSED (#816–#820).** These were the original
+  audit gaps where value could reach or benefit a flagged wallet; all are now
+  fixed and screened, and are retained here only as historical record (see Open
+  gaps for the per-gap closure note): the `triggerLiquidationDiscounted`
+  `recipient` screen (#816, gap (c)); the default auto-dispatch matcher-bonus
+  zeroing for a flagged matcher (#817, gap (d)); the collateral-sale listing
+  holder screen (#818, gap (a)); the `addCollateral` payer/holder screen (#820,
+  gap (e)); and the keeper preclose / early-withdrawal initiation holder screens
+  (#819, gap (b)). The wind-down liveness brick (gap (f)) is closed by the #821
+  vault-lock + position-NFT transfer restriction.
 
-So the invariant holds on the **centralised Tier-1 entry points** but is broken
-by the enumerated enforcement gaps in both directions — see Open gaps and the
-`_CodeVsDocsAudit.md` findings.
+So the invariant holds on the **centralised Tier-1 entry points** and the
+enumerated value-out and liveness gaps are all closed; the one deferred residual
+is the `completeLoanSale` / `completeOffset` completion path (#831) — see Open
+gaps and the `_CodeVsDocsAudit.md` findings.
 
 ## Action matrix — Terms-of-Service gate
 
@@ -259,21 +270,36 @@ gate-disabled — a route-gate bypass.)
   external/FallbackPending path) but **zeroes the 1% incentive**, folding it into
   the lenders' shares, so no bonus reaches the flagged wallet — #817. (e) `addCollateral` now screens the payer / current holder, not just the
   stored `loan.borrower` — #820.
-- **Enforcement gap — liveness brick + deferred-proceeds (OPEN, #821).**
-  (f) **Cross-cutting recipient-vault brick:** the wind-down close-outs
-  (`repayLoan` full, `triggerDefault`, HF-based liquidation, and the
-  `cancelOffer` refund) deposit/refund the recipient's share through
-  `getOrCreateUserVault`, which screens the vault **owner**. So a flagged
-  *recipient loan party* (lender on repay/liquidation/default, surplus borrower on
-  liquidation/default, or the offer creator on cancel) makes the whole close-out
-  **revert** instead of the value deferring to a Tier-1 claim — the unflagged
-  counterparty is not made whole until the flag clears. The same deferred-proceeds
-  treatment covers the **completion** paths left out of (b): a holder flagged
-  *after* listing on `completeLoanSale` / `completeOffset`, where a buyer is
-  already committed, so a naive revert would strand the buyer. The principled fix
-  is a held-proceeds escrow on these paths (mirroring the consolidation-move-out
-  exemption) so the close-out completes and the flagged recipient's share waits
-  behind a Tier-1 claim. Tracked under #821.
+- **Enforcement gap — liveness brick (CLOSED, #821: vault-lock + freeze).**
+  (f) The wind-down close-outs (`repayLoan` full, `triggerDefault`, HF-based
+  liquidation) deposit the recipient's share through `getOrCreateUserVault`,
+  which screens the vault **owner** — previously a flagged *recipient loan party*
+  bricked the whole close-out. **Resolved by parking the share in the recipient's
+  OWN vault, LOCKED:** a receive-side `getOrCreateUserVault` exemption
+  (`sanctionedDepositExemptUser`, mirroring the move-out pin; never mints a new
+  vault for a flagged wallet) lets the close-out complete so the unflagged
+  counterparty is made whole. The freeze itself is enforced **at the source** by a
+  **position-NFT transfer restriction** (`VaipakamNFTFacet.transferFrom` /
+  `safeTransferFrom` screen both `from` and `to`): a flagged wallet can't move a
+  position into or out of itself, so its position is frozen in place and can't be
+  laundered to a clean wallet, while the claim paths screen the **live claimant**
+  (`msg.sender` / `nftOwner`) — so a flagged wallet that holds its own position
+  can't claim either. The claim paths do **NOT** screen the stored
+  `loan.lender` / `loan.borrower`: for an NFT-rental / non-ERC-20 loan the
+  close-out isn't consolidated, so a stale stored field left by a **legitimate
+  pre-flag secondary-market transfer** must not freeze the clean current holder —
+  the claim-time vault withdrawal arms the exact-address move-out exemption so that
+  clean holder is paid out of the (stale-flagged) stored vault as normal. Mint /
+  burn / protocol-internal settlement use separate authorized paths (so a flagged
+  party's loan still settles + burns at terminal). The vault is isolated per-user, so nothing commingles in the Diamond. A
+  `SanctionedProceedsLocked` event records each park. The parallel-sale
+  `recordOfferSaleProceeds` live-lender-holder leg is screened at fill (atomic,
+  no stranding). **`cancelOffer` is intentionally NOT
+  vault-locked:** its refund returns the creator's OWN escrowed funds (a move-OUT
+  from their own vault), so with no counterparty to make whole the existing revert
+  IS the desired freeze — the flagged creator's escrow stays put until the flag
+  clears. (The `completeLoanSale` / `completeOffset` completion-path residual from
+  (b) remains the one open follow-up — see the new `_CodeVsDocsAudit.md` finding.)
 - **UI submit-disable on the flagged signal.** Pages warn via `SanctionsBanner`
   but do not yet disable their submit buttons on `useSanctionsCheck().isSanctioned`;
   wiring that (so the app never offers a clickable Tier-1 action to a flagged

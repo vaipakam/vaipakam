@@ -7,6 +7,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibAuth} from "../libraries/LibAuth.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {LenderIntentFacet} from "./LenderIntentFacet.sol";
@@ -415,6 +416,12 @@ contract ClaimFacet is
         // always runs regardless; this gate adds the swap leg.
         if (!snap.retryAttempted) revert BackstopRetryRequired();
 
+        // #821 — the freeze is the position-NFT transfer restriction + the
+        // `msg.sender`/`nftOwner` screens above (both gate the live holder, who a
+        // flagged wallet can't be post-flag). No stored-`loan.lender` screen: a
+        // FallbackPending loan is excluded from eager consolidation, so a stale
+        // `loan.lender` from a LEGITIMATE pre-flag transfer would wrongly freeze
+        // the clean current holder's buyout (Codex #832 r6 P2).
         // ── Resolution failed → the backstop buys the lender slice for cash.
         _absorbLenderSlice(loanId, loan, snap, vault, nftOwner);
     }
@@ -474,9 +481,11 @@ contract ClaimFacet is
             LibFacet.recordTreasuryAccrual(c, snap.treasuryCollateral);
         }
         if (snap.borrowerCollateral > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(c).safeTransfer(borrowerVault, snap.borrowerCollateral);
-            LibVaipakam.recordVaultDeposit(loan.borrower, c, snap.borrowerCollateral);
+            // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
+            // flagged stored borrower doesn't brick the backstop absorb.
+            LibSanctionedLock.depositLocked(
+                s, loan.borrower, loanId, c, snap.borrowerCollateral
+            );
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     EncumbranceMutateFacet.incrementCollateralLien.selector,
@@ -530,6 +539,14 @@ contract ClaimFacet is
         // NOT re-paid from the absorb bucket (§5). FallbackPending ⇒ ERC20 loan.
         uint256 held = s.heldForLender[loanId];
         if (held > 0) {
+            // #821 (Codex #832 r8 P2) — the heldForLender funds sit in the STORED
+            // `loan.lender`'s vault. For a legitimately pre-flag-transferred
+            // position that stored lender can be flagged, so arm the from-side
+            // move-out exemption around this withdraw (mirroring the normal claim
+            // payout) — otherwise `getOrCreateUserVault(loan.lender)` would brick
+            // the clean current holder's backstop absorb. The stored party loses
+            // custody to the (already-screened) NFT owner.
+            LibSanctionedLock.beginMoveOut(s, loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
@@ -540,6 +557,7 @@ contract ClaimFacet is
                 ),
                 VaultWithdrawFailed.selector
             );
+            LibSanctionedLock.endMoveOut(s);
         }
 
         s.lenderBackstopOptIn[loanId] = address(0);
@@ -626,6 +644,16 @@ contract ClaimFacet is
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
+
+        // #821 — the FREEZE is enforced by the position-NFT transfer restriction
+        // (a flagged wallet can't move a position in or out of itself) plus the
+        // `msg.sender` screen above (a flagged holder can't call claim). No
+        // stored-`loan.lender` screen here: for NFT-rental loans the close-out
+        // does NOT consolidate the stored field (`_isExcludedLive` skips
+        // non-ERC-20), so a stale `loan.lender` left by a LEGITIMATE pre-flag
+        // secondary-market transfer would wrongly freeze the clean current holder
+        // (Codex #832 r6 P2). The transfer restriction guarantees a flagged party
+        // can't be that holder, so screening the live caller is sufficient.
 
         // Loan must be resolved (Repaid, Defaulted, FallbackPending awaiting
         // the lender's one-shot retry, or InternalMatched). Active or already
@@ -796,6 +824,15 @@ contract ClaimFacet is
         // the reserve ticked, even when the claim record's asset differs.
         LibEncumbrance.releaseLenderProceeds(loanId, loan.lender);
 
+        // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
+        // `loan.lender`'s vault to the (already-screened) current claimer. For an
+        // NFT-rental / non-ERC-20 loan the close-out doesn't consolidate the
+        // stored field, so a LEGITIMATE pre-flag transfer can leave `loan.lender`
+        // stale-and-later-flagged; arm the from-side move-out exemption so that
+        // doesn't brick the clean current holder's claim (the stored party is
+        // losing custody, not receiving). Pinned to the exact `loan.lender`.
+        LibSanctionedLock.beginMoveOut(s, loan.lender);
+
         // Transfer claimable assets from lender's vault to claimant (if any)
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
             if (claim.amount > 0) {
@@ -907,6 +944,7 @@ contract ClaimFacet is
                 VaultTransferFailed.selector
             );
         }
+        LibSanctionedLock.endMoveOut(s);
 
         // Update lender's NFT to "Loan Closed" before burning (per README)
         LibFacet.crossFacetCall(
@@ -996,6 +1034,13 @@ contract ClaimFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
 
+        // #821 — the FREEZE is the position-NFT transfer restriction plus the
+        // `msg.sender` screen below (a flagged wallet can't hold/claim a borrower
+        // position). No stored-`loan.borrower` screen: for NFT-rental / non-ERC-20
+        // loans the close-out doesn't consolidate the stored field, so a stale
+        // `loan.borrower` from a LEGITIMATE pre-flag transfer would wrongly freeze
+        // the clean current holder (Codex #832 r6 P2).
+
         // Borrower can only claim after the loan is terminally Repaid,
         // Defaulted, or InternalMatched. FallbackPending is explicitly
         // blocked: during that window the borrower can still cure via
@@ -1081,6 +1126,15 @@ contract ClaimFacet is
         // record under the asset it was reserved with → a no-op for every loan
         // that never reserved a surplus (non-VPFI, or no liquid-default surplus).
         LibEncumbrance.releaseBorrowerProceeds(loanId, loan.borrower);
+
+        // #821 (Codex #832 r7 P2) — the payout below WITHDRAWS from the stored
+        // `loan.borrower`'s vault to the (already-screened) current claimer. As
+        // with the lender claim, an NFT-rental / non-ERC-20 loan isn't
+        // consolidated, so a legitimate pre-flag transfer can leave `loan.borrower`
+        // stale-and-later-flagged; arm the from-side move-out exemption so the
+        // clean current holder's claim isn't bricked (the stored party is losing
+        // custody). Pinned to the exact `loan.borrower`; covers the restamp below.
+        LibSanctionedLock.beginMoveOut(s, loan.borrower);
 
         // Transfer claimable collateral from borrower's vault to claimant
         if (claim.assetType == LibVaipakam.AssetType.ERC20) {
@@ -1172,6 +1226,7 @@ contract ClaimFacet is
                 bytes4(0)
             );
         }
+        LibSanctionedLock.endMoveOut(s);
 
         // Phase 5 / §5.2b — transfer any pending borrower LIF VPFI rebate.
         // The Diamond custody-holds the rebate slice between settlement
@@ -1485,17 +1540,20 @@ contract ClaimFacet is
         }
 
         if (lenderGets > 0) {
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderGets);
-            // T-051 — Diamond-side transfer to vault ticks the
-            // protocolTrackedVaultBalance counter so the eventual
-            // claimAsLender's vaultWithdrawERC20 doesn't underflow.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderGets);
+            // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender
+            // doesn't brick the retry distribution (T-051 — the Diamond-side
+            // transfer ticks protocolTrackedVaultBalance so the eventual
+            // claimAsLender's vaultWithdrawERC20 doesn't underflow).
+            LibSanctionedLock.depositLocked(
+                s, loan.lender, loanId, loan.principalAsset, lenderGets
+            );
         }
         if (borrowerGets > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerGets);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerGets);
+            // #821 (Codex #832 r4 P1) — vault-lock the borrower residual so a
+            // flagged stored borrower doesn't brick the retry distribution.
+            LibSanctionedLock.depositLocked(
+                s, loan.borrower, loanId, loan.principalAsset, borrowerGets
+            );
             // #661 (Codex #674 P1) — the FallbackPending retry is a FOURTH
             // borrower-VPFI-surplus terminal: reserve it against the unstake
             // path, like the default / liquidation surplus sites. Released in
@@ -1546,14 +1604,18 @@ contract ClaimFacet is
         }
 
         if (snap.lenderCollateral > 0) {
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.collateralAsset).safeTransfer(lenderVault, snap.lenderCollateral);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.collateralAsset, snap.lenderCollateral);
+            // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored lender
+            // doesn't brick the fallback-collateral distribution.
+            LibSanctionedLock.depositLocked(
+                s, loan.lender, loanId, loan.collateralAsset, snap.lenderCollateral
+            );
         }
         if (snap.borrowerCollateral > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.collateralAsset).safeTransfer(borrowerVault, snap.borrowerCollateral);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, snap.borrowerCollateral);
+            // #821 (Codex #832 r4 P1) — vault-lock so a flagged stored borrower
+            // doesn't brick the fallback-collateral distribution.
+            LibSanctionedLock.depositLocked(
+                s, loan.borrower, loanId, loan.collateralAsset, snap.borrowerCollateral
+            );
             // #569 Gap A — RE-LIEN the borrower residual pushed BACK into
             // the vault here. The lien was released at liquidation/default
             // ENTRY (when the full collateral left to Diamond custody); the

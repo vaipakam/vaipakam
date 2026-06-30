@@ -4,6 +4,7 @@ pragma solidity ^0.8.29;
 import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibSwap} from "../libraries/LibSwap.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
@@ -178,16 +179,16 @@ contract RiskSplitLiquidationFacet is
             }
         }
 
-        // Withdraw collateral to Diamond for the split swap.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                loan.collateralAmount
-            ),
-            VaultWithdrawFailed.selector
+        // Withdraw collateral to Diamond for the split swap. #821 (Codex #832 r3
+        // P1) — move-out-exempt so a borrower flagged after init doesn't brick
+        // the split liquidation (collateral pushed OUT to the already-screened
+        // swap recipients).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
         // the full pre-liquidation VPFI balance; re-stamp after the withdrawal
@@ -294,11 +295,12 @@ contract RiskSplitLiquidationFacet is
             IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
+        // #821 — vault-lock the lender's share through the receive-side exemption
+        // so a flagged stored lender doesn't brick the liquidation; the proceeds
+        // park locked behind the claim-side freeze (self-guards a zero amount).
+        LibSanctionedLock.depositLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
             asset: loan.principalAsset,
             amount: lenderProceeds,
@@ -315,9 +317,9 @@ contract RiskSplitLiquidationFacet is
             );
         }
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+            LibSanctionedLock.depositLocked(
+                s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
+            );
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {

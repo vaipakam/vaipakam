@@ -9,6 +9,7 @@ import {LibConsolidation} from "../libraries/LibConsolidation.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibSettlement} from "../libraries/LibSettlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -313,6 +314,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // ensures the protocolTrackedVaultBalance counter ticks
             // up under the LENDER (the owner of the receiving vault,
             // not the borrower who's the payer).
+            // #821 — vault-lock: a flagged stored lender would otherwise brick
+            // this deposit (the receiving-vault screen reverts). Pin the
+            // receive-side exemption to `loan.lender` so the close-out completes
+            // and the borrower's debt clears; the proceeds land in the lender's
+            // OWN (protocol-tracked) vault, frozen behind the Tier-1 claim gate
+            // (the `claimAsLender` stored-owner screen) until the flag clears.
+            LibSanctionedLock.begin(s, loan.lender);
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultDepositERC20From.selector,
@@ -322,6 +330,9 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                     plan.lenderDue
                 ),
                 VaultDepositFailed.selector
+            );
+            LibSanctionedLock.end(
+                s, loan.lender, loanId, loan.principalAsset, plan.lenderDue
             );
 
             // Record lender's claimable (principal + interest). heldForLender handled by ClaimFacet.
@@ -421,6 +432,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 totalDue
             );
 
+            // #821 (Codex #832 r3 P1) — both withdrawals below pull the prepay
+            // from the repayer's (`msg.sender`) own vault. Arm the move-out
+            // exemption so a borrower flagged after init can still settle the
+            // rental repayment (Tier-2 stays open) — the prepay is pushed OUT to
+            // the already-screened treasury / lender, the payer loses custody.
+            LibSanctionedLock.beginMoveOut(s, msg.sender);
             // Treasury share: immediate from borrower's vault
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -445,12 +462,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 VaultWithdrawFailed.selector
             );
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.prepayAsset).safeTransfer(lenderVault, lenderShare);
-            // T-051 — Diamond-side transfer to lender's vault ticks
-            // the protocolTrackedVaultBalance counter so the
-            // subsequent claim's vaultWithdrawERC20 doesn't underflow.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, lenderShare);
+            LibSanctionedLock.endMoveOut(s);
+            // #821 (Codex #832 r2 P1) — vault-lock the lender's rental share so a
+            // flagged stored lender doesn't brick the rental repayment; the share
+            // lands in the lender's OWN vault, frozen behind the claim gate
+            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance
+            // so the subsequent claim's vaultWithdrawERC20 doesn't underflow).
+            LibSanctionedLock.depositLocked(
+                s, loan.lender, loanId, loan.prepayAsset, lenderShare
+            );
 
             // Record lender's claimable rental fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -560,11 +580,13 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 snap.treasuryCollateral +
                 snap.borrowerCollateral;
             if (held > 0) {
-                address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-                IERC20(loan.collateralAsset).safeTransfer(borrowerVault, held);
-                // T-051 — Diamond-side transfer to vault ticks the
-                // protocolTrackedVaultBalance counter.
-                LibVaipakam.recordVaultDeposit(loan.borrower, loan.collateralAsset, held);
+                // #821 (Codex #832 r2 P1) — vault-lock the restored collateral so
+                // a flagged stored borrower doesn't brick the fallback cure; it
+                // lands in the borrower's OWN vault, frozen behind the claim gate
+                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+                LibSanctionedLock.depositLocked(
+                    s, loan.borrower, loanId, loan.collateralAsset, held
+                );
                 // #569 Codex #572 round-5 P1 — RE-LIEN the restored
                 // collateral. The lien was released at default-entry
                 // (when the loan went FallbackPending), so the snapshot
@@ -687,7 +709,12 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lender-holder cannot receive protocol funds. Reverts
             // `SanctionedAddress`; the borrower's Tier-2 escape is a full
             // `repayLoan` (stays open, defers the lender proceeds to a
-            // sanctions-gated claim). No-op while the oracle is unset.
+            // sanctions-gated claim). No-op while the oracle is unset. The
+            // recipient is `ownerOf` (the current holder), and #821's position-NFT
+            // transfer restriction means a flagged wallet can't be that holder via
+            // a post-flag transfer — so screening the live recipient is sufficient;
+            // no stale stored-`loan.lender` screen is needed (it would wrongly
+            // freeze a legitimate pre-flag secondary-market buyer).
             LibVaipakam._assertNotSanctioned(lenderRecipient);
             IERC20(loan.principalAsset).safeTransferFrom(
                 msg.sender,
@@ -802,13 +829,28 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
             // lien (the prepay pool is drained by this very mechanism,
             // not protected by a lien), so no decrement here.
 
+            // #821 (Codex #832 r7 P2) — pay the LIVE lender-NFT holder, NOT the
+            // stored `loan.lender`. NFT-rental loans skip the eager consolidation
+            // at this function's start (`_isExcludedLive` non-ERC-20), so
+            // `loan.lender` can be a stale pre-transfer party; resolve + screen
+            // `ownerOf(lenderTokenId)` (matching the ERC-20 branch) so a flagged
+            // live holder is refused while a legitimate clean holder is paid.
+            address lenderRecipient =
+                IERC721(address(this)).ownerOf(loan.lenderTokenId);
+            LibVaipakam._assertNotSanctioned(lenderRecipient);
+            // #821 (Codex #832 r3 P1) — both deductions pull the prepay from the
+            // payer's (`msg.sender`) own vault. Arm the move-out exemption so a
+            // borrower flagged after init can still service the partial rental
+            // (Tier-2 stays open) — the prepay is pushed OUT to the lender /
+            // treasury, the payer loses custody.
+            LibSanctionedLock.beginMoveOut(LibVaipakam.storageSlot(), msg.sender);
             // Deduct from prepay (prepayAsset, not collateralAsset)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
                     VaultFactoryFacet.vaultWithdrawERC20.selector,
                     msg.sender,
                     loan.prepayAsset,
-                    loan.lender,
+                    lenderRecipient,
                     lenderShare
                 ),
                 VaultWithdrawFailed.selector
@@ -824,6 +866,7 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 ),
                 TreasuryTransferFailed.selector
             );
+            LibSanctionedLock.endMoveOut(LibVaipakam.storageSlot());
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryShare);
 
             unchecked {

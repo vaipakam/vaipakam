@@ -457,6 +457,22 @@ contract PrepayListingFacet is
         // Distribute proceeds.
         address lenderHolder = VaipakamNFTFacet(address(this))
             .ownerOf(loan.lenderTokenId);
+        // #821 (#825-r4 residual) — this Scenario-B settlement pays the LIVE
+        // lender holder its leg directly from the parallel-sale proceeds. The
+        // sign-time screen on the offer can't see this diamond-resolved holder,
+        // so a holder flagged after the listing was recorded would be paid here.
+        // Screen it at fill: the settlement runs inside the atomic Seaport fill
+        // (via the executor zone callback), so a revert aborts the whole fill —
+        // the buyer's funds are never committed, nothing is stranded.
+        // #821 (Codex #832) — screen the LIVE lender holder (the direct recipient
+        // of this leg). The borrower remainder leg below resolves the current
+        // borrower-position holder through `getOrCreateUserVault`, which screens
+        // that recipient too. No stale stored-party (`loan.lender`/`loan.borrower`)
+        // screen is needed: #821's position-NFT transfer restriction stops a
+        // flagged wallet from becoming a holder via a post-flag transfer, so a
+        // flagged party can't be paid here, while a legitimate pre-flag buyer
+        // (whom a stored-party screen would wrongly freeze) settles cleanly.
+        LibVaipakam._assertNotSanctioned(lenderHolder);
         address treasury = s.treasury;
         SafeERC20.safeTransfer(IERC20(principalAsset), lenderHolder, lenderLeg);
         SafeERC20.safeTransfer(IERC20(principalAsset), treasury, treasuryLeg);

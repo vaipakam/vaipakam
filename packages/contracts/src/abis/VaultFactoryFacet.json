@@ -1569,6 +1569,17 @@
   },
   {
     "type": "error",
+    "name": "SanctionedRecipientHasNoVault",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SanctionsOracleUnavailable",
     "inputs": []
   },

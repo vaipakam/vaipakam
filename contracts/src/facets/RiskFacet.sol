@@ -8,6 +8,7 @@ import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
@@ -707,16 +708,16 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         if (liquidity != LibVaipakam.LiquidityStatus.Liquid)
             revert NonLiquidAsset();
 
-        // Withdraw collateral to Diamond for swap
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                loan.collateralAmount
-            ),
-            VaultWithdrawFailed.selector
+        // Withdraw collateral to Diamond for swap. #821 (Codex #832 r3 P1) — the
+        // move-out-exempt withdraw so a borrower flagged after init doesn't brick
+        // the liquidation (collateral pushed OUT to the already-screened swap
+        // recipients; the flagged party loses custody).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            loan.collateralAmount
         );
         // #658 (Codex #680 P2) — the eager consolidation stamped the holder at
         // the full pre-liquidation VPFI balance; the withdrawal just above
@@ -860,14 +861,12 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, toTreasury);
         }
 
-        // Lender's proceeds deposited into lender's vault for claim
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            // T-051 — Diamond-side transfer to vault ticks the
-            // protocolTrackedVaultBalance counter.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
+        // Lender's proceeds deposited into lender's vault for claim. #821 —
+        // vault-lock so a flagged stored lender doesn't brick the liquidation
+        // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+        LibSanctionedLock.depositLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
 
         // Record lender's claimable proceeds. heldForLender handled by ClaimFacet.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -889,9 +888,9 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
 
         // Borrower surplus: any proceeds remaining after bonus + treasury + lender debt
         if (borrowerSurplus > 0) {
-            address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-            IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-            LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+            LibSanctionedLock.depositLocked(
+                s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
+            );
             // #661 — reserve a VPFI surplus against the unstake path until the
             // current borrower-position holder claims it. No-op for non-VPFI.
             if (loan.principalAsset == s.vpfiToken) {
@@ -1119,16 +1118,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // Withdraw only the slice from the borrower's vault. If the
         // swap reverts downstream, the wrapping `revert` here unwinds
         // the withdraw too (single tx, all storage rolled back) — no
-        // manual refund needed.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                loan.borrower,
-                loan.collateralAsset,
-                address(this),
-                swappedCollateral
-            ),
-            VaultWithdrawFailed.selector
+        // manual refund needed. #821 (Codex #832 r3 P1) — move-out-exempt so a
+        // borrower flagged after init doesn't brick the partial liquidation
+        // (collateral pushed OUT to screened swap recipients).
+        LibSanctionedLock.vaultWithdrawERC20MoveOut(
+            LibVaipakam.storageSlot(),
+            loan.borrower,
+            loan.collateralAsset,
+            address(this),
+            swappedCollateral
         );
         // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after
         // the partial collateral slice leaves the vault. No-op for non-VPFI.
@@ -1244,11 +1242,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        if (lenderProceeds > 0) {
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
+        // #821 — vault-lock the lender's share (self-guards a zero amount).
+        LibSanctionedLock.depositLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
         // BEFORE the mutation below. The dust waiver keys off this pre-existing
@@ -1559,12 +1556,10 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             LibFacet.recordTreasuryAccrual(loan.principalAsset, treasuryInterestFee);
         }
 
-        // Lender's proceeds to their vault.
-        address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-        if (lenderProceeds > 0) {
-            IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-        }
+        // Lender's proceeds to their vault. #821 — vault-lock for a flagged lender.
+        LibSanctionedLock.depositLocked(
+            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+        );
 
         // Record lender claim metadata for NFT-state tracking.
         s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -1601,15 +1596,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // borrower-position NFT holder via `ClaimFacet.claimAsBorrower`
         // (which releases the residual lien atomically with the payout).
         if (collateralSeized > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    loan.borrower,
-                    loan.collateralAsset,
-                    recipient,
-                    collateralSeized
-                ),
-                VaultWithdrawFailed.selector
+            // #821 (Codex #832 r3 P1) — move-out-exempt so a borrower flagged
+            // after init doesn't brick the discounted liquidation; the seized
+            // collateral is pushed OUT to the already-screened `recipient`.
+            LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                LibVaipakam.storageSlot(),
+                loan.borrower,
+                loan.collateralAsset,
+                recipient,
+                collateralSeized
             );
         }
         // #658 (Codex #680 P2) — re-stamp the holder's VPFI tier/staking after

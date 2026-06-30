@@ -97,15 +97,23 @@ That gate is what keeps bugs out of the oracle.
   examples for developers.
 - `TokenomicsTechSpec.md` — VPFI token economics + multi-chain model.
 - `WebsiteReadme.md` — website / product UX.
-- `SanctionsAndTermsGateMatrix.md` — cross-cutting action matrix for the two
-  live compliance gates on the retail deploy: address-level sanctions screening
-  (Tier-1 block / Tier-2 wind-down / fail-open) and the versioned Terms-of-Service
-  gate, per action family, plus the UI banner / Terms-prompt rules. (A focused
-  slice of the planned **Compliance** domain below.)
-- `KeeperAuthorityMatrix.md` — cross-cutting matrix of keeper delegation
-  authority: the allowed delegated lifecycle surface vs. the no-custody boundary
-  (a keeper, even with `KEEPER_ACTION_ALL`, can never claim, withdraw, transfer
-  position NFTs, or redirect funds), plus the permissionless-trigger exception.
+
+The two cross-cutting **analysis matrices** (action × actor) now live under
+`docs/DesignsAndPlans/` — they are code-derived analysis of how the live gates
+and the keeper boundary behave per action, not code-independent intended-behavior
+specs, so they belong with the design/analysis docs rather than the
+test-oracle FunctionalSpecs:
+
+- [`docs/DesignsAndPlans/SanctionsAndTermsGateMatrix.md`](../DesignsAndPlans/SanctionsAndTermsGateMatrix.md)
+  — cross-cutting action matrix for the two live compliance gates on the retail
+  deploy: address-level sanctions screening (Tier-1 block / Tier-2 wind-down /
+  fail-open) and the versioned Terms-of-Service gate, per action family, plus
+  the UI banner / Terms-prompt rules.
+- [`docs/DesignsAndPlans/KeeperAuthorityMatrix.md`](../DesignsAndPlans/KeeperAuthorityMatrix.md)
+  — cross-cutting matrix of keeper delegation authority: the allowed delegated
+  lifecycle surface vs. the no-custody boundary (a keeper, even with
+  `KEEPER_ACTION_ALL`, can never claim, withdraw, transfer position NFTs, or
+  redirect funds), plus the permissionless-trigger exception.
 
 **Planned — per-domain functional specs** (authored by the baseline
 epic; see below). One doc per functional domain:

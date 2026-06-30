@@ -10,6 +10,7 @@ import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -329,16 +330,16 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 // but time-based defaults are independent — the README treats non-repayment
                 // after grace as a separate default trigger regardless of collateral health.
 
-                // Withdraw collateral from borrower's vault
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        loan.borrower,
-                        loan.collateralAsset,
-                        address(this),
-                        loan.collateralAmount
-                    ),
-                    VaultWithdrawFailed.selector
+                // Withdraw collateral from borrower's vault. #821 (Codex #832 r3
+                // P1) — move-out-exempt so a borrower flagged after init doesn't
+                // brick the liquid time-based default (collateral pushed OUT to
+                // the already-screened swap recipients).
+                LibSanctionedLock.vaultWithdrawERC20MoveOut(
+                    s,
+                    loan.borrower,
+                    loan.collateralAsset,
+                    address(this),
+                    loan.collateralAmount
                 );
 
                 // README §3 lines 140–141 + §7 line 263: compute the oracle-
@@ -430,14 +431,12 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     IERC20(loan.principalAsset).safeTransfer(treasury, toTreasury);
                 }
 
-                // Deposit lender proceeds into lender's vault for claim
-                address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-                if (lenderProceeds > 0) {
-                    IERC20(loan.principalAsset).safeTransfer(lenderVault, lenderProceeds);
-                    // T-051 — Diamond-side transfer to vault ticks
-                    // the protocolTrackedVaultBalance counter.
-                    LibVaipakam.recordVaultDeposit(loan.lender, loan.principalAsset, lenderProceeds);
-                }
+                // Deposit lender proceeds into lender's vault for claim. #821 —
+                // vault-lock so a flagged stored lender doesn't brick the default
+                // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+                LibSanctionedLock.depositLocked(
+                    s, loan.lender, loanId, loan.principalAsset, lenderProceeds
+                );
 
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
                     asset: loan.principalAsset,
@@ -460,9 +459,9 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
 
                 // Borrower surplus
                 if (borrowerSurplus > 0) {
-                    address borrowerVault = LibFacet.getOrCreateVault(loan.borrower);
-                    IERC20(loan.principalAsset).safeTransfer(borrowerVault, borrowerSurplus);
-                    LibVaipakam.recordVaultDeposit(loan.borrower, loan.principalAsset, borrowerSurplus);
+                    LibSanctionedLock.depositLocked(
+                        s, loan.borrower, loanId, loan.principalAsset, borrowerSurplus
+                    );
                     // #661 — reserve a VPFI surplus against the unstake path until
                     // the current borrower-position holder claims it (mirror of
                     // the #592 lender-proceeds reserve above). No-op for non-VPFI.
@@ -488,8 +487,28 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             ) {
                 // Illiquid or value collapsed: Move collateral from borrower's vault to lender's vault
                 // so ClaimFacet.claimAsLender can withdraw from lender's vault consistently.
-                address lenderVault = LibFacet.getOrCreateVault(loan.lender);
+                // #821 — vault-lock the in-kind collateral into a flagged stored
+                // lender's vault rather than bricking the default. #832 r7 P3 —
+                // report the real parked payload in the lock event: ERC-1155
+                // carries its amount in `collateralQuantity` (`collateralAmount`
+                // is structurally zero for non-ERC-20 collateral), so pass the
+                // quantity for ERC-1155 to keep the reconciliation trail accurate.
+                address lenderVault = LibSanctionedLock.getOrCreateVaultLocked(
+                    s,
+                    loan.lender,
+                    loanId,
+                    loan.collateralAsset,
+                    loan.collateralAssetType == LibVaipakam.AssetType.ERC1155
+                        ? loan.collateralQuantity
+                        : loan.collateralAmount
+                );
 
+                // #821 (Codex #832 r2 P1) — the in-kind move WITHDRAWS the
+                // collateral from the borrower's vault, which resolves through the
+                // Tier-1-gated `getOrCreateUserVault`. Arm the from-side move-out
+                // exemption so a borrower flagged after init doesn't brick the
+                // default (the collateral is pushed OUT to the lender's vault).
+                LibSanctionedLock.beginMoveOut(s, loan.borrower);
                 if (loan.collateralAssetType == LibVaipakam.AssetType.ERC20) {
                     LibFacet.crossFacetCall(
                         abi.encodeWithSelector(
@@ -529,6 +548,7 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                         VaultWithdrawFailed.selector
                     );
                 }
+                LibSanctionedLock.endMoveOut(s);
 
                 // Record collateral claim for the lender
                 s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
@@ -582,6 +602,11 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
             // NFT stays in vault — returned to lender via ClaimFacet.claimAsLender
             // (NFT-gated: lender must own the Vaipakam position NFT to claim).
 
+            // #821 (Codex #832 r3 P1) — both prepay withdrawals below pull from
+            // the borrower's vault on the NFT-rental default. Arm the move-out
+            // exemption so a borrower flagged after init doesn't brick the default
+            // (the prepay is pushed OUT to the already-screened treasury / lender).
+            LibSanctionedLock.beginMoveOut(s, loan.borrower);
             // Buffer to treasury immediately (no claim needed for treasury)
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -610,17 +635,17 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 ),
                 VaultWithdrawFailed.selector
             );
+            LibSanctionedLock.endMoveOut(s);
 
             // Treasury fee from rental portion
             IERC20(loan.prepayAsset).safeTransfer(treasury, treasuryFee);
             LibFacet.recordTreasuryAccrual(loan.prepayAsset, treasuryFee);
 
-            // Lender gets remainder
-            address lenderVault = LibFacet.getOrCreateVault(loan.lender);
-            IERC20(loan.prepayAsset).safeTransfer(lenderVault, prepayToLender);
-            // T-051 — Diamond-side transfer to lender's vault ticks
-            // the protocolTrackedVaultBalance counter.
-            LibVaipakam.recordVaultDeposit(loan.lender, loan.prepayAsset, prepayToLender);
+            // Lender gets remainder. #821 — vault-lock for a flagged stored lender
+            // (T-051 — the Diamond-side transfer ticks protocolTrackedVaultBalance).
+            LibSanctionedLock.depositLocked(
+                s, loan.lender, loanId, loan.prepayAsset, prepayToLender
+            );
 
             // Record lender's claimable prepay fees. heldForLender handled by ClaimFacet.
             s.lenderClaims[loanId] = LibVaipakam.ClaimInfo({
