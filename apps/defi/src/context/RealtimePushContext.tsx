@@ -123,7 +123,13 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
     // possibly deferred-behind-an-in-flight-probe) refetch starts.
     let pendingNudgeAt: number | null = null;
     let attempt = 0;
+    // `everLive` is STICKY (ever reached live this effect) — it drives the
+    // `reconnecting` vs `polling` posture. `liveNow` is the CURRENT live latch,
+    // cleared on every close, used only to count reconnects (#845 Codex P3): a
+    // reconnect is counted once per loss of an established-live channel, not
+    // once per failed retry during an outage after the first live connect.
     let everLive = false;
+    let liveNow = false;
     // Set when a reconnect learns the channel is INTENTIONALLY inactive
     // (`hello.ingestActive === false` — DO ingest rolled back). The next
     // `onclose` then schedules a dormant retry and reports honest `polling`
@@ -208,6 +214,7 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
         if (frame.t === 'hello') {
           if (frame.ingestActive) {
             everLive = true;
+            liveNow = true;
             attempt = 0; // healthy channel — reset backoff
             setTransport('live');
           } else {
@@ -216,6 +223,7 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
             // following `onclose` goes dormant + reports honest `polling` (not
             // `reconnecting` off the now-stale `everLive`).
             everLive = false;
+            liveNow = false;
             intentionalInactive = true;
             setTransport('polling');
             try {
@@ -234,10 +242,13 @@ export function RealtimePushProvider({ children }: { children: ReactNode }) {
       socket.onclose = () => {
         if (cancelled) return;
         ws = null;
-        // #843 delta 2 — count only the loss of an ESTABLISHED live channel.
-        // The ingest-off path resets `everLive=false` before closing, and
-        // initial (never-live) connects leave it false — neither counts.
-        if (everLive) setReconnectCount((c) => c + 1);
+        // #843 delta 2 / #845 Codex P3 — count only the loss of a CURRENTLY-live
+        // channel. `liveNow` is set on `hello.ingestActive` and cleared on every
+        // close, so a failed reconnect during an outage (open→close before
+        // re-reaching live) doesn't inflate the count; the ingest-off path
+        // clears it before closing, and never-live connects leave it false.
+        if (liveNow) setReconnectCount((c) => c + 1);
+        liveNow = false;
         scheduleReconnect();
       };
       socket.onerror = () => {

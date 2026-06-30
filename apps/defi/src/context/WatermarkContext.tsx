@@ -227,6 +227,13 @@ export function WatermarkProvider({ children }: { children: ReactNode }) {
     // client OR a transport-only http fallback), so we only need to
     // gate on the diamond address being known for this chain.
     if (!diamond) {
+      // #845 Codex P3 — this early return skips `schedule()`, so nothing else
+      // rewrites the poll diagnostics. The poller is disabled on a no-Diamond
+      // chain (e.g. an undeployed registry entry), so clear the interval +
+      // push-backed flag here; otherwise the drawer keeps showing the previous
+      // chain's cadence for the whole unsupported-chain session.
+      diagnosticsRef.current.effectivePollIntervalMs = null;
+      diagnosticsRef.current.pushBacked = false;
       rescheduleRef.current = () => {};
       return;
     }
