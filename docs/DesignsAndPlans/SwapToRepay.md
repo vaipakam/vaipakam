@@ -1,6 +1,6 @@
 # Swap-to-Repay (T-090)
 
-> Status: **design — ready for implementation card filing**
+> Status: **implemented — v1 shipped under T-090**
 > Owners: contracts (new facet), libraries (knob), frontend (later card)
 > Related: T-086 prepay-listing (NFT-side marketplace path), Phase 7a
 > 4-DEX swap failover, T-051 direct-custody pattern.
@@ -483,9 +483,10 @@ After contracts merge:
 - **Runbook note** in `DeploymentRunbook.md` if the new config knob
   has a non-default desired-on-deploy value.
 
-## 16. Cards to file
+## 16. Implementation cards
 
-Parent feature card + four implementation sub-cards:
+Parent feature card + four implementation sub-cards, retained here as
+the implementation audit trail:
 
 - **Parent**: `T-090 — Swap collateral asset to prepay (umbrella)` —
   links to this design doc + tracks all sub-cards.
