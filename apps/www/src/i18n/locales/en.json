@@ -1434,7 +1434,7 @@
       "basics-custody": {
         "q": "Who actually holds my money while a loan is active?",
         "a1": "Nobody holds it in the traditional sense. Assets live in a smart-contract vault that only the user and the protocol's own rules can move. Each user has their own isolated vault — funds are never pooled with strangers — and every release of those funds follows a rule that was published on-chain before the user ever clicked \"accept\".",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; in an emergency, the team can pause protocol entry points to prevent new state changes until normal operation is restored."
       },
       "basics-vpfi-intro": {
         "q": "What is VPFI, and do I need any to use the app?",

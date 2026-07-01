@@ -789,7 +789,8 @@ Live-Status:
 - Consent-Flag auf Wallet-Ebene.
 
 VPFI im Vault zählt zu deinem Rabatt-Tier, solange es eingezahlt
-bleibt — es gibt keine separate "Deposit"-Aktion.
+bleibt — zusätzlich zum expliziten Deposit-Schritt unten gibt es
+keine separate Locking-Aktion.
 
 <a id="buy-vpfi.deposit"></a>
 
