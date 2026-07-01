@@ -746,13 +746,24 @@ actual broadcasts.
 ## #757 — near-real-time indexer ingest (Durable Object + webhook): operator activation
 
 The `apps/indexer` Worker ships with a per-chain ingest **Durable Object**
-(`ChainIngestDO`) and an inbound webhook route (`POST /hooks/chain-event`), but
-**both are OFF by default** — the cron keeps the legacy round-robin inline scan
-and the webhook 200-no-ops — until an operator explicitly enables them. This is a
-deliberate two-step rollout so deploying the new code never re-routes live ingest
-on its own. Nothing here is required for correctness; it only lowers staleness
-(round-robin minutes → ~1 min from the cron pinging every chain's DO, → seconds
-once the provider webhook fires).
+(`ChainIngestDO`) and an inbound webhook route (`POST /hooks/chain-event`). The
+DO path is gated by the `CHAIN_INGEST_VIA_DO` var: while unset/not `"true"` the
+cron keeps the legacy round-robin inline scan and the webhook 200-no-ops, so the
+CODE defaults off and merely deploying it never re-routes live ingest.
+
+> **Activation state of the checked-in config:** as of the #757 testnet rollout,
+> `apps/indexer/wrangler.jsonc` commits `CHAIN_INGEST_VIA_DO: "true"` plus the
+> per-chain `ALCHEMY_WEBHOOK_SIGNING_KEY_<chainId>` bindings — i.e. the checked-in
+> baseline has DO ingest **ON** for the active testnet chains. An environment
+> that uses this config as its baseline switches the cron to DO pings on the
+> first deploy; the secrets below must exist first (wrangler validates every
+> binding at deploy). To keep a fresh environment off, set the var back to a
+> non-`"true"` value (or drop it) and remove the signing-key bindings before
+> deploying.
+
+Nothing here is required for correctness; it only lowers staleness (round-robin
+minutes → ~1 min from the cron pinging every chain's DO, → seconds once the
+provider webhook fires).
 
 **To enable (per environment):**
 
@@ -772,6 +783,11 @@ printf '%s' "<base-sepolia signing key>" | wrangler secrets-store secret create 
   --name ALCHEMY_WEBHOOK_SIGNING_KEY_84532  --scopes workers --remote
 printf '%s' "<arb-sepolia signing key>"  | wrangler secrets-store secret create "$STORE" \
   --name ALCHEMY_WEBHOOK_SIGNING_KEY_421614 --scopes workers --remote
+printf '%s' "<bnb-testnet signing key>"  | wrangler secrets-store secret create "$STORE" \
+  --name ALCHEMY_WEBHOOK_SIGNING_KEY_97     --scopes workers --remote
+# apps/indexer/wrangler.jsonc binds _84532, _421614 AND _97, and wrangler
+# validates EVERY binding at deploy — so create all three (or remove a chain's
+# binding) before `wrangler deploy`, else it fails validating the missing one.
 
 # 2. In apps/indexer/wrangler.jsonc, ensure the PER-CHAIN bindings are present
 #    (a binding can only be added once its secret exists — wrangler validates at
