@@ -70,6 +70,6 @@ The [`../audits/`](../audits/) directory carries finalized audit deliverables wh
 
 ## Related
 
-- [`../README.md`](../README.md) — repo root README (currently carries the older whitepaper body; canonical whitepaper is in `apps/www`).
+- [`../README.md`](../README.md) — repo root product overview for quick orientation. The canonical technical whitepaper is [`../apps/www/src/content/whitepaper/Whitepaper.en.md`](../apps/www/src/content/whitepaper/Whitepaper.en.md).
 - [`../CLAUDE.md`](../CLAUDE.md) — AI-instruction twin of this directory's handbook.
 - [`../AGENTS.md`](../AGENTS.md) — shared agent-guidance file (Codex review commands).

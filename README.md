@@ -121,7 +121,7 @@ The app exposes:
 - Locked and free balances.
 - VPFI utility balances.
 - Asset rows that distinguish withdrawable funds from funds locked by offers, loans, intents, claims, or reservations.
-- Recovery tooling for unsolicited ERC-20 tokens sent directly to a vault, available through a deliberately hidden advanced route.
+- Recovery tooling for protocol-untracked, self-sent stuck ERC-20 tokens, available through a deliberately hidden advanced route.
 
 The vault interface is meant to prevent users from mistaking locked protocol capital for withdrawable wallet balance.
 
@@ -179,6 +179,8 @@ The coded network registry includes mainnet and testnet entries for:
 
 Only networks with deployed protocol addresses are treated as live protocol targets by the production app. Unsupported-chain connections are allowed, but the app shows switch-network guidance before money-moving actions.
 
+Current deploy state (July 1, 2026): live protocol deployments are testnet/local only. Mainnet network entries are supported targets in the app registry, not a statement that mainnet deployments are live. Third-party audit remains required before mainnet launch.
+
 ## Wallets and Transaction Safety
 
 The connected app supports browser wallets, mobile wallet flows, WalletConnect-style connections, Coinbase Wallet, injected wallets, and Safe app embedding where configured.
@@ -206,6 +208,8 @@ The app includes user-facing gates and notices for legal and operational safety:
 - Data Rights tools let users export or delete Vaipakam-namespaced browser storage, while making clear that public on-chain state cannot be erased by frontend action.
 
 Vaipakam is decentralized protocol software. Users remain responsible for understanding the assets they use, the jurisdictions they operate in, and the risks of lending, borrowing, renting, collateral, liquidation, and smart-contract interaction.
+
+Security-sensitive reports should use the private channels in [SECURITY.md](SECURITY.md), not public GitHub issues. Incident-response procedures are documented in [docs/ops/IncidentRunbook.md](docs/ops/IncidentRunbook.md).
 
 ## Transparency and Operations
 
