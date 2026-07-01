@@ -82,7 +82,7 @@ Tier ladder:
 
 Tier는 VPFI를 deposit하거나 withdraw하는 순간의 **post-change** vault
 balance를 기준으로 calculate되고, 각 loan의 전체 기간에 대해
-time-weighted 처리됩니다. Unstake는 내가 관여하는 모든 open loans에
+time-weighted 처리됩니다. 인출는 내가 관여하는 모든 open loans에
 대해 새로운 (낮은) balance로 rate를 즉시 re-stamp합니다 — 이전 (높은)
 tier가 계속 적용되는 grace window는 없습니다. 이는 loan 종료 직전에
 VPFI를 top up해 full-tier discount를 받고 몇 초 뒤 withdraw하는 exploit
@@ -680,7 +680,7 @@ Live status:
 - wallet-level consent flag.
 
 vault VPFI는 deposit되어 있는 동안 discount tier에 count됩니다 —
-별도의 "stake" action은 없습니다.
+별도의 "deposit" action은 없습니다.
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -693,9 +693,9 @@ chain에서는 앱이 classic approve + deposit pattern보다 single-signature
 path를 prefer합니다. 해당 chain에서 Permit2가 configured되어 있지 않다면
 cleanly fall back합니다.
 
-<a id="buy-vpfi.unstake"></a>
+<a id="buy-vpfi.withdraw"></a>
 
-### vault에서 VPFI unstake
+### vault에서 VPFI withdraw
 
 VPFI를 vault에서 wallet으로 다시 withdraw합니다. approval leg는 없습니다
 — protocol이 vault owner이며 자기 자신을 debit합니다. withdraw는 새로운
@@ -732,9 +732,9 @@ non-zero claim 또는 settlement로 trigger되는 lazy finalisation). window가
 
 <a id="rewards.withdraw-staked"></a>
 
-### Staked VPFI 인출
+### Vault VPFI 인출
 
-VPFI 섹션의 "vault에서 VPFI unstake"와 같은 interface입니다 — vault에서
+VPFI 섹션의 "vault에서 VPFI withdraw"와 같은 interface입니다 — vault에서
 wallet으로 VPFI를 다시 withdraw합니다. withdraw된 VPFI는 즉시 discount
 accumulator에서 빠집니다(모든 open loan에서 post-balance re-stamp).
 
@@ -1409,7 +1409,7 @@ user-only로 남습니다.
 
 ### "묶인 토큰"(stuck token)의 의미
 
-내 Vaipakam Vault 프록시는 내부 프로토콜 저장소입니다. 입금 주소가 아닙니다. 모든 프로토콜 지원 입금은 오퍼 생성, 대출 수락 또는 스테이킹 작업의 일부로 지갑에서 볼트로 자금을 가져오는 Vaipakam의 패싯 진입점을 통해 흐릅니다. 해당 흐름 외부에서 볼트에 도착한 토큰 — 지갑에서 직접 `IERC20.transfer`를 하거나 볼트 주소를 복사하여 붙여넣은 CEX 출금 등 — 은 프로토콜 장부 없이 그곳에 머물게 됩니다. 자산 뷰어는 프로토콜이 추적하는 잔액만 보여줌으로써 이를 숨깁니다.
+내 Vaipakam Vault 프록시는 내부 프로토콜 저장소입니다. 입금 주소가 아닙니다. 모든 프로토콜 지원 입금은 오퍼 생성, 대출 수락 또는 입금 작업의 일부로 지갑에서 볼트로 자금을 가져오는 Vaipakam의 패싯 진입점을 통해 흐릅니다. 해당 흐름 외부에서 볼트에 도착한 토큰 — 지갑에서 직접 `IERC20.transfer`를 하거나 볼트 주소를 복사하여 붙여넣은 CEX 출금 등 — 은 프로토콜 장부 없이 그곳에 머물게 됩니다. 자산 뷰어는 프로토콜이 추적하는 잔액만 보여줌으로써 이를 숨깁니다.
 
 토큰이 묶이는 두 가지 경로:
 
@@ -1421,7 +1421,7 @@ user-only로 남습니다.
 
 ### "오염 독식"(taint poisoning) 소개
 
-제3자 발신자가 제재 목록에 있는 경우, 비록 내가 들어온 토큰에 손을 대지 않았더라도 일반적인 온체인 분석 도구는 내 볼트를 "제재 인접"으로 표시할 수 있습니다. 온체인에서 이를 취소할 방법은 없습니다 — 전송 이벤트는 영구적입니다. Vaipakam의 내부(INTERNAL) 장부는 영향을 받지 않으므로(프로토콜 중개 입금만 추적하며, 더스트는 카운터에 들어오지 않음), 대출 / 스테이킹 / 클레임은 정상적으로 계속 작동합니다. 하지만 우리 회계 방식을 이해하지 못하는 외부 도구는 경고를 표시할 수 있습니다.
+제3자 발신자가 제재 목록에 있는 경우, 비록 내가 들어온 토큰에 손을 대지 않았더라도 일반적인 온체인 분석 도구는 내 볼트를 "제재 인접"으로 표시할 수 있습니다. 온체인에서 이를 취소할 방법은 없습니다 — 전송 이벤트는 영구적입니다. Vaipakam의 내부(INTERNAL) 장부는 영향을 받지 않으므로(프로토콜 중개 입금만 추적하며, 더스트는 카운터에 들어오지 않음), 대출 / 입금 / 클레임은 정상적으로 계속 작동합니다. 하지만 우리 회계 방식을 이해하지 못하는 외부 도구는 경고를 표시할 수 있습니다.
 
 <a id="stuck-recovery.dont-recover"></a>
 

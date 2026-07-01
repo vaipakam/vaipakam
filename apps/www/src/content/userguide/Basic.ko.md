@@ -382,9 +382,9 @@ discount를 unlock하려면 직접 VPFI를 vault로 옮겨야 합니다. 이는
 않습니다. 한 번의 transaction(또는 지원되는 chain에서는 single
 signature)이면 됩니다.
 
-<a id="buy-vpfi.unstake"></a>
+<a id="buy-vpfi.withdraw"></a>
 
-### vault에서 VPFI unstake
+### vault에서 VPFI withdraw
 
 VPFI를 wallet으로 다시 가져오고 싶다면 이 카드에서 vault로부터
 withdraw하면 됩니다. 주의: VPFI를 빼면 discount tier가 **즉시**
@@ -417,10 +417,10 @@ interaction-pool share는 하루에 한 번 settle되므로, 마지막 settlemen
 
 <a id="rewards.withdraw-staked"></a>
 
-### Staked VPFI 인출
+### Vault VPFI 인출
 
 VPFI를 vault에서 wallet으로 옮깁니다. wallet에 들어가면 discount
-tier에 더 이상 count되지 않습니다. VPFI 페이지의 "unstake"와 같은
+tier에 더 이상 count되지 않습니다. VPFI 페이지의 "withdraw"와 같은
 action입니다 — 편의를 위해 여기에도 둔 것입니다.
 
 ---

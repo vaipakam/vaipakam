@@ -6,6 +6,32 @@ Vaipakam is non-custodial at the user-action layer: protocol transactions are su
 
 This README is the product-facing overview. The canonical technical whitepaper rendered on the public website remains [apps/www/src/content/whitepaper/Whitepaper.en.md](apps/www/src/content/whitepaper/Whitepaper.en.md).
 
+## Legacy README Section Reference Map
+
+Older code comments, audit notes, and design docs may still cite `README §...` from the former technical whitepaper layout. Treat those citations as references to the canonical technical whitepaper and FunctionalSpecs sources below; the root README no longer carries those technical sections.
+
+| Legacy citation area | Current source |
+| --- | --- |
+| README §1 Introduction and motivation | `apps/www/src/content/whitepaper/Whitepaper.en.md` §1 |
+| README §2 System model, chain model, roles | `apps/www/src/content/whitepaper/Whitepaper.en.md` §2 |
+| README §3 Diamond architecture, facets, vaults, position NFTs | `apps/www/src/content/whitepaper/Whitepaper.en.md` §3 and `docs/adr/` architecture records |
+| README §4 Asset classification and active-network liquidity | `apps/www/src/content/whitepaper/Whitepaper.en.md` §4 and `docs/FunctionalSpecs/ProjectDetailsREADME.md` active-network liquidity rules |
+| README §5 Offer and loan lifecycle | `apps/www/src/content/whitepaper/Whitepaper.en.md` §5 and `docs/FunctionalSpecs/` workflow specs |
+| README §6 Risk engine | `apps/www/src/content/whitepaper/Whitepaper.en.md` §6 and `docs/DesignsAndPlans/ProgressiveRiskAccessDesign.md` |
+| README §7 Liquidation and fallback settlement | `apps/www/src/content/whitepaper/Whitepaper.en.md` §7 and liquidation-focused design docs under `docs/DesignsAndPlans/` |
+| README §8 Oracle stack | `apps/www/src/content/whitepaper/Whitepaper.en.md` §8 and `docs/DesignsAndPlans/OraclePolicy.md` |
+| README §9 NFT rental subsystem | `apps/www/src/content/whitepaper/Whitepaper.en.md` §9 |
+| README §10 Strategic flows | `apps/www/src/content/whitepaper/Whitepaper.en.md` §10 and matching `docs/FunctionalSpecs/` workflow coverage |
+| README §11 VPFI token and tokenomics | `apps/www/src/content/whitepaper/Whitepaper.en.md` §11 and `docs/FunctionalSpecs/TokenomicsTechSpec.md` |
+| README §12 Reward system | `apps/www/src/content/whitepaper/Whitepaper.en.md` §12 |
+| README §13 Cross-chain surface | `apps/www/src/content/whitepaper/Whitepaper.en.md` §13 and cross-chain design docs under `docs/DesignsAndPlans/` |
+| README §14 MEV protection | `apps/www/src/content/whitepaper/Whitepaper.en.md` §14 and `docs/DesignsAndPlans/MEVProtection.md` |
+| README §15 Governance and operations | `apps/www/src/content/whitepaper/Whitepaper.en.md` §15 and `docs/ops/` runbooks |
+| README §16 Frontend as safety layer | `apps/www/src/content/whitepaper/Whitepaper.en.md` §16 and `docs/FunctionalSpecs/WebsiteReadme.md` |
+| README §17 Verification and testing | `apps/www/src/content/whitepaper/Whitepaper.en.md` §17 plus workflow/test-scope docs under `docs/TestScopes/` |
+| README §18 References | `apps/www/src/content/whitepaper/Whitepaper.en.md` §18 |
+
+
 ## Product Overview
 
 Vaipakam provides a two-sided market where lenders and borrowers define their own terms instead of borrowing from a pooled money market.

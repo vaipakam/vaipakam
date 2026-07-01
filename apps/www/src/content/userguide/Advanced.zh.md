@@ -81,7 +81,7 @@ Tier ladder：
 
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
 vault balance 计算；随后在每笔 loan 的生命周期内按 time-weighted
-方式生效。unstake 会立即对您参与的每笔 open loan，用新的较低
+方式生效。withdraw 会立即对您参与的每笔 open loan，用新的较低
 balance re-stamp rate — 没有让旧的 (更高) tier 继续适用的 grace
 window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top up
 VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
@@ -619,7 +619,7 @@ bridge 到的那条 chain 上的 wallet。
 - Wallet 级 consent flag。
 
 只要 vault VPFI 保持 deposit 状态，它就会计入您的 discount tier
-— 没有单独的 "stake" 操作。
+— 没有单独的 "deposit" 操作。
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -632,9 +632,9 @@ vault deposit 始终必须是 explicit user action。在配置了 Permit2
 approve + deposit pattern；如果该 chain 未配置 Permit2，则会
 cleanly fall back。
 
-<a id="buy-vpfi.unstake"></a>
+<a id="buy-vpfi.withdraw"></a>
 
-### 从您的 vault unstake VPFI
+### 从您的 vault withdraw VPFI
 
 把 VPFI 从您的 vault withdraw 回 wallet。没有单独的 approval leg
 — protocol 持有 vault，并 debit 自身。withdraw 会基于新的 (较低)
@@ -671,7 +671,7 @@ contracts 之间。
 
 ### 从您的 vault 提取 VPFI
 
-与 VPFI 章节中 "从您的 vault unstake VPFI" 相同的 interface — 把
+与 VPFI 章节中 "从您的 vault withdraw VPFI" 相同的 interface — 把
 VPFI 从 vault withdraw 回 wallet。Withdrawn VPFI 会立即退出
 discount accumulator (在每笔 open loan 上 post-balance re-stamp)。
 
@@ -1325,7 +1325,7 @@ user-only。
 
 ### 什么是“被困代币”
 
-您的 Vaipakam Vault 代理是协议的内部存储，它**不是**存款地址。协议支持的每一项存款都必须通过 Vaipakam 的 Facet 入口点进行，这些入口点会在报价创建、贷款接受或质押操作中，将资金从您的钱包“拉取”到您的 vault。在这些流程之外到达 vault 的代币——例如直接从钱包进行的 `IERC20.transfer` 或复制粘贴 vault 地址进行的 CEX 提现——会在没有协议簿记的情况下停留在那里。资产查看器通过仅显示协议追踪的余额来隐藏这些代币。
+您的 Vaipakam Vault 代理是协议的内部存储，它**不是**存款地址。协议支持的每一项存款都必须通过 Vaipakam 的 Facet 入口点进行，这些入口点会在报价创建、贷款接受或存入操作中，将资金从您的钱包“拉取”到您的 vault。在这些流程之外到达 vault 的代币——例如直接从钱包进行的 `IERC20.transfer` 或复制粘贴 vault 地址进行的 CEX 提现——会在没有协议簿记的情况下停留在那里。资产查看器通过仅显示协议追踪的余额来隐藏这些代币。
 
 代币被困主要有两种方式：
 
@@ -1337,7 +1337,7 @@ user-only。
 
 ### 关于“污点污染”
 
-如果第三方发送者在制裁名单上，通用的链上分析工具可能会将您的 vault 标记为“制裁相关”，即使您从未接触过这些转入的代币。链上没有任何方法可以撤销这一操作——转账事件是永久性的。Vaipakam 的**内部**簿记不受影响（我们仅追踪协议介导的存款，粉尘永远不会进入我们的计数器），因此您的贷款/质押/索赔仍可正常进行。但外部工具由于不了解我们的会计机制，可能会显示警告。
+如果第三方发送者在制裁名单上，通用的链上分析工具可能会将您的 vault 标记为“制裁相关”，即使您从未接触过这些转入的代币。链上没有任何方法可以撤销这一操作——转账事件是永久性的。Vaipakam 的**内部**簿记不受影响（我们仅追踪协议介导的存款，粉尘永远不会进入我们的计数器），因此您的贷款/存入/索赔仍可正常进行。但外部工具由于不了解我们的会计机制，可能会显示警告。
 
 <a id="stuck-recovery.dont-recover"></a>
 

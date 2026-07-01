@@ -69,9 +69,9 @@
     "security": "보안",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFI 알아보기",
-    "vpfiStakeUnstake": "스테이킹 / 언스테이킹",
-    "vpfiStake": "스테이킹",
-    "vpfiUnstake": "언스테이킹",
+    "vpfiStakeUnstake": "입금 / 인출",
+    "vpfiStake": "입금",
+    "vpfiUnstake": "인출",
     "launchApp": "Vaipakam 실행",
     "toggleMenu": "메뉴 전환",
     "switchNetwork": "네트워크 전환",
@@ -1194,7 +1194,7 @@
     "notRegistered": "VPFI는 아직 {{chain}}의 Diamond에 등록되지 않았습니다. 관리자가 setVPFIToken을 호출하면 잔액과 활동이 여기에 표시됩니다.",
     "walletBalance": "지갑 VPFI 잔액",
     "vaultBalance": "Vault VPFI 잔액",
-    "vaultTooltip": "이 체인의 사용자별 Vault에 현재 스테이킹된 VPFI. 차입자 수수료 할인 Tier에 산입됩니다.",
+    "vaultTooltip": "이 체인의 사용자별 Vault에 현재 보관된 VPFI. 차입자 수수료 할인 Tier에 산입됩니다.",
     "shareCirculating": "유통 비중",
     "circulatingThisChain": "유통량(이 체인)",
     "remainingMintable": "남은 발행 가능량",
@@ -1242,9 +1242,9 @@
     "depositAmount": "입금할 VPFI 양",
     "useMaxVpfi": "최대({{amount}} VPFI) 사용",
     "depositButton": "Vault에 입금",
-    "unstakeTitle": "Vault에서 VPFI 언스테이크",
+    "unstakeTitle": "Vault에서 VPFI 인출",
     "unstakeSubtitle": "{{chain}}의 Vault에서 지갑으로 VPFI를 이동합니다. Vault 잔액이 Tier 임계값 아래로 떨어지면 할인 Tier도 떨어집니다.",
-    "unstakeAmount": "언스테이크할 VPFI 양",
+    "unstakeAmount": "인출할 VPFI 양",
     "unstakeButton": "지갑으로 출금"
   },
   "alertsPage": {
@@ -1507,7 +1507,7 @@
     "loanDetailsParties": "대여자와 차입자 주소, 자산을 보관하는 사용자별 Vault 프록시, 그리고 양측이 대출 개시 시 받은 포지션 NFT입니다. 각 NFT는 해당 측 청구권의 무기명 증서이며, 분실하면 청구권을 잃습니다.",
     "loanDetailsActionsLender": "이 대출에서 대여자가 사용 가능한 액션입니다. 대출 정산 후 청구(원금 + 이자를 {{treasuryFee}}% Treasury 차감 후 반환). 대출 도중 대여자 NFT를 매수자에게 매도하기 위해 조기 인출(Early Withdrawal) 개시. HF < 1이거나 유예 기간이 만료되면 누구나(대여자 포함) 청산을 트리거할 수 있습니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
     "loanDetailsActionsBorrower": "이 대출에서 차입자가 사용 가능한 액션입니다. 전액 또는 부분 상환, Preclose 직접(미상환분을 지금 지불) 또는 오프셋(DEX 통해 담보 매도), 새 조건의 대출로 리파이낸스. 청구는 전액 상환 시 담보를 반환하거나 미사용 VPFI 환급분을 반환합니다. 비활성화된 액션은 호버 시 사유를 표시합니다.",
-    "buyVpfiUnstake": "이 체인에서 VPFI를 Vault에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, unstake는 그 순간부터 수수료 할인 수식에 효력이 있습니다."
+    "buyVpfiUnstake": "이 체인에서 VPFI를 Vault에서 지갑으로 다시 옮깁니다. 할인 Tier를 실시간으로 낮춥니다 — 시간 가중 누산기가 새(더 낮은) 잔액으로 모든 열린 대출을 즉시 재스탬핑하므로, 인출은 그 순간부터 수수료 할인 수식에 효력이 있습니다."
   },
   "acceptReview": {
     "partialRepayLabel": "부분 상환",
