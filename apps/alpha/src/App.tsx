@@ -416,6 +416,7 @@ function App() {
           <AlphaNavLink to="/rent" label="NFT Rental" icon={<Box />} />
           <AlphaNavLink to="/offers" label="Offers" icon={<Store />} />
           <AlphaNavLink to="/claims" label="Claims" icon={<ReceiptText />} />
+          <AlphaNavLink to="/vault" label="Vault" icon={<LockKeyhole />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
           <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
@@ -435,6 +436,7 @@ function App() {
           <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/offers" element={<OfferBook wallet={wallet} onConnectWallet={connectWallet} />} />
           <Route path="/claims" element={<Claims wallet={wallet} onConnectWallet={connectWallet} />} />
+          <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/help" element={<Help />} />
@@ -740,6 +742,85 @@ const managedPositions: ManagedPosition[] = [
 ];
 
 
+
+
+type VaultTab = 'assets' | 'locks' | 'vpfi';
+
+const vaultAssets = [
+  { asset: 'mUSDC', free: '1,000', locked: '1,000', reason: 'Loan #2 collateral or settlement path' },
+  { asset: 'mWETH', free: '0.42', locked: '0.00', reason: 'Available for new collateral' },
+  { asset: 'VPFI', free: '42', locked: '0', reason: 'Interaction reward preview' },
+];
+
+const vpfiTiers = [
+  { tier: 'Starter', balance: '100 VPFI', discount: '2%' },
+  { tier: 'Active', balance: '1,000 VPFI', discount: '5%' },
+  { tier: 'Power', balance: '10,000 VPFI', discount: '10%' },
+];
+
+function VaultUtility({ wallet }: { wallet: WalletState }) {
+  const [tab, setTab] = useState<VaultTab>('assets');
+  const connected = Boolean(wallet.account);
+  const freeCount = vaultAssets.filter((asset) => asset.free !== '0').length;
+  const lockedCount = vaultAssets.filter((asset) => asset.locked !== '0' && asset.locked !== '0.00').length;
+
+  return (
+    <div className="vault-page">
+      <SectionHeading eyebrow="Vault and VPFI" title="Know what is free, locked, and useful" />
+      <p className="page-intro">
+        The vault view separates balances by what the user can do now. VPFI stays optional: useful for discounts and rewards, never a required first step.
+      </p>
+      <section className="claim-summary">
+        <div className="panel-surface">
+          <p className="eyebrow">Wallet</p>
+          <strong>{connected ? 'Connected' : 'Read only'}</strong>
+          <span>{wallet.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Base Sepolia' : 'Switch for actions'}</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Free assets</p>
+          <strong>{freeCount}</strong>
+          <span>available rows</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Locked assets</p>
+          <strong>{lockedCount}</strong>
+          <span>explain before action</span>
+        </div>
+      </section>
+
+      <section className="portfolio-tools panel-surface" aria-label="Vault tabs">
+        {(['assets', 'locks', 'vpfi'] as VaultTab[]).map((option) => (
+          <button className={tab === option ? 'selected' : ''} type="button" key={option} onClick={() => setTab(option)}>
+            {option}
+          </button>
+        ))}
+      </section>
+
+      {tab === 'vpfi' ? (
+        <section className="vpfi-grid">
+          {vpfiTiers.map((tier) => (
+            <article className="panel-surface vpfi-card" key={tier.tier}>
+              <p className="eyebrow">{tier.tier}</p>
+              <strong>{tier.discount}</strong>
+              <span>fee discount at {tier.balance}</span>
+            </article>
+          ))}
+        </section>
+      ) : (
+        <section className="vault-table panel-surface" aria-label="Vault assets">
+          {vaultAssets.map((asset) => (
+            <article className="vault-row" key={asset.asset}>
+              <strong>{asset.asset}</strong>
+              <span>Free: {asset.free}</span>
+              <span>Locked: {asset.locked}</span>
+              <p>{tab === 'locks' ? asset.reason : 'Available and locked balances shown separately.'}</p>
+            </article>
+          ))}
+        </section>
+      )}
+    </div>
+  );
+}
 
 type ClaimItem = {
   id: string;

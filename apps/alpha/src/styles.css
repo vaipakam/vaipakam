@@ -232,6 +232,7 @@ button {
 .advanced-page,
 .offers-page,
 .claims-page,
+.vault-page,
 .help-page {
   display: grid;
   gap: 22px;
@@ -619,6 +620,47 @@ dd {
 .claim-row button:disabled {
   cursor: default;
   opacity: 0.58;
+}
+
+.vault-table {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(100px, 0.55fr) minmax(100px, 0.55fr) minmax(220px, 1.4fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.vault-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.vpfi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.vpfi-card {
+  display: grid;
+  gap: 6px;
+}
+
+.vpfi-card strong {
+  font-size: 1.8rem;
+}
+
+.vpfi-card span {
+  color: var(--muted);
 }
 
 .principle-card {
@@ -1075,7 +1117,7 @@ dd {
   }
 
   .nav-list {
-    grid-template-columns: repeat(9, minmax(0, 1fr));
+    grid-template-columns: repeat(10, minmax(0, 1fr));
   }
 
   .nav-link {
@@ -1123,6 +1165,8 @@ dd {
   .position-row,
   .workbench-grid,
   .diagnostic-panel,
+  .vpfi-grid,
+  .vault-row,
   .claim-summary,
   .task-grid,
   .step-board,
