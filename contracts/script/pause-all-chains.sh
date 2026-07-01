@@ -332,7 +332,16 @@ BANNER
       if [ -z "$tl" ]; then
         echo "  [post-handover] (no .timelock recorded — pre-handover deploy; use the direct calls above)"
       elif ! command -v cast >/dev/null 2>&1; then
-        echo "  [post-handover] (cast unavailable — install foundry to emit timelock batch calldata; timelock=$tl)"
+        # A recorded .timelock means this chain is (or will be) post-handover,
+        # where the timelock OWNS unpause and the pre-handover direct calls above
+        # are NOT executable. Without cast we cannot emit the required
+        # scheduleBatch/executeBatch calldata — abort rather than green-light an
+        # incomplete unpause plan during a live recovery (#857 round-7).
+        echo "  [post-handover] ERROR: .timelock recorded ($tl) but 'cast' is unavailable —" >&2
+        echo "  cannot emit the timelock scheduleBatch/executeBatch calldata a post-handover" >&2
+        echo "  unpause REQUIRES (the direct calls above don't work once the timelock owns" >&2
+        echo "  unpause). Install foundry (cast) and re-run. Aborting." >&2
+        exit 1
       elif [ "${#addrs[@]}" -eq 0 ]; then
         echo "  [post-handover] (no pausable targets resolved for this chain)"
       else
