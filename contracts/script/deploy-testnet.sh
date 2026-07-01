@@ -1910,6 +1910,21 @@ phase_pause_rehearsal() {
         echo "  [post-handover] (no .timelock recorded — pre-handover; use the direct calls above)"
       elif [ "${#UADDRS[@]}" -eq 0 ]; then
         echo "  [post-handover] (no pausable targets resolved)"
+      elif ! command -v cast >/dev/null 2>&1; then
+        # `.timelock` is recorded in the contracts phase, BEFORE handover — and a
+        # testnet stays admin-owned (no handover), so this drill is pre-handover
+        # by default and the direct calls above are the valid path. Missing cast
+        # must NOT fail the drill; the timelock batch is educational here. Only
+        # abort if the operator explicitly rehearses the post-handover flow
+        # (POST_HANDOVER=1), where the direct calls wouldn't work (#857 round-9 P3).
+        if [ "${POST_HANDOVER:-0}" = "1" ]; then
+          echo "  [post-handover] ERROR: POST_HANDOVER=1 but 'cast' is unavailable — cannot emit" >&2
+          echo "  the timelock scheduleBatch/executeBatch calldata. Install foundry + re-run. Aborting." >&2
+          exit 1
+        fi
+        echo "  [post-handover] (cast unavailable — timelock batch calldata not emitted; this"
+        echo "                  testnet drill is pre-handover, so the direct calls above are the"
+        echo "                  valid path. Set POST_HANDOVER=1 to make missing cast fatal.)"
       else
         local UT UV UP USALT USCHED UEXEC
         UT=$(IFS=,; echo "${UADDRS[*]}")
