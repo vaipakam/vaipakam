@@ -535,28 +535,22 @@ EOF
     exit 1
   fi
 
-  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
-  # DeployVPFIToken's [3b] no-overwrite guard aborts (correctly) when a canonical
-  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
-  # Timelock broadcast, so a late abort would leave a PARTIAL mainnet deploy.
-  # Catch every one of [3b]'s abort conditions HERE, before any broadcast AND
-  # before the --fresh archive wipes the artifact: a canonical chain whose
-  # addresses.json already carries `.vpfiToken` must opt into a rotation to
-  # re-mint, else refuse up-front. Covers BOTH the --fresh re-deploy and the
-  # pre-seeded-token (`.vpfiToken` present, no `.diamond` yet) cases. On --fresh
-  # WITH the force flag the [0a] archive clears `.vpfiToken`, so [3b] then mints
-  # the rotated token cleanly.
+  # #857 — VPFI-token config validation: ONE pre-broadcast gate. The single
+  # source of truth for the fresh-mint / force-rotate / carry-forward decision
+  # (and every reuse-address check) lives in DeployVPFIToken._resolveMode(); run
+  # its no-broadcast preflight() HERE — before [2] DeployDiamond AND before the
+  # --fresh archive (so it can still read the recorded .vpfiToken) — so any
+  # invalid VPFI config fails BEFORE anything is broadcast (rather than at [3b],
+  # after Diamond + Timelock already landed → partial deploy). No-op on mirror
+  # chains. This replaces the former jq/cast preflight duplicated across the
+  # three deploy scripts.
   if [ "$IS_CANONICAL" = "1" ]; then
-    local preseeded_vpfi
-    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
-      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
-      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
-      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-      echo "       To deliberately rotate the canonical token re-run with" >&2
-      echo "       VPFI_TOKEN_FORCE_REDEPLOY=1; otherwise carry the existing token forward." >&2
-      exit 1
-    fi
+    echo "[1c] VPFI token preflight (mode validation, no broadcast)"
+    # Pass $FRESH through as VPFI_TOKEN_FRESH so _resolveMode() knows a --fresh
+    # redeploy is about to archive the recorded .vpfiToken — otherwise it would
+    # read the still-present old token and reject the documented --fresh mint.
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
   fi
 
   # ── Detect-and-refuse on a chain dir with a deployed Diamond ─────
@@ -744,10 +738,17 @@ EOF
   # belt-and-suspenders. The duplicate-mint refusal for a --fresh re-deploy is
   # enforced in the "VPFI re-mint preflight" gate, before any broadcast — refusing here
   # would leave a partial deploy since [2]/[3] already landed (#853 Codex P2).
+  # Pass $FRESH through as VPFI_TOKEN_FRESH so run()'s _resolveMode() mints fresh
+  # even when the archive DIDN'T clear a recorded `.vpfiToken` — the archive gate
+  # only fires when `.diamond` is present, so a pre-seeded `.vpfiToken`-only file
+  # survives a --fresh; without FRESH here run() would revert AFTER Diamond +
+  # Timelock already broadcast (#857 P1). Rotate/reuse stay driven by their own
+  # env vars (FRESH only relaxes the mint-path no-overwrite guard).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
@@ -854,6 +855,27 @@ Mainnet gate (CLAUDE.md "Cross-Chain Security Policy"): the per-lane
 rate limits this phase sets, and the CCT TokenAdminRegistry admin, are
 load-bearing — confirm CCIP_RATE_CAPACITY / CCIP_RATE_REFILL match the
 design §10 starting values before broadcasting.
+EOF
+    exit 1
+  fi
+
+  # #855 — CCIP_GUARDIAN is REQUIRED for ccip-wire. ConfigureCcip._setGuardians
+  # SKIPS silently when unset, leaving every GuardianPausable cross-chain
+  # contract (CcipMessenger / RewardMessenger / mirror VPFI) with NO guardian.
+  # Setting a guardian is owner-only, so once handover moves ownership to the
+  # timelock the fast Pauser-Safe pause lever (pause-all-chains.sh) can no longer
+  # freeze those contracts during an incident — it MUST be wired now, while ADMIN
+  # still owns them. On MAINNET this is especially load-bearing (the incident
+  # containment path). Single global address (the incident guardian / Pauser Safe).
+  if [ -z "${CCIP_GUARDIAN:-}" ] || [ "${CCIP_GUARDIAN:-}" = "0x0000000000000000000000000000000000000000" ]; then
+    cat >&2 <<EOF
+Refusing --phase ccip-wire: CCIP_GUARDIAN unset (or zero) in .env.
+
+ConfigureCcip wires the incident guardian onto every GuardianPausable
+cross-chain contract. Left unset they get NO guardian, and after handover
+only the governance timelock can pause them — defeating pause-all-chains.sh's
+fast containment path on mainnet. Set CCIP_GUARDIAN to the incident guardian
+address (the Pauser Safe) before running ccip-wire.
 EOF
     exit 1
   fi
@@ -984,7 +1006,13 @@ EOF
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
-  forge script script/DiamondConfigSpell.s.sol \
+  # #857 — a full mainnet deploy ALWAYS configures VPFI (there is no
+  # `--skip-vpfi` here). Force SKIP_VPFI=0 for the spell so a stale
+  # SKIP_VPFI=1 left in the shared .env / a prior --skip-vpfi run can't
+  # silently skip ConfigureVPFIToken/RewardReporter/VPFIBuy while the
+  # configure phase still reports success.
+  SKIP_VPFI=0 \
+    forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
   mark_phase_done "configure"

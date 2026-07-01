@@ -114,8 +114,12 @@ contract ConfigureRewardReporter is Script {
             rewardMessenger = artifactValue;
         } else {
             // Neither — load the reverting reader to produce the usual
-            // env-fallback error path (`REWARD_MESSENGER_ADDRESS` env
-            // var or addresses.json missing).
+            // env-fallback error path (`<PREFIX>REWARD_MESSENGER_ADDRESS` env var
+            // or `.rewardMessenger` artifact missing). This FAILS LOUD by design:
+            // a missing reward messenger on a normal deploy must not be silently
+            // configured-around. The `--skip-vpfi` case (no cross-chain stack)
+            // never reaches this script — `DiamondConfigSpell` skips the
+            // VPFI-dependent children as a group when SKIP_VPFI=1 (#857).
             rewardMessenger = Deployments.readRewardMessenger();
         }
         // Defence-in-depth (PR #272 round 4): apply the messenger

@@ -49,10 +49,15 @@ contract ConfigureVPFIToken is Script {
         address diamond = Deployments.readDiamond();
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
 
-        // Resolve THIS chain's VPFI token: canonical hosts the real
-        // `.vpfiToken`; a mirror holds the Burn/Mint `.vpfiMirror`.
+        // Resolve THIS chain's VPFI token: canonical hosts the real `.vpfiToken`
+        // (artifact OR the documented `<CHAIN>_VPFI_TOKEN_ADDRESS` env fallback);
+        // a mirror holds the Burn/Mint `.vpfiMirror`. An absent token FAILS LOUD:
+        // a missing/corrupt artifact on a normal deploy must NOT silently leave
+        // `s.vpfiToken` unset. The `--skip-vpfi` case (no VPFI stack) never
+        // reaches this script — `DiamondConfigSpell` skips it as a group when
+        // SKIP_VPFI=1 (#857) — so no per-child skip logic is needed here.
         address token = canonical
-            ? Deployments.readVpfiToken()
+            ? _resolveCanonicalToken()
             : Deployments.readVpfiMirrorOptional();
         require(
             token != address(0),
@@ -95,6 +100,20 @@ contract ConfigureVPFIToken is Script {
             canonical
                 ? "VPFI token registered + canonical flag set."
                 : "Mirror VPFI token registered (canonical flag left false)."
+        );
+    }
+
+    /// @dev Resolve the canonical `.vpfiToken` from the artifact, falling back to
+    ///      the documented chain-prefixed `<CHAIN>_VPFI_TOKEN_ADDRESS` env var
+    ///      (the legacy/bootstrap path `readVpfiToken()` honours). Non-reverting:
+    ///      returns address(0) when both are absent, so the caller can decide
+    ///      between an explicit `--skip-vpfi` skip and a fail-loud revert (#857).
+    function _resolveCanonicalToken() internal view returns (address) {
+        address a = Deployments.readVpfiTokenOptional();
+        if (a != address(0)) return a;
+        return vm.envOr(
+            string.concat(Deployments.envPrefix(), "VPFI_TOKEN_ADDRESS"),
+            address(0)
         );
     }
 }

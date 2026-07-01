@@ -668,24 +668,20 @@ EOF
     exit 1
   fi
 
-  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
-  # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical
-  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
-  # Timelock broadcast, so a late abort leaves a PARTIAL deploy. The
-  # existing-diamond gate below only catches a prior `.diamond`; a PRE-SEEDED
-  # `.vpfiToken` with no `.diamond` yet slips through to [3b]. Refuse that here,
-  # before any broadcast. --fresh is exempt: it archives addresses.json (clearing
-  # `.vpfiToken`) and the [3b] step re-mints under the FRESH-derived force flag.
-  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
-    local preseeded_vpfi
-    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ]; then
-      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
-      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
-      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-      echo "       Re-deploy with --fresh (archives + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
-      exit 1
-    fi
+  # #857 — VPFI-token config validation: ONE pre-broadcast gate. The single
+  # source of truth for the fresh-mint / force-rotate / carry-forward decision
+  # (and every reuse-address check) lives in DeployVPFIToken._resolveMode(); run
+  # its no-broadcast preflight() HERE — before [2] DeployDiamond AND before the
+  # --fresh archive (so it can still read the recorded .vpfiToken) — so any
+  # invalid VPFI config fails BEFORE anything is broadcast. No-op on mirror
+  # chains. Replaces the former jq/cast preflight duplicated across the scripts.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo "[1c] VPFI token preflight (mode validation, no broadcast)"
+    # Pass $FRESH through as VPFI_TOKEN_FRESH so _resolveMode() knows a --fresh
+    # redeploy is about to archive the recorded .vpfiToken — otherwise it would
+    # read the still-present old token and reject the documented --fresh mint.
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
   fi
 
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
@@ -884,13 +880,20 @@ EOF
   # at [4] unless a token was hand-deployed first (#853 Codex P1). Mirror chains
   # skip it — they mint their own Burn/Mint VPFIMirrorToken inside [4]. The
   # DeployVPFIToken script itself hard-guards to canonical chain ids, so this
-  # IS_CANONICAL gate is belt-and-suspenders. On a --fresh redeploy the prior
-  # `.vpfiToken` artifact is intentionally orphaned, so authorize the overwrite;
-  # otherwise the script refuses to mint a second 23M canonical supply.
+  # IS_CANONICAL gate is belt-and-suspenders. The mode (fresh-mint / rotate /
+  # reuse) was already validated by the [1c] preflight; no FORCE injection is
+  # needed. Pass $FRESH through as VPFI_TOKEN_FRESH so run()'s _resolveMode()
+  # mints fresh even when the archive above DIDN'T clear a recorded `.vpfiToken`
+  # — the detect-and-refuse/archive block only fires when `.diamond` is present,
+  # so a pre-seeded `.vpfiToken`-only file survives a --fresh; without FRESH here
+  # run() would revert AFTER Diamond+Timelock already broadcast (#857 P1). A
+  # deliberate rotate/reuse is still driven by VPFI_TOKEN_FORCE_REDEPLOY /
+  # VPFI_TOKEN_REUSE_ADDRESS, which run() reads directly (FRESH only relaxes the
+  # mint-path no-overwrite guard; it does not touch the reuse-match).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    VPFI_TOKEN_FORCE_REDEPLOY="$([ "$FRESH" = "1" ] && echo 1 || echo "${VPFI_TOKEN_FORCE_REDEPLOY:-0}")" \
+    VPFI_TOKEN_FRESH="$FRESH" \
       forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
 
@@ -1042,6 +1045,27 @@ EOF
     exit 1
   fi
 
+  # #855 — CCIP_GUARDIAN is REQUIRED for ccip-wire. ConfigureCcip._setGuardians
+  # SKIPS silently when it's unset, leaving every GuardianPausable cross-chain
+  # contract (CcipMessenger / RewardMessenger / mirror VPFI) with NO guardian.
+  # Setting a guardian is owner-only, so once handover moves ownership to the
+  # timelock the fast Pauser-Safe pause lever (pause-all-chains.sh) can no longer
+  # freeze those contracts during an incident — it MUST be wired now, while ADMIN
+  # still owns them. The guardian is a single global address (the incident
+  # guardian, typically the Pauser Safe), the same on every chain.
+  if [ -z "${CCIP_GUARDIAN:-}" ] || [ "${CCIP_GUARDIAN:-}" = "0x0000000000000000000000000000000000000000" ]; then
+    cat >&2 <<EOF
+Refusing --phase ccip-wire: CCIP_GUARDIAN unset (or zero) in .env.
+
+ConfigureCcip wires the incident guardian onto every GuardianPausable
+cross-chain contract. Left unset they get NO guardian, and after handover
+only the governance timelock can pause them — defeating pause-all-chains.sh's
+fast containment path. Set CCIP_GUARDIAN to the incident guardian address
+(typically the Pauser Safe) before running ccip-wire.
+EOF
+    exit 1
+  fi
+
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — ccip-wire  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
@@ -1171,7 +1195,13 @@ EOF
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
-  forge script script/DiamondConfigSpell.s.sol \
+  # #857 — a full testnet deploy ALWAYS configures VPFI (there is no
+  # `--skip-vpfi` here). Force SKIP_VPFI=0 for the spell so a stale
+  # SKIP_VPFI=1 left in the shared .env / a prior --skip-vpfi run can't
+  # silently skip ConfigureVPFIToken/RewardReporter/VPFIBuy while the
+  # configure phase still reports success.
+  SKIP_VPFI=0 \
+    forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
   mark_phase_done "configure"
@@ -1849,20 +1879,79 @@ phase_pause_rehearsal() {
     unpause-calldata)
       echo "═══════════════════════════════════════════════════════════════"
       echo "deploy-testnet.sh — pause-rehearsal UNPAUSE-CALLDATA  ($CHAIN_SLUG)"
-      echo "  Cleanup phase. Sign these via Pauser Safe to unpause."
+      echo "  Cleanup phase. Unpause is deliberately owner-only (#857). WHO the"
+      echo "  owner is depends on handover state, and the calldata differs:"
+      echo "   • PRE-handover  (testnet rehearsal): admin/Pauser EOA calls"
+      echo "     unpause() DIRECTLY on each contract (first block)."
+      echo "   • POST-handover (mainnet cutover done): the governance TIMELOCK"
+      echo "     queues scheduleBatch/executeBatch (second block)."
+      echo "  This mirrors the real pause-all-chains.sh --mode unpause path so"
+      echo "  operators practise the exact recovery they'll run on mainnet."
       echo "═══════════════════════════════════════════════════════════════"
       echo
       local UNPAUSE_SELECTOR
       UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
-      printf "  %-22s %s\n" "Contract" "to / data"
-      printf "  %-22s %s\n" "----------------------" "-------------------------------------------"
+      local ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
+      local TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
+      local RUN_NONCE; RUN_NONCE="$(date +%s)"
+      # (1) PRE-handover: direct owner call on each contract.
+      echo "  [pre-handover] admin/Pauser EOA -> unpause() direct:"
+      local UADDRS=()
       for ENTRY in "${PAUSE_TARGETS[@]}"; do
         local KEY="${ENTRY%%:*}"
         local ADDR="${ENTRY#*:}"
-        printf "  %-22s to=%s\n" "$KEY" "$ADDR"
-        printf "  %-22s data=%s\n" "" "$UNPAUSE_SELECTOR"
-        echo
+        printf "    %-20s to=%s data=%s\n" "$KEY" "$ADDR" "$UNPAUSE_SELECTOR"
+        UADDRS+=("$ADDR")
       done
+      # (2) POST-handover: ONE atomic timelock batch (matches pause-all-chains.sh).
+      local TL
+      TL=$(jq -r '.timelock // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+      if [ -z "$TL" ]; then
+        echo "  [post-handover] (no .timelock recorded — pre-handover; use the direct calls above)"
+      elif [ "${#UADDRS[@]}" -eq 0 ]; then
+        echo "  [post-handover] (no pausable targets resolved)"
+      elif ! command -v cast >/dev/null 2>&1; then
+        # `.timelock` is recorded in the contracts phase, BEFORE handover — and a
+        # testnet stays admin-owned (no handover), so this drill is pre-handover
+        # by default and the direct calls above are the valid path. Missing cast
+        # must NOT fail the drill; the timelock batch is educational here. Only
+        # abort if the operator explicitly rehearses the post-handover flow
+        # (POST_HANDOVER=1), where the direct calls wouldn't work (#857 round-9 P3).
+        if [ "${POST_HANDOVER:-0}" = "1" ]; then
+          echo "  [post-handover] ERROR: POST_HANDOVER=1 but 'cast' is unavailable — cannot emit" >&2
+          echo "  the timelock scheduleBatch/executeBatch calldata. Install foundry + re-run. Aborting." >&2
+          exit 1
+        fi
+        echo "  [post-handover] (cast unavailable — timelock batch calldata not emitted; this"
+        echo "                  testnet drill is pre-handover, so the direct calls above are the"
+        echo "                  valid path. Set POST_HANDOVER=1 to make missing cast fatal.)"
+      else
+        local UT UV UP USALT USCHED UEXEC
+        UT=$(IFS=,; echo "${UADDRS[*]}")
+        UV=$(printf '0,%.0s' $(seq "${#UADDRS[@]}")); UV="${UV%,}"
+        UP=$(printf "$UNPAUSE_SELECTOR,%.0s" $(seq "${#UADDRS[@]}")); UP="${UP%,}"
+        if [ -n "${UNPAUSE_TIMELOCK_SALT:-}" ]; then
+          USALT="$UNPAUSE_TIMELOCK_SALT"
+        elif ! USALT=$(cast keccak "vaipakam-unpause-${CHAIN_SLUG}-${RUN_NONCE}" 2>/dev/null); then
+          echo "  ERROR: cast keccak failed computing the timelock salt — aborting." >&2
+          exit 1
+        fi
+        if ! USCHED=$(cast calldata "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
+          "[$UT]" "[$UV]" "[$UP]" "$ZERO32" "$USALT" "$TL_DELAY" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode scheduleBatch — aborting (check cast version)." >&2
+          exit 1
+        fi
+        if ! UEXEC=$(cast calldata "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
+          "[$UT]" "[$UV]" "[$UP]" "$ZERO32" "$USALT" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode executeBatch — aborting." >&2
+          exit 1
+        fi
+        echo "  [post-handover] governance timelock ($TL) -> scheduleBatch then executeBatch:"
+        echo "    salt=$USALT   delay=$TL_DELAY s (must be >= getMinDelay())"
+        echo "    [1] queue:   to=$TL data=$USCHED"
+        echo "    [2] execute: to=$TL data=$UEXEC   (after >= $TL_DELAY s, same salt)"
+      fi
+      echo
       # Clear the sentinel so a future drill starts fresh.
       rm -f "$SENTINEL"
       ;;

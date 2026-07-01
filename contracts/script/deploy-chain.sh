@@ -490,6 +490,31 @@ snapshot_addresses() {
 # the indexer Worker's deploy block — instead of via a now-deleted
 # external script.
 
+# #857 — VPFI-token config validation: ONE pre-broadcast gate, run BEFORE the
+# --fresh cleanup below (so it can still read the recorded .vpfiToken for the
+# carry-forward match) AND before any broadcast. The single source of truth for
+# the fresh-mint / force-rotate / carry-forward decision + every reuse-address
+# check lives in DeployVPFIToken._resolveMode(); its no-broadcast preflight()
+# fails loud on any invalid VPFI config here. No-op on mirror chains / --skip-vpfi.
+# Skipped ONLY on a --resume run whose `vpfitoken` step already completed: the
+# recorded .vpfiToken is then legitimately present (step [3b] landed it), the
+# token step below short-circuits anyway, and re-running preflight would reject
+# that recorded token and block the documented resume-at-a-later-step flow.
+# A --fresh redeploy MUST still run the preflight (pre-broadcast validation of an
+# invalid REUSE address / reuse+force conflict BEFORE Diamond+Timelock land) — so
+# force it on when FRESH=1. `step_done` already gates on RESUME=1 (and --fresh /
+# --resume are mutually exclusive), so a stale marker from a prior deploy can't
+# suppress it on --fresh; the explicit FRESH short-circuit makes that invariant
+# self-evident and robust to any future step_done change (#857 round-9).
+if [ "$IS_CANONICAL" = "1" ] && [ "$SKIP_VPFI" = "0" ] && { [ "$FRESH" = "1" ] || ! step_done "vpfitoken"; }; then
+  echo "[0·pre] VPFI token preflight (mode validation, no broadcast)"
+  # Pass $FRESH through as VPFI_TOKEN_FRESH so _resolveMode() knows a --fresh
+  # redeploy is about to archive the recorded .vpfiToken — otherwise it would
+  # read the still-present old token and reject the documented --fresh mint.
+  VPFI_TOKEN_FRESH="$FRESH" \
+    forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
+fi
+
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
@@ -548,27 +573,8 @@ if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "
   echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
 fi
 
-# ── VPFI re-mint preflight (#853 Codex P2) ────────────────────────────
-# DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical `.vpfiToken`
-# is already recorded — but [3b] runs AFTER [2] Diamond + [3] Timelock broadcast,
-# so a late abort would leave a PARTIAL deploy. The [2b] existing-diamond gate
-# only catches a prior `.diamond`; a PRE-SEEDED `.vpfiToken` with no `.diamond`
-# yet slips through to [3b]. Refuse that here, before any broadcast, matching the
-# tiered scripts. Only when [3b] will actually run (canonical, VPFI not skipped,
-# marker absent). --fresh is exempt (it wipes addresses.json + markers, so [3b]
-# re-mints); an explicit VPFI_TOKEN_FORCE_REDEPLOY=1 (propagated to the forge
-# subprocess) is the deliberate rotation opt-in.
-if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ] && ! step_done "vpfitoken" \
-   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
-  PRESEEDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  if [ -n "$PRESEEDED_VPFI" ] && [ "$PRESEEDED_VPFI" != "null" ]; then
-    echo "ERROR: a canonical VPFI token ($PRESEEDED_VPFI) is already recorded on $CHAIN_SLUG." >&2
-    echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
-    echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-    echo "       Re-run with --fresh (wipes + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
-    exit 1
-  fi
-fi
+# (The VPFI-token mode validation runs as a single pre-broadcast preflight() call
+# BEFORE the --fresh cleanup above — see "[0·pre] VPFI token preflight". #857.)
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
@@ -658,7 +664,12 @@ if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
   else
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    # Pass $FRESH -> VPFI_TOKEN_FRESH so run() mints fresh if a recorded token
+    # survives a --fresh. deploy-chain's [0] cleanup archives the whole file
+    # unconditionally (unlike testnet/mainnet, whose archive gates on .diamond),
+    # so this is defensive here — kept for parity with the other wrappers (#857).
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
     snapshot_addresses "post-vpfitoken"
     mark_done "vpfitoken"
   fi
@@ -1293,11 +1304,25 @@ echo
 echo "Follow-up steps NOT in this script:"
 echo "  1. REQUIRED — Diamond-side configure (this script deploys the VPFI"
 echo "     token in [3b]/[4] but does NOT register it or wire oracles):"
-echo "        forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
+# Prefix SKIP_VPFI=0 explicitly: DiamondConfigSpell reads SKIP_VPFI from the
+# global env, so a stale SKIP_VPFI=1 left in the shared .env (from an earlier
+# --skip-vpfi run in the same shell) would otherwise silently skip
+# ConfigureVPFIToken/RewardReporter/VPFIBuy while the configure still reports
+# success — the same footgun the mainnet/testnet wrappers guard against by
+# forcing SKIP_VPFI=0. A --skip-vpfi deploy overrides this to =1 below. (#857 r9)
+echo "        SKIP_VPFI=0 forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
 echo "     Runs ConfigureVPFIToken (sets s.vpfiToken + the canonical flag so"
 echo "     TreasuryFacet.mintVPFI and every token-aware guard work), plus"
 echo "     ConfigureOracle / RewardReporter / VPFIBuy / NFT URIs. WITHOUT this"
 echo "     the Diamond leaves s.vpfiToken unset and token paths stay disabled."
+if [ "$SKIP_VPFI" = "1" ]; then
+echo "     NOTE: this was a --skip-vpfi deploy (no VPFI/cross-chain stack), so"
+echo "     prefix SKIP_VPFI=1 (instead of the =0 shown above) — all THREE VPFI children"
+echo "     (ConfigureVPFIToken + ConfigureRewardReporter + ConfigureVPFIBuy)"
+echo "     then SKIP gracefully as a group (they otherwise fail loud on the"
+echo "     missing .vpfiToken/.rewardMessenger artifacts). ConfigureOracle +"
+echo "     NFT URIs still run."
+fi
 echo "  2. CCIP lane + channel wiring (after EVERY chain in your"
 echo "     topology has had this script run):"
 echo "        CCIP_LANE_CHAIN_IDS=<other chain ids> \\"
