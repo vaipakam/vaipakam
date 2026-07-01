@@ -309,6 +309,8 @@ BANNER
     echo "Selector:      unpause()  =  $UNPAUSE_SELECTOR"
     echo "Timelock delay:$TL_DELAY s (override UNPAUSE_TIMELOCK_DELAY; must be >= getMinDelay())"
     echo "Salt nonce:    $RUN_NONCE (per-chain salt = keccak(vaipakam-unpause-<slug>-$RUN_NONCE); override UNPAUSE_TIMELOCK_SALT)"
+    echo "Handover:      set POST_HANDOVER=1 for chains where the timelock already owns unpause"
+    echo "               (makes missing-cast a hard failure; default treats it as pre-handover)"
     echo
 
     for slug in "${CHAINS[@]}"; do
@@ -332,16 +334,30 @@ BANNER
       if [ -z "$tl" ]; then
         echo "  [post-handover] (no .timelock recorded — pre-handover deploy; use the direct calls above)"
       elif ! command -v cast >/dev/null 2>&1; then
-        # A recorded .timelock means this chain is (or will be) post-handover,
-        # where the timelock OWNS unpause and the pre-handover direct calls above
-        # are NOT executable. Without cast we cannot emit the required
-        # scheduleBatch/executeBatch calldata — abort rather than green-light an
-        # incomplete unpause plan during a live recovery (#857 round-7).
-        echo "  [post-handover] ERROR: .timelock recorded ($tl) but 'cast' is unavailable —" >&2
-        echo "  cannot emit the timelock scheduleBatch/executeBatch calldata a post-handover" >&2
-        echo "  unpause REQUIRES (the direct calls above don't work once the timelock owns" >&2
-        echo "  unpause). Install foundry (cast) and re-run. Aborting." >&2
-        exit 1
+        # A recorded `.timelock` does NOT by itself mean this chain is
+        # post-handover: DeployTimelock records it in the contracts phase, while
+        # Handover.s.sol grants UNPAUSER_ROLE / transfers Ownable ownership to it
+        # only later. We can't confirm that ownership on-chain here (no cast), so
+        # infer handover state from the operator's explicit POST_HANDOVER signal:
+        #   - POST_HANDOVER=1 → the timelock OWNS unpause and the direct calls
+        #     above are NOT executable; without cast we can't emit the required
+        #     timelock calldata → abort rather than green-light an incomplete
+        #     recovery plan (#857 round-7).
+        #   - default (pre-handover, e.g. testnets that stay admin-owned) → the
+        #     direct unpause() calls above ARE the valid path, so a missing cast
+        #     is non-fatal; just note the timelock block couldn't be emitted
+        #     (#857 round-8 P3).
+        if [ "${POST_HANDOVER:-0}" = "1" ]; then
+          echo "  [post-handover] ERROR: POST_HANDOVER=1 but 'cast' is unavailable — cannot emit" >&2
+          echo "  the timelock scheduleBatch/executeBatch calldata this chain requires (the direct" >&2
+          echo "  calls above don't work once the timelock owns unpause). Install foundry (cast)" >&2
+          echo "  and re-run. Aborting." >&2
+          exit 1
+        fi
+        echo "  [post-handover] (cast unavailable — timelock batch calldata not emitted; the"
+        echo "                  pre-handover direct calls above are valid here. If this chain is"
+        echo "                  already handed over, install foundry + re-run, or set"
+        echo "                  POST_HANDOVER=1 to make this a hard failure. timelock=$tl)"
       elif [ "${#addrs[@]}" -eq 0 ]; then
         echo "  [post-handover] (no pausable targets resolved for this chain)"
       else
