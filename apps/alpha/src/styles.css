@@ -148,6 +148,31 @@ button {
   max-width: 1280px;
 }
 
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.wallet-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.wallet-pill strong {
+  color: var(--brand-strong);
+}
+
 .topbar h1 {
   max-width: 760px;
   margin: 4px 0 0;
@@ -459,6 +484,37 @@ dd {
   gap: 14px;
 }
 
+.advanced-settings,
+.action-center {
+  display: grid;
+  gap: 18px;
+}
+
+.advanced-setting-grid,
+.action-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.action-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.action-list button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  border: 1px solid rgba(20, 107, 92, 0.28);
+  border-radius: 8px;
+  background: #e5f4ee;
+  color: var(--brand-strong);
+  cursor: pointer;
+  font-weight: 800;
+}
+
 .panel-surface {
   padding: 20px;
   box-shadow: none;
@@ -741,6 +797,7 @@ dd {
   }
 
   .topbar,
+  .topbar-controls,
   .hero-panel,
   .flow-hero,
   .decision-strip {
@@ -762,7 +819,9 @@ dd {
   .principle-list,
   .advanced-grid,
   .lane-grid,
-  .console-grid {
+  .console-grid,
+  .advanced-setting-grid,
+  .action-list {
     grid-template-columns: 1fr;
   }
 

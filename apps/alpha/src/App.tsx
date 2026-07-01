@@ -25,7 +25,10 @@ import {
   Wallet,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
+import { useState } from 'react';
 import type { ReactNode } from 'react';
+
+type Mode = 'guided' | 'advanced';
 
 type Task = {
   title: string;
@@ -243,6 +246,15 @@ const advancedPanels = [
 ];
 
 function App() {
+  const [mode, setModeState] = useState<Mode>(() => {
+    if (typeof window === 'undefined') return 'guided';
+    return window.localStorage.getItem('vaipakam-alpha-mode') === 'advanced' ? 'advanced' : 'guided';
+  });
+  const setMode = (nextMode: Mode) => {
+    setModeState(nextMode);
+    window.localStorage.setItem('vaipakam-alpha-mode', nextMode);
+  };
+
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Vaipakam Alpha navigation">
@@ -268,13 +280,13 @@ function App() {
       </aside>
 
       <main className="main-surface">
-        <TopBar />
+        <TopBar mode={mode} onModeChange={setMode} />
         <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} />} />
-          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} />} />
-          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} />} />
-          <Route path="/manage" element={<Manage />} />
+          <Route path="/" element={<Home mode={mode} />} />
+          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} />} />
+          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} />} />
+          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} />} />
+          <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
         </Routes>
       </main>
@@ -291,22 +303,43 @@ function AlphaNavLink({ to, label, icon }: { to: string; label: string; icon: Re
   );
 }
 
-function TopBar() {
+function TopBar({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mode) => void }) {
   return (
     <header className="topbar">
       <div>
         <p className="eyebrow">Alpha redesign direction</p>
         <h1>Make the first decision easy, then reveal power carefully.</h1>
       </div>
-      <div className="mode-switch" aria-label="Experience mode">
-        <button className="selected" type="button">Guided</button>
-        <button type="button">Advanced</button>
+      <div className="topbar-controls">
+        <div className="wallet-pill" aria-label="Wallet and network status">
+          <Wallet size={16} />
+          <span>0xE8...23Cb</span>
+          <strong>Base Sepolia</strong>
+        </div>
+        <div className="mode-switch" aria-label="Experience mode">
+          <button
+            className={mode === 'guided' ? 'selected' : ''}
+            type="button"
+            aria-pressed={mode === 'guided'}
+            onClick={() => onModeChange('guided')}
+          >
+            Guided
+          </button>
+          <button
+            className={mode === 'advanced' ? 'selected' : ''}
+            type="button"
+            aria-pressed={mode === 'advanced'}
+            onClick={() => onModeChange('advanced')}
+          >
+            Advanced
+          </button>
+        </div>
       </div>
     </header>
   );
 }
 
-function Home() {
+function Home({ mode }: { mode: Mode }) {
   return (
     <div className="page-grid">
       <section className="hero-panel">
@@ -314,7 +347,7 @@ function Home() {
           <p className="eyebrow">A DeFi + DEX + NFT rental workspace</p>
           <h2>Vaipakam should feel like choosing an outcome, not decoding a contract.</h2>
           <p>
-            The alpha starts with user intent: earn, borrow, rent, or manage. Protocol details such as offer NFTs, vault locks,
+            The alpha starts in {mode} mode with user intent: earn, borrow, rent, or manage. Protocol details such as offer NFTs, vault locks,
             liquidity tiers, VPFI discounts, and keeper automation become visible at the moment they affect a decision.
           </p>
           <div className="hero-actions">
@@ -363,7 +396,7 @@ function Home() {
   );
 }
 
-function FlowPage({ flow }: { flow: GuidedFlow }) {
+function FlowPage({ flow, mode }: { flow: GuidedFlow; mode: Mode }) {
   const receiptRows = [
     ['You receive', flow.receipt.receive],
     ['You lock', flow.receipt.lock],
@@ -440,6 +473,21 @@ function FlowPage({ flow }: { flow: GuidedFlow }) {
         </div>
       </section>
 
+      {mode === 'advanced' ? (
+        <section className="advanced-settings panel-surface">
+          <div>
+            <p className="eyebrow">Advanced controls</p>
+            <h3>Power settings stay available without changing the guided path.</h3>
+          </div>
+          <div className="advanced-setting-grid">
+            <Metric label="Oracle route" value="Primary + fallback" />
+            <Metric label="Slippage cap" value="1.5%" />
+            <Metric label="Keeper automation" value="Manual approval" />
+            <Metric label="Risk mode" value="Blue-chip only" />
+          </div>
+        </section>
+      ) : null}
+
       <section className="step-board compact">
         {flow.steps.map((step, index) => (
           <article className="step-card" key={step.title}>
@@ -464,7 +512,7 @@ function FlowPage({ flow }: { flow: GuidedFlow }) {
   );
 }
 
-function Manage() {
+function Manage({ mode }: { mode: Mode }) {
   const lanes = [
     { title: 'Urgent', body: 'Claims, near-default loans, stale risk acknowledgements, failed reads.', icon: <AlertTriangle /> },
     { title: 'Positions', body: 'Active loans, offers, rentals, grouped by what the user can do next.', icon: <Landmark /> },
@@ -478,6 +526,17 @@ function Manage() {
       <div className="lane-grid">
         {lanes.map((lane) => <Principle key={lane.title} icon={lane.icon} title={lane.title} body={lane.body} />)}
       </div>
+      <section className="action-center panel-surface">
+        <div>
+          <p className="eyebrow">Next best actions</p>
+          <h3>{mode === 'guided' ? 'Handle the important things first' : 'Position operations and diagnostics'}</h3>
+        </div>
+        <div className="action-list">
+          <button type="button"><ReceiptText size={16} /> Claim 1,000 mUSDC</button>
+          <button type="button"><Gauge size={16} /> Review loan health</button>
+          <button type="button"><Coins size={16} /> Check VPFI discount</button>
+        </div>
+      </section>
       <section className="portfolio-preview">
         <div className="portfolio-row strong"><span>Loan #2</span><span>Claim ready</span><span>1,000 mUSDC</span></div>
         <div className="portfolio-row"><span>Vault</span><span>1,000 locked / 1,000 free</span><span>mUSDC</span></div>
