@@ -43,6 +43,36 @@ contract DeployVPFIToken is Script {
         address diamond = Deployments.readDiamond();
         require(diamond != address(0), "DeployVPFIToken: diamond not deployed yet");
 
+        // #853 Codex P2 — CANONICAL-CHAIN GUARD. This mints the 23M canonical
+        // supply and is only correct on the one chain that hosts canonical VPFI
+        // (Base 8453 / Base Sepolia 84532). On a mirror chain the canonical
+        // token must NOT exist — mirrors carry a Burn/Mint `VPFIMirrorToken`
+        // deployed by `DeployCrosschain`. Running here on a mirror would mint a
+        // rogue 23M "canonical" proxy and clobber that chain's `.vpfiToken`
+        // artifact, corrupting the state `DeployCrosschain`/`ConfigureCcip`
+        // read. Match `DeployCrosschain`'s own `canonical` predicate exactly.
+        require(
+            block.chainid == 8453 || block.chainid == 84532,
+            "DeployVPFIToken: canonical chain only (Base 8453 / Base Sepolia 84532)"
+        );
+
+        // #853 Codex P2 — NO-OVERWRITE GUARD. This is a one-time tokenomics
+        // deploy: a rerun would mint a SECOND 23M supply, repoint every
+        // downstream CCIP/config step at the new proxy, and orphan the first
+        // token + its LockRelease pool. Refuse when `.vpfiToken` is already
+        // recorded, unless the operator opts in via VPFI_TOKEN_FORCE_REDEPLOY=1
+        // (the deliberate rotation/`--fresh` path; the shell sets it from the
+        // --fresh flag so an intentional orphan-and-redeploy is authorized).
+        address existing = Deployments.readVpfiToken();
+        bool forceRedeploy = vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) != 0;
+        require(
+            existing == address(0) || forceRedeploy,
+            "DeployVPFIToken: .vpfiToken already set; set VPFI_TOKEN_FORCE_REDEPLOY=1 to redeploy"
+        );
+        if (existing != address(0)) {
+            console.log("VPFI_TOKEN_FORCE_REDEPLOY set - orphaning prior token:", existing);
+        }
+
         vm.startBroadcast(deployerKey);
         VPFIToken impl = new VPFIToken();
         bytes memory initData =

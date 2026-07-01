@@ -8,6 +8,7 @@ import {ConfigureNFTImageURIs} from "./ConfigureNFTImageURIs.s.sol";
 import {ConfigureOracle} from "./ConfigureOracle.s.sol";
 import {ConfigureRewardReporter} from "./ConfigureRewardReporter.s.sol";
 import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
+import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
 
 /**
  * @title DiamondConfigSpell
@@ -103,21 +104,31 @@ contract DiamondConfigSpell is Script {
     function run() external {
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 1/4: ConfigureOracle");
+        console.log("[DiamondConfigSpell] 1/5: ConfigureVPFIToken (canonical registration)");
+        console.log("[DiamondConfigSpell] ============================================");
+        // #853 Codex P2 — register the canonical VPFI token + set the canonical
+        // flag FIRST (a no-op on mirror chains) so the Diamond can mint/use VPFI
+        // for every downstream path. Admin-key broadcast, canonical-guarded.
+        ConfigureVPFIToken vpfiToken = new ConfigureVPFIToken();
+        vpfiToken.run();
+
+        console.log("");
+        console.log("[DiamondConfigSpell] ============================================");
+        console.log("[DiamondConfigSpell] 2/5: ConfigureOracle");
         console.log("[DiamondConfigSpell] ============================================");
         ConfigureOracle oracle = new ConfigureOracle();
         oracle.run();
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 2/4: ConfigureRewardReporter");
+        console.log("[DiamondConfigSpell] 3/5: ConfigureRewardReporter");
         console.log("[DiamondConfigSpell] ============================================");
         ConfigureRewardReporter reporter = new ConfigureRewardReporter();
         reporter.run();
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 3/4: ConfigureVPFIBuy (discount price)");
+        console.log("[DiamondConfigSpell] 4/5: ConfigureVPFIBuy (discount price)");
         console.log("[DiamondConfigSpell] ============================================");
         // #687-A: the discount applies on EVERY chain (not the removed
         // canonical-only sale), so the discount price config runs everywhere.
@@ -126,7 +137,7 @@ contract DiamondConfigSpell is Script {
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 4/4: ConfigureNFTImageURIs");
+        console.log("[DiamondConfigSpell] 5/5: ConfigureNFTImageURIs");
         console.log("[DiamondConfigSpell] ============================================");
         ConfigureNFTImageURIs nft = new ConfigureNFTImageURIs();
         nft.run();

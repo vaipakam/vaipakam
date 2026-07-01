@@ -787,13 +787,40 @@ EOF
   # shell-script lint. A failure aborts the deploy before any broadcast.
   bash "$SCRIPT_DIR/predeploy-check.sh"
 
+  # Broadcast robustness posture (#853 Codex P2): `--slow` sequences one tx
+  # at a time (waiting for each receipt, avoiding nonce races) and
+  # `--gas-estimate-multiplier` (default 130%) pads the per-tx gas limit so a
+  # batched diamondCut clears the drpc per-tx gas ceiling. There is NO
+  # send-retry flag here — forge's `--retries`/`--delay` govern VERIFICATION
+  # retries only, not `eth_sendRawTransaction`, so they were removed rather than
+  # left as misleading knobs. A transient RPC 5xx on send aborts the phase; the
+  # recovery is to re-run it — with `--broadcast --resume` forge replays the
+  # saved broadcast and skips already-landed txs, or (on a --fresh testnet run)
+  # simply re-run the phase from a clean state.
   echo
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   echo
   echo "[3] DeployTimelock.s.sol"
-  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
+  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+
+  # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain. On the
+  # canonical chain (Base / Base Sepolia) DeployCrosschain's canonical branch
+  # reads `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool;
+  # nothing upstream mints it, so without this step a fresh canonical run fails
+  # at [4] unless a token was hand-deployed first (#853 Codex P1). Mirror chains
+  # skip it — they mint their own Burn/Mint VPFIMirrorToken inside [4]. The
+  # DeployVPFIToken script itself hard-guards to canonical chain ids, so this
+  # IS_CANONICAL gate is belt-and-suspenders. On a --fresh redeploy the prior
+  # `.vpfiToken` artifact is intentionally orphaned, so authorize the overwrite;
+  # otherwise the script refuses to mint a second 23M canonical supply.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    VPFI_TOKEN_FORCE_REDEPLOY="${FRESH:-0}" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool
@@ -805,7 +832,7 @@ EOF
   # phase — there is no per-adapter setRateLimits step any more.
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
   # Range Orders Phase 1 governance-gated kill switches default
@@ -946,7 +973,7 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — ccip-wire  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
-  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
+  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   mark_phase_done "ccip-wire"
 }
 
@@ -1009,7 +1036,7 @@ EOF
   echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
   echo "  ONEINCH_ROUTER_OVERRIDE:    ${ONEINCH_ROUTER_OVERRIDE:-(default 0x…2A65)}"
   echo
-  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
+  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   mark_phase_done "swap-adapters"
 }
 
