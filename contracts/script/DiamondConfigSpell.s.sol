@@ -102,49 +102,68 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  */
 contract DiamondConfigSpell is Script {
     function run() external {
-        console.log("");
-        console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 1/5: ConfigureVPFIToken (canonical registration)");
-        console.log("[DiamondConfigSpell] ============================================");
-        // #853 Codex P2 — register the canonical VPFI token + set the canonical
-        // flag FIRST (a no-op on mirror chains) so the Diamond can mint/use VPFI
-        // for every downstream path. Admin-key broadcast, canonical-guarded.
-        ConfigureVPFIToken vpfiToken = new ConfigureVPFIToken();
-        vpfiToken.run();
+        // #857 — SINGLE skip-vpfi decision point. On a `--skip-vpfi` deploy
+        // (SKIP_VPFI=1) the chain has NO VPFI / cross-chain stack, so the three
+        // VPFI-dependent children (ConfigureVPFIToken / ConfigureRewardReporter /
+        // ConfigureVPFIBuy) have nothing to configure and would revert on their
+        // missing artifacts. Deciding it HERE — invoke them only when VPFI is
+        // present — keeps each child a simple, fail-loud "the artifact must
+        // exist" step (no per-child skip logic to drift). The VPFI-INDEPENDENT
+        // children (Oracle, NFT URIs) always run: a chain still needs oracle
+        // pricing for lending even without VPFI.
+        bool skipVpfi = vm.envOr("SKIP_VPFI", uint256(0)) == 1;
+        if (skipVpfi) {
+            console.log("[DiamondConfigSpell] SKIP_VPFI=1 - skipping ConfigureVPFIToken /");
+            console.log("  ConfigureRewardReporter / ConfigureVPFIBuy (no VPFI stack on this chain).");
+        }
+
+        if (!skipVpfi) {
+            console.log("");
+            console.log("[DiamondConfigSpell] ============================================");
+            console.log("[DiamondConfigSpell] ConfigureVPFIToken (VPFI registration)");
+            console.log("[DiamondConfigSpell] ============================================");
+            // Register the VPFI token (canonical `.vpfiToken` + canonical flag, or
+            // the mirror `.vpfiMirror`) so the Diamond can mint/use VPFI.
+            ConfigureVPFIToken vpfiToken = new ConfigureVPFIToken();
+            vpfiToken.run();
+        }
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 2/5: ConfigureOracle");
+        console.log("[DiamondConfigSpell] ConfigureOracle");
         console.log("[DiamondConfigSpell] ============================================");
         ConfigureOracle oracle = new ConfigureOracle();
         oracle.run();
 
-        console.log("");
-        console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 3/5: ConfigureRewardReporter");
-        console.log("[DiamondConfigSpell] ============================================");
-        ConfigureRewardReporter reporter = new ConfigureRewardReporter();
-        reporter.run();
+        if (!skipVpfi) {
+            console.log("");
+            console.log("[DiamondConfigSpell] ============================================");
+            console.log("[DiamondConfigSpell] ConfigureRewardReporter");
+            console.log("[DiamondConfigSpell] ============================================");
+            ConfigureRewardReporter reporter = new ConfigureRewardReporter();
+            reporter.run();
+
+            console.log("");
+            console.log("[DiamondConfigSpell] ============================================");
+            console.log("[DiamondConfigSpell] ConfigureVPFIBuy (discount price)");
+            console.log("[DiamondConfigSpell] ============================================");
+            // #687-A: the discount applies on EVERY VPFI chain (not the removed
+            // canonical-only sale), so the discount price config runs on any chain
+            // that has the VPFI stack.
+            ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
+            buy.run();
+        }
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 4/5: ConfigureVPFIBuy (discount price)");
-        console.log("[DiamondConfigSpell] ============================================");
-        // #687-A: the discount applies on EVERY chain (not the removed
-        // canonical-only sale), so the discount price config runs everywhere.
-        ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
-        buy.run();
-
-        console.log("");
-        console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] 5/5: ConfigureNFTImageURIs");
+        console.log("[DiamondConfigSpell] ConfigureNFTImageURIs");
         console.log("[DiamondConfigSpell] ============================================");
         ConfigureNFTImageURIs nft = new ConfigureNFTImageURIs();
         nft.run();
 
         console.log("");
         console.log("[DiamondConfigSpell] ============================================");
-        console.log("[DiamondConfigSpell] All four configures landed.");
+        console.log("[DiamondConfigSpell] All configures landed.");
         console.log("[DiamondConfigSpell] ============================================");
     }
 }

@@ -490,14 +490,19 @@ snapshot_addresses() {
 # the indexer Worker's deploy block — instead of via a now-deleted
 # external script.
 
+# #857 — VPFI-token config validation: ONE pre-broadcast gate, run BEFORE the
+# --fresh cleanup below (so it can still read the recorded .vpfiToken for the
+# carry-forward match) AND before any broadcast. The single source of truth for
+# the fresh-mint / force-rotate / carry-forward decision + every reuse-address
+# check lives in DeployVPFIToken._resolveMode(); its no-broadcast preflight()
+# fails loud on any invalid VPFI config here. No-op on mirror chains / --skip-vpfi.
+if [ "$IS_CANONICAL" = "1" ] && [ "$SKIP_VPFI" = "0" ]; then
+  echo "[0·pre] VPFI token preflight (mode validation, no broadcast)"
+  forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
+fi
+
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
-  # #857 — capture the recorded canonical .vpfiToken BEFORE archiving it, so the
-  # reuse-address preflight below can still MATCH a carry-forward against the
-  # prior token on a --fresh redeploy (the archive would otherwise blank it,
-  # letting a typo to a different VPFI-symbol token slip through).
-  PRESERVED_RECORDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  export PRESERVED_RECORDED_VPFI
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$(date +%s).json"
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
@@ -554,59 +559,8 @@ if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "
   echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
 fi
 
-# #857 — reject a ZERO VPFI_TOKEN_REUSE_ADDRESS up-front (a non-empty zero value
-# would satisfy the reuse-exemption below yet DeployVPFIToken parses it as
-# address(0), skips reuse mode, and hits its no-overwrite guard only at [3b]
-# after broadcast — a partial deploy).
-if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "${VPFI_TOKEN_REUSE_ADDRESS}" = "0x0000000000000000000000000000000000000000" ]; then
-  echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is the zero address — unset it, or set the real canonical VPFI token." >&2
-  exit 1
-fi
-
-# #857 — validate a reuse address PRE-broadcast (DeployVPFIToken's symbol/
-# decimals check runs only at [3b], after Diamond+Timelock broadcast). (a) if
-# `.vpfiToken` is already recorded the reuse MUST equal it; (b) on-chain, the
-# reuse must be an 18-decimal ERC20 whose symbol is "VPFI".
-if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
-  _recorded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-  # On --fresh the record was archived in [0]; fall back to the value captured
-  # before the archive so the match still catches a typo (#857).
-  { [ -z "$_recorded_vpfi" ] || [ "$_recorded_vpfi" = "null" ]; } && _recorded_vpfi="${PRESERVED_RECORDED_VPFI:-}"
-  if [ -n "$_recorded_vpfi" ] && [ "$_recorded_vpfi" != "null" ] && \
-     [ "$(printf '%s' "$_recorded_vpfi" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$VPFI_TOKEN_REUSE_ADDRESS" | tr 'A-Z' 'a-z')" ]; then
-    echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS ($VPFI_TOKEN_REUSE_ADDRESS) != recorded .vpfiToken ($_recorded_vpfi) — refusing before broadcast." >&2
-    exit 1
-  fi
-  _reuse_sym=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "symbol()(string)" --rpc-url "$RPC" 2>/dev/null | tr -d '"' || echo "")
-  _reuse_dec=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "decimals()(uint8)" --rpc-url "$RPC" 2>/dev/null || echo "")
-  if [ "$_reuse_sym" != "VPFI" ] || [ "$_reuse_dec" != "18" ]; then
-    echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is not a canonical VPFI token (symbol='$_reuse_sym' decimals='$_reuse_dec'; expected VPFI / 18)." >&2
-    exit 1
-  fi
-fi
-
-# ── VPFI re-mint preflight (#853 Codex P2) ────────────────────────────
-# DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical `.vpfiToken`
-# is already recorded — but [3b] runs AFTER [2] Diamond + [3] Timelock broadcast,
-# so a late abort would leave a PARTIAL deploy. The [2b] existing-diamond gate
-# only catches a prior `.diamond`; a PRE-SEEDED `.vpfiToken` with no `.diamond`
-# yet slips through to [3b]. Refuse that here, before any broadcast, matching the
-# tiered scripts. Only when [3b] will actually run (canonical, VPFI not skipped,
-# marker absent). --fresh is exempt (it wipes addresses.json + markers, so [3b]
-# re-mints); an explicit VPFI_TOKEN_FORCE_REDEPLOY=1 (propagated to the forge
-# subprocess) is the deliberate rotation opt-in.
-if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ] && ! step_done "vpfitoken" \
-   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ] \
-   && [ -z "${VPFI_TOKEN_REUSE_ADDRESS:-}" ]; then
-  PRESEEDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
-  if [ -n "$PRESEEDED_VPFI" ] && [ "$PRESEEDED_VPFI" != "null" ]; then
-    echo "ERROR: a canonical VPFI token ($PRESEEDED_VPFI) is already recorded on $CHAIN_SLUG." >&2
-    echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
-    echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-    echo "       Re-run with --fresh (wipes + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
-    exit 1
-  fi
-fi
+# (The VPFI-token mode validation runs as a single pre-broadcast preflight() call
+# BEFORE the --fresh cleanup above — see "[0·pre] VPFI token preflight". #857.)
 
 # ── 2. Diamond ────────────────────────────────────────────────────────
 

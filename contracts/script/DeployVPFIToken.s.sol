@@ -36,69 +36,57 @@ import {Deployments} from "./lib/Deployments.sol";
  *         Env: DEPLOYER_PRIVATE_KEY, ADMIN_ADDRESS, TREASURY_ADDRESS.
  */
 contract DeployVPFIToken is Script {
-    function run() external returns (address token) {
-        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
-        address admin = vm.envAddress("ADMIN_ADDRESS");
-        address treasury = vm.envAddress("TREASURY_ADDRESS");
-        address diamond = Deployments.readDiamond();
-        require(diamond != address(0), "DeployVPFIToken: diamond not deployed yet");
+    /// @notice The one canonical predicate: is THIS the chain that hosts the
+    ///         canonical VPFI ERC-20? (Base 8453 / Base Sepolia 84532.) Matches
+    ///         `DeployCrosschain`'s own `canonical` check exactly.
+    function _isCanonical() internal view returns (bool) {
+        return block.chainid == 8453 || block.chainid == 84532;
+    }
 
-        // #853 Codex P2 — CANONICAL-CHAIN GUARD. This mints the 23M canonical
-        // supply and is only correct on the one chain that hosts canonical VPFI
-        // (Base 8453 / Base Sepolia 84532). On a mirror chain the canonical
-        // token must NOT exist — mirrors carry a Burn/Mint `VPFIMirrorToken`
-        // deployed by `DeployCrosschain`. Running here on a mirror would mint a
-        // rogue 23M "canonical" proxy and clobber that chain's `.vpfiToken`
-        // artifact, corrupting the state `DeployCrosschain`/`ConfigureCcip`
-        // read. Match `DeployCrosschain`'s own `canonical` predicate exactly.
+    /// @notice SINGLE SOURCE OF TRUTH for the canonical-VPFI token mode. Reads
+    ///         env + the recorded artifact + (for reuse) the on-chain token, and
+    ///         resolves exactly one of three mutually-exclusive outcomes, failing
+    ///         loud on any invalid/ambiguous config. NO broadcast, NO state
+    ///         change, NO diamond dependency — so it is safe to call BOTH as a
+    ///         pre-broadcast `preflight()` (before [2] DeployDiamond) AND inside
+    ///         `run()` at [3b]. Centralising it here is what lets the deploy
+    ///         wrappers stay thin (they just call `preflight()` once) instead of
+    ///         re-implementing this policy in jq/cast (#855/#857).
+    ///
+    ///         Outcomes:
+    ///           - `isReuse == true`  → carry-forward: keep `reuseToken`, no mint.
+    ///           - `isReuse == false` + no recorded token → fresh mint.
+    ///           - `isReuse == false` + recorded token + FORCE → rotate (new mint).
+    ///
+    ///         MUST be called on the canonical chain only (guarded here).
+    function _resolveMode() internal view returns (bool isReuse, address reuseToken) {
         require(
-            block.chainid == 8453 || block.chainid == 84532,
+            _isCanonical(),
             "DeployVPFIToken: canonical chain only (Base 8453 / Base Sepolia 84532)"
         );
 
-        // #855 — CARRY-FORWARD / REUSE mode. A Diamond/CCIP redeploy that must
-        // KEEP the existing canonical VPFI token (not fork a second 23M supply)
-        // sets VPFI_TOKEN_REUSE_ADDRESS to that token. We record it as
-        // `.vpfiToken` — so `DeployCrosschain` wraps it and `ConfigureVPFIToken`
-        // registers it in the NEW diamond — and skip the mint entirely. This is
-        // the third outcome alongside fresh-mint (no token yet) and force-rotate.
-        // NOTE: the reused token's `minter` still points at the OLD diamond; the
-        // operator MUST rotate it to the new diamond via the token owner's
-        // `setMinter(newDiamond)` for `TreasuryFacet.mintVPFI` to work — this
-        // script only records the address, it can't rotate the minter (owner-only,
-        // and post-handover that owner is the timelock).
         address reuse = vm.envOr("VPFI_TOKEN_REUSE_ADDRESS", address(0));
+        bool force = vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) != 0;
+        address recorded = Deployments.readVpfiTokenOptional();
+
         if (reuse != address(0)) {
-            // #857 — CONFLICTING MODES. VPFI_TOKEN_FORCE_REDEPLOY=1 (mint a NEW
-            // token) and VPFI_TOKEN_REUSE_ADDRESS (keep the EXISTING one) are
-            // mutually exclusive; if both are set the reuse branch would silently
-            // win and carry the old token forward while the operator asked for a
-            // rotation. Fail fast instead.
+            // CARRY-FORWARD. Keep the EXISTING canonical token (no forked supply).
+            // (1) reuse vs rotate are mutually exclusive.
             require(
-                vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) == 0,
-                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS and VPFI_TOKEN_FORCE_REDEPLOY are mutually exclusive (reuse vs rotate) - unset one"
+                !force,
+                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS + VPFI_TOKEN_FORCE_REDEPLOY are mutually exclusive (reuse vs rotate) - unset one"
             );
-            // #857 — MATCH the recorded token when present (direct-invocation
-            // safety; the shell preflights do this pre-broadcast, but this covers
-            // a bare `forge script DeployVPFIToken`). If `.vpfiToken` already
-            // records token A and reuse points at a different token B — even one
-            // that reports symbol "VPFI"/18 — refuse rather than clobber the
-            // artifact + wrap the wrong asset as canonical VPFI.
-            address recorded = Deployments.readVpfiTokenOptional();
+            // (2) if a token is already recorded, the reuse MUST equal it — a
+            //     different address (even a VPFI-look-alike) would clobber the
+            //     artifact + wrap the wrong asset as canonical VPFI.
             require(
                 recorded == address(0) || recorded == reuse,
-                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS != the already-recorded .vpfiToken (refusing to clobber)"
+                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS != the recorded .vpfiToken (refusing to clobber)"
             );
-            require(
-                reuse.code.length > 0,
-                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS has no bytecode (not a deployed token)"
-            );
-            // #857 — validate it is actually a VPFI token, not a copied
-            // timelock / USDC / arbitrary proxy address: registering the wrong
-            // asset as canonical VPFI would disconnect the real supply/minter
-            // path. Require symbol == "VPFI" AND decimals == 18 (VPFIToken's
-            // initializer sets exactly these). A non-ERC20 (e.g. the timelock)
-            // reverts on symbol()/decimals() → caught → hard error.
+            // (3) it must actually be a VPFI token, not a copied timelock / USDC
+            //     / proxy. symbol == "VPFI" AND decimals == 18 (what VPFIToken's
+            //     initializer sets). A non-ERC20 reverts on the getters → caught.
+            require(reuse.code.length > 0, "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS has no bytecode");
             try VPFIToken(reuse).symbol() returns (string memory sym) {
                 require(
                     keccak256(bytes(sym)) == keccak256(bytes("VPFI")),
@@ -112,40 +100,68 @@ contract DeployVPFIToken is Script {
             } catch {
                 revert("DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS decimals() reverted");
             }
-            Deployments.writeVpfiToken(reuse);
-            console.log("VPFI carry-forward: reusing existing canonical token:", reuse);
+            return (true, reuse);
+        }
+
+        // MINT path. Refuse to silently mint a SECOND 23M supply over an existing
+        // recorded token unless FORCE (deliberate rotation) is set. A clean first
+        // deploy (or a --fresh run whose archive already cleared the artifact) has
+        // `recorded == address(0)` and proceeds to a fresh mint.
+        require(
+            recorded == address(0) || force,
+            "DeployVPFIToken: .vpfiToken already recorded; carry it forward with VPFI_TOKEN_REUSE_ADDRESS=<token>, or rotate with VPFI_TOKEN_FORCE_REDEPLOY=1"
+        );
+        return (false, address(0));
+    }
+
+    /// @notice PRE-BROADCAST validator. The deploy wrappers call this ONCE,
+    ///         before `[2] DeployDiamond` and before the `--fresh` archive, so an
+    ///         invalid VPFI-token config fails BEFORE anything is broadcast
+    ///         (rather than at [3b], after Diamond + Timelock already landed →
+    ///         partial deploy). No-op on mirror chains (no canonical VPFI). No
+    ///         broadcast, no state change.
+    function preflight() external {
+        if (!_isCanonical()) {
+            console.log("[DeployVPFIToken.preflight] skip - mirror chain, no canonical VPFI:", block.chainid);
+            return;
+        }
+        (bool isReuse, address reuseToken) = _resolveMode();
+        if (isReuse) {
+            console.log("[DeployVPFIToken.preflight] OK - CARRY-FORWARD reuse of:", reuseToken);
+            console.log("  (mint skipped; post-deploy you MUST rotate its minter to");
+            console.log("   the new diamond AND, as token owner, install the new CCIP");
+            console.log("   LockRelease pool in the TokenAdminRegistry.)");
+        } else if (Deployments.readVpfiTokenOptional() != address(0)) {
+            console.log("[DeployVPFIToken.preflight] OK - FORCE ROTATE: a NEW 23M canonical token will be minted (old one orphaned)");
+        } else {
+            console.log("[DeployVPFIToken.preflight] OK - FRESH MINT of the canonical VPFI token");
+        }
+    }
+
+    function run() external returns (address token) {
+        uint256 deployerKey = vm.envUint("DEPLOYER_PRIVATE_KEY");
+        address admin = vm.envAddress("ADMIN_ADDRESS");
+        address treasury = vm.envAddress("TREASURY_ADDRESS");
+        address diamond = Deployments.readDiamond();
+        require(diamond != address(0), "DeployVPFIToken: diamond not deployed yet");
+
+        // Re-run the SAME validation as preflight() (belt-and-suspenders for a
+        // bare `forge script DeployVPFIToken`; the wrapper already gated it).
+        (bool isReuse, address reuseToken) = _resolveMode();
+
+        if (isReuse) {
+            Deployments.writeVpfiToken(reuseToken);
+            console.log("VPFI carry-forward: reusing existing canonical token:", reuseToken);
             console.log("  recorded as .vpfiToken (mint skipped).");
             console.log("  ACTION REQUIRED (owner/timelock, post-deploy):");
             console.log("   1. rotate the token minter -> new diamond:", diamond);
-            // #857 — the CCT TokenAdminRegistry keeps pointing VPFI at the OLD
-            // LockRelease pool: DeployCrosschain deploys a NEW pool for the new
-            // diamond, but ConfigureCcip._registerCct SKIPS setPool when the
-            // broadcaster (ADMIN) is not the token owner — which is exactly the
-            // post-handover carry-forward case (owner = timelock). So the token
-            // owner MUST install the new pool in the registry, else CCIP routes
-            // VPFI through the stale pool. Flag it loudly here.
             console.log("   2. as the token OWNER, install the NEW LockRelease pool");
             console.log("      in the CCIP TokenAdminRegistry (setPool) - ConfigureCcip");
             console.log("      skips it when ADMIN != token owner (post-handover).");
-            return reuse;
+            return reuseToken;
         }
 
-        // #853 Codex P2 — NO-OVERWRITE GUARD. This is a one-time tokenomics
-        // deploy: a rerun would mint a SECOND 23M supply, repoint every
-        // downstream CCIP/config step at the new proxy, and orphan the first
-        // token + its LockRelease pool. Refuse when `.vpfiToken` is already
-        // recorded, unless the operator opts in via VPFI_TOKEN_FORCE_REDEPLOY=1
-        // (the deliberate rotation/`--fresh` path; the shell sets it from the
-        // --fresh flag so an intentional orphan-and-redeploy is authorized).
-        // Artifact-only, non-reverting read: a clean first deploy has no
-        // `.vpfiToken` yet, and `readVpfiToken()` would otherwise fall through
-        // to the mandatory env reader and revert (#853 Codex P1).
         address existing = Deployments.readVpfiTokenOptional();
-        bool forceRedeploy = vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) != 0;
-        require(
-            existing == address(0) || forceRedeploy,
-            "DeployVPFIToken: .vpfiToken already set; set VPFI_TOKEN_FORCE_REDEPLOY=1 to redeploy"
-        );
         if (existing != address(0)) {
             console.log("VPFI_TOKEN_FORCE_REDEPLOY set - orphaning prior token:", existing);
         }

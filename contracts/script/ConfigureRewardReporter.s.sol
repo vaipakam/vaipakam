@@ -113,35 +113,14 @@ contract ConfigureRewardReporter is Script {
             // Artifact-only path (no env override).
             rewardMessenger = artifactValue;
         } else {
-            // Neither the env override nor a `.rewardMessenger`/`.rewardOApp`
-            // artifact is present. Try the legacy chain-prefixed env fallback
-            // (`<PREFIX>REWARD_MESSENGER_ADDRESS`) directly; if THAT is also
-            // absent this is a `--skip-vpfi` deploy — DeployCrosschain ([4]) was
-            // skipped so no reward contract was recorded — so SKIP gracefully
-            // rather than reverting, letting DiamondConfigSpell's remaining
-            // configures (oracle / NFT URIs) still run (#857). A normal deploy
-            // always has the messenger recorded by configure-time.
-            address legacyEnv = vm.envOr(
-                string.concat(Deployments.envPrefix(), "REWARD_MESSENGER_ADDRESS"),
-                address(0)
-            );
-            if (legacyEnv == address(0)) {
-                // No artifact + no env. SKIP only on an EXPLICIT `--skip-vpfi`
-                // deploy (SKIP_VPFI=1). Otherwise FAIL LOUD (#857): a
-                // missing/corrupt `.rewardMessenger` on a NORMAL deploy must not
-                // silently let the spell continue + the wrapper mark configure
-                // done while cross-chain rewards stay unwired.
-                require(
-                    vm.envOr("SKIP_VPFI", uint256(0)) == 1,
-                    "ConfigureRewardReporter: no reward messenger recorded (run DeployCrosschain first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
-                );
-                console.log(
-                    "[ConfigureRewardReporter] skip - SKIP_VPFI=1 + no reward messenger, chain:",
-                    block.chainid
-                );
-                return;
-            }
-            rewardMessenger = legacyEnv;
+            // Neither — load the reverting reader to produce the usual
+            // env-fallback error path (`<PREFIX>REWARD_MESSENGER_ADDRESS` env var
+            // or `.rewardMessenger` artifact missing). This FAILS LOUD by design:
+            // a missing reward messenger on a normal deploy must not be silently
+            // configured-around. The `--skip-vpfi` case (no cross-chain stack)
+            // never reaches this script — `DiamondConfigSpell` skips the
+            // VPFI-dependent children as a group when SKIP_VPFI=1 (#857).
+            rewardMessenger = Deployments.readRewardMessenger();
         }
         // Defence-in-depth (PR #272 round 4): apply the messenger
         // interface + peer-binding verify to EVERY resolved address,

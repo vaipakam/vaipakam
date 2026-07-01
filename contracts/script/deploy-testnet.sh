@@ -668,52 +668,16 @@ EOF
     exit 1
   fi
 
-  # #857 — reject a ZERO VPFI_TOKEN_REUSE_ADDRESS up-front (a non-empty zero
-  # value would satisfy the reuse-exemption below yet DeployVPFIToken parses it
-  # as address(0), skips reuse mode, and hits its no-overwrite guard only at [3b]
-  # after broadcast — a partial deploy).
-  if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "${VPFI_TOKEN_REUSE_ADDRESS}" = "0x0000000000000000000000000000000000000000" ]; then
-    echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is the zero address — unset it, or set the real canonical VPFI token." >&2
-    exit 1
-  fi
-
-  # #857 — validate a reuse address PRE-broadcast (DeployVPFIToken's symbol/
-  # decimals check runs only at [3b], after Diamond+Timelock broadcast). (a) if
-  # `.vpfiToken` is already recorded the reuse MUST equal it; (b) on-chain, the
-  # reuse must be an 18-decimal ERC20 whose symbol is "VPFI".
-  if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "$IS_CANONICAL" = "1" ]; then
-    _recorded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-    if [ -n "$_recorded_vpfi" ] && [ "$_recorded_vpfi" != "null" ] && \
-       [ "$(printf '%s' "$_recorded_vpfi" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$VPFI_TOKEN_REUSE_ADDRESS" | tr 'A-Z' 'a-z')" ]; then
-      echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS ($VPFI_TOKEN_REUSE_ADDRESS) != recorded .vpfiToken ($_recorded_vpfi) — refusing before broadcast." >&2
-      exit 1
-    fi
-    _reuse_sym=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "symbol()(string)" --rpc-url "$RPC" 2>/dev/null | tr -d '"' || echo "")
-    _reuse_dec=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "decimals()(uint8)" --rpc-url "$RPC" 2>/dev/null || echo "")
-    if [ "$_reuse_sym" != "VPFI" ] || [ "$_reuse_dec" != "18" ]; then
-      echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is not a canonical VPFI token (symbol='$_reuse_sym' decimals='$_reuse_dec'; expected VPFI / 18)." >&2
-      exit 1
-    fi
-  fi
-
-  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
-  # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical
-  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
-  # Timelock broadcast, so a late abort leaves a PARTIAL deploy. The
-  # existing-diamond gate below only catches a prior `.diamond`; a PRE-SEEDED
-  # `.vpfiToken` with no `.diamond` yet slips through to [3b]. Refuse that here,
-  # before any broadcast. --fresh is exempt: it archives addresses.json (clearing
-  # `.vpfiToken`) and the [3b] step re-mints under the FRESH-derived force flag.
-  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ] && [ -z "${VPFI_TOKEN_REUSE_ADDRESS:-}" ]; then
-    local preseeded_vpfi
-    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
-    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ]; then
-      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
-      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
-      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-      echo "       Re-deploy with --fresh (archives + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
-      exit 1
-    fi
+  # #857 — VPFI-token config validation: ONE pre-broadcast gate. The single
+  # source of truth for the fresh-mint / force-rotate / carry-forward decision
+  # (and every reuse-address check) lives in DeployVPFIToken._resolveMode(); run
+  # its no-broadcast preflight() HERE — before [2] DeployDiamond AND before the
+  # --fresh archive (so it can still read the recorded .vpfiToken) — so any
+  # invalid VPFI config fails BEFORE anything is broadcast. No-op on mirror
+  # chains. Replaces the former jq/cast preflight duplicated across the scripts.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo "[1c] VPFI token preflight (mode validation, no broadcast)"
+    forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
   fi
 
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
@@ -912,14 +876,16 @@ EOF
   # at [4] unless a token was hand-deployed first (#853 Codex P1). Mirror chains
   # skip it — they mint their own Burn/Mint VPFIMirrorToken inside [4]. The
   # DeployVPFIToken script itself hard-guards to canonical chain ids, so this
-  # IS_CANONICAL gate is belt-and-suspenders. On a --fresh redeploy the prior
-  # `.vpfiToken` artifact is intentionally orphaned, so authorize the overwrite;
-  # otherwise the script refuses to mint a second 23M canonical supply.
+  # IS_CANONICAL gate is belt-and-suspenders. The mode (fresh-mint / rotate /
+  # reuse) was already validated by the [1c] preflight; no FORCE injection is
+  # needed here — on a --fresh redeploy the [0] archive already cleared the prior
+  # `.vpfiToken`, so run() simply mints fresh (and a deliberate rotate/reuse is
+  # driven by VPFI_TOKEN_FORCE_REDEPLOY / VPFI_TOKEN_REUSE_ADDRESS, which run()
+  # reads directly). Injecting FORCE here previously conflicted with reuse (#857).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    VPFI_TOKEN_FORCE_REDEPLOY="$([ "$FRESH" = "1" ] && echo 1 || echo "${VPFI_TOKEN_FORCE_REDEPLOY:-0}")" \
-      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
