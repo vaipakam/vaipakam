@@ -190,9 +190,7 @@ Vaipakam पर lending और borrowing risk-free नहीं है। ले
 - **Pause switches.** हर contract में emergency pause levers हैं ताकि
   operator कुछ गलत दिखने पर seconds में new business रोक सके, जबकि
   existing users अपनी positions safely wind down कर सकें।
-- **Independent audits.** हर chain पर हर contract third-party
-  security review के बाद ही ship होता है। Audit reports और bug bounty
-  scope public हैं।
+- **Mainnet से पहले ऑडिट लंबित।** Mainnet लॉन्च से पहले थर्ड-पार्टी सुरक्षा समीक्षा आवश्यक है। ऑडिट रिपोर्ट और bug bounty scope उपलब्ध होने पर प्रकाशित किए जाएँगे।
 
 फिर भी आपको समझना चाहिए कि आप किस चीज़ के लिए sign कर रहे हैं। हर
 loan से पहले आने वाला combined **risk consent** पढ़ें — यह

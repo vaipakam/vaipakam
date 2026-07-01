@@ -2,7 +2,7 @@
  * /help/technical — the full Vaipakam Technical Whitepaper.
  *
  * Renders the canonical English whitepaper from
- * `frontend/src/content/whitepaper/Whitepaper.en.md`. The whitepaper
+ * `apps/www/src/content/whitepaper/Whitepaper.en.md`. The whitepaper
  * is intentionally **not translated** — translation drift on a
  * technical specification is a worse failure mode than asking
  * non-English readers to use English here. The legal-style "English
@@ -82,6 +82,12 @@ export default function Whitepaper() {
           <article className="user-guide-content">
             <HelpTabs />
             {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
+            {!isNonEnglish && (
+              <p>
+                This page renders the canonical technical whitepaper. The repository root README
+                is a product overview for quick orientation.
+              </p>
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={headingComps as never}

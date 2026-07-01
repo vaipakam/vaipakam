@@ -69,9 +69,9 @@
     "security": "セキュリティ",
     "vpfi": "VPFI",
     "vpfiLearn": "VPFIについて学ぶ",
-    "vpfiStakeUnstake": "ステーク / アンステーク",
-    "vpfiStake": "ステーク",
-    "vpfiUnstake": "アンステーク",
+    "vpfiStakeUnstake": "入金 / 引き出し",
+    "vpfiStake": "入金",
+    "vpfiUnstake": "引き出し",
     "launchApp": "Vaipakamを開く",
     "toggleMenu": "メニュー切替",
     "switchNetwork": "ネットワーク切替",
@@ -847,8 +847,8 @@
     "transparencyDesc": "すべてのオファー、ローン、ステータス変更がオンチェーンに記録されます。Vaipakam NFT はポジション所有権の検証可能な証明として機能します。",
     "slippageTitle": "スリッページと清算の安全性",
     "slippageDesc": "スリッページが 6% を超える場合、DEX 清算は中止されます。NFT クレームモデルによる担保の全額移転にフォールバックされ、不利なスワップは強制されません。",
-    "auditTitle": "監査済みで実戦投入対応",
-    "auditDesc": "OpenZeppelin コントラクトをベースに構築。すべてのファセットに ReentrancyGuard と Pausable を適用。メインネット展開前には第三者監査が必須です。",
+    "auditTitle": "Mainnet 前の監査待ち",
+    "auditDesc": "OpenZeppelin コントラクトを基盤とし、緊急停止コントロールを備えています。Mainnet デプロイ前には第三者監査が必要で、レポートは利用可能になり次第公開されます。",
     "kycTitle": "ノンカストディアル・KYC不要",
     "kycDesc": "フェーズ1ではパススルーモードでの KYC チェックを伴って開始します。Vaipakam はノンカストディアルであり、各ユーザーが自身の規制遵守に責任を負います。制裁対象国およびティア別 KYC のロジックは将来のガバナンス起動に向けてコードベースに残されています。"
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "ローンが有効な間、私の資金は誰が管理しているのですか？",
         "a1": "従来の意味で誰かが管理しているわけではありません。資産はスマートコントラクトのVaultに置かれ、本人とプロトコル自身のルールだけが動かせます。各ユーザーは自分専用の隔離されたVaultを持ち、資金が他者と混ざることはありません。資金の解放はすべて、ユーザーが「受諾」を押す前にオンチェーンで公開されたルールに従います。",
-        "a2": "コントラクトはオープンソースで監査済みです。Vaipakam が残高を凍結・転送・差し戻すことはできず、緊急時にできるのは新規操作の一時停止までです。返済・請求・退出は常に利用可能です。"
+        "a2": "コントラクトはオープンソースで、mainnet デプロイ前には第三者監査が必要です。Vaipakam が残高を転送したり取り戻したりすることはできません。緊急時にチームができるのは新規操作の一時停止までで、既存の返済・請求・退出経路は利用可能なままです。"
       },
       "basics-vpfi-intro": {
         "q": "VPFI とは何ですか。アプリの利用に必要ですか？",
@@ -1194,7 +1194,7 @@
     "notRegistered": "VPFIは{{chain}}のDiamondにまだ登録されていません。管理者がsetVPFITokenを呼び出すと、残高とアクティビティがここに表示されます。",
     "walletBalance": "ウォレットVPFI残高",
     "vaultBalance": "VaultVPFI残高",
-    "vaultTooltip": "このチェーン上のユーザー単位Vaultに現在ステーキングされているVPFI。借り手手数料割引Tierに算入されます。",
+    "vaultTooltip": "このチェーン上のユーザー単位Vaultに現在あるVPFI。借り手手数料割引Tierに算入されます。",
     "shareCirculating": "流通量シェア",
     "circulatingThisChain": "流通量（このチェーン）",
     "remainingMintable": "ミント可能残高",
@@ -1242,9 +1242,9 @@
     "depositAmount": "入金するVPFI量",
     "useMaxVpfi": "最大（{{amount}} VPFI）を使用",
     "depositButton": "Vaultに入金",
-    "unstakeTitle": "VaultからVPFIをアンステーク",
+    "unstakeTitle": "VaultからVPFIを引き出し",
     "unstakeSubtitle": "{{chain}}のVaultからウォレットへVPFIを戻します。Vault 残高がTierしきい値を下回ると、割引Tierも下がります。",
-    "unstakeAmount": "アンステークするVPFI量",
+    "unstakeAmount": "引き出すVPFI量",
     "unstakeButton": "ウォレットへ引き出し"
   },
   "alertsPage": {
@@ -1507,7 +1507,7 @@
     "loanDetailsParties": "貸し手と借り手のアドレス、それぞれの資産を保有するユーザー別Vault プロキシ、およびローン開始時に各サイドが受け取ったポジション NFT です。各 NFT はそのサイドのクレームの所持人型インストルメントであり、紛失するとクレームを失います。",
     "loanDetailsActionsLender": "このローンで貸し手が利用可能なアクションです。ローン決済後にクレーム（元本 + 利息を返却し、{{treasuryFee}}% の Treasury 控除が差し引かれます）。ローン途中で貸し手 NFT を買い手に売却するために Early Withdrawal を開始。HF < 1 もしくはグレース期間が満了すると、誰でも（貸し手を含む）Liquidate をトリガーできます。無効化されているアクションはホバーで理由を表示します。",
     "loanDetailsActionsBorrower": "このローンで借り手が利用可能なアクションです。全額または部分返済、Preclose ダイレクト（残債を今すぐ支払う）またはオフセット（DEX 経由で担保を売却）、新しい条件のローンへリファイナンス。クレームは全額返済時に担保を返却するか、未使用の VPFI リベートを返します。無効化されているアクションはホバーで理由を表示します。",
-    "buyVpfiUnstake": "このチェーン上で VPFI をVaultからウォレットへ戻します。割引 Tier をリアルタイムで下げます — 時間加重アキュムレータが新しい（より低い）残高で開いている全ローンを直ちに再スタンプするため、unstake はその時点から手数料割引計算に対して有効です。"
+    "buyVpfiUnstake": "このチェーン上で VPFI をVaultからウォレットへ戻します。割引 Tier をリアルタイムで下げます — 時間加重アキュムレータが新しい（より低い）残高で開いている全ローンを直ちに再スタンプするため、引き出しはその時点から手数料割引計算に対して有効です。"
   },
   "acceptReview": {
     "partialRepayLabel": "部分返済",

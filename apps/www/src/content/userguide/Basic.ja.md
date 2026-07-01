@@ -407,7 +407,7 @@ fee discount を unlock するには、自分で VPFI を vault に move
 
 <a id="buy-vpfi.unstake"></a>
 
-### vault から VPFI をアンステークする
+### vault から VPFI を引き出しする
 
 VPFI を wallet に戻したいときは、このカードで vault から
 withdraw します。注意: VPFI を引き出すと discount tier は

@@ -69,9 +69,9 @@
     "security": "Sicherheit",
     "vpfi": "VPFI",
     "vpfiLearn": "Mehr über VPFI erfahren",
-    "vpfiStakeUnstake": "Staken / Unstaken",
-    "vpfiStake": "Staken",
-    "vpfiUnstake": "Unstaken",
+    "vpfiStakeUnstake": "Einzahlen / Abheben",
+    "vpfiStake": "Einzahlen",
+    "vpfiUnstake": "Abheben",
     "launchApp": "Vaipakam öffnen",
     "toggleMenu": "Menü umschalten",
     "switchNetwork": "Netzwerk wechseln",
@@ -847,8 +847,8 @@
     "transparencyDesc": "Jedes Angebot, jeder Kredit und jede Statusänderung wird on-chain protokolliert. Vaipakam-NFTs dienen als überprüfbarer Eigentumsnachweis der Position.",
     "slippageTitle": "Slippage- und Liquidationssicherheit",
     "slippageDesc": "Die DEX-Liquidation bricht ab, wenn die Slippage 6% überschreitet. Stattdessen erfolgt eine vollständige Sicherheitenübertragung über das NFT-Claim-Modell. Keine erzwungenen Verlust-Swaps.",
-    "auditTitle": "Auditiert und erprobt",
-    "auditDesc": "Auf OpenZeppelin-Verträgen aufgebaut. ReentrancyGuard und Pausable in allen Facetten. Verpflichtende Drittparteien-Audits vor dem Mainnet-Deployment.",
+    "auditTitle": "Audit vor Mainnet ausstehend",
+    "auditDesc": "Auf OpenZeppelin-Verträgen aufgebaut, mit Notfall-Pausekontrollen. Vor dem Mainnet-Deployment sind Drittparteien-Audits erforderlich; Berichte werden veröffentlicht, sobald sie verfügbar sind.",
     "kycTitle": "Non-Custodial und ohne KYC",
     "kycDesc": "Phase 1 startet mit KYC-Prüfungen im Pass-Through-Modus. Vaipakam ist non-custodial; jeder Nutzer ist für die eigene regulatorische Compliance verantwortlich. Sanktionsländer- und Tiered-KYC-Logik bleibt im Code für eine spätere Aktivierung durch die Governance."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "Wer verwahrt mein Geld eigentlich, während ein Kredit aktiv ist?",
         "a1": "Niemand im klassischen Sinn. Die Vermögenswerte liegen in einer Smart-Contract-Treuhand, die nur der Nutzer und die protokolleigenen Regeln bewegen können. Jeder Nutzer hat seine eigene isolierte Treuhand — Mittel werden niemals mit Fremden zusammengelegt — und jede Freigabe folgt einer Regel, die schon vor dem Klick auf „Akzeptieren\" on-chain veröffentlicht war.",
-        "a2": "Die Verträge sind quelloffen und wurden auditiert. Vaipakam kann kein Guthaben einfrieren, umleiten oder zurückholen; das Maximum ist das Pausieren neuer Aktionen im Notfall. Rückzahlung, Anspruch oder Ausstieg bleiben jederzeit verfügbar."
+        "a2": "Die Verträge sind quelloffen, und vor dem Mainnet-Deployment sind Drittparteien-Audits erforderlich. Vaipakam kann Guthaben nicht umleiten oder zurückholen; im Notfall kann das Team höchstens neue Aktionen pausieren, während bestehende Rückzahlungs-, Anspruchs- oder Ausstiegswege verfügbar bleiben."
       },
       "basics-vpfi-intro": {
         "q": "Was ist VPFI, und brauche ich welche, um die App zu nutzen?",
@@ -1194,7 +1194,7 @@
     "notRegistered": "VPFI ist auf {{chain}} noch nicht beim Diamond registriert. Sobald der Administrator setVPFIToken aufruft, erscheinen Salden und Aktivität hier.",
     "walletBalance": "VPFI-Wallet-Saldo",
     "vaultBalance": "VPFI-Vault-Saldo",
-    "vaultTooltip": "VPFI, das derzeit im benutzerspezifischen Vault auf dieser Chain gestaked ist. Zählt für den Gebühren-Rabatt-Tier des Kreditnehmers.",
+    "vaultTooltip": "VPFI, das derzeit im benutzerspezifischen Vault auf dieser Chain liegt. Zählt für den Gebühren-Rabatt-Tier des Kreditnehmers.",
     "shareCirculating": "Anteil am Umlauf",
     "circulatingThisChain": "Im Umlauf (diese Chain)",
     "remainingMintable": "Verbleibend prägbar",
@@ -1507,7 +1507,7 @@
     "loanDetailsParties": "Adressen von Kreditgeber und Kreditnehmer, die per-Nutzer-Vault-Proxies, die ihre Vermögenswerte halten, und die Positions-NFTs, die jede Seite bei Kreditinitiierung erhalten hat. Jedes NFT ist das Inhaberinstrument für den Anspruch dieser Seite — es zu verlieren bedeutet, den Anspruch zu verlieren.",
     "loanDetailsActionsLender": "Für den Kreditgeber auf diesem Kredit verfügbare Aktionen. Beanspruchen, sobald der Kredit abgewickelt ist (gibt Hauptbetrag + Zinsen zurück, abzüglich des {{treasuryFee}}% Treasury-Anteils). Vorzeitiger Ausstieg initiieren, um das Kreditgeber-NFT mitten im Kredit an einen Käufer zu verkaufen. Jeder (einschließlich des Kreditgebers) kann Liquidieren auslösen, wenn HF < 1 oder die Gnadenfrist abgelaufen ist. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
     "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
-    "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass ein Unstake ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist."
+    "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass eine Abhebung ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist."
   },
   "acceptReview": {
     "partialRepayLabel": "Teilrückzahlung",

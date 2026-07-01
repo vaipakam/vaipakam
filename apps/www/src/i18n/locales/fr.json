@@ -847,8 +847,8 @@
     "transparencyDesc": "Chaque offre, prêt et changement de statut est consigné on-chain. Les NFT Vaipakam servent de preuve vérifiable de la propriété de la position.",
     "slippageTitle": "Sécurité face au slippage et à la liquidation",
     "slippageDesc": "La liquidation DEX est annulée si le slippage dépasse 6%. Le protocole se replie alors sur le transfert intégral du collatéral via le modèle de retrait par NFT. Aucun swap défavorable n'est forcé.",
-    "auditTitle": "Audité et éprouvé",
-    "auditDesc": "Construit sur les contrats OpenZeppelin. ReentrancyGuard et Pausable sur toutes les facettes. Audits tiers obligatoires avant tout déploiement en mainnet.",
+    "auditTitle": "Audit en attente avant le mainnet",
+    "auditDesc": "Construit sur les contrats OpenZeppelin avec des contrôles de pause d’urgence. Des audits tiers sont requis avant tout déploiement en mainnet ; les rapports seront publiés lorsqu’ils seront disponibles.",
     "kycTitle": "Non-custodial et sans KYC",
     "kycDesc": "La Phase 1 est lancée avec des contrôles KYC en mode pass-through. Vaipakam est non-custodial ; chaque utilisateur est responsable de sa propre conformité réglementaire. La logique des pays sous sanctions et du KYC par paliers reste dans le code, en attente d'une activation future par la gouvernance."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "Qui détient réellement mon argent pendant qu'un prêt est actif ?",
         "a1": "Personne au sens traditionnel. Les actifs résident dans un vault par smart contract que seul l'utilisateur et les règles du protocole peuvent déplacer. Chaque utilisateur dispose de son propre vault isolé — les fonds ne sont jamais mutualisés avec ceux d'inconnus — et chaque libération de fonds suit une règle publiée on-chain avant tout clic sur « accepter ».",
-        "a2": "Les contrats sont open source et ont été audités. Vaipakam ne peut ni geler, ni rediriger, ni reprendre un solde ; tout au plus l'équipe peut-elle suspendre les nouvelles actions en cas d'urgence. Le remboursement, la réclamation ou la sortie restent toujours disponibles."
+        "a2": "Les contrats sont open source et des audits tiers sont requis avant tout déploiement en mainnet. Vaipakam ne peut ni rediriger ni récupérer des soldes ; au maximum, l’équipe peut suspendre les nouvelles actions en cas d’urgence tandis que les chemins existants de remboursement, de réclamation ou de sortie restent disponibles."
       },
       "basics-vpfi-intro": {
         "q": "Qu'est-ce que VPFI, et faut-il en posséder pour utiliser l'app ?",

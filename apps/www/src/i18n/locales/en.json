@@ -1365,8 +1365,8 @@
     "transparencyDesc": "Every offer, loan, and status change is recorded on-chain. Vaipakam NFTs serve as verifiable proof of position ownership.",
     "slippageTitle": "Slippage & Liquidation Safety",
     "slippageDesc": "DEX liquidation aborts if slippage exceeds 6%. Falls back to full collateral transfer via NFT claim model. No forced bad swaps.",
-    "auditTitle": "Audited & Battle-Tested",
-    "auditDesc": "Built on OpenZeppelin contracts. ReentrancyGuard and Pausable on all facets. Mandatory third-party audits before mainnet deployment.",
+    "auditTitle": "Audit pending before mainnet",
+    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
     "kycTitle": "Non-Custodial & No KYC",
     "kycDesc": "Vaipakam is non-custodial and does not require KYC. Users are responsible for their own regulatory compliance. Tiered-KYC and country-pair logic remains in the codebase for future governance activation if a separate industrial deployment ever needs it."
   },
@@ -1434,7 +1434,7 @@
       "basics-custody": {
         "q": "Who actually holds my money while a loan is active?",
         "a1": "Nobody holds it in the traditional sense. Assets live in a smart-contract vault that only the user and the protocol's own rules can move. Each user has their own isolated vault — funds are never pooled with strangers — and every release of those funds follows a rule that was published on-chain before the user ever clicked \"accept\".",
-        "a2": "The contracts are open source and have been audited. Vaipakam cannot freeze, redirect, or claw back any balance; the most the team can do is pause new actions in an emergency. Repayment, claim, or exit always remains available."
+        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; in an emergency, the team can pause protocol entry points to prevent new state changes until normal operation is restored."
       },
       "basics-vpfi-intro": {
         "q": "What is VPFI, and do I need any to use the app?",

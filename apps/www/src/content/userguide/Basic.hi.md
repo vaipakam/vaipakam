@@ -415,7 +415,7 @@ chains पर एक signature) और काम पूरा।
 
 <a id="buy-vpfi.unstake"></a>
 
-### vault से VPFI unstake करें
+### vault से VPFI निकालें
 
 कुछ VPFI वापस wallet में चाहिए? यह कार्ड उसे vault से वापस भेज
 देता है। ध्यान रहे: VPFI निकालते ही आपका discount tier

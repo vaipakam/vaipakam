@@ -2,8 +2,12 @@
 
 Handoff document for external audit. Summarises architecture, trust
 assumptions, known deviations, and areas auditors should prioritise. Paired
-with [`CLAUDE.md`](../CLAUDE.md) and [`README.md`](../README.md) — read both
-before reviewing code.
+with [`CLAUDE.md`](../CLAUDE.md) and the canonical technical
+whitepaper
+[`apps/www/src/content/whitepaper/Whitepaper.en.md`](../apps/www/src/content/whitepaper/Whitepaper.en.md).
+Auditors should read those before code review. The root
+[`README.md`](../README.md) is a product overview, not the audit
+technical specification.
 
 ---
 
@@ -133,7 +137,7 @@ protection.
 
 5. **Active-network-only liquidity** (`checkLiquidity` and
    `checkLiquidityOnActiveNetwork`).
-   - README §1 / line 1076: liquidity is judged purely from the current
+   - Canonical whitepaper §4 and §8.4 plus `docs/FunctionalSpecs/ProjectDetailsREADME.md` active-network liquidity rules: liquidity is judged purely from the current
      active network. The prior Ethereum-mainnet reference layer (the
      `AssetBlockedUseMainnet` block-and-redirect path) has been retired.
      Both entry points now return Liquid/Illiquid based only on the

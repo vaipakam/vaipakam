@@ -1,8 +1,8 @@
 # Vaipakam: Technical Whitepaper
 
 **Version:** `3.0`
-**Date:** April 2026
-**Status:** Production protocol
+**Date:** July 2026
+**Status:** Production-oriented technical specification; current live protocol deployments are testnet and local only pending third-party audit and mainnet launch approval.
 
 ---
 
@@ -10,11 +10,13 @@
 
 Vaipakam is a non-custodial vault-to-vault credit protocol for over-collateralized
 ERC-20 lending and vault-mediated ERC-721 / ERC-1155 rentals across
-Ethereum-compatible networks. Each supported network — `Ethereum mainnet`,
-`Base`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain` — runs an
-independent Diamond (`EIP-2535`) deployment, with all loan, offer, collateral,
-repayment, claim, refinance, and liquidation state remaining local to a single
-chain. The protocol couples bilateral offer negotiation with per-user isolated
+Ethereum-compatible networks. The intended mainnet chain set is `Ethereum
+mainnet`, `Base`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain`;
+current live deployments are limited to testnet and local environments. At
+mainnet launch, each supported network is designed to run an independent
+Diamond (`EIP-2535`) deployment, with all loan, offer, collateral, repayment,
+claim, refinance, and liquidation state remaining local to a single chain. The
+protocol couples bilateral offer negotiation with per-user isolated
 vaults, tokenized lender / borrower position rights, an oracle stack hardened
 by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
 pipeline, and a `Chainlink CCIP CCT` protocol token (`VPFI`) wired for fee
@@ -25,7 +27,7 @@ This document specifies the architecture, the loan and rental lifecycle,
 the risk and liquidation engine, the oracle and liquidity-classification
 model, the VPFI tokenomics, the cross-chain reward mesh, the security
 posture, and the operational and governance topology that together define
-the production protocol.
+the production-oriented protocol design. Current live deployments are testnet and local only; mainnet launch remains pending third-party audit and launch approval.
 
 ---
 
@@ -99,16 +101,18 @@ liquidation, and claim rights.
 
 ### 2.1 Chain Model
 
-Vaipakam core protocol state is deployed as a separate Diamond on each
-supported chain. Each Diamond is an independent protocol instance:
+Vaipakam core protocol state is designed to be deployed as a separate Diamond
+on each supported mainnet chain after the audit and launch-approval gate. Each
+Diamond is an independent protocol instance:
 
 - there is no cross-chain loan state machine
 - a loan opened on `Base` is settled on `Base`
 - per-chain Diamonds are governed by per-chain Safes / timelocks
 - only `VPFI` and the daily interaction-reward denominator are cross-chain
 
-Supported chains: `Ethereum mainnet`, `Base` (canonical), `Polygon zkEVM`,
-`Arbitrum`, `Optimism`, and `BNB Chain`.
+Planned supported mainnet chains: `Ethereum mainnet`, `Base` (canonical),
+`Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain`. Current live protocol
+deployments remain testnet and local only.
 
 ### 2.2 Product Surface
 
@@ -1470,13 +1474,16 @@ network. Audit scope includes the Diamond core, the four-DEX swap
 failover, the secondary oracle quorum, the cross-chain reward mesh,
 the borrower LIF custody, and the Chainlink CCIP OApp surface.
 
-Audit reports will be published where appropriate. The static analysis
+Current live deployments are testnet and local only; mainnet launch remains pending third-party audit and launch approval. Audit reports will be published where appropriate. The static analysis
 toolchain includes Slither and Mythril. Bug bounty scope, severity, and
 reward ranges will be public before mainnet launch.
 
 ---
 
 ## 18. References
+
+Security-sensitive reports should use the private disclosure channels in
+[SECURITY.md](https://github.com/vaipakam/vaipakam/blob/main/SECURITY.md).
 
 1. `EIP-2535` Diamond Standard
 2. `ERC-20`, `ERC-721`, `ERC-1155`, `ERC-4907` standards

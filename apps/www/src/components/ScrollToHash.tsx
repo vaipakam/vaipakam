@@ -16,7 +16,13 @@ export function ScrollToHash() {
       window.scrollTo({ top: 0 });
       return;
     }
-    const id = hash.slice(1);
+    const rawId = hash.slice(1);
+    let id = rawId;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
+      id = rawId;
+    }
     const scroll = () => {
       const el = document.getElementById(id);
       if (el) {

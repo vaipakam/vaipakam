@@ -89,7 +89,7 @@ Tier ladder:
 
 Tier は、VPFI を deposit または withdraw した瞬間の
 **post-change** vault balance に対して calculate され、その後
-各 loan の全期間にわたって time-weighted されます。Unstake は、
+各 loan の全期間にわたって time-weighted されます。引き出し は、
 あなたの open loans すべてに対して、新しい (低い) balance を
 使って rate を即座に re-stamp します — 古い (高い) tier が残る
 grace window はありません。これにより、loan 終了直前に VPFI を
@@ -736,7 +736,7 @@ Live status:
 - wallet-level consent flag。
 
 vault VPFI は deposit されている限り discount tier の判定に count
-されます — 別の "stake" action はありません。
+されます — 別の "deposit" action はありません。
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -752,7 +752,7 @@ cleanly fall back します。
 
 <a id="buy-vpfi.unstake"></a>
 
-### vault から VPFI をアンステークする
+### vault から VPFI を引き出しする
 
 VPFI を vault から wallet に戻します。approval leg はありません
 — protocol が vault owner であり、自身を debit します。withdraw
@@ -792,7 +792,7 @@ button を guard し、users が under-claim しないようにします。
 
 ### vault から VPFI を引き出す
 
-VPFI セクションの "vault から VPFI をアンステークする" と同じ
+VPFI セクションの "vault から VPFI を引き出しする" と同じ
 interface です — vault から wallet に VPFI を戻します。withdraw
 された VPFI は discount accumulator から即座に外れます (各 open
 loan で post-balance re-stamp)。

@@ -429,7 +429,7 @@ fertig.
 
 <a id="buy-vpfi.unstake"></a>
 
-### VPFI aus deinem Vault unstaken
+### VPFI aus deinem Vault abheben
 
 Willst du etwas VPFI zurück in deinem Wallet? Diese Karte schickt
 es vom Vault zurück zu dir. Achtung: VPFI rauszuziehen senkt dein

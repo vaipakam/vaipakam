@@ -847,8 +847,8 @@
     "transparencyDesc": "Cada oferta, préstamo y cambio de estado queda registrado on-chain. Los NFT de Vaipakam funcionan como prueba verificable de la propiedad de la posición.",
     "slippageTitle": "Seguridad ante slippage y liquidación",
     "slippageDesc": "La liquidación DEX se cancela si el slippage supera el 6%. En su lugar, se aplica la transferencia total del colateral mediante el modelo de reclamo por NFT. Sin swaps perjudiciales forzados.",
-    "auditTitle": "Auditada y probada en producción",
-    "auditDesc": "Construida sobre contratos de OpenZeppelin. ReentrancyGuard y Pausable en todas las facetas. Auditorías obligatorias por terceros antes del despliegue en mainnet.",
+    "auditTitle": "Auditoría pendiente antes de mainnet",
+    "auditDesc": "Construido sobre contratos OpenZeppelin con controles de pausa de emergencia. Las auditorías de terceros son obligatorias antes del despliegue en mainnet; los informes se publicarán cuando estén disponibles.",
     "kycTitle": "No custodial y sin KYC",
     "kycDesc": "La Fase 1 se lanza con verificaciones KYC en modo pass-through. Vaipakam es no custodial; cada usuario es responsable de su propio cumplimiento normativo. La lógica de países sancionados y KYC por niveles permanece en el código a la espera de futura activación por gobernanza."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "¿Quién custodia realmente mi dinero mientras un préstamo está activo?",
         "a1": "Nadie en el sentido tradicional. Los activos viven en una custodia mediante contrato inteligente que solo el usuario y las propias reglas del protocolo pueden mover. Cada usuario tiene su propia custodia aislada — los fondos nunca se mezclan con los de extraños — y cada liberación de esos fondos sigue una regla publicada en cadena antes de que se pulsara \"aceptar\".",
-        "a2": "Los contratos son de código abierto y han sido auditados. Vaipakam no puede congelar, redirigir ni recuperar saldo alguno; lo máximo que puede hacer el equipo es pausar nuevas acciones en una emergencia. El repago, la reclamación o la salida siempre permanecen disponibles."
+        "a2": "Los contratos son de código abierto y requieren auditorías de terceros antes del despliegue en mainnet. Vaipakam no puede redirigir ni recuperar saldos; como máximo, el equipo puede pausar acciones nuevas en una emergencia mientras las rutas existentes de repago, reclamación o salida siguen disponibles."
       },
       "basics-vpfi-intro": {
         "q": "¿Qué es VPFI y necesito tenerlo para usar la app?",

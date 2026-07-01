@@ -15,8 +15,10 @@
  * a tap on a TOC link scrolls to the right section.
  *
  * Two-level structure: H2 = section group (rendered as a label in the
- * sidebar), H3 = jump target. H1 is reserved for the document title
- * and skipped. H4+ are body-level and don't appear in the TOC.
+ * sidebar), H3 = jump target. If a document has an H2 with no H3
+ * children, that H2 becomes its own jump target so H2-only documents
+ * still get a usable TOC. H1 is reserved for the document title and
+ * skipped. H4+ are body-level and don't appear in the TOC.
  */
 
 import type { ReactNode } from 'react';
@@ -34,7 +36,7 @@ export function slugify(input: string): string {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');
@@ -56,8 +58,8 @@ export interface TocSection {
  * Walk the raw markdown line-by-line and build a two-level TOC. H2s
  * become section group titles, H3s become jump items underneath. H3s
  * appearing before any H2 land in an unsectioned group with empty
- * `title`. Sections with no H3 children are dropped — they'd render
- * as orphan group labels in the sidebar.
+ * `title`. Sections with no H3 children become single H2 jump items
+ * instead of disappearing from the sidebar.
  *
  * Code-fence aware: inside ``` blocks we skip line scanning so a
  * `## Foo` line in a code example doesn't become a TOC entry.
@@ -92,7 +94,14 @@ export function extractMarkdownToc(raw: string): TocSection[] {
     }
   }
 
-  return sections.filter((s) => s.items.length > 0);
+  return sections.map((section) => {
+    if (section.items.length > 0) return section;
+    const id = slugify(section.title) || 'section';
+    return {
+      title: '',
+      items: [{ id, title: section.title }],
+    };
+  });
 }
 
 /**

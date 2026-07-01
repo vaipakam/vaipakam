@@ -267,7 +267,7 @@ This scenario addresses lending where collateral is illiquid (e.g., low-liquidit
    - The lender deposits the ERC-721 or ERC-1155 rental NFT into the lender’s Vaipakam Vault.
 
 2. **Borrower Accepts the Offer**
-   - For Phase 1 NFT rentals, the borrower locks ERC20 prepayment rather than taking custody of the rental NFT. NFT-as-collateral edge cases are treated as illiquid and should follow the README’s illiquid-asset consent rules.
+   - For NFT rentals, the borrower locks ERC20 prepayment rather than taking custody of the rental NFT. NFT-as-collateral edge cases are treated as illiquid and should follow the canonical whitepaper and FunctionalSpecs illiquid-asset consent rules.
    - The smart contract assigns the borrower as the user of the lender’s NFT.
 
 3. **Borrower Fails to Return the NFT**

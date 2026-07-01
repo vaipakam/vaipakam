@@ -69,9 +69,9 @@
     "security": "安全",
     "vpfi": "VPFI",
     "vpfiLearn": "了解 VPFI",
-    "vpfiStakeUnstake": "质押 / 取消质押",
-    "vpfiStake": "质押",
-    "vpfiUnstake": "取消质押",
+    "vpfiStakeUnstake": "存入 / 提取",
+    "vpfiStake": "存入",
+    "vpfiUnstake": "提取",
     "launchApp": "启动 Vaipakam",
     "toggleMenu": "切换菜单",
     "switchNetwork": "切换网络",
@@ -847,8 +847,8 @@
     "transparencyDesc": "每一笔报价、贷款及状态变更均链上记录。Vaipakam NFT 作为头寸所有权的可验证凭证。",
     "slippageTitle": "滑点与清算安全",
     "slippageDesc": "DEX 清算的滑点超过 6% 时将立即终止，转而通过 NFT 领取模式进行全额抵押品转移，不会强制执行不利的兑换。",
-    "auditTitle": "经过审计与实战检验",
-    "auditDesc": "基于 OpenZeppelin 合约构建。所有 facet 均使用 ReentrancyGuard 与 Pausable。主网部署前必须完成第三方审计。",
+    "auditTitle": "Mainnet 前审计待完成",
+    "auditDesc": "基于 OpenZeppelin 合约构建，并带有紧急暂停控制。Mainnet 部署前必须完成第三方审计；报告将在可用时发布。",
     "kycTitle": "非保管且无 KYC",
     "kycDesc": "第 1 阶段以直通模式启用 KYC 检查。Vaipakam 为非保管协议，用户需自行承担合规责任。受制裁国家与分级 KYC 逻辑保留在代码库中，等待未来通过治理启用。"
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "贷款生效期间，资金到底由谁保管？",
         "a1": "传统意义上没有人保管。资产存放在智能合约保管中，只有用户本人和协议自身的规则才能调动。每位用户都有自己独立的保管——资金从不与他人合并——每一次释放都遵循在用户点击「接受」之前就已在链上公开的规则。",
-        "a2": "合约开源且经过审计。Vaipakam 无法冻结、转移或追回任何余额；最多只能在紧急情况下暂停新的操作。还款、申领或退出始终保持可用。"
+        "a2": "合约是开源的，mainnet 部署前必须完成第三方审计。Vaipakam 不能重定向或追回余额；团队在紧急情况下最多只能暂停新操作，同时既有的还款、领取或退出路径仍保持可用。"
       },
       "basics-vpfi-intro": {
         "q": "VPFI 是什么？使用应用必须持有它吗？",
@@ -1177,10 +1177,10 @@
     "durationMins": "{{mins}}分",
     "durationSecs": "{{seconds}}秒",
     "consentMissingTitle": "折扣等级未启用",
-    "consentMissingBody": "您尚未同意在此贷款中使用已质押 / 已存入的 VPFI 支付费用折扣。折扣等级需要主动选择 — 在 Dashboard 启用之前，结算时的收益费将按完整 {{treasuryFee}}% 收取，不会产生 VPFI 返还。",
+    "consentMissingBody": "您尚未同意在此贷款中使用已存入 Vault 的 VPFI 支付费用折扣。折扣等级需要主动选择 — 在 Dashboard 启用之前，结算时的收益费将按完整 {{treasuryFee}}% 收取，不会产生 VPFI 返还。",
     "consentMissingCta": "在 Dashboard 启用",
     "consentEnabledNoVpfiTitle": "已同意，但没有符合条件的 VPFI",
-    "consentEnabledNoVpfiBody": "您已给出同意，但当前在此链的 Vault 中没有符合条件的已质押 / 已存入 VPFI。补充 VPFI 后即可开始获得按时间加权的收益费折扣。"
+    "consentEnabledNoVpfiBody": "您已给出同意，但当前在此链的 Vault 中没有符合条件的已存入 VPFI。补充 VPFI 后即可开始获得按时间加权的收益费折扣。"
   },
   "vpfiTokenCard": {
     "title": "VPFI代币（此链）",
@@ -1194,7 +1194,7 @@
     "notRegistered": "VPFI尚未在{{chain}}上的Diamond中注册。一旦管理员调用setVPFIToken，余额和活动将显示在此处。",
     "walletBalance": "钱包VPFI余额",
     "vaultBalance": "Vault VPFI余额",
-    "vaultTooltip": "当前在此链按用户vault中质押的VPFI。计入借款人费用折扣Tier。",
+    "vaultTooltip": "当前在此链按用户vault中存放的VPFI。计入借款人费用折扣Tier。",
     "shareCirculating": "流通占比",
     "circulatingThisChain": "流通量（此链）",
     "remainingMintable": "剩余可铸造",
@@ -1242,9 +1242,9 @@
     "depositAmount": "存入的VPFI数量",
     "useMaxVpfi": "使用最大（{{amount}} VPFI）",
     "depositButton": "存入Vault",
-    "unstakeTitle": "从vault解除质押VPFI",
+    "unstakeTitle": "从vault提取VPFI",
     "unstakeSubtitle": "将VPFI从{{chain}}的vault移回钱包。如果vault余额低于Tier阈值，折扣Tier也会下降。",
-    "unstakeAmount": "解除质押的VPFI数量",
+    "unstakeAmount": "要提取的VPFI数量",
     "unstakeButton": "提取到钱包"
   },
   "alertsPage": {
@@ -1507,7 +1507,7 @@
     "loanDetailsParties": "出借方与借款方地址、保管其资产的逐用户保管代理，以及双方在贷款开启时收到的仓位 NFT。每个 NFT 是该方债权的不记名凭证 — 丢失即丧失债权。",
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
     "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
-    "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此 unstake 自此刻起对手续费折扣计算即生效。"
+    "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此提取自此刻起对手续费折扣计算即生效。"
   },
   "acceptReview": {
     "partialRepayLabel": "部分还款",

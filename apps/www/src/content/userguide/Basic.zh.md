@@ -357,7 +357,7 @@ consent switch 是否为 ON — discount 只有在它 ON 时才会生效。
 
 <a id="buy-vpfi.unstake"></a>
 
-### 从 vault 中 unstake VPFI
+### 从 vault 中 withdraw VPFI
 
 想把一些 VPFI 拿回 wallet？这张卡会把它从 vault 送回给您。
 请注意：取出 VPFI 会**立即**降低您的 discount tier。如果您有 open

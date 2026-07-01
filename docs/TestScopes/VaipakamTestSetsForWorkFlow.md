@@ -1,6 +1,6 @@
 # Vaipakam Lending Platform Test Workflows
 
-This document provides detailed Phase 1 test workflows for the Vaipakam decentralized P2P lending, borrowing and NFT rental platform. These scenarios cover ERC20 lending, NFT lending/renting, illiquid collateral, lender early withdrawal, and borrower preclose. They follow the README as the source of truth: Phase 1 loans are single-network flows; governance, staking, cross-chain bridging, and VNGK rewards are Phase 2; ERC721 and ERC1155 rental NFTs are vault-custodied; borrowers receive only temporary user rights; preclose flows must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type; and lender early-withdrawal plus refinance flows apply only to active ERC20 loans.
+This document provides detailed test workflows for the Vaipakam decentralized P2P lending, borrowing, and NFT rental platform. These scenarios cover ERC20 lending, NFT lending/renting, illiquid collateral, lender early withdrawal, and borrower preclose. They follow `apps/www/src/content/whitepaper/Whitepaper.en.md` and `docs/FunctionalSpecs/` as the technical sources of truth: loans are single-network flows in the current connected-app product surface; ERC721 and ERC1155 rental NFTs are vault-custodied; borrowers receive only temporary user rights; preclose flows must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type; and lender early-withdrawal plus refinance flows apply only to active ERC20 loans.
 
 ---
 
@@ -278,7 +278,7 @@ This scenario tests lending where the borrower provides illiquid collateral (e.g
 
 ## Scenario 7: Loan Sales by Lender
 
-This scenario covers lender early withdrawal for active ERC20 loans only. Per the README, NFT rental loans and other non-ERC20 loan/rental positions are not eligible for lender early withdrawal in Phase 1. Each Phase 1 ERC20 early-withdrawal option has one path: Option 1 accepts an existing compatible lender offer, and Option 2 creates a new borrower-style offer. The principal/lending asset type, payment/prepay asset type, and collateral asset type must match the original live loan, and the replacement terms must not make the original borrower worse off.
+This scenario covers lender early withdrawal for active ERC20 loans only. Per the canonical whitepaper and FunctionalSpecs, NFT rental loans and other non-ERC20 loan/rental positions are not eligible for lender early withdrawal. Each ERC20 early-withdrawal option has one path: Option 1 accepts an existing compatible lender offer, and Option 2 creates a new borrower-style offer. The principal/lending asset type, payment/prepay asset type, and collateral asset type must match the original live loan, and the replacement terms must not make the original borrower worse off.
 
 ### Sub-Scenario 7a: Lender Sells Loan by Accepting Another Lender’s Offer (ERC-20)
 
@@ -344,7 +344,7 @@ This scenario covers lender early withdrawal for active ERC20 loans only. Per th
 
 ## Scenario 8: Loan Transfers by Borrower
 
-This scenario covers borrower preclose. Per the README, Option 2 accepts an existing compatible borrower offer, while Option 3 creates a new lender offer as an offsetting position. The principal/lending asset type, payment/prepay asset type, and collateral asset type must match the original active loan, and the replacement terms must not make the original lender worse off unless the original borrower compensates the shortfall.
+This scenario covers borrower preclose. Per the canonical whitepaper and FunctionalSpecs, Option 2 accepts an existing compatible borrower offer, while Option 3 creates a new lender offer as an offsetting position. The principal/lending asset type, payment/prepay asset type, and collateral asset type must match the original active loan, and the replacement terms must not make the original lender worse off unless the original borrower compensates the shortfall.
 
 ### Sub-Scenario 8a: Borrower Transfers Loan by Accepting Another Borrower’s Offer (ERC-20)
 

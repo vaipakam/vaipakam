@@ -94,7 +94,7 @@ Tier-Leiter:
 
 Das Tier wird gegen deinen Vault-Saldo **nach der Änderung** in
 dem Moment berechnet, in dem du VPFI einzahlst oder abhebst, und
-dann über die Laufzeit jedes Loans zeitgewichtet. Ein Unstake
+dann über die Laufzeit jedes Loans zeitgewichtet. Ein Abhebung
 stempelt die Rate sofort auf den neuen niedrigeren Saldo für jeden
 offenen Loan, an dem du beteiligt bist — es gibt kein
 Gnadenfenster, in dem dein altes (höheres) Tier weiter gilt. Damit
@@ -789,7 +789,8 @@ Live-Status:
 - Consent-Flag auf Wallet-Ebene.
 
 VPFI im Vault zählt zu deinem Rabatt-Tier, solange es eingezahlt
-bleibt — es gibt keine separate "Stake"-Aktion.
+bleibt — zusätzlich zum expliziten Deposit-Schritt unten gibt es
+keine separate Locking-Aktion.
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -806,7 +807,7 @@ ist.
 
 <a id="buy-vpfi.unstake"></a>
 
-### VPFI aus deinem Vault unstaken
+### VPFI aus deinem Vault abheben
 
 Hebe VPFI aus deinem Vault zurück in dein Wallet ab. Es gibt
 keinen separaten Approve-Schritt — das Protokoll besitzt den
@@ -850,7 +851,7 @@ damit Nutzer nicht unter-claimen.
 
 ### VPFI aus deinem Vault abheben
 
-Identische Oberfläche wie "VPFI aus deinem Vault unstaken" im
+Identische Oberfläche wie "VPFI aus deinem Vault abheben" im
 VPFI-Bereich — hebe VPFI aus dem Vault zurück in dein Wallet ab.
 Abgehobenes VPFI verlässt den Rabatt-Akkumulator sofort
 (Post-Saldo-Re-Stamp auf jedem offenen Loan).
@@ -1610,7 +1611,7 @@ Dieser Abschnitt behandelt einen SONDERFALL, den die meisten Nutzer nie benötig
 
 ### Was "hängengebliebene Token" bedeutet
 
-Dein Vaipakam-Vault-Proxy ist ein interner Speicher des Protokolls. Er ist KEINE Einzahlungsadresse. Jede vom Protokoll unterstützte Einzahlung läuft über die Facet-Einstiegspunkte von Vaipakam, die im Rahmen einer Offer-Erstellung, Loan-Annahme oder eines Staking-Vorgangs Mittel aus deinem Wallet in deinen Vault ziehen. Token, die AUSSERHALB dieses Flows im Vault ankommen — z. B. durch einen direkten `IERC20.transfer` aus einem Wallet oder einen CEX-Withdrawal, bei dem deine Vault-Adresse kopiert und eingefügt wurde — liegen dort ohne Protokoll-Buchhaltung. Der Asset-Viewer blendet sie aus, da er nur den vom Protokoll verfolgten Saldo anzeigt.
+Dein Vaipakam-Vault-Proxy ist ein interner Speicher des Protokolls. Er ist KEINE Einzahlungsadresse. Jede vom Protokoll unterstützte Einzahlung läuft über die Facet-Einstiegspunkte von Vaipakam, die im Rahmen einer Offer-Erstellung, Loan-Annahme oder eines Deposit-Vorgangs Mittel aus deinem Wallet in deinen Vault ziehen. Token, die AUSSERHALB dieses Flows im Vault ankommen — z. B. durch einen direkten `IERC20.transfer` aus einem Wallet oder einen CEX-Withdrawal, bei dem deine Vault-Adresse kopiert und eingefügt wurde — liegen dort ohne Protokoll-Buchhaltung. Der Asset-Viewer blendet sie aus, da er nur den vom Protokoll verfolgten Saldo anzeigt.
 
 Token können auf zwei Arten hängenbleiben:
 1. **Du hast sie selbst geschickt.** Du hast deine Vault-Adresse (aus dem Dashboard oder einem Block-Explorer) in ein CEX-Auszahlungsfeld oder das Senden-Formular eines Wallets kopiert und abgeschickt. Die Token landeten in deinem Vault, ohne den Einzahlungspfad des Protokolls zu durchlaufen.
@@ -1620,7 +1621,7 @@ Token können auf zwei Arten hängenbleiben:
 
 ### Über "Taint-Poisoning"
 
-Wenn der Dritt-Absender auf einer Sanktionsliste steht, könnten generische On-Chain-Analysetools deinen Vault als "sanktionsnah" markieren, obwohl du die eingehenden Token nie berührt hast. Es gibt keinen On-Chain-Weg, dies rückgängig zu machen — das Transfer-Event ist permanent. Die INTERNE Buchhaltung von Vaipakam ist davon unberührt (wir verfolgen nur über das Protokoll vermittelte Deposits, Dust geht niemals in unsere Zähler ein), sodass deine Loans / Stakes / Claims normal weiterfunktionieren. Externe Tools jedoch, die unsere Buchhaltung nicht verstehen, könnten Warnungen anzeigen.
+Wenn der Dritt-Absender auf einer Sanktionsliste steht, könnten generische On-Chain-Analysetools deinen Vault als "sanktionsnah" markieren, obwohl du die eingehenden Token nie berührt hast. Es gibt keinen On-Chain-Weg, dies rückgängig zu machen — das Transfer-Event ist permanent. Die INTERNE Buchhaltung von Vaipakam ist davon unberührt (wir verfolgen nur über das Protokoll vermittelte Deposits, Dust geht niemals in unsere Zähler ein), sodass deine Loans / Deposits / Claims normal weiterfunktionieren. Externe Tools jedoch, die unsere Buchhaltung nicht verstehen, könnten Warnungen anzeigen.
 
 <a id="stuck-recovery.dont-recover"></a>
 

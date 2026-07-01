@@ -204,9 +204,7 @@ Protokoll hat mehrere eingebaute Schichten:
   der Operator neue Geschäfte in Sekunden stoppen kann, wenn etwas
   nicht stimmt, während bestehende Nutzer ihre Positionen sicher
   abwickeln können.
-- **Unabhängige Audits.** Jeder Vertrag auf jeder Chain geht erst
-  nach Drittanbieter-Sicherheitsprüfung live. Audit-Berichte und
-  Bug-Bounty-Umfang sind öffentlich.
+- **Audit vor Mainnet ausstehend.** Vor dem Mainnet-Start ist eine Sicherheitsprüfung durch Dritte erforderlich. Audit-Berichte und Bug-Bounty-Umfang werden veröffentlicht, sobald sie verfügbar sind.
 
 Sie sollten dennoch verstehen, worauf Sie sich einlassen. Lesen Sie
 die kombinierte **Risikozustimmung**, die vor jedem Kredit

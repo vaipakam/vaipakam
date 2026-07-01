@@ -703,13 +703,11 @@ update is part of the same PR. Drift between code and README is a
 real failure mode — treat README updates the way release-notes
 fragments are treated (§6.1).
 
-**Root `README.md` is the technical whitepaper** — its template is
+**Root `README.md` is the product overview** — its template is
 different (audience: external readers landing on the GitHub repo
-cold, looking for protocol-level intro). It carries the "For
-auditors and integrators" quick-links table that points at every
-load-bearing doc (added in PR #93). The canonical whitepaper text
-lives at
-[`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md).
+cold, looking for product-level orientation). The canonical technical
+whitepaper for auditors and integrators lives at
+[`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md). Keep repo-navigation and audit-entry references pointed at that canonical file when readers need the technical specification.
 
 ---
 
