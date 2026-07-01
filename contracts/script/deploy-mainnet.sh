@@ -535,6 +535,16 @@ EOF
     exit 1
   fi
 
+  # #857 — reject a ZERO VPFI_TOKEN_REUSE_ADDRESS up-front. A non-empty but
+  # zero value would satisfy the reuse-exemption below (skipping the re-mint
+  # refusal), yet DeployVPFIToken parses it as address(0), does NOT enter reuse
+  # mode, and hits its no-overwrite guard only at [3b] AFTER Diamond + Timelock
+  # broadcast — the partial deploy the gate exists to prevent.
+  if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "${VPFI_TOKEN_REUSE_ADDRESS}" = "0x0000000000000000000000000000000000000000" ]; then
+    echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is the zero address — unset it, or set the real canonical VPFI token to carry forward." >&2
+    exit 1
+  fi
+
   # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
   # DeployVPFIToken's [3b] no-overwrite guard aborts (correctly) when a canonical
   # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
@@ -874,9 +884,9 @@ EOF
   # freeze those contracts during an incident — it MUST be wired now, while ADMIN
   # still owns them. On MAINNET this is especially load-bearing (the incident
   # containment path). Single global address (the incident guardian / Pauser Safe).
-  if [ -z "${CCIP_GUARDIAN:-}" ]; then
+  if [ -z "${CCIP_GUARDIAN:-}" ] || [ "${CCIP_GUARDIAN:-}" = "0x0000000000000000000000000000000000000000" ]; then
     cat >&2 <<EOF
-Refusing --phase ccip-wire: CCIP_GUARDIAN unset in .env.
+Refusing --phase ccip-wire: CCIP_GUARDIAN unset (or zero) in .env.
 
 ConfigureCcip wires the incident guardian onto every GuardianPausable
 cross-chain contract. Left unset they get NO guardian, and after handover

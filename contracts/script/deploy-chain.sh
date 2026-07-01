@@ -548,6 +548,15 @@ if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "
   echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
 fi
 
+# #857 — reject a ZERO VPFI_TOKEN_REUSE_ADDRESS up-front (a non-empty zero value
+# would satisfy the reuse-exemption below yet DeployVPFIToken parses it as
+# address(0), skips reuse mode, and hits its no-overwrite guard only at [3b]
+# after broadcast — a partial deploy).
+if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "${VPFI_TOKEN_REUSE_ADDRESS}" = "0x0000000000000000000000000000000000000000" ]; then
+  echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is the zero address — unset it, or set the real canonical VPFI token." >&2
+  exit 1
+fi
+
 # ── VPFI re-mint preflight (#853 Codex P2) ────────────────────────────
 # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical `.vpfiToken`
 # is already recorded — but [3b] runs AFTER [2] Diamond + [3] Timelock broadcast,

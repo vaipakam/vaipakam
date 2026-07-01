@@ -73,6 +73,25 @@ contract DeployVPFIToken is Script {
                 reuse.code.length > 0,
                 "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS has no bytecode (not a deployed token)"
             );
+            // #857 — validate it is actually a VPFI token, not a copied
+            // timelock / USDC / arbitrary proxy address: registering the wrong
+            // asset as canonical VPFI would disconnect the real supply/minter
+            // path. Require symbol == "VPFI" AND decimals == 18 (VPFIToken's
+            // initializer sets exactly these). A non-ERC20 (e.g. the timelock)
+            // reverts on symbol()/decimals() → caught → hard error.
+            try VPFIToken(reuse).symbol() returns (string memory sym) {
+                require(
+                    keccak256(bytes(sym)) == keccak256(bytes("VPFI")),
+                    "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS symbol is not VPFI"
+                );
+            } catch {
+                revert("DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS is not an ERC20 (symbol() reverted)");
+            }
+            try VPFIToken(reuse).decimals() returns (uint8 dec) {
+                require(dec == 18, "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS decimals != 18");
+            } catch {
+                revert("DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS decimals() reverted");
+            }
             Deployments.writeVpfiToken(reuse);
             console.log("VPFI carry-forward: reusing existing canonical token:", reuse);
             console.log("  recorded as .vpfiToken (mint skipped).");
