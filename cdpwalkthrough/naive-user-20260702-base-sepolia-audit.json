@@ -1,0 +1,1555 @@
+[
+  {
+    "route": "/app",
+    "screenshot": "/tmp/base-sepolia-user-app.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Dashboard"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Enable discount",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Learn how liquidation actually works →",
+        "disabled": false
+      },
+      {
+        "text": "Vaipakam Terms",
+        "disabled": false
+      },
+      {
+        "text": "Enable auto-lend",
+        "disabled": true
+      },
+      {
+        "text": "Enable",
+        "disabled": false
+      },
+      {
+        "text": "Deposit VPFI now",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Platform-interaction rewards Earn a daily VPFI share for every loan you participate in. Pending: 0 Claimed: 0",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Status: Active",
+        "disabled": false
+      },
+      {
+        "text": "NEW OFFER",
+        "disabled": false
+      },
+      {
+        "text": "#1",
+        "disabled": false
+      },
+      {
+        "text": "mUSDC",
+        "disabled": false
+      },
+      {
+        "text": "mWETH",
+        "disabled": false
+      },
+      {
+        "text": "Cancel",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Role: All",
+        "disabled": false
+      },
+      {
+        "text": "Status: All",
+        "disabled": false
+      },
+      {
+        "text": "Per page: 10",
+        "disabled": false
+      },
+      {
+        "text": "ID",
+        "disabled": false
+      },
+      {
+        "text": "ROLE",
+        "disabled": false
+      },
+      {
+        "text": "POSITION NFT",
+        "disabled": false
+      },
+      {
+        "text": "PRINCIPAL",
+        "disabled": false
+      },
+      {
+        "text": "RATE (APR)",
+        "disabled": false
+      },
+      {
+        "text": "DURATION",
+        "disabled": false
+      },
+      {
+        "text": "LTV",
+        "disabled": false
+      },
+      {
+        "text": "HF",
+        "disabled": false
+      },
+      {
+        "text": "STATUS",
+        "disabled": false
+      },
+      {
+        "text": "#3",
+        "disabled": false
+      },
+      {
+        "text": "#8",
+        "disabled": false
+      },
+      {
+        "text": "mUSDC",
+        "disabled": false
+      },
+      {
+        "text": "rNFT",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 4",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Dashboard Overview of your lending and borrowing positions 1 Active Loans 1 As Lender 0 As Borrower 1 Total Loans FEE-DISCOUNT CONSENT When enabled, the protocol may deduct VPFI from the vault to pay the discounted fee on both the borrower Loan Initiation Fee and / or the lender Yield Fee. The discount scales with the vault VPFI balance — 10% off at Tier 1 (≥ 100 VPFI), 15% at Tier 2 (≥ 1,000), 20% at Tier 3 (≥ 5,000), and 24% at Tier 4 (> 20,000). Acquire and deposit VPFI on VPFI Vault . Disabled Enable discount AUTO-LEND (STANDING INTENT) Register a standing lend intent on an asset pair and fund working capital. The protocol keeper fills matching borrower demand under your bounds and — once you delegate it — auto-rolls fully-repaid loans straight back into your capital, with no manual claim round-trip. You stay in control: pause, top up, or withdraw any time. Best-effort, not guaranteed. Fills depend on matching borrower demand within your bounds — open intents can be filled by any solver, so no keeper is required; only if you restrict fills to your delegated keeper do they also depend on that keeper. Auto-roll of repaid loans is the keeper-dependent part: it needs an enabled, funded protocol keeper you've delegated. So your capital may sit idle, deploy, or stop rolling at any time, and an in-flight loan still follows its own terms. Monitor your positions; pause, top up, or withdraw any time. Intent filling is paused by admin on this chain. You can register and fund now; the keeper starts filling automatically once it's re-enabled. Lending asset (what you supply) Token discovery is not available on this network (testnet). Paste the contract address manually. Collateral asset (what borrowers post) Token discovery is not available on this network (testnet). Paste the contract address manually. Max exposure Min fill size Min rate (% APR) Max init LTV (%) Max term (days) Restrict fills to my delegated keeper only (otherwise any solver may fill, within your bounds) Amount to fund now (optional — pulled from your wallet) Risk Disclosures I understand that in case of market abnormalities or for any other reason liquidation cannot execute safely, the lender may receive collateral in-kind — that is, the collateral asset itself — instead of the lending asset. If oracle pricing is unavailable, or if the loan uses illiquid assets, the lender may receive all collateral regardless of market value and the borrower receives nothing. By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position. Learn how liquidation actually works → I understand and agree to the Risk Disclosures and Vaipakam Terms. No keeper is published for this chain yet, so auto-roll delegation is unavailable here. You can still register and fund an intent; the keeper auto-fills it. Auto-roll needs the delegation step, which appears once a keeper address is configured. Enable auto-lend AUTO-LIFECYCLE Borrower convenience: pre-set your refinance offer terms so every new loan can auto-populate them, and allow in-place loan extensions when both sides have pre-consented. (Auto-lend now lives in its own card below — it's wired to standing lender intents.) Auto-set refinance offer terms on every new loan Borrower convenience. Every new ERC20-principal loan auto-populates its refinance offer terms from your defaults; NFT-collateral loans require explicit per-loan opt-in (asymmetric default-loss risk). Enable DEPOSIT VPFI Deposit VPFI on this chain to start earning a discount on the protocol's yield fee. Higher tiers unlock higher discounts; the current thresholds are listed on the VPFI Vault page. Deposit VPFI now YOUR VPFI REWARDS Total earned 0 VPFI You haven't earned any VPFI rewards yet. Deposit VPFI in your vault to unlock fee discounts, or take a loan to start accruing platform-interaction rewards. Platform-interaction rewards Earn a daily VPFI share for every loan you participate in. Pending: 0 Claimed: 0 YOUR OFFERS 1 SHOWN Status: Active NEW OFFER ID TYPE PRINCIPAL RATE DURATION COLLATERAL STATUS #1 Lender 1,000 mUSDC 5.00% 30 days 1 mWETH Active Cancel Asset types: ERC-20 · ERC-721 · ERC-1155 YOUR LOANS Role: All Status: All Per page: 10 ID ROLE POSITION NFT PRINCIPAL COLLATERAL RATE (APR) DURATION LTV HF STATUS #3 Lender #8 1K mUSDC NFT #110 rNFT 5.00% 30 days — — Active Synced Refresh © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 4"
+  },
+  {
+    "route": "/app/offers",
+    "screenshot": "/tmp/base-sepolia-user-app-offers.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/offers",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Offer Book",
+      "No Open Offers"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Open",
+        "disabled": false
+      },
+      {
+        "text": "Closed / Filled",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Any duration",
+        "disabled": false
+      },
+      {
+        "text": "Any",
+        "disabled": false
+      },
+      {
+        "text": "Lend at market rate",
+        "disabled": false
+      },
+      {
+        "text": "Borrow at market rate",
+        "disabled": false
+      },
+      {
+        "text": "Both Sides",
+        "disabled": false
+      },
+      {
+        "text": "Lender Offers",
+        "disabled": false
+      },
+      {
+        "text": "Borrower Offers",
+        "disabled": false
+      },
+      {
+        "text": "Per side: 20",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 4",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Offer Book Ranked outward from the market anchor. Create Offer Open Closed / Filled FILTERS Lending asset Collateral asset Duration Any duration Liquidity Any LEND / BORROW AT MARKET RATE Lending amount No market rate yet for this pair — you'd be posting the first offer This asset isn't on a liquid market — set collateral terms on the offer page Lend at market rate Borrow at market rate Opens Create Offer with the rate, amount and minimum collateral pre-filled — you confirm there. The minimum collateral is the smallest that keeps the loan's health factor at the protocol floor (1.5); you can raise it, not lower it. Both Sides Lender Offers Borrower Offers Per side: 20 No Open Offers There are no open offers on the book. Be the first to create one! Create Offer Showing 0 of 6 open offers (6 hidden by filters) Synced Refresh © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 4"
+  },
+  {
+    "route": "/create-offer",
+    "screenshot": "/tmp/base-sepolia-user-create-offer.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/create-offer",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Create Offer"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "I want to Lend",
+        "disabled": false
+      },
+      {
+        "text": "I want to Borrow",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Enable consent on Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "30 days",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Learn how liquidation actually works →",
+        "disabled": false
+      },
+      {
+        "text": "Vaipakam Terms",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": true
+      },
+      {
+        "text": "Cancel",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 4",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Create Offer Create a lending offer — specify what you want to lend and your terms. OFFER TYPE I want to Lend I want to Borrow Lending a liquid ERC-20? Earn up to a 24% VPFI discount on the yield fee Hold VPFI in the Vaipakam Vault and enable the one-time platform-level VPFI consent on the Dashboard. At settlement, the 1% treasury cut on interest earned is reduced by a time-weighted VPFI discount across the loan's lifetime — up to 24%, so the lender keeps more of the interest earned. Nothing is paid up front; the discount is applied automatically when the loan settles properly (repay / preclose / refinance). Default or liquidation forfeits the discount. Need VPFI? VPFI Vault (buy from a preferred chain — routing is handled). Enable consent on Dashboard LENDING ASSET Token Contract Address Token discovery is not available on this network (testnet). Paste the contract address manually. Lend up to (tokens) Amount in whole tokens (scaled on-chain using the token's decimals) At minimum interest rate (APR %) Stored in basis points (5% = 500 BPS) Duration (Days) 30 days Grace period: 3 days COLLATERAL Collateral Contract Address Token discovery is not available on this network (testnet). Paste the contract address manually. Require at least (collateral) RISK DISCLOSURES Risk Disclosures I understand that in case of market abnormalities or for any other reason liquidation cannot execute safely, the lender may receive collateral in-kind — that is, the collateral asset itself — instead of the lending asset. If oracle pricing is unavailable, or if the loan uses illiquid assets, the lender may receive all collateral regardless of market value and the borrower receives nothing. By proceeding, you acknowledge that recovery may be less than the asset lent, that the lender may receive a different asset than the one lent, and that no further claim exists against the borrower, Vaipakam, its contributors, or any third party. This acknowledgement is recorded on-chain for this position. Full-term interest: the borrower agrees to pay interest for the entire agreed loan term, even if the loan is repaid early. Repaying before the term ends does NOT reduce the interest owed — the full-term interest amount is due either way. Learn how liquidation actually works → I understand and agree to the Risk Disclosures and Vaipakam Terms. Create Offer Cancel Creating an offer will lock the assets in the Vaipakam Vault and mint a Vaipakam position NFT. The accepting party pays gas to initiate the loan. Loan Initiation Fee (0.1%): When the offer is accepted, 0.1% of the lending amount will be routed to the Vaipakam treasury before the borrower receives the remaining 99.9%. The borrower still repays the full principal. © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 4"
+  },
+  {
+    "route": "/app/claims",
+    "screenshot": "/tmp/base-sepolia-user-app-claims.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/claims",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Claim Center"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "#2",
+        "disabled": false
+      },
+      {
+        "text": "mUSDC",
+        "disabled": false
+      },
+      {
+        "text": "Claim",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Claim Center Claim your funds and collateral from completed, repaid, or defaulted loans using your Vaipakam NFT. Loan #2 Lender Repaid 1,000 mUSDC Claim Synced Refresh © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/app/activity",
+    "screenshot": "/tmp/base-sepolia-user-app-activity.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/activity",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Activity"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "All",
+        "disabled": false
+      },
+      {
+        "text": "Loan initiated",
+        "disabled": false
+      },
+      {
+        "text": "Offer accepted",
+        "disabled": false
+      },
+      {
+        "text": "Offer created",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "Loan #3",
+        "disabled": false
+      },
+      {
+        "text": "Offer #5",
+        "disabled": false
+      },
+      {
+        "text": "0xbe28f822…014dfa6c",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "Loan #2",
+        "disabled": false
+      },
+      {
+        "text": "Offer #4",
+        "disabled": false
+      },
+      {
+        "text": "0x014e33d6…5be929a5",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "Offer #4",
+        "disabled": false
+      },
+      {
+        "text": "0xc970fce5…b579af62",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "Offer #1",
+        "disabled": false
+      },
+      {
+        "text": "0x48dd4964…26c6fdc8",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "0x03c01fe6…c84a934b",
+        "disabled": false
+      },
+      {
+        "text": "Expand details",
+        "disabled": false
+      },
+      {
+        "text": "0x23b35b06…989a252c",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Activity On-chain events involving your wallet — offers you created, loans you opened, repayments, claims, and liquidations. Sourced directly from Diamond event logs on Base Sepolia and grouped by transaction so multi-event flows (like \"Accept offer → Initiate loan\") read as one row. All Loan initiated Offer accepted Offer created Synced Refresh Loan initiated+4 more 9 hours ago Loan #3 Offer #5 0xbe28f822…014dfa6c Loan initiated+1 more 9 hours ago Loan #2 Offer #4 0x014e33d6…5be929a5 Offer created+3 more 9 hours ago Offer #4 0xc970fce5…b579af62 Offer created+4 more 9 hours ago Offer #1 0x48dd4964…26c6fdc8 9 hours ago 0x03c01fe6…c84a934b +1 more 9 hours ago 0x23b35b06…989a252c © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/app/vault",
+    "screenshot": "/tmp/base-sepolia-user-app-vault.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/vault",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Your Vaipakam Vault"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "0xCD84…D1E4",
+        "disabled": false
+      },
+      {
+        "text": "Hide low balances",
+        "disabled": false
+      },
+      {
+        "text": "Token",
+        "disabled": false
+      },
+      {
+        "text": "Balance",
+        "disabled": false
+      },
+      {
+        "text": "mUSDC",
+        "disabled": false
+      },
+      {
+        "text": "mWETH",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Your Vaipakam Vault Tokens held by the protocol on your behalf. Each user has their own isolated vault proxy — deposits and withdrawals always flow through the Vaipakam Diamond. VAULT ADDRESS0xCD84…D1E4 Internal protocol storage — funds enter and exit via the protocol only. HOLDINGS Hide low balances Token Balance mUSDC Total2,000 Locked1,000 Free1,000 mWETH 0 Refresh Only tokens managed by the Vaipakam protocol are shown here. Do not send any tokens directly to your vault address — they may not be recoverable. © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/app/vpfi-vault",
+    "screenshot": "/tmp/base-sepolia-user-app-vpfi-vault.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/vpfi-vault",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "VPFI Vault"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet VPFI Vault Deposit VPFI into your canonical-chain vault to unlock the tiered discount on protocol fees for your liquid loans. YOUR VPFI DISCOUNT STATUS Current tier — No discount yet Vault VPFI (tracked, this chain) 0.0000 Counts toward your fee-discount tier. Status Inactive · discount consent OFF Enable the shared discount consent on the Dashboard. Deposit 100.00 more VPFI into vault to reach Tier Tier 1 (10% off). Tier Vault VPFI Discount Tier 1 100 – 1,000 10% off Tier 2 1,000 – 5,000 15% off Tier 3 5,000 – 20,000 20% off Tier 4 > 20,000 24% off 1 DEPOSIT VPFI INTO YOUR VAULT Depositing is open to everyone — you don't need a loan to participate. Your fee-discount tier is set by your vault balance on the canonical chain, so deposit there to raise it (deposits on other chains are held in your vault but don't change your tier). First time? Your Vaipakam Vault is created for you automatically on your first deposit — no setup needed. 0 Wallet VPFI balance 0 Vault VPFI balance (Base Sepolia) VPFI is not yet registered with the diamond on Base Sepolia. Admin must call setVPFIToken before deposits are possible. VPFI TOKEN (THIS CHAIN) VPFI is not yet registered with the Diamond on Base Sepolia. Once the admin calls setVPFIToken, balances and activity will appear here. © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/app/allowances",
+    "screenshot": "/tmp/base-sepolia-user-app-allowances.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/allowances",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Allowances"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "About this card",
+        "disabled": false
+      },
+      {
+        "text": "Refresh",
+        "disabled": false
+      },
+      {
+        "text": "mUSDC",
+        "disabled": false
+      },
+      {
+        "text": "0x7732...500c",
+        "disabled": false
+      },
+      {
+        "text": "mWETH",
+        "disabled": false
+      },
+      {
+        "text": "0xb7ad...65c3",
+        "disabled": false
+      },
+      {
+        "text": "USDC",
+        "disabled": false
+      },
+      {
+        "text": "0x036c...cf7e",
+        "disabled": false
+      },
+      {
+        "text": "WETH",
+        "disabled": false
+      },
+      {
+        "text": "0x4200...0006",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Allowances Every ERC-20 approval the connected wallet has granted the Vaipakam Diamond on this chain. Revoke any you no longer need in one click. Non-zero approvals appear first; the zero-allowance rows below are a reference so you can confirm the list is clean. Refresh 4 tokens scanned · 0 with non-zero allowance TOKEN ADDRESS ALLOWANCE SOURCE mUSDC 0x7732...500c — loan-derived cleared mWETH 0xb7ad...65c3 — loan-derived cleared USDC 0x036c...cf7e — canonical cleared WETH 0x4200...0006 — canonical cleared This page scans only the Vaipakam Diamond as spender on the current chain. Approvals granted to other contracts (DEX aggregators, other dApps) aren't listed here — use revoke.cash or a similar tool to audit them. © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/risk-access",
+    "screenshot": "/tmp/base-sepolia-user-risk-access.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/risk-access",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Risk Access",
+      "Vault risk tier",
+      "Strict mode"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "Blue-chip only ✓ Safest. Only blue-chip pairs (the protocol's numeraire basket or deepest-liquidity assets).",
+        "disabled": true
+      },
+      {
+        "text": "Broad liquid Adds mid-tier liquid assets. Still backed by the quantitative LTV / health-factor checks.",
+        "disabled": false
+      },
+      {
+        "text": "Illiquid / custom Allows illiquid / unpriced assets and NFTs. Each illiquid pair also needs a one-time per-pair consent.",
+        "disabled": false
+      },
+      {
+        "text": "Strict mode is OFF — click to turn on",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Risk Access Choose how risky the assets your offers may involve can be. Your vault starts at the safest tier and opts up only with your explicit consent. Effective tier: Blue-chip only Enforcement: off (not yet enforced) Vault risk tier Blue-chip only ✓ Safest. Only blue-chip pairs (the protocol's numeraire basket or deepest-liquidity assets). Broad liquid Adds mid-tier liquid assets. Still backed by the quantitative LTV / health-factor checks. Illiquid / custom Allows illiquid / unpriced assets and NFTs. Each illiquid pair also needs a one-time per-pair consent. Lowering your tier takes effect immediately. Raising it may be subject to an opt-up cooldown before it becomes effective. Strict mode Off by default. While on, every mid-tier (liquid-but-not-blue-chip) pair you originate also needs a fresh, deliberate per-pair acknowledgement — not just the tier opt-up. The acknowledgement is collected in the flow that needs it: when you create a mid-tier offer, and when you accept one. Strict mode is OFF — click to turn on © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  },
+  {
+    "route": "/app/data-rights",
+    "screenshot": "/tmp/base-sepolia-user-app-data-rights.png",
+    "console": [
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 close listeners added. Use emitter.setMaxListeners() to increase limit",
+      "MaxListenersExceededWarning: Possible EventEmitter memory leak detected. 11 end listeners added. Use emitter.setMaxListeners() to increase limit",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"app-init-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - orphaned data for stream \"background-liveness\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\"",
+      "ObjectMultiplex - malformed chunk without name \"[object Object]\""
+    ],
+    "href": "https://defi.vaipakam.com/app/data-rights",
+    "accounts": [
+      "0xe87319e4f4cd0a0bd6ff2c087d038ac90d6023cb",
+      "0x90f79bf6eb2c4f870365e785982e1f101e93b906"
+    ],
+    "chainId": "0x14a34",
+    "headings": [
+      "Your data rights (GDPR / UK GDPR / CCPA)"
+    ],
+    "buttons": [
+      {
+        "text": "Collapse sidebar",
+        "disabled": false
+      },
+      {
+        "text": "Dashboard",
+        "disabled": false
+      },
+      {
+        "text": "Offer Book",
+        "disabled": false
+      },
+      {
+        "text": "Create Offer",
+        "disabled": false
+      },
+      {
+        "text": "Claim Center",
+        "disabled": false
+      },
+      {
+        "text": "VPFI Vault",
+        "disabled": false
+      },
+      {
+        "text": "Activity",
+        "disabled": false
+      },
+      {
+        "text": "Alerts",
+        "disabled": false
+      },
+      {
+        "text": "Allowances",
+        "disabled": false
+      },
+      {
+        "text": "Your Vaipakam Vault",
+        "disabled": false
+      },
+      {
+        "text": "Risk Access",
+        "disabled": false
+      },
+      {
+        "text": "Data Rights",
+        "disabled": false
+      },
+      {
+        "text": "What does this mean?",
+        "disabled": false
+      },
+      {
+        "text": "0xE8…23Cb B Base Sepolia Testnet",
+        "disabled": false
+      },
+      {
+        "text": "Settings",
+        "disabled": false
+      },
+      {
+        "text": "Download my data (JSON)",
+        "disabled": false
+      },
+      {
+        "text": "Download journey log (JSON)",
+        "disabled": false
+      },
+      {
+        "text": "Delete my data",
+        "disabled": false
+      },
+      {
+        "text": "Verify on-chain",
+        "disabled": false
+      },
+      {
+        "text": "Terms",
+        "disabled": false
+      },
+      {
+        "text": "Privacy",
+        "disabled": false
+      },
+      {
+        "text": "Cookie settings",
+        "disabled": false
+      },
+      {
+        "text": "Report Issue 2",
+        "disabled": false
+      }
+    ],
+    "alerts": [],
+    "text": "Dashboard Offer Book Create Offer Claim Center VPFI Vault Activity Alerts Allowances Your Vaipakam Vault Risk Access Data Rights 0xE8…23Cb B Base Sepolia Testnet Your data rights (GDPR / UK GDPR / CCPA) Export or erase the data Vaipakam stores in your browser. On-chain positions are never affected — Vaipakam has no power to erase blockchain state. DOWNLOAD MY DATA Exports every Vaipakam-namespaced key from your browser as a portable JSON file. Covers: Journey-log telemetry (sessionStorage — last few minutes of UI events for support diagnostics). Cookie / consent-banner choice (localStorage). Cached event index (per-chain offer / loan IDs the app re-uses to avoid full chain re-scans). Download my data (JSON) DOWNLOAD JOURNEY LOG (THIS SESSION) Saves the in-memory journey-log buffer (UI events from this tab's session) as a JSON file. Useful for sharing in a Discord DM or support thread. Independent of the broader Download / Delete above — those touch your stored namespace; this captures only the live event buffer. Download journey log (JSON) DELETE MY DATA Removes every Vaipakam-namespaced key from your browser. Click once to arm the action; click again on the now-red button to confirm. What happens after deleting: The cookie / consent banner returns on the next page load. Your local activity-log buffer is wiped (no support diagnostics until new events accumulate). Cached event indexes are cleared — the next dashboard / offer-book load re-scans the chain from scratch (slower than usual). Theme, language, mode (basic/advanced) and any other Vaipakam-namespaced preferences reset to defaults. On-chain positions, loans, and balances are unaffected. Vaipakam cannot erase blockchain state. Delete my data Vaipakam acts as data controller for the items above. We do not maintain any server-side personal data (no accounts, no email lists, no analytics linked to your wallet). For audit purposes we record every UI error event server-side with a per-event UUID — see the Privacy Policy for what's captured. © 2026 Vaipakam. All rights reserved. Verify on-chain Terms Privacy Cookie settings BUSL 1.1 License Report Issue 2"
+  }
+]
