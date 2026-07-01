@@ -504,6 +504,22 @@ echo
 echo "[1b] Pre-deploy sanity check"
 bash "$SCRIPT_DIR/predeploy-check.sh"
 
+# ── Arbitrum L2-block override (#853 Codex P2) ────────────────────────
+# forge sim can't emulate `ArbSys(0x64)`, so `Deployments.currentL2Block()`
+# reverts on Arbitrum unless `ARB_L2_DEPLOY_BLOCK` is set. Derive it from THIS
+# chain's RPC (returns the L2 head on Arbitrum) BEFORE the diamond broadcast so
+# the diamond can't land on-chain and then abort before addresses.json is
+# written. Only fetched when the diamond step will actually run.
+if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "diamond"; then
+  ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+  if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+    echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+    exit 1
+  fi
+  export ARB_L2_DEPLOY_BLOCK
+  echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+fi
+
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
 if step_done "diamond"; then
@@ -575,6 +591,27 @@ else
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
   snapshot_addresses "post-timelock"
   mark_done "timelock"
+fi
+
+# ── 3b. Canonical VPFI token ──────────────────────────────────────────
+# MUST land BEFORE DeployCrosschain, whose canonical branch (Base) reads
+# `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool; nothing
+# upstream mints it, so a fresh canonical run fails at [4] without this step
+# (#853 Codex P1). Mirror chains skip it — they mint their own Burn/Mint
+# VPFIMirrorToken inside [4]. DeployVPFIToken itself hard-guards to canonical
+# chain ids, so this IS_CANONICAL gate is belt-and-suspenders. Gated by
+# --skip-vpfi the same way [4] is (both are the VPFI/cross-chain surface).
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
+  if step_done "vpfitoken"; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol (skipped — marker exists)"
+  else
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    snapshot_addresses "post-vpfitoken"
+    mark_done "vpfitoken"
+  fi
 fi
 
 # ── 4. CCIP cross-chain stack ─────────────────────────────────────────

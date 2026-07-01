@@ -581,11 +581,23 @@ purge_chain_d1() {
   # swap_to_repay_intents, pre_grace_notify_state, liquidity_confidence, …
   # were all missing). Introspecting the live schema means tables added later
   # are purged automatically — the list can't go stale (#853 Codex P2).
-  local introspect="SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) p ON p.name = 'chain_id' WHERE m.type = 'table';"
+  #
+  # EXCLUDE user-subscription tables. `user_thresholds` (per-user per-chain HF
+  # alert config) and `telegram_links` (a user's notification rail) also carry a
+  # `chain_id` column, but they are USER-authored preferences, not stale
+  # Diamond-derived index data — a fresh contract redeploy must NOT wipe a
+  # subscriber's saved thresholds / notification rails (#853 Codex P2). The old
+  # hardcoded purge preserved them (it only cleared `notify_state`); keep that.
+  local introspect="SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) p ON p.name = 'chain_id' WHERE m.type = 'table' AND m.name NOT IN ('user_thresholds', 'telegram_links');"
   local tables
-  tables=$( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+  # Best-effort under `set -euo pipefail`: a failed / non-JSON `wrangler`
+  # (operator unauthenticated, D1 unreachable) must yield an EMPTY list and hit
+  # the warn-and-skip path below — NOT abort the whole deploy via the failing
+  # command substitution (#853 Codex P2). The trailing `|| true` neutralises the
+  # pipeline's exit status for the assignment.
+  tables=$( { cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
     --remote --json --command "$introspect" 2>/dev/null \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null )
+    | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null ; } || true )
   if [ -z "$tables" ]; then
     echo "    ⚠ could not introspect chain-scoped tables (wrangler not authenticated, or D1 unreachable). Skipping purge; re-run via the indexer dir if needed."
     return 0
@@ -818,6 +830,25 @@ EOF
   # recovery is to re-run it — with `--broadcast --resume` forge replays the
   # saved broadcast and skips already-landed txs, or (on a --fresh testnet run)
   # simply re-run the phase from a clean state.
+  # Arbitrum L2-block override (#853 Codex P2). On Arbitrum `block.number`
+  # returns the L1 block; the artifact writer uses `ArbSys(0x64).arbBlockNumber()`
+  # for the real L2 block, but forge's SIMULATION doesn't emulate that precompile,
+  # so `Deployments.currentL2Block()` reverts unless `ARB_L2_DEPLOY_BLOCK` is set.
+  # Derive it from THIS chain's RPC (on Arbitrum `cast block-number` returns the
+  # L2 head) BEFORE the broadcast, so the diamond can't land on-chain and then
+  # abort before `addresses.json` is written. Fail loudly if the fetch fails —
+  # better than a mid-run revert after a successful broadcast.
+  if [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; then
+    ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+    if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+      echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+      echo "       (needed because forge sim can't emulate ArbSys). Aborting before broadcast." >&2
+      exit 1
+    fi
+    export ARB_L2_DEPLOY_BLOCK
+    echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+  fi
+
   echo
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"

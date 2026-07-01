@@ -686,6 +686,21 @@ EOF
   # contracts. A failure aborts the deploy before any broadcast.
   bash "$SCRIPT_DIR/predeploy-check.sh" --full
 
+  # Arbitrum L2-block override (#853 Codex P2): forge sim can't emulate
+  # `ArbSys(0x64)`, so `Deployments.currentL2Block()` reverts on Arbitrum unless
+  # `ARB_L2_DEPLOY_BLOCK` is set. Derive it from THIS chain's RPC (returns the L2
+  # head on Arbitrum) BEFORE the broadcast so the diamond can't land and then
+  # abort before `addresses.json` is written.
+  if [ "$CHAIN_ID" = "42161" ]; then
+    ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+    if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+      echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+      exit 1
+    fi
+    export ARB_L2_DEPLOY_BLOCK
+    echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+  fi
+
   echo
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
@@ -693,6 +708,21 @@ EOF
   echo
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+
+  # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain, whose
+  # canonical branch (Base) reads `.vpfiToken` to wrap the existing token in the
+  # CCIP LockRelease pool; nothing upstream mints it, so a fresh Base mainnet run
+  # fails at [4] without this step (#853 Codex P1). Mirror chains skip it — they
+  # mint their own Burn/Mint VPFIMirrorToken inside [4]. DeployVPFIToken itself
+  # hard-guards to canonical chain ids, so this IS_CANONICAL gate is
+  # belt-and-suspenders. NOTE: no --fresh on mainnet, so the no-overwrite guard
+  # protects a re-run — an intentional canonical-token rotation must set
+  # VPFI_TOKEN_FORCE_REDEPLOY=1 explicitly.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+  fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool

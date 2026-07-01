@@ -63,7 +63,10 @@ contract DeployVPFIToken is Script {
         // recorded, unless the operator opts in via VPFI_TOKEN_FORCE_REDEPLOY=1
         // (the deliberate rotation/`--fresh` path; the shell sets it from the
         // --fresh flag so an intentional orphan-and-redeploy is authorized).
-        address existing = Deployments.readVpfiToken();
+        // Artifact-only, non-reverting read: a clean first deploy has no
+        // `.vpfiToken` yet, and `readVpfiToken()` would otherwise fall through
+        // to the mandatory env reader and revert (#853 Codex P1).
+        address existing = Deployments.readVpfiTokenOptional();
         bool forceRedeploy = vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) != 0;
         require(
             existing == address(0) || forceRedeploy,

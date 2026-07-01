@@ -127,6 +127,29 @@ library Deployments {
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
+
+    /// @notice Optional read of `.vpfiToken` from the ARTIFACT ONLY — never the
+    ///         legacy env fallback, and never reverts. Returns address(0) when
+    ///         the key is absent. `readVpfiToken()` falls through to the typed
+    ///         (mandatory) `VPFI_TOKEN_ADDRESS` env reader and REVERTS when the
+    ///         key is missing, which would break `DeployVPFIToken`'s
+    ///         no-overwrite guard on a clean canonical first deploy — there
+    ///         `.vpfiToken` is intentionally absent until the mint runs, yet the
+    ///         operator's documented env set may already carry a
+    ///         `<CHAIN>_VPFI_TOKEN_ADDRESS` for other scripts. This json-only,
+    ///         non-reverting read is what that guard must use (#853 Codex P1).
+    function readVpfiTokenOptional() internal view returns (address) {
+        string memory p = path();
+        if (!_fileExists(p)) return address(0);
+        // forge-lint: disable-next-line(unsafe-cheatcode)
+        string memory file = CHEATS.readFile(p);
+        if (bytes(file).length == 0) return address(0);
+        try CHEATS.parseJsonAddress(file, ".vpfiToken") returns (address a) {
+            return a;
+        } catch {
+            return address(0);
+        }
+    }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
     // artifacts (pre-PR #272 contract-side rename) recorded the same
