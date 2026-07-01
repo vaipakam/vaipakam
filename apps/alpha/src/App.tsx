@@ -40,7 +40,10 @@ type WalletState = {
   detected: boolean;
   account: string | null;
   chainId: string | null;
+  error: string | null;
 };
+
+type FlowKind = 'earn' | 'borrow' | 'rent';
 
 declare global {
   interface Window {
@@ -64,12 +67,15 @@ type Step = {
 };
 
 type GuidedFlow = {
+  kind: FlowKind;
   title: string;
   intro: string;
   actionLabel: string;
   assetQuestion: string;
   assetOptions: string[];
+  defaultAsset: string;
   amountLabel: string;
+  defaultAmount: string;
   amountHint: string;
   recommendedPath: string;
   checklist: string[];
@@ -82,6 +88,15 @@ type GuidedFlow = {
     ending: string;
   };
   steps: Step[];
+};
+
+const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
+const BASE_SEPOLIA_PARAMS = {
+  chainId: BASE_SEPOLIA_CHAIN_ID,
+  chainName: 'Base Sepolia',
+  nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
+  rpcUrls: ['https://sepolia.base.org'],
+  blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
 
 const tasks: Task[] = [
@@ -176,13 +191,16 @@ const rentalSteps: Step[] = [
 
 const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
   earn: {
+    kind: 'earn',
     title: 'Earn by lending',
     intro:
       'Start with the asset you can lend, then review collateral quality, expected return, fees, and what happens if the borrower does not repay.',
     actionLabel: 'Prepare lending offer',
     assetQuestion: 'What do you want to lend?',
     assetOptions: ['mUSDC', 'mWETH', 'mWBTC'],
+    defaultAsset: 'mUSDC',
     amountLabel: 'Amount to lend',
+    defaultAmount: '1000',
     amountHint: 'Recommended starter path: liquid token collateral, priced on this chain, no custom oracle route.',
     recommendedPath: 'Recommended: mUSDC loan backed by mWETH collateral',
     checklist: ['Wallet connected', 'Network supported', 'Asset price route available', 'Allowance ready'],
@@ -197,13 +215,16 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
     steps: earnSteps,
   },
   borrow: {
+    kind: 'borrow',
     title: 'Borrow safely',
     intro:
       'Start with the amount you need. Vaipakam should then show required collateral, repayment deadline, and default consequences before the wallet opens.',
     actionLabel: 'Check borrow terms',
     assetQuestion: 'What do you want to borrow?',
     assetOptions: ['mUSDC', 'mWETH', 'VPFI'],
+    defaultAsset: 'mUSDC',
     amountLabel: 'Target borrow amount',
+    defaultAmount: '1000',
     amountHint: 'Recommended starter path: borrow stable value against liquid collateral with a visible safety buffer.',
     recommendedPath: 'Recommended: borrow mUSDC against mWETH collateral',
     checklist: ['Wallet connected', 'Collateral balance found', 'Health buffer acceptable', 'Repay route available'],
@@ -218,13 +239,16 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
     steps: borrowSteps,
   },
   rent: {
+    kind: 'rent',
     title: 'Rent NFT access',
     intro:
       'Keep NFT rental separate from borrowing: the renter pays for temporary rights while the NFT remains protected by custody and expiry rules.',
     actionLabel: 'Find rental offer',
     assetQuestion: 'What NFT access do you need?',
     assetOptions: ['Game NFT', 'Membership NFT', 'Utility NFT'],
+    defaultAsset: 'Game NFT',
     amountLabel: 'Rental duration',
+    defaultAmount: '7',
     amountHint: 'Recommended starter path: fixed duration, prepaid fee, refundable buffer, visible expiry.',
     recommendedPath: 'Recommended: fixed-rate rental with refundable buffer',
     checklist: ['NFT standard supported', 'Rights expiry visible', 'Prepay token available', 'Close/claim path known'],
@@ -268,7 +292,7 @@ function App() {
     if (typeof window === 'undefined') return 'guided';
     return window.localStorage.getItem('vaipakam-alpha-mode') === 'advanced' ? 'advanced' : 'guided';
   });
-  const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null });
+  const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
   const setMode = (nextMode: Mode) => {
     setModeState(nextMode);
     window.localStorage.setItem('vaipakam-alpha-mode', nextMode);
@@ -290,6 +314,7 @@ function App() {
         detected: true,
         account: typeof accounts[0] === 'string' ? accounts[0] : null,
         chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
+        error: null,
       });
     };
 
@@ -299,13 +324,14 @@ function App() {
         ...current,
         detected: true,
         account: typeof nextAccounts[0] === 'string' ? nextAccounts[0] : null,
+        error: null,
       }));
     };
     const handleChainChanged = (chainId: unknown) => {
-      setWallet((current) => ({ ...current, detected: true, chainId: typeof chainId === 'string' ? chainId : null }));
+      setWallet((current) => ({ ...current, detected: true, chainId: typeof chainId === 'string' ? chainId : null, error: null }));
     };
 
-    refreshWallet().catch(() => setWallet({ detected: true, account: null, chainId: null }));
+    refreshWallet().catch(() => setWallet({ detected: true, account: null, chainId: null, error: 'Could not read wallet state.' }));
     ethereum.on?.('accountsChanged', handleAccountsChanged);
     ethereum.on?.('chainChanged', handleChainChanged);
 
@@ -319,7 +345,7 @@ function App() {
   const connectWallet = async () => {
     const ethereum = window.ethereum;
     if (!ethereum) {
-      setWallet({ detected: false, account: null, chainId: null });
+      setWallet({ detected: false, account: null, chainId: null, error: 'No injected wallet detected.' });
       return;
     }
     const accountsResult = await ethereum.request({ method: 'eth_requestAccounts' });
@@ -329,7 +355,25 @@ function App() {
       detected: true,
       account: typeof accounts[0] === 'string' ? accounts[0] : null,
       chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
+      error: null,
     });
+  };
+
+  const switchToBaseSepolia = async () => {
+    const ethereum = window.ethereum;
+    if (!ethereum) return;
+    try {
+      await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BASE_SEPOLIA_CHAIN_ID }] });
+      setWallet((current) => ({ ...current, detected: true, chainId: BASE_SEPOLIA_CHAIN_ID, error: null }));
+    } catch (error) {
+      const maybeError = error as { code?: number };
+      if (maybeError.code === 4902) {
+        await ethereum.request({ method: 'wallet_addEthereumChain', params: [BASE_SEPOLIA_PARAMS] });
+        setWallet((current) => ({ ...current, detected: true, chainId: BASE_SEPOLIA_CHAIN_ID, error: null }));
+        return;
+      }
+      setWallet((current) => ({ ...current, error: 'Network switch rejected or failed.' }));
+    }
   };
 
   return (
@@ -361,9 +405,9 @@ function App() {
         <TopBar mode={mode} wallet={wallet} onConnectWallet={connectWallet} onModeChange={setMode} />
         <Routes>
           <Route path="/" element={<Home mode={mode} />} />
-          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} />} />
-          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} />} />
-          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} />} />
+          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/help" element={<Help />} />
@@ -492,15 +536,43 @@ function Home({ mode }: { mode: Mode }) {
   );
 }
 
-function FlowPage({ flow, mode }: { flow: GuidedFlow; mode: Mode }) {
-  const receiptRows = [
-    ['You receive', flow.receipt.receive],
-    ['You lock', flow.receipt.lock],
-    ['You may owe', flow.receipt.owe],
-    ['You can lose', flow.receipt.lose],
-    ['Fees', flow.receipt.fees],
-    ['When this ends', flow.receipt.ending],
-  ];
+function FlowPage({
+  flow,
+  mode,
+  wallet,
+  onConnectWallet,
+  onSwitchNetwork,
+}: {
+  flow: GuidedFlow;
+  mode: Mode;
+  wallet: WalletState;
+  onConnectWallet: () => void;
+  onSwitchNetwork: () => void;
+}) {
+  const [selectedAsset, setSelectedAsset] = useState(flow.defaultAsset);
+  const [amount, setAmount] = useState(flow.defaultAmount);
+  const numericAmount = Number(amount.replace(/,/g, '')) || 0;
+  const isBaseSepolia = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const walletReady = Boolean(wallet.account);
+  const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
+  const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
+  const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
+  const actionLabel = !walletReady
+    ? 'Connect wallet'
+    : !isBaseSepolia
+      ? 'Switch to Base Sepolia'
+      : canProceed
+        ? flow.actionLabel
+        : 'Enter an amount';
+  const handlePrimaryAction = () => {
+    if (!walletReady) {
+      onConnectWallet();
+      return;
+    }
+    if (!isBaseSepolia) {
+      onSwitchNetwork();
+    }
+  };
 
   return (
     <div className="flow-page">
@@ -522,19 +594,29 @@ function FlowPage({ flow, mode }: { flow: GuidedFlow; mode: Mode }) {
           <p className="eyebrow">Step 1</p>
           <h3>{flow.assetQuestion}</h3>
           <div className="choice-grid" role="group" aria-label={flow.assetQuestion}>
-            {flow.assetOptions.map((option, index) => (
-              <button className={index === 0 ? 'choice selected' : 'choice'} type="button" key={option}>
+            {flow.assetOptions.map((option) => (
+              <button
+                className={option === selectedAsset ? 'choice selected' : 'choice'}
+                type="button"
+                key={option}
+                onClick={() => setSelectedAsset(option)}
+              >
                 {option}
               </button>
             ))}
           </div>
           <label className="alpha-field">
             <span>{flow.amountLabel}</span>
-            <input value={flow.amountLabel.includes('duration') ? '7 days' : '1,000'} readOnly />
+            <input
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              aria-label={flow.amountLabel}
+            />
           </label>
           <div className="recommendation">
             <BadgeCheck size={18} />
-            <span>{flow.recommendedPath}</span>
+            <span>{flow.recommendedPath} · Selected: {selectedAsset}</span>
           </div>
           <p className="field-hint">{flow.amountHint}</p>
         </div>
@@ -543,10 +625,10 @@ function FlowPage({ flow, mode }: { flow: GuidedFlow; mode: Mode }) {
           <p className="eyebrow">Step 2</p>
           <h3>Eligibility checklist</h3>
           <ul>
-            {flow.checklist.map((item, index) => (
-              <li key={item} className={index < 2 ? 'ready' : 'waiting'}>
-                {index < 2 ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
-                <span>{item}</span>
+            {checklistRows.map((item) => (
+              <li key={item.label} className={item.ready ? 'ready' : 'waiting'}>
+                {item.ready ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                <span>{item.label}</span>
               </li>
             ))}
           </ul>
@@ -563,9 +645,10 @@ function FlowPage({ flow, mode }: { flow: GuidedFlow; mode: Mode }) {
               </div>
             ))}
           </dl>
-          <button className="primary-action wide" type="button">
-            {flow.actionLabel} <ArrowRight size={18} />
+          <button className="primary-action wide" type="button" disabled={walletReady && isBaseSepolia && !canProceed} onClick={handlePrimaryAction}>
+            {actionLabel} <ArrowRight size={18} />
           </button>
+          {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
       </section>
 
@@ -723,6 +806,69 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
       <p>{body}</p>
     </article>
   );
+}
+
+
+function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number) {
+  const connected = Boolean(wallet.account);
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  if (flow.kind === 'borrow') {
+    return [
+      { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
+      { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
+      { label: numericAmount > 0 ? 'Borrow amount entered' : 'Enter borrow amount', ready: numericAmount > 0 },
+      { label: 'Repay route preview available', ready: true },
+    ];
+  }
+  if (flow.kind === 'rent') {
+    return [
+      { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
+      { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
+      { label: numericAmount > 0 ? 'Rental duration entered' : 'Enter rental duration', ready: numericAmount > 0 },
+      { label: 'Close and claim path visible', ready: true },
+    ];
+  }
+  return [
+    { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
+    { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
+    { label: numericAmount > 0 ? 'Lend amount entered' : 'Enter lend amount', ready: numericAmount > 0 },
+    { label: 'Allowance check ready for contract wiring', ready: true },
+  ];
+}
+
+function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount: number) {
+  const amount = numericAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  if (flow.kind === 'borrow') {
+    const repay = (numericAmount * 1.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    return [
+      ['You receive', amount + ' ' + selectedAsset],
+      ['You lock', 'Collateral sized from the selected offer and safety buffer.'],
+      ['You may owe', repay + ' ' + selectedAsset + ' including example interest.'],
+      ['You can lose', 'Collateral can be claimed or liquidated after default.'],
+      ['Fees', 'Protocol fee, any VPFI discount, swap slippage if used, and gas.'],
+      ['When this ends', 'Repay, preclose, refinance, add collateral, or settle after default.'],
+    ];
+  }
+  if (flow.kind === 'rent') {
+    const fee = (numericAmount * 3).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    return [
+      ['You receive', amount + ' days of ' + selectedAsset + ' use rights.'],
+      ['You lock', fee + ' mUSDC rental prepay plus any refundable buffer.'],
+      ['You may owe', 'No loan repayment; closure may require gas.'],
+      ['You can lose', 'Rental fee is spent, and buffer can be claimable if terms fail.'],
+      ['Fees', 'Rental fee, protocol fee, any VPFI discount, and gas.'],
+      ['When this ends', 'Rental expires, renter closes, or owner claims per terms.'],
+    ];
+  }
+  const interest = (numericAmount * 0.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  return [
+    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' interest if repaid.'],
+    ['You lock', amount + ' ' + selectedAsset + ' until repay, cancel, or settlement.'],
+    ['You may owe', 'No repayment obligation; gas is needed for offer actions.'],
+    ['You can lose', 'Time value and settlement route risk if collateral cannot execute.'],
+    ['Fees', 'Treasury fee after any VPFI discount, plus network gas.'],
+    ['When this ends', 'Borrower repays, lender cancels before match, or lender claims collateral after default.'],
+  ];
 }
 
 function shortAddress(address: string) {
