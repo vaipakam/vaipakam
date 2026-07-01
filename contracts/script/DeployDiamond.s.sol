@@ -475,60 +475,50 @@ contract DeployDiamond is Script {
         // slot 24 (see the #687-B note above).
 
         // ── Step 4: Execute diamond cut ─────────────────────────────────
-        // Split into two halves to stay under Base Sepolia's per-tx
-        // gas cap (~18M observed) — a single all-facets cut estimates
-        // at ~17M, and forge's default 1.3× multiplier pushes the sent
-        // gas-limit over the cap. Two halves @ ~8.5M each, padded to
-        // ~11M, land well under. Any chain that can take the single
-        // cut will also accept two halves; this is strictly safer.
-        uint256 mid = cuts.length / 2;
-        IDiamondCut.FacetCut[] memory firstHalf = new IDiamondCut.FacetCut[](mid);
-        IDiamondCut.FacetCut[] memory secondHalf = new IDiamondCut.FacetCut[](cuts.length - mid);
-        for (uint256 i = 0; i < mid; i++) {
-            firstHalf[i] = cuts[i];
+        // Apply the facet cuts in fixed-size BATCHES so no single
+        // `diamondCut` tx exceeds the RPC's per-tx gas cap. drpc caps
+        // `eth_sendRawTransaction` at ~18M gas on Base Sepolia; the full
+        // 61-facet cut estimates ~17.7M, and even the previous two-half
+        // split now lands one half at ~17.7M (the facet set grew past
+        // what two halves can carry), which forge's gas buffer pushes
+        // over the cap. Batches of `CUTS_PER_BATCH` facets keep each cut
+        // ~7M — comfortably under the cap even with the default 1.3x
+        // buffer — and auto-scale as facets are added. Any chain that
+        // accepts the single all-facets cut also accepts these batches;
+        // strictly safer.
+        // 4 facets/batch keeps each diamondCut ~2.7M gas; even with
+        // forge's default 1.3x send-buffer that's ~3.5M — under the
+        // largest facet-CREATE tx (~5.3M) drpc already accepts on Base
+        // Sepolia, so every batch clears drpc's per-tx cap (an observed
+        // hard wall below 17.7M) WHILE keeping the 1.3x buffer that
+        // prevents small post-cut config calls from running out of the
+        // 63/64-forwarded delegatecall gas. Auto-scales as facets grow.
+        uint256 CUTS_PER_BATCH = 4;
+        uint256 applied = 0;
+        while (applied < cuts.length) {
+            uint256 n = cuts.length - applied;
+            if (n > CUTS_PER_BATCH) n = CUTS_PER_BATCH;
+            IDiamondCut.FacetCut[] memory batch = new IDiamondCut.FacetCut[](n);
+            for (uint256 i = 0; i < n; i++) {
+                batch[i] = cuts[applied + i];
+            }
+            IDiamondCut(diamond).diamondCut(batch, address(0), "");
+            applied += n;
+            console.log("Diamond cut batch complete; facets applied:", applied);
+            // Post-batch sanity: the loupe must report EXACTLY the facets
+            // applied so far. The constructor-installed DiamondCutFacet is
+            // NOT in `facetAddresses[]` (it writes the selector mapping
+            // directly, bypassing the loupe registry), so the expected
+            // count equals `applied`. A silently-reverted or mis-routed
+            // facet write inside a batch trips this require before the
+            // next batch dispatches, so no half-cut state is left behind.
+            uint256 actualApplied =
+                DiamondLoupeFacet(diamond).facetAddresses().length;
+            require(
+                actualApplied == applied,
+                "DeployDiamond: batch cut did not register all facets"
+            );
         }
-        for (uint256 i = mid; i < cuts.length; i++) {
-            secondHalf[i - mid] = cuts[i];
-        }
-        IDiamondCut(diamond).diamondCut(firstHalf, address(0), "");
-        console.log("Diamond cut 1/2 complete:", mid, "facets added.");
-        // Post-cut-1 sanity: the loupe should now report every facet
-        // added in the first half. The constructor-installed
-        // DiamondCutFacet is intentionally NOT in `facetAddresses[]`
-        // — `VaipakamDiamond.constructor` calls `LibDiamond.diamondCut`
-        // with an empty array and then writes the cut selector
-        // mapping directly into `selectorToFacetAndPosition` without
-        // touching the loupe-visible registry. So the count is
-        // exactly `mid` here, not `mid + 1`. If a facet write
-        // reverted silently inside the cut, the count is off and the
-        // in-flight script bails BEFORE dispatching cut-2 (which
-        // would otherwise complete and leave a misleadingly-finished
-        // broadcast log).
-        uint256 expectedAfterCut1 = mid;
-        uint256 actualAfterCut1 = DiamondLoupeFacet(diamond)
-            .facetAddresses()
-            .length;
-        require(
-            actualAfterCut1 == expectedAfterCut1,
-            "DeployDiamond: cut 1/2 did not register all facets"
-        );
-
-        IDiamondCut(diamond).diamondCut(secondHalf, address(0), "");
-        console.log("Diamond cut 2/2 complete:", cuts.length - mid, "facets added.");
-        // Post-cut-2 sanity: every facet added across both cuts must
-        // now be loupe-visible. The DiamondCutFacet stays out of
-        // `facetAddresses[]` (constructor-installed, not cut), so the
-        // expected loupe count is exactly `cuts.length`. The selector
-        // for `diamondCut` itself is still callable; it just isn't
-        // enumerated by the loupe walk.
-        uint256 expectedAfterCut2 = cuts.length;
-        uint256 actualAfterCut2 = DiamondLoupeFacet(diamond)
-            .facetAddresses()
-            .length;
-        require(
-            actualAfterCut2 == expectedAfterCut2,
-            "DeployDiamond: cut 2/2 did not register all facets"
-        );
 
         // Issue #72 — per-selector ownership assertion. The count check
         // above only proves "N distinct facet addresses are registered";

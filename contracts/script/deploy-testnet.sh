@@ -787,11 +787,11 @@ EOF
 
   echo
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
 
   echo
   echo "[3] DeployTimelock.s.sol"
-  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool
@@ -803,7 +803,7 @@ EOF
   # phase — there is no per-adapter setRateLimits step any more.
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
   # Range Orders Phase 1 governance-gated kill switches default
@@ -944,7 +944,7 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — ccip-wire  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
-  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
   mark_phase_done "ccip-wire"
 }
 
@@ -1007,7 +1007,7 @@ EOF
   echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
   echo "  ONEINCH_ROUTER_OVERRIDE:    ${ONEINCH_ROUTER_OVERRIDE:-(default 0x…2A65)}"
   echo
-  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}" --retries "${FORGE_RETRIES:-10}" --delay "${FORGE_DELAY:-5}"
   mark_phase_done "swap-adapters"
 }
 

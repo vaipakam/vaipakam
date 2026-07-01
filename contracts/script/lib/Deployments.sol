@@ -357,11 +357,23 @@ library Deployments {
             (bool ok, bytes memory data) = address(0x64).staticcall(
                 abi.encodeWithSignature("arbBlockNumber()")
             );
+            if (ok && data.length >= 32) {
+                return abi.decode(data, (uint256));
+            }
+            // forge's simulation EVM does NOT emulate the Arbitrum ArbSys
+            // precompile, so the in-EVM call above reverts during
+            // `forge script`. Fall back to an operator-supplied L2 block:
+            // read the RPC's `eth_blockNumber` (which returns the L2 height on
+            // Arbitrum, unlike the in-EVM `block.number` which returns L1) and
+            // pass it as ARB_L2_DEPLOY_BLOCK. Revert with guidance rather than
+            // silently stamping the wrong L1 `block.number` — the exact bug
+            // this ArbSys path exists to prevent.
+            uint256 l2Override = CHEATS.envOr("ARB_L2_DEPLOY_BLOCK", uint256(0));
             require(
-                ok && data.length >= 32,
-                "Deployments: ArbSys.arbBlockNumber() unavailable on Arb chain"
+                l2Override != 0,
+                "Deployments: ArbSys unavailable in forge sim; set ARB_L2_DEPLOY_BLOCK to the arb eth_blockNumber"
             );
-            return abi.decode(data, (uint256));
+            return l2Override;
         }
         return block.number;
     }
