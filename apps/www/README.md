@@ -18,7 +18,7 @@ The **public marketing + docs surface** served at `vaipakam.com` (apex; `www.vai
 
 This deliberate dependency-surface narrowing means a marketing-only change has a tighter blast radius — `apps/www` can't accidentally regress the connected app, and vice versa.
 
-**Canonical whitepaper** lives at [`src/content/whitepaper/Whitepaper.en.md`](src/content/whitepaper/Whitepaper.en.md). This is the file the website renders; it's also the file the rest of the repo cross-references (root `README.md`'s audit-prep table, every ADR, etc.).
+**Canonical whitepaper** lives at [`src/content/whitepaper/Whitepaper.en.md`](src/content/whitepaper/Whitepaper.en.md). This is the file the website renders; repo navigation and audit-intake docs should link to this file directly when they need the technical specification.
 
 ## History
 
