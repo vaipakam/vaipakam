@@ -102,6 +102,7 @@ export interface WorkerEnv {
   ALCHEMY_WEBHOOK_SIGNING_KEY?: SecretBinding;
   ALCHEMY_WEBHOOK_SIGNING_KEY_84532?: SecretBinding; // Base Sepolia (canonical testnet)
   ALCHEMY_WEBHOOK_SIGNING_KEY_421614?: SecretBinding; // Arb Sepolia (mirror testnet)
+  ALCHEMY_WEBHOOK_SIGNING_KEY_97?: SecretBinding; // BNB Testnet (key ready; DO scans once 97 is in the bundle)
   // #757 Phase A — per-chain ingest Durable Object namespace. The webhook
   // route and the cron `scheduled()` both resolve `idFromName(String(chainId))`
   // and forward a (chainId, target-block) hint; the DO is the single serialized

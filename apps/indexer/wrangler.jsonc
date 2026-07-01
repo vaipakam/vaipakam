@@ -93,6 +93,13 @@
     // binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532" },
     { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614" },
+    // BNB Testnet (97): webhook + key are configured ahead of BNB going into the
+    // active-chains bundle. The route will HMAC-verify BNB deliveries, but the
+    // DO only SCANS chain 97 once `getDeployment(97)` resolves (i.e. 97 is added
+    // to `.active-chains` + the deployments bundle) — deferred until BNB's
+    // contract deploy is finalized. Harmless until then: verified deliveries
+    // forward to the DO, which no-ops without a chain config.
+    { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_97",     "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_97" },
   ],
 
   // #757 Phase A — per-chain ingest Durable Object: the single serialized
