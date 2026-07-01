@@ -248,7 +248,7 @@ The app includes user-facing gates and notices for legal and operational safety:
 
 Vaipakam is decentralized protocol software. Users remain responsible for understanding the assets they use, the jurisdictions they operate in, and the risks of lending, borrowing, renting, collateral, liquidation, and smart-contract interaction.
 
-Security-sensitive reports should use the private channels in SECURITY.md, not public GitHub issues. Incident-response procedures are documented in docs/ops/IncidentRunbook.md.
+Security-sensitive reports should use Vaipakam's private disclosure channel at [GitHub Security Advisories](https://github.com/vaipakam/vaipakam/security/advisories/new) or the repository [SECURITY.md](https://github.com/vaipakam/vaipakam/blob/main/SECURITY.md), not public GitHub issues. Incident-response procedures are documented in the [Incident Runbook](https://github.com/vaipakam/vaipakam/blob/main/docs/ops/IncidentRunbook.md).
 
 ---
 

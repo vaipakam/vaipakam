@@ -182,9 +182,7 @@ protocolには複数の保護layerがあります。
 - **Pause switches.** 各contractにはemergency pause leversがあり、
   何か異常が見えたとき、operatorは数秒でnew businessを止められ
   ます。一方でexisting usersはpositionsをsafeにwind downできます。
-- **Independent audits.** 各chainの各contractは、third-party security
-  review後にのみshipされます。Audit reportsとbug bounty scopeは
-  publicです。
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 それでも、自分が何にsignしているのか理解しておくべきです。各loanの前に
 表示されるcombined **risk consent**を読んでください。そこでは

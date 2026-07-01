@@ -3,7 +3,7 @@
 ## Purpose
 
 This document will define the website and product experience for Vaipakam.
-It is separate from the protocol-level `README.md`, which focuses on smart contracts, workflows, and backend logic.
+It is separate from the repository root `README.md`, which is a product-facing overview. Protocol and workflow detail lives in `apps/www/src/content/whitepaper/Whitepaper.en.md` and the other `docs/FunctionalSpecs/` documents.
 
 The goal of this file is to guide the design and development of:
 

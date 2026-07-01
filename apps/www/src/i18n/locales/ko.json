@@ -847,8 +847,8 @@
     "transparencyDesc": "모든 오퍼, 대출, 상태 변경이 온체인에 기록됩니다. Vaipakam NFT는 포지션 소유권의 검증 가능한 증명 역할을 합니다.",
     "slippageTitle": "슬리피지·청산 안전성",
     "slippageDesc": "슬리피지가 6%를 초과하면 DEX 청산이 중단됩니다. NFT 청구 모델을 통한 담보 전체 이전으로 폴백되며, 불리한 스왑이 강제 실행되지 않습니다.",
-    "auditTitle": "감사 완료 및 실전 검증",
-    "auditDesc": "OpenZeppelin 컨트랙트 위에 구축되어 있으며, 모든 facet에 ReentrancyGuard와 Pausable이 적용됩니다. 메인넷 배포 전에는 제3자 감사가 필수입니다.",
+    "auditTitle": "Audit pending before mainnet",
+    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
     "kycTitle": "비수탁형이며 KYC 불필요",
     "kycDesc": "1단계는 패스스루 모드의 KYC 점검과 함께 출시됩니다. Vaipakam은 비수탁형으로, 각 사용자가 규제 준수 책임을 부담합니다. 제재 국가 및 단계별 KYC 로직은 향후 거버넌스 활성화를 위해 코드베이스에 그대로 유지됩니다."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "대출이 활성화된 동안 제 돈은 실제로 누가 보관하나요?",
         "a1": "전통적인 의미에서 누군가가 보관하는 것은 아닙니다. 자산은 사용자 본인과 프로토콜의 자체 규칙만 움직일 수 있는 스마트 컨트랙트 Vault에 보관됩니다. 각 사용자는 자신만의 격리된 Vault를 갖고, 자금이 타인과 섞이는 일은 없습니다. 자금이 풀려나갈 때마다 사용자가 \"수락\"을 누르기 전에 이미 온체인에 공개된 규칙을 따릅니다.",
-        "a2": "컨트랙트는 오픈소스이며 감사를 받았습니다. Vaipakam은 잔액을 동결, 전환 또는 회수할 수 없으며, 비상 시 할 수 있는 일은 새로운 동작을 일시 중지하는 것이 전부입니다. 상환, 청구, 퇴장은 언제나 사용 가능합니다."
+        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
       },
       "basics-vpfi-intro": {
         "q": "VPFI란 무엇이고 앱 사용에 꼭 필요한가요?",
@@ -931,7 +931,7 @@
       "vault": {
         "q": "사용자별 Vault는 어떻게 동작하나요?",
         "a1": "각 사용자는 자신만의 UUPS 업그레이드 가능 프록시 Vault를 가지며, 첫 사용 시 <c>VaultFactoryFacet</c>(클론 팩토리 패턴)에 의해 배포됩니다. 자산이 다른 사람의 자산과 섞이는 일은 없습니다.",
-        "a2": "Diamond는 Vault 간 자산 이동을 조정하지만, 청구 권한은 Vaipakam 포지션 NFT에 묶여 있습니다. 따라서 Vault의 보관은 온체인 포지션 상태에 의해 엄격히 제한됩니다."
+        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
       },
       "default": {
         "q": "차입자가 디폴트되면 어떻게 되나요?",

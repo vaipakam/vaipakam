@@ -194,9 +194,7 @@ el protocolo tiene varias capas integradas:
   operaciones en segundos si algo no parece bien, mientras los
   usuarios existentes pueden cerrar sus posiciones de forma
   segura.
-- **Auditorías independientes.** Cada contrato en cada cadena se
-  publica solo después de revisión de seguridad por terceros. Los
-  informes de auditoría y el alcance del bug bounty son públicos.
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 Aún así deberías entender en qué te estás metiendo. Lee el
 **consentimiento de riesgos** combinado que aparece antes de cada

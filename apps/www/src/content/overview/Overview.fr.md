@@ -203,9 +203,7 @@ protocole intègre plusieurs couches :
   activité en quelques secondes si quelque chose semble anormal,
   tout en laissant les utilisateurs existants clôturer leurs
   positions en sécurité.
-- **Audits indépendants.** Chaque contrat sur chaque chaîne ne sort
-  qu'après une revue de sécurité par un tiers. Les rapports d'audit
-  et le périmètre du bug bounty sont publics.
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 Vous devez quand même comprendre ce dans quoi vous vous engagez.
 Lisez le **consentement de risque** combiné qui apparaît avant

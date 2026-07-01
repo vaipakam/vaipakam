@@ -178,9 +178,7 @@ has several layers built in:
   the operator can stop new business in seconds if something looks
   wrong, while letting existing users wind down their positions
   safely.
-- **Independent audits.** Every contract on every chain ships only
-  after third-party security review. Audit reports and bug bounty
-  scope are public.
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 You should still understand what you're signing up for. Read the
 combined **risk consent** that appears before every loan — it

@@ -179,9 +179,7 @@ protocol에는 여러 보호 layer가 내장되어 있습니다.
   무언가 이상해 보일 때 operator가 몇 초 안에 new business를 멈출 수
   있습니다. 동시에 existing users는 자신의 positions를 safely wind down
   할 수 있습니다.
-- **Independent audits.** 모든 chain의 모든 contract는 third-party
-  security review 이후에만 ship됩니다. Audit reports와 bug bounty scope는
-  public입니다.
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 그래도 자신이 무엇에 sign하는지 이해해야 합니다. 각 loan 전에 나오는 combined
 **risk consent**를 읽어보세요. abnormal-market fallback path와 illiquid

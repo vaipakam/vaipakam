@@ -847,8 +847,8 @@
     "transparencyDesc": "ஒவ்வொரு வாய்ப்பு, கடன் மற்றும் நிலை மாற்றமும் ஆன்-செயினில் பதிவு செய்யப்படுகிறது. Vaipakam NFT-கள் நிலை உரிமையின் சரிபார்க்கக்கூடிய சான்றாகச் செயல்படுகின்றன.",
     "slippageTitle": "ஸ்லிப்பேஜ் மற்றும் லிக்விடேஷன் பாதுகாப்பு",
     "slippageDesc": "ஸ்லிப்பேஜ் 6% ஐத் தாண்டினால் DEX லிக்விடேஷன் ரத்தாகும். NFT claim மாதிரியின் வழியாக முழு பிணைய மாற்றத்துக்கு திரும்பும். வலியக் கட்டாய மோசமான ஸ்வாப்கள் இல்லை.",
-    "auditTitle": "ஆடிட் செய்யப்பட்டது மற்றும் நிரூபிக்கப்பட்டது",
-    "auditDesc": "OpenZeppelin கான்ட்ராக்ட்களின் மீது கட்டப்பட்டது. அனைத்து facets-இலும் ReentrancyGuard மற்றும் Pausable. மெயின்நெட் வெளியீட்டிற்கு முன் கட்டாய மூன்றாம் தரப்பு ஆடிட்கள்.",
+    "auditTitle": "Audit pending before mainnet",
+    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
     "kycTitle": "நான்-கஸ்டோடியல் மற்றும் KYC இல்லை",
     "kycDesc": "கட்டம் 1, KYC சரிபார்ப்புகளை பாஸ்-த்ரூ முறையில் தொடங்குகிறது. Vaipakam நான்-கஸ்டோடியல்; ஒவ்வொரு பயனரும் தங்கள் சொந்த ஒழுங்குமுறை இணக்கத்திற்கு பொறுப்பானவர்கள். தடைசெய்யப்பட்ட நாடுகள் மற்றும் டையர்டு KYC தர்க்கம் எதிர்கால நிர்வாக செயல்படுத்தலுக்காக கோட்பேஸில் தக்க வைக்கப்பட்டுள்ளது."
   },
@@ -931,7 +931,7 @@
       "vault": {
         "q": "ஒவ்வொரு பயனருக்கான Vault எவ்வாறு செயல்படுகிறது?",
         "a1": "ஒவ்வொரு பயனருக்கும் சொந்தமான UUPS மேம்படுத்தத்தக்க ப்ராக்ஸி Vault உள்ளது, இது முதலில் பயன்படுத்தும்போது <c>VaultFactoryFacet</c>-ஆல் (clone-factory பாணி) வரிசைப்படுத்தப்படுகிறது. சொத்துகள் வேறு யாருடைய சொத்துகளுடனும் சேர்க்கப்படுவதே இல்லை.",
-        "a2": "Diamond Vaultக்களுக்கு இடையிலான இயக்கங்களை ஒருங்கிணைக்கிறது, ஆனால் கோரும் உரிமைகள் Vaipakam நிலை NFT-உடன் இணைக்கப்பட்டுள்ளன — எனவே Vault காப்பு ஆன்-செயின் நிலை நிலையால் கண்டிப்பாக கட்டுப்படுகிறது."
+        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
       },
       "default": {
         "q": "ஒரு கடன் வாங்குபவர் தவறிழைத்தால் என்ன நடக்கும்?",

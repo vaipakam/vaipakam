@@ -100,7 +100,7 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 - **Slippage cap.** Liquidations 会拒绝以超过 6% slippage 的糟糕价格抛售 collateral。如果 market 太薄，protocol 会 fallback，直接把 collateral 给你。
 - **L2 sequencer awareness.** 在 L2 chains 上，如果 chain 的 sequencer 刚从 downtime 中恢复，liquidation 会短暂停止，避免 attackers 利用 stale-price window 干扰你。
 - **Pause switches.** 每个 contract 都有 emergency pause levers。如果情况异常，operator 可以在几秒内停止 new business，同时允许 existing users 安全地 wind down positions。
-- **Independent audits.** 每条 chain 上的每个 contract 都只有在 third-party security review 完成后才会 ship。Audit reports 和 bug bounty scope 都是公开的。
+- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
 
 你仍然应该理解自己正在 sign 什么。每笔 loan 之前都会显示 combined **risk consent**；它解释了 abnormal-market fallback path，以及 illiquid collateral 的 in-kind settlement path。只有勾选 consent box 后，app 才会允许你 accept。
 
