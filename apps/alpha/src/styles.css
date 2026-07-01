@@ -231,6 +231,7 @@ button {
 .manage-page,
 .advanced-page,
 .offers-page,
+.claims-page,
 .help-page {
   display: grid;
   gap: 22px;
@@ -552,6 +553,72 @@ dd {
 .offer-review dl div {
   display: grid;
   grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+}
+
+.claim-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.claim-summary .panel-surface {
+  display: grid;
+  gap: 5px;
+}
+
+.claim-summary strong {
+  font-size: 1.8rem;
+}
+
+.claim-summary span {
+  color: var(--muted);
+}
+
+.claim-list {
+  display: grid;
+  gap: 8px;
+}
+
+.claim-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(120px, 0.5fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.claim-row.ready {
+  border-color: rgba(20, 107, 92, 0.42);
+  background: #f4fbf6;
+}
+
+.claim-row h3 {
+  margin: 3px 0 4px;
+  font-size: 1rem;
+}
+
+.claim-row p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.claim-row button {
+  min-height: 38px;
+  border: 1px solid rgba(20, 107, 92, 0.28);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--brand-strong);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.claim-row button:disabled {
+  cursor: default;
+  opacity: 0.58;
 }
 
 .principle-card {
@@ -1008,7 +1075,7 @@ dd {
   }
 
   .nav-list {
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(9, minmax(0, 1fr));
   }
 
   .nav-link {
@@ -1056,6 +1123,7 @@ dd {
   .position-row,
   .workbench-grid,
   .diagnostic-panel,
+  .claim-summary,
   .task-grid,
   .step-board,
   .guided-board,
@@ -1078,9 +1146,18 @@ dd {
   }
 
   .offer-review dl div,
+  .claim-row,
   .choice-grid,
   .receipt-card dl div {
     grid-template-columns: 1fr;
+  }
+
+  .claim-row {
+    width: 100%;
+  }
+
+  .claim-row > * {
+    min-width: 0;
   }
 
   .receipt-card dd {

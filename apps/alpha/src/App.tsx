@@ -415,6 +415,7 @@ function App() {
           <AlphaNavLink to="/borrow" label="Borrow" icon={<HandCoins />} />
           <AlphaNavLink to="/rent" label="NFT Rental" icon={<Box />} />
           <AlphaNavLink to="/offers" label="Offers" icon={<Store />} />
+          <AlphaNavLink to="/claims" label="Claims" icon={<ReceiptText />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
           <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
@@ -433,6 +434,7 @@ function App() {
           <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/offers" element={<OfferBook wallet={wallet} onConnectWallet={connectWallet} />} />
+          <Route path="/claims" element={<Claims wallet={wallet} onConnectWallet={connectWallet} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/help" element={<Help />} />
@@ -737,6 +739,91 @@ const managedPositions: ManagedPosition[] = [
   { id: 'vpfi', kind: 'reward', title: 'VPFI utility', status: 'Discount inactive', amount: '0 VPFI registered', nextAction: 'Check discount', urgency: 'calm' },
 ];
 
+
+
+type ClaimItem = {
+  id: string;
+  source: 'loan' | 'rental' | 'reward' | 'discount';
+  title: string;
+  amount: string;
+  asset: string;
+  status: 'Ready' | 'Waiting' | 'Informational';
+  detail: string;
+};
+
+const claimItems: ClaimItem[] = [
+  { id: 'claim-loan-2', source: 'loan', title: 'Loan #2 repayment claim', amount: '1,000', asset: 'mUSDC', status: 'Ready', detail: 'Borrower repayment proceeds can be claimed to wallet.' },
+  { id: 'claim-rental-buffer', source: 'rental', title: 'Rental buffer refund', amount: '12', asset: 'mUSDC', status: 'Waiting', detail: 'Available after rental close or expiry proof.' },
+  { id: 'claim-interaction', source: 'reward', title: 'Interaction reward', amount: '42', asset: 'VPFI', status: 'Ready', detail: 'Reward preview from platform activity.' },
+  { id: 'discount-vpfi', source: 'discount', title: 'VPFI fee discount', amount: '0', asset: 'VPFI', status: 'Informational', detail: 'Register VPFI to unlock discount tiers once wired.' },
+];
+
+function Claims({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWallet: () => void }) {
+  const [claimedIds, setClaimedIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState<'all' | ClaimItem['source']>('all');
+  const walletReady = Boolean(wallet.account);
+  const visibleClaims = claimItems.filter((item) => filter === 'all' || item.source === filter);
+  const readyCount = claimItems.filter((item) => item.status === 'Ready' && !claimedIds.includes(item.id)).length;
+  const totalReady = claimItems
+    .filter((item) => item.status === 'Ready' && item.asset === 'mUSDC' && !claimedIds.includes(item.id))
+    .reduce((sum, item) => sum + Number(item.amount.replace(/,/g, '')), 0);
+
+  const claim = (id: string) => {
+    setClaimedIds((current) => current.includes(id) ? current : [...current, id]);
+  };
+
+  return (
+    <div className="claims-page">
+      <SectionHeading eyebrow="Claims and rewards" title="Collect value without hunting through activity" />
+      <section className="claim-summary">
+        <div className="panel-surface">
+          <p className="eyebrow">Ready now</p>
+          <strong>{readyCount}</strong>
+          <span>claimable items</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">mUSDC ready</p>
+          <strong>{totalReady.toLocaleString()}</strong>
+          <span>before gas</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Wallet</p>
+          <strong>{walletReady ? 'Connected' : 'Not connected'}</strong>
+          <span>{wallet.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Base Sepolia' : 'Network check needed'}</span>
+        </div>
+      </section>
+
+      <section className="portfolio-tools panel-surface" aria-label="Claim filters">
+        {(['all', 'loan', 'rental', 'reward', 'discount'] as Array<'all' | ClaimItem['source']>).map((option) => (
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+            {option}
+          </button>
+        ))}
+      </section>
+
+      <section className="claim-list panel-surface" aria-label="Claimable items">
+        {visibleClaims.map((item) => {
+          const claimed = claimedIds.includes(item.id);
+          const ready = item.status === 'Ready' && !claimed;
+          return (
+            <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id}>
+              <div>
+                <span className="position-kind">{item.source}</span>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+              <strong>{claimed ? 'Queued' : item.amount + ' ' + item.asset}</strong>
+              <span>{claimed ? 'Claim queued locally' : item.status}</span>
+              <button type="button" disabled={!ready} onClick={walletReady ? () => claim(item.id) : onConnectWallet}>
+                {!walletReady ? 'Connect wallet' : claimed ? 'Queued' : ready ? 'Claim' : 'Not ready'}
+              </button>
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
+}
 
 function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWallet: () => void }) {
   const [filter, setFilter] = useState<OfferKind | 'all'>('all');
