@@ -295,10 +295,20 @@ BANNER
     # it reverts (safe failure). Default 48h; override with UNPAUSE_TIMELOCK_DELAY.
     # Confirm against `cast call <timelock> "getMinDelay()(uint256)"` before use.
     TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
-    TL_SALT="${UNPAUSE_TIMELOCK_SALT:-$ZERO32}"
+    # Salt MUST be run-unique: OZ TimelockController keeps executed ops
+    # registered as Done and scheduleBatch() rejects any id that already exists,
+    # so a zero (constant) salt would let only the FIRST incident's unpause be
+    # queued — a later identical unpause on the same target set would revert with
+    # no obvious cause during a recovery window. Default to a run-specific nonce
+    # (overridable); the per-chain salt below folds in the slug so each chain's
+    # op id is distinct too. RUN_NONCE is stamped once so schedule + execute of a
+    # given chain share the same salt.
+    RUN_NONCE="$(date +%s)"
+    TL_SALT_OVERRIDE="${UNPAUSE_TIMELOCK_SALT:-}"
     echo
     echo "Selector:      unpause()  =  $UNPAUSE_SELECTOR"
     echo "Timelock delay:$TL_DELAY s (override UNPAUSE_TIMELOCK_DELAY; must be >= getMinDelay())"
+    echo "Salt nonce:    $RUN_NONCE (per-chain salt = keccak(vaipakam-unpause-<slug>-$RUN_NONCE); override UNPAUSE_TIMELOCK_SALT)"
     echo
 
     for slug in "${CHAINS[@]}"; do
@@ -329,13 +339,31 @@ BANNER
         T=$(IFS=,; echo "${addrs[*]}")
         V=$(printf '0,%.0s' $(seq "${#addrs[@]}")); V="${V%,}"
         P=$(printf "$UNPAUSE_SELECTOR,%.0s" $(seq "${#addrs[@]}")); P="${P%,}"
-        sched=$(cast calldata "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
-          "[$T]" "[$V]" "[$P]" "$ZERO32" "$TL_SALT" "$TL_DELAY" 2>/dev/null || echo "<cast-encode-failed>")
-        execd=$(cast calldata "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
-          "[$T]" "[$V]" "[$P]" "$ZERO32" "$TL_SALT" 2>/dev/null || echo "<cast-encode-failed>")
+        # Run-unique per-chain salt (see RUN_NONCE note above). An explicit
+        # UNPAUSE_TIMELOCK_SALT override wins verbatim.
+        if [ -n "$TL_SALT_OVERRIDE" ]; then
+          salt="$TL_SALT_OVERRIDE"
+        elif ! salt=$(cast keccak "vaipakam-unpause-${slug}-${RUN_NONCE}" 2>/dev/null); then
+          echo "  ERROR: cast keccak failed computing the timelock salt for $slug — aborting." >&2
+          exit 1
+        fi
+        # A failed encode must ABORT — emitting a `<placeholder>` that an operator
+        # could paste into the timelock/Safe during a live recovery is worse than
+        # a hard stop they can diagnose (bad salt / array format / cast version).
+        if ! sched=$(cast calldata "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
+          "[$T]" "[$V]" "[$P]" "$ZERO32" "$salt" "$TL_DELAY" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode scheduleBatch for $slug — aborting (check salt/array/cast version)." >&2
+          exit 1
+        fi
+        if ! execd=$(cast calldata "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
+          "[$T]" "[$V]" "[$P]" "$ZERO32" "$salt" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode executeBatch for $slug — aborting." >&2
+          exit 1
+        fi
         echo "  [post-handover] governance timelock ($tl) -> scheduleBatch then executeBatch:"
+        echo "    salt=$salt"
         echo "    [1] queue:   to=$tl data=$sched"
-        echo "    [2] execute: to=$tl data=$execd   (after >= $TL_DELAY s)"
+        echo "    [2] execute: to=$tl data=$execd   (after >= $TL_DELAY s, same salt)"
       fi
       echo
     done

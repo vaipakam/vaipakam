@@ -658,7 +658,12 @@ if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
   else
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    # Pass $FRESH -> VPFI_TOKEN_FRESH so run() mints fresh if a recorded token
+    # survives a --fresh. deploy-chain's [0] cleanup archives the whole file
+    # unconditionally (unlike testnet/mainnet, whose archive gates on .diamond),
+    # so this is defensive here — kept for parity with the other wrappers (#857).
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
     snapshot_addresses "post-vpfitoken"
     mark_done "vpfitoken"
   fi

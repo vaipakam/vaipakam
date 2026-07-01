@@ -882,14 +882,19 @@ EOF
   # DeployVPFIToken script itself hard-guards to canonical chain ids, so this
   # IS_CANONICAL gate is belt-and-suspenders. The mode (fresh-mint / rotate /
   # reuse) was already validated by the [1c] preflight; no FORCE injection is
-  # needed here — on a --fresh redeploy the [0] archive already cleared the prior
-  # `.vpfiToken`, so run() simply mints fresh (and a deliberate rotate/reuse is
-  # driven by VPFI_TOKEN_FORCE_REDEPLOY / VPFI_TOKEN_REUSE_ADDRESS, which run()
-  # reads directly). Injecting FORCE here previously conflicted with reuse (#857).
+  # needed. Pass $FRESH through as VPFI_TOKEN_FRESH so run()'s _resolveMode()
+  # mints fresh even when the archive above DIDN'T clear a recorded `.vpfiToken`
+  # — the detect-and-refuse/archive block only fires when `.diamond` is present,
+  # so a pre-seeded `.vpfiToken`-only file survives a --fresh; without FRESH here
+  # run() would revert AFTER Diamond+Timelock already broadcast (#857 P1). A
+  # deliberate rotate/reuse is still driven by VPFI_TOKEN_FORCE_REDEPLOY /
+  # VPFI_TOKEN_REUSE_ADDRESS, which run() reads directly (FRESH only relaxes the
+  # mint-path no-overwrite guard; it does not touch the reuse-match).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
@@ -1874,25 +1879,64 @@ phase_pause_rehearsal() {
     unpause-calldata)
       echo "═══════════════════════════════════════════════════════════════"
       echo "deploy-testnet.sh — pause-rehearsal UNPAUSE-CALLDATA  ($CHAIN_SLUG)"
-      echo "  Cleanup phase. Route these through the governance TIMELOCK — NOT"
-      echo "  the Pauser Safe (#857). Unpause is deliberately owner-only: the"
-      echo "  Diamond's unpause is UNPAUSER_ROLE and every GuardianPausable"
-      echo "  contract's is onlyOwner — after handover BOTH are the timelock, so"
-      echo "  these go through its schedule/execute queue. This mirrors the real"
-      echo "  pause-all-chains.sh --unpause-calldata path operators must practise."
+      echo "  Cleanup phase. Unpause is deliberately owner-only (#857). WHO the"
+      echo "  owner is depends on handover state, and the calldata differs:"
+      echo "   • PRE-handover  (testnet rehearsal): admin/Pauser EOA calls"
+      echo "     unpause() DIRECTLY on each contract (first block)."
+      echo "   • POST-handover (mainnet cutover done): the governance TIMELOCK"
+      echo "     queues scheduleBatch/executeBatch (second block)."
+      echo "  This mirrors the real pause-all-chains.sh --mode unpause path so"
+      echo "  operators practise the exact recovery they'll run on mainnet."
       echo "═══════════════════════════════════════════════════════════════"
       echo
       local UNPAUSE_SELECTOR
       UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
-      printf "  %-22s %s\n" "Contract" "to / data"
-      printf "  %-22s %s\n" "----------------------" "-------------------------------------------"
+      local ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
+      local TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
+      local RUN_NONCE; RUN_NONCE="$(date +%s)"
+      # (1) PRE-handover: direct owner call on each contract.
+      echo "  [pre-handover] admin/Pauser EOA -> unpause() direct:"
+      local UADDRS=()
       for ENTRY in "${PAUSE_TARGETS[@]}"; do
         local KEY="${ENTRY%%:*}"
         local ADDR="${ENTRY#*:}"
-        printf "  %-22s to=%s\n" "$KEY" "$ADDR"
-        printf "  %-22s data=%s\n" "" "$UNPAUSE_SELECTOR"
-        echo
+        printf "    %-20s to=%s data=%s\n" "$KEY" "$ADDR" "$UNPAUSE_SELECTOR"
+        UADDRS+=("$ADDR")
       done
+      # (2) POST-handover: ONE atomic timelock batch (matches pause-all-chains.sh).
+      local TL
+      TL=$(jq -r '.timelock // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+      if [ -z "$TL" ]; then
+        echo "  [post-handover] (no .timelock recorded — pre-handover; use the direct calls above)"
+      elif [ "${#UADDRS[@]}" -eq 0 ]; then
+        echo "  [post-handover] (no pausable targets resolved)"
+      else
+        local UT UV UP USALT USCHED UEXEC
+        UT=$(IFS=,; echo "${UADDRS[*]}")
+        UV=$(printf '0,%.0s' $(seq "${#UADDRS[@]}")); UV="${UV%,}"
+        UP=$(printf "$UNPAUSE_SELECTOR,%.0s" $(seq "${#UADDRS[@]}")); UP="${UP%,}"
+        if [ -n "${UNPAUSE_TIMELOCK_SALT:-}" ]; then
+          USALT="$UNPAUSE_TIMELOCK_SALT"
+        elif ! USALT=$(cast keccak "vaipakam-unpause-${CHAIN_SLUG}-${RUN_NONCE}" 2>/dev/null); then
+          echo "  ERROR: cast keccak failed computing the timelock salt — aborting." >&2
+          exit 1
+        fi
+        if ! USCHED=$(cast calldata "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
+          "[$UT]" "[$UV]" "[$UP]" "$ZERO32" "$USALT" "$TL_DELAY" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode scheduleBatch — aborting (check cast version)." >&2
+          exit 1
+        fi
+        if ! UEXEC=$(cast calldata "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
+          "[$UT]" "[$UV]" "[$UP]" "$ZERO32" "$USALT" 2>/dev/null); then
+          echo "  ERROR: cast failed to encode executeBatch — aborting." >&2
+          exit 1
+        fi
+        echo "  [post-handover] governance timelock ($TL) -> scheduleBatch then executeBatch:"
+        echo "    salt=$USALT   delay=$TL_DELAY s (must be >= getMinDelay())"
+        echo "    [1] queue:   to=$TL data=$USCHED"
+        echo "    [2] execute: to=$TL data=$UEXEC   (after >= $TL_DELAY s, same salt)"
+      fi
+      echo
       # Clear the sentinel so a future drill starts fresh.
       rm -f "$SENTINEL"
       ;;

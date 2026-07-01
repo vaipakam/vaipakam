@@ -738,10 +738,17 @@ EOF
   # belt-and-suspenders. The duplicate-mint refusal for a --fresh re-deploy is
   # enforced in the "VPFI re-mint preflight" gate, before any broadcast — refusing here
   # would leave a partial deploy since [2]/[3] already landed (#853 Codex P2).
+  # Pass $FRESH through as VPFI_TOKEN_FRESH so run()'s _resolveMode() mints fresh
+  # even when the archive DIDN'T clear a recorded `.vpfiToken` — the archive gate
+  # only fires when `.diamond` is present, so a pre-seeded `.vpfiToken`-only file
+  # survives a --fresh; without FRESH here run() would revert AFTER Diamond +
+  # Timelock already broadcast (#857 P1). Rotate/reuse stay driven by their own
+  # env vars (FRESH only relaxes the mint-path no-overwrite guard).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
   fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this

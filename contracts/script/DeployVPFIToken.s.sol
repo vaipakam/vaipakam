@@ -186,7 +186,10 @@ contract DeployVPFIToken is Script {
 
         address existing = Deployments.readVpfiTokenOptional();
         if (existing != address(0)) {
-            console.log("VPFI_TOKEN_FORCE_REDEPLOY set - orphaning prior token:", existing);
+            // Reached via FORCE (deliberate rotation) OR --fresh (VPFI_TOKEN_FRESH)
+            // over a pre-seeded/un-archived .vpfiToken — either way the prior token
+            // is orphaned and a NEW 23M supply is minted below.
+            console.log("Orphaning prior recorded token (FORCE or --fresh):", existing);
         }
 
         vm.startBroadcast(deployerKey);
