@@ -56,6 +56,30 @@ contract DeployVPFIToken is Script {
             "DeployVPFIToken: canonical chain only (Base 8453 / Base Sepolia 84532)"
         );
 
+        // #855 — CARRY-FORWARD / REUSE mode. A Diamond/CCIP redeploy that must
+        // KEEP the existing canonical VPFI token (not fork a second 23M supply)
+        // sets VPFI_TOKEN_REUSE_ADDRESS to that token. We record it as
+        // `.vpfiToken` — so `DeployCrosschain` wraps it and `ConfigureVPFIToken`
+        // registers it in the NEW diamond — and skip the mint entirely. This is
+        // the third outcome alongside fresh-mint (no token yet) and force-rotate.
+        // NOTE: the reused token's `minter` still points at the OLD diamond; the
+        // operator MUST rotate it to the new diamond via the token owner's
+        // `setMinter(newDiamond)` for `TreasuryFacet.mintVPFI` to work — this
+        // script only records the address, it can't rotate the minter (owner-only,
+        // and post-handover that owner is the timelock).
+        address reuse = vm.envOr("VPFI_TOKEN_REUSE_ADDRESS", address(0));
+        if (reuse != address(0)) {
+            require(
+                reuse.code.length > 0,
+                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS has no bytecode (not a deployed token)"
+            );
+            Deployments.writeVpfiToken(reuse);
+            console.log("VPFI carry-forward: reusing existing canonical token:", reuse);
+            console.log("  recorded as .vpfiToken (mint skipped).");
+            console.log("  ACTION REQUIRED: rotate its minter -> new diamond:", diamond);
+            return reuse;
+        }
+
         // #853 Codex P2 — NO-OVERWRITE GUARD. This is a one-time tokenomics
         // deploy: a rerun would mint a SECOND 23M supply, repoint every
         // downstream CCIP/config step at the new proxy, and orphan the first

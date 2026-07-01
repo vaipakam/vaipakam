@@ -559,7 +559,8 @@ fi
 # re-mints); an explicit VPFI_TOKEN_FORCE_REDEPLOY=1 (propagated to the forge
 # subprocess) is the deliberate rotation opt-in.
 if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ] && ! step_done "vpfitoken" \
-   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ] \
+   && [ -z "${VPFI_TOKEN_REUSE_ADDRESS:-}" ]; then
   PRESEEDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
   if [ -n "$PRESEEDED_VPFI" ] && [ "$PRESEEDED_VPFI" != "null" ]; then
     echo "ERROR: a canonical VPFI token ($PRESEEDED_VPFI) is already recorded on $CHAIN_SLUG." >&2

@@ -676,7 +676,7 @@ EOF
   # `.vpfiToken` with no `.diamond` yet slips through to [3b]. Refuse that here,
   # before any broadcast. --fresh is exempt: it archives addresses.json (clearing
   # `.vpfiToken`) and the [3b] step re-mints under the FRESH-derived force flag.
-  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ] && [ -z "${VPFI_TOKEN_REUSE_ADDRESS:-}" ]; then
     local preseeded_vpfi
     preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
     if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ]; then
@@ -1038,6 +1038,27 @@ Every listed chain must already have had its \`contracts\` phase land —
 ConfigureCcip reads each chain's deployments/<slug>/addresses.json to
 resolve lane + channel peers. It also needs CCIP_TOKEN_ADMIN_REGISTRY
 and CCIP_REGISTRY_MODULE_OWNER_CUSTOM (resolved per-slug from .env).
+EOF
+    exit 1
+  fi
+
+  # #855 — CCIP_GUARDIAN is REQUIRED for ccip-wire. ConfigureCcip._setGuardians
+  # SKIPS silently when it's unset, leaving every GuardianPausable cross-chain
+  # contract (CcipMessenger / RewardMessenger / mirror VPFI) with NO guardian.
+  # Setting a guardian is owner-only, so once handover moves ownership to the
+  # timelock the fast Pauser-Safe pause lever (pause-all-chains.sh) can no longer
+  # freeze those contracts during an incident — it MUST be wired now, while ADMIN
+  # still owns them. The guardian is a single global address (the incident
+  # guardian, typically the Pauser Safe), the same on every chain.
+  if [ -z "${CCIP_GUARDIAN:-}" ]; then
+    cat >&2 <<EOF
+Refusing --phase ccip-wire: CCIP_GUARDIAN unset in .env.
+
+ConfigureCcip wires the incident guardian onto every GuardianPausable
+cross-chain contract. Left unset they get NO guardian, and after handover
+only the governance timelock can pause them — defeating pause-all-chains.sh's
+fast containment path. Set CCIP_GUARDIAN to the incident guardian address
+(typically the Pauser Safe) before running ccip-wire.
 EOF
     exit 1
   fi

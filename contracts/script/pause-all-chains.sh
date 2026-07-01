@@ -274,7 +274,14 @@ BANNER
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  pause-all-chains.sh — UNPAUSE (post-incident cleanup)               ║
 ║                                                                      ║
-║  Sign EVERY tx below via the Pauser Safe on its respective chain.    ║
+║  Route EVERY tx below through the governance TIMELOCK — NOT the       ║
+║  Pauser Safe. Unpause is deliberately owner-only (asymmetric-pause    ║
+║  design): the Pauser Safe can pause FAST, but unpausing requires the  ║
+║  timelock's review window. The Diamond's unpause is UNPAUSER_ROLE and ║
+║  every GuardianPausable cross-chain contract's unpause is onlyOwner — ║
+║  after handover BOTH are the governance timelock, so these calls go   ║
+║  through its schedule/execute queue, never the fast Pauser path.      ║
+║                                                                      ║
 ║  ONLY run this once root cause is confirmed fixed and reviewed by    ║
 ║  the security on-call. There is no "unpause budget" — go slow,       ║
 ║  verify each chain comes back healthy before unpausing the next.     ║
@@ -282,7 +289,9 @@ BANNER
 BANNER
     UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
     echo
-    echo "Pauser Safe:   ${PAUSER_ADDRESS:-(not in .env — confirm against runbook)}"
+    echo "Signer:        governance TIMELOCK (UNPAUSER_ROLE on the Diamond;"
+    echo "               owner on each GuardianPausable contract) — via its"
+    echo "               schedule/execute queue. NOT the Pauser Safe."
     echo "Selector:      unpause()  =  $UNPAUSE_SELECTOR"
     echo
 

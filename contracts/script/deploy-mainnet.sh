@@ -545,16 +545,24 @@ EOF
   # re-mint, else refuse up-front. Covers BOTH the --fresh re-deploy and the
   # pre-seeded-token (`.vpfiToken` present, no `.diamond` yet) cases. On --fresh
   # WITH the force flag the [0a] archive clears `.vpfiToken`, so [3b] then mints
-  # the rotated token cleanly.
-  if [ "$IS_CANONICAL" = "1" ]; then
+  # the rotated token cleanly. THREE valid outcomes on a canonical redeploy:
+  #   1. no prior token            → [3b] mints fresh (this gate is a no-op);
+  #   2. VPFI_TOKEN_FORCE_REDEPLOY=1 → [3b] mints a NEW token (deliberate rotation);
+  #   3. VPFI_TOKEN_REUSE_ADDRESS set → [3b] CARRIES FORWARD the existing token
+  #      (#855) — records it as `.vpfiToken`, skips the mint, no forked supply.
+  # This gate only refuses the accidental case: a recorded token, no rotation and
+  # no reuse opt-in.
+  if [ "$IS_CANONICAL" = "1" ] && [ -z "${VPFI_TOKEN_REUSE_ADDRESS:-}" ]; then
     local preseeded_vpfi
     preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
     if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
       echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
       echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
       echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
-      echo "       To deliberately rotate the canonical token re-run with" >&2
-      echo "       VPFI_TOKEN_FORCE_REDEPLOY=1; otherwise carry the existing token forward." >&2
+      echo "       Choose one: rotate the token (mint a new one) with" >&2
+      echo "       VPFI_TOKEN_FORCE_REDEPLOY=1, OR carry the existing token forward with" >&2
+      echo "       VPFI_TOKEN_REUSE_ADDRESS=<existing canonical VPFI> (then rotate its minter" >&2
+      echo "       to the new diamond post-deploy)." >&2
       exit 1
     fi
   fi
@@ -854,6 +862,27 @@ Mainnet gate (CLAUDE.md "Cross-Chain Security Policy"): the per-lane
 rate limits this phase sets, and the CCT TokenAdminRegistry admin, are
 load-bearing — confirm CCIP_RATE_CAPACITY / CCIP_RATE_REFILL match the
 design §10 starting values before broadcasting.
+EOF
+    exit 1
+  fi
+
+  # #855 — CCIP_GUARDIAN is REQUIRED for ccip-wire. ConfigureCcip._setGuardians
+  # SKIPS silently when unset, leaving every GuardianPausable cross-chain
+  # contract (CcipMessenger / RewardMessenger / mirror VPFI) with NO guardian.
+  # Setting a guardian is owner-only, so once handover moves ownership to the
+  # timelock the fast Pauser-Safe pause lever (pause-all-chains.sh) can no longer
+  # freeze those contracts during an incident — it MUST be wired now, while ADMIN
+  # still owns them. On MAINNET this is especially load-bearing (the incident
+  # containment path). Single global address (the incident guardian / Pauser Safe).
+  if [ -z "${CCIP_GUARDIAN:-}" ]; then
+    cat >&2 <<EOF
+Refusing --phase ccip-wire: CCIP_GUARDIAN unset in .env.
+
+ConfigureCcip wires the incident guardian onto every GuardianPausable
+cross-chain contract. Left unset they get NO guardian, and after handover
+only the governance timelock can pause them — defeating pause-all-chains.sh's
+fast containment path on mainnet. Set CCIP_GUARDIAN to the incident guardian
+address (the Pauser Safe) before running ccip-wire.
 EOF
     exit 1
   fi

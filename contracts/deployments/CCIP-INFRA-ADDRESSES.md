@@ -14,7 +14,13 @@ so one `.env` serves every chain without manual editing between runs.
 
 - `--phase contracts` needs: `CCIP_ROUTER_<SLUG>`, `CCIP_RMN_PROXY_<SLUG>`
 - `--phase ccip-wire` additionally needs: `CCIP_TOKEN_ADMIN_REGISTRY_<SLUG>`,
-  `CCIP_REGISTRY_MODULE_OWNER_CUSTOM_<SLUG>`
+  `CCIP_REGISTRY_MODULE_OWNER_CUSTOM_<SLUG>`, and **`CCIP_GUARDIAN`** — a single
+  **global** address (NOT per-slug; the incident guardian, typically the Pauser
+  Safe). `ccip-wire` now hard-errors if it is unset: `ConfigureCcip` wires the
+  guardian onto every `GuardianPausable` cross-chain contract, and setting it is
+  owner-only — so it MUST land while ADMIN still owns those contracts (before
+  handover). Left unset, only the governance timelock could pause them after
+  handover, defeating `pause-all-chains.sh`'s fast incident-containment path.
 
 `<SLUG>` ∈ `{ BASE_SEPOLIA, ARB_SEPOLIA, BNB_TESTNET, SEPOLIA, OP_SEPOLIA,
 POLYGON_AMOY }` (matches the `CCIP_SLUG` in each script's chain registry).

@@ -50,16 +50,23 @@ contract ConfigureVPFIToken is Script {
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
 
         // Resolve THIS chain's VPFI token: canonical hosts the real
-        // `.vpfiToken`; a mirror holds the Burn/Mint `.vpfiMirror`.
+        // `.vpfiToken`; a mirror holds the Burn/Mint `.vpfiMirror`. Both use the
+        // json-only optional readers so an absent token is a clean skip below
+        // (not a revert) — a `--skip-vpfi` deploy omits [3b]/[4], so there is no
+        // token to register, yet `DiamondConfigSpell` must still run the oracle
+        // / reward / NFT configures (#855).
         address token = canonical
-            ? Deployments.readVpfiToken()
+            ? Deployments.readVpfiTokenOptional()
             : Deployments.readVpfiMirrorOptional();
-        require(
-            token != address(0),
-            canonical
-                ? "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first)"
-                : "ConfigureVPFIToken: .vpfiMirror not deployed (run DeployCrosschain first)"
-        );
+        if (token == address(0)) {
+            console.log(
+                canonical
+                    ? "[ConfigureVPFIToken] skip - no .vpfiToken recorded (VPFI deploy skipped?) chain:"
+                    : "[ConfigureVPFIToken] skip - no .vpfiMirror recorded (VPFI deploy skipped?) chain:",
+                block.chainid
+            );
+            return;
+        }
 
         console.log("=== Configure VPFI Token (diamond registration) ===");
         console.log("Chain id:   ", block.chainid);
