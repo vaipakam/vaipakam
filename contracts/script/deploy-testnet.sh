@@ -668,6 +668,26 @@ EOF
     exit 1
   fi
 
+  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
+  # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical
+  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
+  # Timelock broadcast, so a late abort leaves a PARTIAL deploy. The
+  # existing-diamond gate below only catches a prior `.diamond`; a PRE-SEEDED
+  # `.vpfiToken` with no `.diamond` yet slips through to [3b]. Refuse that here,
+  # before any broadcast. --fresh is exempt: it archives addresses.json (clearing
+  # `.vpfiToken`) and the [3b] step re-mints under the FRESH-derived force flag.
+  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+    local preseeded_vpfi
+    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ]; then
+      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
+      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+      echo "       Re-deploy with --fresh (archives + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
+      exit 1
+    fi
+  fi
+
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
   # addresses.json indicates a prior deploy. Re-running --phase
   # contracts without --fresh would either (a) collide on a CREATE2
@@ -1011,7 +1031,7 @@ ConfigureCcip.s.sol wires a CCIP TokenPool lane to every REMOTE chain
 in the topology. Set CCIP_LANE_CHAIN_IDS to a comma-separated list of
 the OTHER chains' EVM chain ids, e.g.:
 
-  CCIP_LANE_CHAIN_IDS=11155111,421614   # on Base Sepolia (the hub)
+  CCIP_LANE_CHAIN_IDS=421614   # on Base Sepolia (the hub) — the active mirror(s)
   CCIP_LANE_CHAIN_IDS=84532             # on a mirror (hub-spoke)
 
 Every listed chain must already have had its \`contracts\` phase land —

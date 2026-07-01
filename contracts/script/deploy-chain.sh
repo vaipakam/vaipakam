@@ -375,13 +375,23 @@ fi
 # (after Diamond + Timelock have already landed on-chain). Catching it
 # in pre-flight saves the faucet-ETH burn from a partial deploy.
 for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
-         VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-         TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
+         TIMELOCK_PROPOSER; do
   if [ -z "${!v:-}" ]; then
     echo "Error: \$$v required in .env but not set." >&2
     exit 1
   fi
 done
+# VPFI + CCIP env is only needed when the VPFI / cross-chain stack is actually
+# deployed. `--skip-vpfi` omits [3b] + [4], so requiring these there would
+# contradict the flag and fail before the non-VPFI deploy path (#853 Codex P2).
+if [ "$SKIP_VPFI" = "0" ]; then
+  for v in VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER CCIP_ROUTER CCIP_RMN_PROXY; do
+    if [ -z "${!v:-}" ]; then
+      echo "Error: \$$v required in .env but not set (or pass --skip-vpfi to omit the VPFI/CCIP stack)." >&2
+      exit 1
+    fi
+  done
+fi
 
 # Mirror chains additionally need BASE_CHAIN_ID — the EVM chain id of
 # canonical Base — so DeployCrosschain can point the reward + buy flows
