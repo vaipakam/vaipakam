@@ -216,7 +216,8 @@ button {
 .portfolio-preview,
 .advanced-console,
 .decision-strip,
-.band {
+.band,
+.panel-surface {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
@@ -448,8 +449,152 @@ dd {
   font-size: 1.5rem;
 }
 
-.step-board {
+.step-board,
+.guided-board {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.guided-board {
+  display: grid;
+  gap: 14px;
+}
+
+.panel-surface {
+  padding: 20px;
+  box-shadow: none;
+}
+
+.flow-form,
+.checklist-card,
+.receipt-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.flow-form h3,
+.checklist-card h3,
+.receipt-card h3 {
+  margin: 10px 0 16px;
+  font-size: 1.12rem;
+}
+
+.choice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.choice {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.choice.selected {
+  border-color: rgba(20, 107, 92, 0.5);
+  background: #e5f4ee;
+  color: var(--brand-strong);
+}
+
+.alpha-field {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 750;
+}
+
+.alpha-field input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+}
+
+.recommendation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #e5f4ee;
+  color: var(--brand-strong);
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.recommendation svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.field-hint {
+  margin: 12px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.checklist-card ul {
+  display: grid;
+  gap: 10px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.checklist-card li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.checklist-card li.ready svg {
+  color: var(--brand);
+}
+
+.checklist-card li.waiting svg {
+  color: var(--gold);
+}
+
+.receipt-card dl {
+  gap: 0;
+}
+
+.receipt-card dl div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+}
+
+.receipt-card dd {
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.wide {
+  width: 100%;
+  margin-top: auto;
+  border: 0;
+  cursor: pointer;
+}
+
+.step-board.compact {
+  margin-top: 2px;
 }
 
 .step-card {
@@ -613,6 +758,7 @@ dd {
 
   .task-grid,
   .step-board,
+  .guided-board,
   .principle-list,
   .advanced-grid,
   .lane-grid,
@@ -626,6 +772,15 @@ dd {
 
   .nav-list {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .choice-grid,
+  .receipt-card dl div {
+    grid-template-columns: 1fr;
+  }
+
+  .receipt-card dd {
+    text-align: left;
   }
 
   .brand small {

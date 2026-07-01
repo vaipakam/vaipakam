@@ -27,8 +27,6 @@ import {
 import { NavLink, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 
-type Mode = 'guided' | 'advanced';
-
 type Task = {
   title: string;
   description: string;
@@ -42,6 +40,27 @@ type Step = {
   title: string;
   body: string;
   checks: string[];
+};
+
+type GuidedFlow = {
+  title: string;
+  intro: string;
+  actionLabel: string;
+  assetQuestion: string;
+  assetOptions: string[];
+  amountLabel: string;
+  amountHint: string;
+  recommendedPath: string;
+  checklist: string[];
+  receipt: {
+    receive: string;
+    lock: string;
+    owe: string;
+    lose: string;
+    fees: string;
+    ending: string;
+  };
+  steps: Step[];
 };
 
 const tasks: Task[] = [
@@ -133,6 +152,73 @@ const rentalSteps: Step[] = [
   },
 ];
 
+
+const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
+  earn: {
+    title: 'Earn by lending',
+    intro:
+      'Start with the asset you can lend, then review collateral quality, expected return, fees, and what happens if the borrower does not repay.',
+    actionLabel: 'Prepare lending offer',
+    assetQuestion: 'What do you want to lend?',
+    assetOptions: ['mUSDC', 'mWETH', 'mWBTC'],
+    amountLabel: 'Amount to lend',
+    amountHint: 'Recommended starter path: liquid token collateral, priced on this chain, no custom oracle route.',
+    recommendedPath: 'Recommended: mUSDC loan backed by mWETH collateral',
+    checklist: ['Wallet connected', 'Network supported', 'Asset price route available', 'Allowance ready'],
+    receipt: {
+      receive: 'Principal plus agreed interest when borrower repays.',
+      lock: 'The lent token amount until repay, cancel, or settlement.',
+      owe: 'No repayment obligation; gas is needed for offer actions.',
+      lose: 'Time value and route risk if collateral settlement cannot execute as expected.',
+      fees: 'Treasury fee after any VPFI discount, plus network gas.',
+      ending: 'Borrower repays, lender cancels before match, or lender claims collateral after default.',
+    },
+    steps: earnSteps,
+  },
+  borrow: {
+    title: 'Borrow safely',
+    intro:
+      'Start with the amount you need. Vaipakam should then show required collateral, repayment deadline, and default consequences before the wallet opens.',
+    actionLabel: 'Check borrow terms',
+    assetQuestion: 'What do you want to borrow?',
+    assetOptions: ['mUSDC', 'mWETH', 'VPFI'],
+    amountLabel: 'Target borrow amount',
+    amountHint: 'Recommended starter path: borrow stable value against liquid collateral with a visible safety buffer.',
+    recommendedPath: 'Recommended: borrow mUSDC against mWETH collateral',
+    checklist: ['Wallet connected', 'Collateral balance found', 'Health buffer acceptable', 'Repay route available'],
+    receipt: {
+      receive: 'Borrowed tokens after the loan starts.',
+      lock: 'Collateral in the Vaipakam vault until repayment or settlement.',
+      owe: 'Principal, interest, and any late/default cost shown before signing.',
+      lose: 'Locked collateral can be claimed or liquidated if the loan defaults.',
+      fees: 'Protocol fee, any VPFI discount, swap-to-repay slippage if used, and gas.',
+      ending: 'Repay, preclose, refinance, add collateral, or settle after default.',
+    },
+    steps: borrowSteps,
+  },
+  rent: {
+    title: 'Rent NFT access',
+    intro:
+      'Keep NFT rental separate from borrowing: the renter pays for temporary rights while the NFT remains protected by custody and expiry rules.',
+    actionLabel: 'Find rental offer',
+    assetQuestion: 'What NFT access do you need?',
+    assetOptions: ['Game NFT', 'Membership NFT', 'Utility NFT'],
+    amountLabel: 'Rental duration',
+    amountHint: 'Recommended starter path: fixed duration, prepaid fee, refundable buffer, visible expiry.',
+    recommendedPath: 'Recommended: fixed-rate rental with refundable buffer',
+    checklist: ['NFT standard supported', 'Rights expiry visible', 'Prepay token available', 'Close/claim path known'],
+    receipt: {
+      receive: 'Temporary NFT use rights until the expiry time.',
+      lock: 'Prepaid rental fee and refundable buffer, depending on terms.',
+      owe: 'No loan repayment; closure may require a gas transaction.',
+      lose: 'Rental fee is spent, and buffer may be claimable if return/close conditions fail.',
+      fees: 'Rental fee, protocol fee, any VPFI discount, and gas.',
+      ending: 'Rental expires, renter closes and gets buffer back, or owner claims per terms.',
+    },
+    steps: rentalSteps,
+  },
+};
+
 const advancedPanels = [
   {
     title: 'Market builder',
@@ -185,9 +271,9 @@ function App() {
         <TopBar />
         <Routes>
           <Route path="/" element={<Home />} />
-          <Route path="/earn" element={<FlowPage mode="guided" title="Earn by lending" intro="A guided lending path that starts from assets and expected return, then unfolds risk and protocol details only when needed." steps={earnSteps} />} />
-          <Route path="/borrow" element={<FlowPage mode="guided" title="Borrow safely" intro="A borrower-first path that begins with the goal amount, then shows collateral, deadline, and default consequences before signing." steps={borrowSteps} />} />
-          <Route path="/rent" element={<FlowPage mode="guided" title="Rent NFT access" intro="A separate mental model for time-limited NFT access, prepaid rental cost, and owner/renter settlement." steps={rentalSteps} />} />
+          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} />} />
+          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} />} />
+          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} />} />
           <Route path="/manage" element={<Manage />} />
           <Route path="/advanced" element={<Advanced />} />
         </Routes>
@@ -269,7 +355,7 @@ function Home() {
         <SectionHeading eyebrow="Design stance" title="Two modes, one product" />
         <div className="principle-list">
           <Principle icon={<LifeBuoy />} title="Guided by default" body="New users see recommended paths, plain-language risk, and one action at a time." />
-          <Principle icon={<Layers3 />} title="Advanced when earned" body="Power tools are grouped into an advanced workspace instead of scattered through first-use screens." />
+          <Principle icon={<Layers3 />} title="Advanced when ready" body="Power tools are grouped into an advanced workspace instead of scattered through first-use screens." />
           <Principle icon={<ReceiptText />} title="Every signature gets a receipt" body="Before signing, the user sees exact terms, likely outcomes, and what changes on-chain." />
         </div>
       </section>
@@ -277,14 +363,23 @@ function Home() {
   );
 }
 
-function FlowPage({ title, intro, steps }: { mode: Mode; title: string; intro: string; steps: Step[] }) {
+function FlowPage({ flow }: { flow: GuidedFlow }) {
+  const receiptRows = [
+    ['You receive', flow.receipt.receive],
+    ['You lock', flow.receipt.lock],
+    ['You may owe', flow.receipt.owe],
+    ['You can lose', flow.receipt.lose],
+    ['Fees', flow.receipt.fees],
+    ['When this ends', flow.receipt.ending],
+  ];
+
   return (
     <div className="flow-page">
       <section className="flow-hero">
         <div>
           <p className="eyebrow">Guided workflow</p>
-          <h2>{title}</h2>
-          <p>{intro}</p>
+          <h2>{flow.title}</h2>
+          <p>{flow.intro}</p>
         </div>
         <div className="review-card">
           <span className="review-label">Before wallet opens</span>
@@ -293,8 +388,60 @@ function FlowPage({ title, intro, steps }: { mode: Mode; title: string; intro: s
         </div>
       </section>
 
-      <section className="step-board">
-        {steps.map((step, index) => (
+      <section className="guided-board" aria-label={flow.title + ' alpha flow'}>
+        <div className="flow-form panel-surface">
+          <p className="eyebrow">Step 1</p>
+          <h3>{flow.assetQuestion}</h3>
+          <div className="choice-grid" role="group" aria-label={flow.assetQuestion}>
+            {flow.assetOptions.map((option, index) => (
+              <button className={index === 0 ? 'choice selected' : 'choice'} type="button" key={option}>
+                {option}
+              </button>
+            ))}
+          </div>
+          <label className="alpha-field">
+            <span>{flow.amountLabel}</span>
+            <input value={flow.amountLabel.includes('duration') ? '7 days' : '1,000'} readOnly />
+          </label>
+          <div className="recommendation">
+            <BadgeCheck size={18} />
+            <span>{flow.recommendedPath}</span>
+          </div>
+          <p className="field-hint">{flow.amountHint}</p>
+        </div>
+
+        <div className="checklist-card panel-surface">
+          <p className="eyebrow">Step 2</p>
+          <h3>Eligibility checklist</h3>
+          <ul>
+            {flow.checklist.map((item, index) => (
+              <li key={item} className={index < 2 ? 'ready' : 'waiting'}>
+                {index < 2 ? <CheckCircle2 size={16} /> : <AlertTriangle size={16} />}
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div className="receipt-card panel-surface">
+          <p className="eyebrow">Step 3</p>
+          <h3>Review receipt</h3>
+          <dl>
+            {receiptRows.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          <button className="primary-action wide" type="button">
+            {flow.actionLabel} <ArrowRight size={18} />
+          </button>
+        </div>
+      </section>
+
+      <section className="step-board compact">
+        {flow.steps.map((step, index) => (
           <article className="step-card" key={step.title}>
             <span className="step-number">{index + 1}</span>
             <h3>{step.title}</h3>
