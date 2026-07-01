@@ -127,6 +127,29 @@ library Deployments {
     function readVaultImpl()      internal view returns (address) { return _readAddr(".vaultImpl",      "VAULT_IMPL_ADDRESS"); }
     function readTimelock()        internal view returns (address) { return _readAddr(".timelock",        "TIMELOCK_ADDRESS"); }
     function readVpfiToken()       internal view returns (address) { return _readAddr(".vpfiToken",       "VPFI_TOKEN_ADDRESS"); }
+
+    /// @notice Optional read of `.vpfiToken` from the ARTIFACT ONLY — never the
+    ///         legacy env fallback, and never reverts. Returns address(0) when
+    ///         the key is absent. `readVpfiToken()` falls through to the typed
+    ///         (mandatory) `VPFI_TOKEN_ADDRESS` env reader and REVERTS when the
+    ///         key is missing, which would break `DeployVPFIToken`'s
+    ///         no-overwrite guard on a clean canonical first deploy — there
+    ///         `.vpfiToken` is intentionally absent until the mint runs, yet the
+    ///         operator's documented env set may already carry a
+    ///         `<CHAIN>_VPFI_TOKEN_ADDRESS` for other scripts. This json-only,
+    ///         non-reverting read is what that guard must use (#853 Codex P1).
+    function readVpfiTokenOptional() internal view returns (address) {
+        return _tryReadAddr(".vpfiToken");
+    }
+
+    /// @notice Optional, non-reverting artifact read of `.vpfiMirror` — the
+    ///         Burn/Mint mirror VPFI ERC20 a mirror chain's `DeployCrosschain`
+    ///         records. Returns address(0) when absent. `ConfigureVPFIToken`
+    ///         uses it to register the mirror token in the Diamond's
+    ///         `s.vpfiToken` slot on mirror chains (#853 Codex P1).
+    function readVpfiMirrorOptional() internal view returns (address) {
+        return _tryReadAddr(".vpfiMirror");
+    }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older
     // artifacts (pre-PR #272 contract-side rename) recorded the same
@@ -357,11 +380,23 @@ library Deployments {
             (bool ok, bytes memory data) = address(0x64).staticcall(
                 abi.encodeWithSignature("arbBlockNumber()")
             );
+            if (ok && data.length >= 32) {
+                return abi.decode(data, (uint256));
+            }
+            // forge's simulation EVM does NOT emulate the Arbitrum ArbSys
+            // precompile, so the in-EVM call above reverts during
+            // `forge script`. Fall back to an operator-supplied L2 block:
+            // read the RPC's `eth_blockNumber` (which returns the L2 height on
+            // Arbitrum, unlike the in-EVM `block.number` which returns L1) and
+            // pass it as ARB_L2_DEPLOY_BLOCK. Revert with guidance rather than
+            // silently stamping the wrong L1 `block.number` — the exact bug
+            // this ArbSys path exists to prevent.
+            uint256 l2Override = CHEATS.envOr("ARB_L2_DEPLOY_BLOCK", uint256(0));
             require(
-                ok && data.length >= 32,
-                "Deployments: ArbSys.arbBlockNumber() unavailable on Arb chain"
+                l2Override != 0,
+                "Deployments: ArbSys unavailable in forge sim; set ARB_L2_DEPLOY_BLOCK to the arb eth_blockNumber"
             );
-            return abi.decode(data, (uint256));
+            return l2Override;
         }
         return block.number;
     }

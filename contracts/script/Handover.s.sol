@@ -265,6 +265,18 @@ contract Handover is Script {
         _transferCrossChainOwnership(adminKey, rewardMessenger, "rewardMessenger",      timelock);
         _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
         _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
+        // #853 Codex P2 — canonical VPFI token OZ ownership → Timelock. On
+        // canonical Base the token is now DEPLOYED as part of the flow
+        // (`DeployVPFIToken`) with owner = ADMIN (`Ownable2StepUpgradeable`).
+        // That owner gates UUPS upgrades, `setMinter`, and pause — so it must
+        // rotate to the Timelock like every other cross-chain contract, else a
+        // post-handover admin EOA could still upgrade/re-mint canonical VPFI
+        // outside governance. On mirror chains the `vpfiMirror` leg above
+        // already covers the local VPFI ERC20 (`vpfiToken == mirror` there), so
+        // this canonical-only leg would be a redundant no-op — hence the guard.
+        if (canonical) {
+            _transferCrossChainOwnership(adminKey, vpfiToken, "vpfiToken", timelock);
+        }
 
         // ── 3g. CCT admin → Timelock ────────────────────────────────────
         // The CCIP `TokenAdminRegistry` administrator for VPFI rotates to
@@ -298,6 +310,7 @@ contract Handover is Script {
         if (rewardMessenger != address(0)) console.log("    target: rewardMessenger      @", rewardMessenger);
         if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
         if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
+        if (canonical && vpfiToken != address(0)) console.log("    target: vpfiToken            @", vpfiToken);
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");
             console.log("    registry:      ", cctRegistry);

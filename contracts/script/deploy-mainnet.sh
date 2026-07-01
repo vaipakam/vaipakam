@@ -535,6 +535,30 @@ EOF
     exit 1
   fi
 
+  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
+  # DeployVPFIToken's [3b] no-overwrite guard aborts (correctly) when a canonical
+  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
+  # Timelock broadcast, so a late abort would leave a PARTIAL mainnet deploy.
+  # Catch every one of [3b]'s abort conditions HERE, before any broadcast AND
+  # before the --fresh archive wipes the artifact: a canonical chain whose
+  # addresses.json already carries `.vpfiToken` must opt into a rotation to
+  # re-mint, else refuse up-front. Covers BOTH the --fresh re-deploy and the
+  # pre-seeded-token (`.vpfiToken` present, no `.diamond` yet) cases. On --fresh
+  # WITH the force flag the [0a] archive clears `.vpfiToken`, so [3b] then mints
+  # the rotated token cleanly.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    local preseeded_vpfi
+    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
+      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+      echo "       To deliberately rotate the canonical token re-run with" >&2
+      echo "       VPFI_TOKEN_FORCE_REDEPLOY=1; otherwise carry the existing token forward." >&2
+      exit 1
+    fi
+  fi
+
   # ── Detect-and-refuse on a chain dir with a deployed Diamond ─────
   # Same shape as deploy-testnet.sh's gate but with a SECOND mainnet-
   # only confirm flag (--confirm-purging-prior-mainnet-deploy) on top
@@ -621,6 +645,8 @@ EOF
         echo "    (operator confirmed via --confirm-orphans-prior-onchain-state)"
       fi
     fi
+    # (The canonical VPFI re-mint refusal ran in preflight above, before any
+    # broadcast AND before this archive — see the "VPFI re-mint preflight" gate.)
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
@@ -686,6 +712,21 @@ EOF
   # contracts. A failure aborts the deploy before any broadcast.
   bash "$SCRIPT_DIR/predeploy-check.sh" --full
 
+  # Arbitrum L2-block override (#853 Codex P2): forge sim can't emulate
+  # `ArbSys(0x64)`, so `Deployments.currentL2Block()` reverts on Arbitrum unless
+  # `ARB_L2_DEPLOY_BLOCK` is set. Derive it from THIS chain's RPC (returns the L2
+  # head on Arbitrum) BEFORE the broadcast so the diamond can't land and then
+  # abort before `addresses.json` is written.
+  if [ "$CHAIN_ID" = "42161" ]; then
+    ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+    if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+      echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+      exit 1
+    fi
+    export ARB_L2_DEPLOY_BLOCK
+    echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+  fi
+
   echo
   echo "[2] DeployDiamond.s.sol"
   forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
@@ -693,6 +734,21 @@ EOF
   echo
   echo "[3] DeployTimelock.s.sol"
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+
+  # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain, whose
+  # canonical branch (Base) reads `.vpfiToken` to wrap the existing token in the
+  # CCIP LockRelease pool; nothing upstream mints it, so a fresh Base mainnet run
+  # fails at [4] without this step (#853 Codex P1). Mirror chains skip it — they
+  # mint their own Burn/Mint VPFIMirrorToken inside [4]. DeployVPFIToken itself
+  # hard-guards to canonical chain ids, so this IS_CANONICAL gate is
+  # belt-and-suspenders. The duplicate-mint refusal for a --fresh re-deploy is
+  # enforced in the "VPFI re-mint preflight" gate, before any broadcast — refusing here
+  # would leave a partial deploy since [2]/[3] already landed (#853 Codex P2).
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+  fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool

@@ -50,11 +50,14 @@
 
 # drift-prone (stale after every fresh redeploy).
 
-31337 # anvil (local devnet — included so flow scripts and the consolidated registry pick up the local deploy)
-84532 # base-sepolia
+# 31337 # anvil (local devnet) — commented for the testnet cut; its local
+#         addresses.json is stale (chain wiped). Re-add after a fresh
+#         `anvil-bootstrap.sh` if you want the local diamond in the bundle.
+84532 # base-sepolia (canonical-VPFI — deployed 2026-07-01)
+421614 # arb-sepolia (mirror — deployed 2026-07-01)
 
-# 421614 # arb-sepolia
+# 97 # bnb-testnet (mirror) — deploy deferred (stuck on bnb RPC); uncomment once its --phase contracts completes
 
-11155111 # Sepolia
+# 11155111 # Sepolia (retired — not in the Phase-1 testnet trio)
 
-# 11155420 # op-sepolia
+# 11155420 # op-sepolia (retired — not in the Phase-1 testnet trio)

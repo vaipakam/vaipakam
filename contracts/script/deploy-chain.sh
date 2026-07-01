@@ -326,14 +326,30 @@ fi
 # each have a distinct CCIP Router + RMN proxy). The .env carries
 # `CCIP_ROUTER_<SLUG>` / `CCIP_RMN_PROXY_<SLUG>` per chain; resolve the
 # active chain's pair here so one .env serves every chain without
-# manual editing between runs. A pre-set `CCIP_ROUTER` / `CCIP_RMN_PROXY`
-# (no per-slug var) is left untouched — handy for a single-chain run.
+# manual editing between runs.
+#
+# The per-slug form is REQUIRED (#853 Codex P2) — matching deploy-testnet.sh
+# and the CCIP-INFRA-ADDRESSES.md contract. A bare pre-set `CCIP_ROUTER` with
+# no matching `CCIP_ROUTER_<SLUG>` is a HARD ERROR, not a silent fallback:
+# reusing a stale bare Base router left over from a prior single-chain run on
+# e.g. `arb-sepolia` would wire the WRONG immutable CCIP router into
+# DeployCrosschain. Only enforced when the VPFI/cross-chain stack is actually
+# being deployed (`--skip-vpfi` skips [4], so CCIP infra isn't needed).
 CCIP_ROUTER_VAR="CCIP_ROUTER_${CCIP_SLUG}"
 CCIP_RMN_PROXY_VAR="CCIP_RMN_PROXY_${CCIP_SLUG}"
-if [ -n "${!CCIP_ROUTER_VAR:-}" ]; then
+if [ "$SKIP_VPFI" = "0" ]; then
+  if [ -z "${!CCIP_ROUTER_VAR:-}" ]; then
+    echo "Error: $CCIP_ROUTER_VAR is unset. deploy-chain.sh requires the per-slug CCIP" >&2
+    echo "       router (a bare CCIP_ROUTER is refused — it risks wiring the wrong chain's" >&2
+    echo "       immutable router). See contracts/deployments/CCIP-INFRA-ADDRESSES.md for" >&2
+    echo "       $CHAIN_SLUG's value, or pass --skip-vpfi if not deploying the CCIP stack." >&2
+    exit 1
+  fi
   export CCIP_ROUTER="${!CCIP_ROUTER_VAR}"
-fi
-if [ -n "${!CCIP_RMN_PROXY_VAR:-}" ]; then
+  if [ -z "${!CCIP_RMN_PROXY_VAR:-}" ]; then
+    echo "Error: $CCIP_RMN_PROXY_VAR is unset (per-slug CCIP RMN proxy required)." >&2
+    exit 1
+  fi
   export CCIP_RMN_PROXY="${!CCIP_RMN_PROXY_VAR}"
 fi
 
@@ -359,20 +375,32 @@ fi
 # (after Diamond + Timelock have already landed on-chain). Catching it
 # in pre-flight saves the faucet-ETH burn from a partial deploy.
 for v in DEPLOYER_PRIVATE_KEY ADMIN_PRIVATE_KEY ADMIN_ADDRESS TREASURY_ADDRESS \
-         VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER \
-         TIMELOCK_PROPOSER CCIP_ROUTER CCIP_RMN_PROXY; do
+         TIMELOCK_PROPOSER; do
   if [ -z "${!v:-}" ]; then
     echo "Error: \$$v required in .env but not set." >&2
     exit 1
   fi
 done
+# VPFI + CCIP env is only needed when the VPFI / cross-chain stack is actually
+# deployed. `--skip-vpfi` omits [3b] + [4], so requiring these there would
+# contradict the flag and fail before the non-VPFI deploy path (#853 Codex P2).
+if [ "$SKIP_VPFI" = "0" ]; then
+  for v in VPFI_OWNER VPFI_TREASURY VPFI_INITIAL_MINTER CCIP_ROUTER CCIP_RMN_PROXY; do
+    if [ -z "${!v:-}" ]; then
+      echo "Error: \$$v required in .env but not set (or pass --skip-vpfi to omit the VPFI/CCIP stack)." >&2
+      exit 1
+    fi
+  done
+fi
 
 # Mirror chains additionally need BASE_CHAIN_ID — the EVM chain id of
 # canonical Base — so DeployCrosschain can point the reward + buy flows
 # back at the canonical receiver. Canonical Base is its own base and
-# stores baseChainId = 0, so the check is mirror-only.
-if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
-  echo "Error: \$BASE_CHAIN_ID required in .env for mirror chains." >&2
+# stores baseChainId = 0, so the check is mirror-only. Only DeployCrosschain
+# ([4]) consumes it, so gate on SKIP_VPFI too — a `--skip-vpfi` mirror quick
+# deploy shouldn't demand it (#853 Codex P2).
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
+  echo "Error: \$BASE_CHAIN_ID required in .env for mirror chains (or pass --skip-vpfi)." >&2
   exit 1
 fi
 
@@ -380,7 +408,7 @@ echo "════════════════════════�
 echo "deploy-chain.sh"
 echo "  chain-slug:    $CHAIN_SLUG"
 echo "  chain-id:      $CHAIN_ID"
-echo "  ccip router:   $CCIP_ROUTER"
+echo "  ccip router:   ${CCIP_ROUTER:-(skipped — --skip-vpfi)}"
 if [ "$IS_CANONICAL" = "1" ]; then
   echo "  crosschain:    CANONICAL  (lock/release VPFI pool + buy receiver)"
 else
@@ -504,6 +532,44 @@ echo
 echo "[1b] Pre-deploy sanity check"
 bash "$SCRIPT_DIR/predeploy-check.sh"
 
+# ── Arbitrum L2-block override (#853 Codex P2) ────────────────────────
+# forge sim can't emulate `ArbSys(0x64)`, so `Deployments.currentL2Block()`
+# reverts on Arbitrum unless `ARB_L2_DEPLOY_BLOCK` is set. Derive it from THIS
+# chain's RPC (returns the L2 head on Arbitrum) BEFORE the diamond broadcast so
+# the diamond can't land on-chain and then abort before addresses.json is
+# written. Only fetched when the diamond step will actually run.
+if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "diamond"; then
+  ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+  if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+    echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+    exit 1
+  fi
+  export ARB_L2_DEPLOY_BLOCK
+  echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+fi
+
+# ── VPFI re-mint preflight (#853 Codex P2) ────────────────────────────
+# DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical `.vpfiToken`
+# is already recorded — but [3b] runs AFTER [2] Diamond + [3] Timelock broadcast,
+# so a late abort would leave a PARTIAL deploy. The [2b] existing-diamond gate
+# only catches a prior `.diamond`; a PRE-SEEDED `.vpfiToken` with no `.diamond`
+# yet slips through to [3b]. Refuse that here, before any broadcast, matching the
+# tiered scripts. Only when [3b] will actually run (canonical, VPFI not skipped,
+# marker absent). --fresh is exempt (it wipes addresses.json + markers, so [3b]
+# re-mints); an explicit VPFI_TOKEN_FORCE_REDEPLOY=1 (propagated to the forge
+# subprocess) is the deliberate rotation opt-in.
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ] && ! step_done "vpfitoken" \
+   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+  PRESEEDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$PRESEEDED_VPFI" ] && [ "$PRESEEDED_VPFI" != "null" ]; then
+    echo "ERROR: a canonical VPFI token ($PRESEEDED_VPFI) is already recorded on $CHAIN_SLUG." >&2
+    echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+    echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+    echo "       Re-run with --fresh (wipes + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
+    exit 1
+  fi
+fi
+
 # ── 2. Diamond ────────────────────────────────────────────────────────
 
 if step_done "diamond"; then
@@ -575,6 +641,27 @@ else
   forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
   snapshot_addresses "post-timelock"
   mark_done "timelock"
+fi
+
+# ── 3b. Canonical VPFI token ──────────────────────────────────────────
+# MUST land BEFORE DeployCrosschain, whose canonical branch (Base) reads
+# `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool; nothing
+# upstream mints it, so a fresh canonical run fails at [4] without this step
+# (#853 Codex P1). Mirror chains skip it — they mint their own Burn/Mint
+# VPFIMirrorToken inside [4]. DeployVPFIToken itself hard-guards to canonical
+# chain ids, so this IS_CANONICAL gate is belt-and-suspenders. Gated by
+# --skip-vpfi the same way [4] is (both are the VPFI/cross-chain surface).
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
+  if step_done "vpfitoken"; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol (skipped — marker exists)"
+  else
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
+    snapshot_addresses "post-vpfitoken"
+    mark_done "vpfitoken"
+  fi
 fi
 
 # ── 4. CCIP cross-chain stack ─────────────────────────────────────────
@@ -1204,7 +1291,14 @@ fi
 echo "  artifact:      contracts/deployments/$CHAIN_SLUG/addresses.json"
 echo
 echo "Follow-up steps NOT in this script:"
-echo "  1. CCIP lane + channel wiring (after EVERY chain in your"
+echo "  1. REQUIRED — Diamond-side configure (this script deploys the VPFI"
+echo "     token in [3b]/[4] but does NOT register it or wire oracles):"
+echo "        forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
+echo "     Runs ConfigureVPFIToken (sets s.vpfiToken + the canonical flag so"
+echo "     TreasuryFacet.mintVPFI and every token-aware guard work), plus"
+echo "     ConfigureOracle / RewardReporter / VPFIBuy / NFT URIs. WITHOUT this"
+echo "     the Diamond leaves s.vpfiToken unset and token paths stay disabled."
+echo "  2. CCIP lane + channel wiring (after EVERY chain in your"
 echo "     topology has had this script run):"
 echo "        CCIP_LANE_CHAIN_IDS=<other chain ids> \\"
 echo "        forge script script/ConfigureCcip.s.sol --rpc-url <rpc> --broadcast"
@@ -1212,6 +1306,6 @@ echo "     Wires chain selectors, remote messengers, the vpfi-buy /"
 echo "     vpfi-reward channel peers, the TokenPool lanes + rate limits,"
 echo "     and the TokenAdminRegistry CCT registration. Run it once per"
 echo "     chain. The multi-chain orchestrators do this automatically."
-echo "  2. Role rotation to governance + timelock — DeploymentRunbook §6"
+echo "  3. Role rotation to governance + timelock — DeploymentRunbook §6"
 echo "     (multi-party ceremony, deliberately out of any script)"
 echo "═══════════════════════════════════════════════════════════════"

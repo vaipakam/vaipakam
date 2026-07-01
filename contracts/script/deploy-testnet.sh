@@ -99,14 +99,16 @@
 #       wrangler secrets. The phase verifies the chain-specific RPC
 #       secret is present on the Worker before claiming success.
 #
-#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer [--fresh]
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
 #       `vaipakam-archive` database. The indexer is the only Worker
-#       that owns migrations — keeper + agent are stateless. Seeds
-#       indexer_cursor at safe head if `--seed-cursor` is passed
-#       alongside this phase (skipped by default — mainnet redeploys
-#       almost always preserve the diamond and its prior cursor).
+#       that owns migrations — keeper + agent are stateless. With
+#       `--fresh` (i.e. after a fresh contract redeploy that changed the
+#       diamond address) it ALSO purges this chain's stale D1 rows
+#       (offers/loans/activity/cursor/…) so the reindex starts clean from
+#       the new deployBlock. Without `--fresh` the D1 is left intact
+#       (mainnet redeploys almost always preserve the diamond + history).
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-agent
 #       Deploys apps/agent (notifications + frames + agent surfaces)
@@ -570,12 +572,45 @@ purge_chain_d1() {
     return 0
   fi
   echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
-  local sql=""
-  for t in activity_events diag_errors indexer_cursor loans notify_state offers oracle_snapshot_state; do
+  # Enumerate EVERY chain-scoped table DYNAMICALLY — any table carrying a
+  # `chain_id` column — instead of a hardcoded list. Indexer routes read
+  # loan-scoped tables by (chain_id, loan_id); a new loan reusing a retired
+  # diamond's id would otherwise inherit stale prepay-listing / swap-intent
+  # rows or have pre-grace notifications deduped from the old deploy. A fixed
+  # list silently drifts as the schema grows (prepay_listings,
+  # swap_to_repay_intents, pre_grace_notify_state, liquidity_confidence, …
+  # were all missing). Introspecting the live schema means tables added later
+  # are purged automatically — the list can't go stale (#853 Codex P2).
+  #
+  # EXCLUDE user-subscription tables. `user_thresholds` (per-user per-chain HF
+  # alert config) and `telegram_links` (a user's notification rail) also carry a
+  # `chain_id` column, but they are USER-authored preferences, not stale
+  # Diamond-derived index data — a fresh contract redeploy must NOT wipe a
+  # subscriber's saved thresholds / notification rails (#853 Codex P2). The old
+  # hardcoded purge preserved them (it only cleared `notify_state`); keep that.
+  local introspect="SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) p ON p.name = 'chain_id' WHERE m.type = 'table' AND m.name NOT IN ('user_thresholds', 'telegram_links');"
+  local tables
+  # Best-effort under `set -euo pipefail`: a failed / non-JSON `wrangler`
+  # (operator unauthenticated, D1 unreachable) must yield an EMPTY list and hit
+  # the warn-and-skip path below — NOT abort the whole deploy via the failing
+  # command substitution (#853 Codex P2). The trailing `|| true` neutralises the
+  # pipeline's exit status for the assignment.
+  tables=$( { cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+    --remote --json --command "$introspect" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null ; } || true )
+  if [ -z "$tables" ]; then
+    echo "    ⚠ could not introspect chain-scoped tables (wrangler not authenticated, or D1 unreachable). Skipping purge; re-run via the indexer dir if needed."
+    return 0
+  fi
+  local sql="" n=0
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
     sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
-  done
+    n=$((n + 1))
+  done <<< "$tables"
+  echo "    purging $n chain-scoped table(s): $(echo "$tables" | tr '\n' ' ')"
   ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
-    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -2 ) || \
+    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -3 ) || \
     echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
 }
 
@@ -631,6 +666,26 @@ the same day to renounce DEPLOYER_ROLE / DEFAULT_ADMIN_ROLE / etc.
 Re-run with the flag once the multisig signers are reachable.
 EOF
     exit 1
+  fi
+
+  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
+  # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical
+  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
+  # Timelock broadcast, so a late abort leaves a PARTIAL deploy. The
+  # existing-diamond gate below only catches a prior `.diamond`; a PRE-SEEDED
+  # `.vpfiToken` with no `.diamond` yet slips through to [3b]. Refuse that here,
+  # before any broadcast. --fresh is exempt: it archives addresses.json (clearing
+  # `.vpfiToken`) and the [3b] step re-mints under the FRESH-derived force flag.
+  if [ "$IS_CANONICAL" = "1" ] && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+    local preseeded_vpfi
+    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ]; then
+      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
+      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+      echo "       Re-deploy with --fresh (archives + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
+      exit 1
+    fi
   fi
 
   # ── Detect-and-refuse: a chain dir with a `diamond` key in
@@ -785,13 +840,59 @@ EOF
   # shell-script lint. A failure aborts the deploy before any broadcast.
   bash "$SCRIPT_DIR/predeploy-check.sh"
 
+  # Broadcast robustness posture (#853 Codex P2): `--slow` sequences one tx
+  # at a time (waiting for each receipt, avoiding nonce races) and
+  # `--gas-estimate-multiplier` (default 130%) pads the per-tx gas limit so a
+  # batched diamondCut clears the drpc per-tx gas ceiling. There is NO
+  # send-retry flag here — forge's `--retries`/`--delay` govern VERIFICATION
+  # retries only, not `eth_sendRawTransaction`, so they were removed rather than
+  # left as misleading knobs. A transient RPC 5xx on send aborts the phase; the
+  # recovery is to re-run it — with `--broadcast --resume` forge replays the
+  # saved broadcast and skips already-landed txs, or (on a --fresh testnet run)
+  # simply re-run the phase from a clean state.
+  # Arbitrum L2-block override (#853 Codex P2). On Arbitrum `block.number`
+  # returns the L1 block; the artifact writer uses `ArbSys(0x64).arbBlockNumber()`
+  # for the real L2 block, but forge's SIMULATION doesn't emulate that precompile,
+  # so `Deployments.currentL2Block()` reverts unless `ARB_L2_DEPLOY_BLOCK` is set.
+  # Derive it from THIS chain's RPC (on Arbitrum `cast block-number` returns the
+  # L2 head) BEFORE the broadcast, so the diamond can't land on-chain and then
+  # abort before `addresses.json` is written. Fail loudly if the fetch fails —
+  # better than a mid-run revert after a successful broadcast.
+  if [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; then
+    ARB_L2_DEPLOY_BLOCK="$(cast block-number --rpc-url "$RPC" 2>/dev/null || true)"
+    if [ -z "$ARB_L2_DEPLOY_BLOCK" ]; then
+      echo "ERROR: could not fetch Arbitrum L2 block from \$RPC for ARB_L2_DEPLOY_BLOCK" >&2
+      echo "       (needed because forge sim can't emulate ArbSys). Aborting before broadcast." >&2
+      exit 1
+    fi
+    export ARB_L2_DEPLOY_BLOCK
+    echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+  fi
+
   echo
   echo "[2] DeployDiamond.s.sol"
-  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployDiamond.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   echo
   echo "[3] DeployTimelock.s.sol"
-  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployTimelock.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+
+  # [3b] Canonical VPFI token — MUST land BEFORE DeployCrosschain. On the
+  # canonical chain (Base / Base Sepolia) DeployCrosschain's canonical branch
+  # reads `.vpfiToken` to wrap the existing token in the CCIP LockRelease pool;
+  # nothing upstream mints it, so without this step a fresh canonical run fails
+  # at [4] unless a token was hand-deployed first (#853 Codex P1). Mirror chains
+  # skip it — they mint their own Burn/Mint VPFIMirrorToken inside [4]. The
+  # DeployVPFIToken script itself hard-guards to canonical chain ids, so this
+  # IS_CANONICAL gate is belt-and-suspenders. On a --fresh redeploy the prior
+  # `.vpfiToken` artifact is intentionally orphaned, so authorize the overwrite;
+  # otherwise the script refuses to mint a second 23M canonical supply.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    echo
+    echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
+    VPFI_TOKEN_FORCE_REDEPLOY="$([ "$FRESH" = "1" ] && echo 1 || echo "${VPFI_TOKEN_FORCE_REDEPLOY:-0}")" \
+      forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  fi
 
   # DeployCrosschain.s.sol deploys the whole T-068 CCIP stack for this
   # chain in one run — CcipMessenger, the VPFI CCIP TokenPool
@@ -803,7 +904,7 @@ EOF
   # phase — there is no per-adapter setRateLimits step any more.
   echo
   echo "[4] DeployCrosschain.s.sol  (CCIP cross-chain stack)"
-  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeployCrosschain.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
 
   # ── Master-flag flip (testnet ergonomics) ───────────────────────
   # Range Orders Phase 1 governance-gated kill switches default
@@ -930,7 +1031,7 @@ ConfigureCcip.s.sol wires a CCIP TokenPool lane to every REMOTE chain
 in the topology. Set CCIP_LANE_CHAIN_IDS to a comma-separated list of
 the OTHER chains' EVM chain ids, e.g.:
 
-  CCIP_LANE_CHAIN_IDS=11155111,421614   # on Base Sepolia (the hub)
+  CCIP_LANE_CHAIN_IDS=421614   # on Base Sepolia (the hub) — the active mirror(s)
   CCIP_LANE_CHAIN_IDS=84532             # on a mirror (hub-spoke)
 
 Every listed chain must already have had its \`contracts\` phase land —
@@ -944,7 +1045,7 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — ccip-wire  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
-  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/ConfigureCcip.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   mark_phase_done "ccip-wire"
 }
 
@@ -1007,7 +1108,7 @@ EOF
   echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
   echo "  ONEINCH_ROUTER_OVERRIDE:    ${ONEINCH_ROUTER_OVERRIDE:-(default 0x…2A65)}"
   echo
-  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   mark_phase_done "swap-adapters"
 }
 
@@ -1455,6 +1556,20 @@ phase_cf_indexer() {
     echo "[c] RPC-secret check for chainId=$CHAIN_ID"
     verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
       "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  # [d] Fresh-deploy D1 hygiene — automated so operators don't hand-run it.
+  # After a `--fresh` contract redeploy the diamond address changed, but the
+  # D1 rows key by chain_id, so the retired diamond's offers/loans would still
+  # surface. Purge this chain's rows (offers/loans/activity/cursor/etc.) here,
+  # right after the indexer is redeployed with the NEW bundle. Deleting
+  # indexer_cursor makes the cron fall back to `deployBlock - 1` and re-scan
+  # forward from the new diamond's deploy block — a clean fresh index. Runs
+  # ONLY under `--fresh`; a normal redeploy (same diamond) preserves history.
+  if [ "$FRESH" = "1" ]; then
+    echo
+    echo "[d] --fresh D1 purge for chainId=$CHAIN_ID (stale rows from the retired diamond)"
+    purge_chain_d1
   fi
 
   mark_phase_done "cf-indexer"
