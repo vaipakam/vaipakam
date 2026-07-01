@@ -691,13 +691,50 @@ function FlowPage({
   );
 }
 
+type PositionFilter = 'all' | 'urgent' | 'claimable' | 'loans' | 'rentals';
+
+type ManagedPosition = {
+  id: string;
+  kind: 'loan' | 'offer' | 'rental' | 'vault' | 'reward';
+  title: string;
+  status: string;
+  amount: string;
+  nextAction: string;
+  urgency: 'urgent' | 'normal' | 'calm';
+  claimable?: boolean;
+};
+
+const managedPositions: ManagedPosition[] = [
+  { id: 'loan-2', kind: 'loan', title: 'Loan #2', status: 'Claim ready', amount: '1,000 mUSDC', nextAction: 'Claim proceeds', urgency: 'urgent', claimable: true },
+  { id: 'offer-8', kind: 'offer', title: 'Lending offer #8', status: 'Open', amount: '2,500 mUSDC', nextAction: 'Review or cancel', urgency: 'normal' },
+  { id: 'rental-4', kind: 'rental', title: 'Game NFT rental', status: 'Expires in 2d', amount: '7 days', nextAction: 'Track expiry', urgency: 'normal' },
+  { id: 'vault-usdc', kind: 'vault', title: 'Vault balance', status: 'Locked and free', amount: '1,000 locked / 1,000 free', nextAction: 'Inspect locks', urgency: 'calm' },
+  { id: 'vpfi', kind: 'reward', title: 'VPFI utility', status: 'Discount inactive', amount: '0 VPFI registered', nextAction: 'Check discount', urgency: 'calm' },
+];
+
 function Manage({ mode }: { mode: Mode }) {
+  const [filter, setFilter] = useState<PositionFilter>('all');
+  const [completedActions, setCompletedActions] = useState<string[]>([]);
+  const visiblePositions = managedPositions.filter((position) => {
+    if (filter === 'urgent') return position.urgency === 'urgent';
+    if (filter === 'claimable') return Boolean(position.claimable);
+    if (filter === 'loans') return position.kind === 'loan' || position.kind === 'offer';
+    if (filter === 'rentals') return position.kind === 'rental';
+    return true;
+  });
+  const urgentCount = managedPositions.filter((position) => position.urgency === 'urgent').length;
+  const claimableCount = managedPositions.filter((position) => position.claimable).length;
+  const completedCount = completedActions.length;
   const lanes = [
-    { title: 'Urgent', body: 'Claims, near-default loans, stale risk acknowledgements, failed reads.', icon: <AlertTriangle /> },
-    { title: 'Positions', body: 'Active loans, offers, rentals, grouped by what the user can do next.', icon: <Landmark /> },
-    { title: 'Vault', body: 'Total, locked, and free assets with explanations for why funds are locked.', icon: <LockKeyhole /> },
-    { title: 'Rewards', body: 'VPFI discount status, interaction rewards, and claimable balances.', icon: <Coins /> },
+    { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
+    { title: 'Positions', body: managedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
+    { title: 'Vault', body: 'Locked and free balances are separated before any withdrawal or claim.', icon: <LockKeyhole /> },
+    { title: 'Rewards', body: claimableCount + ' claimable item and VPFI utility status kept visible.', icon: <Coins /> },
   ];
+
+  const completeAction = (id: string) => {
+    setCompletedActions((current) => current.includes(id) ? current : [...current, id]);
+  };
 
   return (
     <div className="manage-page">
@@ -711,16 +748,37 @@ function Manage({ mode }: { mode: Mode }) {
           <h3>{mode === 'guided' ? 'Handle the important things first' : 'Position operations and diagnostics'}</h3>
         </div>
         <div className="action-list">
-          <button type="button"><ReceiptText size={16} /> Claim 1,000 mUSDC</button>
-          <button type="button"><Gauge size={16} /> Review loan health</button>
-          <button type="button"><Coins size={16} /> Check VPFI discount</button>
+          <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
+          <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
+          <button type="button" onClick={() => setFilter('all')}><Coins size={16} /> Completed ({completedCount})</button>
         </div>
       </section>
-      <section className="portfolio-preview">
-        <div className="portfolio-row strong"><span>Loan #2</span><span>Claim ready</span><span>1,000 mUSDC</span></div>
-        <div className="portfolio-row"><span>Vault</span><span>1,000 locked / 1,000 free</span><span>mUSDC</span></div>
-        <div className="portfolio-row"><span>Risk access</span><span>Blue-chip only</span><span>Strict off</span></div>
-        <div className="portfolio-row"><span>Activity</span><span>6 recent grouped events</span><span>Synced</span></div>
+
+      <section className="portfolio-tools panel-surface" aria-label="Portfolio filters">
+        {(['all', 'urgent', 'claimable', 'loans', 'rentals'] as PositionFilter[]).map((option) => (
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+            {option}
+          </button>
+        ))}
+      </section>
+
+      <section className="portfolio-table panel-surface" aria-label="Managed positions">
+        {visiblePositions.map((position) => {
+          const done = completedActions.includes(position.id);
+          return (
+            <article className={position.urgency === 'urgent' ? 'position-row urgent' : 'position-row'} key={position.id}>
+              <div>
+                <span className="position-kind">{position.kind}</span>
+                <h3>{position.title}</h3>
+              </div>
+              <span>{position.status}</span>
+              <strong>{position.amount}</strong>
+              <button type="button" onClick={() => completeAction(position.id)} disabled={done}>
+                {done ? 'Queued' : position.nextAction}
+              </button>
+            </article>
+          );
+        })}
       </section>
     </div>
   );

@@ -742,9 +742,85 @@ dd {
   padding: 8px 18px 18px;
 }
 
+.portfolio-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portfolio-tools button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.portfolio-tools button.selected {
+  border-color: rgba(20, 107, 92, 0.5);
+  background: #e5f4ee;
+  color: var(--brand-strong);
+}
+
+.portfolio-table {
+  display: grid;
+  gap: 8px;
+}
+
+.position-row,
 .portfolio-row {
   min-height: 54px;
   align-items: center;
+}
+
+.position-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.2fr) minmax(110px, 0.7fr) minmax(140px, 0.8fr) minmax(150px, 0.8fr);
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.position-row.urgent {
+  border-color: rgba(166, 77, 95, 0.45);
+  background: #fff7f8;
+}
+
+.position-kind {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.position-row h3 {
+  margin: 3px 0 0;
+  font-size: 1rem;
+}
+
+.position-row strong {
+  color: var(--ink);
+}
+
+.position-row button {
+  min-height: 38px;
+  border: 1px solid rgba(20, 107, 92, 0.28);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--brand-strong);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.position-row button:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 
 .portfolio-row.strong {
@@ -854,6 +930,7 @@ dd {
     flex: 1;
   }
 
+  .position-row,
   .task-grid,
   .step-board,
   .guided-board,
