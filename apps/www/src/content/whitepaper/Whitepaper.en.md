@@ -1,1508 +1,276 @@
-# Vaipakam: Technical Whitepaper
+# Vaipakam DeFi Whitepaper
 
-**Version:** `3.0`
-**Date:** April 2026
-**Status:** Production protocol
+**Date:** July 2026
+**Status:** Production-oriented protocol design; current live protocol deployments are testnet and local only pending third-party audit and mainnet launch approval.
 
 ---
 
 ## Abstract
 
-Vaipakam is a non-custodial vault-to-vault credit protocol for over-collateralized
-ERC-20 lending and vault-mediated ERC-721 / ERC-1155 rentals across
-Ethereum-compatible networks. Each supported network — `Ethereum mainnet`,
-`Base`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, and `BNB Chain` — runs an
-independent Diamond (`EIP-2535`) deployment, with all loan, offer, collateral,
-repayment, claim, refinance, and liquidation state remaining local to a single
-chain. The protocol couples bilateral offer negotiation with per-user isolated
-vaults, tokenized lender / borrower position rights, an oracle stack hardened
-by a Soft 2-of-N secondary quorum, a four-DEX swap-failover liquidation
-pipeline, and a `Chainlink CCIP CCT` protocol token (`VPFI`) wired for fee
-discounts and locally-claimable interaction rewards
-that share a protocol-wide daily denominator.
+Vaipakam is a decentralized peer-to-peer lending, borrowing, NFT rental, and collateral-management protocol for Ethereum-compatible networks. The protocol lets users negotiate bilateral terms, lock assets through isolated Vaipakam Vaults, represent lender and borrower rights with Vaipakam position NFTs, claim proceeds through wallet-controlled transactions, and inspect public protocol state without relying on a private account system.
 
-This document specifies the architecture, the loan and rental lifecycle,
-the risk and liquidation engine, the oracle and liquidity-classification
-model, the VPFI tokenomics, the cross-chain reward mesh, the security
-posture, and the operational and governance topology that together define
-the production protocol.
+The connected app at defi.vaipakam.com is the user-facing transaction surface. The public site at vaipakam.com provides education, documentation, and this canonical whitepaper. Vaipakam is non-custodial at the user-action layer: users submit transactions through their own wallets, and claim authority follows the current holder of the relevant Vaipakam position NFT.
+
+This document describes the product and protocol behavior currently represented by the repository and connected-app surfaces. It avoids roadmap language and limits itself to product surfaces that are represented in the current repository and connected-app experience.
 
 ---
 
-## Table of Contents
+## 1. Overview
 
-1. Introduction and Motivation
-2. System Model
-3. Architecture
-4. Asset Classification
-5. Offer and Loan Lifecycle
-6. Risk Engine
-7. Liquidation and Fallback Settlement
-8. Oracle Stack
-9. NFT Rental Subsystem
-10. Strategic Flows: Preclose, Refinance, Lender Early Withdrawal
-11. VPFI Token and Tokenomics
-12. Reward System
-13. Cross-Chain Surface
-14. MEV Protection
-15. Governance and Operations
-16. Frontend as a Safety Layer
-17. Verification and Testing
-18. References
+Vaipakam is built around negotiated credit rather than pooled credit. Lenders and borrowers create offers with explicit terms, counterparties accept compatible offers, and loans progress through repayment, default, liquidation, or claimable terminal states according to protocol rules.
+
+The core commitments are:
+
+- Bilateral terms: users define asset pairs, amounts, rates, duration, collateral, and relevant risk acknowledgements.
+- Wallet-controlled execution: every user action is submitted through the connected wallet or an explicitly authorized flow.
+- Isolated vault accounting: user assets and protocol-tracked balances are accounted through each user's Vaipakam Vault rather than a shared user pool.
+- Tokenized rights: lender and borrower rights are represented by Vaipakam position NFTs, and claim authority follows current NFT ownership.
+- Active-network risk checks: liquidity and oracle assumptions are evaluated against the selected network, not borrowed from another network.
+- Explicit risk communication: offer creation, offer acceptance, liquidation, claims, VPFI utility, vault accounting, sanctions state, and data-rights surfaces are visible to users.
 
 ---
 
-## 1. Introduction and Motivation
+## 2. Product Surfaces
 
-Most large DeFi credit systems optimize for pooled liquidity, standardized
-assets, and uniform market parameters. That model is efficient for deep,
-fungible markets, but it is poorly suited to negotiated bilateral credit,
-long-tail collateral, and NFT utility flows. Vaipakam takes a different
-path: it keeps lending bilateral, makes economic rights explicit through
-position NFTs, treats the frontend as part of the protocol's safety layer
-rather than as a thin wrapper over contracts, and refuses to trade on bad
-markets even when that means falling back to in-kind collateral settlement.
+The connected app currently exposes the following user surfaces:
 
-The protocol's defining commitments are:
-
-- **Bilateral terms.** Lenders and borrowers post their own offers; there
-  is no shared interest-rate curve, no global utilization ratio, and no
-  imposed risk parameters beyond the safety floor.
-- **Per-user vault isolation.** Every user owns a dedicated `ERC1967` vault
-  proxy. There is no commingled treasury vault.
-- **Tokenized rights.** Lender-side and borrower-side position NFTs follow
-  ownership; claim authority moves with the NFT, not with the originating
-  wallet.
-- **Liquidity-aware classification.** An asset is treated as liquid only if
-  the **active chain** itself can confirm both a usable Chainlink-led price
-  path and sufficient v3-style AMM depth. Ethereum mainnet is never
-  consulted as a fallback reference for another chain.
-- **Refusal to trade on bad markets.** When liquidation slippage would exceed
-  the configured ceiling (default `6%`), the protocol stops trying
-  to convert collateral and routes into a documented in-kind fallback path
-  rather than dumping into illiquid books.
-- **Permissionless safety.** Any address may liquidate when conditions are
-  met. Non-liquidation third-party execution is opt-in, role-scoped, and
-  whitelisted per user.
-- **Chain-local lifecycle, cross-chain protocol token.** Loans, offers,
-  collateral, repayment, liquidation, preclose, refinance, and keeper
-  actions remain local to the deployment chain. Only `VPFI` (the
-  protocol token) and the daily reward denominator cross chains.
-
-Vaipakam is non-custodial. Users negotiate terms directly through on-chain
-offers; Vaipakam smart contracts enforce custody, repayment, default,
-liquidation, and claim rights.
+- Dashboard for wallet-owned loans, offers, claim shortcuts, VPFI status, fee-discount consent, and auto-lifecycle settings where available.
+- Offer Book for browsing lender and borrower offers, filtering market inventory, reviewing active user offers, and accepting valid offers.
+- Create Offer for lender offers, borrower offers, ERC-20 collateral, NFT collateral, NFT rental terms, duration buckets, interest-mode choices, periodic-interest settings where supported, and risk acknowledgement.
+- Loan Details for repayment, collateral additions, health-factor and LTV views where applicable, liquidation visibility, lifecycle timelines, keeper controls, prepayment listings, swap-to-repay surfaces, and position-specific actions.
+- Claim Center for lender claims, borrower claims, VPFI interaction rewards, loan-linked claim rows, and claim transaction feedback.
+- VPFI Vault for depositing and withdrawing free VPFI, viewing protocol-tracked VPFI balances, fee-discount tier status, and token transparency.
+- Your Vaipakam Vault for protocol-tracked balances, locked versus free asset state, and vault-level inspection.
+- Risk Access for user-controlled vault risk tiers and strict-mode controls where the active deployment exposes them.
+- Alerts for loan and health-factor notification preferences where enabled.
+- Allowances for reviewing token approvals relevant to app actions.
+- Keeper Settings for advanced delegated-execution controls.
+- Activity for wallet-specific protocol history.
+- Data Rights for browser-storage export and deletion tools.
+- Public Analytics for no-wallet aggregated protocol data.
+- NFT Verifier for public inspection of Vaipakam position NFTs.
+- Protocol Console for public and admin-facing protocol configuration visibility where the active wallet has the required authority.
 
 ---
 
-## 2. System Model
+## 3. Network Model
 
-### 2.1 Chain Model
+Vaipakam is structured as separate protocol deployments per network. Loans, offers, collateral, repayment, liquidation, preclose, refinance, keeper actions, and claims remain local to the selected network. Users should treat each network as its own local protocol instance.
 
-Vaipakam core protocol state is deployed as a separate Diamond on each
-supported chain. Each Diamond is an independent protocol instance:
+The app registry includes entries for Ethereum, Base, Polygon zkEVM, Arbitrum One, Optimism, BNB Chain, Sepolia, Base Sepolia, Polygon zkEVM Cardona, Arbitrum Sepolia, Optimism Sepolia, BNB Testnet, and local Anvil development networks.
 
-- there is no cross-chain loan state machine
-- a loan opened on `Base` is settled on `Base`
-- per-chain Diamonds are governed by per-chain Safes / timelocks
-- only `VPFI` and the daily interaction-reward denominator are cross-chain
+Only networks with deployed protocol addresses are treated as live protocol targets by the app. Unsupported-chain wallet connections are allowed, but the app shows switch-network guidance before money-moving actions.
 
-Supported chains: `Ethereum mainnet`, `Base` (canonical), `Polygon zkEVM`,
-`Arbitrum`, `Optimism`, and `BNB Chain`.
-
-### 2.2 Product Surface
-
-Vaipakam supports:
-
-- ERC-20 lending and borrowing with ERC-20, ERC-721, or ERC-1155 collateral
-- ERC-721 and ERC-1155 rentals using ERC-4907-style user-right assignment
-- borrower preclose (early repayment in three forms)
-- lender early withdrawal (sale-based exits)
-- loan refinance (active ERC-20 loans only)
-- partial collateral withdrawal when health permits
-- additional collateral top-up
-- VPFI vault deposit, fee discounts
-- daily platform interaction rewards
-- public read-only NFT verifier and analytics dashboard
-
-### 2.3 Roles
-
-- **Lender** — supplies the principal, receives principal + interest at
-  settlement (or collateral on default).
-- **Borrower** — supplies collateral, receives principal at initiation,
-  repays + interest by maturity (or loses collateral on default).
-- **NFT renter / owner** — analogue of borrower / lender for ERC-4907
-  rental flows.
-- **Liquidator** — any address. Liquidation is permissionless and timely.
-- **Keeper** — opt-in delegated role-manager for non-liquidation flows;
-  scoped per role (lender or borrower side) and whitelisted per user.
-- **Operator** — the team that runs the canonical frontend, the
-  hf-watcher Cloudflare Worker, and the public reference keeper-bot repo.
-- **Governance Safe** — long-delay admin authority via 48-hour timelock.
-- **Ops Safe (Guardian)** — fast-response pause holder.
+Current deploy state as of July 1, 2026: live protocol deployments are testnet and local only. Mainnet registry entries are supported targets in the app and documentation, not a statement that mainnet deployments are live. Third-party audit remains required before mainnet launch.
 
 ---
 
-## 3. Architecture
+## 4. Offers and Market Mechanics
 
-### 3.1 Diamond Pattern (`EIP-2535`)
+Vaipakam separates offer creation from loan initiation.
 
-`VaipakamDiamond.sol` is the single user-facing entry point on each
-chain. It holds no business logic of its own; the constructor registers
-`DiamondCutFacet`, and the fallback `delegatecall`s into the facet
-resolved by the function selector. Unresolved selectors revert with
-`FunctionDoesNotExist()`.
+An offer records proposed terms: side, asset pair, amount, rate, duration, collateral, asset type, interest mode, and relevant acknowledgements. A loan begins only when an offer is accepted or a valid match is executed and the required protocol checks pass.
 
-Shared state lives at `keccak256("vaipakam.storage")` (an `ERC-7201`-style
-namespaced slot) and is exposed through `LibVaipakam.Storage`. Storage
-discipline is **append-only**: existing fields are never reordered or
-removed, and new fields land at the end of the struct. There are no
-per-facet `__gap` arrays inside the main storage struct; upgrade safety
-relies on the append-only invariant.
+The app supports:
 
-### 3.2 Facet Layout
+- Lender-side and borrower-side offers.
+- ERC-20 principal assets.
+- ERC-20, ERC-721, and ERC-1155 collateral handling where supported by the active deployment.
+- NFT rental offers using vault custody and temporary user-right assignment.
+- Duration validation within the supported range exposed by protocol configuration.
+- Market-rate context from recent accepted offers where available.
+- Active, filled, and cancelled user-offer views.
+- Offer cancellation for eligible active offers.
+- Direct accept review with fee, risk, and transaction-preview information.
+- Partial-fill, fill-mode, expiry, and matcher-aware display where the deployment provides those fields.
 
-Lifecycle facets:
-
-- **OfferFacet** — create / accept / cancel offers (ERC-20 and rental)
-- **LoanFacet** — `initiateLoan`, liquidity re-check, HF / LTV gate, NFT mint
-- **RepayFacet** — full / partial repayment, late-fee accrual, daily rental deductions
-- **ClaimFacet** — claim-based fund release for both sides; routes the borrower VPFI rebate
-
-Risk and oracle:
-
-- **RiskFacet** — LTV / HF computation, HF-triggered liquidation
-- **DefaultedFacet** — time-based default after grace expiry
-- **OracleFacet** — Chainlink price reads, sequencer uptime, hybrid staleness
-- **OracleAdminFacet** — Chainlink registry, secondary oracle config (Tellor / API3 / DIA), per-feed overrides, V3 factory set
-
-Token economics:
-
-- **VPFITokenFacet** — vault VPFI views and helpers
-- **VPFIDiscountFacet** — time-weighted tier resolution
-- **InteractionRewardsFacet** — daily lender / borrower accrual under the 8-band emission schedule
-- **RewardReporterFacet** — every-chain reporter; sends mirror daily totals to canonical Base
-- **RewardAggregatorFacet** — Base-only aggregator; finalizes and broadcasts the daily global denominator
-
-Admin and config:
-
-- **AdminFacet** — treasury address, pause toggles, swap-adapter registry
-- **ConfigFacet** — runtime-tunable protocol parameters (fees, LTV, slippage, tier table)
-- **AccessControlFacet** — RBAC role plumbing
-- **TreasuryFacet** — VPFI mint surface, treasury fee accumulation
-- **DiamondCutFacet / DiamondLoupeFacet / OwnershipFacet** — `EIP-2535` plumbing
-
-NFT and vault:
-
-- **VaipakamNFTFacet** — position NFT mint / update / burn (ERC-721, on-chain metadata)
-- **VaultFactoryFacet** — per-user UUPS vault proxy deployment, mandatory upgrade gating
-- **ProfileFacet** — keeper opt-in surface
-
-Strategic flows:
-
-- **PrecloseFacet** — borrower direct preclose, transfer-via-offer, offset-with-new-offer
-- **RefinanceFacet** — atomic settlement after replacement loan exists
-- **EarlyWithdrawalFacet** — lender exit (sell-loan, buy-offer, wait-to-maturity)
-- **AddCollateralFacet** — borrower collateral top-up
-- **PartialWithdrawalFacet** — lender principal reduction with borrower consent
-
-Auxiliary:
-
-- **MetricsFacet** — read-only public analytics surface (TVL, counts, fee totals)
-
-### 3.3 Vaipakam Vaults
-
-`VaipakamVaultImplementation.sol` is a UUPS-upgradeable contract.
-`VaultFactoryFacet` deploys one `ERC1967Proxy` per user. Each user's
-ERC-20, ERC-721, and ERC-1155 assets are held in their own isolated
-vault — no commingling. Cross-facet calls into vault use the canonical
-`address(this).call(abi.encodeWithSelector(...))` pattern, which routes
-through the Diamond fallback.
-
-Mandatory vault upgrades are not silently mass-pushed. When the protocol
-marks an upgrade as mandatory, interactions through outdated vaults are
-blocked at the facet boundary, and the frontend prompts the user to
-submit their own vault-upgrade transaction.
-
-### 3.4 Position NFTs
-
-Vaipakam mints `ERC-721` position NFTs at offer creation and again at
-loan initiation. Position NFTs are first-class economic objects:
-
-- the lender-side NFT carries lender claim rights
-- the borrower-side NFT carries borrower claim rights
-- claim authority follows the current `ownerOf`, not the originating wallet
-- `tokenURI()` is fully on-chain; off-chain image storage uses IPFS for
-  four role-and-status-aware images
-- the NFT supports the public NFT Verifier surface, which distinguishes
-  valid live NFTs, burned NFTs (warning state with historical context
-  where indexed data is available), and never-minted token IDs
-
-`LoanPositionStatus` captures the NFT lifecycle distinct from `LoanStatus`:
-`OfferCreated`, `LoanInitiated`, `LoanRepaid`, `LoanDefaulted`,
-`LoanLiquidated`, `LoanFallbackPending`, `LoanClosed`.
-
-### 3.5 Storage Constants
-
-Key constants in `LibVaipakam.sol`:
-
-| Constant                       |            Value | Meaning                                |
-| ------------------------------ | ---------------: | -------------------------------------- |
-| `MIN_HEALTH_FACTOR`            |         `1.5e18` | HF floor at loan initiation            |
-| `HF_LIQUIDATION_THRESHOLD`     |           `1e18` | HF-based liquidation trigger           |
-| `TREASURY_FEE_BPS`             |            `100` | `1%` Yield Fee on lender interest      |
-| `LOAN_INITIATION_FEE_BPS`      |             `10` | `0.1%` Loan Initiation Fee             |
-| `MAX_LIQUIDATION_SLIPPAGE_BPS` |            `600` | `6%` slippage ceiling                  |
-| `MAX_LIQUIDATOR_INCENTIVE_BPS` |            `300` | `3%` cap on liquidator bonus           |
-| `LIQUIDATION_HANDLING_BPS`     |            `200` | `2%` treasury surcharge on liquidation |
-| `FALLBACK_LENDER_BONUS_BPS`    |            `300` | `3%` lender share in fallback          |
-| `FALLBACK_TREASURY_BPS`        |            `200` | `2%` treasury share in fallback        |
-| `RENTAL_BUFFER_BPS`            |            `500` | `5%` NFT rental prepayment buffer      |
-| `VOLATILITY_LTV_THRESHOLD_BPS` |          `11000` | `110%` LTV collapse trigger            |
-| `VPFI_HARD_CAP`                | `230_000_000e18` | Global VPFI supply cap                 |
-| `VPFI_INITIAL_MINT`            |  `23_000_000e18` | Genesis mint on Base                   |
-| `VPFI_INTERACTION_POOL_CAP`    |  `69_000_000e18` | Interaction-reward category cap        |
-| `INTERACTION_CAP_VPFI_PER_ETH` |            `500` | `0.5 VPFI` per `0.001 ETH` of interest |
-
-### 3.6 Rounding Doctrine
-
-Every division in the protocol documents which side it favors. LTV rounds
-down (1 BPS under-reported) to favor the borrower. Health Factor rounds
-down (slightly under-reported) to favor the protocol — earlier liquidation
-is the safety bias. Treasury splits round in favor of the treasury on
-liquidation but in favor of the borrower on routine settlement. New
-divisions added to the codebase MUST state direction, beneficiary, and
-safety rationale; this is enforced by code review, not by lint.
+Offer creation and acceptance should present risk disclosures before submission. Users must understand that collateral recovery can be affected by liquidity, oracle availability, market stress, asset type, and fallback settlement rules.
 
 ---
 
-## 4. Asset Classification
+## 5. Loan Lifecycle
 
-### 4.1 Liquid vs. Illiquid
+A Vaipakam loan tracks agreed principal, collateral, rate, duration, interest mode, parties, position NFTs, and state. Loan Details is the canonical surface for inspecting and acting on a live or terminal position.
 
-Vaipakam classifies an ERC-20 as **liquid on the active chain** if and
-only if both of the following hold on that chain:
+The current app supports:
 
-1. **Priceable.** A usable Chainlink path: preferred direct `asset/USD`,
-   else `asset/ETH × ETH/USD`. WETH itself is priced from `ETH/USD`.
-2. **Tradeable.** At least one configured v3-style concentrated-liquidity
-   AMM `asset/WETH` pool meets the configured minimum-depth threshold
-   when converted to USD via the active chain's Chainlink `ETH/USD`.
+- Full repayment.
+- Partial repayment when allowed by the loan.
+- Collateral additions.
+- Health-factor and LTV display for liquid loans.
+- Clear handling for illiquid loans where standard risk math is not meaningful.
+- Borrower preclose paths.
+- Lender early-withdrawal paths.
+- Refinance flows.
+- Route-based liquidation actions for eligible undercollateralized active loans.
+- Claim actions after repayment, default, liquidation, or other terminal settlement.
+- Timeline and activity views that reconstruct important lifecycle events.
+- Interest-mode display so users can distinguish full-term and pro-rata behavior where relevant.
+- Periodic-interest checkpoint visibility where configured.
+- Warnings when a third party repays a loan without receiving collateral rights.
 
-Multiple V3-clone factories are checked with **OR** logic: Uniswap V3,
-PancakeSwap V3, and SushiSwap V3. One sufficiently deep
-venue is enough.
-
-**Bright-line rule:** Ethereum mainnet must not be consulted as a
-fallback when classifying liquidity for any other chain. If the active
-chain's check fails, the asset is illiquid on that chain.
-
-### 4.2 Illiquid Treatment
-
-The following are illiquid for protocol valuation and liquidation:
-
-- all ERC-721 and ERC-1155 assets (platform-assessed value `$0`)
-- ERC-20s that fail either the priceability or tradeability check on the
-  active chain
-- any asset where oracle data is missing, stale, or revert-failed
-
-Loans involving illiquid assets default to **full-collateral-in-kind**
-settlement on default. Both parties must explicitly consent via the
-combined risk acknowledgement.
-
-### 4.3 Same-Asset Guard
-
-At offer creation, the lending asset and the collateral asset must not
-be the same asset. This invariant is enforced directly rather than
-through reference-asset hacks.
-
-### 4.4 Fail-Closed Behavior
-
-If oracle reads or pool lookups face transient issues (Chainlink stale
-beyond the configured budget, Tellor / API3 / DIA all unreachable, V3
-factory revert), the protocol treats the asset as illiquid for that
-operation. There is **no manual override** path to mark an asset liquid
-when checks fail.
+Repayment does not grant collateral rights to the payer unless the payer also holds the borrower-side Vaipakam position NFT. Claim rights follow current position-NFT ownership.
 
 ---
 
-## 5. Offer and Loan Lifecycle
+## 6. Vaipakam Vaults
 
-### 5.1 Offer Creation
+Each user can operate through a Vaipakam Vault. A vault is the protocol accounting boundary for tracked balances, locked assets, VPFI utility balances, claimable proceeds, and reservations.
 
-Either side may create an offer:
+The app exposes:
 
-- **Lender offer** — specifies lending asset, principal, APR, required
-  collateral type and (amount or maximum LTV / minimum HF), duration. The
-  lender's principal is locked into vault at creation.
-- **Borrower offer** — specifies desired asset and amount, maximum
-  acceptable APR, offered collateral, duration. The borrower's collateral
-  is locked at creation.
-- **NFT rental offer** — analogous, with daily rental fee, duration, and
-  the ERC-20 used for prepayment. The NFT is vaulted at creation.
+- Protocol-tracked asset balances.
+- Locked and free balances.
+- VPFI utility balances.
+- Asset rows that distinguish withdrawable funds from funds locked by offers, loans, intents, claims, or reservations.
+- Recovery tooling for protocol-untracked, self-sent stuck ERC-20 tokens through a deliberately hidden advanced route.
 
-Loan durations: configurable from 1 day to 365 days. Grace periods auto-
-assigned by tier:
-
-| Duration     | Grace   |
-| ------------ | ------- |
-| `< 1 week`   | 1 hour  |
-| `< 1 month`  | 1 day   |
-| `< 3 months` | 3 days  |
-| `< 6 months` | 1 week  |
-| `≤ 1 year`   | 2 weeks |
-
-A position NFT is minted to the creator at creation with status
-`OfferCreated`.
-
-### 5.2 Combined Mandatory Risk Consent
-
-Before either party submits a create- or accept-offer transaction, the
-frontend requires **one** combined warning-and-consent acknowledgement
-covering both:
-
-- the abnormal-market fallback path for liquid collateral
-- the full-collateral-in-kind default path for illiquid assets
-
-The consent is mandatory and is captured for the offer and stored on the
-resulting loan. The protocol stores a single combined-accepted-by-both-
-parties flag rather than two separate per-party bits.
-
-### 5.3 Offer Acceptance and Loan Initiation
-
-When the counterparty accepts, control flows through `OfferFacet.acceptOffer`
-into a cross-facet call to `LoanFacet.initiateLoan`. The latter is guarded
-by `msg.sender == address(this)` so it can only be reached through the
-Diamond fallback.
-
-`initiateLoan` performs:
-
-1. On-chain liquidity re-verification — both legs are re-checked at
-   acceptance time (frontend assessments don't bind the contract)
-2. Combined fallback consent enforcement
-3. For fully-liquid loans: enforce `LTV ≤ maxLtvBps` and `HF ≥ 1.5e18`
-4. Snapshot of all economic terms (principal, collateral, APR, duration,
-   fallback splits, fee BPS, VPFI discount accrual state)
-5. Position NFT mint to the lender and borrower
-6. Status transition: offer → `Accepted`, loan → `Active`
-
-The `Loan` struct snapshots the protocol-config BPS values at initiation
-so subsequent governance changes never retroactively alter dual-consent
-positions.
-
-### 5.4 Loan Initiation Fee
-
-For ERC-20 loans, a `{liveValue:loanInitiationFeeBps}`% Loan Initiation
-Fee is charged on the lending-asset amount **before** net proceeds reach
-the borrower. On a 1,000 USDC match at the default rate, the borrower
-receives 999 USDC and 1 USDC routes to treasury.
-
-The borrower VPFI path inverts the fee source: when consent is
-active, the lending asset is liquid, and sufficient VPFI is in the vault,
-the borrower receives `100%` of the requested principal and pays the
-**full** non-discounted `{liveValue:loanInitiationFeeBps}`% LIF equivalent
-in VPFI up front. That VPFI is held in Diamond custody (not Treasury) for
-the life of the loan.
-
-> **Note on blockchain network gas.** Every on-chain action (offer
-> creation, acceptance, repayment, claim, liquidation trigger, etc.)
-> additionally requires a **network gas fee** paid to the underlying
-> blockchain's validators / sequencer. That gas fee is **not** a
-> protocol charge — Vaipakam never receives it; it goes to the
-> network and varies with chain congestion at submission time. The
-> only fees the protocol itself collects are the Loan Initiation Fee
-> documented above and the lender Yield Fee in §5.5.
-
-### 5.5 Repayment
-
-Repayment may be initiated by the borrower or any third party. ERC-20
-repayment amount is `Principal + Interest`, where:
-
-```
-Interest = (Principal × AnnualRateBps × LoanDurationDays)
-         / (BPS × DAYS_PER_YEAR)
-```
-
-A third-party repayer is treated only as the payment sender. They do
-**not** gain collateral rights; collateral remains claimable only by
-the holder of the borrower-side position NFT. The repayment confirmation
-flow surfaces a prominent warning stating this when the connected wallet
-is not the borrower NFT owner.
-
-Late fees apply post-due-date but within grace:
-
-- `1%` of outstanding principal on day 1 past due
-- `+0.5%` per additional day
-- capped at `5%` total
-- collected with repayment, subject to treasury fee on the late-fee portion
-
-NFT rental repayment auto-deducts daily rental fees from the prepaid
-buffer. The `5%` prepayment buffer returns to the borrower on timely
-return; on default the buffer escalates to treasury.
-
-### 5.6 Settlement and Claims
-
-After repayment, the loan transitions to `Repaid`. Lender becomes
-entitled to `Principal + Interest − YieldFee`; borrower becomes entitled
-to full collateral return. Both sides claim independently against their
-position NFTs:
-
-- `ClaimFacet.claimAsLender(loanId)` — pays principal + interest from
-  vault; routes the borrower VPFI rebate share if applicable
-- `ClaimFacet.claimAsBorrower(loanId)` — pays collateral + VPFI
-  rebate atomically
-
-Once both sides have claimed (or have nothing to claim), the loan moves
-to `Settled` and position NFTs are burned.
-
-### 5.7 Lifecycle State Machine
-
-`LibLifecycle` enforces the legal `LoanStatus` transition graph as a
-single allow-list in an if-ladder (no data structure):
-
-```
-Active → Repaid | Defaulted | FallbackPending
-FallbackPending → Active | Repaid | Defaulted
-Repaid → Settled
-Defaulted → Settled
-```
-
-Every status mutation routes through `transition()` or `initialize()`;
-illegal edges revert with `IllegalTransition`. This keeps audit trails
-predictable and prevents subtle ordering bugs in cross-facet flows.
+The recovery route is not a dust-cleanup tool for unsolicited third-party tokens. Users should not recover tokens they did not send themselves. The route asks the user to declare the source address and warns that a sanctioned declared source can lock the user's vault.
 
 ---
 
-## 6. Risk Engine
+## 7. Position NFTs
 
-### 6.1 LTV and Health Factor
+Vaipakam position NFTs represent economic rights in offers and loans. Lender-side and borrower-side NFTs let the protocol and app determine who can claim, who can act for a role, and how rights move after a transfer.
 
-For loans with liquid collateral:
+This means:
 
-```
-LTV     = BorrowedValueUSD / CollateralValueUSD
-HF      = (CollateralValueUSD × LiquidationThresholdBps / BPS)
-        / BorrowedValueUSD
-```
-
-`BorrowedValueUSD` includes principal + accrued interest. `LiquidationThresholdBps`
-is per-asset and admin-configured under `RISK_ADMIN_ROLE`.
-
-At loan initiation, `HF ≥ 1.5e18` (`MIN_HEALTH_FACTOR`) is enforced.
-HF-triggered liquidation becomes available when `HF < 1e18`.
-
-### 6.2 Add Collateral
-
-Borrowers may proactively post additional collateral via
-`AddCollateralFacet.addCollateral` to raise HF. The added collateral must
-match the existing collateral asset type. The same call also functions
-as the cure path during `FallbackPending` — restoring HF above threshold
-returns the loan to `Active` and cancels the fallback snapshot.
-
-### 6.3 Partial Collateral Withdrawal
-
-When HF allows, lenders may permit partial principal withdrawal via
-`PartialWithdrawalFacet.partialWithdrawCollateral` with borrower consent.
-The post-withdrawal HF must remain `≥ MIN_HEALTH_FACTOR`.
-
-### 6.4 Volatility LTV Collapse
-
-If `LTV > 110%` (`VOLATILITY_LTV_THRESHOLD_BPS`), the swap path is
-skipped entirely and the loan routes directly to `FallbackPending` to
-avoid forcing a sale into a collapsed market. This handles the case where
-collateral has crashed below the borrowed amount before any liquidator
-arrives.
+- Claim authority follows the current position-NFT owner, not necessarily the original wallet.
+- Loan Details and Claim Center should distinguish stored loan parties from live position holders where that distinction matters.
+- Third-party repayment can close a debt but does not transfer collateral rights.
+- Strategic flows can constrain transferability while an in-progress path is open.
+- Public verification tools can help secondary-market participants inspect a Vaipakam position NFT before relying on it.
 
 ---
 
-## 7. Liquidation and Fallback Settlement
+## 8. NFT Rental Model
 
-### 7.1 Triggers
+Vaipakam supports NFT rental flows for eligible NFTs. In a rental, the NFT remains under vault-controlled custody and the borrower receives temporary usage rights. The borrower does not receive ownership custody of the NFT itself.
 
-Two distinct liquidation paths exist:
+NFT rentals use ERC-20 prepayment or collateral rules to cover the rental obligation and buffer. When the rental closes properly, the protocol returns the NFT owner and renter to the settlement state defined by the loan terms. On default, the protocol can settle the locked payment assets according to the rental rules.
 
-- **HF-based** via `RiskFacet.triggerLiquidation(loanId, AdapterCall[])`
-  when `HF < 1e18`. Always permissionless.
-- **Time-based** via `DefaultedFacet.triggerDefault(loanId, AdapterCall[])`
-  when the grace period has expired. Permissionless.
-
-For NFT rental defaults, `triggerDefault` revokes the borrower's user
-rights; the prepayment + buffer route to the lender (minus treasury
-fee), and the NFT returns to the lender's vault.
-
-### 7.2 Swap-Failover (LibSwap)
-
-Liquidation conversion of liquid collateral into the borrowed asset
-goes through a four-DEX failover pipeline. The caller (keeper or
-frontend) supplies a ranked `AdapterCall[]` try-list:
-
-1. **0x Settler** (production routing aggregator)
-2. **1inch v6** (production routing aggregator)
-3. **Uniswap V3** (single-hop direct quote)
-4. **Balancer V2** (subgraph-discovered pool quote)
-
-`LibSwap.swapWithFailover(...)` iterates the ranked list. For each
-attempt:
-
-- approval is set to **exactly** the input amount needed (no unlimited
-  approvals)
-- the adapter call is wrapped in try / catch
-- approval is revoked after the attempt regardless of success or failure
-- the protocol enforces `realizedOut ≥ minOutputAmount` via balance-delta
-  on the aggregator path or `amountOutMinimum` on the DEX path
-
-The first adapter that meets the floor commits and returns realized
-proceeds. Total failure (all adapters revert or under-fill) routes the
-loan to `FallbackPending` and emits `SwapAllAdaptersFailed`.
-
-**Caller insulation invariant.** The keeper picks routes, but cannot
-weaken the slippage cap. `minOutputAmount` is computed by the protocol
-from the oracle-derived expected output minus the configured slippage
-budget. `LiquidationMinOutputInvariant.t.sol` asserts this with
-`vm.expectCall` against a 1,000-address fuzz of liquidator identities.
-
-### 7.3 Slippage and Liquidator Incentive
-
-Successful liquidations follow a bounded execution model:
-
-- `realized_slippage% + liquidator_incentive% = 6%` (`MAX_LIQUIDATION_SLIPPAGE_BPS`)
-- `liquidator_incentive ≤ 3%` (`MAX_LIQUIDATOR_INCENTIVE_BPS`)
-- treasury receives `2%` (`LIQUIDATION_HANDLING_BPS`) on top, separate
-  from the Yield Fee on recovered interest
-
-The liquidator is paid first. The remainder discharges the lender's
-debt. Any residual returns to the borrower via the borrower NFT claim
-flow.
-
-The `6%` ceiling is governance-configurable within an audited bounded
-range. The frontend reads the live value rather than hard-coding `6%`.
-
-### 7.4 Abnormal-Market Fallback
-
-If the slippage check fails — every adapter reverts, every adapter
-under-fills, or volatility LTV has collapsed past `110%` — the protocol
-**stops trying to convert** and routes to the fallback path. This is
-not a revert; it is a state transition.
-
-Fallback semantics (`LibFallback.record(...)`):
-
-- the loan status moves to `FallbackPending`
-- collateral and the per-bps split are snapshotted at fallback time
-- the lender may claim immediately — there is no separate borrower
-  grace window
-- before lender claim execution starts, the borrower may still:
-  - **fully repay** the loan (cancels fallback, routes to normal `Repaid`)
-  - **add collateral** to restore HF (returns to `Active`)
-- once lender claim execution starts, that path is final
-
-When the borrower has not cured before claim, the lender's claim
-attempts one more swap retry (lender or keeper supplies a fresh
-`AdapterCall[]` try-list). If retry also fails:
-
-- lender receives collateral equivalent to `LendingDue + AccruedInterest + 3%`
-- treasury receives collateral equivalent to `2%` of the lending amount
-- if remaining collateral value is below the lender entitlement, lender
-  receives the full remaining collateral and the borrower receives nothing
-- if remaining collateral value exceeds the entitlements, residual
-  collateral remains attributable to the borrower
-
-The `+3% / +2%` premium exists because the borrower did not act before
-liquidation became necessary.
-
-### 7.5 Settlement as Immutable Plan
-
-`LibSettlement.computeRepayment` and `computePreclose` are pure functions
-that produce an immutable `ERC20Settlement` plan: principal, interest,
-late fee, treasury share, lender share, lender due, and the
-borrower VPFI rebate split. The facet body executes transfers from
-that plan exactly. This separation prevents the class of bug where the
-event log reports one split and the transfer executes another.
-
-### 7.6 Adapter Registry
-
-Production deploys must register at least one swap adapter via
-`AdminFacet.addSwapAdapter`. A deployment with zero adapters reverts on
-every swap-based liquidation attempt, automatically reaching the
-fallback path. This is intentional — the test suite exercises this as
-a bright-line gate.
-
-### 7.7 Operator Tooling
-
-To support the swap-failover flow end-to-end:
-
-- A Cloudflare Worker (`ops/hf-watcher`) exposes `/quote/0x` and
-  `/quote/1inch` proxy endpoints that inject operator API keys server-
-  side and apply per-IP rate limits.
-- The frontend's `swapQuoteService` uses these proxies plus direct
-  on-chain `QuoterV2` reads for UniV3 (across three fee tiers) and a
-  per-chain Balancer V2 subgraph URL for pool discovery.
-- The hf-watcher Worker can run an autonomous keeper mode that polls
-  subscribed-user loans and submits permissionless `triggerLiquidation`
-  when HF crosses 1.0. This mode is opt-in and requires worker secrets
-  - a funded keeper EOA per chain.
-- A standalone public reference keeper bot lives in the sibling repo
-  `vaipakam-keeper-bot`. MIT-licensed, Node.js / TypeScript,
-  ABI-synced from the monorepo via `forge inspect <Facet> abi --json`.
+The app includes NFT-aware creation, loan detail, collateral, prepayment, and verifier surfaces so users can inspect the position before and after entering a rental.
 
 ---
 
-## 8. Oracle Stack
+## 9. Collateral, Liquidity, and Risk
 
-### 8.1 Quote Asset and Conversion
+Vaipakam distinguishes liquid assets from illiquid assets.
 
-ETH (in practice WETH) is the protocol's quote asset for liquidity
-classification because it is the deepest cross-chain venue. Pool depth
-is converted to PAD-units via the active chain's Chainlink `ETH/PAD`
-feed.
+Liquid ERC-20 assets depend on active-network oracle and liquidity conditions. The app and protocol should evaluate the selected network rather than assuming liquidity from another chain. For liquid loans, the app can surface health factor, LTV, liquidation projections, and collateral-risk indicators.
 
-For ERC-20 pricing, `OracleFacet._primaryPrice` returns numeraire-quoted
-prices through a 3-step flow:
+Illiquid assets include NFTs and ERC-20 assets that do not satisfy the active liquidity and oracle checks. Illiquid loans do not have ordinary health-factor math in the same way liquid ERC-20 loans do. In stressed or illiquid conditions, lender recovery may occur in-kind rather than through a market sale.
 
-1. **Retail short-circuit (PAD == numeraire == USD)** — read
-   `asset/PAD` directly via Chainlink Feed Registry. Single read, no
-   FX conversion. WETH special case reads `ETH/PAD` directly with
-   no circular WETH/WETH liquidity check.
-2. **Per-asset operator override (industrial-fork only)** — when
-   `assetNumeraireDirectFeedOverride[asset]` is set non-zero, read
-   that Chainlink AggregatorV3 directly as the numeraire-quoted
-   price and skip the PAD pivot entirely. Operator vouches the
-   override is verified-rated; the protocol does not Pyth-cross-check
-   overrides.
-3. **PAD pivot (industrial-fork, no override)** — read `asset/PAD`
-   (Chainlink Feed Registry, falls back to `asset/ETH × ETH/PAD` for
-   assets without a direct feed) then multiply by the
-   `PAD/<numeraire>` FX rate (direct `padNumeraireRateFeed` if set,
-   else derived from `ETH/<numeraire> ÷ ETH/PAD`).
+The user-facing risk model includes:
 
-**Why PAD-first instead of asset/<numeraire>-first**: Chainlink's
-feed-rating metadata (🟢 verified / 🟡 monitored / 🔴 specialized)
-is **off-chain** — `AggregatorV3Interface` doesn't expose a `rating()`
-view. Direct asset/<numeraire> Chainlink feeds for non-USD pairs are
-rare AND frequently 🟡-rated when they exist. Routing all pricing
-through PAD (`Denominations.USD` by post-deploy default) biases toward
-verified-rated feeds **structurally**, without requiring operators
-to manually curate per-asset feed quality. The FX-multiply cost is
-bounded; the trust gain is real.
-
-**Predominantly Available Denominator (PAD)** is governance-tunable
-via the atomic four-arg `setPredominantDenominator(denom, symbol,
-ethPadFeed, padNumeraireRateFeed)` setter. Per-asset overrides are
-governance-set via `setAssetNumeraireDirectFeedOverride(asset, feed)`.
-Both setters are admin-gated and emit indexed events for off-chain
-monitoring.
-
-**Pre-T-048 deploy compatibility**: when `predominantDenominator ==
-address(0)`, `_primaryPrice` falls back to the legacy
-numeraire-direct path (`asset/<numeraireChainlinkDenominator>` via
-Feed Registry, then `asset/ETH × ETH/<numeraire>` fallback).
-Existing deploys keep working unchanged until the operator opts in.
-
-### 8.2 Hybrid Peg-Aware Staleness
-
-The hybrid staleness model:
-
-- volatile assets must be `≤ 2 hours` old (`ORACLE_VOLATILE_STALENESS`)
-- stable / reference feeds may extend to `≤ 25 hours` only when the
-  reported price stays within `±3%` (`ORACLE_PEG_TOLERANCE_BPS`) of
-  either the implicit USD `$1` peg or a governance-registered fiat /
-  commodity reference (EUR/USD, JPY/USD, XAU/USD)
-- feeds beyond 25 hours always reject
-
-Per-feed overrides allow oracle admins to tighten the staleness budget
-or set a minimum-valid-answer floor for critical aggregators. Setting
-the override staleness back to zero clears it.
-
-### 8.3 Soft 2-of-N Secondary Quorum
-
-Chainlink remains the primary pricing path. Secondary oracles harden the
-gate against single-feed manipulation:
-
-- **Tellor** (`ITellor`) — 15-minute staleness, queried by symbol (e.g.
-  "ETH/USD")
-- **API3** (`IApi3ServerV1`) — airnode-managed dAPI proxy, queried by
-  proxy address
-- **DIA** (`IDIAOracleV2`) — DIA price feeds, queried by symbol key
-
-The decision rule:
-
-- if **every** secondary is unavailable, Chainlink is accepted alone
-- if **at least one** available secondary agrees with Chainlink within
-  `secondaryOracleMaxDeviationBps`, Chainlink is accepted
-- if one or more secondaries disagree and **none** agree, pricing
-  reverts with `OraclePriceDivergence`
-
-Secondary oracle keys are derived from `IERC20.symbol()` on-chain. There
-is **no per-asset governance write** required to enable secondaries on
-new collateral assets — adding USDC, USDT, or any symbol with secondary
-coverage works automatically. Pyth was specifically not adopted because
-its per-asset `priceId` mapping conflicted with this no-config policy.
-
-### 8.4 V3 Multi-Clone Liquidity
-
-Pool depth is read from `IUniswapV3Factory.getPool(asset, WETH, fee)`
-across the configured V3-clone factory set:
-
-- Uniswap V3
-- PancakeSwap V3
-- SushiSwap V3
-
-Across multiple fee tiers (the protocol registers `500 / 3000 / 10000` bps
-tiers for each clone). Results combine with **OR** logic — one
-sufficiently deep pool on any clone at any fee tier is enough.
-
-### 8.5 L2 Sequencer Circuit Breaker
-
-On L2 chains (`Base`, `Arbitrum`, `Optimism`, `Polygon zkEVM`), HF-based
-liquidation reverts if Chainlink's sequencer-uptime feed reports the
-sequencer is down OR is still inside its 1-hour post-recovery grace
-window. This prevents attackers from exploiting the small stale-price
-window at L2 resumption to trigger unfair liquidations.
-
-### 8.6 Off-Chain Consumers
-
-Several off-chain processes read the oracle and liquidation surface:
-
-- the canonical frontend's `useLiquidationQuotes` hook
-- the hf-watcher Cloudflare Worker (autonomous keeper + alert sweep)
-- the public reference keeper bot in the `vaipakam-keeper-bot` repo
-
-All three submit liquidation transactions permissionlessly. None hold
-any Diamond role — a keeper that needed an admin role would be a
-structural hazard.
+- Combined risk and terms acknowledgement during offer creation and acceptance.
+- Liquidity preflight warnings.
+- Progressive risk-access tiers where enabled.
+- Strict-mode acknowledgement for users who want stronger per-pair controls.
+- Sanctions and terms gates where configured.
+- Transaction simulation previews that can report whether a transaction appears likely to succeed, revert, or be unavailable for preview.
 
 ---
 
-## 9. NFT Rental Subsystem
+## 10. Liquidation and Fallback Settlement
 
-### 9.1 Custody Model
+Liquidation handling in the connected app is route-based. The review surface can quote available liquidation routes, submit the liquidation transaction, and show fallback settlement visibility where the deployment exposes it. The app does not present every protocol-level liquidation branch as a user-selectable action.
 
-For rentable ERC-721 / ERC-1155 NFTs (ERC-4907 compliant), the protocol
-vaults the asset in `VaipakamVault` and assigns `ERC-4907`-style
-**user rights** to the borrower for the agreed duration. The borrower
-never receives custody or ownership of the underlying NFT.
-
-### 9.2 Prepayment and Buffer
-
-The borrower locks ERC-20 prepayment equal to `daily_fee × days × 1.05`.
-The `5%` buffer (`RENTAL_BUFFER_BPS`) covers settlement edge cases:
-
-- on timely return, buffer refunds to the borrower
-- on default, buffer routes to treasury
-- daily auto-deduction is permissionless via `RepayFacet.autoDeductDaily`
-
-### 9.3 ERC-1155 Read Surface
-
-For ERC-1155 rentals, the vault is the canonical read surface for
-external integrations. Third-party apps querying for the active rented
-quantity for a given `(collection, tokenId)` pair receive:
-
-- the aggregate rented quantity within that vault
-- the **minimum** active expiry across all rented units
-
-This conservative model prevents external integrations from overstating
-duration or simultaneous usability.
-
-### 9.4 Strategic Rental Flows
-
-NFT rental positions support borrower preclose (transfer of remaining
-rental to a new borrower) and standard repayment. Rental loans are not
-eligible for borrower preclose Option 3 (offset) or for lender early
-withdrawal — those flows apply only to ERC-20 loans.
+When ordinary liquidation cannot execute safely, the protocol can move into fallback settlement behavior according to the loan state, collateral type, oracle availability, and risk rules. Users should not assume that collateral will always be converted into the lending asset. Lenders may receive collateral in kind, and the recovered value can be materially lower than the asset lent.
 
 ---
 
-## 10. Strategic Flows
+## 11. VPFI Utility
 
-### 10.1 Borrower Preclose
+VPFI is the Vaipakam protocol token used by the connected app for fee utility and interaction rewards.
 
-Three options for borrower-initiated early closure:
+The active app surfaces support:
 
-- **Option 1: Standard Early Repayment** — borrower pays `Principal +
-full contractual interest for the original term`. Lender becomes
-  entitled to principal + interest − Yield Fee; borrower reclaims
-  collateral.
-- **Option 2: Loan Transfer to Another Borrower** — original borrower
-  exits by accepting a compatible borrower offer. The new borrower locks
-  collateral; the original borrower pays accrued interest plus any
-  shortfall to keep the original lender whole. The lender's loan
-  continues with the new borrower.
-- **Option 3: Offset with a New Lender Offer** — the original borrower
-  becomes a lender on a new offsetting position, neutralizing their
-  borrower obligation. Restricted to active ERC-20 loans only. Atomic
-  on counterparty match: the original loan settles in the same
-  transaction as the new offer's acceptance.
+- Depositing VPFI into the user's Vaipakam Vault.
+- Withdrawing free VPFI from the vault.
+- Viewing wallet and vault VPFI balances.
+- Viewing fee-discount tier status.
+- Enabling a shared platform-level setting that permits vault-held VPFI to be used for fee discounts.
+- Viewing VPFI token transparency information.
+- Claiming platform interaction rewards through Claim Center when earned and claimable.
 
-Across all three:
+The current product surface treats VPFI as fee utility and claimable reward infrastructure. Vault-held VPFI is not described as a passive yield deposit product.
 
-- principal / payment / collateral asset **types** must remain identical
-- replacement terms must favor the original lender, or the borrower
-  funds the shortfall
-- claim rights continue to follow position NFTs
-
-### 10.2 Refinance
-
-Available for active ERC-20 loans. By the time the borrower calls
-`RefinanceFacet.refinanceLoan(oldLoanId, newOfferId)`, the replacement
-lender has already accepted the new borrower offer and the replacement
-loan exists as a standalone live loan. Refinance is a single atomic
-settlement step:
-
-1. repay the old lender (principal + early-repayment interest)
-2. release the original collateral back to the borrower's wallet
-3. update old-loan NFTs to closed
-4. close the old loan
-
-The replacement collateral was already locked at the new loan's
-acceptance; the new loan's HF / LTV gate was checked there. There is
-no separate refinance-time HF gate for the borrower handoff.
-
-### 10.3 Lender Early Withdrawal
-
-Three options for lender-initiated exit:
-
-- **Option 1: Sell the Loan to Another Lender** — accept a compatible
-  lender offer. Original lender forfeits accrued interest to treasury;
-  receives outstanding principal. Borrower's loan continues with new
-  lender. Available as ERC-20 only.
-- **Option 2: Create a New Offer Through the Borrower-Offer Path** —
-  initiate exit through an offsetting offer flow.
-- **Option 3: Wait for Loan Maturity** — passive fallback; no transfer
-  occurs.
-
-### 10.4 Strategic Flow Authority
-
-Borrower-side strategic actions follow the borrower-side position NFT
-holder, not the originating wallet. Lender-side actions follow the
-lender-side NFT holder. A rented `userOf` address, an approved keeper,
-or a third-party helper is **not** sufficient to start a new strategic
-flow — those delegations are allowed only on explicitly-documented
-keeper-enabled completion functions.
-
-### 10.5 Same-Asset-Type Continuity
-
-All preclose, transfer, and early-withdrawal paths preserve the
-**asset types** of the original loan (principal, payment, collateral).
-Only **amounts** may vary, and only to the extent that variations do
-not disadvantage the protected counterparty. This invariant lets the
-protocol safely skip a fresh transfer-time HF gate in cases like
-`transferObligationViaOffer` because the original lender's risk
-profile remains unchanged.
+Borrower fee-discount handling is shown as an up-front fee path with any earned rebate becoming claimable through the loan's settlement flow when protocol conditions are satisfied.
 
 ---
 
-## 11. VPFI Token and Tokenomics
+## 12. Interaction Rewards
 
-### 11.1 Token Parameters
+Vaipakam rewards eligible lending and borrowing activity through platform interaction rewards. The connected app exposes the reward claim surface in Claim Center alongside ordinary per-loan claims.
 
-| Parameter       | Value                                           |
-| --------------- | ----------------------------------------------- |
-| Name            | `Vaipakam DeFi Token`                           |
-| Symbol          | `VPFI`                                          |
-| Decimals        | `18`                                            |
-| Hard Cap        | `230_000_000`                                   |
-| Initial Mint    | `23_000_000` (10% of cap)                       |
-| Canonical Chain | `Base`                                          |
-| Standard        | `Chainlink CCIP CCT`                              |
-| Mint Access     | TreasuryFacet via timelock-controlled multi-sig |
+The claim UI can show:
 
-The token is `ERC20CappedUpgradeable` (UUPS-upgradeable). The cap is
-enforced natively by the contract; mints flow only through an authorized
-`minter` address (TreasuryFacet). Owner can pause all transfers as an
-emergency brake.
+- Pending claimable VPFI.
+- Lifetime claimed VPFI reconstructed from events.
+- Contributing loan rows.
+- Waiting states when required reward accounting is not yet available on the active chain.
+- Successful claim transaction feedback.
 
-### 11.2 Allocation
-
-| Category                         |        % |          Amount | Vesting                             |
-| -------------------------------- | -------: | --------------: | ----------------------------------- |
-| Founders                         |       6% |      13,800,000 | 12-mo cliff + 36-mo linear          |
-| Developers & Team                |      12% |      27,600,000 | Same as founders                    |
-| Testers & Early Contributors     |       6% |      13,800,000 | 6–12 mo cliff                       |
-| Platform Admins                  |       3% |       6,900,000 | Timelock controlled                 |
-| Security Auditors                |       2% |       4,600,000 | One-time on delivery                |
-| Reserve (pending reallocation)   |      25% |      57,500,000 | One-time                            |
-| Bug Bounty                       |       2% |       4,600,000 | Multi-sig locked                    |
-| Exchange / Market Making         |      14% |      32,200,000 | 50% liquidity / 50% locked          |
-| **Platform Interaction Rewards** |      30% |      69,000,000 | Daily emission via 8-band schedule  |
-| **Total**                        | **100%** | **230,000,000** |                                     |
-
-> The 25% Reserve is the allocation freed by removing the fixed-rate public sale
-> (1%) and the staking-rewards pool (24%) in the #687 legal-surface excision. Its
-> final disposition — held in reserve, burned to reduce the 230M cap, or
-> otherwise reallocated — is a **pending governance decision**; it is shown here
-> as a Reserve placeholder so the table stays at 100% / 230M.
-
-### 11.3 Fee Discount Tiers
-
-Both lender and borrower discounts use the same chain-local tier table,
-keyed on **vaulted VPFI balance on the relevant lending chain**:
-
-| Tier | Vaulted VPFI                                                            | Discount                          |
-| ---- | ------------------------------------------------------------------------ | --------------------------------- |
-| 1    | ≥ `{liveValue:tier1Min}` and < `{liveValue:tier2Min}`                    | `{liveValue:tier1DiscountBps}`%   |
-| 2    | ≥ `{liveValue:tier2Min}` and < `{liveValue:tier3Min}`                    | `{liveValue:tier2DiscountBps}`%   |
-| 3    | ≥ `{liveValue:tier3Min}` and ≤ `{liveValue:tier4Min}`                    | `{liveValue:tier3DiscountBps}`%   |
-| 4    | > `{liveValue:tier4Min}`                                                 | `{liveValue:tier4DiscountBps}`%   |
-
-Effective fees per tier are the base rate (lender Yield Fee
-`{liveValue:treasuryFeeBps}`%, borrower LIF
-`{liveValue:loanInitiationFeeBps}`%) multiplied by
-`(1 − tierDiscount)`. At the default base rates and tier 4 discount
-of `{liveValue:tier4DiscountBps}`%, the lender effective yield fee
-is `0.76%` and the borrower effective LIF is `0.076%`.
-
-Tier resolution is **chain-local**: VPFI in the vault on `Base` does not
-discount loans initiated on `Optimism`. Users opt in via a single
-platform-level consent surfaced on `Dashboard` — there is no per-offer
-or per-loan toggle.
-
-### 11.4 Time-Weighted Discount Accumulator
-
-The protocol enforces **time-weighted** discount calculation across the loan
-lifetime, not point-in-time tier lookup. `LibVPFIDiscount.rollupUserDiscount`
-re-stamps the BPS at the **post-mutation** vault VPFI balance on every
-balance change. This rollup closes the gaming vector where a user could
-keep a high-tier stamp after dropping to tier 0 until the next balance
-change.
-
-The lender discount is applied at settlement: the time-weighted average
-BPS reduces the Yield Fee taken from lender interest, deducting the
-required VPFI amount from the lender's vault into Treasury via the
-ETH+asset USD conversion path.
-
-### 11.5 Borrower LIF — Up-Front + Time-Weighted Rebate
-
-The borrower path inverts the fee source. At `OfferFacet.acceptOffer`
-on the VPFI path:
-
-1. Borrower pays the **full** non-discounted `0.1%` LIF equivalent in
-   VPFI (not tier-discounted) from vault into Diamond custody (not
-   Treasury). Stored in `s.borrowerLifRebate[loanId].vpfiHeld`.
-2. Borrower receives `100%` of the requested lending asset.
-
-At proper settlement (`RepayFacet` terminal, `PrecloseFacet` direct +
-offset, `RefinanceFacet`):
-
-```
-rebate = vpfiHeld × avgBps / BPS
-treasuryShare = vpfiHeld − rebate
-```
-
-`LibVPFIDiscount.settleBorrowerLifProper(loan)` splits `vpfiHeld`,
-stores rebate on the loan, and forwards the treasury share. At
-`ClaimFacet.claimAsBorrower`, the rebate pays atomically with the
-normal collateral claim.
-
-At default / HF-liquidation (`DefaultedFacet`, `RiskFacet` HF-terminal):
-`LibVPFIDiscount.forfeitBorrowerLif(loan)` forwards the full held
-amount to treasury; no rebate.
-
-This model removes the prior gaming vector where a borrower could
-briefly top up VPFI at acceptance to capture a full discount and unstake
-immediately after. Borrowers pay full LIF up front and earn the discount
-**only for the time they actually held the tier balance**.
-
-### 11.6 Acquiring VPFI
-
-VPFI is freely transferable and is acquired on the open market or
-bridged in. VPFI is a Chainlink CCIP cross-chain token, so it moves
-between supported chains using the official bridge and lands in the
-user's wallet on the destination chain. A separate explicit user action
-then moves VPFI from wallet into the user's Vaipakam Vault on the same
-chain to unlock the fee-discount tier. Permit2 single-signature path is
-supported as a convenience; classic approve-plus-deposit remains the
-fallback. The protocol never auto-routes VPFI into the vault.
-
-### 11.7 Treasury Recycling Rule
-
-VPFI received as fees recycles as:
-
-- `38%` → Buy ETH (via configured aggregator)
-- `38%` → Buy wBTC (via approved treasury path)
-- `24%` → Held as VPFI
-
-If the Insurance / Bug Bounty pool exceeds `2%` of total VPFI supply,
-surplus recycles using the same `38 / 38 / 24` split. This is a
-treasury-strengthening conversion, not a token burn.
+Interaction rewards are pull-based: users claim when rewards are available instead of receiving automatic transfers.
 
 ---
 
-## 12. Reward System
+## 13. Wallets, Permissions, and Transaction Safety
 
-### 12.1 Platform Interaction Rewards
+The connected app supports browser wallets, mobile wallet flows, WalletConnect-style connections, Coinbase Wallet, injected wallets, and Safe app embedding where configured.
 
-A `30%` allocation (`69,000,000 VPFI`) funds usage-based rewards. The
-emission schedule is front-loaded in 8 bands:
+The app is designed around explicit wallet approval:
 
-| Period       | Annual Rate |    Daily Pool (approx.) |
-| ------------ | ----------: | ----------------------: |
-| Months 0–6   |         32% |            ~20,164 VPFI |
-| Months 7–18  |         29% |            ~18,274 VPFI |
-| Months 19–30 |         24% |            ~15,123 VPFI |
-| Months 31–42 |         20% |            ~12,603 VPFI |
-| Months 43–54 |         15% |             ~9,452 VPFI |
-| Months 55–66 |         10% |             ~6,301 VPFI |
-| Months 67–78 |          5% |             ~3,151 VPFI |
-| Month 79+    |          5% | ~3,151 VPFI (until cap) |
+- Users connect a wallet before account-specific actions.
+- Writes are submitted through the connected wallet.
+- ERC-20 flows can use Permit2 where supported, with a classic approval fallback.
+- Review surfaces show important transaction context before submission.
+- Simulations are advisory and do not replace the mined transaction receipt.
+- Success states are based on transaction receipt confirmation.
+- Errors are decoded where possible and recorded in a local journey log for issue reporting.
 
-Daily pool split:
-
-- `50%` to lenders, proportional to USD interest earned
-- `50%` to borrowers, proportional to USD interest paid (clean repay only)
-
-Per-user cap: `0.5 VPFI` per `0.001 ETH` equivalent of eligible interest
-(`500 VPFI` per `1 ETH` equivalent). Excess above the cap stays in the
-allocation rather than redistributing to other users.
-
-Borrower interaction rewards are earned only on **clean** full
-repayment. Late / defaulted / liquidated / post-grace-cured loans
-forfeit the borrower share. Both lender and borrower interaction rewards
-are claimable only **after the loan has closed** — `day 0` is excluded
-from accrual.
-
-### 12.2 Cross-Chain Reward Mesh
-
-Loans are chain-local but the interaction-reward denominator is
-**protocol-wide**. Computing rewards against a local-only denominator
-would give a lender on a quiet chain an outsized share. The solution:
-aggregate daily totals to the canonical chain and broadcast the global
-denominator back.
-
-Topology:
-
-- Base is the **canonical reward chain**
-- mirrors (`Ethereum`, `Polygon zkEVM`, `Arbitrum`, `Optimism`, `BNB Chain`)
-  are reporters
-- each mirror's `RewardReporterFacet.closeDay(dayId)` sends
-  `chainInterestUSD` to Base via Chainlink CCIP through the
-  `VaipakamRewardMessenger` adapter
-- Base's `RewardAggregatorFacet` finalizes when all expected mirrors
-  have reported OR after a 4-hour grace window past `dayId + 1 UTC`
-- Base broadcasts the finalized `dailyGlobalInterestUSD[dayId]` back to
-  every mirror through the same `VaipakamRewardMessenger` adapter
-- mirrors store it as `knownGlobalInterest[dayId]`, the local denominator
-
-A claim for `dayId` reverts locally if the global denominator hasn't
-been broadcast yet. Late-arriving mirror reports past finalization are
-recorded for audit but never retroactively change a finalized day —
-this preserves claim determinism.
-
-Each chain's per-day per-user cap is applied **after** the proportional
-allocation, so an idle chain doesn't degrade a busy chain's user-level
-cap behavior.
-
-The interaction-reward VPFI pool is held on Base. Per-day per-chain
-payout budgets compute as `(dailyChainInterest × dailyPool) / globalInterest`.
-Treasury bridges that budget to each mirror via the CCIP CCT path
-during finalization. Mirror-side `claimInteractionRewards()` draws from
-the local VPFI reward vault — no synthetic IOUs, no cross-chain claim
-hops.
-
-### 12.3 Reward UX
-
-Users have one `Rewards` page per chain that shows pending interaction
-rewards. `Claim Rewards` mints VPFI directly on the
-connected chain. After claim, an optional `Bridge to another chain`
-action surfaces the official Chainlink CCIP bridge.
+Keeper settings are advanced delegated-execution controls. Keepers are role managers, not asset claimants. Claim authority remains tied to the current owner of the relevant Vaipakam position NFT.
 
 ---
 
-## 13. Cross-Chain Surface
+## 14. Compliance, Terms, Privacy, and Data Rights
 
-T-068 (PR #46, merged 2026-05-18) migrated the cross-chain transport
-from LayerZero to **Chainlink CCIP**. The migration was driven by the
-April 2026 ~$292M Kelp / LayerZero bridge exploit — a configuration
-footgun in LayerZero's "1-required / 0-optional DVN" default verifier
-shape — and is documented in `docs/adr/0004-ccip-over-layerzero.md`
-and `docs/DesignsAndPlans/LayerZeroToChainlinkCcipMigration.md`. The
-cross-chain code now lives in `contracts/src/crosschain/`.
+The app includes user-facing gates and notices for legal and operational safety:
 
-### 13.1 `ICrossChainMessenger` + `CcipMessenger`
+- Terms acceptance can be required before connected-app routes open.
+- Terms reads fail closed rather than silently allowing protected actions when acceptance status cannot be verified.
+- Sanctions banners appear for affected connected wallets or counterparties where a sanctions oracle is configured.
+- Flagged wallets can be blocked from new risky activity while close-out paths may remain available to protect clean counterparties.
+- Proceeds owed to a flagged wallet can be described as locked in that wallet's Vaipakam Vault until the flag clears.
+- Cookie consent, language, theme, and privacy controls are available across the app experience.
+- Data Rights tools let users export or delete Vaipakam-namespaced browser storage, while making clear that public on-chain state cannot be erased by frontend action.
 
-`ICrossChainMessenger` is the provider-agnostic port; domain
-contracts depend only on it, never on a CCIP library. `CcipMessenger`
-is the single CCIP-aware adapter — owns the chainId ↔ CCIP selector
-map, the remote-messenger allowlist, and the `vpfi-reward`
-channel registry (local handlers + remote peers).
+Vaipakam is decentralized protocol software. Users remain responsible for understanding the assets they use, the jurisdictions they operate in, and the risks of lending, borrowing, renting, collateral, liquidation, and smart-contract interaction.
 
-### 13.2 `VPFIToken` + `VPFIMirrorToken` (CCIP Cross-Chain Token)
-
-`VPFIToken` is the canonical ERC-20 on Base. Mirror chains run
-`VPFIMirrorToken` proxies backed by the stock CCIP
-`BurnMintTokenPool`; canonical Base uses the stock
-`LockReleaseTokenPool` so the hard cap stays enforceable at the
-source. Mirror token supply equals currently-bridged VPFI by
-construction.
-
-### 13.3 `VaipakamRewardMessenger`
-
-Dedicated CCIP messenger for cross-chain reward accounting.
-Mirrors send `REPORT` messages to Base (their daily
-`chainInterestUSD`); Base sends `BROADCAST` messages back (the
-finalized `dailyGlobalInterestUSD[dayId]`). Authenticates sender
-against the registered peer messenger address on each chain.
-
-### 13.4 Security model: CCIP RMN + per-lane rate limits + `GuardianPausable`
-
-CCIP's security is **operated by Chainlink** — a committing DON +
-an executing DON + an **independent Risk Management Network** (RMN,
-a separate codebase and operator set) that re-verifies every
-message. Uniform for every integrator: there is no DVN fleet to
-assemble per-integrator, and no "1-required / 0-optional default"
-footgun reachable by configuration mistake. The mainnet-deploy
-gates that matter for this protocol are:
-
-- CCIP lanes enabled and each `CcipMessenger`'s registry configured.
-- Per-lane CCIP rate limits set on every VPFI TokenPool through
-  `VpfiPoolRateGovernor`.
-- CCT admin (CCIP `TokenAdminRegistry`) and every cross-chain
-  contract owner = the admin multisig → governance timelock.
-
-### 13.5 Pause surface — `GuardianPausable`
-
-Every cross-chain contract with a runtime send / receive path
-carries `GuardianPausable`: guardian-or-owner `pause()`, owner-only
-`unpause()`, on both send and receive paths. A paused inbound
-reverts; CCIP records it as a failed message, manually
-re-executable once unpaused — so a pause-and-investigate cycle does
-not lose messages. The `VpfiPoolRateGovernor` is the documented
-exception (rate-limit admin only, no runtime send/receive path of
-its own; setters already owner-gated through `Ownable2Step`). The
-46-minute pause during the April 2026 cross-chain bridge incident
-blocked ~$200M of follow-up drain — the precedent that pause
-authority needs to be reachable fast. Pause authority on cross-
-chain contracts allows the Guardian Safe to act immediately but
-reserves unpause to the Owner / Timelock.
+Security-sensitive reports should use the private channels in SECURITY.md, not public GitHub issues. Incident-response procedures are documented in docs/ops/IncidentRunbook.md.
 
 ---
 
-## 14. MEV Protection
+## 15. Transparency and Operations
 
-### 14.1 What's Enforced On-Chain
+Vaipakam exposes public-read surfaces for transparency:
 
-- **Sandwich attack on liquidation swap.** RiskFacet + DefaultedFacet
-  compute oracle-derived `minOutputAmount` and pass it to `LibSwap.swapWithFailover`.
-  Each adapter enforces the same min-out floor on its own side. Caller-
-  insulation invariant: keepers pick routes, never weaken the floor.
-- **Oracle manipulation to trigger liquidation.** Chainlink + Soft 2-of-N
-  quorum (Tellor + API3 + DIA) + L2 sequencer circuit breaker. To push
-  a fake price through the gate, an attacker now must compromise
-  Chainlink **plus** every secondary that has data for the asset in the
-  same block.
-- **Liquidator race during HF < 1.** Permissionless by design; first
-  liquidator wins the bonus. This is natural MEV — how every serious
-  lending protocol handles liquidator selection.
+- Public Analytics for aggregate protocol metrics.
+- NFT Verifier for independent inspection of position NFTs.
+- Protocol Console for configuration and admin visibility.
+- Explorer links from transaction and asset rows.
+- Data freshness indicators that distinguish indexed data, direct chain reads, fallback reads, and catching-up states.
+- Issue-report tooling that captures redacted frontend, chain, wallet, and indexer context.
 
-### 14.2 What's NOT Enforced On-Chain (User-Level Vectors)
-
-Defensive borrower / lender txs (repay, addCollateral, refinance) are
-visible in the public mempool and can be front-run by liquidation bots
-racing for the bonus. Hard-gating against mempool visibility would
-require either a private mempool integration at the protocol layer or
-a UX most users can't navigate — neither is shipped.
-
-User-level mitigations available:
-
-- **Whitelist a trusted keeper.** The KeeperSettings system lets a user
-  pre-authorize an address to execute defensive actions. A keeper
-  operating its own private-mempool flow sidesteps the public-mempool
-  window.
-- **Use a private-mempool RPC.** Flashbots Protect / MEV Blocker on
-  Ethereum mainnet; bloXroute / MEV Blocker on BNB Chain. L2 chains
-  have sequencer-ordered inclusion and are naturally less exposed.
-
-A frontend CoinGecko / CoinMarketCap sanity banner was evaluated and
-**not adopted** — any frontend check is bypassable
-via DevTools / a custom frontend / a direct `cast send`, so it doesn't
-raise the actual security floor. The in-protocol Chainlink + Soft 2-of-N
-deviation check is what actually enforces price sanity.
-
-### 14.3 Keeper Per-Action Authorization
-
-The KeeperSettings system supports granular delegation:
-
-- per-user opt-in (master switch)
-- per-keeper-address whitelist (max 5 addresses per user)
-- per-action class (lender-side actions vs borrower-side actions)
-- per-offer toggle
-- per-loan toggle (post-initiation)
-
-Keepers are **delegated role-managers**, not asset claimants. A
-lender-approved keeper executes only lender-side keeper-enabled actions;
-a borrower-approved keeper executes only borrower-side. Claim authority
-**always** follows the current position NFT owner — keeper approval
-never grants claim rights.
+Advanced users can inspect keeper settings, risk-access state, allowances, vault locks, loan timelines, and activity history without relying on private support intervention.
 
 ---
 
-## 15. Governance and Operations
+## 16. Boundaries
 
-### 15.1 Three-Role Topology
+The connected app is the interactive surface. It does not replace user judgement and does not guarantee a counterparty, successful match, profitable liquidation, available liquidity, oracle coverage, successful notification delivery, uninterrupted indexer availability, or uninterrupted third-party infrastructure.
 
-- **Governance Safe (4-of-7, geographically separated).** Holds
-  `DEFAULT_ADMIN_ROLE`. Only actor that can grant/revoke roles. Actions
-  always go through the timelock.
-- **Admin Timelock (`TimelockController`).** Holds `ADMIN_ROLE`,
-  `ORACLE_ADMIN_ROLE`, `RISK_ADMIN_ROLE`, `VAULT_ADMIN_ROLE`. 48-hour
-  default delay (24-hour minimum after stabilization). Proposer:
-  Governance Safe. Executor: open after delay.
-- **Ops Safe / Guardian (2-of-5, fast-response on-call).** Holds
-  `PAUSER_ROLE`. No delay — pause in a live exploit is useless if it's
-  behind a 48h timelock.
-- **Deployer hot key.** Used for initial deploy + role transfer.
-  **Revoked within 24 hours.**
+Vaipakam does not promise that collateral will retain value, that liquidation routes will always be available, or that illiquid assets can be converted into the lending asset. Users should create and accept only terms they are willing to hold through stressed market conditions.
 
-### 15.2 What Pause Blocks
-
-`AdminFacet.pause()` sets a single boolean consulted by every
-`whenNotPaused` modifier. Blocked: 47 call sites across 19 facets —
-every user lifecycle entry point, every reward facet, every vault
-mutation.
-
-**Not** blocked by pause (by design):
-
-- `AccessControlFacet.grantRole / revokeRole / renounceRole`
-- `DiamondCutFacet.diamondCut`
-- `OracleAdminFacet.*`
-- `VaultFactoryFacet.upgradeVaultImplementation / setMandatoryVaultUpgrade`
-- `AdminFacet.pause / unpause / paused`
-- All view functions
-- Chainlink CCIP message ingress to reward OApps (in-flight messages have
-  their own auth gates)
-
-`PauseGatingTest` enforces the gated set; any change to it must update
-the test.
-
-### 15.3 Per-Asset Pause
-
-`AdminFacet.pauseAsset(asset)` is a finer-grained surface separate from
-the global pause. When an asset is paused, new offers / loans involving
-it revert, but in-flight wind-down (repayment, claims, addCollateral,
-preclose, refinance) remains available so counterparties
-are not trapped.
-
-### 15.4 Timelock Minimum
-
-`24 hours` after a deploy has stabilized; never below 24h on mainnet
-without an audited rationale. Emergency override: no override via
-timelock. Emergencies go through `PAUSER_ROLE`. If an admin-only change
-is needed under emergency, unpause only after the timelock's delay —
-or queue the change immediately and pause until it lands.
-
-### 15.5 Key Rotation Procedure
-
-Executed within 24 hours of a fresh deploy:
-
-1. Grant new Governance Safe `DEFAULT_ADMIN_ROLE`
-2. From Governance Safe: `TimelockController.scheduleBatch` granting
-   ADMIN/ORACLE/RISK/VAULT roles to the Timelock
-3. From Governance Safe: directly grant `PAUSER_ROLE`
-   to the Ops Safe (no timelock)
-4. After 48h delay, execute the batch from step 2
-5. From deployer hot key: `renounceRole` for every role
-6. Verify: deployer holds zero roles; Governance / Timelock / Ops hold
-   the expected roles
-
-`DeployerZeroRolesTest` enforces step 6 as a cutover invariant.
-
-### 15.6 Adapter Registration Gate
-
-Mainnet deploys must register at least one swap adapter via
-`AdminFacet.addSwapAdapter` before any value flows through the system.
-A deployment with zero adapters reverts on every swap-based liquidation
-attempt; the test suite exercises this as a bright-line gate.
-
-### 15.7 Off-Chain Operations
-
-- **hf-watcher Cloudflare Worker** — autonomous keeper + HF alert
-  sweep. Polls subscribed-user loans, sends Telegram / Push alerts,
-  optionally submits permissionless `triggerLiquidation` when HF
-  crosses 1.0 (operator-controlled, opt-in).
-- **Public reference keeper bot (`vaipakam-keeper-bot`)** — MIT-licensed
-  Node.js / TypeScript repo. Third-party operators clone, configure
-  their own keeper key + RPC + (optional) aggregator API keys, run on
-  any chain. ABI-synced from the monorepo via
-  `contracts/script/exportAbis.sh` (uses `forge inspect <Facet> abi --json`).
-- **Subgraph** — The Graph indexing schema for analytics; consumed by
-  the public dashboard.
-- **Tenderly** — VM / simulation config for testing liquidations.
-
----
-
-## 16. Frontend as a Safety Layer
-
-### 16.1 Public Website
-
-- homepage education
-- public `VPFI` benefits page (reachable from homepage without wallet)
-- public analytics dashboard (no wallet required)
-- FAQs and risk education
-- `Terms` and `Privacy` public routes
-- Cookie consent banner (GDPR / Google Consent Mode v2 compliant)
-- Farcaster Frame at `/frames/active-loans` — wallet-address lookup
-  surfacing active-loan count, lowest HF, per-chain breakdown
-
-### 16.2 Connected App
-
-Built on React + wagmi v2 + viem + ConnectKit. Pages:
-
-- `Dashboard` — overview of loans, positions, metrics, the shared
-  fee-discount consent control, and ENS / Basenames address resolution
-- `OfferBook` — paginated two-sided market view, sorted around the last
-  matched rate
-- `Create Offer` — guided + advanced forms with combined risk consent
-  enforcement
-- `Loan Details` — LTV / HF, liquidation-price calculator (shows the
-  collateral price at which HF reaches 1.0), per-side keeper status,
-  Liquidate action with parallel route quotes
-- `Claim Center` — settled-loan claims, including the borrower
-  VPFI rebate line
-- `Activity` — paginated lifecycle events
-- `VPFI` — vault deposit / withdrawal and fee-discount tier status
-- `Rewards` — interaction rewards, claim
-- `Allowances` — ERC-20 / 721 / 1155 approvals to Diamond, with
-  one-click revoke
-- `Alerts` — HF alert subscriptions per loan (Telegram + Push Protocol)
-- `Keepers` (advanced) — per-action keeper authorization
-
-### 16.3 Transaction Safety
-
-- **Permit2 single-signature path.** Uses Uniswap's canonical deployment
-  at `0x000000000022D473030F116dDEE9F6B43aC78BA3`. EIP-712 signatures,
-  30-minute expiry, high-entropy nonces, exact asset / amount / spender
-  scope. Available for create offer, accept offer, VPFI vault deposit.
-  Wallets that don't support Permit2 fall back to classic approve-plus-
-  action.
-- **Blockaid simulation preview.** Shown on review modals before final
-  confirmation. Distinguishes benign / warning / malicious / unavailable
-  states. Server-side proxy keeps API keys off the browser. Fail-soft:
-  unavailability collapses to a subtle `preview-unavailable` state but
-  never blocks the on-chain path.
-
-### 16.4 Mobile and Growth Surfaces
-
-- **PWA support** — web app manifest + production-only service worker
-  with stale-while-revalidate for the static shell. RPC, subgraph, and
-  worker API responses bypass service-worker caching so chain state is
-  never stale.
-- **Mobile wallet deep linking** — ConnectKit-powered picker; tapping a
-  wallet opens the wallet app directly via mobile deep link. QR pairing
-  remains as fallback.
-- **Safe app embed** — auto-detects Safe iframe context and auto-connects
-  through the Safe postMessage handshake. Outside Safe, the connector
-  is a no-op.
-- **Farcaster Frame** at `/frames/active-loans` — public read-only growth
-  surface.
-
-### 16.5 Public Analytics Dashboard
-
-No-wallet-required transparency surface. Top row: combined all-chains
-headline totals. Below: chain-specific drill-down via a visible chain
-selector. All metrics are derived from on-chain contract state and event
-logs — no PII, no off-chain warehousing.
-
-Required exports: CSV / JSON with snapshot timestamp, contract addresses,
-and block number for verifiable provenance.
-
-### 16.6 Two-Mode UX
-
-A single global `Basic / Advanced` mode toggle drives conditional
-rendering across the app:
-
-- **Basic** — guided flows, fewer visible controls, safer defaults.
-  Hides `Keepers` and `NFT Verifier` from navigation.
-- **Advanced** — denser controls, diagnostics, protocol config details,
-  exposed `Liquidity type` selectors, partial actions, keeper management.
-
-Both modes use the same protocol rules; mode controls visibility and
-density, never policy.
-
-### 16.7 Diagnostics and Observability
-
-A floating diagnostics drawer captures structured frontend telemetry
-(step start / success / failure events) for every important action
-path. Default filter is `Failure` (the most likely support-relevant
-subset). The drawer supports `Download my data` / `Delete my data`
-actions for Vaipakam-namespaced browser storage. Always available on
-public pages where critical actions can fail.
-
----
-
-## 17. Verification and Testing
-
-### 17.1 Test Footprint
-
-The Foundry test suite has 91 test files covering:
-
-- **9 lifecycle facet tests** (Loan / Offer / Repay / Claim / Refinance / Preclose / Early Withdrawal / AddCollateral / PartialWithdrawal)
-- **5 risk and liquidation tests** (Risk / Defaulted / VolatilityLTV / LiquidationMainnetFork / `LiquidationMinOutputInvariant`)
-- **8 oracle tests** (Oracle / OracleAdmin / StalenessHybrid / OracleLiquidityOR / OracleMainnetFork / SecondaryQuorum / SequencerUptimeCheck / FeedOverride)
-- **7 VPFI tests** (Discount / Boundaries / Token / MirrorToken / SupplyCap invariant / TreasuryMint)
-- **reward tests** (Interaction / Coverage / Cap / Cross-chain plumbing / OApp delivery + invariants)
-- **10 governance tests** (AccessControl / Admin / Config / GovernanceConfig / Handover / LZConfig / LZGuardian / PerAssetPause / PauseGating / DeployerZeroRoles)
-- **20+ invariant suites** (FundsConservation / VaultSolvency / FallbackSettlement / ClaimExclusivity / NFTOwnerAuthority / VPFISupplyCap / etc.)
-- **8 end-to-end scenario suites** (Scenario1 through Scenario8 + FallbackClaimRace + PositiveFlowsGapFillers)
-- **2 Permit2 fork tests** (local mock + real Permit2 against mainnet fork)
-- **6 introspection tests** (Metrics / Enumeration / Loupe + 3 parity invariants)
-
-Test settings: 1000 fuzz runs, 100 invariant runs × 50k calls.
-Compiler: Solidity 0.8.29 with `viaIR = true`, optimizer at 200 runs.
-
-### 17.2 Mainnet-Cutover Gate
-
-Before any mainnet `-rc` tag, every `Scenario*.t.sol` and every
-`invariants/*.invariant.t.sol` must be green on the target network's
-fork. Specific load-bearing tests:
-
-- `LZConfig.t.sol` — DVN policy readback for every (OApp, eid) pair
-- `GovernanceHandover.t.sol` — three-role topology installed, deployer
-  holds zero roles
-- `LiquidationMinOutputInvariant.t.sol` — caller-insulation on `minOutputAmount`
-- `SecondaryQuorumTest.t.sol` — Tellor + API3 + DIA quorum semantics
-- `FeedOverride.t.sol` — per-feed staleness + min-answer bounds
-- `Permit2RealForkTest.t.sol` — five negative paths against canonical
-  Permit2 (expired deadline, wrong amount, nonce reuse, spender
-  mismatch, happy path)
-
-### 17.3 External Audits
-
-Mandatory third-party security audits before mainnet launch on each
-network. Audit scope includes the Diamond core, the four-DEX swap
-failover, the secondary oracle quorum, the cross-chain reward mesh,
-the borrower LIF custody, and the Chainlink CCIP OApp surface.
-
-Audit reports will be published where appropriate. The static analysis
-toolchain includes Slither and Mythril. Bug bounty scope, severity, and
-reward ranges will be public before mainnet launch.
-
----
-
-## 18. References
-
-1. `EIP-2535` Diamond Standard
-2. `ERC-20`, `ERC-721`, `ERC-1155`, `ERC-4907` standards
-3. Chainlink Price Feeds and Feed Registry
-4. Uniswap V3 / PancakeSwap V3 / SushiSwap V3 concentrated-liquidity AMMs
-5. `Chainlink CCIP CCT` cross-chain token standard
-6. Tellor TRB oracle, API3 dAPI, DIA price feeds
-7. 0x Settler v2, 1inch v6 routing aggregators
-8. Balancer V2 vault and subgraph
-9. Uniswap Permit2 (`0x000000000022D473030F116dDEE9F6B43aC78BA3`)
-10. OpenZeppelin Contracts Upgradeable (UUPS, AccessControl, Pausable, ERC721)
-11. Diamond-3 reference implementation (Mudgen)
-12. Vaipakam `README.md`, `CLAUDE.md`, `docs/TokenomicsTechSpec.md`,
-    `docs/MEVProtection.md`, `docs/OraclePolicy.md`, `docs/GovernanceConfigDesign.md`,
-    `docs/GovernanceRunbook.md`, `docs/WebsiteReadme.md`
-13. LayerZero / KelpDAO Incident Statement (April 2026) and follow-up
-    industry coverage of the cross-chain bridge exploit — referenced
-    here as the precedent that motivated Vaipakam's migration off
-    LayerZero OFT V2 to Chainlink CCIP (no CCIP lane was involved in
-    the incident)
-
----
-
-## License
-
-This document and the Vaipakam codebase ship under
-**Business Source License 1.1 (BUSL 1.1)** with the project-specific
-terms recorded in `LICENSE`. Change Date: 5 years after production
-deployment. Change License: MIT.
+The app presents the currently available Vaipakam product surfaces: lending, borrowing, NFT rental, offer management, loan management, claims, VPFI fee utility, interaction rewards, vault accounting, risk access, alerts, public analytics, NFT verification, and protocol-console visibility.
