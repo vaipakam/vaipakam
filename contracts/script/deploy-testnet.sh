@@ -99,14 +99,16 @@
 #       wrangler secrets. The phase verifies the chain-specific RPC
 #       secret is present on the Worker before claiming success.
 #
-#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer
+#   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-indexer [--fresh]
 #       Deploys apps/indexer (D1 indexer + read-only API) via
 #       wrangler, then applies any pending D1 migrations to the shared
 #       `vaipakam-archive` database. The indexer is the only Worker
-#       that owns migrations — keeper + agent are stateless. Seeds
-#       indexer_cursor at safe head if `--seed-cursor` is passed
-#       alongside this phase (skipped by default — mainnet redeploys
-#       almost always preserve the diamond and its prior cursor).
+#       that owns migrations — keeper + agent are stateless. With
+#       `--fresh` (i.e. after a fresh contract redeploy that changed the
+#       diamond address) it ALSO purges this chain's stale D1 rows
+#       (offers/loans/activity/cursor/…) so the reindex starts clean from
+#       the new deployBlock. Without `--fresh` the D1 is left intact
+#       (mainnet redeploys almost always preserve the diamond + history).
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-agent
 #       Deploys apps/agent (notifications + frames + agent surfaces)
@@ -1455,6 +1457,20 @@ phase_cf_indexer() {
     echo "[c] RPC-secret check for chainId=$CHAIN_ID"
     verify_rpc_secret_on_worker "$INDEXER_DIR" "vaipakam-indexer" \
       "$EXPECTED_RPC_SECRET" "$CHAIN_ID" || exit 1
+  fi
+
+  # [d] Fresh-deploy D1 hygiene — automated so operators don't hand-run it.
+  # After a `--fresh` contract redeploy the diamond address changed, but the
+  # D1 rows key by chain_id, so the retired diamond's offers/loans would still
+  # surface. Purge this chain's rows (offers/loans/activity/cursor/etc.) here,
+  # right after the indexer is redeployed with the NEW bundle. Deleting
+  # indexer_cursor makes the cron fall back to `deployBlock - 1` and re-scan
+  # forward from the new diamond's deploy block — a clean fresh index. Runs
+  # ONLY under `--fresh`; a normal redeploy (same diamond) preserves history.
+  if [ "$FRESH" = "1" ]; then
+    echo
+    echo "[d] --fresh D1 purge for chainId=$CHAIN_ID (stale rows from the retired diamond)"
+    purge_chain_d1
   fi
 
   mark_phase_done "cf-indexer"
