@@ -185,6 +185,18 @@ for chain_dir in sorted(deployments_dir.iterdir()):
             f"'{merged[key].get('chainSlug')}' — skipped"
         )
         continue
+    # #853 Codex P2 — universal `vpfiToken` alias on mirror chains. The
+    # `Deployment.vpfiToken` field is documented as "the VPFI token address on
+    # this chain, present on every chain": canonical chains export the real
+    # token, mirror chains hold the burn/mint `vpfiMirror`. Frontend guards
+    # (e.g. AutoLendIntentCard blocking VPFI as a lending asset) read
+    # `getDeployment(chainId)?.vpfiToken` universally; without the alias the
+    # guard silently disables on a mirror chain and lets a user submit a flow
+    # the Diamond rejects at `lendingAsset == s.vpfiToken`. Derive it here so
+    # the per-chain artifact stays the single source of truth and the alias
+    # can't drift out of a hand-edited bundle.
+    if "vpfiToken" not in data and "vpfiMirror" in data:
+        data["vpfiToken"] = data["vpfiMirror"]
     merged[key] = data
     print(f"  ✓ {data.get('chainSlug', chain_dir.name)} (chainId={chain_id})")
 

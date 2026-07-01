@@ -572,12 +572,33 @@ purge_chain_d1() {
     return 0
   fi
   echo "  purging D1 rows for chainId=$cid in vaipakam-archive..."
-  local sql=""
-  for t in activity_events diag_errors indexer_cursor loans notify_state offers oracle_snapshot_state; do
+  # Enumerate EVERY chain-scoped table DYNAMICALLY — any table carrying a
+  # `chain_id` column — instead of a hardcoded list. Indexer routes read
+  # loan-scoped tables by (chain_id, loan_id); a new loan reusing a retired
+  # diamond's id would otherwise inherit stale prepay-listing / swap-intent
+  # rows or have pre-grace notifications deduped from the old deploy. A fixed
+  # list silently drifts as the schema grows (prepay_listings,
+  # swap_to_repay_intents, pre_grace_notify_state, liquidity_confidence, …
+  # were all missing). Introspecting the live schema means tables added later
+  # are purged automatically — the list can't go stale (#853 Codex P2).
+  local introspect="SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) p ON p.name = 'chain_id' WHERE m.type = 'table';"
+  local tables
+  tables=$( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
+    --remote --json --command "$introspect" 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); rows=(d[0] if isinstance(d,list) else d).get('results',[]); print('\n'.join(r['name'] for r in rows))" 2>/dev/null )
+  if [ -z "$tables" ]; then
+    echo "    ⚠ could not introspect chain-scoped tables (wrangler not authenticated, or D1 unreachable). Skipping purge; re-run via the indexer dir if needed."
+    return 0
+  fi
+  local sql="" n=0
+  while IFS= read -r t; do
+    [ -z "$t" ] && continue
     sql="${sql}DELETE FROM \"$t\" WHERE chain_id = $cid; "
-  done
+    n=$((n + 1))
+  done <<< "$tables"
+  echo "    purging $n chain-scoped table(s): $(echo "$tables" | tr '\n' ' ')"
   ( cd "$indexer_dir" && pnpm exec wrangler d1 execute vaipakam-archive \
-    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -2 ) || \
+    --remote --command "$sql" 2>&1 | grep -E "Executed|Error" | head -3 ) || \
     echo "    ⚠ D1 purge returned non-zero — wrangler not authenticated, or D1 unreachable. Re-run via the indexer dir if needed."
 }
 

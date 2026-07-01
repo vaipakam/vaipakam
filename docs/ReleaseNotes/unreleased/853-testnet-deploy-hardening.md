@@ -34,4 +34,15 @@ would otherwise still surface), and the misleading forge `--retries`/`--delay`
 knobs were removed — those govern contract-verification retries, not
 `eth_sendRawTransaction`, so they gave a false sense of send-retry protection;
 transient RPC send failures are recovered by re-running the phase (with
-`--resume`) instead.
+`--resume`) instead. The fresh purge now enumerates every chain-scoped
+indexer table dynamically (any table carrying a `chain_id` column) rather than
+a hardcoded list, so tables added to the schema later can never be silently
+left behind — a stale prepay-listing or swap-intent row could otherwise be
+inherited by a new loan that reuses a retired diamond's loan id.
+
+The frontend deployments bundle also now derives a universal `vpfiToken` on
+mirror chains (equal to the burn/mint `vpfiMirror`), matching the documented
+"present on every chain" contract of that field. Without it, a mirror-chain
+record that only carried `vpfiMirror` would make the app's "block VPFI as a
+lending asset" guard silently disable, letting a user submit a flow the diamond
+then rejects.
