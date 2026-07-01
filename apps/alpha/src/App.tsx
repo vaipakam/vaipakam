@@ -272,6 +272,7 @@ function App() {
           <AlphaNavLink to="/rent" label="NFT Rental" icon={<Box />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
+          <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
         </nav>
         <div className="sidebar-note">
           <ShieldCheck size={18} />
@@ -288,6 +289,7 @@ function App() {
           <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
+          <Route path="/help" element={<Help />} />
         </Routes>
       </main>
     </div>
@@ -542,6 +544,41 @@ function Manage({ mode }: { mode: Mode }) {
         <div className="portfolio-row"><span>Vault</span><span>1,000 locked / 1,000 free</span><span>mUSDC</span></div>
         <div className="portfolio-row"><span>Risk access</span><span>Blue-chip only</span><span>Strict off</span></div>
         <div className="portfolio-row"><span>Activity</span><span>6 recent grouped events</span><span>Synced</span></div>
+      </section>
+    </div>
+  );
+}
+
+function Help() {
+  const topics = [
+    { title: 'Before you connect', body: 'Vaipakam is non-custodial. You keep wallet control, but every signature can change balances, locks, or future claim rights.' },
+    { title: 'Borrowing basics', body: 'Borrowers receive tokens now and lock collateral. If repayment fails, the locked collateral can move through claim or liquidation paths.' },
+    { title: 'Lending basics', body: 'Lenders provide tokens for interest. The important decision is whether the collateral and settlement route are good enough if the borrower defaults.' },
+    { title: 'NFT rental basics', body: 'Renters pay for temporary use rights. The NFT owner keeps custody rules and expiry/claim paths visible before the rental starts.' },
+    { title: 'VPFI utility', body: 'VPFI is optional in the beginner path. It can affect fee discounts, rewards, and governance context once the user wants that layer.' },
+    { title: 'When to use Advanced', body: 'Use Advanced for custom markets, risk simulation, automation, diagnostics, and protocol settings after the guided receipt makes sense.' },
+  ];
+
+  return (
+    <div className="help-page">
+      <SectionHeading eyebrow="Help" title="Plain-language protocol guide" />
+      <p className="page-intro">
+        This guide is part of the product surface, not a separate manual. Every help topic should connect back to an action the user can take next.
+      </p>
+      <div className="help-grid">
+        {topics.map((topic) => (
+          <article className="help-card panel-surface" key={topic.title}>
+            <h3>{topic.title}</h3>
+            <p>{topic.body}</p>
+          </article>
+        ))}
+      </div>
+      <section className="decision-strip">
+        <div>
+          <p className="eyebrow">Ready to act</p>
+          <h3>Start with a receipt-backed guided flow.</h3>
+        </div>
+        <NavLink className="primary-action" to="/earn">Open Earn flow <ArrowRight size={18} /></NavLink>
       </section>
     </div>
   );

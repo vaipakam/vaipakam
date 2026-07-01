@@ -218,7 +218,8 @@ button {
 .page-grid,
 .flow-page,
 .manage-page,
-.advanced-page {
+.advanced-page,
+.help-page {
   display: grid;
   gap: 22px;
   max-width: 1280px;
@@ -355,7 +356,8 @@ dd {
 .principle-list,
 .lane-grid,
 .advanced-grid,
-.console-grid {
+.console-grid,
+.help-grid {
   display: grid;
   gap: 14px;
 }
@@ -448,6 +450,21 @@ dd {
 .advanced-grid,
 .lane-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.help-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.help-card h3 {
+  margin: 0 0 8px;
+  font-size: 1.05rem;
+}
+
+.help-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.58;
 }
 
 .principle-card {
@@ -769,7 +786,7 @@ dd {
   }
 
   .nav-list {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
   }
 
   .nav-link {
@@ -786,7 +803,8 @@ dd {
 
   .task-grid,
   .advanced-grid,
-  .lane-grid {
+  .lane-grid,
+  .help-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -819,6 +837,7 @@ dd {
   .principle-list,
   .advanced-grid,
   .lane-grid,
+  .help-grid,
   .console-grid,
   .advanced-setting-grid,
   .action-list {
