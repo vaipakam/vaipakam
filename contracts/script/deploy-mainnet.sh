@@ -628,6 +628,18 @@ EOF
     # no prior token → this stays empty → [3b] proceeds normally.
     PRESERVED_VPFI_TOKEN="$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || true)"
     export PRESERVED_VPFI_TOKEN
+    # [0a-guard] #853 Codex P2 — refuse a duplicate canonical VPFI mint HERE, in
+    # preflight, BEFORE archiving and BEFORE any forge broadcast. Enforcing it at
+    # [3b] instead would run only after [2] DeployDiamond + [3] DeployTimelock had
+    # already landed, leaving a partial mainnet deploy. A prior canonical token +
+    # no explicit rotation opt-in aborts cleanly before anything is broadcast.
+    if [ "$IS_CANONICAL" = "1" ] && [ -n "$PRESERVED_VPFI_TOKEN" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+      echo "ERROR: a prior canonical VPFI token ($PRESERVED_VPFI_TOKEN) exists on $CHAIN_SLUG." >&2
+      echo "       A --fresh redeploy would mint a SECOND 23M supply and FORK VPFI. To rotate" >&2
+      echo "       the canonical token deliberately, re-run with VPFI_TOKEN_FORCE_REDEPLOY=1;" >&2
+      echo "       otherwise carry the existing token forward (do not --fresh the VPFI mint)." >&2
+      exit 1
+    fi
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
@@ -722,23 +734,10 @@ EOF
   # fails at [4] without this step (#853 Codex P1). Mirror chains skip it — they
   # mint their own Burn/Mint VPFIMirrorToken inside [4]. DeployVPFIToken itself
   # hard-guards to canonical chain ids, so this IS_CANONICAL gate is
-  # belt-and-suspenders.
+  # belt-and-suspenders. The duplicate-mint refusal for a --fresh re-deploy is
+  # enforced in PREFLIGHT (see [0a-guard]), before any broadcast — refusing here
+  # would leave a partial deploy since [2]/[3] already landed (#853 Codex P2).
   if [ "$IS_CANONICAL" = "1" ]; then
-    # #853 Codex P1 — mainnet DOES support --fresh (with
-    # --confirm-purging-prior-mainnet-deploy), and that path archives
-    # addresses.json in [0a] BEFORE this step, so DeployVPFIToken's on-disk
-    # no-overwrite guard is blind. If a canonical VPFI token existed pre-archive
-    # (captured into PRESERVED_VPFI_TOKEN), refuse to mint a SECOND 23M supply —
-    # which would FORK VPFI — unless the operator explicitly opts into a token
-    # rotation via VPFI_TOKEN_FORCE_REDEPLOY=1. (On a non-fresh re-run the
-    # artifact still carries .vpfiToken, so the script-side guard also trips.)
-    if [ -n "${PRESERVED_VPFI_TOKEN:-}" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
-      echo "ERROR: a prior canonical VPFI token ($PRESERVED_VPFI_TOKEN) existed before this" >&2
-      echo "       --fresh mainnet redeploy. Minting a new one would FORK VPFI. To deliberately" >&2
-      echo "       rotate the canonical token set VPFI_TOKEN_FORCE_REDEPLOY=1; otherwise restore" >&2
-      echo "       the existing token into addresses.json and skip the mint." >&2
-      exit 1
-    fi
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
     forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow
