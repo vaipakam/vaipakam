@@ -1,8 +1,10 @@
-# Vaipakam DeFi Whitepaper
+# Vaipakam DeFi Product Overview
 
 Vaipakam is a decentralized peer-to-peer lending, borrowing, NFT rental, and collateral-management protocol. The connected application at defi.vaipakam.com gives users a wallet-controlled interface for creating offers, accepting offers, managing loans, claiming proceeds, using VPFI fee utility, and inspecting public protocol state.
 
 Vaipakam is non-custodial at the user-action layer: protocol transactions are submitted through the connected wallet, and claim rights follow the Vaipakam position NFTs that represent lender and borrower roles. The app does not hold signing keys, does not custody user wallets, and does not hide protocol state behind a private account system.
+
+This README is the product-facing overview. The canonical technical whitepaper rendered on the public website remains [apps/www/src/content/whitepaper/Whitepaper.en.md](apps/www/src/content/whitepaper/Whitepaper.en.md).
 
 ## Product Overview
 
@@ -21,13 +23,13 @@ The protocol is designed for transparent, asset-specific negotiation. Users choo
 
 The connected app currently includes:
 
-- Dashboard for wallet-owned loans, offers, claim shortcuts, VPFI status, and auto-lifecycle settings where available.
+- Dashboard for wallet-owned loans, offers, claim shortcuts, VPFI status, fee-discount consent, and auto-lifecycle settings where available.
 - Offer Book for browsing lender and borrower offers, filtering market inventory, reviewing active user offers, and accepting valid offers.
 - Create Offer for lender offers, borrower offers, ERC-20 collateral, NFT collateral, NFT rental terms, duration buckets, interest-mode choices, periodic-interest settings where supported, and risk acknowledgement.
 - Loan Details for repayment, collateral additions, health-factor and LTV views when applicable, liquidation visibility, lifecycle timelines, keeper controls, prepayment listings, swap-to-repay surfaces, and position-specific actions.
 - Claim Center for lender and borrower claims, VPFI interaction rewards, loan-linked claim rows, and claim transaction feedback.
-- VPFI Vault for depositing and withdrawing free VPFI, viewing protocol-tracked VPFI balances, fee-discount consent, tier status, and token transparency.
-- Your Vaipakam Vault for protocol-tracked balances, locked versus free asset state, deposits, withdrawals, and vault-level asset inspection.
+- VPFI Vault for depositing and withdrawing free VPFI, viewing protocol-tracked VPFI balances, fee-discount tier status, and token transparency.
+- Your Vaipakam Vault for protocol-tracked balances, locked versus free asset state, and vault-level asset inspection.
 - Risk Access for user-controlled vault risk tiers and strict-mode controls where the deployment exposes progressive risk access.
 - Alerts for loan and health-factor notification preferences where enabled.
 - Allowances for reviewing token approvals relevant to app actions.
@@ -99,7 +101,7 @@ The user-facing risk model includes:
 - Sanctions and terms gates where configured.
 - Transaction simulation previews that can report whether a transaction appears likely to succeed, revert, or be unavailable for preview.
 
-Liquidation handling can include ordinary route-based liquidation, partial liquidation, internal-match opportunities, discounted collateral purchase paths, and fallback settlement visibility where those protocol surfaces are deployed. The app presents these as reviewable actions rather than hidden background state.
+Liquidation handling in the connected app is route-based: the review surface can quote available liquidation routes, submit the liquidation transaction, and show fallback settlement visibility where the deployment exposes it. The app does not present every protocol-level liquidation branch as a user-selectable action.
 
 ## NFT Rental Model
 
@@ -117,7 +119,6 @@ The app exposes:
 
 - Protocol-tracked asset balances.
 - Locked and free balances.
-- Deposits and withdrawals where available.
 - VPFI utility balances.
 - Asset rows that distinguish withdrawable funds from funds locked by offers, loans, intents, claims, or reservations.
 - Recovery tooling for unsolicited ERC-20 tokens sent directly to a vault, available through a deliberately hidden advanced route.
