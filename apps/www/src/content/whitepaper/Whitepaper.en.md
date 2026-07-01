@@ -1482,6 +1482,9 @@ reward ranges will be public before mainnet launch.
 
 ## 18. References
 
+Security-sensitive reports should use the private disclosure channels in
+[SECURITY.md](https://github.com/vaipakam/vaipakam/blob/main/SECURITY.md).
+
 1. `EIP-2535` Diamond Standard
 2. `ERC-20`, `ERC-721`, `ERC-1155`, `ERC-4907` standards
 3. Chainlink Price Feeds and Feed Registry

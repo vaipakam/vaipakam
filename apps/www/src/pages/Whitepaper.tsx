@@ -82,10 +82,12 @@ export default function Whitepaper() {
           <article className="user-guide-content">
             <HelpTabs />
             {isNonEnglish && <EnglishOnlyNotice variant="legal" />}
-            <p>
-              This page renders the canonical technical whitepaper. The repository root README
-              is a product overview for quick orientation.
-            </p>
+            {!isNonEnglish && (
+              <p>
+                This page renders the canonical technical whitepaper. The repository root README
+                is a product overview for quick orientation.
+              </p>
+            )}
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={headingComps as never}

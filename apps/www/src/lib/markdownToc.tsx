@@ -96,9 +96,10 @@ export function extractMarkdownToc(raw: string): TocSection[] {
 
   return sections.map((section) => {
     if (section.items.length > 0) return section;
+    const id = slugify(section.title) || 'section';
     return {
       title: '',
-      items: [{ id: slugify(section.title), title: section.title }],
+      items: [{ id, title: section.title }],
     };
   });
 }
