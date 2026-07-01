@@ -757,17 +757,29 @@ once the provider webhook fires).
 **To enable (per environment):**
 
 ```bash
-# 1. Create the Alchemy webhook HMAC signing key in the SAME Cloudflare Secrets
-#    Store the RPC_* secrets live in (store vaipakam-credentials). The value is
-#    the "signing key" Alchemy shows for the webhook (Webhooks dashboard).
-wrangler secret-store secret create ALCHEMY_WEBHOOK_SIGNING_KEY \
-  --store-id 1e66429d0fa24aa38a27bc05b7bcf63e
+# 1. Create ONE Alchemy webhook HMAC signing key PER CHAIN in the SAME Cloudflare
+#    Secrets Store the RPC_* secrets live in (store vaipakam-credentials).
+#    Alchemy Notify V2 mints a DISTINCT signing key per webhook — there is no
+#    team/app-shared key — so the route selects ALCHEMY_WEBHOOK_SIGNING_KEY_<chainId>
+#    from the trusted `?chain=` param (falling back to the generic
+#    ALCHEMY_WEBHOOK_SIGNING_KEY for a single-chain deploy). The value is the
+#    "signing key" Alchemy shows for that chain's webhook (Webhooks dashboard).
+#    Pipe the value via stdin (keeps it out of shell history / argv), --scopes
+#    workers --remote. One create per active chain (84532 Base Sepolia, 421614
+#    Arb Sepolia, 97 BNB Testnet, …):
+STORE=1e66429d0fa24aa38a27bc05b7bcf63e
+printf '%s' "<base-sepolia signing key>" | wrangler secrets-store secret create "$STORE" \
+  --name ALCHEMY_WEBHOOK_SIGNING_KEY_84532  --scopes workers --remote
+printf '%s' "<arb-sepolia signing key>"  | wrangler secrets-store secret create "$STORE" \
+  --name ALCHEMY_WEBHOOK_SIGNING_KEY_421614 --scopes workers --remote
 
-# 2. In apps/indexer/wrangler.jsonc, UNCOMMENT the binding (it's commented out so
-#    a deploy can't fail validating a not-yet-existing store secret):
-#      { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY", "store_id": "1e66…", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY" }
-#    and set the gate var:
+# 2. In apps/indexer/wrangler.jsonc, ensure the PER-CHAIN bindings are present
+#    (a binding can only be added once its secret exists — wrangler validates at
+#    deploy) and the gate var is set:
+#      { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532",  "store_id": "1e66…", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532" }
+#      { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614", "store_id": "1e66…", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614" }
 #      "vars": { …, "CHAIN_INGEST_VIA_DO": "true" }
+#    (Add a `_<chainId>` binding for every chain you enable a webhook for.)
 
 # 3. Redeploy the indexer Worker.
 cd apps/indexer && wrangler deploy
