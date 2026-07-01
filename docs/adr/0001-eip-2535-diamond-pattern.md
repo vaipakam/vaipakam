@@ -116,5 +116,5 @@ layout). Diamond's shared-storage pattern is strictly better here.
   [`contracts/lib/diamond-3-hardhat/`](../../contracts/lib/)
 - Deploy-sanity: [`contracts/test/deploy/FacetSizeLimitTest.t.sol`](../../contracts/test/deploy/FacetSizeLimitTest.t.sol),
   [`contracts/test/deploy/SelectorCoverageTest.t.sol`](../../contracts/test/deploy/SelectorCoverageTest.t.sol)
-- Spec context: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §3 (Network Model) describes per-network protocol instances; Diamond-specific implementation detail is anchored by the source contracts above.
+- Spec context: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §2.1 (Chain Model) describes per-network protocol instances; §3.1 (Diamond Pattern) covers Diamond implementation context, with source-level details anchored by the contracts above.
 - Related: ADR-0008 (per-user vault factory)

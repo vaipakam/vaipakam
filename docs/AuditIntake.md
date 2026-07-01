@@ -137,7 +137,7 @@ protection.
 
 5. **Active-network-only liquidity** (`checkLiquidity` and
    `checkLiquidityOnActiveNetwork`).
-   - Canonical whitepaper §9 and `docs/FunctionalSpecs/ProjectDetailsREADME.md` active-network liquidity rules: liquidity is judged purely from the current
+   - Canonical whitepaper §4 and §8.4 plus `docs/FunctionalSpecs/ProjectDetailsREADME.md` active-network liquidity rules: liquidity is judged purely from the current
      active network. The prior Ethereum-mainnet reference layer (the
      `AssetBlockedUseMainnet` block-and-redirect path) has been retired.
      Both entry points now return Liquid/Illiquid based only on the

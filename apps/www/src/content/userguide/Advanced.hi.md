@@ -750,7 +750,8 @@ Live status:
 - Wallet-level consent flag।
 
 जब तक VPFI deposited रहता है तब तक वह आपके discount tier में
-गिना जाता है — कोई अलग "deposit" action नहीं है।
+गिना जाता है — नीचे दिए explicit deposit step के अलावा कोई
+अलग locking action नहीं है।
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -764,7 +765,7 @@ deposit pattern की जगह single-signature path prefer करता ह�
 यदि उस chain पर Permit2 configured नहीं है, तो यह clean fallback
 करता है।
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault से VPFI निकालें
 

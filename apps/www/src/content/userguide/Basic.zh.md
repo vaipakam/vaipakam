@@ -355,7 +355,7 @@ consent switch 是否为 ON — discount 只有在它 ON 时才会生效。
 不会在未经您同意的情况下移动您的 VPFI。一笔 transaction (在支持
 的 chains 上可以是一笔 signature) 即可完成。
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### 从 vault 中 withdraw VPFI
 

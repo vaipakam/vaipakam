@@ -750,7 +750,7 @@ approve + deposit pattern より single-signature path を prefer
 します。その chain で Permit2 が configured されていない場合は、
 cleanly fall back します。
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault から VPFI を引き出しする
 

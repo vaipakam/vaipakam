@@ -405,7 +405,7 @@ fee discount を unlock するには、自分で VPFI を vault に move
 があなたの VPFI を勝手に動かすことはありません。1 transaction
 (対応 chain では single signature) で完了します。
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault から VPFI を引き出しする
 

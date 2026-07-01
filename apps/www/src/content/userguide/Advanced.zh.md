@@ -619,7 +619,7 @@ bridge 到的那条 chain 上的 wallet。
 - Wallet 级 consent flag。
 
 只要 vault VPFI 保持 deposit 状态，它就会计入您的 discount tier
-— 没有单独的 "deposit" 操作。
+— 除了下面的 explicit deposit step 之外，没有额外的 locking 操作。
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -632,7 +632,7 @@ vault deposit 始终必须是 explicit user action。在配置了 Permit2
 approve + deposit pattern；如果该 chain 未配置 Permit2，则会
 cleanly fall back。
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### 从您的 vault withdraw VPFI
 

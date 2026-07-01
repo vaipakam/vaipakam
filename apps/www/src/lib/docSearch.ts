@@ -87,17 +87,15 @@ const WHITEPAPER_FILES = import.meta.glob('../content/whitepaper/*.md', {
 }) as Record<string, string>;
 
 // ─── Slug derivation ─────────────────────────────────────────────────
-// Mirrors `slugify` in lib/markdownToc — kept private here to avoid a
-// circular import (markdownToc imports React, and a search index built
-// at module scope shouldn't pull React in transitively for environments
-// like SSR pre-rendering).
+// Mirrors `slugify` in lib/markdownToc. Keep Unicode letters/numbers so
+// search result anchors match localized headings rendered by the docs pages.
 
 function slugify(input: string): string {
   return input
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[^\p{L}\p{N}\s-]/gu, '')
     .trim()
     .replace(/\s+/g, '-')
     .replace(/-+/g, '-');

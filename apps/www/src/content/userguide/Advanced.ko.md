@@ -680,7 +680,7 @@ Live status:
 - wallet-level consent flag.
 
 vault VPFI는 deposit되어 있는 동안 discount tier에 count됩니다 —
-별도의 "deposit" action은 없습니다.
+아래 explicit deposit step 외에 별도의 locking action은 없습니다.
 
 <a id="buy-vpfi.deposit"></a>
 
@@ -693,7 +693,7 @@ chain에서는 앱이 classic approve + deposit pattern보다 single-signature
 path를 prefer합니다. 해당 chain에서 Permit2가 configured되어 있지 않다면
 cleanly fall back합니다.
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault에서 VPFI withdraw
 

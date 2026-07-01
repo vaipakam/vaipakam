@@ -382,7 +382,7 @@ discount를 unlock하려면 직접 VPFI를 vault로 옮겨야 합니다. 이는
 않습니다. 한 번의 transaction(또는 지원되는 chain에서는 single
 signature)이면 됩니다.
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault에서 VPFI withdraw
 

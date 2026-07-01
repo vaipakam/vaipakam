@@ -413,7 +413,7 @@ discount unlock करने के लिए आपको उसे खुद v
 बिना आपका VPFI कभी move नहीं करता। एक transaction (या supported
 chains पर एक signature) और काम पूरा।
 
-<a id="buy-vpfi.withdraw"></a>
+<a id="buy-vpfi.unstake"></a>
 
 ### vault से VPFI निकालें
 
