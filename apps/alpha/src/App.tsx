@@ -820,6 +820,15 @@ function Help() {
 }
 
 function Advanced() {
+  const [riskMode, setRiskMode] = useState('Blue-chip only');
+  const [oracleRoute, setOracleRoute] = useState('Primary + fallback');
+  const [automation, setAutomation] = useState('Manual approval');
+  const [slippage, setSlippage] = useState('1.5');
+  const [diagnosticRun, setDiagnosticRun] = useState(0);
+  const diagnostics = diagnosticRun === 0
+    ? 'Not run in this session'
+    : 'Run #' + diagnosticRun + ': Base Sepolia connected, offer index readable, no blocking UI state found.';
+
   return (
     <div className="advanced-page">
       <SectionHeading eyebrow="Advanced mode" title="Full protocol power, intentionally grouped" />
@@ -830,17 +839,64 @@ function Advanced() {
       <div className="advanced-grid">
         {advancedPanels.map((panel) => <Principle key={panel.title} icon={panel.icon} title={panel.title} body={panel.body} />)}
       </div>
+
+      <section className="advanced-workbench panel-surface">
+        <div>
+          <p className="eyebrow">Workspace controls</p>
+          <h3>Set assumptions before creating custom markets or automation.</h3>
+        </div>
+        <div className="workbench-grid">
+          <label>
+            <span>Risk mode</span>
+            <select value={riskMode} onChange={(event) => setRiskMode(event.target.value)}>
+              <option>Blue-chip only</option>
+              <option>Liquid assets</option>
+              <option>Illiquid allowed</option>
+            </select>
+          </label>
+          <label>
+            <span>Oracle route</span>
+            <select value={oracleRoute} onChange={(event) => setOracleRoute(event.target.value)}>
+              <option>Primary + fallback</option>
+              <option>Chainlink only</option>
+              <option>DEX TWAP + fallback</option>
+            </select>
+          </label>
+          <label>
+            <span>Automation</span>
+            <select value={automation} onChange={(event) => setAutomation(event.target.value)}>
+              <option>Manual approval</option>
+              <option>Auto-lend capped</option>
+              <option>Auto-roll capped</option>
+            </select>
+          </label>
+          <label>
+            <span>Slippage cap</span>
+            <input inputMode="decimal" value={slippage} onChange={(event) => setSlippage(event.target.value)} />
+          </label>
+        </div>
+      </section>
+
       <section className="advanced-console">
         <div className="console-header">
           <span><Network size={16} /> Base Sepolia</span>
-          <span><Wallet size={16} /> 0xE8...23Cb</span>
-          <span><Store size={16} /> Diamond connected</span>
+          <span><Wallet size={16} /> Connected wallet</span>
+          <span><Store size={16} /> Diamond target ready</span>
         </div>
         <div className="console-grid">
-          <Metric label="Open offers" value="6 hidden" />
-          <Metric label="Active loans" value="1" />
-          <Metric label="Claimable" value="1,000 mUSDC" />
-          <Metric label="VPFI status" value="Not registered" />
+          <Metric label="Risk mode" value={riskMode} />
+          <Metric label="Oracle route" value={oracleRoute} />
+          <Metric label="Automation" value={automation} />
+          <Metric label="Slippage cap" value={slippage + '%'} />
+        </div>
+        <div className="diagnostic-panel">
+          <div>
+            <p className="eyebrow">Diagnostics</p>
+            <strong>{diagnostics}</strong>
+          </div>
+          <button className="secondary-action" type="button" onClick={() => setDiagnosticRun((current) => current + 1)}>
+            Run diagnostics
+          </button>
         </div>
       </section>
     </div>

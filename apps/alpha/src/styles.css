@@ -828,6 +828,38 @@ dd {
   font-weight: 800;
 }
 
+.advanced-workbench {
+  display: grid;
+  gap: 18px;
+}
+
+.workbench-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.workbench-grid label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.workbench-grid select,
+.workbench-grid input {
+  min-height: 42px;
+  width: 100%;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 750;
+}
+
 .advanced-console {
   overflow: hidden;
 }
@@ -849,6 +881,21 @@ dd {
 .console-grid {
   padding: 18px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.diagnostic-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.diagnostic-panel strong {
+  display: block;
+  margin-top: 6px;
+  line-height: 1.45;
 }
 
 .metric {
@@ -931,6 +978,8 @@ dd {
   }
 
   .position-row,
+  .workbench-grid,
+  .diagnostic-panel,
   .task-grid,
   .step-board,
   .guided-board,
