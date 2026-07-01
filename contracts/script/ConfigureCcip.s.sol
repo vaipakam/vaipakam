@@ -351,10 +351,19 @@ contract ConfigureCcip is Script {
     ///      (#687-A removed the `VpfiBuyAdapter`/`VpfiBuyReceiver` from this
     ///      coverage map along with the cross-chain VPFI sale.)
     function _setGuardians(Ctx memory c) internal {
-        if (c.guardian == address(0)) {
-            console.log("Guardian: CCIP_GUARDIAN unset, skip.");
-            return;
-        }
+        // #857 — REQUIRE the guardian on every entrypoint, not just the
+        // deploy-{mainnet,testnet}.sh wrappers. Previously an unset CCIP_GUARDIAN
+        // was a silent skip, so a direct/recovery `forge script ConfigureCcip`
+        // (the path deploy-chain.sh points one-shot operators at) could wire the
+        // whole CCIP stack, mark ccip-wire successful, and leave every
+        // GuardianPausable contract with NO guardian — after handover only the
+        // timelock could pause them, defeating the fast incident-containment
+        // path. Setting a guardian is owner-only, so it MUST land here while
+        // ADMIN still owns the contracts. Fail loud instead of skipping.
+        require(
+            c.guardian != address(0),
+            "ConfigureCcip: CCIP_GUARDIAN unset (or zero) - required to wire the incident guardian onto every GuardianPausable contract before handover"
+        );
         GuardianPausable(c.messenger).setGuardian(c.guardian);
         GuardianPausable(c.rewardMessenger).setGuardian(c.guardian);
         if (!c.canonical) {

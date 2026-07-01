@@ -95,7 +95,18 @@ contract DeployVPFIToken is Script {
             Deployments.writeVpfiToken(reuse);
             console.log("VPFI carry-forward: reusing existing canonical token:", reuse);
             console.log("  recorded as .vpfiToken (mint skipped).");
-            console.log("  ACTION REQUIRED: rotate its minter -> new diamond:", diamond);
+            console.log("  ACTION REQUIRED (owner/timelock, post-deploy):");
+            console.log("   1. rotate the token minter -> new diamond:", diamond);
+            // #857 — the CCT TokenAdminRegistry keeps pointing VPFI at the OLD
+            // LockRelease pool: DeployCrosschain deploys a NEW pool for the new
+            // diamond, but ConfigureCcip._registerCct SKIPS setPool when the
+            // broadcaster (ADMIN) is not the token owner — which is exactly the
+            // post-handover carry-forward case (owner = timelock). So the token
+            // owner MUST install the new pool in the registry, else CCIP routes
+            // VPFI through the stale pool. Flag it loudly here.
+            console.log("   2. as the token OWNER, install the NEW LockRelease pool");
+            console.log("      in the CCIP TokenAdminRegistry (setPool) - ConfigureCcip");
+            console.log("      skips it when ADMIN != token owner (post-handover).");
             return reuse;
         }
 

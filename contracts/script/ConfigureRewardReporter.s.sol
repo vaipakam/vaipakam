@@ -126,8 +126,17 @@ contract ConfigureRewardReporter is Script {
                 address(0)
             );
             if (legacyEnv == address(0)) {
+                // No artifact + no env. SKIP only on an EXPLICIT `--skip-vpfi`
+                // deploy (SKIP_VPFI=1). Otherwise FAIL LOUD (#857): a
+                // missing/corrupt `.rewardMessenger` on a NORMAL deploy must not
+                // silently let the spell continue + the wrapper mark configure
+                // done while cross-chain rewards stay unwired.
+                require(
+                    vm.envOr("SKIP_VPFI", uint256(0)) == 1,
+                    "ConfigureRewardReporter: no reward messenger recorded (run DeployCrosschain first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
+                );
                 console.log(
-                    "[ConfigureRewardReporter] skip - no reward messenger recorded (cross-chain / VPFI skipped?) chain:",
+                    "[ConfigureRewardReporter] skip - SKIP_VPFI=1 + no reward messenger, chain:",
                     block.chainid
                 );
                 return;

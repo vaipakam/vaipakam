@@ -50,19 +50,28 @@ contract ConfigureVPFIToken is Script {
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
 
         // Resolve THIS chain's VPFI token: canonical hosts the real
-        // `.vpfiToken`; a mirror holds the Burn/Mint `.vpfiMirror`. Both use the
-        // json-only optional readers so an absent token is a clean skip below
-        // (not a revert) — a `--skip-vpfi` deploy omits [3b]/[4], so there is no
-        // token to register, yet `DiamondConfigSpell` must still run the oracle
-        // / reward / NFT configures (#855).
+        // `.vpfiToken` (artifact OR the documented `<CHAIN>_VPFI_TOKEN_ADDRESS`
+        // env fallback — restored in #857); a mirror holds the Burn/Mint
+        // `.vpfiMirror`.
         address token = canonical
-            ? Deployments.readVpfiTokenOptional()
+            ? _resolveCanonicalToken()
             : Deployments.readVpfiMirrorOptional();
         if (token == address(0)) {
-            console.log(
+            // No token recorded. SKIP only on an EXPLICIT `--skip-vpfi` deploy
+            // (SKIP_VPFI=1, set by the operator running the configure on a
+            // chain deployed without the VPFI/cross-chain stack). Otherwise
+            // FAIL LOUD (#857): a missing/corrupt artifact on a normal deploy
+            // must NOT silently leave `s.vpfiToken` unset while the wrapper
+            // marks configure done — that disables every VPFI mint/reward/
+            // discount path.
+            require(
+                vm.envOr("SKIP_VPFI", uint256(0)) == 1,
                 canonical
-                    ? "[ConfigureVPFIToken] skip - no .vpfiToken recorded (VPFI deploy skipped?) chain:"
-                    : "[ConfigureVPFIToken] skip - no .vpfiMirror recorded (VPFI deploy skipped?) chain:",
+                    ? "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
+                    : "ConfigureVPFIToken: .vpfiMirror not deployed (run DeployCrosschain first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
+            );
+            console.log(
+                "[ConfigureVPFIToken] skip - SKIP_VPFI=1 + no VPFI token recorded, chain:",
                 block.chainid
             );
             return;
@@ -102,6 +111,20 @@ contract ConfigureVPFIToken is Script {
             canonical
                 ? "VPFI token registered + canonical flag set."
                 : "Mirror VPFI token registered (canonical flag left false)."
+        );
+    }
+
+    /// @dev Resolve the canonical `.vpfiToken` from the artifact, falling back to
+    ///      the documented chain-prefixed `<CHAIN>_VPFI_TOKEN_ADDRESS` env var
+    ///      (the legacy/bootstrap path `readVpfiToken()` honours). Non-reverting:
+    ///      returns address(0) when both are absent, so the caller can decide
+    ///      between an explicit `--skip-vpfi` skip and a fail-loud revert (#857).
+    function _resolveCanonicalToken() internal view returns (address) {
+        address a = Deployments.readVpfiTokenOptional();
+        if (a != address(0)) return a;
+        return vm.envOr(
+            string.concat(Deployments.envPrefix(), "VPFI_TOKEN_ADDRESS"),
+            address(0)
         );
     }
 }

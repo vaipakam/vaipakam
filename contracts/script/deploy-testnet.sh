@@ -677,6 +677,25 @@ EOF
     exit 1
   fi
 
+  # #857 — validate a reuse address PRE-broadcast (DeployVPFIToken's symbol/
+  # decimals check runs only at [3b], after Diamond+Timelock broadcast). (a) if
+  # `.vpfiToken` is already recorded the reuse MUST equal it; (b) on-chain, the
+  # reuse must be an 18-decimal ERC20 whose symbol is "VPFI".
+  if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "$IS_CANONICAL" = "1" ]; then
+    _recorded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$_recorded_vpfi" ] && [ "$_recorded_vpfi" != "null" ] && \
+       [ "$(printf '%s' "$_recorded_vpfi" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$VPFI_TOKEN_REUSE_ADDRESS" | tr 'A-Z' 'a-z')" ]; then
+      echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS ($VPFI_TOKEN_REUSE_ADDRESS) != recorded .vpfiToken ($_recorded_vpfi) — refusing before broadcast." >&2
+      exit 1
+    fi
+    _reuse_sym=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "symbol()(string)" --rpc-url "$RPC" 2>/dev/null | tr -d '"' || echo "")
+    _reuse_dec=$(cast call "$VPFI_TOKEN_REUSE_ADDRESS" "decimals()(uint8)" --rpc-url "$RPC" 2>/dev/null || echo "")
+    if [ "$_reuse_sym" != "VPFI" ] || [ "$_reuse_dec" != "18" ]; then
+      echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS is not a canonical VPFI token (symbol='$_reuse_sym' decimals='$_reuse_dec'; expected VPFI / 18)." >&2
+      exit 1
+    fi
+  fi
+
   # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
   # DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical
   # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
