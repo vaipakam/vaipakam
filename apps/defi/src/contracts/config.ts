@@ -96,11 +96,28 @@ interface ChainMeta {
   predominantStableAddress?: string | null;
 }
 
+/** Chains whose Diamond is deployed + present in the shared deployments
+ *  bundle for INDEXING, but which are NOT yet user-facing. The indexer reads
+ *  the bundle directly (not this frontend registry), so keeping a chain here
+ *  lets it be tracked while staying out of the app: `buildChainConfig` folds
+ *  `diamondAddress → null` for these, which drops them from `ChainSwitcher`
+ *  (filters `diamondAddress !== null`) and flips `isChainSupported` false so
+ *  protocol calls are gated off — a user can't select a half-configured chain.
+ *
+ *  BNB testnet (97): cross-chain stack + diamond are deployed and indexed, but
+ *  its `ConfigureOracle` follow-up hasn't run (no `wethContract`/ETH feed), so
+ *  `OracleFacet` fail-closes every asset to Illiquid → lending/risk flows would
+ *  break. Remove 97 here once the BNB oracle setup lands. (#856/#859 Codex.) */
+const INDEXER_ONLY_CHAIN_IDS = new Set<number>([97]);
+
 /** Folds a `ChainMeta` + the matching deployments-JSON record into a
  *  full `ChainConfig`. RPC URL still comes from the operator's
  *  `.env.local`; everything else flows from the deployments JSON. */
 function buildChainConfig(meta: ChainMeta): ChainConfig {
   const dep: Deployment | undefined = getDeployment(meta.chainId);
+  const userFacingDiamond = INDEXER_ONLY_CHAIN_IDS.has(meta.chainId)
+    ? null
+    : (dep?.diamond ?? null);
   return {
     chainId: meta.chainId,
     chainIdHex: meta.chainIdHex,
@@ -108,7 +125,7 @@ function buildChainConfig(meta: ChainMeta): ChainConfig {
     shortName: meta.shortName,
     rpcUrl: str(meta.rpcUrlEnvKey, meta.rpcUrlDefault),
     blockExplorer: meta.blockExplorer,
-    diamondAddress: dep?.diamond ?? null,
+    diamondAddress: userFacingDiamond,
     deployBlock: dep?.deployBlock ?? 0,
     isCanonicalVPFI: meta.isCanonicalVPFI,
     testnet: meta.testnet,

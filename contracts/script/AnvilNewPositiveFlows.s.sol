@@ -32,6 +32,7 @@ import {MockChainlinkRegistry, MockChainlinkFeed} from "./mocks/MockChainlinkReg
 import {MockUniswapV3Factory} from "./mocks/MockUniswapV3.sol";
 import {MockSanctionsList} from "../test/mocks/MockSanctionsList.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title AnvilNewPositiveFlows
@@ -200,13 +201,16 @@ contract AnvilNewPositiveFlows is Script {
         registry.setFeed(address(weth), usdDenom, address(wethFeed));
 
         MockUniswapV3Factory univ3 = new MockUniswapV3Factory();
-        univ3.createPool(
-            address(usdc),
-            address(weth),
-            3000,
-            79228162514264337593543950336,
-            1e24
-        );
+        // #856 — price the mock pool CONSISTENTLY with the mock Chainlink feeds.
+        // OracleFacet's depth guard (`_accumulatePoolImpacts` Guard 1) requires
+        // the pool's two legs, valued at the feed price, to BALANCE — i.e. the
+        // pool's spot must agree with the oracle. A raw 1:1 sqrtPriceX96 (2^96)
+        // is wildly imbalanced for a USDC(6-dec,$1)/WETH(18-dec,$2000) pair, so
+        // the guard rejected the pool and classified USDC Illiquid on every
+        // chain whose deploy has the depth guard configured (the guard is recent;
+        // that's why the raw-1:1 fixture used to pass). See
+        // `_mockPoolSqrtPriceX96` for the derivation.
+        univ3.createPool(address(usdc), address(weth), 3000, _mockPoolSqrtPriceX96(), 1e24);
 
         // Mock sanctions oracle — N7 (recoverStuckERC20) checks the
         // declaredSource against this oracle and reverts
@@ -226,6 +230,21 @@ contract AnvilNewPositiveFlows is Script {
         OracleAdminFacet(diamond).setWethContract(address(weth));
         OracleAdminFacet(diamond).setEthUsdFeed(address(wethFeed));
         OracleAdminFacet(diamond).setUniswapV3Factory(address(univ3));
+        // #856 — point the PAA (Predominantly-Available-Asset) quote set at THIS
+        // fixture's mock WETH so the floor-slippage depth probe can DISCOVER the
+        // mock usdc/weth pool. A real testnet deploy's ConfigureOracle populates
+        // `s.paaAssets` with that chain's own quote assets (arb-sepolia carried
+        // `[vpfiMirror]`), so the probe would route the mock USDC over a real
+        // asset for which no mock pool exists → no route → Illiquid. On a fresh
+        // Anvil `s.paaAssets` is empty and falls back to `[wethContract]`, which
+        // is why the fixture found its pool there. WETH itself takes the
+        // wethContract liquidity branch (no PAA route), so a single-element
+        // `[weth]` set makes both mock assets liquid. (Route discovery is
+        // necessary but not sufficient — the pool must ALSO pass the value-balance
+        // guard, which is why the pool is priced consistently above.)
+        address[] memory paa = new address[](1);
+        paa[0] = address(weth);
+        ConfigFacet(diamond).setPaaAssets(paa);
         RiskFacet(diamond).updateRiskParams(address(usdc), 8000, 300, 1000);
         RiskFacet(diamond).updateRiskParams(address(weth), 8000, 300, 1000);
         ProfileFacet(diamond).updateKYCTier(lender, LibVaipakam.KYCTier.Tier2);
@@ -242,6 +261,32 @@ contract AnvilNewPositiveFlows is Script {
         _setCountryIfUnset(newBorrowerKey, newBorrower, "US");
 
         console.log("Setup OK: oracle + risk params + KYC + countries.");
+    }
+
+    /// @dev #856 — sqrtPriceX96 (Q96) for the mock USDC/WETH pool, priced so the
+    ///      pool's Chainlink-feed-valued reserves BALANCE (OracleFacet
+    ///      `_accumulatePoolImpacts` Guard 1). `v3VirtualReserves` gives
+    ///      reserve0 = L·Q96/√P and reserve1 = L·√P/Q96, and the guard requires
+    ///      reserve0·p0/scale0 ≈ reserve1·p1/scale1. Solving for √P:
+    ///        √P = Q96 · sqrt( (p0·scale1) / (p1·scale0) )
+    ///      where token0/token1 are ordered by ADDRESS (as the pool + guard read
+    ///      them), pX is the feed price (8-dec: USDC 1e8, WETH 2000e8) and
+    ///      scaleX = 10^(8 + tokenDecimals) (USDC 1e14, WETH 1e26). Computed at
+    ///      runtime because the mock token addresses — hence the ordering — vary
+    ///      per deploy. `Math.mulDiv` keeps the `·Q192` intermediate from
+    ///      overflowing uint256; the result fits uint160 for these values.
+    function _mockPoolSqrtPriceX96() internal view returns (uint160) {
+        uint256 pUsdc = 1e8;
+        uint256 scaleUsdc = 1e14; // 10^(8 + 6)
+        uint256 pWeth = 2000e8;
+        uint256 scaleWeth = 1e26; // 10^(8 + 18)
+        (uint256 p0, uint256 scale0, uint256 p1, uint256 scale1) =
+            address(usdc) < address(weth)
+                ? (pUsdc, scaleUsdc, pWeth, scaleWeth)
+                : (pWeth, scaleWeth, pUsdc, scaleUsdc);
+        uint256 q192 = uint256(1) << 192;
+        uint256 sq = Math.sqrt(Math.mulDiv(p0 * scale1, q192, p1 * scale0));
+        return uint160(sq);
     }
 
     function _setCountryIfUnset(uint256 key, address user, string memory country) internal {
