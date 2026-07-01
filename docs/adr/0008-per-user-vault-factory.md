@@ -150,6 +150,6 @@ gas cost on the hot path is lower (one fewer SLOAD per call).
 - Source:
   [`contracts/src/VaipakamVaultImplementation.sol`](../../contracts/src/VaipakamVaultImplementation.sol),
   [`contracts/src/facets/VaultFactoryFacet.sol`](../../contracts/src/facets/VaultFactoryFacet.sol)
-- Spec: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §3.3 (Vaipakam Vaults)
+- Spec: [`apps/www/src/content/whitepaper/Whitepaper.en.md`](../../apps/www/src/content/whitepaper/Whitepaper.en.md) §6 (Vaipakam Vaults)
 - Related: ADR-0001 (Diamond pattern — vault factory uses a Diamond
   facet, but the per-user proxies are separate UUPS contracts)

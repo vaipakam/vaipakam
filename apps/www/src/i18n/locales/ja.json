@@ -847,8 +847,8 @@
     "transparencyDesc": "すべてのオファー、ローン、ステータス変更がオンチェーンに記録されます。Vaipakam NFT はポジション所有権の検証可能な証明として機能します。",
     "slippageTitle": "スリッページと清算の安全性",
     "slippageDesc": "スリッページが 6% を超える場合、DEX 清算は中止されます。NFT クレームモデルによる担保の全額移転にフォールバックされ、不利なスワップは強制されません。",
-    "auditTitle": "Audit pending before mainnet",
-    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
+    "auditTitle": "Mainnet 前の監査待ち",
+    "auditDesc": "OpenZeppelin コントラクトを基盤とし、緊急停止コントロールを備えています。Mainnet デプロイ前には第三者監査が必要で、レポートは利用可能になり次第公開されます。",
     "kycTitle": "ノンカストディアル・KYC不要",
     "kycDesc": "フェーズ1ではパススルーモードでの KYC チェックを伴って開始します。Vaipakam はノンカストディアルであり、各ユーザーが自身の規制遵守に責任を負います。制裁対象国およびティア別 KYC のロジックは将来のガバナンス起動に向けてコードベースに残されています。"
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "ローンが有効な間、私の資金は誰が管理しているのですか？",
         "a1": "従来の意味で誰かが管理しているわけではありません。資産はスマートコントラクトのVaultに置かれ、本人とプロトコル自身のルールだけが動かせます。各ユーザーは自分専用の隔離されたVaultを持ち、資金が他者と混ざることはありません。資金の解放はすべて、ユーザーが「受諾」を押す前にオンチェーンで公開されたルールに従います。",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "コントラクトはオープンソースで、mainnet デプロイ前には第三者監査が必要です。Vaipakam が残高を転送したり取り戻したりすることはできません。緊急時にチームができるのは新規操作の一時停止までで、既存の返済・請求・退出経路は利用可能なままです。"
       },
       "basics-vpfi-intro": {
         "q": "VPFI とは何ですか。アプリの利用に必要ですか？",

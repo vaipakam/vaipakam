@@ -847,8 +847,8 @@
     "transparencyDesc": "हर ऑफर, ऋण और स्थिति परिवर्तन ऑन-चेन दर्ज होता है। Vaipakam NFT पोज़िशन स्वामित्व का सत्यापन-योग्य प्रमाण होते हैं।",
     "slippageTitle": "स्लिपेज और लिक्विडेशन सुरक्षा",
     "slippageDesc": "यदि स्लिपेज 6% से अधिक हो तो DEX लिक्विडेशन रुक जाता है। ऐसे में NFT क्लेम मॉडल के माध्यम से पूर्ण गिरवी हस्तांतरण पर वापस आ जाता है। कोई हानिकारक स्वैप ज़बरदस्ती नहीं किया जाता।",
-    "auditTitle": "Audit pending before mainnet",
-    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
+    "auditTitle": "Mainnet से पहले ऑडिट लंबित",
+    "auditDesc": "OpenZeppelin कॉन्ट्रैक्ट्स पर निर्मित, आपातकालीन pause नियंत्रणों के साथ। Mainnet परिनियोजन से पहले थर्ड-पार्टी ऑडिट आवश्यक हैं; रिपोर्ट उपलब्ध होने पर प्रकाशित की जाएँगी।",
     "kycTitle": "नॉन-कस्टोडियल और बिना KYC",
     "kycDesc": "फेज़ 1 KYC जाँच को पास-थ्रू मोड में लॉन्च करता है। Vaipakam नॉन-कस्टोडियल है; नियामक अनुपालन की ज़िम्मेदारी प्रत्येक उपयोगकर्ता की होती है। प्रतिबंधित देशों और टियर्ड KYC तर्क को भविष्य में गवर्नेंस सक्रियण के लिए कोडबेस में बनाए रखा गया है।"
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "ऋण सक्रिय रहने के दौरान मेरा धन वास्तव में कौन रखता है?",
         "a1": "पारंपरिक अर्थ में कोई नहीं रखता। परिसंपत्तियाँ एक स्मार्ट-कॉन्ट्रैक्ट Vault में रहती हैं जिसे केवल उपयोगकर्ता और प्रोटोकॉल के अपने नियम ही चला सकते हैं। प्रत्येक उपयोगकर्ता का अपना अलग Vault होता है — फंड कभी अनजान लोगों के साथ मिलाए नहीं जाते — और हर बार फंड की रिलीज़ उन्हीं नियमों के अनुसार होती है जो उपयोगकर्ता द्वारा \"स्वीकार करें\" क्लिक करने से पहले ही ऑन-चेन प्रकाशित किए जा चुके होते हैं।",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "कॉन्ट्रैक्ट ओपन सोर्स हैं, और mainnet परिनियोजन से पहले थर्ड-पार्टी ऑडिट आवश्यक हैं। Vaipakam बैलेंस को पुनः-निर्देशित या वापस नहीं ले सकता; आपातकाल में टीम अधिक से अधिक नई गतिविधियों को रोक सकती है, जबकि मौजूदा repayment, claim या exit मार्ग उपलब्ध रहते हैं।"
       },
       "basics-vpfi-intro": {
         "q": "VPFI क्या है, और क्या ऐप के उपयोग के लिए इसकी ज़रूरत है?",
@@ -931,7 +931,7 @@
       "vault": {
         "q": "प्रति-उपयोगकर्ता Vault कैसे काम करता है?",
         "a1": "प्रत्येक उपयोगकर्ता को अपना UUPS-अपग्रेडेबल प्रॉक्सी Vault मिलता है, जिसे पहले उपयोग पर <c>VaultFactoryFacet</c> (क्लोन-फ़ैक्टरी पैटर्न) तैनात करता है। परिसंपत्तियाँ कभी किसी और की परिसंपत्तियों के साथ नहीं मिलाई जातीं।",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "Diamond विभिन्न Vault के बीच गतिविधि का संचालन करता है, परंतु क्लेम के अधिकार Vaipakam पोज़िशन NFT से बँधे होते हैं — इसलिए Vault की कस्टडी ऑन-चेन पोज़िशन की स्थिति के अधीन सख्ती से सीमित रहती है।"
       },
       "default": {
         "q": "यदि ऋणकर्ता डिफ़ॉल्ट कर जाए तो क्या होता है?",

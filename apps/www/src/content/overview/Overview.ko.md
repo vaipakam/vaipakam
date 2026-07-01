@@ -179,7 +179,7 @@ protocol에는 여러 보호 layer가 내장되어 있습니다.
   무언가 이상해 보일 때 operator가 몇 초 안에 new business를 멈출 수
   있습니다. 동시에 existing users는 자신의 positions를 safely wind down
   할 수 있습니다.
-- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
+- **Mainnet 전 감사 대기.** Mainnet 출시 전에는 제3자 보안 검토가 필요합니다. 감사 보고서와 bug bounty 범위는 준비되는 대로 공개됩니다.
 
 그래도 자신이 무엇에 sign하는지 이해해야 합니다. 각 loan 전에 나오는 combined
 **risk consent**를 읽어보세요. abnormal-market fallback path와 illiquid

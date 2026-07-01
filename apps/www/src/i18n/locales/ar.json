@@ -847,8 +847,8 @@
     "transparencyDesc": "تُسجَّل كل العروض والقروض وتغيّرات الحالة على السلسلة. تعمل NFT الخاصة بـ Vaipakam كإثبات قابل للتحقق لملكية المركز.",
     "slippageTitle": "أمان الانزلاق السعري والتصفية",
     "slippageDesc": "تُلغى تصفية DEX إذا تجاوز الانزلاق السعري 6%. ثم يتم التراجع إلى تحويل الضمان بالكامل عبر نموذج المطالبة بـ NFT. لا تُفرض عمليات مبادلة ضارّة.",
-    "auditTitle": "Audit pending before mainnet",
-    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
+    "auditTitle": "التدقيق معلّق قبل mainnet",
+    "auditDesc": "مبني على عقود OpenZeppelin مع ضوابط إيقاف طارئة. يلزم تدقيق من طرف ثالث قبل النشر على mainnet؛ وستُنشر التقارير عند توفرها.",
     "kycTitle": "غير حافظ ودون KYC",
     "kycDesc": "تُطلق المرحلة 1 مع فحوصات KYC في وضع التمرير. Vaipakam بروتوكول غير حافظ؛ ويبقى كل مستخدم مسؤولًا عن امتثاله التنظيمي. يبقى منطق الدول الخاضعة للعقوبات وKYC المتدرّج في قاعدة الشيفرة بانتظار تفعيل لاحق عبر الحوكمة."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "من يحتفظ فعليًا بأموالي طوال نشاط القرض؟",
         "a1": "لا أحد بالمعنى التقليدي. تبقى الأصول في حساب ضمان عبر عقد ذكي لا يمكن تحريكه إلا من قِبل المستخدم وقواعد البروتوكول نفسه. لكل مستخدم حساب ضمان معزول خاص به — لا تُخلط الأموال أبدًا مع غرباء — ويتبع كل إفراج للأموال قاعدةً نُشرت على السلسلة قبل أن يضغط المستخدم «قبول».",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "العقود مفتوحة المصدر، ويلزم تدقيق من طرف ثالث قبل النشر على mainnet. لا تستطيع Vaipakam إعادة توجيه الأرصدة أو استردادها؛ أقصى ما يمكن للفريق فعله في الطوارئ هو إيقاف الإجراءات الجديدة مؤقتًا، مع بقاء مسارات السداد والمطالبة والخروج الحالية متاحة."
       },
       "basics-vpfi-intro": {
         "q": "ما هو VPFI، وهل أحتاج إليه لاستخدام التطبيق؟",

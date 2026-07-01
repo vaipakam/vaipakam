@@ -847,8 +847,8 @@
     "transparencyDesc": "Jedes Angebot, jeder Kredit und jede Statusänderung wird on-chain protokolliert. Vaipakam-NFTs dienen als überprüfbarer Eigentumsnachweis der Position.",
     "slippageTitle": "Slippage- und Liquidationssicherheit",
     "slippageDesc": "Die DEX-Liquidation bricht ab, wenn die Slippage 6% überschreitet. Stattdessen erfolgt eine vollständige Sicherheitenübertragung über das NFT-Claim-Modell. Keine erzwungenen Verlust-Swaps.",
-    "auditTitle": "Audit pending before mainnet",
-    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
+    "auditTitle": "Audit vor Mainnet ausstehend",
+    "auditDesc": "Auf OpenZeppelin-Verträgen aufgebaut, mit Notfall-Pausekontrollen. Vor dem Mainnet-Deployment sind Drittparteien-Audits erforderlich; Berichte werden veröffentlicht, sobald sie verfügbar sind.",
     "kycTitle": "Non-Custodial und ohne KYC",
     "kycDesc": "Phase 1 startet mit KYC-Prüfungen im Pass-Through-Modus. Vaipakam ist non-custodial; jeder Nutzer ist für die eigene regulatorische Compliance verantwortlich. Sanktionsländer- und Tiered-KYC-Logik bleibt im Code für eine spätere Aktivierung durch die Governance."
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "Wer verwahrt mein Geld eigentlich, während ein Kredit aktiv ist?",
         "a1": "Niemand im klassischen Sinn. Die Vermögenswerte liegen in einer Smart-Contract-Treuhand, die nur der Nutzer und die protokolleigenen Regeln bewegen können. Jeder Nutzer hat seine eigene isolierte Treuhand — Mittel werden niemals mit Fremden zusammengelegt — und jede Freigabe folgt einer Regel, die schon vor dem Klick auf „Akzeptieren\" on-chain veröffentlicht war.",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "Die Verträge sind quelloffen, und vor dem Mainnet-Deployment sind Drittparteien-Audits erforderlich. Vaipakam kann Guthaben nicht umleiten oder zurückholen; im Notfall kann das Team höchstens neue Aktionen pausieren, während bestehende Rückzahlungs-, Anspruchs- oder Ausstiegswege verfügbar bleiben."
       },
       "basics-vpfi-intro": {
         "q": "Was ist VPFI, und brauche ich welche, um die App zu nutzen?",
@@ -931,7 +931,7 @@
       "vault": {
         "q": "Wie funktioniert die Treuhand pro Nutzer?",
         "a1": "Jeder Nutzer erhält seinen eigenen UUPS-aufrüstbaren Treuhand-Proxy, der bei der ersten Nutzung von <c>VaultFactoryFacet</c> bereitgestellt wird (Clone-Factory-Muster). Vermögenswerte werden niemals mit denen anderer vermischt.",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "Das Diamond orchestriert Bewegungen zwischen Treuhandkonten, doch Anspruchsrechte sind an das Vaipakam-Positions-NFT gebunden — die Treuhandverwahrung ist also strikt an den On-Chain-Status der Position gekoppelt."
       },
       "default": {
         "q": "Was passiert, wenn ein Kreditnehmer ausfällt?",

@@ -203,7 +203,7 @@ protocole intègre plusieurs couches :
   activité en quelques secondes si quelque chose semble anormal,
   tout en laissant les utilisateurs existants clôturer leurs
   positions en sécurité.
-- **Audit pending before mainnet.** Mainnet deployment requires third-party security review before launch. Audit reports and bug bounty scope will be published when available.
+- **Audit en attente avant le mainnet.** Le lancement en mainnet exige une revue de sécurité par un tiers. Les rapports d’audit et le périmètre du bug bounty seront publiés lorsqu’ils seront disponibles.
 
 Vous devez quand même comprendre ce dans quoi vous vous engagez.
 Lisez le **consentement de risque** combiné qui apparaît avant

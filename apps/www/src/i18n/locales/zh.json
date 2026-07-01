@@ -847,8 +847,8 @@
     "transparencyDesc": "每一笔报价、贷款及状态变更均链上记录。Vaipakam NFT 作为头寸所有权的可验证凭证。",
     "slippageTitle": "滑点与清算安全",
     "slippageDesc": "DEX 清算的滑点超过 6% 时将立即终止，转而通过 NFT 领取模式进行全额抵押品转移，不会强制执行不利的兑换。",
-    "auditTitle": "Audit pending before mainnet",
-    "auditDesc": "Built on OpenZeppelin contracts with emergency pause controls. Third-party audits are required before mainnet deployment; reports will be published when available.",
+    "auditTitle": "Mainnet 前审计待完成",
+    "auditDesc": "基于 OpenZeppelin 合约构建，并带有紧急暂停控制。Mainnet 部署前必须完成第三方审计；报告将在可用时发布。",
     "kycTitle": "非保管且无 KYC",
     "kycDesc": "第 1 阶段以直通模式启用 KYC 检查。Vaipakam 为非保管协议，用户需自行承担合规责任。受制裁国家与分级 KYC 逻辑保留在代码库中，等待未来通过治理启用。"
   },
@@ -916,7 +916,7 @@
       "basics-custody": {
         "q": "贷款生效期间，资金到底由谁保管？",
         "a1": "传统意义上没有人保管。资产存放在智能合约保管中，只有用户本人和协议自身的规则才能调动。每位用户都有自己独立的保管——资金从不与他人合并——每一次释放都遵循在用户点击「接受」之前就已在链上公开的规则。",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "合约是开源的，mainnet 部署前必须完成第三方审计。Vaipakam 不能重定向或追回余额；团队在紧急情况下最多只能暂停新操作，同时既有的还款、领取或退出路径仍保持可用。"
       },
       "basics-vpfi-intro": {
         "q": "VPFI 是什么？使用应用必须持有它吗？",

@@ -1439,7 +1439,7 @@
       "basics-vpfi-intro": {
         "q": "What is VPFI, and do I need any to use the app?",
         "a1": "VPFI is Vaipakam's native platform token. It is <s>not</s> required to lend or borrow — the app works entirely without it, and every core feature is open to anyone who shows up.",
-        "a2": "The contracts are open source, and third-party audits are required before mainnet deployment. Vaipakam cannot redirect or claw back balances; the most the team can do is pause new actions in an emergency while existing repayment, claim, or exit paths remain available."
+        "a2": "Where VPFI becomes useful is for regular users. Holding it in the Vaipakam Vaults grants a discount on platform fees, and active participants also earn a share of the daily interaction-reward pool. Think of it as an optional loyalty layer, not a gate."
       },
       "assets": {
         "q": "What assets can I lend or borrow?",
