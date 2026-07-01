@@ -173,6 +173,17 @@ button {
   color: var(--brand-strong);
 }
 
+.wallet-button {
+  cursor: pointer;
+  font: inherit;
+  font-weight: 800;
+}
+
+.wallet-button:hover {
+  border-color: rgba(20, 107, 92, 0.5);
+  color: var(--brand-strong);
+}
+
 .topbar h1 {
   max-width: 760px;
   margin: 4px 0 0;

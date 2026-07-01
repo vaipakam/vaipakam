@@ -25,10 +25,28 @@ import {
   Wallet,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
+
+type EthereumProvider = {
+  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
+  on?: (event: string, handler: (...args: unknown[]) => void) => void;
+  removeListener?: (event: string, handler: (...args: unknown[]) => void) => void;
+};
+
+type WalletState = {
+  detected: boolean;
+  account: string | null;
+  chainId: string | null;
+};
+
+declare global {
+  interface Window {
+    ethereum?: EthereumProvider;
+  }
+}
 
 type Task = {
   title: string;
@@ -250,9 +268,68 @@ function App() {
     if (typeof window === 'undefined') return 'guided';
     return window.localStorage.getItem('vaipakam-alpha-mode') === 'advanced' ? 'advanced' : 'guided';
   });
+  const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null });
   const setMode = (nextMode: Mode) => {
     setModeState(nextMode);
     window.localStorage.setItem('vaipakam-alpha-mode', nextMode);
+  };
+
+  useEffect(() => {
+    const ethereum = window.ethereum;
+    if (!ethereum) return;
+
+    let mounted = true;
+    const refreshWallet = async () => {
+      const [accountsResult, chainIdResult] = await Promise.all([
+        ethereum.request({ method: 'eth_accounts' }),
+        ethereum.request({ method: 'eth_chainId' }),
+      ]);
+      if (!mounted) return;
+      const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+      setWallet({
+        detected: true,
+        account: typeof accounts[0] === 'string' ? accounts[0] : null,
+        chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
+      });
+    };
+
+    const handleAccountsChanged = (accounts: unknown) => {
+      const nextAccounts = Array.isArray(accounts) ? accounts : [];
+      setWallet((current) => ({
+        ...current,
+        detected: true,
+        account: typeof nextAccounts[0] === 'string' ? nextAccounts[0] : null,
+      }));
+    };
+    const handleChainChanged = (chainId: unknown) => {
+      setWallet((current) => ({ ...current, detected: true, chainId: typeof chainId === 'string' ? chainId : null }));
+    };
+
+    refreshWallet().catch(() => setWallet({ detected: true, account: null, chainId: null }));
+    ethereum.on?.('accountsChanged', handleAccountsChanged);
+    ethereum.on?.('chainChanged', handleChainChanged);
+
+    return () => {
+      mounted = false;
+      ethereum.removeListener?.('accountsChanged', handleAccountsChanged);
+      ethereum.removeListener?.('chainChanged', handleChainChanged);
+    };
+  }, []);
+
+  const connectWallet = async () => {
+    const ethereum = window.ethereum;
+    if (!ethereum) {
+      setWallet({ detected: false, account: null, chainId: null });
+      return;
+    }
+    const accountsResult = await ethereum.request({ method: 'eth_requestAccounts' });
+    const chainIdResult = await ethereum.request({ method: 'eth_chainId' });
+    const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+    setWallet({
+      detected: true,
+      account: typeof accounts[0] === 'string' ? accounts[0] : null,
+      chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
+    });
   };
 
   return (
@@ -281,7 +358,7 @@ function App() {
       </aside>
 
       <main className="main-surface">
-        <TopBar mode={mode} onModeChange={setMode} />
+        <TopBar mode={mode} wallet={wallet} onConnectWallet={connectWallet} onModeChange={setMode} />
         <Routes>
           <Route path="/" element={<Home mode={mode} />} />
           <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} />} />
@@ -305,7 +382,17 @@ function AlphaNavLink({ to, label, icon }: { to: string; label: string; icon: Re
   );
 }
 
-function TopBar({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mode) => void }) {
+function TopBar({
+  mode,
+  wallet,
+  onConnectWallet,
+  onModeChange,
+}: {
+  mode: Mode;
+  wallet: WalletState;
+  onConnectWallet: () => void;
+  onModeChange: (mode: Mode) => void;
+}) {
   return (
     <header className="topbar">
       <div>
@@ -313,11 +400,18 @@ function TopBar({ mode, onModeChange }: { mode: Mode; onModeChange: (mode: Mode)
         <h1>Make the first decision easy, then reveal power carefully.</h1>
       </div>
       <div className="topbar-controls">
-        <div className="wallet-pill" aria-label="Wallet and network status">
-          <Wallet size={16} />
-          <span>0xE8...23Cb</span>
-          <strong>Base Sepolia</strong>
-        </div>
+        {wallet.account ? (
+          <div className="wallet-pill" aria-label="Wallet and network status">
+            <Wallet size={16} />
+            <span>{shortAddress(wallet.account)}</span>
+            <strong>{chainLabel(wallet.chainId)}</strong>
+          </div>
+        ) : (
+          <button className="wallet-pill wallet-button" type="button" onClick={onConnectWallet}>
+            <Wallet size={16} />
+            <span>{wallet.detected ? 'Connect wallet' : 'Install wallet'}</span>
+          </button>
+        )}
         <div className="mode-switch" aria-label="Experience mode">
           <button
             className={mode === 'guided' ? 'selected' : ''}
@@ -629,6 +723,17 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
       <p>{body}</p>
     </article>
   );
+}
+
+function shortAddress(address: string) {
+  return address.slice(0, 6) + '...' + address.slice(-4);
+}
+
+function chainLabel(chainId: string | null) {
+  if (chainId === '0x14a34') return 'Base Sepolia';
+  if (chainId === '0xaa36a7') return 'Sepolia';
+  if (chainId === '0x89') return 'Polygon';
+  return chainId ? 'Chain ' + Number(chainId) : 'Unknown network';
 }
 
 function Metric({ label, value }: { label: string; value: string }) {
