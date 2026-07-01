@@ -496,9 +496,17 @@ snapshot_addresses() {
 # the fresh-mint / force-rotate / carry-forward decision + every reuse-address
 # check lives in DeployVPFIToken._resolveMode(); its no-broadcast preflight()
 # fails loud on any invalid VPFI config here. No-op on mirror chains / --skip-vpfi.
-if [ "$IS_CANONICAL" = "1" ] && [ "$SKIP_VPFI" = "0" ]; then
+# Also skipped once the `vpfitoken` step has already completed on a --resume run:
+# the recorded .vpfiToken is then legitimately present (step [3b] landed it), and
+# the token step below will short-circuit anyway — re-running preflight would
+# reject that recorded token and block the documented resume-at-a-later-step flow.
+if [ "$IS_CANONICAL" = "1" ] && [ "$SKIP_VPFI" = "0" ] && ! step_done "vpfitoken"; then
   echo "[0·pre] VPFI token preflight (mode validation, no broadcast)"
-  forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
+  # Pass $FRESH through as VPFI_TOKEN_FRESH so _resolveMode() knows a --fresh
+  # redeploy is about to archive the recorded .vpfiToken — otherwise it would
+  # read the still-present old token and reject the documented --fresh mint.
+  VPFI_TOKEN_FRESH="$FRESH" \
+    forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
 fi
 
 if [ "$FRESH" = "1" ]; then

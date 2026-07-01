@@ -546,7 +546,11 @@ EOF
   # three deploy scripts.
   if [ "$IS_CANONICAL" = "1" ]; then
     echo "[1c] VPFI token preflight (mode validation, no broadcast)"
-    forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
+    # Pass $FRESH through as VPFI_TOKEN_FRESH so _resolveMode() knows a --fresh
+    # redeploy is about to archive the recorded .vpfiToken — otherwise it would
+    # read the still-present old token and reject the documented --fresh mint.
+    VPFI_TOKEN_FRESH="$FRESH" \
+      forge script script/DeployVPFIToken.s.sol --sig "preflight()" --rpc-url "$RPC"
   fi
 
   # ── Detect-and-refuse on a chain dir with a deployed Diamond ─────
@@ -995,7 +999,13 @@ EOF
   # then falls through to `Deployments.readRewardMessenger()` which has
   # its own library-level fallback (and reverts loudly if it also misses).
 
-  forge script script/DiamondConfigSpell.s.sol \
+  # #857 — a full mainnet deploy ALWAYS configures VPFI (there is no
+  # `--skip-vpfi` here). Force SKIP_VPFI=0 for the spell so a stale
+  # SKIP_VPFI=1 left in the shared .env / a prior --skip-vpfi run can't
+  # silently skip ConfigureVPFIToken/RewardReporter/VPFIBuy while the
+  # configure phase still reports success.
+  SKIP_VPFI=0 \
+    forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
   mark_phase_done "configure"

@@ -67,6 +67,13 @@ contract DeployVPFIToken is Script {
 
         address reuse = vm.envOr("VPFI_TOKEN_REUSE_ADDRESS", address(0));
         bool force = vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) != 0;
+        // `fresh` = the wrapper is running a `--fresh` redeploy. The recorded
+        // `.vpfiToken` is still present at this pre-broadcast guard (the archive
+        // that clears it runs AFTER preflight), but it is about to be discarded,
+        // so it must NOT trip the no-overwrite guard on the mint path — a
+        // documented `--fresh` run mints a fresh token without demanding an
+        // explicit FORCE. (Set by the wrappers from their `$FRESH` flag.)
+        bool fresh = vm.envOr("VPFI_TOKEN_FRESH", uint256(0)) != 0;
         address recorded = Deployments.readVpfiTokenOptional();
 
         if (reuse != address(0)) {
@@ -100,16 +107,32 @@ contract DeployVPFIToken is Script {
             } catch {
                 revert("DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS decimals() reverted");
             }
+            // (4) symbol+decimals ALONE can't tell the canonical VPFIToken apart
+            //     from the Burn/Mint `VPFIMirrorToken` (same "VPFI" symbol, same
+            //     ERC20 default 18 decimals) or a look-alike ERC20 — wrapping a
+            //     mirror as Base's canonical asset would hand DeployCrosschain the
+            //     wrong token for the LockRelease pool. Assert the VPFIToken-only
+            //     `TOTAL_SUPPLY_CAP()` constant (ERC20Capped surface the mirror
+            //     does NOT expose) to pin it to a genuine canonical instance.
+            try VPFIToken(reuse).TOTAL_SUPPLY_CAP() returns (uint256 supplyCap) {
+                require(
+                    supplyCap == 230_000_000 ether,
+                    "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS TOTAL_SUPPLY_CAP != canonical VPFIToken (mirror/look-alike?)"
+                );
+            } catch {
+                revert("DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS is not a canonical VPFIToken (TOTAL_SUPPLY_CAP() absent - mirror/look-alike?)");
+            }
             return (true, reuse);
         }
 
         // MINT path. Refuse to silently mint a SECOND 23M supply over an existing
-        // recorded token unless FORCE (deliberate rotation) is set. A clean first
-        // deploy (or a --fresh run whose archive already cleared the artifact) has
-        // `recorded == address(0)` and proceeds to a fresh mint.
+        // recorded token unless the operator opted in: FORCE (deliberate rotation
+        // on a live artifact) OR `--fresh` (the recorded token is about to be
+        // archived away, so a fresh mint is exactly the documented intent). A
+        // clean first deploy has `recorded == address(0)` and proceeds regardless.
         require(
-            recorded == address(0) || force,
-            "DeployVPFIToken: .vpfiToken already recorded; carry it forward with VPFI_TOKEN_REUSE_ADDRESS=<token>, or rotate with VPFI_TOKEN_FORCE_REDEPLOY=1"
+            recorded == address(0) || force || fresh,
+            "DeployVPFIToken: .vpfiToken already recorded; carry it forward with VPFI_TOKEN_REUSE_ADDRESS=<token>, rotate with VPFI_TOKEN_FORCE_REDEPLOY=1, or run a --fresh redeploy"
         );
         return (false, address(0));
     }

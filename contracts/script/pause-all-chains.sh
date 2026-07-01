@@ -274,13 +274,15 @@ BANNER
 ╔══════════════════════════════════════════════════════════════════════╗
 ║  pause-all-chains.sh — UNPAUSE (post-incident cleanup)               ║
 ║                                                                      ║
-║  Route EVERY tx below through the governance TIMELOCK — NOT the       ║
-║  Pauser Safe. Unpause is deliberately owner-only (asymmetric-pause    ║
-║  design): the Pauser Safe can pause FAST, but unpausing requires the  ║
-║  timelock's review window. The Diamond's unpause is UNPAUSER_ROLE and ║
-║  every GuardianPausable cross-chain contract's unpause is onlyOwner — ║
-║  after handover BOTH are the governance timelock, so these calls go   ║
-║  through its schedule/execute queue, never the fast Pauser path.      ║
+║  Unpause is deliberately owner-only (asymmetric-pause design): the    ║
+║  Pauser Safe can pause FAST, but unpausing requires the owner. WHO    ║
+║  the owner is depends on handover state — and the calldata differs:   ║
+║                                                                      ║
+║   • PRE-handover  (testnets / a fresh mainnet): owner = admin/Pauser  ║
+║     EOA. Call unpause() DIRECTLY on each contract (first block).      ║
+║   • POST-handover (mainnet cutover done): owner = governance          ║
+║     TIMELOCK. Queue the batch via schedule/execute (second block) —   ║
+║     never the fast Pauser path.                                       ║
 ║                                                                      ║
 ║  ONLY run this once root cause is confirmed fixed and reviewed by    ║
 ║  the security on-call. There is no "unpause budget" — go slow,       ║
@@ -288,11 +290,15 @@ BANNER
 ╚══════════════════════════════════════════════════════════════════════╝
 BANNER
     UNPAUSE_SELECTOR=$(cast sig 'unpause()' 2>/dev/null || echo "0x3f4ba83a")
+    ZERO32=0x0000000000000000000000000000000000000000000000000000000000000000
+    # The timelock schedule() delay MUST be >= the timelock's getMinDelay() or
+    # it reverts (safe failure). Default 48h; override with UNPAUSE_TIMELOCK_DELAY.
+    # Confirm against `cast call <timelock> "getMinDelay()(uint256)"` before use.
+    TL_DELAY="${UNPAUSE_TIMELOCK_DELAY:-172800}"
+    TL_SALT="${UNPAUSE_TIMELOCK_SALT:-$ZERO32}"
     echo
-    echo "Signer:        governance TIMELOCK (UNPAUSER_ROLE on the Diamond;"
-    echo "               owner on each GuardianPausable contract) — via its"
-    echo "               schedule/execute queue. NOT the Pauser Safe."
     echo "Selector:      unpause()  =  $UNPAUSE_SELECTOR"
+    echo "Timelock delay:$TL_DELAY s (override UNPAUSE_TIMELOCK_DELAY; must be >= getMinDelay())"
     echo
 
     for slug in "${CHAINS[@]}"; do
@@ -301,9 +307,36 @@ BANNER
         continue
       fi
       echo "── $slug ───────────────────────────────────────────────────"
+      # (1) PRE-handover: direct owner call on each contract.
+      echo "  [pre-handover] admin/Pauser EOA -> unpause() direct:"
+      addrs=()
       while IFS=: read -r key addr; do
-        printf "  %-22s to=%s data=%s\n" "$key" "$addr" "$UNPAUSE_SELECTOR"
+        printf "    %-20s to=%s data=%s\n" "$key" "$addr" "$UNPAUSE_SELECTOR"
+        addrs+=("$addr")
       done < <(list_pause_targets "$slug")
+
+      # (2) POST-handover: wrap the WHOLE set in ONE timelock batch op (atomic
+      # unpause, single review window). Only when a `.timelock` is recorded AND
+      # `cast` can encode the array calldata.
+      tl=$(jq -r '.timelock // empty' "$DEPLOY_ROOT/$slug/addresses.json" 2>/dev/null || echo "")
+      if [ -z "$tl" ]; then
+        echo "  [post-handover] (no .timelock recorded — pre-handover deploy; use the direct calls above)"
+      elif ! command -v cast >/dev/null 2>&1; then
+        echo "  [post-handover] (cast unavailable — install foundry to emit timelock batch calldata; timelock=$tl)"
+      elif [ "${#addrs[@]}" -eq 0 ]; then
+        echo "  [post-handover] (no pausable targets resolved for this chain)"
+      else
+        T=$(IFS=,; echo "${addrs[*]}")
+        V=$(printf '0,%.0s' $(seq "${#addrs[@]}")); V="${V%,}"
+        P=$(printf "$UNPAUSE_SELECTOR,%.0s" $(seq "${#addrs[@]}")); P="${P%,}"
+        sched=$(cast calldata "scheduleBatch(address[],uint256[],bytes[],bytes32,bytes32,uint256)" \
+          "[$T]" "[$V]" "[$P]" "$ZERO32" "$TL_SALT" "$TL_DELAY" 2>/dev/null || echo "<cast-encode-failed>")
+        execd=$(cast calldata "executeBatch(address[],uint256[],bytes[],bytes32,bytes32)" \
+          "[$T]" "[$V]" "[$P]" "$ZERO32" "$TL_SALT" 2>/dev/null || echo "<cast-encode-failed>")
+        echo "  [post-handover] governance timelock ($tl) -> scheduleBatch then executeBatch:"
+        echo "    [1] queue:   to=$tl data=$sched"
+        echo "    [2] execute: to=$tl data=$execd   (after >= $TL_DELAY s)"
+      fi
       echo
     done
     ;;
