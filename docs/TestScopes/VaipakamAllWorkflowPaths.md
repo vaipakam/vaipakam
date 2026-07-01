@@ -1,19 +1,19 @@
 # Vaipakam All Workflow Paths
 
-This document is a README-aligned catalog of Vaipakam workflow paths. It is intended to be the implementation and QA map for Phase 1 behavior, while clearly marking Phase 2 items as future scope.
+This document is a canonical-whitepaper and FunctionalSpecs aligned catalog of Vaipakam workflow paths. It is intended to be the implementation and QA map for currently documented behavior.
 
 ## Source Of Truth
 
-- The source of truth is `/README.md`.
-- Phase 1 loans are single-network flows.
-- Cross-chain lending, VNGK governance, staking, and VNGK reward distribution are Phase 2.
+- Technical workflow sources of truth are `apps/www/src/content/whitepaper/Whitepaper.en.md` and `docs/FunctionalSpecs/`. The repository root `README.md` is a product overview.
+- Loans are single-network flows in the current connected-app product surface.
+- Cross-chain lending, governance staking, and governance-token reward distribution are not part of the current connected-app product surface.
 - ERC721 and ERC1155 rental NFTs are vault-custodied during active rental positions. Borrowers receive only temporary user rights and never receive custody or ownership of the underlying NFT.
 - Borrower preclose flows must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original loan.
-- Phase 1 borrower preclose Option 3, lender early-withdrawal, and refinance flows apply only to active ERC20 loans. NFT rental loans and other non-ERC20 loan/rental positions must be rejected from those flows.
+- Borrower preclose Option 3, lender early-withdrawal, and refinance flows apply only to active ERC20 loans. NFT rental loans and other non-ERC20 loan/rental positions must be rejected from those flows.
 
-## Phase 1 Workflow Map
+## Workflow Map
 
-| Area | Path | Phase 1 Scope |
+| Area | Path | Current Scope |
 | --- | --- | --- |
 | Offer creation | ERC20 lender offer | Supported |
 | Offer creation | ERC20 borrower offer | Supported |
@@ -39,9 +39,9 @@ This document is a README-aligned catalog of Vaipakam workflow paths. It is inte
 | Collateral management | Add collateral | Supported |
 | Collateral management | Partial collateral withdrawal | Supported when health factor remains safe |
 | Vault upgrades | Mandatory user-triggered upgrade | Supported by policy |
-| Governance | VNGK proposals and voting | Phase 2 |
-| Staking | VNGK staking and revenue sharing | Phase 2 |
-| Cross-chain lending | Bridged loan flows | Phase 2 |
+| Governance | Governance proposals and voting | Not part of the current connected-app product surface |
+| Staking | Governance staking and revenue sharing | Not part of the current connected-app product surface |
+| Cross-chain lending | Bridged loan flows | Not part of the current connected-app product surface |
 
 ## Global Rules
 
@@ -58,7 +58,7 @@ Amounts and economic terms may vary only where the specific flow permits them. A
 ### Illiquid Assets
 
 - Liquid ERC20 assets are evaluated through oracle and liquidity rules.
-- Illiquid ERC20 collateral is not liquidated through LTV-based liquidation. On default, the whole illiquid collateral is transferred to the lender according to the README default rules.
+- Illiquid ERC20 collateral is not liquidated through LTV-based liquidation. On default, the whole illiquid collateral is transferred to the lender according to the canonical whitepaper and FunctionalSpecs default rules.
 - NFTs are treated as illiquid for collateral valuation and LTV purposes.
 - Users must explicitly consent when interacting with illiquid assets.
 
@@ -153,7 +153,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 ### ERC20 Full Repayment
 
 1. Borrower repays principal, interest, and any late fees before the grace period ends.
-2. Treasury fee is deducted from interest and late fees according to the README.
+2. Treasury fee is deducted from interest and late fees according to the canonical whitepaper and FunctionalSpecs.
 3. Lender claim is created for principal plus lender share.
 4. Borrower claim is created for collateral return.
 5. Vaipakam NFTs move to claimable state.
@@ -165,7 +165,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 1. Borrower closes the rental before or within the allowed period.
 2. Rental user rights are revoked.
 3. Rental fees are allocated to the lender after the `Yield Fee`.
-4. Borrower receives refundable unused prepayment and buffer according to the README rules.
+4. Borrower receives refundable unused prepayment and buffer according to the canonical whitepaper and FunctionalSpecs rules.
 5. Vaulted ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim path.
 6. Vaipakam NFTs move to claimable/closed state and are burned after final claim.
 
@@ -203,7 +203,7 @@ Lender-side and borrower-side claims are gated by ownership of the relevant Vaip
 3. Rental prepayment is allocated to the lender, with the `Yield Fee` on rental earnings.
 4. The 5 percent buffer is routed to treasury.
 5. Vaulted ERC721 or ERC1155 is returned to the lender through the lender NFT-gated claim/default settlement path.
-6. No borrower refund is expected on default unless the README later defines one.
+6. No borrower refund is expected on default unless the canonical whitepaper or FunctionalSpecs later define one.
 
 ## Borrower Preclose Paths
 
@@ -252,7 +252,7 @@ Phase 1 lender early withdrawal is ERC20-only. NFT rentals and other non-ERC20 p
 2. Offer must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type.
 3. Offer terms must favor the original borrower.
 4. New lender's principal funds are used to pay the original lender's exit proceeds.
-5. Original lender forfeits accrued interest to treasury, with shortfall handling according to the README.
+5. Original lender forfeits accrued interest to treasury, with shortfall handling according to the canonical whitepaper and FunctionalSpecs.
 6. Live loan lender changes to the new lender.
 7. Original lender NFT is burned/closed and a new lender NFT is minted for the new lender.
 8. Borrower position remains unchanged.
@@ -263,7 +263,7 @@ Phase 1 lender early withdrawal is ERC20-only. NFT rentals and other non-ERC20 p
 2. Offer must preserve principal/lending asset type, payment/prepay asset type, and collateral asset type.
 3. Offer terms must favor the original borrower.
 4. Incoming lender accepts the borrower-style offer.
-5. Principal payment and shortfall handling are settled according to the README.
+5. Principal payment and shortfall handling are settled according to the canonical whitepaper and FunctionalSpecs.
 6. Any temporary offer-acceptance state is cleaned up.
 7. Live loan lender changes to the incoming lender.
 8. Original borrower remains borrower on the live loan.

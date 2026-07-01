@@ -1,10 +1,10 @@
 # Vaipakam All Workflow Test Sets
 
-This document is the README-aligned test-set catalog for all Vaipakam workflow paths in `docs/VaipakamAllWorkflowPaths.md`.
+This document is the canonical-whitepaper and FunctionalSpecs aligned test-set catalog for all Vaipakam workflow paths in `docs/TestScopes/VaipakamAllWorkflowPaths.md`.
 
 ## Test Scope Rules
 
-- `/README.md` is the source of truth.
+- Technical workflow sources of truth are `apps/www/src/content/whitepaper/Whitepaper.en.md`, `docs/FunctionalSpecs/`, and `docs/TestScopes/VaipakamAllWorkflowPaths.md`. The repository root `README.md` is a product overview.
 - Phase 1 tests run on single-network assumptions.
 - Governance, staking, VNGK reward distribution, and cross-chain lending are Phase 2 test scopes unless explicitly stubbed as documentation-only tests.
 - ERC721 and ERC1155 rental NFTs must remain vault-custodied during active rentals.
@@ -294,7 +294,7 @@ Assertions:
 
 ### Liquid ERC20 Collateral Liquidation
 
-Objective: verify liquidation distributes proceeds according to README.
+Objective: verify liquidation distributes proceeds according to the canonical whitepaper and FunctionalSpecs.
 
 Steps:
 
@@ -326,7 +326,7 @@ Steps:
 Assertions:
 
 - No DEX liquidation path is used.
-- Borrower has no collateral surplus claim unless README later defines one.
+- Borrower has no collateral surplus claim unless the canonical whitepaper or FunctionalSpecs later define one.
 - Lender claim uses correct asset accounting.
 
 ### NFT Rental Default
@@ -347,7 +347,7 @@ Assertions:
 
 - Borrower user rights are cleared.
 - Lender can recover rental fee and NFT via lender NFT-gated claim path.
-- Borrower receives no default refund unless README changes.
+- Borrower receives no default refund unless the canonical whitepaper or FunctionalSpecs change.
 
 ## Borrower Preclose Tests
 
@@ -625,7 +625,7 @@ Assertions:
 
 ### KYC Thresholds
 
-Objective: verify KYC requirements are based on README transaction-value rules.
+Objective: verify KYC requirements are based on the canonical whitepaper and FunctionalSpecs transaction-value rules.
 
 Steps:
 
