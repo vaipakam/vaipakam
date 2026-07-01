@@ -535,6 +535,30 @@ EOF
     exit 1
   fi
 
+  # ── VPFI re-mint preflight (#853 Codex P2) ──────────────────────
+  # DeployVPFIToken's [3b] no-overwrite guard aborts (correctly) when a canonical
+  # `.vpfiToken` is already recorded — but [3b] runs AFTER [2] Diamond + [3]
+  # Timelock broadcast, so a late abort would leave a PARTIAL mainnet deploy.
+  # Catch every one of [3b]'s abort conditions HERE, before any broadcast AND
+  # before the --fresh archive wipes the artifact: a canonical chain whose
+  # addresses.json already carries `.vpfiToken` must opt into a rotation to
+  # re-mint, else refuse up-front. Covers BOTH the --fresh re-deploy and the
+  # pre-seeded-token (`.vpfiToken` present, no `.diamond` yet) cases. On --fresh
+  # WITH the force flag the [0a] archive clears `.vpfiToken`, so [3b] then mints
+  # the rotated token cleanly.
+  if [ "$IS_CANONICAL" = "1" ]; then
+    local preseeded_vpfi
+    preseeded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+    if [ -n "$preseeded_vpfi" ] && [ "$preseeded_vpfi" != "null" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+      echo "ERROR: a canonical VPFI token ($preseeded_vpfi) is already recorded on $CHAIN_SLUG." >&2
+      echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+      echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+      echo "       To deliberately rotate the canonical token re-run with" >&2
+      echo "       VPFI_TOKEN_FORCE_REDEPLOY=1; otherwise carry the existing token forward." >&2
+      exit 1
+    fi
+  fi
+
   # ── Detect-and-refuse on a chain dir with a deployed Diamond ─────
   # Same shape as deploy-testnet.sh's gate but with a SECOND mainnet-
   # only confirm flag (--confirm-purging-prior-mainnet-deploy) on top
@@ -621,25 +645,8 @@ EOF
         echo "    (operator confirmed via --confirm-orphans-prior-onchain-state)"
       fi
     fi
-    # #853 Codex P1 — capture the prior canonical VPFI token BEFORE archiving
-    # addresses.json. Otherwise the [3b] mint step's on-disk no-overwrite guard
-    # is blinded by the archive and would silently mint a SECOND 23M canonical
-    # supply (FORKING VPFI) on a --fresh re-deploy. A first-ever fresh deploy has
-    # no prior token → this stays empty → [3b] proceeds normally.
-    PRESERVED_VPFI_TOKEN="$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || true)"
-    export PRESERVED_VPFI_TOKEN
-    # [0a-guard] #853 Codex P2 — refuse a duplicate canonical VPFI mint HERE, in
-    # preflight, BEFORE archiving and BEFORE any forge broadcast. Enforcing it at
-    # [3b] instead would run only after [2] DeployDiamond + [3] DeployTimelock had
-    # already landed, leaving a partial mainnet deploy. A prior canonical token +
-    # no explicit rotation opt-in aborts cleanly before anything is broadcast.
-    if [ "$IS_CANONICAL" = "1" ] && [ -n "$PRESERVED_VPFI_TOKEN" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
-      echo "ERROR: a prior canonical VPFI token ($PRESERVED_VPFI_TOKEN) exists on $CHAIN_SLUG." >&2
-      echo "       A --fresh redeploy would mint a SECOND 23M supply and FORK VPFI. To rotate" >&2
-      echo "       the canonical token deliberately, re-run with VPFI_TOKEN_FORCE_REDEPLOY=1;" >&2
-      echo "       otherwise carry the existing token forward (do not --fresh the VPFI mint)." >&2
-      exit 1
-    fi
+    # (The canonical VPFI re-mint refusal ran in preflight above, before any
+    # broadcast AND before this archive — see the "VPFI re-mint preflight" gate.)
     echo "[0a] --fresh + --confirm-purging-prior-mainnet-deploy: archiving prior chain state for $CHAIN_SLUG"
     archive_chain_state "$CHAIN_SLUG"
     echo
@@ -735,7 +742,7 @@ EOF
   # mint their own Burn/Mint VPFIMirrorToken inside [4]. DeployVPFIToken itself
   # hard-guards to canonical chain ids, so this IS_CANONICAL gate is
   # belt-and-suspenders. The duplicate-mint refusal for a --fresh re-deploy is
-  # enforced in PREFLIGHT (see [0a-guard]), before any broadcast — refusing here
+  # enforced in the "VPFI re-mint preflight" gate, before any broadcast — refusing here
   # would leave a partial deploy since [2]/[3] already landed (#853 Codex P2).
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
