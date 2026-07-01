@@ -53,6 +53,7 @@ import {
   readSecret,
   getChainConfigs,
   type WorkerEnv,
+  type SecretBinding,
 } from './env';
 import { runChainIndexer, sweepUnpublishedListings } from './chainIndexer';
 import { getDeployment } from '@vaipakam/contracts/deployments';
@@ -366,12 +367,33 @@ async function handleChainEventWebhook(
     return new Response('bad request', { status: 400 });
   }
 
-  // 2. HMAC-verify (fail-closed). Reads only the signing key from the raw env,
-  // via `readSecret` so a Secrets-Store fetch that REJECTS (transient outage,
-  // deleted/deactivated secret, permission issue) resolves to `undefined` →
-  // 401, never a Worker 500 before verification (Codex #764 round 4). This
-  // public route stays fail-closed at every step.
-  const signingKey = await readSecret(env.ALCHEMY_WEBHOOK_SIGNING_KEY);
+  // Resolve the chain from the TRUSTED `?chain=<chainId>` URL param FIRST — it's
+  // operator-configured on the webhook target (not payload-derived), so it can
+  // safely drive per-chain signing-key selection below. Alchemy's *Custom
+  // Webhook* payload also carries no `network` field, so pinning the chainId in
+  // the URL is the design's per-chain rollout shape either way.
+  const urlChainRaw = Number(new URL(req.url).searchParams.get('chain'));
+  const urlChain =
+    Number.isInteger(urlChainRaw) && urlChainRaw > 0 ? urlChainRaw : null;
+
+  // 2. HMAC-verify (fail-closed). Alchemy Notify V2 mints a DISTINCT signing key
+  // per webhook (no team/app-shared key — Custom Webhooks are single-network
+  // too), so a multi-chain deploy needs one key PER chain. Prefer the per-chain
+  // binding `ALCHEMY_WEBHOOK_SIGNING_KEY_<chainId>` selected by the trusted
+  // `?chain=` param, falling back to the generic key (single-chain / legacy
+  // deploys). `readSecret` maps a REJECTED Secrets-Store fetch (transient
+  // outage, deleted/deactivated secret, permission issue) to `undefined` → 401,
+  // never a Worker 500 before verification (Codex #764 round 4). A wrong-chain
+  // POST just selects a key its HMAC can't match → 401; the route stays
+  // fail-closed at every step.
+  const perChainBinding = urlChain
+    ? (env as unknown as Record<string, SecretBinding | undefined>)[
+        `ALCHEMY_WEBHOOK_SIGNING_KEY_${urlChain}`
+      ]
+    : undefined;
+  const signingKey = await readSecret(
+    perChainBinding ?? env.ALCHEMY_WEBHOOK_SIGNING_KEY,
+  );
   const ok = await verifyAlchemySignature(
     rawBody,
     req.headers.get('x-alchemy-signature'),
@@ -382,14 +404,9 @@ async function handleChainEventWebhook(
   // 3. Parse the hint (max delivered block, delivery id, network if present).
   const parsed = parseChainEventPayload(rawBody);
   if (!parsed) return new Response('bad payload', { status: 400 });
-  // Resolve the chain. PREFER an explicit `?chain=<chainId>` URL param (Codex
-  // #764 P1): Alchemy's *Custom Webhook* payload — the preferred rollout for
-  // full Diamond-log coverage — carries no `network` field, so the operator
-  // configures one webhook per chain whose target URL pins the chainId. Fall
-  // back to the payload network (Address Activity) when the param is absent.
-  const urlChain = Number(new URL(req.url).searchParams.get('chain'));
-  const chainId =
-    Number.isInteger(urlChain) && urlChain > 0 ? urlChain : parsed.chainId;
+  // Resolve the chain: the pinned `?chain=` param wins (Codex #764 P1), else the
+  // payload network (Address Activity carries it).
+  const chainId = urlChain ?? parsed.chainId;
   // Unmapped/absent chain / DO ingest not enabled ⇒ accept + no-op (cron
   // covers it). The SAME gate as the cron keeps the two consistent — never
   // webhook→DO while the cron still scans inline (which would be two writers).
