@@ -45,6 +45,19 @@ contract ConfigureVPFIToken is Script {
     function run() external {
         bool canonical = block.chainid == 8453 || block.chainid == 84532;
 
+        // #857 — honor an explicit `--skip-vpfi` deploy FIRST, before resolving
+        // the token. A skip-vpfi chain has no VPFI stack; checking this up-front
+        // stops the `<CHAIN>_VPFI_TOKEN_ADDRESS` env fallback below from
+        // consuming a STALE value left in `.env` and registering a token this
+        // Diamond was never meant to have.
+        if (vm.envOr("SKIP_VPFI", uint256(0)) == 1) {
+            console.log(
+                "[ConfigureVPFIToken] skip - SKIP_VPFI=1 (no VPFI stack on this chain), chain:",
+                block.chainid
+            );
+            return;
+        }
+
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
@@ -52,30 +65,19 @@ contract ConfigureVPFIToken is Script {
         // Resolve THIS chain's VPFI token: canonical hosts the real
         // `.vpfiToken` (artifact OR the documented `<CHAIN>_VPFI_TOKEN_ADDRESS`
         // env fallback — restored in #857); a mirror holds the Burn/Mint
-        // `.vpfiMirror`.
+        // `.vpfiMirror`. SKIP_VPFI was already handled above, so an absent token
+        // here FAILS LOUD (#857): a missing/corrupt artifact on a normal deploy
+        // must NOT silently leave `s.vpfiToken` unset while configure is marked
+        // done — that disables every VPFI mint/reward/discount path.
         address token = canonical
             ? _resolveCanonicalToken()
             : Deployments.readVpfiMirrorOptional();
-        if (token == address(0)) {
-            // No token recorded. SKIP only on an EXPLICIT `--skip-vpfi` deploy
-            // (SKIP_VPFI=1, set by the operator running the configure on a
-            // chain deployed without the VPFI/cross-chain stack). Otherwise
-            // FAIL LOUD (#857): a missing/corrupt artifact on a normal deploy
-            // must NOT silently leave `s.vpfiToken` unset while the wrapper
-            // marks configure done — that disables every VPFI mint/reward/
-            // discount path.
-            require(
-                vm.envOr("SKIP_VPFI", uint256(0)) == 1,
-                canonical
-                    ? "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
-                    : "ConfigureVPFIToken: .vpfiMirror not deployed (run DeployCrosschain first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
-            );
-            console.log(
-                "[ConfigureVPFIToken] skip - SKIP_VPFI=1 + no VPFI token recorded, chain:",
-                block.chainid
-            );
-            return;
-        }
+        require(
+            token != address(0),
+            canonical
+                ? "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
+                : "ConfigureVPFIToken: .vpfiMirror not deployed (run DeployCrosschain first, or set SKIP_VPFI=1 for a --skip-vpfi deploy)"
+        );
 
         console.log("=== Configure VPFI Token (diamond registration) ===");
         console.log("Chain id:   ", block.chainid);

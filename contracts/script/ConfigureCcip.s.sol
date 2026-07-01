@@ -157,6 +157,18 @@ contract ConfigureCcip is Script {
         c.rateRefill =
             uint128(vm.envOr("CCIP_RATE_REFILL", uint256(5.8 ether)));
 
+        // #857 — validate CCIP_GUARDIAN HERE, before ANY vm.startBroadcast. The
+        // guardian is wired late in this multi-broadcast script (_setGuardians
+        // runs after pool-ownership accept + lane/channel wiring), so failing
+        // there would leave those earlier txns already broadcast — a partially
+        // wired CCIP stack with no guardian. Gating it up-front, before any
+        // broadcast, is the fail-loud-but-clean path (the redundant assert in
+        // _setGuardians stays as belt-and-suspenders).
+        require(
+            c.guardian != address(0),
+            "ConfigureCcip: CCIP_GUARDIAN unset (or zero) - required to wire the incident guardian onto every GuardianPausable contract before handover"
+        );
+
         // Local deployed addresses — written by `DeployCrosschain.s.sol`.
         c.messenger =
             Deployments.readAddress(".ccipMessenger", "CCIP_MESSENGER_ADDRESS");

@@ -492,6 +492,12 @@ snapshot_addresses() {
 
 if [ "$FRESH" = "1" ]; then
   echo "[0] --fresh cleanup"
+  # #857 — capture the recorded canonical .vpfiToken BEFORE archiving it, so the
+  # reuse-address preflight below can still MATCH a carry-forward against the
+  # prior token on a --fresh redeploy (the archive would otherwise blank it,
+  # letting a typo to a different VPFI-symbol token slip through).
+  PRESERVED_RECORDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  export PRESERVED_RECORDED_VPFI
   if [ -f "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" ]; then
     BACKUP="$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.prior-rehearsal.$(date +%s).json"
     mv "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" "$BACKUP"
@@ -563,6 +569,9 @@ fi
 # reuse must be an 18-decimal ERC20 whose symbol is "VPFI".
 if [ -n "${VPFI_TOKEN_REUSE_ADDRESS:-}" ] && [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ]; then
   _recorded_vpfi=$(jq -r '.vpfiToken // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null || echo "")
+  # On --fresh the record was archived in [0]; fall back to the value captured
+  # before the archive so the match still catches a typo (#857).
+  { [ -z "$_recorded_vpfi" ] || [ "$_recorded_vpfi" = "null" ]; } && _recorded_vpfi="${PRESERVED_RECORDED_VPFI:-}"
   if [ -n "$_recorded_vpfi" ] && [ "$_recorded_vpfi" != "null" ] && \
      [ "$(printf '%s' "$_recorded_vpfi" | tr 'A-Z' 'a-z')" != "$(printf '%s' "$VPFI_TOKEN_REUSE_ADDRESS" | tr 'A-Z' 'a-z')" ]; then
     echo "ERROR: VPFI_TOKEN_REUSE_ADDRESS ($VPFI_TOKEN_REUSE_ADDRESS) != recorded .vpfiToken ($_recorded_vpfi) — refusing before broadcast." >&2

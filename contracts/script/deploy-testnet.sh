@@ -1898,7 +1898,12 @@ phase_pause_rehearsal() {
     unpause-calldata)
       echo "═══════════════════════════════════════════════════════════════"
       echo "deploy-testnet.sh — pause-rehearsal UNPAUSE-CALLDATA  ($CHAIN_SLUG)"
-      echo "  Cleanup phase. Sign these via Pauser Safe to unpause."
+      echo "  Cleanup phase. Route these through the governance TIMELOCK — NOT"
+      echo "  the Pauser Safe (#857). Unpause is deliberately owner-only: the"
+      echo "  Diamond's unpause is UNPAUSER_ROLE and every GuardianPausable"
+      echo "  contract's is onlyOwner — after handover BOTH are the timelock, so"
+      echo "  these go through its schedule/execute queue. This mirrors the real"
+      echo "  pause-all-chains.sh --unpause-calldata path operators must practise."
       echo "═══════════════════════════════════════════════════════════════"
       echo
       local UNPAUSE_SELECTOR

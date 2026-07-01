@@ -69,6 +69,26 @@ contract DeployVPFIToken is Script {
         // and post-handover that owner is the timelock).
         address reuse = vm.envOr("VPFI_TOKEN_REUSE_ADDRESS", address(0));
         if (reuse != address(0)) {
+            // #857 — CONFLICTING MODES. VPFI_TOKEN_FORCE_REDEPLOY=1 (mint a NEW
+            // token) and VPFI_TOKEN_REUSE_ADDRESS (keep the EXISTING one) are
+            // mutually exclusive; if both are set the reuse branch would silently
+            // win and carry the old token forward while the operator asked for a
+            // rotation. Fail fast instead.
+            require(
+                vm.envOr("VPFI_TOKEN_FORCE_REDEPLOY", uint256(0)) == 0,
+                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS and VPFI_TOKEN_FORCE_REDEPLOY are mutually exclusive (reuse vs rotate) - unset one"
+            );
+            // #857 — MATCH the recorded token when present (direct-invocation
+            // safety; the shell preflights do this pre-broadcast, but this covers
+            // a bare `forge script DeployVPFIToken`). If `.vpfiToken` already
+            // records token A and reuse points at a different token B — even one
+            // that reports symbol "VPFI"/18 — refuse rather than clobber the
+            // artifact + wrap the wrong asset as canonical VPFI.
+            address recorded = Deployments.readVpfiTokenOptional();
+            require(
+                recorded == address(0) || recorded == reuse,
+                "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS != the already-recorded .vpfiToken (refusing to clobber)"
+            );
             require(
                 reuse.code.length > 0,
                 "DeployVPFIToken: VPFI_TOKEN_REUSE_ADDRESS has no bytecode (not a deployed token)"
