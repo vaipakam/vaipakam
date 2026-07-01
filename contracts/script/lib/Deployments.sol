@@ -139,16 +139,16 @@ library Deployments {
     ///         `<CHAIN>_VPFI_TOKEN_ADDRESS` for other scripts. This json-only,
     ///         non-reverting read is what that guard must use (#853 Codex P1).
     function readVpfiTokenOptional() internal view returns (address) {
-        string memory p = path();
-        if (!_fileExists(p)) return address(0);
-        // forge-lint: disable-next-line(unsafe-cheatcode)
-        string memory file = CHEATS.readFile(p);
-        if (bytes(file).length == 0) return address(0);
-        try CHEATS.parseJsonAddress(file, ".vpfiToken") returns (address a) {
-            return a;
-        } catch {
-            return address(0);
-        }
+        return _tryReadAddr(".vpfiToken");
+    }
+
+    /// @notice Optional, non-reverting artifact read of `.vpfiMirror` — the
+    ///         Burn/Mint mirror VPFI ERC20 a mirror chain's `DeployCrosschain`
+    ///         records. Returns address(0) when absent. `ConfigureVPFIToken`
+    ///         uses it to register the mirror token in the Diamond's
+    ///         `s.vpfiToken` slot on mirror chains (#853 Codex P1).
+    function readVpfiMirrorOptional() internal view returns (address) {
+        return _tryReadAddr(".vpfiMirror");
     }
     // T-068 CCIP: the cross-chain reward contract is `VaipakamRewardMessenger`,
     // recorded under `.rewardMessenger` by `DeployCrosschain.s.sol`. Older

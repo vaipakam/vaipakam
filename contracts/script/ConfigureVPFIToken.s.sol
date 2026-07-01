@@ -8,61 +8,62 @@ import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
 /**
- * @title ConfigureVPFIToken (canonical VPFI diamond registration)
- * @notice One-shot post-deploy script that REGISTERS the freshly-deployed
- *         canonical VPFI token with the canonical Diamond and flags the chain
- *         as canonical, so `TreasuryFacet.mintVPFI` (and every `s.vpfiToken`
- *         consumer) becomes live.
+ * @title ConfigureVPFIToken (VPFI diamond registration — canonical + mirror)
+ * @notice One-shot post-deploy script that REGISTERS this chain's VPFI token in
+ *         the Diamond's `s.vpfiToken` slot so every token-aware path becomes
+ *         live: on the canonical chain it also flips `isCanonicalVpfiChain` true
+ *         (enabling `TreasuryFacet.mintVPFI`); on mirror chains it registers the
+ *         Burn/Mint `vpfiMirror` and leaves the canonical flag FALSE.
  *
- * @dev #853 Codex P2. `DeployVPFIToken` deploys the token and points its
- *      minter at the Diamond, but the Diamond itself only mints/uses VPFI once
- *      BOTH `s.vpfiToken` and `s.isCanonicalVpfiChain` are set — and those are
- *      ADMIN_ROLE-gated setters (`VPFITokenFacet.setVPFIToken` /
- *      `setCanonicalVPFIChain`). Because `DeployDiamond` renounces the
- *      deployer's roles at the end of the contracts phase, this wiring cannot
- *      ride the deployer key inside `DeployVPFIToken`; it must be a separate
- *      ADMIN-key broadcast. This script is that step and is folded into
- *      `DiamondConfigSpell` so it runs on every post-deploy configure.
+ * @dev #853 Codex P1/P2. `DeployVPFIToken` (canonical) and `DeployCrosschain`
+ *      (mirror) deploy the token, but the Diamond only mints/uses VPFI once
+ *      `s.vpfiToken` is set — and both setters are ADMIN_ROLE-gated
+ *      (`VPFITokenFacet.setVPFIToken` / `setCanonicalVPFIChain`). Because
+ *      `DeployDiamond` renounces the deployer's roles at the end of the
+ *      contracts phase, this wiring must be a separate ADMIN-key broadcast; it
+ *      is folded into `DiamondConfigSpell` so it runs on every configure.
  *
- *      CANONICAL-ONLY. Only the canonical chain (Base 8453 / Base Sepolia
- *      84532) hosts the canonical token + carries the canonical flag; on every
- *      mirror chain this is a no-op (mirrors register their Burn/Mint
- *      `VPFIMirrorToken` via the cross-chain path, and must leave
- *      `isCanonicalVpfiChain` false so they cannot mint locally). The guard
- *      matches `DeployCrosschain`/`DeployVPFIToken`'s own canonical predicate.
+ *      REGISTERS ON EVERY CHAIN — earlier this skipped mirrors, which left
+ *      `s.vpfiToken` zero on Arb/OP/BNB even though `DeployCrosschain` had
+ *      deployed `vpfiMirror`. Mirror runtime paths key off that slot
+ *      (`InteractionRewardsFacet.claimInteractionRewards` reverts when it is
+ *      zero; VPFI-lending/collateral guards compare against it), so the local
+ *      mirror VPFI was unusable. Now: resolve the token per chain (canonical →
+ *      `.vpfiToken`, mirror → `.vpfiMirror`) and `setVPFIToken(token)`
+ *      everywhere; only the canonical chain also `setCanonicalVPFIChain(true)`
+ *      (mirrors must stay false so they can't mint locally — the LockRelease vs
+ *      Burn/Mint split). Matches `DeployCrosschain`'s canonical predicate.
  *
- *      Idempotent — both setters short-circuit when the value is unchanged, so
- *      re-running the spell is safe.
+ *      Idempotent — both setters short-circuit when the value is unchanged.
  *
  *      Required env vars:
- *        - ADMIN_PRIVATE_KEY : admin-role key (signs the two setter txs)
- *      Reads `.diamond` + `.vpfiToken` from the active chain's addresses.json.
+ *        - ADMIN_PRIVATE_KEY : admin-role key (signs the setter tx(s))
+ *      Reads `.diamond` + `.vpfiToken`/`.vpfiMirror` from this chain's
+ *      addresses.json.
  */
 contract ConfigureVPFIToken is Script {
     function run() external {
-        // CANONICAL-ONLY guard — mirror chains never host the canonical token
-        // nor carry the canonical flag; skip cleanly so the spell stays a
-        // single run-on-every-chain step.
-        if (block.chainid != 8453 && block.chainid != 84532) {
-            console.log(
-                "[ConfigureVPFIToken] skip - mirror chain, no canonical VPFI:",
-                block.chainid
-            );
-            return;
-        }
+        bool canonical = block.chainid == 8453 || block.chainid == 84532;
 
         uint256 adminKey = vm.envUint("ADMIN_PRIVATE_KEY");
         address diamond = Deployments.readDiamond();
-        address token = Deployments.readVpfiToken();
-
         require(diamond != address(0), "ConfigureVPFIToken: diamond not deployed");
+
+        // Resolve THIS chain's VPFI token: canonical hosts the real
+        // `.vpfiToken`; a mirror holds the Burn/Mint `.vpfiMirror`.
+        address token = canonical
+            ? Deployments.readVpfiToken()
+            : Deployments.readVpfiMirrorOptional();
         require(
             token != address(0),
-            "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first)"
+            canonical
+                ? "ConfigureVPFIToken: .vpfiToken not deployed (run DeployVPFIToken first)"
+                : "ConfigureVPFIToken: .vpfiMirror not deployed (run DeployCrosschain first)"
         );
 
-        console.log("=== Configure VPFI Token (canonical registration) ===");
+        console.log("=== Configure VPFI Token (diamond registration) ===");
         console.log("Chain id:   ", block.chainid);
+        console.log("Canonical:  ", canonical);
         console.log("Diamond:    ", diamond);
         console.log("VPFI token: ", token);
 
@@ -83,9 +84,17 @@ contract ConfigureVPFIToken is Script {
         vm.startBroadcast(adminKey);
         VPFITokenFacet d = VPFITokenFacet(diamond);
         d.setVPFIToken(token);
-        d.setCanonicalVPFIChain(true);
+        // Canonical flag ONLY on the canonical chain — mirrors must stay false
+        // so they cannot mint VPFI locally (they receive bridged supply).
+        if (canonical) {
+            d.setCanonicalVPFIChain(true);
+        }
         vm.stopBroadcast();
 
-        console.log("VPFI token registered + canonical flag set.");
+        console.log(
+            canonical
+                ? "VPFI token registered + canonical flag set."
+                : "Mirror VPFI token registered (canonical flag left false)."
+        );
     }
 }

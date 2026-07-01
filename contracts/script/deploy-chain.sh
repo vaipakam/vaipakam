@@ -326,14 +326,30 @@ fi
 # each have a distinct CCIP Router + RMN proxy). The .env carries
 # `CCIP_ROUTER_<SLUG>` / `CCIP_RMN_PROXY_<SLUG>` per chain; resolve the
 # active chain's pair here so one .env serves every chain without
-# manual editing between runs. A pre-set `CCIP_ROUTER` / `CCIP_RMN_PROXY`
-# (no per-slug var) is left untouched — handy for a single-chain run.
+# manual editing between runs.
+#
+# The per-slug form is REQUIRED (#853 Codex P2) — matching deploy-testnet.sh
+# and the CCIP-INFRA-ADDRESSES.md contract. A bare pre-set `CCIP_ROUTER` with
+# no matching `CCIP_ROUTER_<SLUG>` is a HARD ERROR, not a silent fallback:
+# reusing a stale bare Base router left over from a prior single-chain run on
+# e.g. `arb-sepolia` would wire the WRONG immutable CCIP router into
+# DeployCrosschain. Only enforced when the VPFI/cross-chain stack is actually
+# being deployed (`--skip-vpfi` skips [4], so CCIP infra isn't needed).
 CCIP_ROUTER_VAR="CCIP_ROUTER_${CCIP_SLUG}"
 CCIP_RMN_PROXY_VAR="CCIP_RMN_PROXY_${CCIP_SLUG}"
-if [ -n "${!CCIP_ROUTER_VAR:-}" ]; then
+if [ "$SKIP_VPFI" = "0" ]; then
+  if [ -z "${!CCIP_ROUTER_VAR:-}" ]; then
+    echo "Error: $CCIP_ROUTER_VAR is unset. deploy-chain.sh requires the per-slug CCIP" >&2
+    echo "       router (a bare CCIP_ROUTER is refused — it risks wiring the wrong chain's" >&2
+    echo "       immutable router). See contracts/deployments/CCIP-INFRA-ADDRESSES.md for" >&2
+    echo "       $CHAIN_SLUG's value, or pass --skip-vpfi if not deploying the CCIP stack." >&2
+    exit 1
+  fi
   export CCIP_ROUTER="${!CCIP_ROUTER_VAR}"
-fi
-if [ -n "${!CCIP_RMN_PROXY_VAR:-}" ]; then
+  if [ -z "${!CCIP_RMN_PROXY_VAR:-}" ]; then
+    echo "Error: $CCIP_RMN_PROXY_VAR is unset (per-slug CCIP RMN proxy required)." >&2
+    exit 1
+  fi
   export CCIP_RMN_PROXY="${!CCIP_RMN_PROXY_VAR}"
 fi
 
@@ -1241,7 +1257,14 @@ fi
 echo "  artifact:      contracts/deployments/$CHAIN_SLUG/addresses.json"
 echo
 echo "Follow-up steps NOT in this script:"
-echo "  1. CCIP lane + channel wiring (after EVERY chain in your"
+echo "  1. REQUIRED — Diamond-side configure (this script deploys the VPFI"
+echo "     token in [3b]/[4] but does NOT register it or wire oracles):"
+echo "        forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
+echo "     Runs ConfigureVPFIToken (sets s.vpfiToken + the canonical flag so"
+echo "     TreasuryFacet.mintVPFI and every token-aware guard work), plus"
+echo "     ConfigureOracle / RewardReporter / VPFIBuy / NFT URIs. WITHOUT this"
+echo "     the Diamond leaves s.vpfiToken unset and token paths stay disabled."
+echo "  2. CCIP lane + channel wiring (after EVERY chain in your"
 echo "     topology has had this script run):"
 echo "        CCIP_LANE_CHAIN_IDS=<other chain ids> \\"
 echo "        forge script script/ConfigureCcip.s.sol --rpc-url <rpc> --broadcast"
@@ -1249,6 +1272,6 @@ echo "     Wires chain selectors, remote messengers, the vpfi-buy /"
 echo "     vpfi-reward channel peers, the TokenPool lanes + rate limits,"
 echo "     and the TokenAdminRegistry CCT registration. Run it once per"
 echo "     chain. The multi-chain orchestrators do this automatically."
-echo "  2. Role rotation to governance + timelock — DeploymentRunbook §6"
+echo "  3. Role rotation to governance + timelock — DeploymentRunbook §6"
 echo "     (multi-party ceremony, deliberately out of any script)"
 echo "═══════════════════════════════════════════════════════════════"
