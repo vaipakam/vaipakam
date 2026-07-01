@@ -79,14 +79,20 @@
     // close-browser edge case is covered even if the
     // frontend-direct push didn't fire.
     { "binding": "OPENSEA_API_KEY",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "OPENSEA_API_KEY" },
-    // #757 Phase A — Alchemy webhook HMAC signing key. Read directly from the
+    // #757 Phase A — Alchemy webhook HMAC signing key(s). Read directly from the
     // raw WorkerEnv in the `/hooks/chain-event` route (dispatched before the
-    // global resolveEnv). The route fails closed (401) while this is unbound, so
-    // it stays COMMENTED until the operator enables #757 (the binding can only
-    // be added once the secret exists in the store — wrangler validates it at
-    // deploy). To enable: create `ALCHEMY_WEBHOOK_SIGNING_KEY` in the store,
-    // uncomment this binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
-    // { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY" },
+    // global resolveEnv). The route fails closed (401) while unbound.
+    //
+    // PER-CHAIN keys: Alchemy Notify V2 mints a distinct signing key per webhook
+    // (no team/app-shared key; Custom Webhooks are single-network too), so each
+    // active chain's webhook has its own key. The route selects
+    // `ALCHEMY_WEBHOOK_SIGNING_KEY_<chainId>` from the trusted `?chain=` param,
+    // falling back to the generic `ALCHEMY_WEBHOOK_SIGNING_KEY`. A binding can
+    // only be added once its secret exists in the store (wrangler validates at
+    // deploy). To enable a chain: create its secret in the store, add the
+    // binding, set `CHAIN_INGEST_VIA_DO: "true"`, and redeploy.
+    { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532",  "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_84532" },
+    { "binding": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614", "store_id": "1e66429d0fa24aa38a27bc05b7bcf63e", "secret_name": "ALCHEMY_WEBHOOK_SIGNING_KEY_421614" },
   ],
 
   // #757 Phase A — per-chain ingest Durable Object: the single serialized
@@ -129,6 +135,12 @@
   //                                      from string + clamped >= 1.
   "vars": {
     "CANCELLED_OFFER_RETENTION_DAYS": "30",
+    // #757 Phase A — enable the DO ingest path (cron→DO AND the webhook→DO
+    // forward). While unset/not "true" the cron keeps the legacy inline scan and
+    // the webhook 200-no-ops, so deploying the DO never re-routes live ingest by
+    // itself. Turned on now that the per-chain Alchemy webhooks + signing keys
+    // are configured for Base Sepolia (84532) + Arb Sepolia (421614).
+    "CHAIN_INGEST_VIA_DO": "true",
   },
 
   // #335 — per-IP rate-limit for the one POST surface this

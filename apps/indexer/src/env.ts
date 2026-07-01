@@ -89,7 +89,19 @@ export interface WorkerEnv {
   // BEFORE the global `resolveEnv`, so an unauthenticated POST never triggers
   // the other Secrets-Store fetches). Optional: unset ⇒ the route fails closed
   // (401) and ingest stays cron-paced.
+  //
+  // PER-CHAIN keys. Alchemy Notify V2 mints a DISTINCT signing key per webhook
+  // (there is no team/app-shared key — confirmed against the Notify API via
+  // both the CLI and the MCP, and Custom Webhooks are single-network too). The
+  // design's "one webhook per chain, target URL pins `?chain=<id>`" model
+  // therefore needs one key per chain. The route reads the TRUSTED `?chain=`
+  // URL param (operator-configured, not payload-derived) BEFORE verifying, and
+  // selects `ALCHEMY_WEBHOOK_SIGNING_KEY_<chainId>`, falling back to the generic
+  // key below. A wrong-chain POST just selects a key its HMAC can't match → 401,
+  // so the param driving key-selection is safe. Add a binding per active chain.
   ALCHEMY_WEBHOOK_SIGNING_KEY?: SecretBinding;
+  ALCHEMY_WEBHOOK_SIGNING_KEY_84532?: SecretBinding; // Base Sepolia (canonical testnet)
+  ALCHEMY_WEBHOOK_SIGNING_KEY_421614?: SecretBinding; // Arb Sepolia (mirror testnet)
   // #757 Phase A — per-chain ingest Durable Object namespace. The webhook
   // route and the cron `scheduled()` both resolve `idFromName(String(chainId))`
   // and forward a (chainId, target-block) hint; the DO is the single serialized
