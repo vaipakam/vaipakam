@@ -396,9 +396,11 @@ fi
 # Mirror chains additionally need BASE_CHAIN_ID — the EVM chain id of
 # canonical Base — so DeployCrosschain can point the reward + buy flows
 # back at the canonical receiver. Canonical Base is its own base and
-# stores baseChainId = 0, so the check is mirror-only.
-if [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
-  echo "Error: \$BASE_CHAIN_ID required in .env for mirror chains." >&2
+# stores baseChainId = 0, so the check is mirror-only. Only DeployCrosschain
+# ([4]) consumes it, so gate on SKIP_VPFI too — a `--skip-vpfi` mirror quick
+# deploy shouldn't demand it (#853 Codex P2).
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "0" ] && [ -z "${BASE_CHAIN_ID:-}" ]; then
+  echo "Error: \$BASE_CHAIN_ID required in .env for mirror chains (or pass --skip-vpfi)." >&2
   exit 1
 fi
 
@@ -406,7 +408,7 @@ echo "════════════════════════�
 echo "deploy-chain.sh"
 echo "  chain-slug:    $CHAIN_SLUG"
 echo "  chain-id:      $CHAIN_ID"
-echo "  ccip router:   $CCIP_ROUTER"
+echo "  ccip router:   ${CCIP_ROUTER:-(skipped — --skip-vpfi)}"
 if [ "$IS_CANONICAL" = "1" ]; then
   echo "  crosschain:    CANONICAL  (lock/release VPFI pool + buy receiver)"
 else
@@ -544,6 +546,28 @@ if { [ "$CHAIN_ID" = "421614" ] || [ "$CHAIN_ID" = "42161" ]; } && ! step_done "
   fi
   export ARB_L2_DEPLOY_BLOCK
   echo "[2·arb] ARB_L2_DEPLOY_BLOCK=$ARB_L2_DEPLOY_BLOCK (forge-sim ArbSys fallback)"
+fi
+
+# ── VPFI re-mint preflight (#853 Codex P2) ────────────────────────────
+# DeployVPFIToken's [3b] no-overwrite guard aborts when a canonical `.vpfiToken`
+# is already recorded — but [3b] runs AFTER [2] Diamond + [3] Timelock broadcast,
+# so a late abort would leave a PARTIAL deploy. The [2b] existing-diamond gate
+# only catches a prior `.diamond`; a PRE-SEEDED `.vpfiToken` with no `.diamond`
+# yet slips through to [3b]. Refuse that here, before any broadcast, matching the
+# tiered scripts. Only when [3b] will actually run (canonical, VPFI not skipped,
+# marker absent). --fresh is exempt (it wipes addresses.json + markers, so [3b]
+# re-mints); an explicit VPFI_TOKEN_FORCE_REDEPLOY=1 (propagated to the forge
+# subprocess) is the deliberate rotation opt-in.
+if [ "$SKIP_VPFI" = "0" ] && [ "$IS_CANONICAL" = "1" ] && ! step_done "vpfitoken" \
+   && [ "$FRESH" != "1" ] && [ "${VPFI_TOKEN_FORCE_REDEPLOY:-0}" != "1" ]; then
+  PRESEEDED_VPFI=$(jq -r '.vpfiToken // empty' "$CONTRACTS_DIR/deployments/$CHAIN_SLUG/addresses.json" 2>/dev/null || echo "")
+  if [ -n "$PRESEEDED_VPFI" ] && [ "$PRESEEDED_VPFI" != "null" ]; then
+    echo "ERROR: a canonical VPFI token ($PRESEEDED_VPFI) is already recorded on $CHAIN_SLUG." >&2
+    echo "       Proceeding would run [3b] DeployVPFIToken, whose no-overwrite guard aborts" >&2
+    echo "       AFTER Diamond + Timelock broadcast — a partial deploy. Refusing up-front." >&2
+    echo "       Re-run with --fresh (wipes + re-mints) or set VPFI_TOKEN_FORCE_REDEPLOY=1." >&2
+    exit 1
+  fi
 fi
 
 # ── 2. Diamond ────────────────────────────────────────────────────────

@@ -890,7 +890,7 @@ EOF
   if [ "$IS_CANONICAL" = "1" ]; then
     echo
     echo "[3b] DeployVPFIToken.s.sol  (canonical VPFI — before crosschain)"
-    VPFI_TOKEN_FORCE_REDEPLOY="${FRESH:-0}" \
+    VPFI_TOKEN_FORCE_REDEPLOY="$([ "$FRESH" = "1" ] && echo 1 || echo "${VPFI_TOKEN_FORCE_REDEPLOY:-0}")" \
       forge script script/DeployVPFIToken.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
   fi
 

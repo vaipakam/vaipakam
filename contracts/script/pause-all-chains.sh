@@ -123,7 +123,15 @@ list_pause_targets() {
   local slug="$1"
   local addr_file="$DEPLOY_ROOT/$slug/addresses.json"
   [ ! -f "$addr_file" ] && return 1
-  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror; do
+  # #853 Codex P2 — include the CCIP-adapter surface. `ccipMessenger` (the
+  # provider-agnostic send/receive adapter) and the Base-side
+  # `buybackRemittanceReceiver` both carry `GuardianPausable` with
+  # `whenNotPaused`-guarded handlers; omitting them let an incident pause report
+  # success while those inbound/outbound paths stayed live. `vpfiTokenPool` /
+  # `vpfiPoolRateGovernor` are governed by CCIP rate-limits, not a pause switch,
+  # so they stay out. Missing keys are skipped by the emptiness check below.
+  for KEY in diamond rewardMessenger vpfiOftAdapter vpfiMirror \
+             ccipMessenger buybackRemittanceReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$addr_file" 2>/dev/null)
     # Legacy fallback: pre-T-068 deployment artifacts stored the cross-
     # chain reward messenger under the LayerZero-era key `rewardOApp`.
