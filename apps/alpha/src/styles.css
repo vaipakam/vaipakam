@@ -230,6 +230,7 @@ button {
 .flow-page,
 .manage-page,
 .advanced-page,
+.offers-page,
 .help-page {
   display: grid;
   gap: 22px;
@@ -484,6 +485,75 @@ dd {
   line-height: 1.58;
 }
 
+.offer-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.offer-list,
+.offer-review {
+  display: grid;
+  gap: 16px;
+}
+
+.offer-card-list {
+  display: grid;
+  gap: 10px;
+}
+
+.offer-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  min-height: 116px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.offer-card.selected {
+  border-color: rgba(20, 107, 92, 0.5);
+  background: #e5f4ee;
+}
+
+.offer-card strong {
+  font-size: 1rem;
+}
+
+.offer-card span:not(.position-kind):not(.risk) {
+  color: var(--muted);
+}
+
+.risk {
+  color: var(--brand-strong);
+  font-weight: 800;
+}
+
+.risk.high {
+  color: #9b2838;
+}
+
+.offer-review {
+  position: sticky;
+  top: 28px;
+}
+
+.offer-review h3 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.offer-review dl div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
+}
+
 .principle-card {
   padding: 18px;
   box-shadow: none;
@@ -631,7 +701,8 @@ dd {
 }
 
 .field-hint,
-.inline-error {
+.inline-error,
+.inline-success {
   margin: 12px 0 0;
   color: var(--muted);
   line-height: 1.55;
@@ -639,6 +710,11 @@ dd {
 
 .inline-error {
   color: #9b2838;
+  font-weight: 750;
+}
+
+.inline-success {
+  color: var(--brand-strong);
   font-weight: 750;
 }
 
@@ -932,7 +1008,7 @@ dd {
   }
 
   .nav-list {
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 
   .nav-link {
@@ -1001,6 +1077,7 @@ dd {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .offer-review dl div,
   .choice-grid,
   .receipt-card dl div {
     grid-template-columns: 1fr;

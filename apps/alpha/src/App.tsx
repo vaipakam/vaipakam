@@ -44,6 +44,7 @@ type WalletState = {
 };
 
 type FlowKind = 'earn' | 'borrow' | 'rent';
+type OfferKind = 'lend' | 'borrow' | 'rent';
 
 declare global {
   interface Window {
@@ -264,6 +265,28 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
   },
 };
 
+type MarketOffer = {
+  id: string;
+  kind: OfferKind;
+  title: string;
+  asset: string;
+  counterAsset: string;
+  amount: string;
+  rate: string;
+  term: string;
+  risk: 'Low' | 'Medium' | 'High';
+  recommended: boolean;
+  nextAction: string;
+};
+
+const marketOffers: MarketOffer[] = [
+  { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% APR', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
+  { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% APR', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
+  { id: 'rent-game-nft', kind: 'rent', title: 'Rent game NFT access', asset: 'Game NFT', counterAsset: 'mUSDC', amount: '7 days', rate: '3 mUSDC/day', term: '7 days', risk: 'Low', recommended: true, nextAction: 'Review rental receipt' },
+  { id: 'lend-vpfi', kind: 'lend', title: 'Lend VPFI to active borrower', asset: 'VPFI', counterAsset: 'mUSDC', amount: '10,000', rate: '9.2% APR', term: '14 days', risk: 'High', recommended: false, nextAction: 'Open advanced review' },
+  { id: 'rent-membership-nft', kind: 'rent', title: 'Rent membership NFT', asset: 'Membership NFT', counterAsset: 'mUSDC', amount: '3 days', rate: '8 mUSDC/day', term: '3 days', risk: 'Medium', recommended: false, nextAction: 'Review rental receipt' },
+];
+
 const advancedPanels = [
   {
     title: 'Market builder',
@@ -391,6 +414,7 @@ function App() {
           <AlphaNavLink to="/earn" label="Earn" icon={<PiggyBank />} />
           <AlphaNavLink to="/borrow" label="Borrow" icon={<HandCoins />} />
           <AlphaNavLink to="/rent" label="NFT Rental" icon={<Box />} />
+          <AlphaNavLink to="/offers" label="Offers" icon={<Store />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
           <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
@@ -408,6 +432,7 @@ function App() {
           <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/offers" element={<OfferBook wallet={wallet} onConnectWallet={connectWallet} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/help" element={<Help />} />
@@ -711,6 +736,103 @@ const managedPositions: ManagedPosition[] = [
   { id: 'vault-usdc', kind: 'vault', title: 'Vault balance', status: 'Locked and free', amount: '1,000 locked / 1,000 free', nextAction: 'Inspect locks', urgency: 'calm' },
   { id: 'vpfi', kind: 'reward', title: 'VPFI utility', status: 'Discount inactive', amount: '0 VPFI registered', nextAction: 'Check discount', urgency: 'calm' },
 ];
+
+
+function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWallet: () => void }) {
+  const [filter, setFilter] = useState<OfferKind | 'all'>('all');
+  const [selectedOfferId, setSelectedOfferId] = useState(marketOffers[0].id);
+  const [reviewedOfferId, setReviewedOfferId] = useState<string | null>(null);
+  const selectedOffer = marketOffers.find((offer) => offer.id === selectedOfferId) ?? marketOffers[0];
+  const visibleOffers = marketOffers.filter((offer) => filter === 'all' || offer.kind === filter);
+  const walletReady = Boolean(wallet.account);
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const blocker = !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
+  const receiptRows = buildOfferReceiptRows(selectedOffer);
+
+  return (
+    <div className="offers-page">
+      <SectionHeading eyebrow="Offer book" title="Browse opportunities by outcome" />
+      <p className="page-intro">
+        Offers are grouped by user goal first. The review panel keeps risk, fees, and end states visible before any wallet prompt.
+      </p>
+      <section className="offer-layout">
+        <div className="offer-list panel-surface">
+          <div className="portfolio-tools" aria-label="Offer filters">
+            {(['all', 'lend', 'borrow', 'rent'] as Array<OfferKind | 'all'>).map((option) => (
+              <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+                {option}
+              </button>
+            ))}
+          </div>
+          <div className="offer-card-list">
+            {visibleOffers.map((offer) => (
+              <button className={selectedOffer.id === offer.id ? 'offer-card selected' : 'offer-card'} type="button" key={offer.id} onClick={() => { setSelectedOfferId(offer.id); setReviewedOfferId(null); }}>
+                <span className="position-kind">{offer.kind}{offer.recommended ? ' · recommended' : ''}</span>
+                <strong>{offer.title}</strong>
+                <span>{offer.amount} · {offer.rate} · {offer.term}</span>
+                <span className={offer.risk === 'High' ? 'risk high' : 'risk'}>{offer.risk} risk</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <aside className="offer-review panel-surface" aria-label="Selected offer review">
+          <p className="eyebrow">Review before signing</p>
+          <h3>{selectedOffer.title}</h3>
+          <dl>
+            {receiptRows.map(([label, value]) => (
+              <div key={label}>
+                <dt>{label}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
+          {blocker ? <p className="inline-error">{blocker}</p> : null}
+          {reviewedOfferId === selectedOffer.id ? <p className="inline-success">Reviewed locally. Contract action is not submitted from alpha yet.</p> : null}
+          <button
+            className="primary-action wide"
+            type="button"
+            onClick={blocker ? onConnectWallet : () => setReviewedOfferId(selectedOffer.id)}
+          >
+            {blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
+          </button>
+        </aside>
+      </section>
+    </div>
+  );
+}
+
+
+function buildOfferReceiptRows(offer: MarketOffer) {
+  if (offer.kind === 'borrow') {
+    return [
+      ['You receive', offer.amount + ' ' + offer.asset],
+      ['You lock', 'Collateral in ' + offer.counterAsset + ' sized by the selected offer terms.'],
+      ['You may owe', 'Principal, interest, protocol fees, and gas.'],
+      ['You can lose', 'Locked collateral can be claimed or liquidated after default.'],
+      ['Fees', 'Protocol fee, any VPFI discount, and network gas.'],
+      ['When this ends', 'Repay, preclose, refinance, or settle after default.'],
+    ];
+  }
+  if (offer.kind === 'rent') {
+    return [
+      ['You receive', offer.amount + ' of temporary ' + offer.asset + ' use rights.'],
+      ['You lock', 'Prepaid rental fee in ' + offer.counterAsset + ' and any refundable buffer.'],
+      ['You may owe', 'No loan repayment; closing or claiming may require gas.'],
+      ['You can lose', 'Rental fee is spent, and buffer can be claimable if terms fail.'],
+      ['Fees', offer.rate + ', protocol fee, any VPFI discount, and gas.'],
+      ['When this ends', 'Rental expiry, renter close, or owner claim.'],
+    ];
+  }
+  return [
+    ['You receive', offer.rate + ' if the borrower repays.'],
+    ['You lock', offer.amount + ' ' + offer.asset + ' until cancel, match, or settlement.'],
+    ['You may owe', 'No repayment obligation; gas for offer actions.'],
+    ['You can lose', offer.risk === 'High' ? 'Higher route or liquidity risk. Use Advanced review.' : 'Time value and disclosed settlement risk.'],
+    ['Fees', 'Protocol fee, any VPFI discount, and network gas.'],
+    ['When this ends', 'Borrower repays, lender cancels, or lender claims after default.'],
+  ];
+}
 
 function Manage({ mode }: { mode: Mode }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
