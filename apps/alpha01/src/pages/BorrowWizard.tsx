@@ -7,7 +7,9 @@ import {
   acceptOfferFlow,
   createBorrowerOffer,
   formatBpsAsPercent,
+  LOAN_INITIATION_FEE_BPS,
   matchOffersToBorrowIntent,
+  netBorrowProceedsWei,
   OFFER_DURATION_DEFAULT_DAYS,
 } from '@vaipakam/defi-client';
 
@@ -48,22 +50,25 @@ function borrowReceipt(
   collateralMeta: TokenMeta | null,
 ): ReviewReceiptView {
   const borrowAmount = offer.amountMax || offer.amount;
+  const principalWei = BigInt(borrowAmount || '0');
+  const netWei = netBorrowProceedsWei(principalWei);
+  const lifBpsLabel = formatBpsAsPercent(Number(LOAN_INITIATION_FEE_BPS));
   return {
     youReceive: {
       label: 'You receive',
       value: (
         <>
-          You are borrowing{' '}
           <AssetAmount
             mode="raw"
-            amount={borrowAmount}
+            amount={netWei.toString()}
             address={offer.lendingAsset}
             meta={lendingMeta}
-          />
-          .
+          />{' '}
+          in your wallet now (after the upfront loan initiation fee).
         </>
       ),
-      hint: 'Funds land in your vault when the loan starts.',
+      hint:
+        'You still owe the full headline principal at repayment; only the net amount above is sent to your wallet when you accept.',
     },
     youLock: {
       label: 'You lock',
@@ -93,7 +98,8 @@ function borrowReceipt(
     },
     fees: {
       label: 'Fees',
-      value: 'Protocol fees at settlement. Network gas is separate from Vaipakam protocol fees.',
+      value: `${lifBpsLabel} loan initiation fee is deducted upfront from wallet proceeds. Settlement fees apply later at repayment.`,
+      hint: 'Network gas is separate from Vaipakam protocol fees.',
     },
     whenEnds: {
       label: 'When this ends',

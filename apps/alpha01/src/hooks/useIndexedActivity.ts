@@ -1,5 +1,5 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { fetchActivity } from '@vaipakam/defi-client';
+import { fetchWalletActivity } from '@vaipakam/defi-client';
 import { useWallet } from '../context/WalletContext';
 import { useIndexerOrigin } from './useIndexerOrigin';
 import { useReadChain } from './useDiamond';
@@ -17,8 +17,7 @@ export function useIndexedActivity() {
     initialPageParam: undefined as string | undefined,
     queryFn: async ({ pageParam }) => {
       if (!address || !origin) return null;
-      return fetchActivity(origin, chain.chainId, {
-        actor: address,
+      return fetchWalletActivity(origin, chain.chainId, address, {
         limit: PAGE_LIMIT,
         before: pageParam,
       });

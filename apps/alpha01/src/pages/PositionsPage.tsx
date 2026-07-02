@@ -107,14 +107,19 @@ export function PositionsPage() {
           <h2 className="section-title">Open offers</h2>
           <ErrorBoundary>
             <div className="position-list">
-              {offerList.map((offer) => (
-                <OfferCard
-                  key={offer.offerId}
-                  offer={offer}
-                  cancelling={cancellingId === offer.offerId}
-                  onCancel={() => void handleCancelOffer(offer.offerId)}
-                />
-              ))}
+              {offerList.map((offer) => {
+                const canCancel =
+                  address != null &&
+                  offer.creator.toLowerCase() === address.toLowerCase();
+                return (
+                  <OfferCard
+                    key={offer.offerId}
+                    offer={offer}
+                    cancelling={cancellingId === offer.offerId}
+                    onCancel={canCancel ? () => void handleCancelOffer(offer.offerId) : undefined}
+                  />
+                );
+              })}
             </div>
           </ErrorBoundary>
         </section>

@@ -14,6 +14,16 @@ export const OFFER_DURATION_DEFAULT_DAYS = 30;
 /** Mirrors LibVaipakam.MAX_INTEREST_BPS (100% APR protocol cap). */
 const MAX_INTEREST_BPS = 10_000n;
 
+/** Mirrors LibVaipakam.LOAN_INITIATION_FEE_BPS — ERC-20 principal path default. */
+export const LOAN_INITIATION_FEE_BPS = 10n;
+
+/** Net wallet proceeds after the upfront ERC-20 LIF deduction at accept. */
+export function netBorrowProceedsWei(principalWei: bigint): bigint {
+  if (principalWei <= 0n) return 0n;
+  const fee = (principalWei * LOAN_INITIATION_FEE_BPS) / 10_000n;
+  return principalWei - fee;
+}
+
 export interface OfferPayloadDecimals {
   lending?: number;
   collateral?: number;

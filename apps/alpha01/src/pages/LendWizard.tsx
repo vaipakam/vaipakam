@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
@@ -12,6 +12,7 @@ import {
 import { AmountField } from '../components/AmountField';
 import { AssetAmount } from '../components/AssetAmount';
 import { AssetSymbolLink } from '../components/AssetSymbolLink';
+import { BasicAssetPicker } from '../components/BasicAssetPicker';
 import { DurationSelect } from '../components/DurationSelect';
 import { EligibilityChecklist } from '../components/EligibilityChecklist';
 import { FlowDone } from '../components/FlowDone';
@@ -103,7 +104,7 @@ function createReceipt(
           cancelled
         </>
       ),
-      hint: 'Lent asset stays in your vault until the offer is accepted or cancelled.',
+      hint: 'Principal stays locked in your vault until a borrower accepts or you cancel — there is no automatic expiry.',
     },
     youMayOwe: { label: 'You may owe', value: 'Nothing beyond gas to post the offer.' },
     youCanLose: {
@@ -111,7 +112,10 @@ function createReceipt(
       value: 'Principal remains locked until a borrower accepts or you cancel.',
     },
     fees: { label: 'Fees', value: 'Protocol yield fee at settlement (separate from gas).' },
-    whenEnds: { label: 'When this ends', value: `Offer duration ${duration} days, or until cancelled.` },
+    whenEnds: {
+      label: 'When this ends',
+      value: `The open offer stays live until a borrower accepts or you cancel — no automatic expiry. After acceptance, the loan term is ${duration} days.`,
+    },
   };
 }
 
@@ -136,8 +140,15 @@ export function LendWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [txError, setTxError] = useState<string | null>(null);
 
-  const lendingAsset = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
-  const collateralAsset = chain.wrappedNativeAddress ?? activeChain?.wrappedNativeAddress ?? '';
+  const lendingDefault = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
+  const collateralDefault = chain.wrappedNativeAddress ?? activeChain?.wrappedNativeAddress ?? '';
+  const [lendingAsset, setLendingAsset] = useState(lendingDefault);
+  const [collateralAsset, setCollateralAsset] = useState(collateralDefault);
+
+  useEffect(() => {
+    setLendingAsset(lendingDefault || '');
+    setCollateralAsset(collateralDefault || '');
+  }, [chain.chainId, lendingDefault, collateralDefault]);
 
   const lendingMeta = useTokenMeta(lendingAsset || null);
   const collateralMeta = useTokenMeta(collateralAsset || null);
@@ -412,11 +423,27 @@ export function LendWizard() {
       {step === 'inputs' ? (
         <>
           <div className="wizard-intent-form">
+            <BasicAssetPicker
+              kind="stablecoin"
+              chainId={chain.chainId}
+              value={lendingAsset}
+              onChange={setLendingAsset}
+              label="Asset to lend"
+              hint="Stablecoins and other widely-used lending assets."
+            />
             <AmountField
               label="Amount to lend"
               value={amount}
               onChange={setAmount}
               placeholder="e.g. 1000"
+            />
+            <BasicAssetPicker
+              kind="collateral"
+              chainId={chain.chainId}
+              value={collateralAsset}
+              onChange={setCollateralAsset}
+              label="Collateral asset borrowers must lock"
+              hint="Major liquid assets on this chain."
             />
             <AmountField
               label="Collateral borrowers must lock"
@@ -451,9 +478,12 @@ export function LendWizard() {
               type="button"
               className="btn btn-primary"
               disabled={
+                !lendingAsset ||
+                !collateralAsset ||
                 Number(amount) <= 0 ||
                 Number(collateralAmount) <= 0 ||
-                !hasResolvedTokenDecimals(lendingMeta, lendingAsset)
+                !hasResolvedTokenDecimals(lendingMeta, lendingAsset) ||
+                !hasResolvedTokenDecimals(collateralMeta, collateralAsset)
               }
               onClick={() => setStep('check')}
             >
