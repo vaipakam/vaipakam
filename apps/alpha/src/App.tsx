@@ -711,7 +711,7 @@ function Home({ mode }: { mode: Mode }) {
         {tasks.map((task) => (
           <NavLink className="task-card" to={task.href} key={task.title}>
             <span className="task-icon">{task.icon}</span>
-            <h3>{task.title}</h3>
+            <h2>{task.title}</h2>
             <p>{task.description}</p>
             <dl>
               <div><dt>Good for</dt><dd>{task.goodFor}</dd></div>
@@ -816,7 +816,7 @@ function FlowPage({
       <section className="guided-board" aria-label={flow.title + ' guided flow'}>
         <div className="flow-form panel-surface">
           <p className="eyebrow">Step 1</p>
-          <h3>{flow.assetQuestion}</h3>
+          <h2>{flow.assetQuestion}</h2>
           <div className="choice-grid" role="group" aria-label={flow.assetQuestion}>
             {flow.assetOptions.map((option) => (
               <button
@@ -847,7 +847,7 @@ function FlowPage({
 
         <div className="checklist-card panel-surface">
           <p className="eyebrow">Step 2</p>
-          <h3>Eligibility checklist</h3>
+          <h2>Eligibility checklist</h2>
           <ul>
             {checklistRows.map((item) => (
               <li key={item.label} className={item.ready ? 'ready' : 'waiting'}>
@@ -860,7 +860,7 @@ function FlowPage({
 
         <div className="receipt-card panel-surface">
           <p className="eyebrow">Step 3</p>
-          <h3>Review receipt</h3>
+          <h2>Review receipt</h2>
           <dl>
             {receiptRows.map(([label, value]) => (
               <div key={label}>
@@ -882,7 +882,7 @@ function FlowPage({
         <section className="advanced-settings panel-surface">
           <div>
             <p className="eyebrow">Advanced controls</p>
-            <h3>Power settings stay available without changing the guided path.</h3>
+            <h2>Power settings stay available without changing the guided path.</h2>
           </div>
           <div className="advanced-setting-grid">
             <Metric label="Oracle route" value="Primary + fallback" />
@@ -897,7 +897,7 @@ function FlowPage({
         {flow.steps.map((step, index) => (
           <article className="step-card" key={step.title}>
             <span className="step-number">{index + 1}</span>
-            <h3>{step.title}</h3>
+            <h2>{step.title}</h2>
             <p>{step.body}</p>
             <ul>
               {step.checks.map((check) => <li key={check}><CheckCircle2 size={16} /> {check}</li>)}
@@ -909,7 +909,7 @@ function FlowPage({
       <section className="decision-strip">
         <div>
           <p className="eyebrow">Interaction model</p>
-          <h3>Start simple. Let advanced users opt into more knobs.</h3>
+          <h2>Start simple. Let advanced users opt into more knobs.</h2>
         </div>
         <NavLink className="secondary-action" to="/advanced">See advanced controls</NavLink>
       </section>
@@ -1092,7 +1092,7 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
         <section className="vault-table panel-surface" aria-label="Vault assets">
           {!canPreviewVault ? (
             <div className="empty-state">
-              <h3>{connected ? 'Switch to Base Sepolia to review vault balances' : 'Connect wallet to review vault balances'}</h3>
+              <h2>{connected ? 'Switch to Base Sepolia to review vault balances' : 'Connect wallet to review vault balances'}</h2>
               <p>Wallet-specific vault rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
             </div>
           ) : null}
@@ -1177,13 +1177,13 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
       <p className="page-intro compact">Claim rows stay hidden until a connected wallet is on Base Sepolia. This prevents fixture data from looking like funds available to every visitor.</p>
       {!walletReady ? (
         <section className="empty-state panel-surface">
-          <h3>Connect wallet to review claimables</h3>
+          <h2>Connect wallet to review claimables</h2>
           <p>Vaipakam will show claimable previews only after it can scope them to your connected wallet.</p>
           <button className="primary-action" type="button" onClick={onConnectWallet}>Connect wallet</button>
         </section>
       ) : !baseReady ? (
         <section className="empty-state panel-surface">
-          <h3>Switch to Base Sepolia</h3>
+          <h2>Switch to Base Sepolia</h2>
           <p>Claim previews are gated until the active network matches the supported Vaipakam deployment.</p>
           <button className="primary-action" type="button" onClick={onSwitchNetwork}>Switch to Base Sepolia</button>
         </section>
@@ -1196,7 +1196,7 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
             <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id} aria-label={item.title}>
               <div>
                 <span className="position-kind">{item.source}</span>
-                <h3>{item.title}</h3>
+                <h2>{item.title}</h2>
                 <p>{item.detail}</p>
               </div>
               <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
@@ -1265,7 +1265,7 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 
         <aside className="offer-review panel-surface" aria-label="Selected offer review">
           <p className="eyebrow">Review before signing</p>
-          <h3>{selectedOffer.title}</h3>
+          <h2>{selectedOffer.title}</h2>
           <dl>
             {receiptRows.map(([label, value]) => (
               <div key={label}>
@@ -1382,7 +1382,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
       <section className="activity-list panel-surface" aria-label="Readable activity timeline">
         {!canPreviewActivity ? (
           <div className="empty-state">
-            <h3>{walletReady ? 'Switch to Base Sepolia to review activity' : 'Connect wallet to review activity'}</h3>
+            <h2>{walletReady ? 'Switch to Base Sepolia to review activity' : 'Connect wallet to review activity'}</h2>
             <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
           </div>
         ) : null}
@@ -1392,7 +1392,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
             <article className={item.status === 'Needs review' ? 'activity-row needs-review' : 'activity-row'} key={item.id} aria-label={item.title}>
               <div className="activity-main">
                 <span className="position-kind">{item.source} · {item.when}</span>
-                <h3>{item.title}</h3>
+                <h2>{item.title}</h2>
                 <p>{item.detail}</p>
               </div>
               <div className="activity-impact">
@@ -1462,7 +1462,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
       <section className="action-center panel-surface">
         <div>
           <p className="eyebrow">Next best actions</p>
-          <h3>{mode === 'guided' ? 'Handle the important things first' : 'Position operations and diagnostics'}</h3>
+          <h2>{mode === 'guided' ? 'Handle the important things first' : 'Position operations and diagnostics'}</h2>
         </div>
         <div className="action-list">
           {canPreviewPositions ? (
@@ -1488,7 +1488,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
       <section className="portfolio-table panel-surface" aria-label="Managed positions">
         {!canPreviewPositions ? (
           <div className="empty-state">
-            <h3>{walletReady ? 'Switch to Base Sepolia to review positions' : 'Connect wallet to review positions'}</h3>
+            <h2>{walletReady ? 'Switch to Base Sepolia to review positions' : 'Connect wallet to review positions'}</h2>
             <p>Wallet-specific position rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
             <button className="primary-action" type="button" onClick={walletReady ? onSwitchNetwork : onConnectWallet}>
               {walletReady ? 'Switch to Base Sepolia' : 'Connect wallet'}
@@ -1501,7 +1501,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
             <article className={position.urgency === 'urgent' ? 'position-row urgent' : 'position-row'} key={position.id} aria-label={position.title}>
               <div>
                 <span className="position-kind">{position.kind}</span>
-                <h3>{position.title}</h3>
+                <h2>{position.title}</h2>
               </div>
               <span>{position.status}</span>
               <strong>{position.amount}</strong>
@@ -1527,7 +1527,6 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
   };
   const updateLanguage = (value: string) => {
     setLanguage(value);
-    writeLocalAppStorage('language', value);
   };
   const updateLocalAnalytics = (value: boolean) => {
     setLocalAnalytics(value);
@@ -1576,14 +1575,14 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
 
         <article className="settings-card panel-surface">
           <p className="eyebrow">Privacy</p>
-          <h3>Browser data and support</h3>
+          <h2>Browser data and support</h2>
           <p>Export or clear local settings without touching public chain history.</p>
           <NavLink className="secondary-action" to="/data-rights">Open data rights</NavLink>
         </article>
 
         <article className="settings-card panel-surface">
           <p className="eyebrow">Emergency</p>
-          <h3>{actionsPaused ? 'New actions paused locally' : 'Actions available'}</h3>
+          <h2>{actionsPaused ? 'New actions paused locally' : 'Actions available'}</h2>
           <p>Pausing here does not touch contracts. It prevents the Vaipakam interface from presenting new action CTAs until resumed.</p>
           <button className={actionsPaused ? 'secondary-action' : 'danger-action'} type="button" onClick={() => onActionsPausedChange(!actionsPaused)}>
             {actionsPaused ? 'Resume Vaipakam actions' : 'Pause new Vaipakam actions'}
@@ -1652,7 +1651,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
       <section className="data-rights-grid">
         <article className="data-card panel-surface">
           <span><Download size={20} /></span>
-          <h3>Export local support report</h3>
+          <h2>Export local support report</h2>
           <p>Creates a redacted browser-local snapshot of Vaipakam preferences, route crash notes, wallet status, and network status for support.</p>
           <div className="hero-actions">
             <button className="secondary-action" type="button" onClick={buildReport}>Generate report</button>
@@ -1662,7 +1661,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
         <article className="data-card panel-surface danger-zone">
           <span><Trash2 size={20} /></span>
-          <h3>Clear local data</h3>
+          <h2>Clear local data</h2>
           <p>Removes Vaipakam preferences, analytics opt-in state, and session crash notes from this browser only.</p>
           {confirmClear ? (
             <div className="confirm-strip">
@@ -1678,7 +1677,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
         <article className="data-card panel-surface">
           <span><ShieldCheck size={20} /></span>
-          <h3>What cannot be erased here</h3>
+          <h2>What cannot be erased here</h2>
           <p>On-chain offers, loans, claims, NFT rental state, vault locks, and transaction history are public network records. This page only controls local browser data.</p>
           <NavLink className="secondary-action" to="/help">Read the plain-language guide</NavLink>
         </article>
@@ -1725,7 +1724,7 @@ function Help() {
       <div className="help-grid">
         {topics.map((topic) => (
           <article className="help-card panel-surface" key={topic.title}>
-            <h3>{topic.title}</h3>
+            <h2>{topic.title}</h2>
             <p>{topic.body}</p>
           </article>
         ))}
@@ -1733,7 +1732,7 @@ function Help() {
       <section className="decision-strip">
         <div>
           <p className="eyebrow">Ready to act</p>
-          <h3>Start with a receipt-backed guided flow.</h3>
+          <h2>Start with a receipt-backed guided flow.</h2>
         </div>
         <NavLink className="primary-action" to="/earn">Open Earn flow <ArrowRight size={18} /></NavLink>
       </section>
@@ -1777,7 +1776,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
       <section className="advanced-workbench panel-surface">
         <div>
           <p className="eyebrow">Workspace controls</p>
-          <h3>Set assumptions before creating custom markets or automation.</h3>
+          <h2>Set assumptions before creating custom markets or automation.</h2>
         </div>
         <div className="workbench-grid">
           <label>
@@ -1851,7 +1850,7 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
   return (
     <article className="principle-card">
       <span>{icon}</span>
-      <h3>{title}</h3>
+      <h2>{title}</h2>
       <p>{body}</p>
     </article>
   );

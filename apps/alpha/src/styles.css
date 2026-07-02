@@ -446,9 +446,9 @@ dd {
   color: var(--rose);
 }
 
-.task-card h3,
-.step-card h3,
-.principle-card h3 {
+.task-card h2,
+.step-card h2,
+.principle-card h2 {
   margin: 16px 0 8px;
   font-size: 1.05rem;
   line-height: 1.25;
@@ -491,7 +491,7 @@ dd {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.help-card h3 {
+.help-card h2 {
   margin: 0 0 8px;
   font-size: 1.05rem;
 }
@@ -562,7 +562,7 @@ dd {
   top: 28px;
 }
 
-.offer-review h3 {
+.offer-review h2 {
   margin: 0;
   font-size: 1.25rem;
 }
@@ -616,7 +616,7 @@ dd {
   background: #f4fbf6;
 }
 
-.claim-row h3 {
+.claim-row h2 {
   margin: 3px 0 4px;
   font-size: 1rem;
 }
@@ -668,7 +668,7 @@ dd {
   background: #fff7f8;
 }
 
-.activity-main h3 {
+.activity-main h2 {
   margin: 3px 0 4px;
   font-size: 1rem;
 }
@@ -765,7 +765,7 @@ dd {
   color: var(--brand-strong);
 }
 
-.data-card h3,
+.data-card h2,
 .recovery-card h2 {
   margin: 0;
 }
@@ -872,7 +872,7 @@ dd {
   cursor: default;
 }
 
-.settings-card h3 {
+.settings-card h2 {
   margin: 0;
 }
 
@@ -980,9 +980,9 @@ dd {
   min-height: 100%;
 }
 
-.flow-form h3,
-.checklist-card h3,
-.receipt-card h3 {
+.flow-form h2,
+.checklist-card h2,
+.receipt-card h2 {
   margin: 10px 0 16px;
   font-size: 1.12rem;
 }
@@ -1223,7 +1223,7 @@ dd {
   text-transform: uppercase;
 }
 
-.position-row h3 {
+.position-row h2 {
   margin: 3px 0 0;
   font-size: 1rem;
 }
