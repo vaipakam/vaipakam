@@ -130,6 +130,7 @@ type GuidedContractDraft = {
   assetSource: string;
   calldataStatus: string;
   calldata: Hex | null;
+  simulationStatus: string;
   readiness: 'Ready for simulation' | 'Needs approved assets' | 'Uses rental path';
   blockers: string[];
 };
@@ -149,6 +150,7 @@ type PreparedGuidedAction = {
   preflightGapCount: number;
   calldataStatus: string;
   calldataPreview: string | null;
+  simulationStatus: string;
 };
 
 const BASE_SEPOLIA_PARAMS = {
@@ -897,6 +899,7 @@ function FlowPage({
       preflightGapCount,
       calldataStatus: transactionPlan.contractDraft.calldataStatus,
       calldataPreview: transactionPlan.contractDraft.calldata ? shortCalldata(transactionPlan.contractDraft.calldata) : null,
+      simulationStatus: transactionPlan.contractDraft.simulationStatus,
     });
     setPlanPrepared(true);
   };
@@ -1033,6 +1036,7 @@ function FlowPage({
               <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
               <Metric label="Asset source" value={transactionPlan.contractDraft.assetSource} />
               <Metric label="Calldata" value={transactionPlan.contractDraft.calldataStatus} />
+              <Metric label="Simulation" value={transactionPlan.contractDraft.simulationStatus} />
             </div>
             {transactionPlan.contractDraft.calldata ? (
               <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
@@ -1502,6 +1506,11 @@ function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
   return 'Deployment artifact';
 }
 
+function guidedSimulationStatus(calldata: Hex | null, blockers: string[]) {
+  if (!calldata) return blockers.length > 0 ? 'Unavailable until preflight clears' : 'Unavailable until calldata is ready';
+  return 'Ready for eth_call simulation';
+}
+
 function encodeGuidedCreateOfferDraft({
   flow,
   principalAsset,
@@ -1583,6 +1592,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
       assetSource: guidedAssetSourceLabel(prepayToken),
       calldataStatus: 'Rental path pending',
       calldata: null,
+      simulationStatus: 'Unavailable until rental path is selected',
       readiness: 'Uses rental path',
       blockers,
     };
@@ -1615,6 +1625,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     assetSource: guidedAssetSourceLabel(principalAsset, collateralAsset),
     calldataStatus: encoded.status,
     calldata: encoded.calldata,
+    simulationStatus: guidedSimulationStatus(encoded.calldata, blockers),
     readiness: blockers.length === 0 ? 'Ready for simulation' : 'Needs approved assets',
     blockers,
   };
@@ -1707,7 +1718,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     id: action.id,
     source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
     title: action.title,
-    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. No transaction has been submitted.',
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. Simulation: ' + action.simulationStatus + '. No transaction has been submitted.',
     status: 'Local queue',
     when: action.createdAtLabel,
     impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : preflightGapLabel(action.preflightGapCount, 'preflight gap') + ' must be resolved before wallet submission.',
@@ -1891,7 +1902,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <div className="activity-main">
                 <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
                 <h2>{action.title}</h2>
-                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Calldata: {action.calldataPreview ?? action.calldataStatus}. No transaction has been submitted.</p>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Calldata: {action.calldataPreview ?? action.calldataStatus}. Simulation: {action.simulationStatus}. No transaction has been submitted.</p>
               </div>
               <div className="activity-impact">
                 <strong>{action.status}</strong>
