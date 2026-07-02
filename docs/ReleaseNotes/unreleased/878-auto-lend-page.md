@@ -14,11 +14,14 @@ change only relocates and hosts it; there is no new mutation path, and the
 list's "Manage" deep-link (which retargets the card and scrolls to it) works on
 the new page exactly as it did on the Dashboard.
 
-In its place the Dashboard shows a compact summary widget — the wallet's active
-standing-intent count, or a "set up auto-lend" prompt at zero — that links to
-the page. The zero-state prompt is deliberate: it keeps the feature
-discoverable for lenders who haven't opened Advanced mode. Both the page's cards
-and the Dashboard widget self-hide on chains where the intent facet set isn't
+In its place the Dashboard shows a compact summary widget — the wallet's
+standing-intent count (active plus paused) with a link to the page. It appears
+only once the wallet actually holds a standing intent; first-time discovery is
+via the sidebar's Auto-lend entry. Opening the page without a connected wallet
+shows a connect prompt, and — since the create/fund/withdraw paths are
+sanctions-gated — the page carries the same wallet sanctions banner the
+Dashboard used to show above these cards. Both the page's cards and the
+Dashboard widget stay hidden on chains where the intent facet set isn't
 deployed, so neither renders a dead surface.
 
 Closes #878.
