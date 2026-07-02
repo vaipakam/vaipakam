@@ -177,7 +177,7 @@ const BASE_SEPOLIA_PARAMS = {
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
 const OFFER_CREATE_ABI = OfferCreateFacetAbi as Abi;
-const ERC20_READ_ABI = [
+const ERC20_VIEW_ABI = [
   {
     type: 'function',
     name: 'balanceOf',
@@ -192,6 +192,8 @@ const ERC20_READ_ABI = [
     inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }],
     outputs: [{ name: 'remaining', type: 'uint256' }],
   },
+] as Abi;
+const ERC20_APPROVAL_ABI = [
   {
     type: 'function',
     name: 'approve',
@@ -200,6 +202,12 @@ const ERC20_READ_ABI = [
     outputs: [{ name: 'ok', type: 'bool' }],
   },
 ] as Abi;
+
+const BASE_SEPOLIA_EXPLORER_URL = 'https://sepolia.basescan.org';
+
+function shortTxHash(hash: string) {
+  return hash.length > 18 ? hash.slice(0, 10) + '...' + hash.slice(-6) : hash;
+}
 
 const tasks: Task[] = [
   {
@@ -978,20 +986,24 @@ function FlowPage({
           method: 'eth_call',
           params: [{
             to: asset.address,
-            data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
+            data: encodeFunctionData({ abi: ERC20_VIEW_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
           }, 'latest'],
         }),
         ethereum.request({
           method: 'eth_call',
           params: [{
             to: asset.address,
-            data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
+            data: encodeFunctionData({ abi: ERC20_VIEW_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
           }, 'latest'],
         }),
       ]);
-      const accountsAfterCheck = await ethereum.request({ method: 'eth_accounts' });
-      const nextAccounts = Array.isArray(accountsAfterCheck) ? accountsAfterCheck : [];
-      if (nextAccounts[0] !== accountAtCheckTime) return;
+      try {
+        const accountsAfterCheck = await ethereum.request({ method: 'eth_accounts' });
+        const nextAccounts = Array.isArray(accountsAfterCheck) ? accountsAfterCheck : [];
+        if (nextAccounts[0] !== accountAtCheckTime) return;
+      } catch {
+        // Balance and allowance reads succeeded; skip the stale-account probe if the wallet rejects it.
+      }
       const balance = parseEthCallUint(balanceHex);
       const allowance = parseEthCallUint(allowanceHex);
       const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
@@ -1031,7 +1043,7 @@ function FlowPage({
         params: [{
           from: wallet.account,
           to: asset.address,
-          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'approve', args: [walletCheckSpec.spender as Address, walletCheckSpec.requiredAmount] }),
+          data: encodeFunctionData({ abi: ERC20_APPROVAL_ABI, functionName: 'approve', args: [walletCheckSpec.spender as Address, walletCheckSpec.requiredAmount] }),
         }],
       });
       setApprovalResult({
@@ -1272,7 +1284,17 @@ function FlowPage({
               </div>
             </div>
             {approvalResult.status !== 'not-started' ? (
-              <p className={approvalResult.status === 'failed' ? 'inline-error' : 'inline-success'}>{approvalResult.message}{approvalResult.txHash ? ' Tx: ' + shortAddress(approvalResult.txHash) : ''}</p>
+              <p className={approvalResult.status === 'failed' ? 'inline-error' : 'inline-success'}>
+                {approvalResult.message}
+                {approvalResult.txHash ? (
+                  <>
+                    {' '}Tx:{' '}
+                    <a href={BASE_SEPOLIA_EXPLORER_URL + '/tx/' + approvalResult.txHash} target="_blank" rel="noreferrer">
+                      {shortTxHash(approvalResult.txHash)}
+                    </a>
+                  </>
+                ) : null}
+              </p>
             ) : null}
             <div className={simulationResult.status === 'failed' ? 'simulation-check failed' : simulationResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
               <div>
