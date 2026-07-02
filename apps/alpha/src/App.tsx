@@ -201,7 +201,7 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
     title: 'Earn by lending',
     intro:
       'Start with the asset you can lend, then review collateral quality, expected return, fees, and what happens if the borrower does not repay.',
-    actionLabel: 'Prepare lending offer',
+    actionLabel: 'Mark lending receipt reviewed',
     assetQuestion: 'What do you want to lend?',
     assetOptions: ['mUSDC', 'mWETH', 'mWBTC'],
     defaultAsset: 'mUSDC',
@@ -225,7 +225,7 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
     title: 'Borrow safely',
     intro:
       'Start with the amount you need. Vaipakam should then show required collateral, repayment deadline, and default consequences before the wallet opens.',
-    actionLabel: 'Check borrow terms',
+    actionLabel: 'Mark borrow receipt reviewed',
     assetQuestion: 'What do you want to borrow?',
     assetOptions: ['mUSDC', 'mWETH', 'VPFI'],
     defaultAsset: 'mUSDC',
@@ -249,7 +249,7 @@ const guidedFlows: Record<'earn' | 'borrow' | 'rent', GuidedFlow> = {
     title: 'Rent NFT access',
     intro:
       'Keep NFT rental separate from borrowing: the renter pays for temporary rights while the NFT remains protected by custody and expiry rules.',
-    actionLabel: 'Find rental offer',
+    actionLabel: 'Mark rental receipt reviewed',
     assetQuestion: 'What NFT access do you need?',
     assetOptions: ['Game NFT', 'Membership NFT', 'Utility NFT'],
     defaultAsset: 'Game NFT',
@@ -321,6 +321,7 @@ const APP_STORAGE_KEYS = {
   language: 'vaipakam-app-language',
   analytics: 'vaipakam-app-analytics',
   lastError: 'vaipakam-app-last-error',
+  actionsPaused: 'vaipakam-app-actions-paused',
 } as const;
 
 function readAppStorage(key: keyof typeof APP_STORAGE_KEYS) {
@@ -335,6 +336,11 @@ function App() {
     return readAppStorage('mode') === 'advanced' ? 'advanced' : 'guided';
   });
   const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
+  const [actionsPaused, setActionsPausedState] = useState(() => readAppStorage('actionsPaused') === 'true');
+  const setActionsPaused = (paused: boolean) => {
+    setActionsPausedState(paused);
+    window.localStorage.setItem(APP_STORAGE_KEYS.actionsPaused, String(paused));
+  };
   const setMode = (nextMode: Mode) => {
     setModeState(nextMode);
     window.localStorage.setItem(APP_STORAGE_KEYS.mode, nextMode);
@@ -390,15 +396,23 @@ function App() {
       setWallet({ detected: false, account: null, chainId: null, error: 'No injected wallet detected.' });
       return;
     }
-    const accountsResult = await ethereum.request({ method: 'eth_requestAccounts' });
-    const chainIdResult = await ethereum.request({ method: 'eth_chainId' });
-    const accounts = Array.isArray(accountsResult) ? accountsResult : [];
-    setWallet({
-      detected: true,
-      account: typeof accounts[0] === 'string' ? accounts[0] : null,
-      chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
-      error: null,
-    });
+    try {
+      const accountsResult = await ethereum.request({ method: 'eth_requestAccounts' });
+      const chainIdResult = await ethereum.request({ method: 'eth_chainId' });
+      const accounts = Array.isArray(accountsResult) ? accountsResult : [];
+      setWallet({
+        detected: true,
+        account: typeof accounts[0] === 'string' ? accounts[0] : null,
+        chainId: typeof chainIdResult === 'string' ? chainIdResult : null,
+        error: null,
+      });
+    } catch {
+      setWallet((current) => ({
+        ...current,
+        detected: true,
+        error: 'Wallet connection was rejected or failed.',
+      }));
+    }
   };
 
   const switchToBaseSepolia = async () => {
@@ -410,8 +424,12 @@ function App() {
     } catch (error) {
       const maybeError = error as { code?: number };
       if (maybeError.code === 4902) {
-        await ethereum.request({ method: 'wallet_addEthereumChain', params: [BASE_SEPOLIA_PARAMS] });
-        setWallet((current) => ({ ...current, detected: true, chainId: BASE_SEPOLIA_CHAIN_ID, error: null }));
+        try {
+          await ethereum.request({ method: 'wallet_addEthereumChain', params: [BASE_SEPOLIA_PARAMS] });
+          setWallet((current) => ({ ...current, detected: true, chainId: BASE_SEPOLIA_CHAIN_ID, error: null }));
+        } catch {
+          setWallet((current) => ({ ...current, detected: true, error: 'Base Sepolia add-chain request was rejected or failed.' }));
+        }
         return;
       }
       setWallet((current) => ({ ...current, error: 'Network switch rejected or failed.' }));
@@ -453,16 +471,16 @@ function App() {
         <RouteErrorBoundary>
           <Routes>
           <Route path="/" element={<Home mode={mode} />} />
-          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/offers" element={<OfferBook wallet={wallet} onConnectWallet={connectWallet} />} />
-          <Route path="/claims" element={<Claims wallet={wallet} onConnectWallet={connectWallet} />} />
+          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/offers" element={<OfferBook wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/claims" element={<Claims wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} />} />
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
           <Route path="/activity" element={<Activity wallet={wallet} />} />
-          <Route path="/manage" element={<Manage mode={mode} />} />
-          <Route path="/advanced" element={<Advanced />} />
-          <Route path="/settings" element={<SettingsPanel />} />
+          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} />} />
+          <Route path="/advanced" element={<Advanced wallet={wallet} />} />
+          <Route path="/settings" element={<SettingsPanel actionsPaused={actionsPaused} onActionsPausedChange={setActionsPaused} />} />
           <Route path="/data-rights" element={<DataRights wallet={wallet} />} />
           <Route path="/help" element={<Help />} />
           <Route path="*" element={<NotFound />} />
@@ -503,10 +521,11 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
         <p className="eyebrow">Recovery</p>
         <h2>This page could not render safely.</h2>
         <p>The rest of Vaipakam is still available. A redacted crash note was saved in this browser session for support.</p>
-        <code>{this.state.message}</code>
+        <p className="support-note">Crash details stay in browser storage and can be exported from Data Rights.</p>
         <div className="hero-actions">
           <button className="primary-action" type="button" onClick={() => window.location.reload()}>Reload page</button>
           <a className="secondary-action" href="/">Back to start</a>
+          <a className="secondary-action" href="/data-rights">Export support report</a>
         </div>
       </section>
     );
@@ -636,12 +655,14 @@ function FlowPage({
   flow,
   mode,
   wallet,
+  actionsPaused,
   onConnectWallet,
   onSwitchNetwork,
 }: {
   flow: GuidedFlow;
   mode: Mode;
   wallet: WalletState;
+  actionsPaused: boolean;
   onConnectWallet: () => void;
   onSwitchNetwork: () => void;
 }) {
@@ -651,22 +672,32 @@ function FlowPage({
   const isBaseSepolia = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const walletReady = Boolean(wallet.account);
   const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
+  const [reviewed, setReviewed] = useState(false);
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
-  const actionLabel = !walletReady
-    ? 'Connect wallet'
-    : !isBaseSepolia
-      ? 'Switch to Base Sepolia'
-      : canProceed
-        ? flow.actionLabel
-        : 'Enter an amount';
+  const actionLabel = actionsPaused
+    ? 'Actions paused'
+    : !walletReady
+      ? 'Connect wallet'
+      : !isBaseSepolia
+        ? 'Switch to Base Sepolia'
+        : canProceed
+          ? reviewed
+            ? 'Receipt reviewed locally'
+            : flow.actionLabel
+          : 'Enter an amount';
   const handlePrimaryAction = () => {
+    if (actionsPaused) return;
     if (!walletReady) {
       onConnectWallet();
       return;
     }
     if (!isBaseSepolia) {
       onSwitchNetwork();
+      return;
+    }
+    if (canProceed) {
+      setReviewed(true);
     }
   };
 
@@ -741,9 +772,11 @@ function FlowPage({
               </div>
             ))}
           </dl>
-          <button className="primary-action wide" type="button" disabled={walletReady && isBaseSepolia && !canProceed} onClick={handlePrimaryAction}>
+          <button className="primary-action wide" type="button" disabled={actionsPaused || reviewed || (walletReady && isBaseSepolia && !canProceed)} onClick={handlePrimaryAction}>
             {actionLabel} <ArrowRight size={18} />
           </button>
+          {reviewed ? <p className="inline-success">Receipt reviewed locally. Contract submission will be wired behind this review step.</p> : null}
+          {actionsPaused ? <p className="inline-error">New action CTAs are paused from Settings.</p> : null}
           {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
       </section>
@@ -939,7 +972,7 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
 
       <section className="portfolio-tools panel-surface" aria-label="Vault tabs">
         {(['assets', 'locks', 'vpfi'] as VaultTab[]).map((option) => (
-          <button className={tab === option ? 'selected' : ''} type="button" key={option} onClick={() => setTab(option)}>
+          <button className={tab === option ? 'selected' : ''} type="button" key={option} aria-pressed={tab === option} onClick={() => setTab(option)}>
             {option}
           </button>
         ))}
@@ -958,7 +991,7 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
       ) : (
         <section className="vault-table panel-surface" aria-label="Vault assets">
           {vaultAssets.map((asset) => (
-            <article className="vault-row" key={asset.asset}>
+            <article className="vault-row" key={asset.asset} aria-label={asset.asset + ' vault balance'}>
               <strong>{asset.asset}</strong>
               <span>Free: {asset.free}</span>
               <span>Locked: {asset.locked}</span>
@@ -988,33 +1021,33 @@ const claimItems: ClaimItem[] = [
   { id: 'discount-vpfi', source: 'discount', title: 'VPFI fee discount', amount: '0', asset: 'VPFI', status: 'Informational', detail: 'Register VPFI to unlock discount tiers once wired.' },
 ];
 
-function Claims({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWallet: () => void }) {
-  const [claimedIds, setClaimedIds] = useState<string[]>([]);
+function Claims({ wallet, actionsPaused, onConnectWallet }: { wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void }) {
+  const [reviewedClaimIds, setReviewedClaimIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<'all' | ClaimItem['source']>('all');
   const walletReady = Boolean(wallet.account);
   const visibleClaims = claimItems.filter((item) => filter === 'all' || item.source === filter);
-  const readyCount = claimItems.filter((item) => item.status === 'Ready' && !claimedIds.includes(item.id)).length;
+  const readyCount = claimItems.filter((item) => item.status === 'Ready' && !reviewedClaimIds.includes(item.id)).length;
   const totalReady = claimItems
-    .filter((item) => item.status === 'Ready' && item.asset === 'mUSDC' && !claimedIds.includes(item.id))
+    .filter((item) => item.status === 'Ready' && item.asset === 'mUSDC' && !reviewedClaimIds.includes(item.id))
     .reduce((sum, item) => sum + Number(item.amount.replace(/,/g, '')), 0);
 
   const claim = (id: string) => {
-    setClaimedIds((current) => current.includes(id) ? current : [...current, id]);
+    setReviewedClaimIds((current) => current.includes(id) ? current : [...current, id]);
   };
 
   return (
     <div className="claims-page">
-      <SectionHeading eyebrow="Claims and rewards" title="Collect value without hunting through activity" />
+      <SectionHeading eyebrow="Claims and rewards" title="Review claimable value before submitting" />
       <section className="claim-summary">
         <div className="panel-surface">
           <p className="eyebrow">Ready now</p>
           <strong>{readyCount}</strong>
-          <span>claimable items</span>
+          <span>sample ready rows</span>
         </div>
         <div className="panel-surface">
           <p className="eyebrow">mUSDC ready</p>
           <strong>{totalReady.toLocaleString()}</strong>
-          <span>before gas</span>
+          <span>sample amount before gas</span>
         </div>
         <div className="panel-surface">
           <p className="eyebrow">Wallet</p>
@@ -1025,27 +1058,28 @@ function Claims({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWal
 
       <section className="portfolio-tools panel-surface" aria-label="Claim filters">
         {(['all', 'loan', 'rental', 'reward', 'discount'] as Array<'all' | ClaimItem['source']>).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
             {option}
           </button>
         ))}
       </section>
 
-      <section className="claim-list panel-surface" aria-label="Claimable items">
+      <p className="page-intro compact">These rows preview the Claim Center layout until live claim reads are wired for the connected wallet.</p>
+      <section className="claim-list panel-surface" aria-label="Claimable item previews">
         {visibleClaims.map((item) => {
-          const claimed = claimedIds.includes(item.id);
+          const claimed = reviewedClaimIds.includes(item.id);
           const ready = item.status === 'Ready' && !claimed;
           return (
-            <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id}>
+            <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id} aria-label={item.title}>
               <div>
                 <span className="position-kind">{item.source}</span>
                 <h3>{item.title}</h3>
                 <p>{item.detail}</p>
               </div>
-              <strong>{claimed ? 'Queued' : item.amount + ' ' + item.asset}</strong>
-              <span>{claimed ? 'Claim queued locally' : item.status}</span>
-              <button type="button" disabled={!ready} onClick={walletReady ? () => claim(item.id) : onConnectWallet}>
-                {!walletReady ? 'Connect wallet' : claimed ? 'Queued' : ready ? 'Claim' : 'Not ready'}
+              <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
+              <span>{claimed ? 'Reviewed locally' : item.status}</span>
+              <button type="button" disabled={actionsPaused || claimed || !ready} onClick={walletReady ? () => claim(item.id) : onConnectWallet}>
+                {!walletReady ? 'Connect wallet' : actionsPaused ? 'Actions paused' : claimed ? 'Reviewed' : ready ? 'Review claim' : 'Not ready'}
               </button>
             </article>
           );
@@ -1055,7 +1089,7 @@ function Claims({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWal
   );
 }
 
-function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnectWallet: () => void }) {
+function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<OfferKind | 'all'>('all');
   const [selectedOfferId, setSelectedOfferId] = useState(marketOffers[0].id);
   const [reviewedOfferId, setReviewedOfferId] = useState<string | null>(null);
@@ -1063,8 +1097,9 @@ function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnect
   const visibleOffers = marketOffers.filter((offer) => filter === 'all' || offer.kind === filter);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
-  const blocker = !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
+  const blocker = actionsPaused ? 'Actions paused in Settings' : !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
   const receiptRows = buildOfferReceiptRows(selectedOffer);
+  const reviewed = reviewedOfferId === selectedOffer.id;
 
   return (
     <div className="offers-page">
@@ -1076,14 +1111,14 @@ function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnect
         <div className="offer-list panel-surface">
           <div className="portfolio-tools" aria-label="Offer filters">
             {(['all', 'lend', 'borrow', 'rent'] as Array<OfferKind | 'all'>).map((option) => (
-              <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+              <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
                 {option}
               </button>
             ))}
           </div>
           <div className="offer-card-list">
             {visibleOffers.map((offer) => (
-              <button className={selectedOffer.id === offer.id ? 'offer-card selected' : 'offer-card'} type="button" key={offer.id} onClick={() => { setSelectedOfferId(offer.id); setReviewedOfferId(null); }}>
+              <button className={selectedOffer.id === offer.id ? 'offer-card selected' : 'offer-card'} type="button" key={offer.id} aria-pressed={selectedOffer.id === offer.id} aria-label={offer.title} onClick={() => { setSelectedOfferId(offer.id); setReviewedOfferId(null); }}>
                 <span className="position-kind">{offer.kind}{offer.recommended ? ' · recommended' : ''}</span>
                 <strong>{offer.title}</strong>
                 <span>{offer.amount} · {offer.rate} · {offer.term}</span>
@@ -1105,13 +1140,14 @@ function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnect
             ))}
           </dl>
           {blocker ? <p className="inline-error">{blocker}</p> : null}
-          {reviewedOfferId === selectedOffer.id ? <p className="inline-success">Reviewed locally. Contract action is not submitted yet.</p> : null}
+          {reviewed ? <p className="inline-success">Reviewed locally. Contract action is not submitted yet.</p> : null}
           <button
             className="primary-action wide"
             type="button"
-            onClick={blocker ? onConnectWallet : () => setReviewedOfferId(selectedOffer.id)}
+            disabled={reviewed}
+            onClick={() => { if (actionsPaused) return; if (!walletReady) { onConnectWallet(); return; } if (!baseReady) { onSwitchNetwork(); return; } setReviewedOfferId(selectedOffer.id); }}
           >
-            {blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
+            {reviewed ? 'Reviewed locally' : blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
           </button>
         </aside>
       </section>
@@ -1198,7 +1234,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
 
       <section className="portfolio-tools panel-surface" aria-label="Activity filters">
         {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
             {option}
           </button>
         ))}
@@ -1208,7 +1244,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
         {visibleItems.map((item) => {
           const acknowledged = acknowledgedIds.includes(item.id);
           return (
-            <article className={item.status === 'Needs review' ? 'activity-row needs-review' : 'activity-row'} key={item.id}>
+            <article className={item.status === 'Needs review' ? 'activity-row needs-review' : 'activity-row'} key={item.id} aria-label={item.title}>
               <div className="activity-main">
                 <span className="position-kind">{item.source} · {item.when}</span>
                 <h3>{item.title}</h3>
@@ -1232,9 +1268,9 @@ function Activity({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function Manage({ mode }: { mode: Mode }) {
+function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletState; actionsPaused: boolean }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
-  const [completedActions, setCompletedActions] = useState<string[]>([]);
+  const [reviewedActions, setReviewedActions] = useState<string[]>([]);
   const visiblePositions = managedPositions.filter((position) => {
     if (filter === 'urgent') return position.urgency === 'urgent';
     if (filter === 'claimable') return Boolean(position.claimable);
@@ -1244,7 +1280,7 @@ function Manage({ mode }: { mode: Mode }) {
   });
   const urgentCount = managedPositions.filter((position) => position.urgency === 'urgent').length;
   const claimableCount = managedPositions.filter((position) => position.claimable).length;
-  const completedCount = completedActions.length;
+  const completedCount = reviewedActions.length;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
     { title: 'Positions', body: managedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
@@ -1253,12 +1289,13 @@ function Manage({ mode }: { mode: Mode }) {
   ];
 
   const completeAction = (id: string) => {
-    setCompletedActions((current) => current.includes(id) ? current : [...current, id]);
+    setReviewedActions((current) => current.includes(id) ? current : [...current, id]);
   };
 
   return (
     <div className="manage-page">
-      <SectionHeading eyebrow="Portfolio" title="One place for every open obligation" />
+      <SectionHeading eyebrow="Portfolio" title="Portfolio review for open obligations" />
+      <p className="page-intro compact">Sample rows show the intended management model until live wallet positions are wired. Wallet: {wallet.account ? shortAddress(wallet.account) : 'not connected'}.</p>
       <div className="lane-grid">
         {lanes.map((lane) => <Principle key={lane.title} icon={lane.icon} title={lane.title} body={lane.body} />)}
       </div>
@@ -1276,7 +1313,7 @@ function Manage({ mode }: { mode: Mode }) {
 
       <section className="portfolio-tools panel-surface" aria-label="Portfolio filters">
         {(['all', 'urgent', 'claimable', 'loans', 'rentals'] as PositionFilter[]).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
             {option}
           </button>
         ))}
@@ -1284,17 +1321,17 @@ function Manage({ mode }: { mode: Mode }) {
 
       <section className="portfolio-table panel-surface" aria-label="Managed positions">
         {visiblePositions.map((position) => {
-          const done = completedActions.includes(position.id);
+          const done = reviewedActions.includes(position.id);
           return (
-            <article className={position.urgency === 'urgent' ? 'position-row urgent' : 'position-row'} key={position.id}>
+            <article className={position.urgency === 'urgent' ? 'position-row urgent' : 'position-row'} key={position.id} aria-label={position.title}>
               <div>
                 <span className="position-kind">{position.kind}</span>
                 <h3>{position.title}</h3>
               </div>
               <span>{position.status}</span>
               <strong>{position.amount}</strong>
-              <button type="button" onClick={() => completeAction(position.id)} disabled={done}>
-                {done ? 'Queued' : position.nextAction}
+              <button type="button" onClick={() => completeAction(position.id)} disabled={actionsPaused || done}>
+                {actionsPaused ? 'Actions paused' : done ? 'Reviewed' : 'Review: ' + position.nextAction}
               </button>
             </article>
           );
@@ -1305,12 +1342,11 @@ function Manage({ mode }: { mode: Mode }) {
 }
 
 
-function SettingsPanel() {
+function SettingsPanel({ actionsPaused, onActionsPausedChange }: { actionsPaused: boolean; onActionsPausedChange: (paused: boolean) => void }) {
   const [riskGuardrail, setRiskGuardrail] = useState(() => readAppStorage('risk') ?? 'guided');
   const [language, setLanguage] = useState(() => readAppStorage('language') ?? 'English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
-  const [emergencyPause, setEmergencyPause] = useState(false);
 
   const updateRisk = (value: string) => {
     setRiskGuardrail(value);
@@ -1375,10 +1411,10 @@ function SettingsPanel() {
 
         <article className="settings-card panel-surface">
           <p className="eyebrow">Emergency</p>
-          <h3>{emergencyPause ? 'New actions paused locally' : 'Actions available'}</h3>
+          <h3>{actionsPaused ? 'New actions paused locally' : 'Actions available'}</h3>
           <p>Pausing here does not touch contracts. It prevents the Vaipakam interface from presenting new action CTAs until resumed.</p>
-          <button className={emergencyPause ? 'secondary-action' : 'danger-action'} type="button" onClick={() => setEmergencyPause((current) => !current)}>
-            {emergencyPause ? 'Resume Vaipakam actions' : 'Pause new Vaipakam actions'}
+          <button className={actionsPaused ? 'secondary-action' : 'danger-action'} type="button" onClick={() => onActionsPausedChange(!actionsPaused)}>
+            {actionsPaused ? 'Resume Vaipakam actions' : 'Pause new Vaipakam actions'}
           </button>
         </article>
       </section>
@@ -1387,7 +1423,7 @@ function SettingsPanel() {
         <Metric label="Risk guardrail" value={riskGuardrail} />
         <Metric label="Receipts required" value={confirmReceipts ? 'Yes' : 'No'} />
         <Metric label="Local analytics" value={localAnalytics ? 'Enabled' : 'Off'} />
-        <Metric label="Emergency state" value={emergencyPause ? 'Paused' : 'Normal'} />
+        <Metric label="Emergency state" value={actionsPaused ? 'Paused' : 'Normal'} />
       </section>
     </div>
   );
@@ -1397,6 +1433,7 @@ function SettingsPanel() {
 function DataRights({ wallet }: { wallet: WalletState }) {
   const [report, setReport] = useState('');
   const [cleared, setCleared] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
   const storageKeys = Object.values(APP_STORAGE_KEYS);
 
   const buildReport = () => {
@@ -1421,17 +1458,16 @@ function DataRights({ wallet }: { wallet: WalletState }) {
     link.href = url;
     link.download = 'vaipakam-local-support-report.json';
     link.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const clearLocalData = () => {
-    const confirmed = window.confirm('Clear Vaipakam local settings and support notes from this browser?');
-    if (!confirmed) return;
     storageKeys.forEach((key) => {
       window.localStorage.removeItem(key);
       window.sessionStorage.removeItem(key);
     });
     setReport('');
+    setConfirmClear(false);
     setCleared(true);
   };
 
@@ -1457,7 +1493,15 @@ function DataRights({ wallet }: { wallet: WalletState }) {
           <span><Trash2 size={20} /></span>
           <h3>Clear local data</h3>
           <p>Removes Vaipakam preferences, analytics opt-in state, and session crash notes from this browser only.</p>
-          <button className="danger-action" type="button" onClick={clearLocalData}>Clear local Vaipakam data</button>
+          {confirmClear ? (
+            <div className="confirm-strip">
+              <span>Clear Vaipakam local settings and support notes from this browser?</span>
+              <button className="danger-action" type="button" onClick={clearLocalData}>Confirm clear</button>
+              <button className="secondary-action" type="button" onClick={() => setConfirmClear(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className="danger-action" type="button" onClick={() => setConfirmClear(true)}>Clear local Vaipakam data</button>
+          )}
           {cleared ? <p className="inline-success">Local Vaipakam data cleared in this browser.</p> : null}
         </article>
 
@@ -1526,7 +1570,7 @@ function Help() {
   );
 }
 
-function Advanced() {
+function Advanced({ wallet }: { wallet: WalletState }) {
   const [riskMode, setRiskMode] = useState('Blue-chip only');
   const [oracleRoute, setOracleRoute] = useState('Primary + fallback');
   const [automation, setAutomation] = useState('Manual approval');
@@ -1534,7 +1578,9 @@ function Advanced() {
   const [diagnosticRun, setDiagnosticRun] = useState(0);
   const diagnostics = diagnosticRun === 0
     ? 'Not run in this session'
-    : 'Run #' + diagnosticRun + ': Base Sepolia connected, offer index readable, no blocking UI state found.';
+    : wallet.account && wallet.chainId === BASE_SEPOLIA_CHAIN_ID
+      ? 'Run #' + diagnosticRun + ': Base Sepolia connected, wallet readable, no blocking UI state found.'
+      : 'Run #' + diagnosticRun + ': Connect wallet and switch to Base Sepolia before using advanced actions.';
 
   return (
     <div className="advanced-page">
@@ -1586,9 +1632,9 @@ function Advanced() {
 
       <section className="advanced-console">
         <div className="console-header">
-          <span><Network size={16} /> Base Sepolia</span>
-          <span><Wallet size={16} /> Connected wallet</span>
-          <span><Store size={16} /> Diamond target ready</span>
+          <span><Network size={16} /> {chainLabel(wallet.chainId)}</span>
+          <span><Wallet size={16} /> {wallet.account ? 'Wallet connected' : 'Wallet not connected'}</span>
+          <span><Store size={16} /> {wallet.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Diamond target ready' : 'Switch network for actions'}</span>
         </div>
         <div className="console-grid">
           <Metric label="Risk mode" value={riskMode} />
