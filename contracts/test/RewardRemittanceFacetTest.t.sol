@@ -65,6 +65,8 @@ contract RewardRemittanceFacetTest is SetupTest {
         rep.setBaseChainId(CHAIN_BASE);
         rep.setIsCanonicalRewardChain(true);
         rep.setRewardMessenger(address(rewardMessenger));
+        // #776 — reward-budget rides the shared value-carrying
+        // `crossChainMessenger` on its own dedicated reward-budget channel.
         TreasuryFacet(address(diamond)).setCrossChainMessenger(address(ccip));
 
         uint32[] memory chainIds = new uint32[](3);

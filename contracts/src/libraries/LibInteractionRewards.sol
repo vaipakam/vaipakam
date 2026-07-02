@@ -110,6 +110,20 @@ library LibInteractionRewards {
     ///         the remittances can never exceed the day's emission. Returns 0
     ///         when the day pre-dates emissions (`half == 0`) or a global
     ///         denominator is zero (no interest on that side that day).
+    ///
+    ///         #776 over-fund note: this is the UNCAPPED slice. The live claim
+    ///         path also applies the §4 per-user VPFI cap
+    ///         (`_capVpfiForInterestUsd`), which can make a mirror's users
+    ///         collectively claim LESS than the slice remitted here. The residual
+    ///         VPFI is then stranded on the mirror Diamond — but safely so:
+    ///         it is never lost and an ADMIN can reclaim it via
+    ///         `recoverStuckERC20` (VPFI is not vault-tracked). Under-funding is
+    ///         the only unsafe direction (it would brick a claim), and this can
+    ///         only over-fund. Capping the slice exactly here is infeasible: the
+    ///         per-user cap binds per reward-ENTRY over that entry's multi-day
+    ///         window, whereas Base holds only the per-DAY per-chain aggregate
+    ///         numerators — it cannot reconstruct how the windowed cap lands on
+    ///         each mirror user. So over-fund-is-safe is the deliberate tradeoff.
     /// @param s       Diamond storage.
     /// @param chainId Mirror whose slice to compute.
     /// @param dayId   Finalized day.
@@ -816,11 +830,20 @@ library LibInteractionRewards {
     }
 
     /// @notice Remaining VPFI reservable from the 69M interaction pool.
+    /// @dev    #776 — reserves BOTH what Base has paid out locally
+    ///         (`interactionPoolPaidOut`) AND what it has already remitted to
+    ///         mirrors (`rewardBudgetRemittedGlobal`). The remitted VPFI is
+    ///         earmarked for mirror-chain claims, so it must not be re-lent to
+    ///         Base's own claimants — otherwise the two counters could jointly
+    ///         over-issue past the global 69M cap. `rewardBudgetRemittedGlobal`
+    ///         is Base-only (remittance is `onlyCanonical`), so on a mirror it
+    ///         is 0 and this collapses to the plain `CAP − paidOut` bound.
     function poolRemaining() internal view returns (uint256) {
-        uint256 paidOut = LibVaipakam.storageSlot().interactionPoolPaidOut;
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        uint256 reserved = s.interactionPoolPaidOut + s.rewardBudgetRemittedGlobal;
         return
-            LibVaipakam.VPFI_INTERACTION_POOL_CAP > paidOut
-                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - paidOut
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+                ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
                 : 0;
     }
 

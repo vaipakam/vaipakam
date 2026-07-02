@@ -4656,9 +4656,10 @@ library LibVaipakam {
         // 69M interaction pool; mirror claims draw from a locally-funded VPFI
         // balance. `RewardRemittanceFacet.remitRewardBudget` computes each
         // finalized day's per-chain slice and ships VPFI over the CCIP token
-        // path (the value-carrying `crossChainMessenger`, NOT the data-only
-        // `rewardMessenger`), tracking what's been sent so a batch is idempotent
-        // and the global 69M cap is never exceeded.
+        // path (the value-carrying `crossChainMessenger` on its own dedicated
+        // `vpfi-reward-budget` channel, NOT the data-only `rewardMessenger`),
+        // tracking what's been sent so a batch is idempotent and the global 69M
+        // cap is never exceeded.
         //
         // dstChainId => dayId => VPFI already remitted for that (chain, day).
         // A non-zero entry blocks re-remittance, so re-running a partially-sent

@@ -33,11 +33,20 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
  * @dev    Base-only (`onlyCanonical`): the 69M interaction pool lives on the
  *         canonical chain, so only Base holds the VPFI to remit. Authorized to
  *         the ADMIN role, or an optional `rewardRemittanceKeeper` EOA for the
- *         apps/keeper automation loop. Rides the value-carrying
- *         `crossChainMessenger` (the same CCIP adapter buyback uses) on its own
- *         reward-budget channel — NOT the data-only `rewardMessenger`. The Base
- *         Diamond must be registered as the reward-budget channel handler on
- *         that messenger (deploy wiring, PR2).
+ *         apps/keeper automation loop.
+ *
+ *         Rides the value-carrying `crossChainMessenger` (the same CCIP adapter
+ *         buyback uses) on its OWN dedicated `vpfi-reward-budget` channel — NOT
+ *         the data-only `rewardMessenger`. Reusing the shared messenger is safe:
+ *         on Base the Diamond is NOT a handler on it (the buyback inbound
+ *         handler is the separate `BuybackRemittanceReceiver`, and reward data
+ *         routes through `VaipakamRewardMessenger`), so `channelOf[Diamond]` is
+ *         free and deploy wiring registers the Base Diamond as the reward-budget
+ *         channel's handler; on each mirror the {RewardRemittanceReceiver} (a
+ *         distinct address from the mirror Diamond) is that channel's handler,
+ *         so the one-to-one `channelOf[handler]` binding never collides.
+ *         `remitRewardBudget` reverts `RewardBudgetMessengerNotSet` until the
+ *         messenger is configured (`TreasuryFacet.setCrossChainMessenger`).
  */
 contract RewardRemittanceFacet is
     DiamondAccessControl,
@@ -74,7 +83,8 @@ contract RewardRemittanceFacet is
 
     /// @notice Caller is neither ADMIN nor the configured remittance keeper.
     error NotRewardRemitter(address caller);
-    /// @notice The value-carrying cross-chain messenger is unset.
+    /// @notice The value-carrying cross-chain messenger is unset. Configure it
+    ///         with `TreasuryFacet.setCrossChainMessenger` before remitting.
     error RewardBudgetMessengerNotSet();
     /// @notice A requested day has not been finalized on Base yet.
     error RewardDayNotFinalized(uint256 dayId);
