@@ -56,7 +56,7 @@
 84532 # base-sepolia (canonical-VPFI — deployed 2026-07-01)
 421614 # arb-sepolia (mirror — deployed 2026-07-01)
 
-# 97 # bnb-testnet (mirror) — deploy deferred (stuck on bnb RPC); uncomment once its --phase contracts completes
+97 # bnb-testnet (mirror — diamond + crosschain deployed 2026-07-02; the "stuck on bnb RPC" was a min-gas-price quirk, fixed with --legacy --with-gas-price)
 
 # 11155111 # Sepolia (retired — not in the Phase-1 testnet trio)
 
