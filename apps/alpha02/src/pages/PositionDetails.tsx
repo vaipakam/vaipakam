@@ -12,9 +12,10 @@ import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
+import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { useLoanRisk, healthView } from '../data/risk';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -51,6 +52,10 @@ export function PositionDetails() {
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
   const [collateralInput, setCollateralInput] = useState('');
   const [partialInput, setPartialInput] = useState('');
+  // A successful claim doesn't change the indexer row's status, so
+  // without this latch the button would re-enable and invite a
+  // second, reverting claim.
+  const [claimed, setClaimed] = useState(false);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -63,13 +68,52 @@ export function PositionDetails() {
   );
   const collateralMeta = useTokenMeta(loan.data?.collateralAsset ?? undefined);
 
+  // Claim rights and role permissions travel with the POSITION NFTs,
+  // not the original addresses — a wallet that bought/received a
+  // lender- or borrower-side NFT must see that side's actions. Read
+  // the current owners (Diamond is the ERC-721); fall back to the
+  // historical addresses when the reads are unavailable.
+  const { readChain } = useActiveChain();
+  const readClient = usePublicClient({ chainId: readChain.chainId });
+  const nftOwners = useQuery({
+    queryKey: ['positionOwners', readChain.chainId, loan.data?.loanId],
+    enabled: Boolean(loan.data) && Boolean(readClient),
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const row = loan.data!;
+      const ownerOf = async (tokenId: string): Promise<string | null> => {
+        if (!/^[1-9]\d*$/.test(tokenId)) return null;
+        try {
+          return (await readClient!.readContract({
+            address: readChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'ownerOf',
+            args: [BigInt(tokenId)],
+          })) as string;
+        } catch {
+          return null; // burned / not readable
+        }
+      };
+      const [lenderOwner, borrowerOwner] = await Promise.all([
+        ownerOf(row.lenderTokenId),
+        ownerOf(row.borrowerTokenId),
+      ]);
+      return { lenderOwner, borrowerOwner };
+    },
+  });
+
   const role: 'lender' | 'borrower' | 'viewer' = useMemo(() => {
     const row = loan.data;
     if (!row || !address) return 'viewer';
-    if (row.borrower.toLowerCase() === address.toLowerCase()) return 'borrower';
-    if (row.lender.toLowerCase() === address.toLowerCase()) return 'lender';
+    const me = address.toLowerCase();
+    const owners = nftOwners.data;
+    if (owners?.borrowerOwner?.toLowerCase() === me) return 'borrower';
+    if (owners?.lenderOwner?.toLowerCase() === me) return 'lender';
+    // Owner reads unavailable/burned → historical addresses.
+    if (owners?.borrowerOwner == null && row.borrower.toLowerCase() === me) return 'borrower';
+    if (owners?.lenderOwner == null && row.lender.toLowerCase() === me) return 'lender';
     return 'viewer';
-  }, [loan.data, address]);
+  }, [loan.data, address, nftOwners.data]);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
@@ -99,8 +143,18 @@ export function PositionDetails() {
   );
 
   const action: Action = (() => {
+    if (claimed) return null; // claim already made this session
     if (role === 'borrower' && row.status === 'active') return 'repay';
     if (role === 'borrower' && row.status === 'repaid') return 'claim-borrower';
+    // After a default/liquidation the borrower may still have a
+    // residual entitlement (liquidation surplus) — the Claim Center
+    // lists these rows, so this page must offer the claim.
+    if (
+      role === 'borrower' &&
+      (row.status === 'defaulted' || row.status === 'liquidated')
+    ) {
+      return 'claim-borrower';
+    }
     if (role === 'lender' && row.status === 'repaid') return 'claim-lender';
     if (role === 'lender' && (row.status === 'defaulted' || row.status === 'liquidated')) {
       return 'claim-lender';
@@ -121,13 +175,23 @@ export function PositionDetails() {
           args: [BigInt(row.loanId)],
         })) as bigint;
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
+          // The owed amount STEPS UP at each elapsed-day boundary
+          // (whole-day interest flooring) and by 0.5%/day late fee —
+          // an exact-amount approval can be short by the time repayLoan
+          // executes. Pad by ~2 days of interest + one late-fee step;
+          // repayLoan only pulls the recomputed amount, so the pad is
+          // never spent.
+          const principal = BigInt(row.principal);
+          const pad =
+            fullTermInterest(principal, row.interestRateBps, 2) +
+            (principal * 50n) / 10_000n;
           await ensureAllowance({
             publicClient,
             walletClient,
             token: row.lendingAsset as `0x${string}`,
             owner: address,
             spender: walletChain.diamondAddress,
-            amount: totalDue,
+            amount: totalDue + pad,
           });
         }
         await write('repayLoan', [BigInt(row.loanId)]);
@@ -136,21 +200,18 @@ export function PositionDetails() {
         );
       } else if (kind === 'claim-borrower') {
         await write('claimAsBorrower', [BigInt(row.loanId)]);
+        setClaimed(true);
         setDoneMessage(copy.claims.claimed);
       } else {
         await write('claimAsLender', [BigInt(row.loanId)]);
+        setClaimed(true);
         setDoneMessage(copy.claims.claimed);
       }
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -182,12 +243,7 @@ export function PositionDetails() {
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -214,12 +270,7 @@ export function PositionDetails() {
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -245,7 +296,9 @@ export function PositionDetails() {
       : action === 'claim-borrower'
         ? isRental
           ? 'Claim my buffer back'
-          : 'Claim my collateral'
+          : row.status === 'repaid'
+            ? 'Claim my collateral'
+            : 'Claim what’s left (if anything)'
         : action === 'claim-lender'
           ? isRental
             ? 'Claim fees & reclaim NFT'
@@ -368,7 +421,7 @@ export function PositionDetails() {
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || !onSupportedChain || !(Number(collateralInput) > 0)}
+              disabled={busy || !onSupportedChain || !isPositiveDecimal(collateralInput)}
               onClick={() => void runAddCollateral()}
             >
               Add
@@ -402,7 +455,7 @@ export function PositionDetails() {
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || !onSupportedChain || !(Number(partialInput) > 0)}
+              disabled={busy || !onSupportedChain || !isPositiveDecimal(partialInput)}
               onClick={() => void runPartialRepay()}
             >
               Repay part

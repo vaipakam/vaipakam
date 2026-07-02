@@ -26,14 +26,20 @@ import {
 
 const REFRESH_MS = 30_000;
 
-/** Open offers on the current read chain (both sides). */
-export function useActiveOffers(limit = 50) {
+/** Open offers on the current read chain (both sides). One fixed page
+ *  size so every surface (Offer Book, guided flows, rentals) shares a
+ *  single cache entry and one poll. */
+const ACTIVE_OFFERS_LIMIT = 100;
+
+export function useActiveOffers() {
   const { readChain } = useActiveChain();
   return useQuery({
-    queryKey: ['activeOffers', readChain.chainId, limit],
+    queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
-      const page = await fetchActiveOffers(readChain.chainId, { limit });
+      const page = await fetchActiveOffers(readChain.chainId, {
+        limit: ACTIVE_OFFERS_LIMIT,
+      });
       return page ? page.offers : null;
     },
   });
@@ -57,7 +63,9 @@ export function useMyLoans() {
         fetchLoansByLender(readChain.chainId, address),
         fetchLoansByBorrower(readChain.chainId, address),
       ]);
-      if (asLender === null && asBorrower === null) return null;
+      // EITHER side failing means the list would be silently partial —
+      // that's "unavailable", never a confident half-answer.
+      if (asLender === null || asBorrower === null) return null;
       const rows: PositionLoan[] = [
         ...(asLender?.loans ?? []).map((l) => ({ ...l, role: 'lender' as const })),
         ...(asBorrower?.loans ?? []).map((l) => ({ ...l, role: 'borrower' as const })),

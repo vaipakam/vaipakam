@@ -6,6 +6,7 @@
  */
 import { useModal } from 'connectkit';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useSanctionsCheck } from '../data/sanctions';
 import { copy } from '../content/copy';
 import type { CheckItem } from './Checklist';
 import type { TokenMeta } from '../contracts/erc20';
@@ -20,6 +21,14 @@ export interface EligibilityInputs {
     /** Amount the action needs (undefined = amount not entered yet). */
     required: bigint | undefined;
   };
+  /** The OTHER ERC-20 leg of the deal (not paid by this user) — its
+   *  token validity still gates the receipt, so surface it as a
+   *  fixable item instead of an eternal "Preparing your review…". */
+  counterAsset?: {
+    label: string;
+    meta: TokenMeta | undefined;
+    metaError: boolean;
+  };
   /** Risk + terms consent checkbox state; omit for flows without one. */
   consent?: boolean;
 }
@@ -28,6 +37,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
   const { isConnected, onSupportedChain, switchToSupported, switchPending } =
     useActiveChain();
   const { setOpen } = useModal();
+  const sanctioned = useSanctionsCheck();
 
   const items: CheckItem[] = [];
 
@@ -62,6 +72,17 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
     ),
   });
 
+  // Sanctions gate: a flagged wallet's create/accept would revert
+  // on-chain AFTER the approval tx already mined — block before any
+  // gas is spent. Fail-open (unflagged/unknown → no item shown).
+  if (sanctioned) {
+    items.push({
+      id: 'sanctions',
+      label: copy.sanctions.line2,
+      state: 'fail',
+    });
+  }
+
   const asset = inputs.asset;
   if (asset) {
     items.push({
@@ -84,6 +105,17 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
         : asset.balance! >= asset.required!
           ? 'pass'
           : 'fail',
+    });
+  }
+
+  const counter = inputs.counterAsset;
+  if (counter) {
+    items.push({
+      id: 'counter-token',
+      label: counter.metaError
+        ? `${counter.label}: ${copy.errors.notAToken}`
+        : `${counter.label} recognised (${counter.meta?.symbol ?? '…'})`,
+      state: counter.metaError ? 'fail' : counter.meta ? 'pass' : 'pending',
     });
   }
 

@@ -3,12 +3,14 @@
  * Rows come from the indexer; kinds are shown as readable labels with
  * loan/offer links back into the app.
  */
+import { useMemo } from 'react';
 import { History, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useModal } from 'connectkit';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useMyLoans } from '../data/hooks';
 import { fetchActivity, type IndexedActivityEvent } from '../data/indexer';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { formatDate } from '../lib/format';
@@ -50,14 +52,41 @@ function ActivityRow({ event }: { event: IndexedActivityEvent }) {
 export function Activity() {
   const { isConnected, readChain, address } = useActiveChain();
   const { setOpen } = useModal();
+  const loans = useMyLoans();
+
+  // The worker's actor column is non-exhaustive (a keeper-triggered
+  // LoanDefaulted has actor null; OfferAccepted stores only the
+  // acceptor), so fetch broadly and keep an event when the wallet is a
+  // PARTICIPANT: recorded actor, mentioned in the event args, or the
+  // event belongs to one of the wallet's own loans.
+  const myLoanIds = useMemo(
+    () =>
+      new Set(
+        (Array.isArray(loans.data) ? loans.data : []).map((l) => l.loanId),
+      ),
+    [loans.data],
+  );
 
   const activity = useQuery({
-    queryKey: ['activity', readChain.chainId, address?.toLowerCase()],
+    queryKey: [
+      'activity',
+      readChain.chainId,
+      address?.toLowerCase(),
+      myLoanIds.size,
+    ],
     enabled: Boolean(address),
     refetchInterval: 60_000,
     queryFn: async () => {
-      const page = await fetchActivity(readChain.chainId, address!, { limit: 50 });
-      return page === null ? null : page.events;
+      const page = await fetchActivity(readChain.chainId, { limit: 100 });
+      if (page === null) return null;
+      const me = address!.toLowerCase();
+      return page.events.filter((ev) => {
+        if (ev.actor && ev.actor.toLowerCase() === me) return true;
+        if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
+        const argsStr =
+          typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {});
+        return argsStr.toLowerCase().includes(me);
+      });
     },
   });
 

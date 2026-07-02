@@ -4,16 +4,35 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
-/** Deploy default (5%) — used only until the live read lands. */
+/** Deploy default (5%) — display fallback only. Money paths must use
+ *  {@link readRentalBufferBps} or gate on `ready`. */
 const RENTAL_BUFFER_BPS_DEFAULT = 500;
 
-/** NFT-rental prepay buffer in bps, read from
- *  `ConfigFacet.getProtocolConfigBundle` (tuple index 6 — see
- *  apps/defi useProtocolConfig's BundleTuple). */
-export function useRentalBufferBps(): number {
+/** Direct read of the LIVE buffer — for submit paths. Throws on read
+ *  failure instead of substituting a default: an under-read buffer
+ *  under-approves the renter's prepay and the accept reverts AFTER the
+ *  user signed (governance can raise the buffer to 2,000 bps). */
+export async function readRentalBufferBps(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+): Promise<number> {
+  const bundle = (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getProtocolConfigBundle',
+  })) as readonly unknown[];
+  return Number(bundle[6] as bigint);
+}
+
+/** NFT-rental prepay buffer in bps (tuple index 6 of
+ *  `getProtocolConfigBundle` — see apps/defi useProtocolConfig's
+ *  BundleTuple). `ready` is false while the value is still the
+ *  fallback — display may proceed, signing must not. */
+export function useRentalBufferBps(): { bps: number; ready: boolean } {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
 
@@ -21,17 +40,10 @@ export function useRentalBufferBps(): number {
     queryKey: ['rentalBufferBps', readChain.chainId],
     enabled: Boolean(publicClient),
     staleTime: 5 * 60_000,
-    queryFn: async (): Promise<number> => {
-      const bundle = (await publicClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getProtocolConfigBundle',
-      })) as readonly unknown[];
-      return Number(bundle[6] as bigint);
-    },
+    queryFn: () => readRentalBufferBps(publicClient!, readChain.diamondAddress),
   });
 
-  return data ?? RENTAL_BUFFER_BPS_DEFAULT;
+  return { bps: data ?? RENTAL_BUFFER_BPS_DEFAULT, ready: data !== undefined };
 }
 
 /** Renter's total up-front payment for a rental:

@@ -794,3 +794,15 @@ a.item-row:hover {
 .spin {
   animation: spin 1s linear infinite;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+
+  .intent-card,
+  .intent-card:hover {
+    transition: none;
+    transform: none;
+  }
+}

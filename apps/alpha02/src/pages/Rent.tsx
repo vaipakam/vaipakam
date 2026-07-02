@@ -31,7 +31,12 @@ import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import { ensureNftApproval, useNftOwnership } from '../contracts/nft';
 import { useActiveOffers, useOffer } from '../data/hooks';
-import { useRentalBufferBps, totalRentalPrepay } from '../data/protocol';
+import {
+  readRentalBufferBps,
+  totalRentalPrepay,
+  useRentalBufferBps,
+} from '../data/protocol';
+import { useProtocolFees, bpsToPercentText } from '../data/fees';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -42,6 +47,7 @@ import {
 } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
+import { submitErrorText } from '../lib/errors';
 import { AssetPicker } from '../components/AssetPicker';
 import { Checklist, allChecksPass, type CheckItem } from '../components/Checklist';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
@@ -54,13 +60,6 @@ function bufferPct(bufferBps: number): string {
   return `${Number((bufferBps / 100).toFixed(2))}%`;
 }
 
-function submitErrorText(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err);
-  return /rejected|denied|cancel/i.test(message)
-    ? copy.errors.txRejected
-    : `${copy.errors.txFailed} (${message.slice(0, 160)})`;
-}
-
 // ---------------------------------------------------------------- N1
 function ListNftFlow() {
   const { address, walletChain } = useActiveChain();
@@ -68,7 +67,8 @@ function ListNftFlow() {
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
-  const bufferBps = useRentalBufferBps();
+  const { bps: bufferBps } = useRentalBufferBps();
+  const fees = useProtocolFees();
 
   const [step, setStep] = useState<'details' | 'review' | 'done'>('details');
   const [standard, setStandard] = useState<'erc721' | 'erc1155'>('erc721');
@@ -98,7 +98,12 @@ function ListNftFlow() {
   }, [dailyFee, prepayMeta.data]);
 
   const form = useMemo((): OfferFormState | null => {
-    if (!dailyFeeWei || !isAddressLike(contract) || tokenId === '') return null;
+    if (!dailyFeeWei || !isAddressLike(contract) || !/^\d+$/.test(tokenId)) return null;
+    // '0' is truthy as a string — a zero-edition ERC-1155 listing must
+    // not pass the client gates only to revert after the approval tx.
+    if (standard === 'erc1155' && !(/^\d+$/.test(quantity) && Number(quantity) > 0)) {
+      return null;
+    }
     return {
       ...initialOfferForm,
       offerType: 'lender',
@@ -129,11 +134,9 @@ function ListNftFlow() {
         state:
           ownership.data === true
             ? 'pass'
-            : ownership.data === undefined && ownership.isFetching
+            : ownership.data === undefined
               ? 'pending'
-              : ownership.data === undefined
-                ? 'pending'
-                : 'fail',
+              : 'fail',
       },
       {
         id: 'prepay-token',
@@ -145,14 +148,14 @@ function ListNftFlow() {
     ];
     // wallet + network first, then the rental-specific facts, then consent.
     return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
-  }, [baseChecks, ownership.data, ownership.isFetching, prepayMeta.isError, prepayMeta.data]);
+  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data]);
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!form || !dailyFeeWei || !prepayMeta.data) return null;
     const days = Number(durationDays);
-    const fees = dailyFeeWei * BigInt(days);
+    const totalFees = dailyFeeWei * BigInt(days);
     const pay = prepayMeta.data.symbol;
-    const feesStr = `${formatTokenAmount(fees, prepayMeta.data.decimals)} ${pay}`;
+    const feesStr = `${formatTokenAmount(totalFees, prepayMeta.data.decimals)} ${pay}`;
     const nftStr = `${shortAddress(contract)} #${tokenId}${
       standard === 'erc1155' ? ` ×${quantity || '1'}` : ''
     }`;
@@ -161,10 +164,22 @@ function ListNftFlow() {
       youLock: `Your NFT ${nftStr} moves into your vault and stays there for the whole listing and rental.`,
       youMayOwe: 'Nothing.',
       youCanLose: `Temporary use of the NFT while it is rented — the renter can never transfer or sell it. ${copy.rent.notDebt}`,
-      fees: copy.fees.lenderYieldFee.replace('interest', 'rental fees'),
+      fees: copy.fees
+        .lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))
+        .replace('interest', 'rental fees'),
       whenThisEnds: `When the rental ends, the renter’s rights reset automatically; you claim your fees and reclaim the NFT from the rental’s detail page.`,
     };
-  }, [form, dailyFeeWei, prepayMeta.data, durationDays, contract, tokenId, standard, quantity]);
+  }, [
+    form,
+    dailyFeeWei,
+    prepayMeta.data,
+    durationDays,
+    contract,
+    tokenId,
+    standard,
+    quantity,
+    fees.treasuryFeeBps,
+  ]);
 
   const formError = form ? validateOfferForm(form) : null;
   const canSign =
@@ -424,38 +439,67 @@ function RentNftFlow() {
   const { write } = useDiamondWrite();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const queryClient = useQueryClient();
-  const bufferBps = useRentalBufferBps();
-  const activeOffers = useActiveOffers(100);
+  const { bps: bufferBps, ready: bufferReady } = useRentalBufferBps();
+  const activeOffers = useActiveOffers();
 
   const [step, setStep] = useState<'browse' | 'review' | 'done'>('browse');
   const [selected, setSelected] = useState<IndexedOffer | null>(null);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   // Deep link (?offer=<id>) from the Offer Book's "Rent this NFT".
+  // Same rules and notices as OfferFlow's deep link — dead links get a
+  // plain-language explanation, never a silent return to browse.
   const [searchParams, setSearchParams] = useSearchParams();
   const offerParam = searchParams.get('offer');
-  const deepLinkId = offerParam !== null ? Number(offerParam) : undefined;
-  const deepLinkQuery = useOffer(
-    deepLinkId !== undefined && Number.isFinite(deepLinkId) ? deepLinkId : undefined,
-  );
+  const offerParamValid =
+    offerParam !== null && /^\d+$/.test(offerParam.trim()) && offerParam.trim() !== '';
+  const deepLinkId = offerParamValid ? Number(offerParam) : undefined;
+  const deepLinkQuery = useOffer(deepLinkId);
   useEffect(() => {
-    if (deepLinkId === undefined || selected || step !== 'browse') return;
-    const row = deepLinkQuery.data;
-    if (row === undefined || row === null) return;
-    setSearchParams({}, { replace: true });
-    if (
-      row.offerType !== 0 ||
-      row.assetType === AssetType.ERC20 ||
-      row.status !== 'active'
-    ) {
-      return; // not an open rental listing — stay on browse
+    if (offerParam === null || selected || step !== 'browse') return;
+    const clear = (message: string | null) => {
+      if (message) setNotice(message);
+      setSearchParams({}, { replace: true });
+    };
+    if (!offerParamValid) {
+      clear(copy.match.offerNotFound);
+      return;
     }
+    if (deepLinkQuery.isLoading) return;
+    const row = deepLinkQuery.data;
+    if (row === null || row === undefined) {
+      clear(copy.match.offerNotFound);
+      return;
+    }
+    if (row.offerType !== 0 || row.assetType === AssetType.ERC20) {
+      clear(copy.match.wrongSide);
+      return;
+    }
+    if (address && row.creator.toLowerCase() === address.toLowerCase()) {
+      clear(copy.match.ownOffer);
+      return;
+    }
+    if (row.status !== 'active') {
+      clear(copy.match.offerGone);
+      return;
+    }
+    clear(null);
     setSelected(row);
     setStep('review');
-  }, [deepLinkId, deepLinkQuery.data, selected, step, setSearchParams]);
+  }, [
+    offerParam,
+    offerParamValid,
+    deepLinkQuery.isLoading,
+    deepLinkQuery.data,
+    selected,
+    step,
+    address,
+    setSearchParams,
+  ]);
 
   const listings = useMemo(() => {
     const rows = activeOffers.data;
@@ -474,7 +518,7 @@ function RentNftFlow() {
     ? totalRentalPrepay(BigInt(selected.amount), selected.durationDays, bufferBps)
     : undefined;
 
-  const checks = useEligibility({
+  const baseChecks = useEligibility({
     asset: selected
       ? {
           meta: prepayMeta.data,
@@ -485,6 +529,21 @@ function RentNftFlow() {
       : undefined,
     consent,
   });
+  // The prepay pull depends on the LIVE buffer — signing before the
+  // config read lands would compute the approval from a default.
+  const checks = useMemo(
+    (): CheckItem[] => [
+      ...baseChecks,
+      {
+        id: 'rental-config',
+        label: bufferReady
+          ? 'Live rental terms loaded'
+          : 'Loading live rental terms…',
+        state: bufferReady ? 'pass' : 'pending',
+      },
+    ],
+    [baseChecks, bufferReady],
+  );
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!selected || !prepayMeta.data || totalPrepay === undefined) return null;
@@ -505,20 +564,46 @@ function RentNftFlow() {
   const canSign = allChecksPass(checks) && receipt !== null && !busy;
 
   async function submit() {
-    if (!selected || !address || !walletChain || !walletClient || !publicClient) return;
+    if (!selected || !address || !walletChain || !walletClient || !publicClient) {
+      setError(copy.wallet.connectFirst);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
+      // Reviewed row and executing chain must agree — same offerId on
+      // another chain is a different rental.
+      if (selected.chainId !== walletChain.chainId) {
+        throw new Error(copy.match.termsChanged);
+      }
       const { terms, signature } = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
         consent,
       });
-      // Renter's pull is dailyFee × days × (1 + buffer) in prepayAsset —
-      // computed from the SIGNED canonical terms, not the indexer row.
+      // Canonical terms must still match what was reviewed (the owner
+      // can edit the listing in place; the indexer row can lag).
+      const reviewedMatchesSigned =
+        terms.lendingAsset.toLowerCase() === selected.lendingAsset.toLowerCase() &&
+        terms.prepayAsset.toLowerCase() === selected.prepayAsset.toLowerCase() &&
+        terms.amount === BigInt(selected.amount) &&
+        Number(terms.durationDays) === selected.durationDays &&
+        terms.tokenId === BigInt(selected.tokenId);
+      if (!reviewedMatchesSigned) {
+        void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+        void queryClient.invalidateQueries({ queryKey: ['offer'] });
+        throw new Error(copy.match.termsChanged);
+      }
+      // Renter's pull is dailyFee × days × (1 + buffer) in prepayAsset.
+      // Fee terms come from the SIGNED canonical terms; the buffer is
+      // read LIVE right now — never a default that may lag governance.
+      const liveBufferBps = await readRentalBufferBps(
+        publicClient,
+        walletChain.diamondAddress,
+      );
       const canonicalTotal = totalRentalPrepay(
         terms.amount,
         Number(terms.durationDays),
-        bufferBps,
+        liveBufferBps,
       );
       await ensureAllowance({
         publicClient,
@@ -550,6 +635,12 @@ function RentNftFlow() {
         steps={['Choose an NFT', 'Review & sign', 'Done']}
         current={step === 'browse' ? 0 : step === 'review' ? 1 : 2}
       />
+
+      {step === 'browse' && notice ? (
+        <div className="banner banner-warn" role="alert">
+          <span className="banner-body">{notice}</span>
+        </div>
+      ) : null}
 
       {step === 'browse' ? (
         <div className="card">

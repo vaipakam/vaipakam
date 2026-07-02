@@ -5,7 +5,9 @@
  */
 import { formatUnits } from 'viem';
 
-/** "1234.5678" → "1,234.56" (trims trailing zeros, max 6 sig decimals). */
+/** Human display of a token amount. Small-but-nonzero values keep
+ *  enough significant digits that real money never renders as "0"
+ *  (a 0.00004 WBTC claim is ~$4 — it must not display as zero). */
 export function formatTokenAmount(
   raw: bigint | string,
   decimals: number,
@@ -15,9 +17,20 @@ export function formatTokenAmount(
   const asString = formatUnits(value, decimals);
   const num = Number(asString);
   if (!Number.isFinite(num)) return asString;
+  if (num !== 0 && Math.abs(num) < 1) {
+    return num.toLocaleString('en-US', { maximumSignificantDigits: 4 });
+  }
   return num.toLocaleString('en-US', {
     maximumFractionDigits: maxFraction,
   });
+}
+
+/** LOSSLESS decimal string for pre-filling inputs (Max buttons).
+ *  Never round-trips through Number — 18-decimal balances lose
+ *  precision past ~15 significant digits and can round UP above the
+ *  true balance, tripping over-max guards. */
+export function exactAmountString(raw: bigint, decimals: number): string {
+  return formatUnits(raw, decimals);
 }
 
 /** 550 bps → "5.5%". */
@@ -49,10 +62,15 @@ export function formatDate(unixSeconds: number): string {
   });
 }
 
-/** Days remaining until (startTime + durationDays), can be negative. */
+/** Days remaining until (startTime + durationDays). Negative the
+ *  moment the due time passes — Math.floor, NOT ceil: ceil returns -0
+ *  for the first 24h past due (and -0 < 0 is false), which showed
+ *  overdue — even already-defaultable — loans as "Due today". */
 export function daysRemaining(startTime: number, durationDays: number): number {
   const dueAt = startTime + durationDays * 86_400;
-  return Math.ceil((dueAt - Date.now() / 1000) / 86_400);
+  const diff = dueAt - Date.now() / 1000;
+  if (diff < 0) return Math.min(-1, Math.ceil(diff / 86_400));
+  return Math.floor(diff / 86_400);
 }
 
 /** Full-term simple interest, mirroring the protocol formula

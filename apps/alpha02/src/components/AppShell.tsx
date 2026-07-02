@@ -9,7 +9,7 @@
  * stay reachable by URL in both modes (they are deeper tools, not
  * disabled features).
  */
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import {
   CircleHelp,
   Coins,
@@ -65,8 +65,20 @@ const TABBAR: NavItem[] = [
 
 export function AppShell() {
   const { isAdvanced } = useMode();
+  const { pathname } = useLocation();
 
   const visible = (item: NavItem) => !item.advancedOnly || isAdvanced;
+
+  // On phones the "More" tab fronts every destination without a tab of
+  // its own — highlight it on those pages so the user is never "nowhere".
+  const moreIsActive = [
+    '/claims',
+    '/vault',
+    '/offers',
+    '/vpfi',
+    '/activity',
+    '/help',
+  ].some((prefix) => pathname.startsWith(prefix));
 
   return (
     <div className="shell">
@@ -83,7 +95,7 @@ export function AppShell() {
       </header>
 
       <div className="shell-body">
-        <nav className="shell-sidenav" aria-label="Main">
+        <nav className="shell-sidenav" aria-label="Primary">
           {PRIMARY_NAV.filter(visible).map((item) => (
             <NavLink
               key={item.to}
@@ -119,13 +131,19 @@ export function AppShell() {
         </main>
       </div>
 
-      <nav className="shell-tabbar" aria-label="Main">
+      <nav className="shell-tabbar" aria-label="Quick navigation">
         {TABBAR.map((item) => (
           <NavLink
             key={item.to}
             to={item.to}
             end={item.to === '/'}
-            className={({ isActive }) => `tabbar-item ${isActive ? 'active' : ''}`}
+            className={({ isActive }) =>
+              `tabbar-item ${
+                isActive || (item.to === '/settings' && moreIsActive)
+                  ? 'active'
+                  : ''
+              }`
+            }
           >
             <item.icon aria-hidden />
             {item.label}

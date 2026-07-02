@@ -21,18 +21,12 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useVpfi, VPFI_DECIMALS } from '../data/vpfi';
+import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
 import { useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
-import { formatBpsAsPercent, formatTokenAmount } from '../lib/format';
+import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
+import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
-
-const TIERS: Array<{ held: string; discount: string }> = [
-  { held: '100 – 999 VPFI', discount: '10%' },
-  { held: '1,000 – 4,999 VPFI', discount: '15%' },
-  { held: '5,000 – 20,000 VPFI', discount: '20%' },
-  { held: 'Over 20,000 VPFI', discount: '24%' },
-];
 
 type VaultAction = 'deposit' | 'withdraw';
 
@@ -46,6 +40,7 @@ export function Vpfi() {
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
 
+  const tierRows = useVpfiTierTable();
   const [action, setAction] = useState<VaultAction>('deposit');
   const [amount, setAmount] = useState('');
   const [reviewing, setReviewing] = useState(false);
@@ -56,7 +51,7 @@ export function Vpfi() {
   const snapshot = vpfi.data;
 
   const amountWei = useMemo(() => {
-    if (!amount || Number(amount) <= 0) return null;
+    if (!isPositiveDecimal(amount)) return null;
     try {
       return parseUnits(amount, VPFI_DECIMALS);
     } catch {
@@ -64,10 +59,12 @@ export function Vpfi() {
     }
   }, [amount]);
 
+  // Withdrawals above the FREE balance revert (encumbered VPFI backs
+  // active loans) — the Max button and over-max check must use free.
   const maxWei =
     action === 'deposit'
       ? (snapshot?.walletBalance ?? 0n)
-      : (snapshot?.vaultBalance ?? 0n);
+      : (snapshot?.freeBalance ?? 0n);
   const overMax = amountWei !== null && amountWei > maxWei;
 
   const receipt = useMemo((): ReceiptData | null => {
@@ -122,12 +119,7 @@ export function Vpfi() {
       setReviewing(false);
       refresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -141,12 +133,7 @@ export function Vpfi() {
       await write('setVPFIDiscountConsent', [!snapshot.consent]);
       refresh();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -161,7 +148,7 @@ export function Vpfi() {
         topping up today grows your discount gradually, not instantly.
       </p>
       <dl className="receipt" style={{ margin: 0 }}>
-        {TIERS.map((t) => (
+        {tierRows.map((t) => (
           <div key={t.held} className="receipt-row">
             <dt>{t.held}</dt>
             <dd>{t.discount} off eligible protocol fees</dd>
@@ -318,7 +305,7 @@ export function Vpfi() {
                   type="button"
                   className="btn btn-secondary btn-sm"
                   onClick={() => {
-                    setAmount(formatTokenAmount(maxWei, VPFI_DECIMALS, 18).replaceAll(',', ''));
+                    setAmount(exactAmountString(maxWei, VPFI_DECIMALS));
                     setReviewing(false);
                   }}
                 >
@@ -328,7 +315,7 @@ export function Vpfi() {
               <span className="field-hint">
                 {action === 'deposit'
                   ? `In your wallet: ${formatTokenAmount(snapshot.walletBalance, VPFI_DECIMALS)} VPFI`
-                  : `In your vault: ${formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} VPFI`}
+                  : `Withdrawable now: ${formatTokenAmount(snapshot.freeBalance, VPFI_DECIMALS)} VPFI of ${formatTokenAmount(snapshot.vaultBalance, VPFI_DECIMALS)} in your vault`}
                 {overMax ? ' — that’s more than you have.' : ''}
               </span>
             </div>

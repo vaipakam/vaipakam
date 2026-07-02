@@ -39,6 +39,7 @@ import {
   useTokenMeta,
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
+import { useProtocolFees, bpsToPercentText } from '../data/fees';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -55,6 +56,7 @@ import {
   formatTokenAmount,
   fullTermInterest,
 } from '../lib/format';
+import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
 import { AssetPicker } from './AssetPicker';
 import { Checklist, allChecksPass } from './Checklist';
@@ -188,6 +190,7 @@ export function OfferFlow({ side }: { side: Side }) {
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
   const { sign: signAcceptTerms } = useAcceptTermsSigning();
+  const fees = useProtocolFees();
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -207,31 +210,66 @@ export function OfferFlow({ side }: { side: Side }) {
     setForm((f) => ({ ...f, ...patch }));
 
   // ---- Deep link (?offer=<id>) from the Offer Book -------------------
+  // Validates the SAME rules as the browse path (side, open, ERC-20
+  // both legs, not my own offer) and turns every dead link into a
+  // plain-language notice instead of a silent hang.
   const offerParam = searchParams.get('offer');
-  const deepLinkId = offerParam !== null ? Number(offerParam) : undefined;
-  const deepLinkQuery = useOffer(
-    deepLinkId !== undefined && Number.isFinite(deepLinkId) ? deepLinkId : undefined,
-  );
+  const offerParamValid =
+    offerParam !== null && /^\d+$/.test(offerParam.trim()) && offerParam.trim() !== '';
+  const deepLinkId = offerParamValid ? Number(offerParam) : undefined;
+  const deepLinkQuery = useOffer(deepLinkId);
   useEffect(() => {
-    if (deepLinkId === undefined || selected || step !== 'details') return;
+    if (offerParam === null || selected || step !== 'details') return;
+    const clear = (notice: string) => {
+      setDeepLinkNotice(notice);
+      setSearchParams({}, { replace: true });
+    };
+    if (!offerParamValid) {
+      clear(copy.match.offerNotFound);
+      return;
+    }
+    if (deepLinkQuery.isLoading) return; // genuinely still loading
     const row = deepLinkQuery.data;
-    if (row === undefined || row === null) return; // loading / indexer down
+    if (row === null || row === undefined) {
+      // 404 / pruned / indexer down — getJson collapses them to null.
+      clear(copy.match.offerNotFound);
+      return;
+    }
     const wantedType = side === 'borrower' ? 0 : 1;
     if (row.offerType !== wantedType) {
-      setDeepLinkNotice(copy.match.wrongSide);
-      setSearchParams({}, { replace: true });
+      clear(copy.match.wrongSide);
+      return;
+    }
+    if (
+      row.assetType !== AssetType.ERC20 ||
+      row.collateralAssetType !== AssetType.ERC20
+    ) {
+      clear(copy.match.wrongKind);
+      return;
+    }
+    if (address && row.creator.toLowerCase() === address.toLowerCase()) {
+      clear(copy.match.ownOffer);
       return;
     }
     if (row.status !== 'active') {
-      setDeepLinkNotice(copy.match.offerGone);
-      setSearchParams({}, { replace: true });
+      clear(copy.match.offerGone);
       return;
     }
     setForm((f) => ({ ...f, lendingAsset: row.lendingAsset }));
     setSelected(row);
     setMode('accept');
     setStep('review');
-  }, [deepLinkId, deepLinkQuery.data, selected, step, side, setSearchParams]);
+  }, [
+    offerParam,
+    offerParamValid,
+    deepLinkQuery.isLoading,
+    deepLinkQuery.data,
+    selected,
+    step,
+    side,
+    address,
+    setSearchParams,
+  ]);
 
   // ---- Token facts ----------------------------------------------------
   const lendingMeta = useTokenMeta(form.lendingAsset || undefined);
@@ -282,6 +320,25 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }, [mode, selected, form, side, lockedMeta.data, lendingMeta.data, collateralMeta.data]);
 
+  // The leg the user does NOT pay still gates the receipt — surface
+  // it as a fixable item instead of an eternal "Preparing your review…".
+  const counterMeta =
+    mode === 'accept' && selected
+      ? side === 'borrower'
+        ? lendingMeta
+        : selectedCollateralMeta
+      : side === 'lender'
+        ? collateralMeta
+        : lendingMeta;
+  const counterAssetAddress =
+    mode === 'accept' && selected
+      ? side === 'borrower'
+        ? selected.lendingAsset
+        : selected.collateralAsset
+      : side === 'lender'
+        ? form.collateralAsset
+        : form.lendingAsset;
+
   const checks = useEligibility({
     asset: lockedAssetAddress
       ? {
@@ -291,11 +348,19 @@ export function OfferFlow({ side }: { side: Side }) {
           required: lockedAmount,
         }
       : undefined,
+    counterAsset: counterAssetAddress
+      ? {
+          label:
+            side === 'borrower' ? 'Borrowed asset' : 'Collateral asset',
+          meta: counterMeta.data,
+          metaError: counterMeta.isError,
+        }
+      : undefined,
     consent: form.riskAndTermsConsent,
   });
 
   // ---- Matching offers -------------------------------------------------
-  const activeOffers = useActiveOffers(100);
+  const activeOffers = useActiveOffers();
   const desiredWei = useMemo(() => {
     if (!lendingMeta.data || !form.amount || Number(form.amount) <= 0) return null;
     try {
@@ -351,93 +416,118 @@ export function OfferFlow({ side }: { side: Side }) {
               : 2
             : stepLabels.length - 1;
 
-  const detailsComplete = isAddressLike(form.lendingAsset) && Number(form.amount) > 0;
+  // Strict decimal gating — Number('1e18') > 0 and Number('abc') < 0
+  // checks let inputs through that parseUnits/BigInt later throw on.
+  const detailsComplete =
+    isAddressLike(form.lendingAsset) && isPositiveDecimal(form.amount);
   const formError = validateOfferForm(form);
   const postDetailsComplete =
     detailsComplete &&
     isAddressLike(form.collateralAsset) &&
-    Number(form.collateralAmount) > 0 &&
-    form.interestRate !== '';
+    isPositiveDecimal(form.collateralAmount) &&
+    isPlainDecimal(form.interestRate);
 
   // ---- Review receipt ----------------------------------------------------
+  // One side of the deal being unpriced (illiquid) changes the default
+  // outcome to a direct in-kind transfer — the receipt must say so.
+  const selectedIsIlliquid =
+    mode === 'accept' &&
+    selected !== null &&
+    (selected.principalLiquidity === 1 || selected.collateralLiquidity === 1);
+
+  const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
+  const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
+
   const receipt = useMemo((): ReceiptData | null => {
-    if (mode === 'accept' && selected) {
+    // The conversions below throw on inputs the completeness gates
+    // can't fully exclude — never let that take down the page.
+    try {
+      if (mode === 'accept' && selected) {
+        const lending = lendingMeta.data;
+        const collateral = selectedCollateralMeta.data;
+        if (!lending || !collateral) return null;
+        const principal = offerPrincipal(selected);
+        const interest = fullTermInterest(
+          principal,
+          offerRateBps(selected),
+          selected.durationDays,
+        );
+        const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
+        const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
+        const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+        const durationStr = formatDurationDays(selected.durationDays);
+        const grace = gracePeriodLabel(selected.durationDays);
+        const illiquidSuffix = selectedIsIlliquid
+          ? ` ${copy.match.illiquidWarning}`
+          : '';
+
+        if (side === 'borrower') {
+          return {
+            youReceive: `${principalStr} now (minus the ${lifPct} initiation fee).`,
+            youLock: `${collateralStr} as collateral, now.`,
+            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
+            youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${illiquidSuffix}`,
+            fees: copy.fees.borrowerLIF(lifPct),
+            whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
+          };
+        }
+        return {
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youLock: `${principalStr} lent to the borrower, now.`,
+          youMayOwe: 'Nothing — the borrower owes you.',
+          youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
+          fees: copy.fees.lenderYieldFee(yieldPct),
+          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${grace}). You then claim your funds.`,
+        };
+      }
+
+      // Post mode — receipt from the user's own terms.
       const lending = lendingMeta.data;
-      const collateral = selectedCollateralMeta.data;
-      if (!lending || !collateral) return null;
-      const principal = offerPrincipal(selected);
-      const interest = fullTermInterest(
-        principal,
-        offerRateBps(selected),
-        selected.durationDays,
-      );
+      const collateral = collateralMeta.data;
+      if (!lending || !collateral || !postDetailsComplete) return null;
+      const payload = toCreateOfferPayload(form, {
+        lending: lending.decimals,
+        collateral: collateral.decimals,
+      });
+      const principal = payload.amountMax;
+      const rateBps = side === 'lender' ? payload.interestRateBps : payload.interestRateBpsMax;
+      const interest = fullTermInterest(principal, rateBps, payload.durationDays);
       const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
       const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
-      const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
-      const durationStr = formatDurationDays(selected.durationDays);
-      const grace = gracePeriodLabel(selected.durationDays);
+      const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+      const durationStr = formatDurationDays(payload.durationDays);
+      const grace = gracePeriodLabel(payload.durationDays);
 
-      if (side === 'borrower') {
+      if (side === 'lender') {
         return {
-          youReceive: `${principalStr} now (minus the 0.1% initiation fee).`,
-          youLock: `${collateralStr} as collateral, now.`,
-          youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
-          youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
-          fees: copy.fees.borrowerLIF,
-          whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
+          youMayOwe: 'Nothing — the borrower owes you.',
+          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.`,
+          fees: copy.fees.lenderYieldFee(yieldPct),
+          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
         };
       }
       return {
-        youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
-        youLock: `${principalStr} lent to the borrower, now.`,
-        youMayOwe: 'Nothing — the borrower owes you.',
-        youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.`,
-        fees: copy.fees.lenderYieldFee,
-        whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${grace}). You then claim your funds.`,
+        youReceive: `${principalStr} when a lender accepts your request.`,
+        youLock: `${collateralStr} as collateral, starting now.`,
+        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
+        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
+        fees: copy.fees.borrowerLIF(lifPct),
+        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
       };
+    } catch {
+      return null;
     }
-
-    // Post mode — receipt from the user's own terms.
-    const lending = lendingMeta.data;
-    const collateral = collateralMeta.data;
-    if (!lending || !collateral || !postDetailsComplete) return null;
-    const payload = toCreateOfferPayload(form, {
-      lending: lending.decimals,
-      collateral: collateral.decimals,
-    });
-    const principal = payload.amountMax;
-    const rateBps = side === 'lender' ? payload.interestRateBps : payload.interestRateBpsMax;
-    const interest = fullTermInterest(principal, rateBps, payload.durationDays);
-    const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
-    const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
-    const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
-    const durationStr = formatDurationDays(payload.durationDays);
-    const grace = gracePeriodLabel(payload.durationDays);
-
-    if (side === 'lender') {
-      return {
-        youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
-        youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
-        youMayOwe: 'Nothing — the borrower owes you.',
-        youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.`,
-        fees: copy.fees.lenderYieldFee,
-        whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
-      };
-    }
-    return {
-      youReceive: `${principalStr} when a lender accepts your request.`,
-      youLock: `${collateralStr} as collateral, starting now.`,
-      youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
-      youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
-      fees: copy.fees.borrowerLIF,
-      whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
-    };
   }, [
     mode,
     selected,
+    selectedIsIlliquid,
     side,
     form,
     postDetailsComplete,
+    lifPct,
+    yieldPct,
     lendingMeta.data,
     collateralMeta.data,
     selectedCollateralMeta.data,
@@ -447,11 +537,21 @@ export function OfferFlow({ side }: { side: Side }) {
     allChecksPass(checks) &&
     receipt !== null &&
     (mode === 'accept' ? selected !== null : formError === null) &&
+    // The wallet client hydrates asynchronously after `isConnected`
+    // flips true — without this gate a click in that window would
+    // no-op silently.
+    Boolean(walletClient) &&
+    Boolean(publicClient) &&
     !submitting;
 
   // ---- Submission ----------------------------------------------------
-  async function submitPost() {
-    if (!receipt || !address || !walletChain || !walletClient || !publicClient) return;
+  // Inner helpers THROW on missing prerequisites and return the tx
+  // hash — the success screen only ever renders behind a real
+  // transaction.
+  async function submitPost(): Promise<`0x${string}`> {
+    if (!receipt || !address || !walletChain || !walletClient || !publicClient) {
+      throw new Error(copy.wallet.connectFirst);
+    }
     const payload = toCreateOfferPayload(form, {
       lending: lendingMeta.data?.decimals,
       collateral: collateralMeta.data?.decimals,
@@ -469,17 +569,40 @@ export function OfferFlow({ side }: { side: Side }) {
       amount,
     });
     const { hash } = await write('createOffer', [payload]);
-    setTxHash(hash);
+    return hash;
   }
 
-  async function submitAccept() {
-    if (!selected || !address || !walletChain || !walletClient || !publicClient) return;
-    // Sign canonical terms first; approval amounts come from the SIGNED
+  async function submitAccept(): Promise<`0x${string}`> {
+    if (!selected || !address || !walletChain || !walletClient || !publicClient) {
+      throw new Error(copy.wallet.connectFirst);
+    }
+    // The reviewed row was fetched from the READ chain — the signature
+    // and transaction execute on the WALLET chain. Same offerId on a
+    // different chain is a different offer; never cross that silently.
+    if (selected.chainId !== walletChain.chainId) {
+      throw new Error(copy.match.termsChanged);
+    }
+    // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row.
     const { terms, signature } = await signAcceptTerms({
       offerId: BigInt(selected.offerId),
       consent: form.riskAndTermsConsent,
     });
+    // The canonical terms must still MATCH what the user reviewed —
+    // the creator can edit an offer in place, and the indexer row can
+    // lag the OfferModified event.
+    const reviewedMatchesSigned =
+      terms.lendingAsset.toLowerCase() === selected.lendingAsset.toLowerCase() &&
+      terms.collateralAsset.toLowerCase() === selected.collateralAsset.toLowerCase() &&
+      terms.amount === offerPrincipal(selected) &&
+      terms.interestRateBps === BigInt(offerRateBps(selected)) &&
+      terms.collateralAmount === BigInt(selected.collateralAmount) &&
+      Number(terms.durationDays) === selected.durationDays;
+    if (!reviewedMatchesSigned) {
+      void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+      void queryClient.invalidateQueries({ queryKey: ['offer'] });
+      throw new Error(copy.match.termsChanged);
+    }
     const acceptorPaysCollateral = side === 'borrower';
     const paysErc20 = acceptorPaysCollateral
       ? terms.collateralAssetType === AssetType.ERC20
@@ -499,26 +622,21 @@ export function OfferFlow({ side }: { side: Side }) {
       terms,
       signature,
     ]);
-    setTxHash(hash);
+    return hash;
   }
 
   async function submit() {
     setSubmitting(true);
     setSubmitError(null);
     try {
-      if (mode === 'accept') await submitAccept();
-      else await submitPost();
+      const hash = mode === 'accept' ? await submitAccept() : await submitPost();
+      setTxHash(hash);
       setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setSubmitError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setSubmitError(submitErrorText(err));
     } finally {
       setSubmitting(false);
     }
@@ -730,6 +848,11 @@ export function OfferFlow({ side }: { side: Side }) {
                 You’re {side === 'borrower' ? 'accepting lending offer' : 'funding borrow request'}{' '}
                 #{selected.offerId}. {copy.match.wholeOfferNote}
               </span>
+            </div>
+          ) : null}
+          {selectedIsIlliquid ? (
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.match.illiquidWarning}</span>
             </div>
           ) : null}
           <div className="card">

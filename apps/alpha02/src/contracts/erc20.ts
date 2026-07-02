@@ -97,17 +97,26 @@ export async function ensureAllowance(opts: {
     args: [owner, spender],
   });
   if (current >= amount) return null;
-  const hash = await walletClient.writeContract({
-    address: token,
-    abi: erc20Abi,
-    functionName: 'approve',
-    args: [spender, amount],
-    account: owner,
-    chain: walletClient.chain,
-  });
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
-  if (receipt.status !== 'success') {
-    throw new Error(`Token approval failed (${hash})`);
-  }
-  return hash;
+
+  const approve = async (value: bigint): Promise<`0x${string}`> => {
+    const hash = await walletClient.writeContract({
+      address: token,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [spender, value],
+      account: owner,
+      chain: walletClient.chain,
+    });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== 'success') {
+      throw new Error(`Token approval failed (${hash})`);
+    }
+    return hash;
+  };
+
+  // Zero-first: tokens like mainnet USDT revert on a non-zero→non-zero
+  // approve. Resetting to 0 first costs one extra tx only in the
+  // leftover-allowance case and keeps every listed token workable.
+  if (current > 0n) await approve(0n);
+  return approve(amount);
 }

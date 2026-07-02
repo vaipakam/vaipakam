@@ -208,13 +208,16 @@ export interface ActivityPage {
   nextBefore: string | null;
 }
 
+/** NOTE: do NOT filter by `actor=` for a user's history — the worker's
+ *  single actor column is non-exhaustive (OfferAccepted stores only the
+ *  acceptor; LoanDefaulted/LoanRepaid/etc. store null). Fetch broadly
+ *  and filter client-side by participation, like apps/defi does. */
 export function fetchActivity(
   chainId: number,
-  actor: string,
-  opts: { limit?: number } = {},
+  opts: { actor?: string; limit?: number } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
-  params.set('actor', actor.toLowerCase());
+  if (opts.actor) params.set('actor', opts.actor.toLowerCase());
   if (opts.limit) params.set('limit', String(opts.limit));
   return getJson<ActivityPage>(`/activity?${params}`);
 }

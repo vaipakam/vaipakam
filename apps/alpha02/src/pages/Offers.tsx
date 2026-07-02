@@ -27,25 +27,20 @@ import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const { address } = useActiveChain();
-  const meta = useTokenMeta(offer.lendingAsset);
-  const collateralMeta = useTokenMeta(offer.collateralAsset);
   const isLending = offer.offerType === 0;
-  const amount = meta.data
-    ? formatTokenAmount(
-        isLending ? offer.amountMax : offer.amount,
-        meta.data.decimals,
-      )
-    : '…';
-  const rate = isLending
-    ? formatBpsAsPercent(offer.interestRateBps)
-    : formatBpsAsPercent(offer.interestRateBpsMax);
+  const isRentalListing = offer.assetType !== AssetType.ERC20 && isLending;
+  // A rental listing's "lending asset" is the NFT contract and its
+  // price lives in the prepay asset — never format it through the
+  // ERC-20 loan template (it renders "… / 0% yearly / 0x0000…0000").
+  const meta = useTokenMeta(isRentalListing ? undefined : offer.lendingAsset);
+  const prepayMeta = useTokenMeta(isRentalListing ? offer.prepayAsset : undefined);
+  const hasCollateral =
+    offer.collateralAsset.toLowerCase() !==
+    '0x0000000000000000000000000000000000000000';
+  const collateralMeta = useTokenMeta(hasCollateral ? offer.collateralAsset : undefined);
 
-  // "Use this offer" routes into the guided flow's review step; NFT
-  // rental listings route into the rental flow. Never the creator's
-  // own offer.
   const notMine =
     !address || offer.creator.toLowerCase() !== address.toLowerCase();
-  const isRentalListing = offer.assetType !== AssetType.ERC20 && isLending;
   const acceptable =
     notMine &&
     (isRentalListing ||
@@ -57,19 +52,39 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
       ? `/borrow?offer=${offer.offerId}`
       : `/lend?offer=${offer.offerId}`;
 
+  const title = isRentalListing
+    ? `NFT rental · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}${
+        offer.assetType === AssetType.ERC1155 ? ` ×${offer.quantity}` : ''
+      }`
+    : `${isLending ? copy.offers.lenderOffer : copy.offers.borrowerOffer} · ${
+        meta.data
+          ? formatTokenAmount(
+              isLending ? offer.amountMax : offer.amount,
+              meta.data.decimals,
+            )
+          : '…'
+      } ${meta.data?.symbol ?? ''}`;
+
+  const sub = isRentalListing
+    ? `${
+        prepayMeta.data
+          ? `${formatTokenAmount(offer.amount, prepayMeta.data.decimals)} ${prepayMeta.data.symbol}/day`
+          : 'daily fee loading…'
+      } · ${formatDurationDays(offer.durationDays)} · fees prepaid · by ${shortAddress(offer.creator)}`
+    : `${formatBpsAsPercent(
+        isLending ? offer.interestRateBps : offer.interestRateBpsMax,
+      )} yearly · ${formatDurationDays(offer.durationDays)} · collateral ${
+        hasCollateral
+          ? (collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset))
+          : 'none'
+      } · by ${shortAddress(offer.creator)}`;
+
   return (
     <div className="item-row">
       <span className="row-main">
-        <span className="row-title">
-          {isLending ? copy.offers.lenderOffer : copy.offers.borrowerOffer} ·{' '}
-          {amount} {meta.data?.symbol ?? ''}
-        </span>
+        <span className="row-title">{title}</span>
         <br />
-        <span className="row-sub">
-          {rate} yearly · {formatDurationDays(offer.durationDays)} · collateral{' '}
-          {collateralMeta.data?.symbol ?? shortAddress(offer.collateralAsset)} · by{' '}
-          {shortAddress(offer.creator)}
-        </span>
+        <span className="row-sub">{sub}</span>
       </span>
       {acceptable ? (
         <Link to={acceptHref} className="btn btn-primary btn-sm">

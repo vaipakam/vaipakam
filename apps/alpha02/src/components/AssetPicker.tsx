@@ -68,12 +68,15 @@ export function AssetPicker({
   onChange: (address: string) => void;
 }) {
   const curated = useCuratedTokens();
-  const isCurated = useMemo(
-    () => curated.some((t) => t.address.toLowerCase() === value.toLowerCase()),
+  // Case-insensitive match, but the <select> needs the option's EXACT
+  // casing — a lowercased address set programmatically (deep links)
+  // must still light up the right curated option.
+  const curatedMatch = useMemo(
+    () => curated.find((t) => t.address.toLowerCase() === value.toLowerCase()),
     [curated, value],
   );
   const [customOpen, setCustomOpen] = useState(false);
-  const showCustom = customOpen || (value !== '' && !isCurated);
+  const showCustom = customOpen || (value !== '' && curatedMatch === undefined);
 
   return (
     <div className="field">
@@ -81,7 +84,7 @@ export function AssetPicker({
       <select
         id={id}
         className="input"
-        value={showCustom ? CUSTOM : value}
+        value={showCustom ? CUSTOM : (curatedMatch?.address ?? value)}
         onChange={(e) => {
           if (e.target.value === CUSTOM) {
             setCustomOpen(true);

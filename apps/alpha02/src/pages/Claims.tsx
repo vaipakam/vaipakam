@@ -15,7 +15,9 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { useTokenMeta } from '../contracts/erc20';
-import { formatTokenAmount } from '../lib/format';
+import { AssetType } from '../lib/types';
+import { formatTokenAmount, shortAddress } from '../lib/format';
+import { submitErrorText } from '../lib/errors';
 import type { PositionLoan } from '../data/hooks';
 
 /** Interaction-reward VPFI, kept visually separate from loan claims
@@ -38,12 +40,7 @@ function RewardsCard() {
       await write('claimInteractionRewards', []);
       void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
-      );
+      setError(submitErrorText(err));
     } finally {
       setBusy(false);
     }
@@ -90,28 +87,47 @@ function RewardsCard() {
 }
 
 function ClaimRow({ loan }: { loan: PositionLoan }) {
-  const principalMeta = useTokenMeta(loan.lendingAsset);
+  // Rentals have an NFT principal leg and often no collateral — never
+  // format them through the ERC-20 loan template.
+  const isRental = loan.assetType !== AssetType.ERC20;
+  const principalMeta = useTokenMeta(isRental ? undefined : loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
+  const defaulted = loan.status === 'defaulted' || loan.status === 'liquidated';
 
-  const what =
-    loan.role === 'lender'
-      ? loan.status === 'repaid'
-        ? principalMeta.data
-          ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
-          : 'Repaid funds'
-        : collateralMeta.data
-          ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol} collateral`
-          : 'Collateral'
-      : collateralMeta.data
-        ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol} collateral back`
-        : 'Your collateral back';
+  const collateralStr = collateralMeta.data
+    ? `${formatTokenAmount(loan.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
+    : 'collateral';
 
-  const why =
-    loan.role === 'lender'
-      ? loan.status === 'repaid'
-        ? 'The borrower repaid this loan.'
-        : 'The loan defaulted — the collateral is yours to claim.'
-      : 'You repaid this loan, so your collateral is released.';
+  let what: string;
+  let why: string;
+  if (isRental) {
+    const nft = `NFT ${shortAddress(loan.lendingAsset)} #${loan.tokenId}`;
+    if (loan.role === 'lender') {
+      what = `Rental fees + your ${nft} back`;
+      why = 'The rental ended — collect your earned fees and reclaim the NFT.';
+    } else {
+      what = 'Your prepaid buffer back';
+      why = 'The rental closed — the refundable buffer is released.';
+    }
+  } else if (loan.role === 'lender') {
+    if (loan.status === 'repaid') {
+      what = principalMeta.data
+        ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
+        : 'Repaid funds';
+      why = 'The borrower repaid this loan.';
+    } else {
+      what = `${collateralStr} collateral`;
+      why = 'The loan defaulted — the collateral is yours to claim.';
+    }
+  } else if (defaulted) {
+    // After a liquidation only a residue (if any) is claimable — never
+    // promise the full original collateral, and never say "you repaid".
+    what = 'Anything left after liquidation';
+    why = 'This loan defaulted. If the liquidation left a surplus, you can claim it.';
+  } else {
+    what = `${collateralStr} collateral back`;
+    why = 'You repaid this loan, so your collateral is released.';
+  }
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="item-row">
@@ -119,7 +135,7 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
         <span className="row-title">{what}</span>
         <br />
         <span className="row-sub">
-          Loan #{loan.loanId} · {why}
+          {isRental ? 'Rental' : 'Loan'} #{loan.loanId} · {why}
         </span>
       </span>
       <span className="btn btn-primary btn-sm">{copy.claims.claim}</span>

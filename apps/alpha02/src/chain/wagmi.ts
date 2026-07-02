@@ -12,7 +12,7 @@
  *     (broken extension detection on desktop) — injected target only.
  */
 import { createConfig, http } from 'wagmi';
-import { coinbaseWallet, injected, walletConnect } from 'wagmi/connectors';
+import { coinbaseWallet, injected, safe, walletConnect } from 'wagmi/connectors';
 import {
   mainnet,
   base,
@@ -63,9 +63,24 @@ if (chains.length === 0) {
   );
 }
 
+// A deployed chain missing from CHAIN_BY_ID would be "supported" with
+// no RPC client behind it — every read silently disabled, every write
+// throwing. Fail loudly at module load instead.
+for (const c of SUPPORTED_CHAINS) {
+  if (!CHAIN_BY_ID[c.chainId]) {
+    throw new Error(
+      `alpha02 wagmi: deployed chain ${c.chainId} (${c.name}) has no viem ` +
+        'chain object — extend CHAIN_BY_ID.',
+    );
+  }
+}
+
+// `batch: true` folds same-tick eth_calls into one JSON-RPC batch —
+// the per-row token-meta reads on list pages go from hundreds of HTTP
+// requests to a handful, with zero call-site changes.
 const transports: Record<number, ReturnType<typeof http>> = {};
 for (const c of SUPPORTED_CHAINS) {
-  if (CHAIN_BY_ID[c.chainId]) transports[c.chainId] = http(c.rpcUrl);
+  transports[c.chainId] = http(c.rpcUrl, { batch: true });
 }
 
 type NonEmptyChains = readonly [Chain, ...Chain[]];
@@ -104,5 +119,12 @@ export const wagmiConfig = createConfig({
           }),
         ]
       : []),
+    // Safe-App connector — auto-connects the Safe as signer when
+    // alpha02 is embedded in a Safe multisig UI; a documented no-op
+    // outside a Safe iframe (see apps/defi wagmiConfig).
+    safe({
+      allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
+      debug: false,
+    }),
   ],
 });

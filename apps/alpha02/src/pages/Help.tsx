@@ -4,6 +4,7 @@
  * the marketing site; this page is deliberately small.
  */
 import { copy } from '../content/copy';
+import { useProtocolFees, bpsToPercentText } from '../data/fees';
 
 const FAQ: Array<{ q: string; a: string }> = [
   {
@@ -26,15 +27,20 @@ const FAQ: Array<{ q: string; a: string }> = [
     q: 'Do I need VPFI?',
     a: 'No. VPFI is optional — holding it in your vault can reduce protocol fees on eligible loans. It never reduces network gas, and you never need it to borrow, lend, or rent.',
   },
-  {
-    q: 'What fees does Vaipakam charge?',
-    a: `${copy.fees.borrowerLIF} ${copy.fees.lenderYieldFee} ${copy.fees.lateFee} Network gas is separate and goes to the blockchain, not to Vaipakam.`,
-  },
 ];
 
 export function Help() {
   const buildHash = import.meta.env.VITE_BUILD_HASH as string | undefined;
   const buildTime = import.meta.env.VITE_BUILD_TIME as string | undefined;
+  const fees = useProtocolFees();
+
+  // Fee numbers come from the live protocol config — governance can
+  // retune them and this answer must track the deployed values.
+  const feeFaq = {
+    q: 'What fees does Vaipakam charge?',
+    a: `${copy.fees.borrowerLIF(bpsToPercentText(fees.loanInitiationFeeBps))} ${copy.fees.lenderYieldFee(bpsToPercentText(fees.treasuryFeeBps))} ${copy.fees.lateFee} Network gas is separate and goes to the blockchain, not to Vaipakam.`,
+  };
+  const faq = [...FAQ, feeFaq];
 
   return (
     <div>
@@ -46,7 +52,7 @@ export function Help() {
       </p>
 
       <div className="stack">
-        {FAQ.map((item) => (
+        {faq.map((item) => (
           <section key={item.q} className="card">
             <h3>{item.q}</h3>
             <p style={{ margin: 0 }}>{item.a}</p>

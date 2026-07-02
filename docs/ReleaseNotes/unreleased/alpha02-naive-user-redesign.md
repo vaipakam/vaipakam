@@ -76,6 +76,35 @@ the app; an Activity page joins the Advanced navigation; and NFT
 rental listings in the Offer Book deep-link into the guided renter
 flow.
 
+A max-effort review pass (ten finder angles, adversarial verification,
+gap sweep) plus the Codex PR review then hardened the whole surface.
+Consent-integrity: accepts now re-verify the signed canonical terms
+against the reviewed offer (and its chain) and abort with a plain
+notice on any mismatch; unpriced (illiquid) legs get an explicit
+in-kind-transfer warning before signing; the sanctions check joined
+the pre-approval checklist so a flagged wallet never pays approval gas
+for a doomed transaction. Funds-access: loan actions follow the
+current position-NFT holder (transferees were locked out as
+"viewers"); borrowers can claim residual entitlements after
+default/liquidation (the Claim Center listed rows the detail page
+couldn't act on); VPFI withdrawals cap at the FREE (unencumbered)
+balance and the Max button is lossless. Honesty: partial indexer
+failures now read as "unavailable" instead of confident half-lists;
+the rental prepay buffer and all fee/tier copy are read live from
+protocol config (never a hardcoded default at signing time); RPC
+failures no longer masquerade as "no liquidation applies"; overdue
+loans no longer show "Due today". Robustness: wallet-rejection
+detection uses error types instead of a message regex that matched
+the word "cancel" inside cancelOffer reverts, with contract errors
+decoded via the shared @vaipakam/lib decoder (fixing the #780
+gas-limit trap); non-numeric amount/rate inputs can no longer crash
+the page; approvals zero-first for USDT-style tokens; repay approvals
+carry day-boundary headroom; deep links validate asset kind, side,
+ownership, and existence; RPC transports batch; the Safe-App connector
+is included. The defi rental daily-fee unit divergence was filed in
+docs/FunctionalSpecs/_CodeVsDocsAudit.md and the alpha02 intended
+behaviour was added to docs/FunctionalSpecs/WebsiteReadme.md.
+
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
 Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT

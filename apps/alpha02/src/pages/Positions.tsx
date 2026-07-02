@@ -19,6 +19,7 @@ import { LoanRow } from '../components/LoanRow';
 import { useTokenMeta } from '../contracts/erc20';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
+import { submitErrorText } from '../lib/errors';
 import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
@@ -47,12 +48,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(
-        /rejected|denied|cancel/i.test(message)
-          ? copy.errors.txRejected
-          : `${copy.errors.txFailed} (${message.slice(0, 120)})`,
-      );
+      setError(submitErrorText(err));
       setConfirming(false);
     } finally {
       setBusy(false);
@@ -118,13 +114,16 @@ export function Positions() {
             </button>
           }
         />
-      ) : loans.isLoading ? (
+      ) : loans.isLoading || offers.isLoading ? (
         <EmptyState icon={LoaderCircle} title="Loading your positions…" />
-      ) : loans.data === null ? (
+      ) : loans.data == null || offers.data == null ? (
+        // EITHER source failing means the page can't honestly claim
+        // "you have nothing" — a user's funds may be locked in exactly
+        // the rows we couldn't load (audit F-20260702-001 class).
         <UnavailableState body={copy.positions.unavailable} />
       ) : (
         <>
-          {Array.isArray(offers.data) && offers.data.length > 0 ? (
+          {offers.data.length > 0 ? (
             <section style={{ marginBottom: 24 }}>
               <h2>Open offers</h2>
               <div className="row-list">
@@ -135,7 +134,7 @@ export function Positions() {
             </section>
           ) : null}
 
-          {loans.data && loans.data.length > 0 ? (
+          {loans.data.length > 0 ? (
             <section>
               <h2>Loans</h2>
               <div className="row-list">
@@ -144,7 +143,9 @@ export function Positions() {
                 ))}
               </div>
             </section>
-          ) : (Array.isArray(offers.data) ? offers.data.length === 0 : true) ? (
+          ) : null}
+
+          {loans.data.length === 0 && offers.data.length === 0 ? (
             <EmptyState
               icon={ListChecks}
               title={copy.positions.emptyTitle}

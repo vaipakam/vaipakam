@@ -9,6 +9,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import { BaseError, ContractFunctionRevertedError, ContractFunctionZeroDataError } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
@@ -27,7 +28,10 @@ export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
   return useQuery({
     queryKey: ['loanRisk', readChain.chainId, loanId],
     enabled: enabled && loanId !== undefined && Boolean(publicClient),
-    refetchInterval: 60_000,
+    // Stop polling once a loan is known unpriceable — that
+    // classification doesn't change for an open loan.
+    refetchInterval: (query) =>
+      query.state.data?.priced === false ? false : 60_000,
     queryFn: async (): Promise<LoanRisk> => {
       try {
         const [healthFactor, ltv] = await Promise.all([
@@ -45,8 +49,18 @@ export function useLoanRisk(loanId: number | undefined, enabled: boolean) {
           }) as Promise<bigint>,
         ]);
         return { priced: true, healthFactor, ltv };
-      } catch {
-        return { priced: false, healthFactor: 0n, ltv: 0n };
+      } catch (err) {
+        // ONLY an on-chain revert means "illiquid legs — HF doesn't
+        // apply". Anything else (RPC outage, timeout, rate limit) must
+        // surface as a query ERROR, never as priced:false — otherwise
+        // a flaky RPC shows a liquid, possibly liquidatable loan as
+        // "no automatic liquidation applies".
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) return { priced: false, healthFactor: 0n, ltv: 0n };
+        throw err;
       }
     },
   });

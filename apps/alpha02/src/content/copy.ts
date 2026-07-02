@@ -49,7 +49,6 @@ export const copy = {
 
   wallet: {
     connect: 'Connect wallet',
-    connected: 'Connected',
     connectFirst: 'Connect a wallet to continue.',
     unsupportedNetwork: (chainNames: string) =>
       `This network isn’t supported. Vaipakam is available on ${chainNames}. Switch networks to continue.`,
@@ -99,8 +98,18 @@ export const copy = {
       'Your funds are lent and the borrower’s collateral is locked. Track repayment under My positions; you’ll claim your funds back after they repay.',
     wrongSide:
       'That link points to the other side of the market — a lending offer is accepted from Borrow, a borrow request from Lend.',
+    wrongKind:
+      'That offer involves an NFT — open it from the NFT Rental page instead.',
+    ownOffer:
+      'That’s your own offer — you can cancel it from My positions, but you can’t accept it yourself.',
     offerGone:
       'That offer is no longer open. Browse current matches below or post your own.',
+    offerNotFound:
+      'We couldn’t find that offer — the link may be old, or the data source is catching up. Browse current offers below.',
+    termsChanged:
+      'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
+    illiquidWarning:
+      'One side of this deal isn’t priced by the protocol. If it ends in default, the entire collateral transfers directly — there is no automatic price-based liquidation. Only proceed if you accept that.',
   },
 
   borrow: {
@@ -206,8 +215,6 @@ export const copy = {
 
   errors: {
     needMore: (asset: string) => `You need more ${asset} to continue.`,
-    approveFirst: (asset: string) =>
-      `Approve ${asset} so Vaipakam can use it for this action.`,
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
     txRejected: 'You cancelled in your wallet. Nothing was sent.',
@@ -216,9 +223,15 @@ export const copy = {
   },
 
   fees: {
-    borrowerLIF:
-      'Vaipakam charges a 0.1% loan initiation fee on the borrowed amount.',
-    lenderYieldFee: 'Vaipakam keeps 1% of the interest you earn.',
+    // Fee percentages come from the LIVE protocol config
+    // (data/fees.ts) — governance can retune them, and the receipt a
+    // user signs against must quote the deployed values.
+    borrowerLIF: (pct: string) =>
+      `Vaipakam charges a ${pct} loan initiation fee on the borrowed amount.`,
+    lenderYieldFee: (pct: string) =>
+      `Vaipakam keeps ${pct} of the interest you earn.`,
+    // The late-fee ladder tracks contract CONSTANTS (no governance
+    // setter), so a static string is accurate here.
     lateFee:
       'Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.',
   },
