@@ -511,7 +511,7 @@ function App() {
   const addPreparedAction = (action: Omit<PreparedGuidedAction, 'id' | 'createdAtLabel'>) => {
     const id = action.kind + '-' + Date.now().toString(36);
     setPreparedActions((current) => [
-      { ...action, id, createdAtLabel: 'just now' },
+      { ...action, id, createdAtLabel: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
       ...current.filter((item) => item.kind !== action.kind || item.asset !== action.asset || item.amount !== action.amount),
     ].slice(0, 6));
   };
@@ -523,9 +523,6 @@ function App() {
     }
   }, [advancedAllowed, mode]);
 
-  useEffect(() => {
-    setPreparedActions([]);
-  }, [wallet.account]);
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -905,7 +902,7 @@ function FlowPage({
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
-  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
+  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
   const walletCheckSpec = useMemo(
     () => buildGuidedWalletCheckSpec(flow, selectedAsset, normalizedAmount, assetOverrides),
     [assetOverrides, flow, normalizedAmount, selectedAsset],
@@ -1041,6 +1038,10 @@ function FlowPage({
     }
     setSimulationResult({ status: 'running', message: 'Running eth_call simulation...' });
     try {
+      if (walletCheckResult.status !== 'passed') {
+        setSimulationResult({ status: 'failed', message: 'Check wallet readiness before running simulation so allowance and balance errors are explained first.' });
+        return;
+      }
       await ethereum.request({
         method: 'eth_call',
         params: [{ from: wallet.account, to: diamond, data: calldata }, 'latest'],
@@ -2088,11 +2089,11 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     nextAction: action.nextStep,
     safeForGuided: true,
   }));
-  const scopedActivityItems = canPreviewActivity ? [...preparedActivityItems, ...activityItems] : [];
+  const scopedActivityItems = [...preparedActivityItems, ...(canPreviewActivity ? activityItems : [])];
   const visibleItems = scopedActivityItems.filter((item) => filter === 'all' || item.source === filter);
   const reviewCount = scopedActivityItems.filter((item) => item.status === 'Needs review').length;
   const localCount = scopedActivityItems.filter((item) => item.status === 'Local queue').length;
-  const acknowledgedCount = canPreviewActivity ? acknowledgedIds.length : 0;
+  const acknowledgedCount = acknowledgedIds.length;
 
   const acknowledge = (id: string) => {
     setAcknowledgedIds((current) => current.includes(id) ? current : [...current, id]);
@@ -2128,7 +2129,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
         </div>
       </section>
 
-      {canPreviewActivity ? (
+      {canPreviewActivity || preparedActivityItems.length > 0 ? (
         <section className="portfolio-tools panel-surface" aria-label="Activity filters">
           {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
             <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
@@ -2141,8 +2142,8 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
       <section className="activity-list panel-surface" aria-label="Readable activity timeline">
         {!canPreviewActivity ? (
           <div className="empty-state">
-            <h2>{walletReady ? 'Switch to Base Sepolia to review activity' : 'Connect wallet to review activity'}</h2>
-            <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
+            <h2>{walletReady ? 'Switch to Base Sepolia to review wallet activity' : 'Connect wallet to review wallet activity'}</h2>
+            <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account. Local prepared drafts remain visible.</p>
           </div>
         ) : null}
         {visibleItems.map((item) => {
@@ -2319,6 +2320,12 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
 }
 
 
+function guidedDeploymentAssetAddress(symbol: string) {
+  if (symbol === 'mWETH') return BASE_SEPOLIA_DEPLOYMENT?.weth ?? null;
+  if (symbol === 'VPFI') return BASE_SEPOLIA_DEPLOYMENT?.vpfiToken ?? null;
+  return null;
+}
+
 function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, onActionsPausedChange }: { riskGuardrail: RiskGuardrail; actionsPaused: boolean; onRiskGuardrailChange: (guardrail: RiskGuardrail) => void; onActionsPausedChange: (paused: boolean) => void }) {
   const [language, setLanguage] = useState('English');
   const confirmReceipts = true;
@@ -2336,6 +2343,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
     writeLocalAppStorage('analytics', String(value));
   };
   const updateAssetOverride = (symbol: string, field: keyof GuidedAssetOverride, value: string) => {
+    if (guidedDeploymentAssetAddress(symbol)) return;
     const current = assetOverrides[symbol] ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
     const nextEntry = { ...current, [field]: value.trim() };
     const next = { ...assetOverrides, [symbol]: nextEntry };
@@ -2399,7 +2407,10 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
           <div className="asset-registry-list">
             {GUIDED_CONFIGURABLE_ASSETS.map((symbol) => {
               const defaultDecimals = guidedDefaultAssetDecimals(symbol);
-              const entry = assetOverrides[symbol] ?? { address: '', decimals: String(defaultDecimals ?? '') };
+              const deploymentAddress = guidedDeploymentAssetAddress(symbol);
+              const entry = deploymentAddress
+                ? { address: deploymentAddress, decimals: String(defaultDecimals ?? '') }
+                : assetOverrides[symbol] ?? { address: '', decimals: String(defaultDecimals ?? '') };
               const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
               return (
                 <div className="asset-registry-row" key={symbol}>
@@ -2411,6 +2422,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                       onChange={(event) => updateAssetOverride(symbol, 'address', event.target.value)}
                       placeholder="0x..."
                       aria-invalid={!addressValid}
+                      readOnly={Boolean(deploymentAddress)}
                     />
                   </label>
                   <label>
@@ -2420,9 +2432,11 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                       value={entry.decimals}
                       onChange={(event) => updateAssetOverride(symbol, 'decimals', event.target.value)}
                       placeholder={defaultDecimals === null ? '18' : String(defaultDecimals)}
+                      readOnly={Boolean(deploymentAddress)}
                     />
                   </label>
-                  {!addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
+                  {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
+                  {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
                 </div>
               );
             })}
