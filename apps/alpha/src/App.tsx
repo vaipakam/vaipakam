@@ -123,6 +123,12 @@ type GuidedContractDraft = {
   blockers: string[];
 };
 
+type GuidedAssetResolution = {
+  symbol: string;
+  display: string;
+  address: string | null;
+};
+
 type PreparedGuidedAction = {
   id: string;
   kind: FlowKind;
@@ -1469,39 +1475,60 @@ function guidedPreviewState() {
   return 'Ready for simulation target';
 }
 
+function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
+  if (symbol === 'VPFI' && BASE_SEPOLIA_DEPLOYMENT?.vpfiToken) {
+    return {
+      symbol,
+      address: BASE_SEPOLIA_DEPLOYMENT.vpfiToken,
+      display: symbol + ' · ' + shortAddress(BASE_SEPOLIA_DEPLOYMENT.vpfiToken),
+    };
+  }
+  return {
+    symbol,
+    address: null,
+    display: symbol + ' · address needed',
+  };
+}
+
 function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedContractDraft {
   const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
   const amountText = formatFlowAmount(flow, numericAmount);
   if (flow.kind === 'rent') {
+    const prepayToken = resolveGuidedAsset('mUSDC');
+    const blockers = ['Confirm the rental-specific action path before opening the wallet.', 'Resolve NFT collection, token standard, token id, and refundable buffer.'];
+    if (!prepayToken.address) blockers.push('Approved prepay token address must be confirmed for mUSDC.');
     return {
       call: 'Rental offer adapter pending',
       target: diamond ? shortAddress(diamond) : 'Unavailable',
       offerType: 'Rental',
-      principalAsset: 'mUSDC prepay token',
-      collateralAsset: selectedAsset,
+      principalAsset: prepayToken.display,
+      collateralAsset: selectedAsset + ' · NFT details needed',
       amount: amountText,
       interestRateBps: 'Not applicable',
       durationDays: amountText,
       fillMode: 'Rental terms',
       readiness: 'Uses rental path',
-      blockers: ['Confirm the rental-specific action path before opening the wallet.', 'Resolve NFT collection, token standard, token id, prepaid token, and refundable buffer.'],
+      blockers,
     };
   }
 
   const isBorrow = flow.kind === 'borrow';
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
+  const principalAsset = resolveGuidedAsset(selectedAsset);
+  const collateralAsset = resolveGuidedAsset(collateralLabel);
   const blockers = [];
   if (!diamond) blockers.push('Base Sepolia Diamond address is not available in deployments.json.');
   if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) blockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
-  blockers.push('Approved token addresses must be confirmed for ' + selectedAsset + ' and ' + collateralLabel + '.');
+  if (!principalAsset.address) blockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
+  if (!collateralAsset.address) blockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
   blockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
 
   return {
     call: 'OfferCreateFacet.createOffer(params)',
     target: diamond ? shortAddress(diamond) : 'Unavailable',
     offerType: isBorrow ? 'Borrow request' : 'Lending offer',
-    principalAsset: selectedAsset,
-    collateralAsset: collateralLabel,
+    principalAsset: principalAsset.display,
+    collateralAsset: collateralAsset.display,
     amount: amountText + ' ' + selectedAsset,
     interestRateBps: isBorrow ? '710 bps' : '650 bps',
     durationDays: isBorrow ? '21 days' : '30 days',
