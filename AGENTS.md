@@ -205,9 +205,11 @@ separate so branch protection and attribution stay clean:
 - If a workflow-file change is needed and the local token lacks `workflow`
   scope, stop and ask the user to refresh local auth/scope. Do not fall back to
   connector-created workflow commits when verified signatures are required.
-- For monitoring review feedback, poll PR comments/checks on a short cadence
-  during active work, typically every five minutes, to get new PR comments
-  without requiring a notification workflow. Do not add a notification workflow
+- For monitoring review feedback during active work, prefer the Codex-owned
+  single-instance delta poller at `/home/pranav/.codex/scripts/pr-poll-once.sh`
+  when it is available; run it for the active PR so it exits on the first new
+  PR delta. If the poller is unavailable, fall back to manually polling PR
+  comments/checks about every five minutes. Do not add a notification workflow
   unless the user explicitly asks to revisit that approach.
 
 ## Verification history — what we know about AGENTS.md being read

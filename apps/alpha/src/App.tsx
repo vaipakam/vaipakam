@@ -102,7 +102,7 @@ const BASE_SEPOLIA_PARAMS = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   chainName: 'Base Sepolia',
   nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
-  rpcUrls: ['https://sepolia.base.org'],
+  rpcUrls: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
 
@@ -869,7 +869,7 @@ function FlowPage({
           <button className="primary-action wide" type="button" disabled={actionsPaused || (reviewed && walletReady && isBaseSepolia) || (walletReady && isBaseSepolia && !canProceed)} onClick={handlePrimaryAction}>
             {actionLabel} <ArrowRight size={18} />
           </button>
-          {reviewed ? <p className="inline-success">Receipt reviewed locally. Contract submission will be wired behind this review step.</p> : null}
+          {reviewed ? <p className="inline-success">Receipt reviewed locally for this session. Contract submission will be wired behind this review step.</p> : null}
           {actionsPaused ? <p className="inline-error">New action CTAs are paused from Settings.</p> : null}
           {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
@@ -1161,13 +1161,15 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
         </div>
       </section>
 
-      <section className="portfolio-tools panel-surface" aria-label="Claim filters">
-        {(['all', 'loan', 'rental', 'reward', 'discount'] as Array<'all' | ClaimItem['source']>).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
-            {option}
-          </button>
-        ))}
-      </section>
+      {canPreviewClaims ? (
+        <section className="portfolio-tools panel-surface" aria-label="Claim filters">
+          {(['all', 'loan', 'rental', 'reward', 'discount'] as Array<'all' | ClaimItem['source']>).map((option) => (
+            <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
+              {option}
+            </button>
+          ))}
+        </section>
+      ) : null}
 
       <p className="page-intro compact">Claim rows stay hidden until a connected wallet is on Base Sepolia. This prevents fixture data from looking like funds available to every visitor.</p>
       {!walletReady ? (
@@ -1195,9 +1197,9 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
                 <p>{item.detail}</p>
               </div>
               <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
-              <span>{claimed ? 'Reviewed locally' : item.status}</span>
+              <span>{claimed ? 'Reviewed locally for this session' : item.status}</span>
               <button type="button" disabled={actionsPaused || claimed || !ready} onClick={() => claim(item.id)}>
-                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed' : ready ? 'Review claim' : 'Not ready'}
+                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed this session' : ready ? 'Review claim' : 'Not ready'}
               </button>
             </article>
           );
@@ -1228,8 +1230,8 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
     const nextVisibleOffers = marketOffers.filter((offer) => nextFilter === 'all' || offer.kind === nextFilter);
     if (!nextVisibleOffers.some((offer) => offer.id === selectedOfferId)) {
       setSelectedOfferId(nextVisibleOffers[0]?.id ?? marketOffers[0].id);
+      setReviewedOfferId(null);
     }
-    setReviewedOfferId(null);
   };
 
   return (
@@ -1271,14 +1273,14 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
             ))}
           </dl>
           {blocker ? <p className="inline-error">{blocker}</p> : null}
-          {reviewed ? <p className="inline-success">Reviewed locally. Contract action is not submitted yet.</p> : null}
+          {reviewed ? <p className="inline-success">Reviewed locally for this session. Contract action is not submitted yet.</p> : null}
           <button
             className="primary-action wide"
             type="button"
             disabled={actionsPaused || reviewed}
             onClick={() => { if (actionsPaused) return; if (!walletReady) { onConnectWallet(); return; } if (!baseReady) { onSwitchNetwork(); return; } setReviewedOfferId(selectedOffer.id); }}
           >
-            {reviewed ? 'Reviewed locally' : blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
+            {reviewed ? 'Reviewed this session' : blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
           </button>
         </aside>
       </section>
@@ -1329,7 +1331,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
   const visibleItems = scopedActivityItems.filter((item) => filter === 'all' || item.source === filter);
   const reviewCount = scopedActivityItems.filter((item) => item.status === 'Needs review').length;
   const localCount = scopedActivityItems.filter((item) => item.status === 'Local queue').length;
-  const acknowledgedCount = acknowledgedIds.length;
+  const acknowledgedCount = canPreviewActivity ? acknowledgedIds.length : 0;
 
   const acknowledge = (id: string) => {
     setAcknowledgedIds((current) => current.includes(id) ? current : [...current, id]);
@@ -1365,13 +1367,15 @@ function Activity({ wallet }: { wallet: WalletState }) {
         </div>
       </section>
 
-      <section className="portfolio-tools panel-surface" aria-label="Activity filters">
-        {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
-            {option}
-          </button>
-        ))}
-      </section>
+      {canPreviewActivity ? (
+        <section className="portfolio-tools panel-surface" aria-label="Activity filters">
+          {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
+            <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
+              {option}
+            </button>
+          ))}
+        </section>
+      ) : null}
 
       <section className="activity-list panel-surface" aria-label="Readable activity timeline">
         {!canPreviewActivity ? (
@@ -1396,7 +1400,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
               <div className="activity-action">
                 <span>{item.safeForGuided ? 'Guided-safe' : 'Advanced context'} · Next: {item.nextAction}</span>
                 <button type="button" onClick={() => acknowledge(item.id)} disabled={acknowledged}>
-                  {acknowledged ? 'Acknowledged' : 'Mark acknowledged'}
+                  {acknowledged ? 'Acknowledged this session' : 'Mark acknowledged'}
                 </button>
               </div>
             </article>
@@ -1410,7 +1414,11 @@ function Activity({ wallet }: { wallet: WalletState }) {
 function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
   const [reviewedActions, setReviewedActions] = useState<string[]>([]);
-  const visiblePositions = managedPositions.filter((position) => {
+  const walletReady = Boolean(wallet.account);
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const canPreviewPositions = walletReady && baseReady;
+  const scopedPositions = canPreviewPositions ? managedPositions : [];
+  const visiblePositions = scopedPositions.filter((position) => {
     if (filter === 'urgent') return position.urgency === 'urgent';
     if (filter === 'claimable') return Boolean(position.claimable);
     if (filter === 'loans') return position.kind === 'loan' || position.kind === 'offer';
@@ -1418,12 +1426,10 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
     if (filter === 'reviewed') return reviewedActions.includes(position.id);
     return true;
   });
-  const walletReady = Boolean(wallet.account);
-  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const actionsBlocked = actionsPaused && walletReady && baseReady;
-  const urgentCount = managedPositions.filter((position) => position.urgency === 'urgent').length;
-  const claimableCount = managedPositions.filter((position) => position.claimable).length;
-  const completedCount = reviewedActions.length;
+  const urgentCount = scopedPositions.filter((position) => position.urgency === 'urgent').length;
+  const claimableCount = scopedPositions.filter((position) => position.claimable).length;
+  const completedCount = canPreviewPositions ? reviewedActions.length : 0;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
     { title: 'Positions', body: managedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
@@ -1457,21 +1463,36 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
           <h3>{mode === 'guided' ? 'Handle the important things first' : 'Position operations and diagnostics'}</h3>
         </div>
         <div className="action-list">
-          <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
-          <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
-          <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
+          {canPreviewPositions ? (
+            <>
+              <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
+              <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
+              <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
+            </>
+          ) : null}
         </div>
       </section>
 
-      <section className="portfolio-tools panel-surface" aria-label="Portfolio filters">
-        {(['all', 'urgent', 'claimable', 'loans', 'rentals', 'reviewed'] as PositionFilter[]).map((option) => (
-          <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
-            {option}
-          </button>
-        ))}
-      </section>
+      {canPreviewPositions ? (
+        <section className="portfolio-tools panel-surface" aria-label="Portfolio filters">
+          {(['all', 'urgent', 'claimable', 'loans', 'rentals', 'reviewed'] as PositionFilter[]).map((option) => (
+            <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
+              {option}
+            </button>
+          ))}
+        </section>
+      ) : null}
 
       <section className="portfolio-table panel-surface" aria-label="Managed positions">
+        {!canPreviewPositions ? (
+          <div className="empty-state">
+            <h3>{walletReady ? 'Switch to Base Sepolia to review positions' : 'Connect wallet to review positions'}</h3>
+            <p>Wallet-specific position rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
+            <button className="primary-action" type="button" onClick={walletReady ? onSwitchNetwork : onConnectWallet}>
+              {walletReady ? 'Switch to Base Sepolia' : 'Connect wallet'}
+            </button>
+          </div>
+        ) : null}
         {visiblePositions.map((position) => {
           const done = reviewedActions.includes(position.id);
           return (
@@ -1483,7 +1504,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
               <span>{position.status}</span>
               <strong>{position.amount}</strong>
               <button type="button" onClick={() => completeAction(position.id)} disabled={actionsBlocked || done}>
-                {!walletReady ? 'Connect wallet' : !baseReady ? 'Switch network' : actionsPaused ? 'Actions paused' : done ? 'Reviewed' : 'Review: ' + position.nextAction}
+                {!walletReady ? 'Connect wallet' : !baseReady ? 'Switch network' : actionsPaused ? 'Actions paused' : done ? 'Reviewed this session' : 'Review: ' + position.nextAction}
               </button>
             </article>
           );
@@ -1495,7 +1516,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
 
 
 function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, onActionsPausedChange }: { riskGuardrail: RiskGuardrail; actionsPaused: boolean; onRiskGuardrailChange: (guardrail: RiskGuardrail) => void; onActionsPausedChange: (paused: boolean) => void }) {
-  const [language, setLanguage] = useState(() => readAppStorage('language') ?? 'English');
+  const [language, setLanguage] = useState(() => readAppStorage('language') === 'English' ? 'English' : 'English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
 
@@ -1525,9 +1546,8 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
             <span>Language</span>
             <select value={language} onChange={(event) => updateLanguage(event.target.value)}>
               <option>English</option>
-              <option>Hindi</option>
-              <option>Spanish</option>
             </select>
+            <small>English is the only available language in this release.</small>
           </label>
           <label>
             <span>Risk guardrail</span>
@@ -1784,7 +1804,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
           </label>
           <label>
             <span>Slippage cap</span>
-            <input inputMode="decimal" value={slippage} onChange={(event) => setSlippage(event.target.value)} />
+            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => setSlippage(event.target.value)} />
           </label>
         </div>
       </section>
