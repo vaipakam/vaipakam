@@ -147,6 +147,8 @@ type PreparedGuidedAction = {
   contractCall: string;
   readiness: GuidedContractDraft['readiness'];
   preflightGapCount: number;
+  calldataStatus: string;
+  calldataPreview: string | null;
 };
 
 const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
@@ -901,6 +903,8 @@ function FlowPage({
       contractCall: transactionPlan.contractDraft.call,
       readiness: transactionPlan.contractDraft.readiness,
       preflightGapCount,
+      calldataStatus: transactionPlan.contractDraft.calldataStatus,
+      calldataPreview: transactionPlan.contractDraft.calldata ? shortCalldata(transactionPlan.contractDraft.calldata) : null,
     });
     setPlanPrepared(true);
   };
@@ -1738,7 +1742,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     id: action.id,
     source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
     title: action.title,
-    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. No transaction has been submitted.',
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. No transaction has been submitted.',
     status: 'Local queue',
     when: action.createdAtLabel,
     impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : preflightGapLabel(action.preflightGapCount, 'preflight gap') + ' must be resolved before wallet submission.',
@@ -1922,7 +1926,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <div className="activity-main">
                 <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
                 <h2>{action.title}</h2>
-                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. No transaction has been submitted.</p>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Calldata: {action.calldataPreview ?? action.calldataStatus}. No transaction has been submitted.</p>
               </div>
               <div className="activity-impact">
                 <strong>{action.status}</strong>
@@ -2317,6 +2321,10 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
   );
 }
 
+
+function shortCalldata(value: Hex) {
+  return value.slice(0, 18) + '...' + value.slice(-10);
+}
 
 function preflightGapLabel(value: number | undefined, noun: string) {
   if (typeof value !== 'number' || !Number.isFinite(value)) return 'untracked ' + noun + 's';
