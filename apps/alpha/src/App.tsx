@@ -2415,7 +2415,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
     const current = assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
     const nextEntry = { ...current, [field]: value.trim() };
     const next = { ...assetOverrides, [symbol]: nextEntry };
-    if (!nextEntry.address && (!nextEntry.decimals || nextEntry.decimals === String(guidedDefaultAssetDecimals(symbol) ?? ''))) {
+    if (!nextEntry.address) {
       delete next[symbol];
     }
     setAssetOverrides(next);
@@ -2480,7 +2480,10 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
               const entry = deploymentAddress
                 ? { address: deploymentAddress, decimals: String(defaultDecimals ?? '') }
                 : assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(defaultDecimals ?? '') };
-              const sourcedFromEnv = Boolean(envEntry && !deploymentAddress && !assetOverrides[symbol]);
+              const sourcedFromEnv = Boolean(envEntry && !deploymentAddress);
+              const envNote = assetOverrides[symbol]
+                ? 'Originally resolved from environment. Browser override is saved for this device.'
+                : 'Resolved from environment. Editing stores a browser override for this device.';
               const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
               return (
                 <div className="asset-registry-row" key={symbol}>
@@ -2506,7 +2509,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                     />
                   </label>
                   {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
-                  {sourcedFromEnv ? <small>Resolved from environment. Editing stores a browser override for this device.</small> : null}
+                  {sourcedFromEnv ? <small>{envNote}</small> : null}
                   {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
                 </div>
               );
