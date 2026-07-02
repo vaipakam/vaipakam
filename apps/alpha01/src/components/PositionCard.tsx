@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import type { IndexedLoan } from '@vaipakam/defi-client';
 import { formatBpsAsPercent, loanRoleForWallet } from '@vaipakam/defi-client';
 import { shortenAddr } from '@vaipakam/lib/address';
-import { AssetSymbolLink } from './AssetSymbolLink';
+import { resolveSymbol } from '../lib/formatAsset';
 import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
 
@@ -30,8 +30,8 @@ export function PositionCard({ loan }: Props) {
         <span style={{ color: 'var(--text-secondary)' }}>{role}</span>
       </div>
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        <AssetSymbolLink address={loan.lendingAsset} meta={lendingMeta} /> ·{' '}
-        <AssetSymbolLink address={loan.collateralAsset} meta={collateralMeta} /> collateral ·{' '}
+        {resolveSymbol(lendingMeta, loan.lendingAsset)} · {resolveSymbol(collateralMeta, loan.collateralAsset)}{' '}
+        collateral ·{' '}
         {loan.durationDays} days · {formatBpsAsPercent(loan.interestRateBps)}
       </div>
       <div style={{ fontSize: '0.85rem' }}>

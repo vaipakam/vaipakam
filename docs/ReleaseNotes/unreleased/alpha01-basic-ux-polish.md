@@ -19,3 +19,5 @@ Round 5: Arb Sepolia and BNB testnet borrow/lend defaults now resolve wrapped-na
 Round 6: Cancel offer is gated to the on-chain creator; create-lending adds curated asset pickers when chain defaults are absent; Activity merges participant loan/offer timelines (not actor-only); borrow accept receipts disclose net wallet proceeds after upfront LIF; create-lending receipt clarifies offers do not auto-expire on the duration field.
 
 Round 7: Activity merge preserves all actor rows; enrichment includes current-holder loans/offers; token metadata cache is chain-scoped; Positions merges creator + holder offers for cancel paths; borrow receipts read live LIF from the diamond; CoinGecko lists clear on chain switch; borrow-request collateral hint is wallet-only.
+
+Round 8: Open offers list is current-holder only so transferred-away positions cannot be cancelled from alpha01; fund-lend receipt discloses principal leaves wallet custody; position cards render asset symbols as text inside the loan link (no nested anchors).

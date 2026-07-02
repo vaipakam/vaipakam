@@ -57,7 +57,7 @@ function fundReceipt(
           the loan closes.
         </>
       ),
-      hint: 'Principal moves to your vault custody for the loan term.',
+      hint: 'Principal leaves your wallet when you fund the loan; you hold a repayment/default claim, not vault custody of the principal.',
     },
     youMayOwe: { label: 'You may owe', value: 'Protocol yield fee at settlement (separate from gas).' },
     youCanLose: {
