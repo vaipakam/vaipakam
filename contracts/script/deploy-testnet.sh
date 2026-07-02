@@ -1077,35 +1077,38 @@ EOF
 
 phase_swap_adapters() {
   _preflight_gate
-  if [ -z "${INITIAL_SETTLERS:-}" ]; then
+  # Two adapter families feed the Diamond's swap-adapter failover chain:
+  #   • Aggregator adapters (0x + 1inch) via DeploySwapAdapters — need
+  #     INITIAL_SETTLERS + an 0x/1inch backend (all mainnets + most testnets).
+  #   • An on-chain DEX adapter (UniV3Adapter → Uniswap/PancakeSwap V3) via
+  #     DeployUniV3Adapter — needs a <CHAIN>_UNISWAP_V3_ROUTER. REQUIRED on
+  #     chains with NO 0x backend (BNB testnet: 0x covers BNB mainnet 56, not
+  #     97), where it's the sole liquidation route (registered at index 0, which
+  #     the keeper + ConfigureOracle's no-0x check both expect).
+  # Run whichever are configured; refuse only if NEITHER is (the chain would
+  # have no liquidation route, and ConfigureOracle would then hard-fail).
+  local _univ3_router_var="${CCIP_SLUG}_UNISWAP_V3_ROUTER"
+  local _univ3_router="${!_univ3_router_var:-}"
+  if [ -z "${INITIAL_SETTLERS:-}" ] && [ -z "$_univ3_router" ]; then
     cat >&2 <<EOF
-Refusing --phase swap-adapters: INITIAL_SETTLERS env var unset.
+Refusing --phase swap-adapters: no swap adapter would be registered.
 
-This phase calls DeploySwapAdapters.s.sol which deploys the
-ZeroExAggregatorAdapter + OneInchAggregatorAdapter and registers
-both with the diamond's swap-adapter chain via
-AdminFacet.addSwapAdapter.
+This phase registers the Diamond's liquidation-swap adapters. Set at least one:
 
-The 0x adapter constructor requires a non-empty seed allowlist of
-permitted Settler call destinations — Settler addresses rotate
-per 0x release and vary by route type, so they MUST be supplied
-explicitly. Pull current Settlers via:
+  • INITIAL_SETTLERS  — deploys the 0x + 1inch aggregator adapters
+    (DeploySwapAdapters.s.sol). The 0x adapter needs a seed Settler allowlist
+    (rotates per 0x release); pull current Settlers via the 0x deployer's
+    ownerOf(...) at 0x00000000000004533Fe15556B1E086BB1A72cEae, or transaction.to
+    from a fresh https://api.0x.org/swap/allowance-holder/quote call.
+      Optional: ALLOWANCE_HOLDER_OVERRIDE (default 0x…2734; Mantle 0x…9562),
+                ONEINCH_ROUTER_OVERRIDE   (default 0x…2A65).
 
-  (a) The 0x deployer's ownerOf(...) at
-      0x00000000000004533Fe15556B1E086BB1A72cEae, OR
-  (b) Reading transaction.to from a fresh
-      \`https://api.0x.org/swap/allowance-holder/quote\` call on
-      this chain.
+  • ${_univ3_router_var}  — deploys the on-chain UniV3/PancakeSwap V3 adapter
+    (DeployUniV3Adapter.s.sol). REQUIRED on chains with no 0x backend (e.g. BNB
+    testnet); set it to the chain's UniV3-style SwapRouter.
 
-Then re-run with:
-  INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... \\
+  INITIAL_SETTLERS=0xSettlerA,... ${_univ3_router_var}=0xRouter \\
     bash contracts/script/deploy-testnet.sh $CHAIN_SLUG --phase swap-adapters
-
-Optional overrides (defaults shown):
-  ALLOWANCE_HOLDER_OVERRIDE  default 0x0000000000001fF3684f28c67538d4D072C22734
-                             Set to 0x0000000000005E88410CcDFaDe4a5EfaE4b49562 on Mantle.
-  ONEINCH_ROUTER_OVERRIDE    default 0x111111125421cA6dc452d289314280a0f8842A65
-                             Same address on every chain we deploy to.
 EOF
     exit 1
   fi
@@ -1128,11 +1131,19 @@ EOF
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — swap-adapters  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
-  echo "  INITIAL_SETTLERS:           $INITIAL_SETTLERS"
-  echo "  ALLOWANCE_HOLDER_OVERRIDE:  ${ALLOWANCE_HOLDER_OVERRIDE:-(default 0x…2734)}"
-  echo "  ONEINCH_ROUTER_OVERRIDE:    ${ONEINCH_ROUTER_OVERRIDE:-(default 0x…2A65)}"
+  echo "  INITIAL_SETTLERS:           ${INITIAL_SETTLERS:-(unset — skipping 0x/1inch adapters)}"
+  echo "  ${_univ3_router_var}: ${_univ3_router:-(unset — skipping UniV3 adapter)}"
   echo
-  forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  # Aggregator adapters FIRST so their indices are stable (0x=0, 1inch=1) and
+  # the UniV3 adapter appends after (=2) — matching the keeper's per-chain map.
+  # On a no-aggregator chain (only the router set) the UniV3 adapter lands at
+  # index 0, which the keeper's no-0x config + ConfigureOracle both require.
+  if [ -n "${INITIAL_SETTLERS:-}" ]; then
+    forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  fi
+  if [ -n "$_univ3_router" ]; then
+    forge script script/DeployUniV3Adapter.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
+  fi
   mark_phase_done "swap-adapters"
 }
 

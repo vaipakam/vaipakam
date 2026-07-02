@@ -784,6 +784,30 @@ else
   mark_done "swap-adapters"
 fi
 
+# ── 5cc. On-chain UniV3/PancakeSwap V3 swap adapter ───────────────────
+# Deploys the UniV3Adapter (DeployUniV3Adapter.s.sol) + registers it in the
+# Diamond's swap-adapter chain. REQUIRED on chains with NO 0x backend (BNB
+# testnet: 0x's API covers BNB mainnet 56, not 97), where it's the sole
+# liquidation route — registered at index 0, which the keeper's no-0x config
+# and ConfigureOracle's no-0x check both require. Runs AFTER 5cb so aggregator
+# adapters keep indices 0/1 and this appends after; on a no-aggregator chain
+# it lands at index 0. Skipped when <SLUG>_UNISWAP_V3_ROUTER is unset.
+UNIV3_ROUTER_VAR="${CCIP_SLUG}_UNISWAP_V3_ROUTER"
+if [ "${!UNIV3_ROUTER_VAR:-}" = "" ]; then
+  echo
+  echo "[5cc] Skipping DeployUniV3Adapter — ${UNIV3_ROUTER_VAR} not set."
+  echo "      (Set it to the chain's UniV3-style SwapRouter; REQUIRED on no-0x"
+  echo "       chains like BNB testnet or ConfigureOracle will refuse.)"
+elif [ -f "$MARKERS_DIR/univ3-adapter.done" ] && [ "$RESUME" = "1" ]; then
+  echo
+  echo "[5cc] DeployUniV3Adapter (skipped — marker exists)"
+else
+  echo
+  echo "[5cc] DeployUniV3Adapter.s.sol  (on-chain UniV3/PancakeSwap adapter + register)"
+  forge script script/DeployUniV3Adapter.s.sol --rpc-url "$RPC" --broadcast --slow
+  mark_done "univ3-adapter"
+fi
+
 # ── 5d. Post-deploy health check ──────────────────────────────────────
 # Reads sentinel state from the deployed Diamond + (where applicable)
 # the BuyAdapter rate limits. Logs a clear PASS/FAIL line per check
