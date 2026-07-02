@@ -9,7 +9,7 @@ import { copy } from '../content/copy';
 import { useSanctionsCheck } from '../data/sanctions';
 
 export function SanctionsBanner() {
-  const flagged = useSanctionsCheck();
+  const { flagged } = useSanctionsCheck();
   if (!flagged) return null;
   return (
     <div className="banner banner-danger" role="alert">

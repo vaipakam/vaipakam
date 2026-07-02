@@ -77,16 +77,28 @@ export function Activity() {
     enabled: Boolean(address),
     refetchInterval: 60_000,
     queryFn: async () => {
-      const page = await fetchActivity(readChain.chainId, { limit: 100 });
-      if (page === null) return null;
+      // Protocol-wide feed, so one busy day can push a wallet's events
+      // past the first page — follow the cursor a few pages before
+      // giving up, and stop early once we have plenty of matches.
       const me = address!.toLowerCase();
-      return page.events.filter((ev) => {
-        if (ev.actor && ev.actor.toLowerCase() === me) return true;
-        if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
-        const argsStr =
-          typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {});
-        return argsStr.toLowerCase().includes(me);
-      });
+      const mine: IndexedActivityEvent[] = [];
+      let before: string | undefined;
+      for (let i = 0; i < 5; i++) {
+        const page = await fetchActivity(readChain.chainId, { limit: 100, before });
+        if (page === null) return mine.length > 0 ? mine : null;
+        mine.push(
+          ...page.events.filter((ev) => {
+            if (ev.actor && ev.actor.toLowerCase() === me) return true;
+            if (ev.loanId !== null && myLoanIds.has(ev.loanId)) return true;
+            const argsStr =
+              typeof ev.args === 'string' ? ev.args : JSON.stringify(ev.args ?? {});
+            return argsStr.toLowerCase().includes(me);
+          }),
+        );
+        if (page.nextBefore === null || mine.length >= 50) break;
+        before = page.nextBefore;
+      }
+      return mine;
     },
   });
 

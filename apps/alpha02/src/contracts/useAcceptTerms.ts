@@ -21,6 +21,7 @@ import type { Address, Hex } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { copy } from '../content/copy';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -135,6 +136,23 @@ export function useAcceptTermsSigning() {
         functionName: 'getOffer',
         args: [input.offerId],
       })) as Record<string, unknown>;
+
+      // Refuse STALE accepts before any signature or approval: an
+      // already-accepted, expired, or cancelled (storage-deleted →
+      // zero creator) offer can return the same economic terms, so the
+      // caller's reviewed-vs-signed comparison alone wouldn't catch it
+      // and the user would mine an approval tx for a doomed accept.
+      const creator = (o.creator as string).toLowerCase();
+      if (creator === '0x0000000000000000000000000000000000000000') {
+        throw new Error(copy.match.offerGone);
+      }
+      if (Boolean(o.accepted)) {
+        throw new Error(copy.match.offerGone);
+      }
+      const expiresAt = o.expiresAt as bigint;
+      if (expiresAt !== 0n && expiresAt <= BigInt(Math.floor(Date.now() / 1000))) {
+        throw new Error(copy.match.offerGone);
+      }
 
       // #725 — auto-linked sale/offset target loan id; 0 for a normal
       // offer. Read from chain so a sale-vehicle / preclose-offset offer

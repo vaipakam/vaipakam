@@ -114,7 +114,10 @@ export interface SupportedChain {
 }
 
 function rpcUrlFor(meta: ChainMeta): string {
-  return (env[meta.rpcUrlEnvKey] as string | undefined) ?? meta.rpcUrlDefault;
+  // A copied-as-is .env.example exposes the keys as EMPTY strings —
+  // `??` alone would keep '' and the transport would call http('').
+  const fromEnv = (env[meta.rpcUrlEnvKey] as string | undefined)?.trim();
+  return fromEnv || meta.rpcUrlDefault;
 }
 
 /** Every chain with a live Diamond, in display order. */

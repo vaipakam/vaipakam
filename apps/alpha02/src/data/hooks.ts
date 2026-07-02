@@ -26,10 +26,13 @@ import {
 
 const REFRESH_MS = 30_000;
 
-/** Open offers on the current read chain (both sides). One fixed page
- *  size so every surface (Offer Book, guided flows, rentals) shares a
- *  single cache entry and one poll. */
-const ACTIVE_OFFERS_LIMIT = 100;
+/** Open offers on the current read chain (both sides). One shared
+ *  cache entry for every surface (Offer Book, guided flows, rentals).
+ *  Follows the indexer's `nextBefore` cursor up to a page cap so a
+ *  busy book doesn't falsely report "no matching offers" for offers
+ *  sitting past the first page. */
+const ACTIVE_OFFERS_PAGE = 100;
+const ACTIVE_OFFERS_MAX_PAGES = 5;
 
 export function useActiveOffers() {
   const { readChain } = useActiveChain();
@@ -37,10 +40,19 @@ export function useActiveOffers() {
     queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
-      const page = await fetchActiveOffers(readChain.chainId, {
-        limit: ACTIVE_OFFERS_LIMIT,
-      });
-      return page ? page.offers : null;
+      const all: IndexedOffer[] = [];
+      let before: number | undefined;
+      for (let i = 0; i < ACTIVE_OFFERS_MAX_PAGES; i++) {
+        const page = await fetchActiveOffers(readChain.chainId, {
+          limit: ACTIVE_OFFERS_PAGE,
+          before,
+        });
+        if (page === null) return all.length > 0 ? all : null;
+        all.push(...page.offers);
+        if (page.nextBefore === null) break;
+        before = page.nextBefore;
+      }
+      return all;
     },
   });
 }

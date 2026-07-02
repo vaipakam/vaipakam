@@ -214,11 +214,12 @@ export interface ActivityPage {
  *  and filter client-side by participation, like apps/defi does. */
 export function fetchActivity(
   chainId: number,
-  opts: { actor?: string; limit?: number } = {},
+  opts: { actor?: string; limit?: number; before?: string } = {},
 ): Promise<ActivityPage | null> {
   const params = new URLSearchParams({ chainId: String(chainId) });
   if (opts.actor) params.set('actor', opts.actor.toLowerCase());
   if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', opts.before);
   return getJson<ActivityPage>(`/activity?${params}`);
 }
 

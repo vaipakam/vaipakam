@@ -59,7 +59,7 @@ import {
 import { isPlainDecimal, isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { copy } from '../content/copy';
 import { AssetPicker } from './AssetPicker';
-import { Checklist, allChecksPass } from './Checklist';
+import { Checklist, allChecksPass, type CheckItem } from './Checklist';
 import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { StepNav } from './StepNav';
 import { useEligibility } from './useEligibility';
@@ -339,7 +339,7 @@ export function OfferFlow({ side }: { side: Side }) {
         ? form.collateralAsset
         : form.lendingAsset;
 
-  const checks = useEligibility({
+  const baseChecks = useEligibility({
     asset: lockedAssetAddress
       ? {
           meta: lockedMeta.data,
@@ -358,6 +358,20 @@ export function OfferFlow({ side }: { side: Side }) {
       : undefined,
     consent: form.riskAndTermsConsent,
   });
+  // The receipt's fee row must quote the GOVERNED values — hold the
+  // sign button until the live config read lands rather than letting
+  // users sign against compile-time defaults.
+  const checks = useMemo(
+    (): CheckItem[] => [
+      ...baseChecks,
+      {
+        id: 'live-fees',
+        label: fees.ready ? 'Live fee terms loaded' : 'Loading live fee terms…',
+        state: fees.ready ? 'pass' : 'pending',
+      },
+    ],
+    [baseChecks, fees.ready],
+  );
 
   // ---- Matching offers -------------------------------------------------
   const activeOffers = useActiveOffers();
@@ -418,6 +432,13 @@ export function OfferFlow({ side }: { side: Side }) {
 
   // Strict decimal gating — Number('1e18') > 0 and Number('abc') < 0
   // checks let inputs through that parseUnits/BigInt later throw on.
+  // Rate is additionally capped at 100% APR: the contract rejects
+  // anything above MAX_INTEREST_BPS (10,000), and without the client
+  // cap the approval tx would mine before createOffer reverts.
+  const MAX_RATE_PERCENT = 100;
+  const rateValid =
+    isPlainDecimal(form.interestRate) &&
+    Number(form.interestRate) <= MAX_RATE_PERCENT;
   const detailsComplete =
     isAddressLike(form.lendingAsset) && isPositiveDecimal(form.amount);
   const formError = validateOfferForm(form);
@@ -425,7 +446,7 @@ export function OfferFlow({ side }: { side: Side }) {
     detailsComplete &&
     isAddressLike(form.collateralAsset) &&
     isPositiveDecimal(form.collateralAmount) &&
-    isPlainDecimal(form.interestRate);
+    rateValid;
 
   // ---- Review receipt ----------------------------------------------------
   // One side of the deal being unpriced (illiquid) changes the default
@@ -769,13 +790,17 @@ export function OfferFlow({ side }: { side: Side }) {
             <label htmlFor="rate">{text.rateLabel}</label>
             <input
               id="rate"
-              className="input"
+              className={`input ${form.interestRate !== '' && !rateValid ? 'input-invalid' : ''}`}
               inputMode="decimal"
               placeholder="5"
               value={form.interestRate}
               onChange={(e) => set({ interestRate: e.target.value.trim() })}
             />
-            <span className="field-hint">{text.rateHint}</span>
+            <span className="field-hint">
+              {form.interestRate !== '' && !rateValid
+                ? `Enter a number between 0 and ${MAX_RATE_PERCENT} — the protocol caps rates at ${MAX_RATE_PERCENT}% yearly.`
+                : text.rateHint}
+            </span>
           </div>
           <AssetPicker
             id="collateral-asset"

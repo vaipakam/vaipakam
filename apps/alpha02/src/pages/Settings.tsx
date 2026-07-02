@@ -5,7 +5,17 @@
  * whatever page they were on with advanced controls revealed.
  */
 import { Link } from 'react-router-dom';
-import { BookOpen, CircleHelp, Coins, Gift, Moon, Sun, MonitorCog } from 'lucide-react';
+import {
+  BookOpen,
+  CircleHelp,
+  Coins,
+  Gift,
+  History,
+  Landmark,
+  Moon,
+  MonitorCog,
+  Sun,
+} from 'lucide-react';
 import { useTheme, type ThemePreference } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 
@@ -101,12 +111,28 @@ export function Settings() {
               <span className="row-sub">Browse every open offer on this network</span>
             </span>
           </Link>
+          <Link to="/vault" className="item-row">
+            <Landmark aria-hidden size={18} />
+            <span className="row-main">
+              <span className="row-title">Your Vaipakam Vault</span>
+              <br />
+              <span className="row-sub">Where your assets sit — totals, locked, and free</span>
+            </span>
+          </Link>
           <Link to="/vpfi" className="item-row">
             <Coins aria-hidden size={18} />
             <span className="row-main">
               <span className="row-title">VPFI fee discounts</span>
               <br />
               <span className="row-sub">Optional — reduce protocol fees by holding VPFI</span>
+            </span>
+          </Link>
+          <Link to="/activity" className="item-row">
+            <History aria-hidden size={18} />
+            <span className="row-main">
+              <span className="row-title">Activity</span>
+              <br />
+              <span className="row-sub">Everything your wallet has done on Vaipakam</span>
             </span>
           </Link>
           <Link to="/help" className="item-row">

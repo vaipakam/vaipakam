@@ -600,6 +600,13 @@ function RentNftFlow() {
         publicClient,
         walletChain.diamondAddress,
       );
+      // The receipt and balance check used the cached buffer — if
+      // governance changed it since review, the user would be asked to
+      // approve MORE than the receipt showed. Force a re-review.
+      if (liveBufferBps !== bufferBps) {
+        void queryClient.invalidateQueries({ queryKey: ['rentalBufferBps'] });
+        throw new Error(copy.match.termsChanged);
+      }
       const canonicalTotal = totalRentalPrepay(
         terms.amount,
         Number(terms.durationDays),

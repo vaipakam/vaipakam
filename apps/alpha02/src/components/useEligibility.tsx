@@ -37,7 +37,7 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
   const { isConnected, onSupportedChain, switchToSupported, switchPending } =
     useActiveChain();
   const { setOpen } = useModal();
-  const sanctioned = useSanctionsCheck();
+  const sanctions = useSanctionsCheck();
 
   const items: CheckItem[] = [];
 
@@ -74,8 +74,16 @@ export function useEligibility(inputs: EligibilityInputs): CheckItem[] {
 
   // Sanctions gate: a flagged wallet's create/accept would revert
   // on-chain AFTER the approval tx already mined — block before any
-  // gas is spent. Fail-open (unflagged/unknown → no item shown).
-  if (sanctioned) {
+  // gas is spent. While the check is still LOADING the item shows as
+  // pending (holds allChecksPass false); once settled it disappears
+  // for clean wallets and fails for flagged ones.
+  if (isConnected && !sanctions.ready) {
+    items.push({
+      id: 'sanctions',
+      label: 'Checking compliance status…',
+      state: 'pending',
+    });
+  } else if (sanctions.flagged) {
     items.push({
       id: 'sanctions',
       label: copy.sanctions.line2,
