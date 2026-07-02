@@ -522,6 +522,10 @@
   "autoLend": {
     "title": "Auto-lend (standing intent)",
     "body": "Register a standing lend intent on an asset pair and fund working capital. The protocol keeper fills matching borrower demand under your bounds and — once you delegate it — auto-rolls fully-repaid loans straight back into your capital, with no manual claim round-trip. You stay in control: pause, top up, or withdraw any time.",
+    "connectTitle": "Connect your wallet",
+    "connectBody": "Connect a wallet to post a standing lend intent and let a delegated keeper fill matching borrower demand on your behalf.",
+    "unavailableTitle": "Auto-lend isn't available on this network",
+    "unavailableBody": "The standing lender-intent feature isn't deployed on the network your wallet is connected to. Switch to a supported network to create and manage auto-lend intents.",
     "bestEffortNotice": "Best-effort, not guaranteed. Fills depend on matching borrower demand within your bounds — open intents can be filled by any solver, so no keeper is required; only if you restrict fills to your delegated keeper do they also depend on that keeper. Auto-roll of repaid loans is the keeper-dependent part: it needs an enabled, funded protocol keeper you've delegated. So your capital may sit idle, deploy, or stop rolling at any time, and an in-flight loan still follows its own terms. Monitor your positions; pause, top up, or withdraw any time.",
     "keepersPausedNotice": "Delegated keepers are globally paused by governance right now. While paused, auto-roll of repaid loans and any fills you've restricted to your delegated keeper are suspended; open intents can still be filled by any solver. Keeper-driven rolling resumes when governance lifts the pause.",
     "fillPathOff": "Intent filling is paused by admin on this chain. You can register and fund now; the keeper starts filling automatically once it's re-enabled.",
@@ -769,12 +773,6 @@
     "standing_one": "{{count}} standing intent",
     "standing_other": "{{count}} standing intents",
     "manage": "Manage"
-  },
-  "autoLend": {
-    "connectTitle": "Connect your wallet",
-    "connectBody": "Connect a wallet to post a standing lend intent and let a delegated keeper fill matching borrower demand on your behalf.",
-    "unavailableTitle": "Auto-lend isn't available on this network",
-    "unavailableBody": "The standing lender-intent feature isn't deployed on the network your wallet is connected to. Switch to a supported network to create and manage auto-lend intents."
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",
