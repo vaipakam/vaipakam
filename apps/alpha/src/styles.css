@@ -186,7 +186,7 @@ button {
   color: var(--brand-strong);
 }
 
-.topbar h1 {
+.app-tagline {
   max-width: 760px;
   margin: 4px 0 0;
   font-size: clamp(1.5rem, 2vw, 2.4rem);
@@ -281,8 +281,9 @@ input:focus-visible {
   padding: clamp(24px, 4vw, 54px);
 }
 
-.hero-copy h2,
-.flow-hero h2,
+.hero-copy h1,
+.flow-hero h1,
+.section-heading h1,
 .section-heading h2 {
   margin: 8px 0 0;
   color: var(--ink);

@@ -637,7 +637,7 @@ function TopBar({
     <header className="topbar">
       <div>
         <p className="eyebrow">Vaipakam Protocol</p>
-        <h1>Lend, borrow, rent NFT access, and manage positions from one non-custodial interface.</h1>
+        <p className="app-tagline">Lend, borrow, rent NFT access, and manage positions from one non-custodial interface.</p>
       </div>
       <div className="topbar-controls">
         {wallet.account ? (
@@ -683,7 +683,7 @@ function Home({ mode }: { mode: Mode }) {
       <section className="hero-panel">
         <div className="hero-copy">
           <p className="eyebrow">Decentralized lending, borrowing, and NFT rentals</p>
-          <h2>Put idle assets to work, access liquidity, or rent NFT utility with clear terms before every signature.</h2>
+          <h1>Put idle assets to work, access liquidity, or rent NFT utility with clear terms before every signature.</h1>
           <p>
             Vaipakam combines peer-to-peer ERC-20 credit markets, vault-backed collateral, temporary NFT use rights, claims, rewards, and VPFI utility in a single connected app.
             {mode === 'guided' ? ' Guided mode keeps recommended paths and receipts front and center.' : ' Advanced mode opens custom markets, automation, diagnostics, and risk controls.'}
@@ -723,7 +723,7 @@ function Home({ mode }: { mode: Mode }) {
       </section>
 
       <section className="principles band">
-        <SectionHeading eyebrow="Protocol safeguards" title="Clear terms before capital moves" />
+        <SectionHeading eyebrow="Protocol safeguards" title="Clear terms before capital moves" level="section" />
         <div className="principle-list">
           <Principle icon={<LifeBuoy />} title="Guided paths" body="Recommended lending, borrowing, and rental flows keep the next safe action visible." />
           <Principle icon={<Layers3 />} title="Advanced controls" body="Custom markets, automation, diagnostics, and risk tools stay available for experienced users." />
@@ -805,7 +805,7 @@ function FlowPage({
       <section className="flow-hero">
         <div>
           <p className="eyebrow">Guided workflow</p>
-          <h2>{flow.title}</h2>
+          <h1>{flow.title}</h1>
           <p>{flow.intro}</p>
         </div>
         <div className="review-card">
@@ -1522,7 +1522,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
 
 
 function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, onActionsPausedChange }: { riskGuardrail: RiskGuardrail; actionsPaused: boolean; onRiskGuardrailChange: (guardrail: RiskGuardrail) => void; onActionsPausedChange: (paused: boolean) => void }) {
-  const [language, setLanguage] = useState(() => readAppStorage('language') === 'English' ? 'English' : 'English');
+  const [language, setLanguage] = useState('English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
 
@@ -1841,11 +1841,12 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
   );
 }
 
-function SectionHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+function SectionHeading({ eyebrow, title, level = 'page' }: { eyebrow: string; title: string; level?: 'page' | 'section' }) {
+  const Heading = level === 'page' ? 'h1' : 'h2';
   return (
     <div className="section-heading">
       <p className="eyebrow">{eyebrow}</p>
-      <h2>{title}</h2>
+      <Heading>{title}</Heading>
     </div>
   );
 }
