@@ -762,9 +762,7 @@ function FlowPage({
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
-    if (!walletReady || !isBaseSepolia) {
-      setReviewed(false);
-    }
+    setReviewed(false);
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
@@ -1227,9 +1225,7 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   const receiptRows = buildOfferReceiptRows(selectedOffer);
   const reviewed = reviewedOfferId === selectedOffer.id && walletReady && baseReady;
   useEffect(() => {
-    if (!walletReady || !baseReady) {
-      setReviewedOfferId(null);
-    }
+    setReviewedOfferId(null);
   }, [walletReady, baseReady, wallet.account]);
   const selectOfferFilter = (nextFilter: OfferKind | 'all') => {
     setFilter(nextFilter);
@@ -1810,7 +1806,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
           </label>
           <label>
             <span>Slippage cap</span>
-            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => setSlippage(event.target.value)} />
+            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => setSlippage(String(Math.max(0, Math.min(25, Number(event.target.value) || 0))))} />
           </label>
         </div>
       </section>
