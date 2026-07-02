@@ -276,7 +276,10 @@ Diamond surface (Phase 1 to add):
 
 - `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
-- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` (no arguments) — auto-walks a bounded window of finalized days from the caller's stored cursor, paying each covered day out using `knownGlobalInterest[dayId]` as that day's denominator, and returns `(paid, fromDay, toDay)`. The claim reverts for a day whose `knownGlobalInterest[dayId]` has not yet been broadcast, so callers never claim ahead of finalization. (The surface is deliberately cursor-driven rather than caller-supplied `dayId[]`, so integrators do not select days explicitly.)
+- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` (no arguments), returning `(paid, fromDay, toDay)`. It is deliberately cursor/entry driven rather than caller-supplied `dayId[]`, and folds **two** reward sources in one call:
+  - **Per-loan reward entries** — the caller's `RewardEntry` list is processed first; forfeited entries route their share to Treasury. Entry rewards contribute to `paid` but are **not** described by `fromDay`/`toDay`.
+  - **Legacy per-day cursor catch-up** — if the caller's stored `interactionLastClaimedDay` is behind, the claim walks a **bounded** window (`MAX_INTERACTION_CLAIM_DAYS`) forward, using `knownGlobalInterest[dayId]` as each day's denominator. The window is clamped to the **contiguous finalized prefix**: if a later day in the window is not yet finalized, the claim pays the finalized prefix and **stops** (it does not revert), advancing the cursor to the last paid day. `fromDay`/`toDay` describe only this cursor window — an entry-only claim can return `paid > 0` with `fromDay == toDay == 0`.
+  - The call reverts only when there is genuinely nothing to pay: `NoInteractionRewardsToClaim` when nothing new is claimable, or `InteractionDayGlobalNotFinalized(next)` when the caller's very next cursor day is unfinalized **and** no entry rewards accrued. No user can be paid for a `dayId` before `knownGlobalInterest[dayId]` is set.
 
 Testing requirements beyond §9:
 
@@ -526,7 +529,7 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
-VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets and per-target thresholds (`setTreasuryConvertTargets` / `setTreasuryConvertThresholds`), and `convertTreasuryAsset` performs the conversions once targets are configured; it is inert until then. The `38 / 38 / 24` allocation below is the **recommended launch configuration**, not a protocol-enforced constant:
+VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum USD value and a maximum interval — that gate when a conversion may run (`setTreasuryConvertThresholds`, applied per input asset, not per target). `convertTreasuryAsset` performs the conversions once targets are configured; it is inert until then. The `38 / 38 / 24` allocation below is the **recommended launch configuration**, not a protocol-enforced constant:
 
 - **`38%` → Buy ETH** (recommended)
 - **`38%` → Buy wBTC** (recommended)
