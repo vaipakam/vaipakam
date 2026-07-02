@@ -270,12 +270,22 @@ contract DeployUniV3Adapter is Script {
     ///      operator who set the oracle-documented `MAINNET_UNISWAP_V3_FACTORY`
     ///      isn't rejected by the now-hard factory requirement above.
     function _resolveFactory() internal view returns (address) {
-        address a = _resolveChainAddr("UNISWAP_V3_FACTORY");
-        if (a != address(0)) return a;
-        // The only prefix divergence with ConfigureOracle._prefix() is chain 1
-        // (MAINNET_ vs this script's ETHEREUM_); accept its key there.
-        if (block.chainid == 1) return vm.envOr("MAINNET_UNISWAP_V3_FACTORY", address(0));
-        return address(0);
+        // 1) This script's CCIP_SLUG-prefixed key (ETHEREUM_ on chain 1).
+        string memory prefix = _ccipSlugPrefix();
+        if (bytes(prefix).length != 0) {
+            address p = vm.envOr(string.concat(prefix, "UNISWAP_V3_FACTORY"), address(0));
+            if (p != address(0)) return p;
+        }
+        // 2) ConfigureOracle's prefix where it diverges (chain 1: MAINNET_). The
+        //    factory is ConfigureOracle's var, so prefer its documented key OVER a
+        //    stale/global bare value that a shared multi-chain env might carry —
+        //    otherwise the hard factory check could reject a valid mainnet router.
+        if (block.chainid == 1) {
+            address m = vm.envOr("MAINNET_UNISWAP_V3_FACTORY", address(0));
+            if (m != address(0)) return m;
+        }
+        // 3) Bare escape hatch, last.
+        return vm.envOr("UNISWAP_V3_FACTORY", address(0));
     }
 
     /// @dev Chain-prefixed `<CHAIN>_<key>` first, then bare `<key>` fallback.
