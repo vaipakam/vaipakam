@@ -600,8 +600,10 @@ treasuryShare = heldVpfiForLoan - rebate;
 
 The rebate becomes claimable by the borrower-side Vaipakam NFT holder
 and is paid with the normal borrower claim. On default or HF-based
-liquidation, `rebate == 0` and the full held VPFI amount is forfeited
-to Treasury.
+liquidation, `rebate == 0` and the held VPFI is forfeited: for a matched
+loan the matcher's configured share is paid to the matcher first and the
+net is forfeited to Treasury; for an unmatched loan the full held VPFI is
+forfeited to Treasury.
 
 **Governance changes to the tier schedule** apply prospectively, just
 like the lender side. Periods already rolled up under the old tier

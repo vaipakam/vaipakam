@@ -2237,7 +2237,23 @@ function CreateOfferSimulationPreview({
     data = null;
   }
   return (
-    <SimulationPreview tx={data ? { to: diamondAddr, data, value: 0n } : null} />
+    <SimulationPreview
+      tx={
+        data
+          ? {
+              to: diamondAddr,
+              data,
+              value: 0n,
+              // A lender ERC-20 offer pulls the principal at createOffer, so
+              // at preview time (before the approve step the submit path runs)
+              // the eth_call reverts with ERC20InsufficientAllowance. That's
+              // expected here — downgrade it to the benign "approval needed"
+              // verdict rather than a false "would revert". (F-20260630-002.)
+              allowAllowanceRevert: true,
+            }
+          : null
+      }
+    />
   );
 }
 

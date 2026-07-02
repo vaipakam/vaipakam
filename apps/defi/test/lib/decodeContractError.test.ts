@@ -4,7 +4,12 @@ import {
   extractRevertData,
   extractRevertSelector,
   namedRevertSelector,
-} from '../../src/lib/decodeContractError';
+  // Stage-3 split moved this module to @vaipakam/lib; the old
+  // `../../src/lib/decodeContractError` path stopped resolving (the test had
+  // silently gone dead). Repointed to the live specifier apps/defi actually
+  // imports so the decoder — including the #780 gas-cap heuristic below —
+  // is exercised again.
+} from '@vaipakam/lib/decodeContractError';
 
 // Known selectors from decodeContractError.ts — kept in sync with the table
 // so the test breaks loudly if the friendly-copy table is edited.
@@ -146,5 +151,36 @@ describe('decodeContractError', () => {
 
   it('honors a caller-supplied fallback when no fields are present', () => {
     expect(decodeContractError({}, 'custom default')).toBe('custom default');
+  });
+
+  // #780 — "exceeds max transaction gas limit" is an estimateGas-fallback
+  // artefact, not a real gas shortage. Distinguish it from a genuine revert.
+  describe('#780 gas-cap heuristic', () => {
+    it('rewrites the bare "exceeds max transaction gas limit" message', () => {
+      const msg = decodeContractError({
+        message: 'exceeds max transaction gas limit',
+      });
+      expect(msg).toMatch(/usually NOT a real gas shortage/i);
+      expect(msg).toMatch(/token approval/i);
+      expect(msg).toMatch(/stale app build/i);
+    });
+
+    it('also matches the "exceeds max gas limit" variant', () => {
+      const msg = decodeContractError({
+        shortMessage: 'RPC Error: exceeds max gas limit',
+      });
+      expect(msg).toMatch(/oversized gas limit/i);
+    });
+
+    it('does NOT reword when a concrete revert selector is decodable', () => {
+      // A real revert whose calldata also mentions the gas phrase must keep
+      // its friendly selector copy, not the gas-cap heuristic.
+      const msg = decodeContractError({
+        message: 'execution reverted: exceeds max transaction gas limit',
+        data: SEL_HF_TOO_LOW,
+      });
+      expect(msg).toMatch(/Health factor too low/i);
+      expect(msg).not.toMatch(/oversized gas limit/i);
+    });
   });
 });

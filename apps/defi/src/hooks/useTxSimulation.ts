@@ -45,6 +45,19 @@ export interface TxSimInput {
    * revert then surfaces normally as `would revert`. (PR #41 review.)
    */
   allowSignatureRevert?: boolean;
+  /**
+   * Set ONLY by a call site whose SUBMIT path provisions an ERC-20
+   * allowance (via `ensureAllowance`) BEFORE broadcasting the previewed
+   * calldata — the CreateOffer / accept flows. At preview time the token
+   * allowance is still zero, so the `eth_call` reverts with
+   * `ERC20InsufficientAllowance` (0xfb8f41b2) even though the real submit
+   * succeeds after the approve step. When this flag is `true` that
+   * specific allowance revert is downgraded to the benign
+   * `approval-needed` verdict instead of an alarming `revert`. Unset
+   * everywhere else — a genuine allowance revert then surfaces normally.
+   * (F-20260630-002.)
+   */
+  allowAllowanceRevert?: boolean;
 }
 
 export interface SimResult {
@@ -53,9 +66,12 @@ export interface SimResult {
    * - `loading`     — simulation in flight
    * - `ok`          — `eth_call` succeeded; the tx will not revert
    * - `revert`      — the tx would revert (`revertReason` set)
+   * - `approval-needed` — the ONLY blocker is a missing ERC-20
+   *   allowance the submit path provisions first (opt-in via
+   *   `allowAllowanceRevert`); benign, not a real failure
    * - `unavailable` — no verdict (RPC down, or a preview artefact)
    */
-  status: 'idle' | 'loading' | 'ok' | 'revert' | 'unavailable';
+  status: 'idle' | 'loading' | 'ok' | 'revert' | 'approval-needed' | 'unavailable';
   revertReason?: string;
 }
 
@@ -104,7 +120,13 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
       setResult({ status: 'ok' });
     } catch (err) {
       if (myReq !== reqIdRef.current) return;
-      setResult(classifyError(err, input.allowSignatureRevert ?? false));
+      setResult(
+        classifyError(
+          err,
+          input.allowSignatureRevert ?? false,
+          input.allowAllowanceRevert ?? false,
+        ),
+      );
     }
   }, [address, isCorrectChain, publicClient, input]);
 
@@ -136,8 +158,10 @@ export function useTxSimulation(input: TxSimInput | null, debounceMs = 400) {
 function classifyError(
   err: unknown,
   allowSignatureRevert: boolean,
+  allowAllowanceRevert: boolean,
 ): SimResult {
   const msg = err instanceof BaseError ? err.shortMessage : String(err);
+  const full = err instanceof BaseError ? err.message : String(err);
   if (!/revert/i.test(msg)) {
     // Network / RPC / timeout — no verdict.
     return { status: 'unavailable' };
@@ -147,6 +171,21 @@ function classifyError(
     /permit|signature|ecdsa|invalidsigner/i.test(msg)
   ) {
     return { status: 'unavailable' };
+  }
+  // ERC20InsufficientAllowance (selector 0xfb8f41b2) — or the legacy
+  // string-revert variants — at preview time is expected on any flow whose
+  // submit path approves first. Downgrade to the benign `approval-needed`
+  // verdict so the preview doesn't cry wolf. Gated behind the explicit
+  // opt-in so a genuine allowance failure elsewhere still surfaces as a
+  // revert. Matched on the full message (viem puts the raw selector /
+  // decoded name in the details, not always the shortMessage). (F-…-002.)
+  if (
+    allowAllowanceRevert &&
+    /0xfb8f41b2|insufficient\s*allowance|ERC20InsufficientAllowance/i.test(
+      full,
+    )
+  ) {
+    return { status: 'approval-needed' };
   }
   return { status: 'revert', revertReason: msg };
 }

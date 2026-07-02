@@ -945,7 +945,22 @@ async function runScan(
   // chain (the sentinel `useDiamondRead` hands back). Either way:
   // don't scan — throw a clear, operator-actionable error instead of
   // hammering the node.
-  if (deployBlock <= 0 || diamondAddress.toLowerCase() === ZERO_ADDRESS) {
+  // Local Anvil / foundry node — a genesis scan is a handful of blocks
+  // against localhost, so an unresolved `deployBlock` is harmless here
+  // (there's no RPC to rate-limit). 31337 is intentionally NOT in the
+  // shipped deployments bundle, so its `deployBlock` routinely resolves to
+  // 0; blocking the scan would leave the local Dashboard/Activity/loan
+  // surfaces permanently empty during dev walkthroughs (F-20260630-004).
+  // Clamp to genesis and continue rather than throw.
+  const isLocalChain = chainId === 31337;
+  if (diamondAddress.toLowerCase() === ZERO_ADDRESS) {
+    throw new Error(
+      `logIndex scan skipped: no Diamond deployed for the resolved chain ` +
+        `(diamond=${diamondAddress}). Connect a wallet on a deployed chain ` +
+        `or fix the deployments.json mismatch in this build.`,
+    );
+  }
+  if (deployBlock <= 0 && !isLocalChain) {
     throw new Error(
       `logIndex scan skipped: chain config not resolved ` +
         `(deployBlock=${deployBlock}, diamond=${diamondAddress}). ` +
@@ -954,7 +969,10 @@ async function runScan(
         `would rate-limit the RPC.`,
     );
   }
-  const cached = readCache(chainId, diamondAddress) ?? emptyCache(deployBlock);
+  // Genesis floor for the local-chain case (deployBlock unresolved → 0).
+  const effectiveDeployBlock = deployBlock > 0 ? deployBlock : 0;
+  const cached =
+    readCache(chainId, diamondAddress) ?? emptyCache(effectiveDeployBlock);
   // Upper bound is the safe-tag head, NOT latest. Caching events from
   // the unsafe tip would mean a 1- to 32-block reorg could remove a
   // block whose `OfferAccepted` we already wrote to localStorage, and
@@ -972,7 +990,7 @@ async function runScan(
   // when it's strictly ahead of both other lower bounds — otherwise
   // the local cache holds richer information and we keep scanning
   // from there.
-  const baseFrom = Math.max(cached.lastBlock + 1, deployBlock);
+  const baseFrom = Math.max(cached.lastBlock + 1, effectiveDeployBlock);
   // T-086 Round-8 §19.7e + Codex round-19 P2 #2 — when the cache is
   // FRESH (lastBlock === deployBlock - 1), bypass the indexer hint
   // and scan from the deploy block. Otherwise the v2 cache bump's
@@ -985,7 +1003,7 @@ async function runScan(
   // doc-block above), so no existing user has a v1 cache to migrate
   // gracefully. Subsequent scans see `cached.lastBlock > deployBlock - 1`
   // and the fast-forward re-engages normally.
-  const isFreshCache = cached.lastBlock === deployBlock - 1;
+  const isFreshCache = cached.lastBlock === effectiveDeployBlock - 1;
   const fromBlock =
     !isFreshCache && indexerLastBlockHint && indexerLastBlockHint + 1 > baseFrom
       ? indexerLastBlockHint + 1

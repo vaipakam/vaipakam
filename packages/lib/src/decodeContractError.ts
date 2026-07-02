@@ -507,6 +507,32 @@ export function decodeContractError(err: unknown, fallback = 'Transaction failed
     e.message ??
     fallback;
 
+  // #780 — "exceeds max transaction gas limit" is what public RPCs surface
+  // when `eth_estimateGas` reverts during simulation and the wallet then
+  // falls back to a default gas ceiling (often ~30M) that overshoots the
+  // chain's per-transaction cap. It reads like a gas shortage but the real
+  // cause is almost always an upstream revert the estimator couldn't price —
+  // most commonly a missing ERC-20 allowance (approve first), or a stale
+  // frontend ABI whose calldata shape no longer matches the deployed facet
+  // (the historical F-0001 accept-offer failure). Only reword when we could
+  // NOT decode a concrete revert selector — a genuine named revert already
+  // returned its friendly copy above. Distinguish it so users don't chase a
+  // phantom gas problem.
+  if (
+    !sel &&
+    /exceeds max (?:transaction )?gas limit/i.test(base)
+  ) {
+    return (
+      'The wallet could not estimate this transaction and fell back to an ' +
+      "oversized gas limit that exceeds this chain's per-transaction cap. " +
+      'This is usually NOT a real gas shortage — the most common causes are ' +
+      'a missing token approval (approve the exact amount and retry) or a ' +
+      'stale app build whose call shape no longer matches the deployed ' +
+      'contract (hard-reload to load the latest version). If it persists, ' +
+      'share the diagnostics export with support.'
+    );
+  }
+
   // Unknown custom error + no friendly copy: append the selector name so
   // support can triage without shipping an ABI fix first.
   if (/unknown custom error/i.test(base)) {

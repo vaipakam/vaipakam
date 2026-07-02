@@ -1,5 +1,20 @@
 # Treasury Buyback (T-087 Sub 3)
 
+> **DORMANT / FUTURE-ONLY in Phase 1.** This document describes the *design*
+> of the treasury-funded VPFI buyback, but the feature is deliberately **not
+> activated** in Phase 1 — see
+> [`VPFISecuritiesFeatureExcision.md`](VPFISecuritiesFeatureExcision.md) §C
+> ("CONFIRM DORMANT — Phase-1 compliance = don't configure/run it") and the
+> buyback-legal-review card (#880). The cross-chain pipe may be wired by
+> `ConfigureCcip`, but the valve stays closed: no buyback allowed-token,
+> funded budget, or committed intent is configured, so **no buy pressure is
+> applied** and the "constant buy pressure" intent below is aspirational,
+> not a Phase-1 behaviour. Activation is a deliberate, legally-reviewed
+> operator decision. Also note the proceeds→**stakers** routing below is
+> **superseded**: the `5% APR` staking-reward program was removed in #687-B,
+> so any future activation must re-target proceeds (e.g. the current
+> rewards/keeper budget cascade), not a staking pool.
+>
 > Code-free, implementation-independent functional specification.
 > The platform IS the test oracle; this doc states intent, not
 > code.

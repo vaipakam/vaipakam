@@ -276,7 +276,10 @@ Diamond surface (Phase 1 to add):
 
 - `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
-- `ClaimFacet` (on every chain): `claimInteractionRewards(dayId[])` using `knownGlobalInterest[dayId]` as denominator
+- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple and error selectors are implementation detail):
+  - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
+  - the daily catch-up is **bounded per call**, so a user who has been away for a long stretch of finalized days may need to call `claimInteractionRewards()` more than once to fully catch up; nothing is lost — the caller's cursor persists between calls, so each call resumes where the last stopped. Claim Center / integrator UX should surface "more rewards still pending" after a bounded claim rather than implying a single call always clears everything;
+  - the surface is deliberately cursor/entry driven rather than a caller-supplied `dayId[]`, so integrators do not select days explicitly.
 
 Testing requirements beyond §9:
 
@@ -357,7 +360,7 @@ Borrower rules (Phase 5 and later):
 - when the VPFI path succeeds, `100%` of the requested lending asset is delivered to the borrower because the initiation fee has been satisfied entirely from vaulted VPFI
 - the borrower-side rebate bps at proper settlement must equal the user's current effective discount at that fee-application moment: Base reads the canonical accumulator, and mirrors read the authenticated cached tier
 - on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × effective-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
-- on default or HF-based liquidation, the entire held VPFI is forfeited to Treasury with no rebate
+- on default or HF-based liquidation, the borrower receives no rebate and the entire held VPFI is forfeited; for a matched loan the matcher's configured share is paid to the matcher first and the net is directed to Treasury, and for an unmatched loan the full held VPFI goes to Treasury (consistent with the matcher-share-applies-on-forfeiture rule above and the VPFI discount design)
 - on refinance, the OLD loan's borrower rebate is credited at settlement (the borrower earned that window fairly); the NEW loan gets a fresh opening snapshot and tracks a new independent window
 - pre-upgrade loans that predate Phase 5 carry zero-valued custody and no opening snapshot, so they silently settle with no rebate — they never paid VPFI up front
 
@@ -418,6 +421,7 @@ Eligibility and fallback:
 - Vault-held VPFI is a special non-collateral asset: it does not count toward collateral value, Health Factor, liquidation value, or LTV support
 - Vault-held VPFI on Base continues to count toward the canonical fee-utility balance for borrower discounts
 - if the asset is illiquid, the borrower has insufficient VPFI, or consent is disabled, the system falls back to the normal lending-asset fee path: the borrower pays `0.1%` in the loan asset and receives the net amount after that treasury deduction
+- the VPFI-LIF payment path is doubly gated: (a) it engages only when governance has configured the VPFI fee-discount pricing route — BOTH the price peg (`vpfiDiscountWeiPerVpfi`, historically `1 VPFI = 0.001 ETH`) AND an oracle-priceable ETH reference asset (`vpfiDiscountEthPriceAsset`); calling `setVPFIDiscountRate` alone, without a priceable reference asset, still leaves every VPFI quote unavailable — AND the borrower has consent enabled + sufficient tracked VPFI, and (b) it requires the borrower's effective discount tier to be `> 0` — a tier-0 borrower (for example within the minimum-history window) earns a zero rebate and is routed to the lending-asset fee path, since paying the LIF in VPFI would gain them nothing. Consistent with the near-zero-legal-surface posture (§7 and `docs/DesignsAndPlans/VPFISecuritiesFeatureExcision.md`), the conservative retail posture is that this pricing route **should remain unconfigured at Phase-1 launch until an organic VPFI secondary market exists** to anchor VPFI's value. Note this pricing route is **shared across all VPFI-denominated discounts**: while it is unconfigured, not only is the borrower LIF path inert (every borrower pays the LIF in the lending asset) but the **lender yield-fee VPFI discount is also off** (`quoteYieldFee` uses the same conversion helper), so lenders take the ordinary yield fee too. Leaving the peg unset is therefore an all-or-nothing switch for VPFI-priced discounts, not a borrower-only gate. NOTE: the current deploy configure phase (`ConfigureVPFIBuy` / `setVPFIDiscountRate`, invoked by `DiamondConfigSpell`) DOES set the peg, so realizing this posture requires skipping or adjusting that step at Phase-1 launch — reconciling the runbook with this posture is a tracked follow-up. Treasury buyback (which would create demand pressure on VPFI) likewise remains **dormant** in Phase 1 for the same reason — see §C of the excision plan: the cross-chain pipe may be wired by `ConfigureCcip` (messenger + `setBuybackRemittanceReceiver`), but the valve stays closed because no buyback allowed-token, funded budget, or committed intent is ever configured. Turning it on is a deliberate, legally-reviewed operator decision
 
 Acceptance-time flow:
 
@@ -427,7 +431,7 @@ Acceptance-time flow:
 4. the protocol resolves the borrower's current effective discount from Base or the active mirror cache
 5. for a liquid lending asset, the protocol converts the loan amount into ETH equivalent using the Chainlink-led active-chain pricing path
 6. the protocol calculates the full `0.1%` `Loan Initiation Fee`
-7. the protocol converts that full ETH-equivalent fee into exact VPFI required at the fixed rate `1 VPFI = 0.001 ETH`
+7. the protocol converts that full ETH-equivalent fee into the exact VPFI required at the governance-configured price peg `vpfiDiscountWeiPerVpfi` (historically `1 VPFI = 0.001 ETH`, i.e. `1e15` wei/VPFI); when the peg is unset the conversion is unavailable and the borrower takes the lending-asset fee path instead
 8. if vault balance is sufficient, the protocol deducts that VPFI from borrower vault into Diamond custody and sends `100%` of the requested lending asset to the borrower
 
 Settlement:
@@ -436,7 +440,7 @@ Settlement:
 - borrower rebate formula: `rebate = heldVPFI * effectiveDiscountBps / 10000`
 - the borrower rebate is claimable by the borrower-side Vaipakam NFT holder and is paid with the ordinary borrower claim
 - the unrewarded remainder of the held VPFI becomes Treasury's share
-- on default or HF-based liquidation, the borrower rebate is `0` and all VPFI held for that loan is forfeited to Treasury
+- on default or HF-based liquidation, the borrower rebate is `0` and the held VPFI is forfeited: for a matched loan the matcher's configured share is paid to the matcher first and the net is forfeited to Treasury; for an unmatched loan the full held VPFI is forfeited to Treasury
 
 Storage requirements:
 
@@ -526,13 +530,11 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
-All VPFI received as fees is recycled as follows (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner):
+VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum **numeraire** value and a maximum interval (`setTreasuryConvertThresholds`) — that gate when a conversion may run. (The threshold is denominated in the protocol's active numeraire, which is USD by default but governance-rotatable; it is not hard-wired to USD.) These thresholds are protocol-wide, not per-target and not per-asset: a single minimum-value gate and a single shared last-conversion timer are consulted for every input asset, so converting any one asset resets the interval gate for all of them. `convertTreasuryAsset` performs the conversions, but only when (a) targets are configured and (b) the Diamond itself is the treasury (Diamond-as-treasury mode); in external-treasury deployments (Treasury is a separate multisig/address) this path is unavailable and configuring targets does not enable it.
 
-- **`38%` → Buy ETH**
-- **`38%` → Buy wBTC**
-- **`24%` → Held as VPFI**
+The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper still shows the historical `38 / 38 / 24`; reconciling that marketing copy with the design doc's recommended list is a separate follow-up.)
 
-If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled using the same `38 / 38 / 24` split.
+If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same governance-configured conversion path (using whatever target allocation governance has set — there is no separate surplus-specific split).
 
 Buyback dormancy and fee-converted VPFI routing:
 
@@ -721,7 +723,7 @@ Testing requirements:
 - include liquid-asset borrower LIF VPFI tests across every discount tier
 - include effective-tier borrower rebate tests for min-history pending, last-minute top-up, withdraw-down, mirror-cache stale, and governance-tier-version-change cases
 - include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
-- include default and HF-liquidation tests proving held VPFI is forfeited to Treasury with no rebate
+- include default and HF-liquidation tests proving held VPFI is forfeited with no rebate, covering BOTH cases: a matched loan pays the matcher's configured share first and forfeits the net to Treasury, and an unmatched loan forfeits the full held VPFI to Treasury
 - include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
 - include tests that vault-held VPFI updates fee-discount accrual without being counted as collateral
 
@@ -782,7 +784,9 @@ Acceptance criteria:
   conversion, full `0.1%` LIF computation, and exact VPFI deduction before
   sending `100%` of requested lending asset to the borrower
 - properly closed loans credit an effective-tier VPFI rebate; defaulted or
-  HF-liquidated loans forfeit the held VPFI to Treasury
+  HF-liquidated loans forfeit the held VPFI with no rebate — a matched loan
+  pays the matcher's configured share first and forfeits the net to Treasury,
+  an unmatched loan forfeits the full amount to Treasury
 - event transparency, NatSpec coverage, and Diamond storage compatibility are
   satisfied
 

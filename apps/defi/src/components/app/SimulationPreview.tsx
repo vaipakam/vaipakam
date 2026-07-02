@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
-import { ShieldCheck, AlertTriangle, Loader2 } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, Loader2, KeyRound } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useTxSimulation, type TxSimInput } from '../../hooks/useTxSimulation';
 
@@ -51,6 +51,35 @@ export function SimulationPreview({ tx, children }: SimulationPreviewProps) {
         <span style={{ fontSize: '0.85rem' }}>
           {t('simulationPreview.scanning')}
         </span>
+      </div>
+    );
+  }
+
+  // The only blocker is a missing ERC-20 allowance the submit flow grants
+  // first (opt-in via `allowAllowanceRevert`). Render a calm, informational
+  // "approval required" card — not the orange revert warning — so the
+  // preview stops contradicting a submit path that actually succeeds.
+  // (F-20260630-002.)
+  if (result.status === 'approval-needed') {
+    return (
+      <div
+        className="alert"
+        style={{
+          marginTop: 8,
+          borderColor: 'var(--accent-blue, #3b82f6)',
+          background: 'rgba(59, 130, 246, 0.06)',
+        }}
+      >
+        <KeyRound size={18} style={{ color: 'var(--accent-blue, #3b82f6)' }} />
+        <div style={{ fontSize: '0.88rem', flex: 1 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            {t('simulationPreview.approvalNeededTitle')}
+          </div>
+          <div style={{ fontSize: '0.82rem', opacity: 0.85 }}>
+            {t('simulationPreview.approvalNeededBody')}
+          </div>
+          {children}
+        </div>
       </div>
     );
   }
