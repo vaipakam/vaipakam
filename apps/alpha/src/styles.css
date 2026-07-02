@@ -980,7 +980,7 @@ dd {
   color: var(--brand-strong);
 }
 
-.alpha-field {
+.app-field {
   display: grid;
   gap: 8px;
   margin-top: 16px;
@@ -989,7 +989,7 @@ dd {
   font-weight: 750;
 }
 
-.alpha-field input {
+.app-field input {
   width: 100%;
   min-height: 44px;
   padding: 0 12px;

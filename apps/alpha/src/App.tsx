@@ -315,15 +315,29 @@ const advancedPanels = [
   },
 ];
 
+const APP_STORAGE_KEYS = {
+  mode: 'vaipakam-app-mode',
+  risk: 'vaipakam-app-risk',
+  language: 'vaipakam-app-language',
+  analytics: 'vaipakam-app-analytics',
+  lastError: 'vaipakam-app-last-error',
+} as const;
+
+function readAppStorage(key: keyof typeof APP_STORAGE_KEYS) {
+  if (typeof window === 'undefined') return null;
+  const storageKey = APP_STORAGE_KEYS[key];
+  return window.localStorage.getItem(storageKey) ?? window.sessionStorage.getItem(storageKey);
+}
+
 function App() {
   const [mode, setModeState] = useState<Mode>(() => {
     if (typeof window === 'undefined') return 'guided';
-    return window.localStorage.getItem('vaipakam-alpha-mode') === 'advanced' ? 'advanced' : 'guided';
+    return readAppStorage('mode') === 'advanced' ? 'advanced' : 'guided';
   });
   const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
   const setMode = (nextMode: Mode) => {
     setModeState(nextMode);
-    window.localStorage.setItem('vaipakam-alpha-mode', nextMode);
+    window.localStorage.setItem(APP_STORAGE_KEYS.mode, nextMode);
   };
 
   useEffect(() => {
@@ -406,27 +420,27 @@ function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar" aria-label="Vaipakam Alpha navigation">
+      <aside className="sidebar" aria-label="Vaipakam navigation">
         <a className="brand" href="/">
           <span className="brand-mark">V</span>
           <span>
-            <strong>Vaipakam Alpha</strong>
+            <strong>Vaipakam</strong>
             <small>Task-first protocol UI</small>
           </span>
         </a>
         <nav className="nav-list">
-          <AlphaNavLink to="/" label="Start" icon={<Sparkles />} />
-          <AlphaNavLink to="/earn" label="Earn" icon={<PiggyBank />} />
-          <AlphaNavLink to="/borrow" label="Borrow" icon={<HandCoins />} />
-          <AlphaNavLink to="/rent" label="NFT Rental" icon={<Box />} />
-          <AlphaNavLink to="/offers" label="Offers" icon={<Store />} />
-          <AlphaNavLink to="/claims" label="Claims" icon={<ReceiptText />} />
-          <AlphaNavLink to="/vault" label="Vault" icon={<LockKeyhole />} />
-          <AlphaNavLink to="/activity" label="Activity" icon={<History />} />
-          <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
-          <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
-          <AlphaNavLink to="/settings" label="Settings" icon={<SettingsIcon />} />
-          <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
+          <AppNavLink to="/" label="Start" icon={<Sparkles />} />
+          <AppNavLink to="/earn" label="Earn" icon={<PiggyBank />} />
+          <AppNavLink to="/borrow" label="Borrow" icon={<HandCoins />} />
+          <AppNavLink to="/rent" label="NFT Rental" icon={<Box />} />
+          <AppNavLink to="/offers" label="Offers" icon={<Store />} />
+          <AppNavLink to="/claims" label="Claims" icon={<ReceiptText />} />
+          <AppNavLink to="/vault" label="Vault" icon={<LockKeyhole />} />
+          <AppNavLink to="/activity" label="Activity" icon={<History />} />
+          <AppNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
+          <AppNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
+          <AppNavLink to="/settings" label="Settings" icon={<SettingsIcon />} />
+          <AppNavLink to="/help" label="Help" icon={<LifeBuoy />} />
         </nav>
         <div className="sidebar-note">
           <ShieldCheck size={18} />
@@ -479,7 +493,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
       message: error instanceof Error ? error.message : 'Unknown route error',
       componentStack: (info.componentStack ?? '').slice(0, 800),
     };
-    window.sessionStorage.setItem('vaipakam-alpha-last-error', JSON.stringify(entry));
+    window.sessionStorage.setItem(APP_STORAGE_KEYS.lastError, JSON.stringify(entry));
   }
 
   render() {
@@ -488,7 +502,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
       <section className="recovery-card panel-surface" role="alert">
         <p className="eyebrow">Recovery</p>
         <h2>This page could not render safely.</h2>
-        <p>The rest of Vaipakam Alpha is still available. A redacted crash note was saved in this browser session for support.</p>
+        <p>The rest of Vaipakam is still available. A redacted crash note was saved in this browser session for support.</p>
         <code>{this.state.message}</code>
         <div className="hero-actions">
           <button className="primary-action" type="button" onClick={() => window.location.reload()}>Reload page</button>
@@ -499,7 +513,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
   }
 }
 
-function AlphaNavLink({ to, label, icon }: { to: string; label: string; icon: ReactNode }) {
+function AppNavLink({ to, label, icon }: { to: string; label: string; icon: ReactNode }) {
   return (
     <NavLink to={to} end={to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
       {icon}
@@ -522,7 +536,7 @@ function TopBar({
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">Alpha redesign direction</p>
+        <p className="eyebrow">Product workspace</p>
         <h1>Make the first decision easy, then reveal power carefully.</h1>
       </div>
       <div className="topbar-controls">
@@ -569,7 +583,7 @@ function Home({ mode }: { mode: Mode }) {
           <p className="eyebrow">A DeFi + DEX + NFT rental workspace</p>
           <h2>Vaipakam should feel like choosing an outcome, not decoding a contract.</h2>
           <p>
-            The alpha starts in {mode} mode with user intent: earn, borrow, rent, or manage. Protocol details such as offer NFTs, vault locks,
+            Vaipakam starts in {mode} mode with user intent: earn, borrow, rent, or manage. Protocol details such as offer NFTs, vault locks,
             liquidity tiers, VPFI discounts, and keeper automation become visible at the moment they affect a decision.
           </p>
           <div className="hero-actions">
@@ -671,7 +685,7 @@ function FlowPage({
         </div>
       </section>
 
-      <section className="guided-board" aria-label={flow.title + ' alpha flow'}>
+      <section className="guided-board" aria-label={flow.title + ' guided flow'}>
         <div className="flow-form panel-surface">
           <p className="eyebrow">Step 1</p>
           <h3>{flow.assetQuestion}</h3>
@@ -687,7 +701,7 @@ function FlowPage({
               </button>
             ))}
           </div>
-          <label className="alpha-field">
+          <label className="app-field">
             <span>{flow.amountLabel}</span>
             <input
               inputMode="decimal"
@@ -764,7 +778,7 @@ function FlowPage({
 
       <section className="decision-strip">
         <div>
-          <p className="eyebrow">Alpha interaction model</p>
+          <p className="eyebrow">Interaction model</p>
           <h3>Start simple. Let advanced users opt into more knobs.</h3>
         </div>
         <NavLink className="secondary-action" to="/advanced">See advanced controls</NavLink>
@@ -791,7 +805,7 @@ const activityItems: ActivityItem[] = [
     id: 'wallet-base-sepolia',
     source: 'wallet',
     title: 'Wallet connected on Base Sepolia',
-    detail: 'The alpha can read wallet and network state before showing action CTAs.',
+    detail: 'Vaipakam can read wallet and network state before showing action CTAs.',
     status: 'Observed',
     when: 'Now',
     impact: 'Actions can stay gated to the supported test network.',
@@ -1091,7 +1105,7 @@ function OfferBook({ wallet, onConnectWallet }: { wallet: WalletState; onConnect
             ))}
           </dl>
           {blocker ? <p className="inline-error">{blocker}</p> : null}
-          {reviewedOfferId === selectedOffer.id ? <p className="inline-success">Reviewed locally. Contract action is not submitted from alpha yet.</p> : null}
+          {reviewedOfferId === selectedOffer.id ? <p className="inline-success">Reviewed locally. Contract action is not submitted yet.</p> : null}
           <button
             className="primary-action wide"
             type="button"
@@ -1156,7 +1170,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
     <div className="activity-page">
       <SectionHeading eyebrow="Activity" title="A readable timeline of what needs attention" />
       <p className="page-intro">
-        Activity separates observed wallet state, local alpha queues, and actions that still need review. It should never make a local preview look like an on-chain transaction.
+        Activity separates observed wallet state, local action queues, and actions that still need review. It should never make a local preview look like an on-chain transaction.
       </p>
 
       <section className="activity-summary">
@@ -1292,23 +1306,23 @@ function Manage({ mode }: { mode: Mode }) {
 
 
 function SettingsPanel() {
-  const [riskGuardrail, setRiskGuardrail] = useState(() => localStorage.getItem('vaipakam-alpha-risk') ?? 'guided');
-  const [language, setLanguage] = useState(() => localStorage.getItem('vaipakam-alpha-language') ?? 'English');
+  const [riskGuardrail, setRiskGuardrail] = useState(() => readAppStorage('risk') ?? 'guided');
+  const [language, setLanguage] = useState(() => readAppStorage('language') ?? 'English');
   const confirmReceipts = true;
-  const [localAnalytics, setLocalAnalytics] = useState(() => localStorage.getItem('vaipakam-alpha-analytics') === 'true');
+  const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
   const [emergencyPause, setEmergencyPause] = useState(false);
 
   const updateRisk = (value: string) => {
     setRiskGuardrail(value);
-    localStorage.setItem('vaipakam-alpha-risk', value);
+    localStorage.setItem(APP_STORAGE_KEYS.risk, value);
   };
   const updateLanguage = (value: string) => {
     setLanguage(value);
-    localStorage.setItem('vaipakam-alpha-language', value);
+    localStorage.setItem(APP_STORAGE_KEYS.language, value);
   };
   const updateLocalAnalytics = (value: boolean) => {
     setLocalAnalytics(value);
-    localStorage.setItem('vaipakam-alpha-analytics', String(value));
+    localStorage.setItem(APP_STORAGE_KEYS.analytics, String(value));
   };
 
   return (
@@ -1345,7 +1359,7 @@ function SettingsPanel() {
             <span>Review receipt required before wallet prompt</span>
             <input type="checkbox" checked={confirmReceipts} readOnly aria-readonly="true" />
           </label>
-          <p>Receipt review is locked on in alpha because it protects users from hidden obligations.</p>
+          <p>Receipt review is locked on because it protects users from hidden obligations.</p>
           <label className="toggle-row">
             <span>Store local usability analytics</span>
             <input type="checkbox" checked={localAnalytics} onChange={(event) => updateLocalAnalytics(event.target.checked)} />
@@ -1355,16 +1369,16 @@ function SettingsPanel() {
         <article className="settings-card panel-surface">
           <p className="eyebrow">Privacy</p>
           <h3>Browser data and support</h3>
-          <p>Export or clear alpha-local settings without touching public chain history.</p>
+          <p>Export or clear local settings without touching public chain history.</p>
           <NavLink className="secondary-action" to="/data-rights">Open data rights</NavLink>
         </article>
 
         <article className="settings-card panel-surface">
           <p className="eyebrow">Emergency</p>
           <h3>{emergencyPause ? 'New actions paused locally' : 'Actions available'}</h3>
-          <p>Pausing here does not touch contracts. It prevents the alpha UI from presenting new action CTAs until resumed.</p>
+          <p>Pausing here does not touch contracts. It prevents the Vaipakam interface from presenting new action CTAs until resumed.</p>
           <button className={emergencyPause ? 'secondary-action' : 'danger-action'} type="button" onClick={() => setEmergencyPause((current) => !current)}>
-            {emergencyPause ? 'Resume alpha actions' : 'Pause new alpha actions'}
+            {emergencyPause ? 'Resume Vaipakam actions' : 'Pause new Vaipakam actions'}
           </button>
         </article>
       </section>
@@ -1383,7 +1397,7 @@ function SettingsPanel() {
 function DataRights({ wallet }: { wallet: WalletState }) {
   const [report, setReport] = useState('');
   const [cleared, setCleared] = useState(false);
-  const storageKeys = ['vaipakam-alpha-mode', 'vaipakam-alpha-risk', 'vaipakam-alpha-language', 'vaipakam-alpha-analytics', 'vaipakam-alpha-last-error'];
+  const storageKeys = Object.values(APP_STORAGE_KEYS);
 
   const buildReport = () => {
     const snapshot = storageKeys.reduce<Record<string, string | null>>((result, key) => {
@@ -1394,8 +1408,8 @@ function DataRights({ wallet }: { wallet: WalletState }) {
       generatedAt: new Date().toISOString(),
       wallet: wallet.account ? shortAddress(wallet.account) : 'not connected',
       chain: chainLabel(wallet.chainId),
-      alphaStorage: snapshot,
-      note: 'Browser-local Vaipakam Alpha report. Public on-chain state is not included and cannot be erased by this action.',
+      appStorage: snapshot,
+      note: 'Browser-local Vaipakam report. Public on-chain state is not included and cannot be erased by this action.',
     }, null, 2);
     setReport(nextReport);
   };
@@ -1405,13 +1419,13 @@ function DataRights({ wallet }: { wallet: WalletState }) {
     const url = URL.createObjectURL(new Blob([report], { type: 'application/json' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'vaipakam-alpha-local-report.json';
+    link.download = 'vaipakam-local-support-report.json';
     link.click();
     URL.revokeObjectURL(url);
   };
 
   const clearLocalData = () => {
-    const confirmed = window.confirm('Clear Vaipakam Alpha local settings and support notes from this browser?');
+    const confirmed = window.confirm('Clear Vaipakam local settings and support notes from this browser?');
     if (!confirmed) return;
     storageKeys.forEach((key) => {
       window.localStorage.removeItem(key);
@@ -1423,16 +1437,16 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
   return (
     <div className="data-rights-page">
-      <SectionHeading eyebrow="Data rights" title="Control the browser data this alpha stores" />
+      <SectionHeading eyebrow="Data rights" title="Control the browser data Vaipakam stores" />
       <p className="page-intro">
-        Vaipakam Alpha can clear its local preferences and support notes from this browser. It cannot erase public blockchain history, wallet transactions, or state held by deployed contracts.
+        Vaipakam can clear its local preferences and support notes from this browser. It cannot erase public blockchain history, wallet transactions, or state held by deployed contracts.
       </p>
 
       <section className="data-rights-grid">
         <article className="data-card panel-surface">
           <span><Download size={20} /></span>
-          <h3>Export local alpha report</h3>
-          <p>Creates a redacted browser-local snapshot of alpha preferences, route crash notes, wallet status, and network status for support.</p>
+          <h3>Export local support report</h3>
+          <p>Creates a redacted browser-local snapshot of Vaipakam preferences, route crash notes, wallet status, and network status for support.</p>
           <div className="hero-actions">
             <button className="secondary-action" type="button" onClick={buildReport}>Generate report</button>
             <button className="primary-action" type="button" onClick={downloadReport} disabled={!report}>Download</button>
@@ -1441,10 +1455,10 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
         <article className="data-card panel-surface danger-zone">
           <span><Trash2 size={20} /></span>
-          <h3>Clear alpha-local data</h3>
-          <p>Removes Vaipakam Alpha preferences, analytics opt-in state, and session crash notes from this browser only.</p>
-          <button className="danger-action" type="button" onClick={clearLocalData}>Clear local alpha data</button>
-          {cleared ? <p className="inline-success">Local alpha data cleared in this browser.</p> : null}
+          <h3>Clear local data</h3>
+          <p>Removes Vaipakam preferences, analytics opt-in state, and session crash notes from this browser only.</p>
+          <button className="danger-action" type="button" onClick={clearLocalData}>Clear local Vaipakam data</button>
+          {cleared ? <p className="inline-success">Local Vaipakam data cleared in this browser.</p> : null}
         </article>
 
         <article className="data-card panel-surface">
@@ -1467,7 +1481,7 @@ function NotFound() {
   return (
     <section className="recovery-card panel-surface">
       <p className="eyebrow">Not found</p>
-      <h2>That alpha page does not exist.</h2>
+      <h2>That page does not exist.</h2>
       <p>Return to the guided start screen or open the help guide to find the right workflow.</p>
       <div className="hero-actions">
         <NavLink className="primary-action" to="/">Back to start</NavLink>
