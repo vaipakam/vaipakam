@@ -76,6 +76,13 @@ contract ConfigureOracle is Script {
         return vm.envOr(full, vm.envOr(key, address(0)));
     }
 
+    /// @dev Chain-prefixed ONLY — no bare-key fallback. For keys where a bare
+    ///      value belonging to a different chain must never be inherited (e.g.
+    ///      the ZEROX_* liquidation-route addresses on a chain that has no 0x).
+    function _resolveAddressPrefixedOnly(string memory key) internal view returns (address) {
+        return vm.envOr(string.concat(_prefix(), key), address(0));
+    }
+
     function _resolveAddressStrict(string memory key) internal view returns (address) {
         address a = _resolveAddress(key);
         if (a == address(0)) {
@@ -106,8 +113,14 @@ contract ConfigureOracle is Script {
         // mainnet (56) but not the testnet, and no Settler/AllowanceHolder is
         // deployed there. Such chains route liquidations through an on-chain DEX
         // adapter instead (see the swap-adapter enforcement below).
-        address zeroEx = _resolveAddress("ZEROX_PROXY");
-        address allowanceTarget = _resolveAddress("ZEROX_ALLOWANCE_TARGET");
+        // Resolve the ZEROX keys CHAIN-PREFIXED ONLY (no bare fallback). On a
+        // no-0x chain (e.g. BNB testnet) `BNB_TESTNET_ZEROX_PROXY` is
+        // deliberately unset; a bare `ZEROX_PROXY` left in a shared multi-chain
+        // .env for another chain must NOT be inherited here — that would flip
+        // this chain into the "0x configured" branch and skip the swap-adapter
+        // safety check, leaving BNB testnet with no usable liquidation route.
+        address zeroEx = _resolveAddressPrefixedOnly("ZEROX_PROXY");
+        address allowanceTarget = _resolveAddressPrefixedOnly("ZEROX_ALLOWANCE_TARGET");
         // Feed Registry only exists on Ethereum mainnet; optional.
         address feedRegistry = _resolveAddress("CHAINLINK_REGISTRY");
 
@@ -172,6 +185,29 @@ contract ConfigureOracle is Script {
         );
         console.log("Pre-flight: broadcaster holds Diamond owner + ADMIN_ROLE");
 
+        // Pre-flight the liquidation-route config BEFORE any broadcast. A later
+        // `require` inside the broadcast would NOT roll back the earlier oracle
+        // setters (setWethContract/feeds/factory), leaving the chain with pricing
+        // enabled but no liquidation venue — the exact state this guard prevents.
+        // Either 0x is fully configured, or it's fully absent AND an on-chain DEX
+        // ISwapAdapter is already registered (e.g. UniV3Adapter → PancakeSwap V3
+        // on BNB testnet; run DeployUniV3Adapter.s.sol BEFORE this script).
+        if (zeroEx != address(0)) {
+            require(
+                allowanceTarget != address(0),
+                "ConfigureOracle: ZEROX_PROXY set but ZEROX_ALLOWANCE_TARGET missing (set both or neither)"
+            );
+        } else {
+            require(
+                allowanceTarget == address(0),
+                "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
+            );
+            require(
+                AdminFacet(diamond).getSwapAdapters().length > 0,
+                "ConfigureOracle: no liquidation route - set <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET), or register an on-chain DEX swap adapter first (DeployUniV3Adapter.s.sol)"
+            );
+        }
+
         vm.startBroadcast(deployerKey);
 
         OracleAdminFacet oa = OracleAdminFacet(diamond);
@@ -186,26 +222,12 @@ contract ConfigureOracle is Script {
         if (feedRegistry != address(0)) {
             oa.setChainlinkRegistry(feedRegistry);
         }
-        // Set the 0x route when configured; when it isn't, skip it but REFUSE to
-        // leave the Diamond with NO liquidation venue — at least one on-chain DEX
-        // ISwapAdapter must already be registered (e.g. UniV3Adapter → PancakeSwap
-        // V3 on BNB testnet; run DeployUniV3Adapter.s.sol BEFORE this script).
+        // 0x route — set when configured (validated pre-broadcast above). When
+        // absent, liquidations route via the registered on-chain swap adapter(s).
         if (zeroEx != address(0)) {
-            require(
-                allowanceTarget != address(0),
-                "ConfigureOracle: ZEROX_PROXY set but ZEROX_ALLOWANCE_TARGET missing (set both or neither)"
-            );
             af.setZeroExProxy(zeroEx);
             af.setallowanceTarget(allowanceTarget);
         } else {
-            require(
-                allowanceTarget == address(0),
-                "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
-            );
-            require(
-                af.getSwapAdapters().length > 0,
-                "ConfigureOracle: no liquidation route - set <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET), or register an on-chain DEX swap adapter first (DeployUniV3Adapter.s.sol)"
-            );
             console.log("0x unset - liquidation via registered on-chain swap adapter(s) only (e.g. PancakeSwap V3 on BNB testnet).");
         }
 

@@ -69,5 +69,6 @@
   "vpfiMirror": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d",
   "swapAdapters": {
     "uniV3": "0x246b05E45e45B6eA5eb695c9E128aaD7519E0Adc"
-  }
+  },
+  "oracleTestnetMockWeth": "0x6D874ff9a55517c61cECE2936B8F457a3ad9102d"
 }

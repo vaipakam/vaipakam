@@ -94,14 +94,33 @@ contract DeployUniV3Adapter is Script {
         console.log("  Diamond:     ", diamond);
         console.log("  SwapRouter:  ", router);
 
-        // Idempotency — skip if a UniswapV3-named adapter is already registered.
+        // Idempotency — a UniswapV3-named adapter already registered is a no-op
+        // ONLY if it wraps the SAME router we resolved. If it points at a
+        // different router (a prior run with a wrong/old env value, or reuse on a
+        // chain with a different UniV3-style router), returning cleanly would
+        // leave liquidation swaps aimed at the wrong venue while
+        // ConfigureOracle's adapter-count check still passes — so FAIL LOUD
+        // instead, prompting the operator to remove the stale adapter first.
         address[] memory existing = AdminFacet(diamond).getSwapAdapters();
         for (uint256 i = 0; i < existing.length; i++) {
             if (
                 keccak256(bytes(ISwapAdapter(existing[i]).adapterName()))
                     == keccak256(bytes("UniswapV3"))
             ) {
-                console.log("  Already registered UniswapV3 adapter:", existing[i]);
+                address existingRouter = address(UniV3Adapter(existing[i]).ROUTER());
+                require(
+                    existingRouter == router,
+                    string.concat(
+                        "DeployUniV3Adapter: a UniswapV3 adapter (",
+                        vm.toString(existing[i]),
+                        ") is already registered pointing at a DIFFERENT router (",
+                        vm.toString(existingRouter),
+                        " != ",
+                        vm.toString(router),
+                        ") - remove it via AdminFacet before re-registering"
+                    )
+                );
+                console.log("  Already registered UniswapV3 adapter (same router):", existing[i]);
                 console.log("  Nothing to do.");
                 return;
             }

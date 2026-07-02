@@ -16,13 +16,25 @@ router). This gives BNB testnet a fully on-chain liquidation route with no
 dependency on an external aggregator API.
 
 To support this, the oracle-configuration script now recognises BNB (mainnet
-and testnet) and treats the 0x proxy as optional: when it isn't configured,
-the script requires that at least one on-chain swap adapter is already
-registered, so a chain can never end up with no liquidation route at all.
-Chains that do have 0x (all mainnets, including BNB mainnet) continue to
-require it as before.
+and testnet) and treats the 0x proxy as optional: when it isn't configured, the
+script requires that at least one on-chain swap adapter is already registered
+(validated before any transaction is broadcast, so a misconfigured run can't
+leave the chain half-configured), so a chain can never end up with no
+liquidation route at all. Chains that do have 0x (all mainnets, including BNB
+mainnet) continue to require it as before.
 
-Every BNB-testnet address used (wrapped-native token, the price feed, the
-PancakeSwap factory and router) was verified on-chain before use, and the
-resulting configuration was confirmed by checking that the wrapped-native
-asset now classifies as liquid on the BNB-testnet diamond.
+The price numeraire follows the platform's canonical rule: the "WETH" oracle
+slot must be a bridged-WETH9 (ETH-denominated) token plus an ETH/USD feed —
+never the wrapped-native — because the pool-depth valuation assumes
+ETH-denominated value. BNB testnet has no canonical bridged-ETH, so a deployed
+18-decimal WETH stand-in is used there (mainnet BNB and, later, Polygon use
+their real bridged-WETH9). This keeps the configuration production-representative
+and identical in shape across every non-ETH-gas chain. The keeper's swap-quote
+registry was also given a BNB-testnet entry (PancakeSwap's V3 quoter + the
+on-chain adapter index) so the keeper actually produces liquidation quotes for
+the chain rather than skipping it.
+
+Every BNB-testnet address was verified on-chain before use (the price feed, the
+PancakeSwap factory / router / quoter — the router and quoter both confirmed to
+share the oracle's configured factory), and the result was confirmed by checking
+that the numeraire asset classifies as liquid on the BNB-testnet diamond.
