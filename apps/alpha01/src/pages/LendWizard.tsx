@@ -24,7 +24,13 @@ import { useBorrowerOffersForLend } from '../hooks/useBorrowerOffers';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
-import { peekTokenMeta, useTokenMeta, type TokenMeta } from '../lib/tokenMeta';
+import {
+  hasResolvedTokenDecimals,
+  peekTokenMeta,
+  requireTokenDecimals,
+  useTokenMeta,
+  type TokenMeta,
+} from '../lib/tokenMeta';
 
 type Path = 'fund' | 'create';
 type Step = 'choose' | 'pick' | 'inputs' | 'check' | 'review' | 'done';
@@ -146,9 +152,32 @@ export function LendWizard() {
         isSanctioned: sanctions.isSanctioned,
         sanctionsLoading: sanctions.loading,
       }),
-      ...(path === 'create' ? [{ id: 'amount', label: 'Lend amount entered', ok: Number(amount) > 0 }] : []),
+      ...(path === 'create'
+        ? [
+            { id: 'amount', label: 'Lend amount entered', ok: Number(amount) > 0 },
+            {
+              id: 'lending-decimals',
+              label: lendingMeta?.symbol
+                ? `${lendingMeta.symbol} decimals loaded`
+                : 'Loading lending token decimals…',
+              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
+            },
+          ]
+        : []),
     ],
-    [address, amount, chain.name, connect, consent, isCorrectChain, path, sanctions, switchToAppChain],
+    [
+      address,
+      amount,
+      chain.name,
+      connect,
+      consent,
+      isCorrectChain,
+      lendingAsset,
+      lendingMeta,
+      path,
+      sanctions,
+      switchToAppChain,
+    ],
   );
 
   const allOk =
@@ -189,9 +218,10 @@ export function LendWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
-      const lendingDecimals = lendingMeta?.decimals ?? peekTokenMeta(lendingAsset)?.decimals ?? 18;
-      const collateralDecimals =
-        peekTokenMeta(collateralAsset)?.decimals ?? 18;
+      const lendingDecimals = requireTokenDecimals(lendingMeta, lendingAsset, 'Lending asset');
+      const collateralDecimals = hasResolvedTokenDecimals(null, collateralAsset)
+        ? requireTokenDecimals(null, collateralAsset, 'Collateral asset')
+        : 18;
       await createLenderOffer({
         diamond,
         publicClient,
@@ -302,7 +332,16 @@ export function LendWizard() {
           </p>
           <div className="wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>Back</button>
-            <button type="button" className="btn btn-primary" disabled={Number(amount) <= 0} onClick={() => setStep('check')}>Continue</button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={
+                Number(amount) <= 0 || !hasResolvedTokenDecimals(lendingMeta, lendingAsset)
+              }
+              onClick={() => setStep('check')}
+            >
+              Continue
+            </button>
           </div>
         </>
       ) : null}

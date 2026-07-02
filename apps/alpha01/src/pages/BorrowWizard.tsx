@@ -31,7 +31,13 @@ import { useMode } from '../context/ModeContext';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import { assessCollateralBalance } from '../lib/balanceCheck';
-import { peekTokenMeta, useTokenMeta, type TokenMeta } from '../lib/tokenMeta';
+import {
+  hasResolvedTokenDecimals,
+  peekTokenMeta,
+  requireTokenDecimals,
+  useTokenMeta,
+  type TokenMeta,
+} from '../lib/tokenMeta';
 
 type Step = 'intent' | 'match' | 'check' | 'review' | 'done';
 type Mode = 'accept' | 'request';
@@ -234,6 +240,20 @@ export function BorrowWizard() {
         ? [
             { id: 'collateral', label: 'Collateral amount entered', ok: Number(collateralAmount) > 0 },
             { id: 'amount', label: 'Borrow amount entered', ok: Number(amount) > 0 },
+            {
+              id: 'lending-decimals',
+              label: lendingMeta?.symbol
+                ? `${lendingMeta.symbol} decimals loaded`
+                : 'Loading borrow asset decimals…',
+              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
+            },
+            {
+              id: 'collateral-decimals',
+              label: collateralMeta?.symbol
+                ? `${collateralMeta.symbol} decimals loaded`
+                : 'Loading collateral decimals…',
+              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset),
+            },
           ]
         : []),
       ...(collateralBalance.sufficient != null
@@ -253,10 +273,14 @@ export function BorrowWizard() {
       amount,
       chain.name,
       collateralAmount,
+      collateralAsset,
       collateralBalance.sufficient,
+      collateralMeta,
       connect,
       consent,
       isCorrectChain,
+      lendingAsset,
+      lendingMeta,
       mode,
       sanctions,
       switchToAppChain,
@@ -323,9 +347,12 @@ export function BorrowWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
-      const lendingDecimals = lendingMeta?.decimals ?? peekTokenMeta(lendingAsset)?.decimals ?? 18;
-      const collateralDecimals =
-        collateralMeta?.decimals ?? peekTokenMeta(collateralAsset)?.decimals ?? 18;
+      const lendingDecimals = requireTokenDecimals(lendingMeta, lendingAsset, 'Borrow asset');
+      const collateralDecimals = requireTokenDecimals(
+        collateralMeta,
+        collateralAsset,
+        'Collateral asset',
+      );
       await createBorrowerOffer({
         diamond,
         publicClient,

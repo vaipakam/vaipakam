@@ -107,6 +107,27 @@ export async function fetchTokenMeta(
   return task;
 }
 
+/** True when on-chain metadata has been fetched (symbol present in cache). */
+export function hasResolvedTokenDecimals(
+  meta: TokenMeta | null | undefined,
+  address: string,
+): boolean {
+  const resolved = meta ?? peekTokenMeta(address);
+  return !!resolved?.symbol && Number.isFinite(resolved.decimals) && resolved.decimals > 0;
+}
+
+export function requireTokenDecimals(
+  meta: TokenMeta | null | undefined,
+  address: string,
+  label: string,
+): number {
+  const resolved = meta ?? peekTokenMeta(address);
+  if (!resolved?.symbol || !Number.isFinite(resolved.decimals)) {
+    throw new Error(`${label} token metadata is still loading`);
+  }
+  return resolved.decimals;
+}
+
 export function peekTokenMeta(address: string | null | undefined): TokenMeta | null {
   if (!address) return null;
   seedMemoryFromStorage();
