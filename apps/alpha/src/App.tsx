@@ -1032,7 +1032,7 @@ function FlowPage({
       });
       setApprovalResult({
         status: 'submitted',
-        message: 'Approval submitted. Recheck wallet readiness after the transaction confirms.',
+        message: 'Approval submitted. Recheck wallet readiness after the transaction confirms. If the transaction fails, change the amount to reset and retry.',
         txHash: typeof txHash === 'string' ? txHash : undefined,
       });
     } catch (error) {
@@ -1841,13 +1841,7 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
     return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: asset.symbol + ' supports at most ' + asset.decimals + ' decimal places. Shorten the amount before wallet checks can run.' };
   }
   if (isBorrow) {
-    return {
-      asset,
-      requiredAmount,
-      requiredLabel,
-      spender: null,
-      unavailableReason: 'Borrow collateral is deposited into your personal vault. Vaipakam needs the vault address before it can check or request token approval.',
-    };
+    return { asset, requiredAmount, requiredLabel, spender: diamond, unavailableReason: null };
   }
   return { asset, requiredAmount, requiredLabel, spender: diamond, unavailableReason: null };
 }
