@@ -23,6 +23,7 @@ import {
   Sparkles,
   Store,
   Wallet,
+  Settings as SettingsIcon,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { useEffect, useState } from 'react';
@@ -419,6 +420,7 @@ function App() {
           <AlphaNavLink to="/vault" label="Vault" icon={<LockKeyhole />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
+          <AlphaNavLink to="/settings" label="Settings" icon={<SettingsIcon />} />
           <AlphaNavLink to="/help" label="Help" icon={<LifeBuoy />} />
         </nav>
         <div className="sidebar-note">
@@ -439,6 +441,7 @@ function App() {
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
+          <Route path="/settings" element={<SettingsPanel />} />
           <Route path="/help" element={<Help />} />
         </Routes>
       </main>
@@ -1069,6 +1072,88 @@ function Manage({ mode }: { mode: Mode }) {
             </article>
           );
         })}
+      </section>
+    </div>
+  );
+}
+
+
+function SettingsPanel() {
+  const [riskGuardrail, setRiskGuardrail] = useState(() => localStorage.getItem('vaipakam-alpha-risk') ?? 'guided');
+  const [language, setLanguage] = useState(() => localStorage.getItem('vaipakam-alpha-language') ?? 'English');
+  const confirmReceipts = true;
+  const [localAnalytics, setLocalAnalytics] = useState(() => localStorage.getItem('vaipakam-alpha-analytics') === 'true');
+  const [emergencyPause, setEmergencyPause] = useState(false);
+
+  const updateRisk = (value: string) => {
+    setRiskGuardrail(value);
+    localStorage.setItem('vaipakam-alpha-risk', value);
+  };
+  const updateLanguage = (value: string) => {
+    setLanguage(value);
+    localStorage.setItem('vaipakam-alpha-language', value);
+  };
+  const updateLocalAnalytics = (value: boolean) => {
+    setLocalAnalytics(value);
+    localStorage.setItem('vaipakam-alpha-analytics', String(value));
+  };
+
+  return (
+    <div className="settings-page">
+      <SectionHeading eyebrow="Settings" title="Guardrails, privacy, and defaults" />
+      <p className="page-intro">
+        Settings are part of the product safety model. New users keep protective defaults; experienced users can intentionally loosen them.
+      </p>
+
+      <section className="settings-grid">
+        <article className="settings-card panel-surface">
+          <p className="eyebrow">Experience</p>
+          <label>
+            <span>Language</span>
+            <select value={language} onChange={(event) => updateLanguage(event.target.value)}>
+              <option>English</option>
+              <option>Hindi</option>
+              <option>Spanish</option>
+            </select>
+          </label>
+          <label>
+            <span>Risk guardrail</span>
+            <select value={riskGuardrail} onChange={(event) => updateRisk(event.target.value)}>
+              <option value="guided">Guided only</option>
+              <option value="liquid">Liquid assets</option>
+              <option value="advanced">Advanced allowed</option>
+            </select>
+          </label>
+        </article>
+
+        <article className="settings-card panel-surface">
+          <p className="eyebrow">Confirmations</p>
+          <label className="toggle-row locked">
+            <span>Review receipt required before wallet prompt</span>
+            <input type="checkbox" checked={confirmReceipts} readOnly aria-readonly="true" />
+          </label>
+          <p>Receipt review is locked on in alpha because it protects users from hidden obligations.</p>
+          <label className="toggle-row">
+            <span>Store local usability analytics</span>
+            <input type="checkbox" checked={localAnalytics} onChange={(event) => updateLocalAnalytics(event.target.checked)} />
+          </label>
+        </article>
+
+        <article className="settings-card panel-surface">
+          <p className="eyebrow">Emergency</p>
+          <h3>{emergencyPause ? 'New actions paused locally' : 'Actions available'}</h3>
+          <p>Pausing here does not touch contracts. It prevents the alpha UI from presenting new action CTAs until resumed.</p>
+          <button className={emergencyPause ? 'secondary-action' : 'danger-action'} type="button" onClick={() => setEmergencyPause((current) => !current)}>
+            {emergencyPause ? 'Resume alpha actions' : 'Pause new alpha actions'}
+          </button>
+        </article>
+      </section>
+
+      <section className="settings-summary panel-surface">
+        <Metric label="Risk guardrail" value={riskGuardrail} />
+        <Metric label="Receipts required" value={confirmReceipts ? 'Yes' : 'No'} />
+        <Metric label="Local analytics" value={localAnalytics ? 'Enabled' : 'Off'} />
+        <Metric label="Emergency state" value={emergencyPause ? 'Paused' : 'Normal'} />
       </section>
     </div>
   );
