@@ -882,6 +882,35 @@ dd {
   line-height: 1.55;
 }
 
+.asset-registry-card {
+  grid-column: span 2;
+}
+
+.asset-registry-list {
+  display: grid;
+  gap: 12px;
+}
+
+.asset-registry-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 110px;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.asset-registry-row strong {
+  align-self: center;
+}
+
+.asset-registry-row small {
+  grid-column: 2 / -1;
+  margin: 0;
+}
+
 .danger-action {
   display: inline-flex;
   align-items: center;
@@ -1015,6 +1044,13 @@ dd {
   display: block;
   margin-top: 4px;
   color: var(--ink);
+  line-height: 1.45;
+}
+
+.simulation-check p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
   line-height: 1.45;
 }
 

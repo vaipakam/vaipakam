@@ -29,13 +29,20 @@ import {
   Trash2,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { encodeFunctionData, parseUnits, type Abi, type Address, type Hex } from 'viem';
+import { encodeFunctionData, formatUnits, parseUnits, type Abi, type Address, type Hex } from 'viem';
 import OfferCreateFacetAbi from '@vaipakam/contracts/abis/OfferCreateFacet.json';
 import {
   BASE_SEPOLIA_CHAIN_ID,
   BASE_SEPOLIA_CHAIN_ID_DECIMAL,
   BASE_SEPOLIA_DEPLOYMENT,
+  GUIDED_ASSET_OVERRIDE_STORAGE_KEY,
+  GUIDED_CONFIGURABLE_ASSETS,
+  guidedDefaultAssetDecimals,
+  isGuidedAssetAddress,
+  readGuidedAssetOverrides,
   resolveGuidedAsset,
+  writeGuidedAssetOverrides,
+  type GuidedAssetOverride,
   type GuidedAssetResolution,
 } from './guidedAssets';
 import { Component, useEffect, useState } from 'react';
@@ -61,6 +68,8 @@ type FlowKind = 'earn' | 'borrow' | 'rent';
 type OfferKind = 'lend' | 'borrow' | 'rent';
 type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
 type GuidedSimulationResult = { status: 'not-run' | 'running' | 'passed' | 'failed'; message: string };
+type GuidedWalletCheckResult = { status: 'not-run' | 'running' | 'passed' | 'failed' | 'unavailable'; message: string; balance?: string; allowance?: string };
+type GuidedWalletCheckSpec = { asset: GuidedAssetResolution | null; requiredAmount: bigint | null; requiredLabel: string; spender: string | null; unavailableReason: string | null };
 
 declare global {
   interface Window {
@@ -166,6 +175,22 @@ const BASE_SEPOLIA_PARAMS = {
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
 const OFFER_CREATE_ABI = OfferCreateFacetAbi as Abi;
+const ERC20_READ_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }],
+    outputs: [{ name: 'remaining', type: 'uint256' }],
+  },
+] as Abi;
 
 const tasks: Task[] = [
   {
@@ -390,6 +415,7 @@ const APP_STORAGE_KEYS = {
   analytics: 'vaipakam-app-analytics',
   lastError: 'vaipakam-app-last-error',
   actionsPaused: 'vaipakam-app-actions-paused',
+  assetOverrides: GUIDED_ASSET_OVERRIDE_STORAGE_KEY,
 } as const;
 
 function readAppStorage(key: keyof typeof APP_STORAGE_KEYS) {
@@ -840,17 +866,20 @@ function FlowPage({
   const [reviewed, setReviewed] = useState(false);
   const [planPrepared, setPlanPrepared] = useState(false);
   const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
+  const [walletCheckResult, setWalletCheckResult] = useState<GuidedWalletCheckResult>({ status: 'not-run', message: 'Not checked yet' });
 
   useEffect(() => {
     setReviewed(false);
     setPlanPrepared(false);
     setSimulationResult({ status: 'not-run', message: 'Not run yet' });
+    setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
     setReviewed(false);
     setPlanPrepared(false);
     setSimulationResult({ status: 'not-run', message: 'Not run yet' });
+    setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
@@ -861,6 +890,11 @@ function FlowPage({
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
+  const walletCheckSpec = buildGuidedWalletCheckSpec(flow, selectedAsset, numericAmount);
+  const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
+  const walletCheckMessage = walletCheckResult.status === 'not-run'
+    ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
+    : walletCheckResult.message;
   const simulationMessage = simulationResult.status === 'not-run' ? transactionPlan.contractDraft.simulationStatus : simulationResult.message;
   const prepareActionLabel = planPrepared
     ? 'Saved in portfolio'
@@ -894,6 +928,54 @@ function FlowPage({
       setReviewed(true);
     }
   };
+  const runGuidedWalletCheck = async () => {
+    const ethereum = window.ethereum;
+    const asset = walletCheckSpec.asset;
+    if (!reviewedOnReadyWallet || !wallet.account || actionsPaused || walletCheckSpec.unavailableReason || !asset?.address || asset.decimals === null || !walletCheckSpec.requiredAmount || !walletCheckSpec.spender) {
+      setWalletCheckResult({ status: 'unavailable', message: walletCheckSpec.unavailableReason ?? 'Wallet readiness check is not available for this draft yet.' });
+      return;
+    }
+    if (!ethereum) {
+      setWalletCheckResult({ status: 'failed', message: 'No injected wallet provider is available for balance and allowance checks.' });
+      return;
+    }
+    setWalletCheckResult({ status: 'running', message: 'Checking wallet balance and allowance...' });
+    try {
+      const balanceHex = await ethereum.request({
+        method: 'eth_call',
+        params: [{
+          to: asset.address,
+          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
+        }, 'latest'],
+      });
+      const allowanceHex = await ethereum.request({
+        method: 'eth_call',
+        params: [{
+          to: asset.address,
+          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
+        }, 'latest'],
+      });
+      const balance = parseEthCallUint(balanceHex);
+      const allowance = parseEthCallUint(allowanceHex);
+      const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
+      const allowanceLabel = formatUnits(allowance, asset.decimals) + ' ' + asset.symbol;
+      const hasBalance = balance >= walletCheckSpec.requiredAmount;
+      const hasAllowance = allowance >= walletCheckSpec.requiredAmount;
+      if (hasBalance && hasAllowance) {
+        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and Diamond allowance for the guided amount.', balance: balanceLabel, allowance: allowanceLabel });
+        return;
+      }
+      setWalletCheckResult({
+        status: 'failed',
+        message: (!hasBalance ? 'Balance is below ' + walletCheckSpec.requiredLabel + '. ' : '') + (!hasAllowance ? 'Allowance is below ' + walletCheckSpec.requiredLabel + '.' : ''),
+        balance: balanceLabel,
+        allowance: allowanceLabel,
+      });
+    } catch (error) {
+      setWalletCheckResult({ status: 'failed', message: 'Wallet readiness check failed: ' + formatSimulationError(error) });
+    }
+  };
+
   const runGuidedSimulation = async () => {
     const calldata = transactionPlan.contractDraft.calldata;
     const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
@@ -1084,6 +1166,18 @@ function FlowPage({
                 {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {blocker}</li>)}
               </ul>
             ) : null}
+            <div className={walletCheckResult.status === 'failed' ? 'simulation-check failed' : walletCheckResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
+              <div>
+                <span className="position-kind">Wallet readiness</span>
+                <strong>{walletCheckMessage}</strong>
+                {walletCheckResult.balance || walletCheckResult.allowance ? (
+                  <p>{walletCheckResult.balance ? 'Balance: ' + walletCheckResult.balance : ''}{walletCheckResult.balance && walletCheckResult.allowance ? ' · ' : ''}{walletCheckResult.allowance ? 'Allowance: ' + walletCheckResult.allowance : ''}</p>
+                ) : null}
+              </div>
+              <button className="secondary-action" type="button" onClick={runGuidedWalletCheck} disabled={!walletCheckCanRun || walletCheckResult.status === 'running'}>
+                {walletCheckResult.status === 'running' ? 'Checking...' : 'Check wallet'}
+              </button>
+            </div>
             <div className={simulationResult.status === 'failed' ? 'simulation-check failed' : simulationResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
               <div>
                 <span className="position-kind">No-send simulation</span>
@@ -1527,6 +1621,33 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   );
 }
 
+
+function parseEthCallUint(value: unknown) {
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error('provider returned an invalid uint256 value');
+  return BigInt(value);
+}
+
+function decimalInputForUnits(value: number) {
+  if (!Number.isFinite(value)) return '0';
+  return value.toFixed(8).replace(/\.?0+$/, '');
+}
+
+function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedWalletCheckSpec {
+  const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond ?? null;
+  if (flow.kind === 'rent') {
+    return { asset: null, requiredAmount: null, requiredLabel: 'rental terms pending', spender: diamond, unavailableReason: 'Rental wallet checks need the selected NFT, prepay token, and refundable buffer first.' };
+  }
+
+  const isBorrow = flow.kind === 'borrow';
+  const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
+  const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset);
+  const requiredValue = isBorrow ? numericAmount * 1.5 : numericAmount;
+  const requiredLabel = decimalInputForUnits(requiredValue) + ' ' + asset.symbol;
+  if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Diamond spender address is missing from the deployment bundle.' };
+  if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: 'Approved token address must be configured for ' + asset.symbol + ' before wallet checks can run.' };
+  if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: 'Token decimals must be configured for ' + asset.symbol + ' before wallet checks can run.' };
+  return { asset, requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
+}
 
 function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string) {
   if (flow.kind === 'rent') return 'Prepay and refundable buffer are set by the rental offer.';
@@ -2034,6 +2155,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
   const [language, setLanguage] = useState('English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
+  const [assetOverrides, setAssetOverrides] = useState<Record<string, GuidedAssetOverride>>(() => readGuidedAssetOverrides());
 
   const updateRisk = (value: RiskGuardrail) => {
     onRiskGuardrailChange(value);
@@ -2044,6 +2166,20 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
   const updateLocalAnalytics = (value: boolean) => {
     setLocalAnalytics(value);
     writeLocalAppStorage('analytics', String(value));
+  };
+  const updateAssetOverride = (symbol: string, field: keyof GuidedAssetOverride, value: string) => {
+    const current = assetOverrides[symbol] ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
+    const nextEntry = { ...current, [field]: value.trim() };
+    const next = { ...assetOverrides, [symbol]: nextEntry };
+    if (!nextEntry.address && (!nextEntry.decimals || nextEntry.decimals === String(guidedDefaultAssetDecimals(symbol) ?? ''))) {
+      delete next[symbol];
+    }
+    setAssetOverrides(next);
+    writeGuidedAssetOverrides(next);
+  };
+  const clearAssetOverrides = () => {
+    setAssetOverrides({});
+    writeGuidedAssetOverrides({});
   };
 
   return (
@@ -2087,6 +2223,45 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
           </label>
         </article>
 
+
+        <article className="settings-card panel-surface asset-registry-card">
+          <p className="eyebrow">Base Sepolia assets</p>
+          <h2>Guided testnet registry</h2>
+          <p>Local overrides let guided checks resolve mock token balances and allowances without rebuilding the app.</p>
+          <div className="asset-registry-list">
+            {GUIDED_CONFIGURABLE_ASSETS.map((symbol) => {
+              const defaultDecimals = guidedDefaultAssetDecimals(symbol);
+              const entry = assetOverrides[symbol] ?? { address: '', decimals: String(defaultDecimals ?? '') };
+              const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
+              return (
+                <div className="asset-registry-row" key={symbol}>
+                  <strong>{symbol}</strong>
+                  <label>
+                    <span>Token address</span>
+                    <input
+                      value={entry.address}
+                      onChange={(event) => updateAssetOverride(symbol, 'address', event.target.value)}
+                      placeholder="0x..."
+                      aria-invalid={!addressValid}
+                    />
+                  </label>
+                  <label>
+                    <span>Decimals</span>
+                    <input
+                      inputMode="numeric"
+                      value={entry.decimals}
+                      onChange={(event) => updateAssetOverride(symbol, 'decimals', event.target.value)}
+                      placeholder={defaultDecimals === null ? '18' : String(defaultDecimals)}
+                    />
+                  </label>
+                  {!addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
+                </div>
+              );
+            })}
+          </div>
+          <button className="secondary-action" type="button" onClick={clearAssetOverrides}>Clear asset overrides</button>
+        </article>
+
         <article className="settings-card panel-surface">
           <p className="eyebrow">Privacy</p>
           <h2>Browser data and support</h2>
@@ -2109,6 +2284,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
         <Metric label="Receipts required" value={confirmReceipts ? 'Yes' : 'No'} />
         <Metric label="Local analytics" value={localAnalytics ? 'Enabled' : 'Off'} />
         <Metric label="Emergency state" value={actionsPaused ? 'Paused' : 'Normal'} />
+        <Metric label="Asset overrides" value={Object.keys(assetOverrides).length ? Object.keys(assetOverrides).join(', ') : 'None'} />
       </section>
     </div>
   );

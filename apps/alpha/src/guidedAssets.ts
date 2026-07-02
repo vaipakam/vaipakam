@@ -9,6 +9,8 @@ type GuidedAssetEnv = {
   decimals?: string;
 };
 
+export type GuidedAssetOverride = { address: string; decimals: string };
+
 export type GuidedAssetResolution = {
   symbol: string;
   display: string;
@@ -16,6 +18,9 @@ export type GuidedAssetResolution = {
   decimals: number | null;
   source: 'deployment' | 'environment' | 'missing';
 };
+
+export const GUIDED_ASSET_OVERRIDE_STORAGE_KEY = 'vaipakam-app-guided-asset-overrides';
+export const GUIDED_CONFIGURABLE_ASSETS = ['mUSDC', 'mWETH', 'mWBTC'] as const;
 
 const GUIDED_ASSET_ENV: Record<string, GuidedAssetEnv> = {
   mUSDC: { address: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_DECIMALS },
@@ -30,7 +35,7 @@ const GUIDED_ASSET_DECIMALS: Record<string, number> = {
   VPFI: 18,
 };
 
-function isHexAddress(value: string | undefined): value is string {
+export function isGuidedAssetAddress(value: string | undefined): value is string {
   return /^0x[a-fA-F0-9]{40}$/.test(value ?? '');
 }
 
@@ -42,6 +47,26 @@ function parseAssetDecimals(value: string | undefined, symbol: string) {
 
 function shortAddress(address: string) {
   return address.slice(0, 6) + '...' + address.slice(-4);
+}
+
+export function guidedDefaultAssetDecimals(symbol: string) {
+  return GUIDED_ASSET_DECIMALS[symbol] ?? null;
+}
+
+export function readGuidedAssetOverrides(): Record<string, GuidedAssetOverride> {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(GUIDED_ASSET_OVERRIDE_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, GuidedAssetOverride> : {};
+  } catch {
+    return {};
+  }
+}
+
+export function writeGuidedAssetOverrides(overrides: Record<string, GuidedAssetOverride>) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(GUIDED_ASSET_OVERRIDE_STORAGE_KEY, JSON.stringify(overrides));
 }
 
 function resolvedAsset(symbol: string, address: string, decimals: number | null, source: GuidedAssetResolution['source']): GuidedAssetResolution {
@@ -64,7 +89,12 @@ export function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
   }
 
   const configured = GUIDED_ASSET_ENV[symbol];
-  if (isHexAddress(configured?.address)) {
+  const override = readGuidedAssetOverrides()[symbol];
+  if (isGuidedAssetAddress(override?.address)) {
+    return resolvedAsset(symbol, override.address, parseAssetDecimals(override.decimals, symbol), 'environment');
+  }
+
+  if (isGuidedAssetAddress(configured?.address)) {
     return resolvedAsset(symbol, configured.address, parseAssetDecimals(configured.decimals, symbol), 'environment');
   }
 
