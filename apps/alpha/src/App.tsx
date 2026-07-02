@@ -991,7 +991,7 @@ function FlowPage({
       ]);
       const accountsAfterCheck = await ethereum.request({ method: 'eth_accounts' });
       const nextAccounts = Array.isArray(accountsAfterCheck) ? accountsAfterCheck : [];
-      if (typeof nextAccounts[0] === 'string' && nextAccounts[0] !== accountAtCheckTime) return;
+      if (nextAccounts[0] !== accountAtCheckTime) return;
       const balance = parseEthCallUint(balanceHex);
       const allowance = parseEthCallUint(allowanceHex);
       const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
