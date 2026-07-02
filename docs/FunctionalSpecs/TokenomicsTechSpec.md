@@ -276,8 +276,9 @@ Diamond surface (Phase 1 to add):
 
 - `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
-- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple, error selectors, and window bounds are implementation detail):
+- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple and error selectors are implementation detail):
   - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
+  - the daily catch-up is **bounded per call**, so a user who has been away for a long stretch of finalized days may need to call `claimInteractionRewards()` more than once to fully catch up; nothing is lost — the caller's cursor persists between calls, so each call resumes where the last stopped. Claim Center / integrator UX should surface "more rewards still pending" after a bounded claim rather than implying a single call always clears everything;
   - the surface is deliberately cursor/entry driven rather than a caller-supplied `dayId[]`, so integrators do not select days explicitly.
 
 Testing requirements beyond §9:
