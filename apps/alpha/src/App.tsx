@@ -867,10 +867,11 @@ function FlowPage({
 }) {
   const [selectedAsset, setSelectedAsset] = useState(flow.defaultAsset);
   const [amount, setAmount] = useState(flow.defaultAmount);
-  const numericAmount = Number(amount.replace(/,/g, '')) || 0;
+  const normalizedAmount = normalizeGuidedAmountInput(amount);
+  const numericAmount = normalizedAmount ? Number(normalizedAmount) : 0;
   const isBaseSepolia = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const walletReady = Boolean(wallet.account);
-  const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
+  const canProceed = walletReady && isBaseSepolia && Boolean(normalizedAmount) && Number.isFinite(numericAmount) && numericAmount > 0;
   const [reviewed, setReviewed] = useState(false);
   const [planPrepared, setPlanPrepared] = useState(false);
   const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
@@ -896,8 +897,8 @@ function FlowPage({
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
   const transactionPlan = useMemo(
-    () => buildGuidedTransactionPlan(flow, selectedAsset, numericAmount, assetOverrides),
-    [assetOverrides, flow, numericAmount, selectedAsset],
+    () => buildGuidedTransactionPlan(flow, selectedAsset, numericAmount, normalizedAmount, assetOverrides),
+    [assetOverrides, flow, normalizedAmount, numericAmount, selectedAsset],
   );
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
@@ -906,8 +907,8 @@ function FlowPage({
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
   const walletCheckSpec = useMemo(
-    () => buildGuidedWalletCheckSpec(flow, selectedAsset, numericAmount, assetOverrides),
-    [assetOverrides, flow, numericAmount, selectedAsset],
+    () => buildGuidedWalletCheckSpec(flow, selectedAsset, normalizedAmount, assetOverrides),
+    [assetOverrides, flow, normalizedAmount, selectedAsset],
   );
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
   const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
@@ -1757,12 +1758,28 @@ function parseEthCallUint(value: unknown) {
   return BigInt(value);
 }
 
-function decimalInputForUnits(value: number) {
-  if (!Number.isFinite(value)) return '0';
-  return value.toFixed(8).replace(/\.?0+$/, '');
+function normalizeGuidedAmountInput(value: string) {
+  const cleaned = value.replace(/,/g, '').trim();
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) return null;
+  const normalized = cleaned.startsWith('.') ? '0' + cleaned : cleaned;
+  return normalized.replace(/^0+(?=\d)/, '') || '0';
 }
 
-function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedWalletCheckSpec {
+function decimalFromNumber(value: number) {
+  if (!Number.isFinite(value)) return null;
+  return value.toFixed(12).replace(/\.?0+$/, '');
+}
+
+function guidedCollateralAmountInput(principalSymbol: string, collateralSymbol: string, principalAmountInput: string | null) {
+  if (!principalAmountInput) return null;
+  const principalAmount = Number(principalAmountInput);
+  if (!Number.isFinite(principalAmount) || principalAmount <= 0) return null;
+  if (principalSymbol === 'mUSDC' && collateralSymbol === 'mWETH') return decimalFromNumber(principalAmount / 1000);
+  if (principalSymbol === 'mWETH' && collateralSymbol === 'mUSDC') return decimalFromNumber(principalAmount * 1000);
+  return null;
+}
+
+function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedWalletCheckSpec {
   const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond ?? null;
   if (flow.kind === 'rent') {
     return { asset: null, requiredAmount: null, requiredLabel: 'rental terms pending', spender: diamond, unavailableReason: 'Rental wallet checks need the selected NFT, prepay token, and refundable buffer first.' };
@@ -1771,28 +1788,33 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, num
   const isBorrow = flow.kind === 'borrow';
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
   const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset, assetOverrides);
-  const requiredValue = isBorrow ? numericAmount * 1.5 : numericAmount;
-  const requiredLabel = decimalInputForUnits(requiredValue) + ' ' + asset.symbol;
+  const collateralAmountInput = isBorrow ? guidedCollateralAmountInput(selectedAsset, collateralLabel, amountInput) : null;
+  const requiredInput = isBorrow ? collateralAmountInput : amountInput;
+  const requiredLabel = (requiredInput ?? '0') + ' ' + asset.symbol;
   if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
   if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
   if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
   if (isBorrow) {
     return {
       asset,
-      requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals),
+      requiredAmount: requiredInput ? parseUnits(requiredInput, asset.decimals) : null,
       requiredLabel,
       spender: null,
       unavailableReason: 'Borrow collateral is deposited into your personal vault. Vaipakam needs the vault address before it can check or request token approval.',
     };
   }
-  return { asset, requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
+  if (!requiredInput) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before it can check wallet readiness.' };
+  return { asset, requiredAmount: parseUnits(requiredInput, asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
 }
 
-function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string) {
+function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string, collateralAmountInput: string | null) {
   if (flow.kind === 'rent') return 'Prepay and refundable buffer are set by the rental offer.';
+  if (collateralAmountInput) {
+    return 'About ' + collateralAmountInput + ' ' + collateralSymbol + ' on starter Base Sepolia sizing; live oracle checks still apply.';
+  }
   const estimatedValue = numericAmount * 1.5;
   const formattedValue = estimatedValue.toLocaleString(undefined, { maximumFractionDigits: 4 });
-  if (flow.kind === 'borrow') return 'About ' + formattedValue + ' ' + principalSymbol + '-equivalent of ' + collateralSymbol + ' value before oracle pricing.';
+  if (flow.kind === 'borrow') return 'Collateral amount needs oracle-priced sizing before wallet submission.';
   return 'Borrower should lock about ' + formattedValue + ' ' + principalSymbol + '-equivalent of collateral value.';
 }
 
@@ -1843,30 +1865,33 @@ function encodeGuidedCreateOfferDraft({
   flow,
   principalAsset,
   collateralAsset,
-  numericAmount,
+  amountInput,
+  collateralAmountInput,
   encodingBlockers,
 }: {
   flow: GuidedFlow;
   principalAsset: GuidedAssetResolution;
   collateralAsset: GuidedAssetResolution;
-  numericAmount: number;
+  amountInput: string | null;
+  collateralAmountInput: string | null;
   encodingBlockers: string[];
 }): { calldata: Hex | null; status: string } {
   if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
   if (encodingBlockers.length > 0) return { calldata: null, status: 'Waiting for token setup' };
+  if (!amountInput || !collateralAmountInput) return { calldata: null, status: 'Waiting for priced collateral sizing' };
   if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
     return { calldata: null, status: 'Withheld until assets resolve' };
   }
 
-  const principalAmount = parseUnits(String(numericAmount), principalAsset.decimals);
-  // Guided mode uses a conservative 150% placeholder until oracle-priced collateral sizing is wired.
-  const collateralAmount = parseUnits(decimalInputForUnits(numericAmount * 1.5), collateralAsset.decimals);
+  const principalAmount = parseUnits(amountInput, principalAsset.decimals);
+  const collateralAmount = parseUnits(collateralAmountInput, collateralAsset.decimals);
   const isBorrow = flow.kind === 'borrow';
+  const interestRateBps = BigInt(isBorrow ? 710 : 650);
   const params = {
     offerType: isBorrow ? 1 : 0,
     lendingAsset: principalAsset.address as Address,
     amount: principalAmount,
-    interestRateBps: BigInt(isBorrow ? 710 : 650),
+    interestRateBps,
     collateralAsset: collateralAsset.address as Address,
     collateralAmount,
     durationDays: BigInt(isBorrow ? 21 : 30),
@@ -1879,9 +1904,9 @@ function encodeGuidedCreateOfferDraft({
     collateralTokenId: 0n,
     collateralQuantity: 0n,
     allowsPartialRepay: true,
-    amountMax: 0n,
-    interestRateBpsMax: 0n,
-    collateralAmountMax: 0n,
+    amountMax: principalAmount,
+    interestRateBpsMax: interestRateBps,
+    collateralAmountMax: collateralAmount,
     periodicInterestCadence: 0,
     expiresAt: 0n,
     fillMode: 0,
@@ -1901,7 +1926,7 @@ function encodeGuidedCreateOfferDraft({
   };
 }
 
-function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedContractDraft {
+function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedContractDraft {
   const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
   const amountText = formatFlowAmount(flow, numericAmount);
   if (flow.kind === 'rent') {
@@ -1915,7 +1940,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
       principalAsset: prepayToken.display,
       collateralAsset: selectedAsset + ' · NFT details needed',
       amount: amountText,
-      collateralEstimate: guidedCollateralEstimate(flow, numericAmount, prepayToken.symbol, prepayToken.symbol),
+      collateralEstimate: guidedCollateralEstimate(flow, numericAmount, prepayToken.symbol, prepayToken.symbol, null),
       safetyIndicator: guidedSafetyIndicator(flow),
       interestRateBps: 'Not applicable',
       durationDays: amountText,
@@ -1933,6 +1958,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
   const principalAsset = resolveGuidedAsset(selectedAsset, assetOverrides);
   const collateralAsset = resolveGuidedAsset(collateralLabel, assetOverrides);
+  const collateralAmountInput = guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, amountInput);
   const encodingBlockers = [];
   const submissionBlockers = [];
   if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
@@ -1941,9 +1967,11 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
   if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
   if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
+  if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
+  if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
   submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
   const blockers = [...encodingBlockers, ...submissionBlockers];
-  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, numericAmount, encodingBlockers });
+  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, amountInput, collateralAmountInput, encodingBlockers });
 
   return {
     call: 'OfferCreateFacet.createOffer(params)',
@@ -1952,7 +1980,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     principalAsset: principalAsset.display,
     collateralAsset: collateralAsset.display,
     amount: amountText + ' ' + selectedAsset,
-    collateralEstimate: guidedCollateralEstimate(flow, numericAmount, principalAsset.symbol, collateralAsset.symbol),
+    collateralEstimate: guidedCollateralEstimate(flow, numericAmount, principalAsset.symbol, collateralAsset.symbol, collateralAmountInput),
     safetyIndicator: guidedSafetyIndicator(flow),
     interestRateBps: isBorrow ? '710 bps' : '650 bps',
     durationDays: isBorrow ? '21 days' : '30 days',
@@ -1966,11 +1994,11 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   };
 }
 
-function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedTransactionPlan {
+function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedTransactionPlan {
   const amountText = formatFlowAmount(flow, numericAmount);
   const deploymentTarget = guidedDeploymentTarget();
   const previewState = guidedPreviewState();
-  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount, assetOverrides);
+  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount, amountInput, assetOverrides);
   if (flow.kind === 'earn') {
     return {
       intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
