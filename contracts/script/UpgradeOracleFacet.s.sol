@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 /**
  * @title UpgradeOracleFacet
@@ -115,30 +116,12 @@ contract UpgradeOracleFacet is Script {
         }
     }
 
-    function _oracleSelectors() internal pure returns (bytes4[] memory s) {
-        // MUST mirror DeployDiamond.s.sol `_getOracleSelectors` in full — a
-        // partial list would leave the unlisted selectors pointed at the old
-        // facet, splitting the diamond across stale and new code.
-        s = new bytes4[](18);
-        s[0] = OracleFacet.checkLiquidity.selector;
-        s[1] = OracleFacet.getAssetPrice.selector;
-        s[2] = OracleFacet.calculateLTV.selector;
-        s[3] = OracleFacet.checkLiquidityOnActiveNetwork.selector;
-        s[4] = OracleFacet.getAssetRiskProfile.selector;
-        s[5] = OracleFacet.getIlliquidAssets.selector;
-        s[6] = OracleFacet.isAssetSupported.selector;
-        s[7] = OracleFacet.getSequencerUptimeFeed.selector;
-        s[8] = OracleFacet.sequencerHealthy.selector;
-        s[9] = OracleFacet.captureDailyPriceSnapshot.selector;
-        s[10] = OracleFacet.getHistoricalAssetPrice.selector;
-        s[11] = OracleFacet.getLiquidityTier.selector;
-        s[12] = OracleFacet.getEffectiveLiquidityTier.selector;
-        s[13] = OracleFacet.tryGetAssetPrice.selector;
-        s[14] = OracleFacet.refreshTierLtvCache.selector;
-        s[15] = OracleFacet.getTierLtvCacheEntry.selector;
-        s[16] = OracleFacet.getEffectiveTierMaxInitLtvBps.selector;
-        // #638 — backstop oracle-coverage counter (new; Added on a pre-#638
-        // diamond, Replaced on a same-version one).
-        s[17] = OracleFacet.countLiveSecondaryOracleFeeds.selector;
+    /// @dev #778 — the full OracleFacet selector surface now comes from the
+    ///      shared {FacetSelectors} single source (parity-tested against the
+    ///      compiled ABI), rather than a local list that had to be kept mirrored
+    ///      to `DeployDiamond._getOracleSelectors` by hand. A partial list would
+    ///      split the diamond across stale + new bytecode on a Replace cut.
+    function _oracleSelectors() internal pure returns (bytes4[] memory) {
+        return FacetSelectors.oracle();
     }
 }

@@ -17,6 +17,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {ConsolidationFacet} from "../src/facets/ConsolidationFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 /**
  * @title RedeployFacets
@@ -346,23 +347,14 @@ contract RedeployFacets is Script {
         s[8] = ClaimFacet.claimAsLenderViaBackstop.selector;
     }
 
-    function _profileSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](15);
-        s[0] = ProfileFacet.updateKYCStatus.selector;
-        s[1] = ProfileFacet.getUserCountry.selector;
-        s[2] = ProfileFacet.isKYCVerified.selector;
-        s[3] = ProfileFacet.setTradeAllowance.selector;
-        s[4] = ProfileFacet.setUserCountry.selector;
-        s[5] = ProfileFacet.updateKYCTier.selector;
-        s[6] = ProfileFacet.getKYCTier.selector;
-        s[7] = ProfileFacet.meetsKYCRequirement.selector;
-        s[8] = ProfileFacet.updateKYCThresholds.selector;
-        s[9] = ProfileFacet.getKYCThresholds.selector;
-        s[10] = ProfileFacet.setKeeperAccess.selector;
-        s[11] = ProfileFacet.getKeeperAccess.selector;
-        s[12] = ProfileFacet.approveKeeper.selector;
-        s[13] = ProfileFacet.revokeKeeper.selector;
-        s[14] = ProfileFacet.getApprovedKeepers.selector;
+    /// @dev #779 — the prior hand-list carried only 15 of ProfileFacet's 25
+    ///      selectors, leaving the Phase-6 keeper + sanctions surface
+    ///      (`setSanctionsOracle`, `isSanctionedAddress`, `setKeeperActions`,
+    ///      `setLoanKeeperEnabled`, …) on stale bytecode after a Replace cut.
+    ///      Sourced from the shared {FacetSelectors} single source
+    ///      (parity-tested against the compiled ABI).
+    function _profileSelectors() internal pure returns (bytes4[] memory) {
+        return FacetSelectors.profile();
     }
 
     /// @dev #658 — full ConsolidationFacet selector set, mirrors

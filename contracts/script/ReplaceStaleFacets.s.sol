@@ -12,6 +12,7 @@ import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
+import {FacetSelectors} from "./lib/FacetSelectors.sol";
 
 /**
  * @title ReplaceStaleFacets
@@ -179,12 +180,12 @@ contract ReplaceStaleFacets is Script {
         s[1] = OfferAcceptFacet.verifyAndBindAccept.selector;
     }
 
-    function _oracleSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
-        s[0] = OracleFacet.checkLiquidity.selector;
-        s[1] = OracleFacet.getAssetPrice.selector;
-        s[2] = OracleFacet.calculateLTV.selector;
-        s[3] = OracleFacet.checkLiquidityOnActiveNetwork.selector;
+    /// @dev #778 — a Replace cut MUST carry the facet's FULL selector surface;
+    ///      the prior 4-of-18 hand-list would leave 14 selectors on stale
+    ///      bytecode. Sourced from the shared {FacetSelectors} single source
+    ///      (parity-tested against the compiled ABI).
+    function _oracleSelectors() internal pure returns (bytes4[] memory) {
+        return FacetSelectors.oracle();
     }
 
     /// @dev The 28 ConfigFacet selectors currently registered on the
@@ -323,36 +324,12 @@ contract ReplaceStaleFacets is Script {
     // note in `run()`: the eid→chainId migration changed the facet's
     // selector set, so a `Replace`-based refresh no longer applies.
 
-    function _vaultFactorySelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](27);
-        s[0] = VaultFactoryFacet.initializeVaultImplementation.selector;
-        s[1] = VaultFactoryFacet.getOrCreateUserVault.selector;
-        s[2] = VaultFactoryFacet.upgradeVaultImplementation.selector;
-        s[3] = VaultFactoryFacet.vaultDepositERC20.selector;
-        s[4] = VaultFactoryFacet.vaultWithdrawERC20.selector;
-        s[5] = VaultFactoryFacet.vaultDepositERC721.selector;
-        s[6] = VaultFactoryFacet.vaultWithdrawERC721.selector;
-        s[7] = VaultFactoryFacet.vaultDepositERC1155.selector;
-        s[8] = VaultFactoryFacet.vaultWithdrawERC1155.selector;
-        s[9] = VaultFactoryFacet.vaultApproveNFT721.selector;
-        s[10] = VaultFactoryFacet.vaultSetNFTUser.selector;
-        s[11] = VaultFactoryFacet.vaultGetNFTUserOf.selector;
-        s[12] = VaultFactoryFacet.vaultGetNFTUserExpires.selector;
-        s[13] = VaultFactoryFacet.getOfferAmount.selector;
-        s[14] = VaultFactoryFacet.getVaipakamVaultImplementationAddress.selector;
-        s[15] = VaultFactoryFacet.getDiamondAddress.selector;
-        s[16] = VaultFactoryFacet.setMandatoryVaultUpgrade.selector;
-        s[17] = VaultFactoryFacet.upgradeUserVault.selector;
-        // T-051 / T-054 — chokepoint deposit + counter-only companions
-        // + stuck-token recovery EIP-712 surface.
-        s[18] = VaultFactoryFacet.vaultDepositERC20From.selector;
-        s[19] = VaultFactoryFacet.recordVaultDepositERC20.selector;
-        s[20] = VaultFactoryFacet.getProtocolTrackedVaultBalance.selector;
-        s[21] = VaultFactoryFacet.recoverStuckERC20.selector;
-        s[22] = VaultFactoryFacet.disown.selector;
-        s[23] = VaultFactoryFacet.recoveryDomainSeparator.selector;
-        s[24] = VaultFactoryFacet.recoveryAckTextHash.selector;
-        s[25] = VaultFactoryFacet.recoveryNonce.selector;
-        s[26] = VaultFactoryFacet.vaultBannedSource.selector;
+    /// @dev #778 — the prior hand-list carried only 27 of the facet's 31
+    ///      selectors (omitting e.g. `vaultSetNFTUser1155`,
+    ///      `getVaultVersionInfo`), so a Replace cut left the rest on stale
+    ///      bytecode. Sourced from the shared {FacetSelectors} single source
+    ///      (parity-tested against the compiled ABI).
+    function _vaultFactorySelectors() internal pure returns (bytes4[] memory) {
+        return FacetSelectors.vaultFactory();
     }
 }
