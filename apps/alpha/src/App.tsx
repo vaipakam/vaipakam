@@ -1181,34 +1181,42 @@ function FlowPage({
           <section className="contract-draft" aria-label="Contract draft">
             <div className="contract-draft-heading">
               <div>
-                <p className="eyebrow">Action details</p>
-                <h3>{transactionPlan.contractDraft.call}</h3>
+                <p className="eyebrow">Borrow setup</p>
+                <h3>{guidedActionSummary(flow)}</h3>
+                <p className="guided-action-copy">Finish these checks before Vaipakam opens your wallet for a borrow transaction.</p>
               </div>
-              <span className="simulation-pill"><ReceiptText size={16} /> {transactionPlan.contractDraft.readiness}</span>
+              <span className="simulation-pill"><ReceiptText size={16} /> {guidedReadinessLabel(transactionPlan.contractDraft.readiness)}</span>
             </div>
-            <div className="draft-grid">
-              <Metric label="Target" value={transactionPlan.contractDraft.target} />
-              <Metric label="Offer type" value={transactionPlan.contractDraft.offerType} />
-              <Metric label="Principal" value={transactionPlan.contractDraft.principalAsset} />
-              <Metric label="Collateral" value={transactionPlan.contractDraft.collateralAsset} />
-              <Metric label="Amount" value={transactionPlan.contractDraft.amount} />
+            <div className="draft-grid guided-summary-grid">
+              <Metric label={flow.kind === 'borrow' ? 'You borrow' : flow.kind === 'earn' ? 'You lend' : 'Rental payment'} value={transactionPlan.contractDraft.amount} />
+              <Metric label={flow.kind === 'borrow' ? 'You lock' : flow.kind === 'earn' ? 'Borrower locks' : 'NFT or buffer'} value={transactionPlan.contractDraft.collateralAsset} />
+              <Metric label="Safety target" value={transactionPlan.contractDraft.safetyIndicator} />
               <Metric label="Collateral estimate" value={transactionPlan.contractDraft.collateralEstimate} />
-              <Metric label="Safety" value={transactionPlan.contractDraft.safetyIndicator} />
-              <Metric label="Rate" value={transactionPlan.contractDraft.interestRateBps} />
+              <Metric label="Interest" value={humanRateLabel(transactionPlan.contractDraft.interestRateBps)} />
               <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
-              <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
-              <Metric label="Asset source" value={transactionPlan.contractDraft.assetSource} />
-              <Metric label="Calldata" value={transactionPlan.contractDraft.calldataStatus} />
-              <Metric label="Simulation" value={simulationMessage} />
+              <Metric label="Token setup" value={transactionPlan.contractDraft.assetSource} />
+              <Metric label="Wallet data" value={humanCalldataStatus(transactionPlan.contractDraft.calldataStatus)} />
             </div>
-            {transactionPlan.contractDraft.calldata ? (
-              <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
-            ) : null}
             {transactionPlan.contractDraft.blockers.length > 0 ? (
-              <ul className="blocker-list" aria-label="Preflight blockers">
-                {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {blocker}</li>)}
+              <ul className="blocker-list" aria-label="What still needs attention">
+                {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {humanBlockerText(blocker)}</li>)}
               </ul>
             ) : null}
+            <details className="technical-details">
+              <summary>Technical details</summary>
+              <div className="draft-grid technical-grid">
+                <Metric label="Function" value={transactionPlan.contractDraft.call} />
+                <Metric label="Contract" value={transactionPlan.contractDraft.target} />
+                <Metric label="Offer type" value={transactionPlan.contractDraft.offerType} />
+                <Metric label="Principal token" value={transactionPlan.contractDraft.principalAsset} />
+                <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
+                <Metric label="Transaction data" value={transactionPlan.contractDraft.calldataStatus} />
+                <Metric label="Simulation" value={simulationMessage} />
+              </div>
+              {transactionPlan.contractDraft.calldata ? (
+                <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
+              ) : null}
+            </details>
             <div className={walletCheckResult.status === 'failed' ? 'simulation-check failed' : walletCheckResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
               <div>
                 <span className="position-kind">Wallet readiness</span>
@@ -1673,6 +1681,44 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 }
 
 
+function guidedActionSummary(flow: GuidedFlow) {
+  if (flow.kind === 'borrow') return 'Set up your borrow request';
+  if (flow.kind === 'earn') return 'Set up your lending offer';
+  return 'Set up the rental terms';
+}
+
+function guidedReadinessLabel(readiness: GuidedContractDraft['readiness']) {
+  if (readiness === 'Ready for simulation') return 'Ready for safety test';
+  if (readiness === 'Uses rental path') return 'Rental setup needed';
+  return 'Needs token setup';
+}
+
+function humanRateLabel(value: string) {
+  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% APR';
+  return value;
+}
+
+function humanCalldataStatus(value: string) {
+  if (value.includes('calldata inputs')) return 'Waiting for token setup';
+  if (value.includes('Encoded')) return 'Ready for safety test';
+  if (value.includes('Rental')) return 'Waiting for rental details';
+  return value;
+}
+
+function humanBlockerText(blocker: string) {
+  if (blocker.startsWith('Approved token address must be confirmed for ')) {
+    const symbol = blocker.replace('Approved token address must be confirmed for ', '').replace('.', '');
+    return symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.';
+  }
+  if (blocker.startsWith('Approved collateral address must be confirmed for ')) {
+    const symbol = blocker.replace('Approved collateral address must be confirmed for ', '').replace('.', '');
+    return symbol + ' collateral token address is missing. Open Settings, then add it under Base Sepolia assets.';
+  }
+  if (blocker.includes('Wallet balance, allowance, oracle price, and collateral safety')) return 'After token setup, Vaipakam still needs to check your balance, approval, price, and collateral safety.';
+  if (blocker.includes('Funding balance, allowance, and borrower collateral safety')) return 'After token setup, Vaipakam still needs to check funding balance, approval, and borrower collateral safety.';
+  return blocker;
+}
+
 function parseEthCallUint(value: unknown) {
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error('provider returned an invalid uint256 value');
   return BigInt(value);
@@ -1694,9 +1740,9 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, num
   const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset);
   const requiredValue = isBorrow ? numericAmount * 1.5 : numericAmount;
   const requiredLabel = decimalInputForUnits(requiredValue) + ' ' + asset.symbol;
-  if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Diamond spender address is missing from the deployment bundle.' };
-  if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: 'Approved token address must be configured for ' + asset.symbol + ' before wallet checks can run.' };
-  if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: 'Token decimals must be configured for ' + asset.symbol + ' before wallet checks can run.' };
+  if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
+  if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
+  if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
   return { asset, requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
 }
 
@@ -1741,13 +1787,13 @@ function guidedPreviewState() {
 
 function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
   const sources = new Set(assets.map((asset) => asset.source));
-  if (sources.has('missing')) return 'Needs registry entry';
-  if (sources.has('environment')) return 'Configured in environment';
-  return 'Deployment artifact';
+  if (sources.has('missing')) return 'Needs token address';
+  if (sources.has('environment')) return 'Configured in Settings';
+  return 'Ready from deployment';
 }
 
 function guidedSimulationStatus(calldata: Hex | null, encodingBlockers: string[]) {
-  if (!calldata) return encodingBlockers.length > 0 ? 'Unavailable until calldata inputs resolve' : 'Unavailable until calldata is ready';
+  if (!calldata) return encodingBlockers.length > 0 ? 'Waiting for token setup' : 'Unavailable until calldata is ready';
   return 'Ready for eth_call simulation';
 }
 
@@ -1765,7 +1811,7 @@ function encodeGuidedCreateOfferDraft({
   encodingBlockers: string[];
 }): { calldata: Hex | null; status: string } {
   if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
-  if (encodingBlockers.length > 0) return { calldata: null, status: 'Withheld until calldata inputs resolve' };
+  if (encodingBlockers.length > 0) return { calldata: null, status: 'Waiting for token setup' };
   if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
     return { calldata: null, status: 'Withheld until assets resolve' };
   }
