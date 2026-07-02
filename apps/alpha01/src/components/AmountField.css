@@ -1,0 +1,34 @@
+.amount-field-input {
+  min-height: var(--touch-min);
+  width: 100%;
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.amount-field-input:focus {
+  outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+
+.amount-field-input--error {
+  border-color: var(--accent-red);
+}
+
+.amount-field-available {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.amount-field-available--warn {
+  color: var(--accent-orange);
+}
+
+.amount-field-shortfall {
+  font-size: 0.85rem;
+  color: var(--accent-red);
+  font-weight: 500;
+}

@@ -1,3 +1,4 @@
+import { LegalLinks } from '../components/LegalLinks';
 import { useMode } from '../context/ModeContext';
 import { useTheme } from '../context/ThemeContext';
 import { CHAIN_REGISTRY, DEFAULT_CHAIN } from '../lib/chains';
@@ -40,11 +41,19 @@ export function SettingsPage() {
         </button>
       </div>
 
-      <div className="card">
+      <div className="card" style={{ marginBottom: 12 }}>
         <h3 style={{ marginBottom: 8 }}>Default chain</h3>
         <p style={{ color: 'var(--text-secondary)' }}>
           {DEFAULT_CHAIN.name} ({DEFAULT_CHAIN.chainId}) — {Object.keys(CHAIN_REGISTRY).length} chains in registry
         </p>
+      </div>
+
+      <div className="card">
+        <h3 style={{ marginBottom: 8 }}>Legal</h3>
+        <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
+          Review platform terms, privacy practices, and risk disclosures before you transact.
+        </p>
+        <LegalLinks />
       </div>
     </div>
   );

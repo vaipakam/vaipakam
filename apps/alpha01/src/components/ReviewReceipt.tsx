@@ -1,11 +1,27 @@
-import type { ReviewReceiptData } from '@vaipakam/defi-client';
+import type { ReactNode } from 'react';
 import { useMode } from '../context/ModeContext';
 
-interface Props {
-  data: ReviewReceiptData;
+export interface ReviewReceiptRow {
+  label: string;
+  value: ReactNode;
+  hint?: string;
 }
 
-function Row({ label, value, hint }: { label: string; value: string; hint?: string }) {
+export interface ReviewReceiptView {
+  youReceive: ReviewReceiptRow;
+  youLock: ReviewReceiptRow;
+  youMayOwe: ReviewReceiptRow;
+  youCanLose: ReviewReceiptRow;
+  fees: ReviewReceiptRow;
+  whenEnds: ReviewReceiptRow;
+  technicalDetails?: ReviewReceiptRow[];
+}
+
+interface Props {
+  data: ReviewReceiptView;
+}
+
+function Row({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="receipt-row">
       <div className="receipt-label">{label}</div>

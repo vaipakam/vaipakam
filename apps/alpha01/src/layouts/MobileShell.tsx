@@ -21,12 +21,21 @@ export function MobileShell() {
   return (
     <div className="shell">
       <header className="shell-header">
-        <div className="shell-brand">Vaipakam</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)' }}>
-            {mode === 'basic' ? 'Basic' : 'Advanced'}
-          </span>
-          <button type="button" className="btn btn-secondary" onClick={toggleTheme} aria-label="Toggle theme">
+        <div className="shell-header-start">
+          <NavLink to="/" className="shell-brand">
+            Vaipakam
+          </NavLink>
+          <nav className="desktop-nav" aria-label="Primary desktop">
+            {NAV.map(({ to, label, ...rest }) => (
+              <NavLink key={to} to={to} {...('end' in rest ? { end: rest.end } : {})}>
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+        </div>
+        <div className="shell-header-actions">
+          <span className="shell-mode-badge">{mode === 'basic' ? 'Basic' : 'Advanced'}</span>
+          <button type="button" className="btn btn-secondary btn-icon" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <ConnectKitButton />
@@ -36,10 +45,12 @@ export function MobileShell() {
       <main className="shell-main">
         <SanctionsBanner />
         <WrongChainBanner />
-        <Outlet />
+        <div className="page-frame">
+          <Outlet />
+        </div>
       </main>
 
-      <nav className="bottom-nav" aria-label="Primary">
+      <nav className="bottom-nav" aria-label="Primary mobile">
         {NAV.map(({ to, label, icon: Icon, ...rest }) => (
           <NavLink key={to} to={to} {...('end' in rest ? { end: rest.end } : {})}>
             {({ isActive }) => (

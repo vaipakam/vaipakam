@@ -3,7 +3,18 @@ import type { CreateOfferForm } from '../types/offers.js';
 
 export const MIN_OFFER_DURATION_DAYS = 1;
 export const MAX_OFFER_DURATION_DAYS = 365;
+
+/** Bucketed duration presets — frontend convention for better offer matching. */
+export const OFFER_DURATION_BUCKETS_DAYS: readonly number[] = [
+  7, 14, 30, 60, 90, 180, 365,
+] as const;
+
 export const OFFER_DURATION_DEFAULT_DAYS = 30;
+
+export function formatDurationBucketLabel(days: number): string {
+  if (days === 365) return '1 year';
+  return `${days} days`;
+}
 
 export function parseInterestBps(percent: string): bigint {
   const n = Number(percent);

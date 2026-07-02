@@ -7,6 +7,7 @@ import { RentPage } from './pages/RentPage';
 import { PositionsPage } from './pages/PositionsPage';
 import { PositionDetailPage } from './pages/PositionDetailPage';
 import { ClaimsPage } from './pages/ClaimsPage';
+import { ActivityPage } from './pages/ActivityPage';
 import { MorePage } from './pages/MorePage';
 import { SettingsPage } from './pages/SettingsPage';
 
@@ -23,6 +24,7 @@ export default function App() {
           <Route path="positions/:loanId" element={<PositionDetailPage />} />
           <Route path="claims" element={<ClaimsPage />} />
           <Route path="more" element={<MorePage />} />
+          <Route path="activity" element={<ActivityPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

@@ -1,0 +1,20 @@
+.legal-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  font-size: 0.85rem;
+}
+
+.legal-links a {
+  color: var(--text-secondary);
+}
+
+.legal-links a:hover {
+  color: var(--brand);
+}
+
+.legal-links--footer {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}

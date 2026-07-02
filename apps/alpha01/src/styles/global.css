@@ -30,29 +30,112 @@ button, input, select, textarea { font: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   padding: 12px 16px;
   background: var(--bg-nav);
   backdrop-filter: blur(8px);
   border-bottom: 1px solid var(--border);
 }
 
+@media (min-width: 768px) {
+  .shell-header {
+    padding: 14px 32px;
+  }
+}
+
+.shell-header-start {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-width: 0;
+}
+
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.shell-mode-badge {
+  font-size: 0.75rem;
+  color: var(--text-tertiary);
+}
+
 .shell-brand {
   font-weight: 700;
   font-size: 1rem;
   color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.desktop-nav {
+  display: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.desktop-nav a {
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: color 0.15s, background 0.15s;
+}
+
+.desktop-nav a:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
+.desktop-nav a.active {
+  color: var(--brand);
+  background: var(--brand-bg);
+  font-weight: 600;
+}
+
+@media (min-width: 768px) {
+  .desktop-nav { display: flex; }
 }
 
 .shell-main {
   flex: 1;
   width: 100%;
-  max-width: var(--content-max);
   margin: 0 auto;
   padding: 16px 16px 88px;
 }
 
+.page-frame {
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+}
+
 @media (min-width: 768px) {
-  .shell-main { padding-bottom: 24px; max-width: 1100px; }
+  .shell-main {
+    padding: 28px 32px 40px;
+    max-width: 1200px;
+  }
+
+  .page-frame {
+    max-width: 880px;
+  }
+
+  .page-title {
+    font-size: 1.75rem;
+  }
+
+  .page-subtitle {
+    font-size: 1rem;
+    max-width: 62ch;
+  }
+}
+
+@media (min-width: 1024px) {
+  .page-frame--wide {
+    max-width: 1000px;
+  }
 }
 
 .bottom-nav {
@@ -120,6 +203,11 @@ button, input, select, textarea { font: inherit; }
 
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.btn-icon {
+  min-width: var(--touch-min);
+  padding: 0;
+}
+
 .intent-grid {
   display: grid;
   gap: 12px;
@@ -127,6 +215,18 @@ button, input, select, textarea { font: inherit; }
 
 @media (min-width: 640px) {
   .intent-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 1024px) {
+  .intent-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+
+  .intent-card {
+    min-height: 140px;
+    padding: 24px;
+  }
 }
 
 .intent-card {
@@ -182,6 +282,95 @@ button, input, select, textarea { font: inherit; }
   gap: 12px;
 }
 
+@media (min-width: 768px) {
+  .receipt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .receipt-row:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}
+
+.wizard-form-grid {
+  display: grid;
+  gap: 0;
+}
+
+@media (min-width: 768px) {
+  .wizard-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+  }
+
+  .wizard-form-grid .field--full {
+    grid-column: 1 / -1;
+  }
+}
+
+/* Intent step: stack asset pickers, then a compact terms row */
+.wizard-intent-form {
+  display: flex;
+  flex-direction: column;
+}
+
+.wizard-intent-terms {
+  display: grid;
+  gap: 0;
+}
+
+@media (min-width: 768px) {
+  .wizard-intent-terms {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 20px;
+    align-items: start;
+  }
+}
+
+/* Keep paired controls aligned when one label wraps to two lines */
+.wizard-intent-terms .field label {
+  min-height: 2.75rem;
+  display: flex;
+  align-items: flex-end;
+  line-height: 1.3;
+}
+
+.wizard-intent-terms .field input,
+.wizard-intent-terms .duration-select-trigger {
+  height: var(--touch-min);
+  min-height: var(--touch-min);
+  max-height: var(--touch-min);
+  box-sizing: border-box;
+}
+
+.wizard-intent-terms-hint {
+  margin-top: 2px;
+}
+
+@media (min-width: 768px) {
+  .wizard-intent-terms-hint {
+    grid-column: 1 / -1;
+  }
+}
+
+.wizard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+@media (min-width: 768px) {
+  .wizard-actions {
+    justify-content: flex-start;
+  }
+
+  .wizard-actions .btn-primary {
+    min-width: 200px;
+  }
+}
+
 .receipt-row {
   display: flex;
   flex-direction: column;
@@ -223,14 +412,38 @@ button, input, select, textarea { font: inherit; }
   padding: 0 12px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: var(--bg-card);
+  background: var(--bg-primary);
   color: var(--text-primary);
+}
+
+.field input:focus, .field select:focus {
+  outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+
+.card .field input,
+.card .field select {
+  background: var(--bg-primary);
+  border-color: color-mix(in srgb, var(--text-tertiary) 45%, var(--border));
 }
 
 .page-title {
   font-size: 1.5rem;
   font-weight: 700;
   margin-bottom: 8px;
+}
+
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.position-card--static {
+  cursor: default;
+  text-decoration: none;
+  color: inherit;
 }
 
 .page-subtitle {

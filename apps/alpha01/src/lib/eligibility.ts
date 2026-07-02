@@ -10,7 +10,7 @@ export function baseEligibilityItems(opts: {
   isSanctioned: boolean;
   sanctionsLoading: boolean;
 }): ChecklistItem[] {
-  return [
+  const items: ChecklistItem[] = [
     {
       id: 'wallet',
       label: 'Wallet connected',
@@ -25,17 +25,38 @@ export function baseEligibilityItems(opts: {
       fixLabel: 'Switch network',
       onFix: opts.switchChain,
     },
-    {
-      id: 'sanctions',
-      label: 'Wallet passes sanctions screening',
-      ok: !opts.sanctionsLoading && !opts.isSanctioned,
-      fixLabel: opts.isSanctioned ? 'Use a different wallet' : undefined,
-    },
-    {
-      id: 'terms',
-      label: 'Risk & terms acknowledged',
-      ok: opts.consent,
-      fixLabel: 'Acknowledge below',
-    },
   ];
+
+  // Fail-closed only — naive users never see a passing sanctions row.
+  if (opts.sanctionsLoading) {
+    items.push({
+      id: 'sanctions',
+      label: 'Checking wallet eligibility…',
+      ok: false,
+    });
+  } else if (opts.isSanctioned) {
+    items.push({
+      id: 'sanctions',
+      label: 'This wallet cannot open new positions',
+      ok: false,
+      fixLabel: 'Use a different wallet',
+    });
+  }
+
+  items.push({
+    id: 'terms',
+    label: 'Risk & terms acknowledged',
+    ok: opts.consent,
+    fixLabel: 'Acknowledge below',
+  });
+
+  return items;
+}
+
+/** Gate tx CTAs while sanctions screening is in flight or flagged. */
+export function sanctionsAllowsProceed(opts: {
+  isSanctioned: boolean;
+  sanctionsLoading: boolean;
+}): boolean {
+  return !opts.sanctionsLoading && !opts.isSanctioned;
 }

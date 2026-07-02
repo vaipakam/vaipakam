@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
-import type { IndexedOffer, ReviewReceiptData } from '@vaipakam/defi-client';
+import type { IndexedOffer } from '@vaipakam/defi-client';
 import {
   acceptOfferFlow,
   createBorrowerOffer,
@@ -10,35 +10,75 @@ import {
   matchOffersToBorrowIntent,
   OFFER_DURATION_DEFAULT_DAYS,
 } from '@vaipakam/defi-client';
-import { shortenAddr } from '@vaipakam/lib/address';
+
+import { AmountField } from '../components/AmountField';
+import { CollateralBalanceHint } from '../components/CollateralBalanceHints';
+import { AssetAmount } from '../components/AssetAmount';
+import { AssetSymbolLink } from '../components/AssetSymbolLink';
+import { BasicAssetPicker } from '../components/BasicAssetPicker';
+import { DurationSelect } from '../components/DurationSelect';
 import { EligibilityChecklist } from '../components/EligibilityChecklist';
 import { FlowDone } from '../components/FlowDone';
 import { HelpLink } from '../components/HelpLink';
-import { ReviewReceipt } from '../components/ReviewReceipt';
+import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
+import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
+import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
-import { baseEligibilityItems } from '../lib/eligibility';
+import { useMode } from '../context/ModeContext';
+import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
+
+import { assessCollateralBalance } from '../lib/balanceCheck';
+import { peekTokenMeta, useTokenMeta, type TokenMeta } from '../lib/tokenMeta';
 
 type Step = 'intent' | 'match' | 'request' | 'check' | 'review' | 'done';
 type Mode = 'accept' | 'request';
 
-function borrowReceipt(offer: IndexedOffer, borrowAmount: string): ReviewReceiptData {
+function borrowReceipt(
+  offer: IndexedOffer,
+  borrowAmount: string,
+  lendingMeta: TokenMeta | null,
+  collateralMeta: TokenMeta | null,
+): ReviewReceiptView {
   return {
     youReceive: {
       label: 'You receive',
-      value: `You are borrowing ${borrowAmount || offer.amountMax || offer.amount} (${shortenAddr(offer.lendingAsset)}).`,
+      value: (
+        <>
+          You are borrowing{' '}
+          <AssetAmount
+            mode={borrowAmount.trim() ? 'human' : 'raw'}
+            amount={borrowAmount.trim() ? borrowAmount : offer.amountMax || offer.amount}
+            address={offer.lendingAsset}
+            meta={lendingMeta}
+          />
+          .
+        </>
+      ),
       hint: 'Funds land in your vault when the loan starts.',
     },
     youLock: {
       label: 'You lock',
-      value: `You are locking ${offer.collateralAmount} (${shortenAddr(offer.collateralAsset)}).`,
+      value: (
+        <>
+          <AssetAmount
+            mode="raw"
+            amount={offer.collateralAmount}
+            address={offer.collateralAsset}
+            meta={collateralMeta}
+            assetType={offer.collateralAssetType}
+            tokenId={offer.collateralTokenId}
+          />{' '}
+          collateral.
+        </>
+      ),
       hint: 'Collateral stays in your vault until you repay or default.',
     },
     youMayOwe: {
       label: 'You may owe',
-      value: `Principal + ${formatBpsAsPercent(offer.interestRateBps)} interest over ${offer.durationDays} days.`,
+      value: `Principal + ${formatBpsAsPercent(offer.interestRateBps)} APR over ${offer.durationDays} days.`,
     },
     youCanLose: {
       label: 'You can lose',
@@ -56,7 +96,16 @@ function borrowReceipt(offer: IndexedOffer, borrowAmount: string): ReviewReceipt
   };
 }
 
-function requestReceipt(amount: string, rate: string, duration: string, collateral: string): ReviewReceiptData {
+function requestReceipt(
+  amount: string,
+  rate: string,
+  duration: string,
+  collateral: string,
+  lendingAsset: string,
+  collateralAsset: string,
+  lendingMeta: TokenMeta | null,
+  collateralMeta: TokenMeta | null,
+): ReviewReceiptView {
   return {
     youReceive: {
       label: 'You receive',
@@ -65,12 +114,23 @@ function requestReceipt(amount: string, rate: string, duration: string, collater
     },
     youLock: {
       label: 'You lock',
-      value: `${collateral || '—'} collateral now.`,
+      value: (
+        <>
+          <AssetAmount mode="human" amount={collateral} address={collateralAsset} meta={collateralMeta} />{' '}
+          collateral now.
+        </>
+      ),
       hint: 'Collateral is locked while the request is open.',
     },
     youMayOwe: {
       label: 'You may owe',
-      value: `Up to ${amount || '—'} principal at ${rate}% over ${duration} days once matched.`,
+      value: (
+        <>
+          Up to{' '}
+          <AssetAmount mode="human" amount={amount} address={lendingAsset} meta={lendingMeta} /> principal at{' '}
+          {rate}% APR over {duration} days once matched.
+        </>
+      ),
     },
     youCanLose: {
       label: 'You can lose',
@@ -83,6 +143,7 @@ function requestReceipt(amount: string, rate: string, duration: string, collater
 
 export function BorrowWizard() {
   const navigate = useNavigate();
+  const { mode: uiMode } = useMode();
   const { address, isCorrectChain, connect, switchToAppChain, activeChain } = useWallet();
   const chain = useReadChain();
   const diamond = useDiamondContract();
@@ -107,6 +168,16 @@ export function BorrowWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [txError, setTxError] = useState<string | null>(null);
 
+  const lendingMeta = useTokenMeta(lendingAsset || null);
+  const collateralMeta = useTokenMeta(collateralAsset || null);
+  const selectedLendingMeta = useTokenMeta(selected?.lendingAsset ?? null);
+  const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
+
+  useEffect(() => {
+    if (lendingDefault) setLendingAsset((v) => v || lendingDefault);
+    if (collateralDefault) setCollateralAsset((v) => v || collateralDefault);
+  }, [lendingDefault, collateralDefault]);
+
   const matched = useMemo(() => {
     const pool = offers ?? [];
     return matchOffersToBorrowIntent(pool, {
@@ -116,6 +187,36 @@ export function BorrowWizard() {
       maxRateBps: Math.round(Number(maxRate) * 100) || undefined,
     });
   }, [offers, lendingAsset, collateralAsset, duration, maxRate]);
+
+  const collateralToken =
+    mode === 'accept' && selected ? selected.collateralAsset : collateralAsset;
+
+  const { data: spendableBalance, isLoading: balanceLoading } = useSpendableBalance(
+    collateralToken || null,
+    address,
+  );
+
+  const collateralBalance = useMemo(
+    () =>
+      assessCollateralBalance({
+        needHuman: mode === 'request' ? collateralAmount : '',
+        needRaw: mode === 'accept' && selected ? selected.collateralAmount : undefined,
+        balance: spendableBalance,
+        tokenAddress: collateralToken,
+        meta: mode === 'accept' ? selectedCollateralMeta : collateralMeta,
+        loading: balanceLoading,
+      }),
+    [
+      balanceLoading,
+      collateralAmount,
+      collateralMeta,
+      collateralToken,
+      mode,
+      selected,
+      selectedCollateralMeta,
+      spendableBalance,
+    ],
+  );
 
   const checklist = useMemo(
     () => [
@@ -135,11 +236,65 @@ export function BorrowWizard() {
             { id: 'amount', label: 'Borrow amount entered', ok: Number(amount) > 0 },
           ]
         : []),
+      ...(collateralBalance.sufficient != null
+        ? [
+            {
+              id: 'collateral-balance',
+              label: collateralBalance.sufficient
+                ? 'Enough collateral in wallet or vault'
+                : 'Insufficient collateral balance',
+              ok: collateralBalance.sufficient,
+            },
+          ]
+        : []),
     ],
-    [address, chain.name, collateralAmount, connect, consent, isCorrectChain, mode, amount, sanctions, switchToAppChain],
+    [
+      address,
+      amount,
+      chain.name,
+      collateralAmount,
+      collateralBalance.sufficient,
+      connect,
+      consent,
+      isCorrectChain,
+      mode,
+      sanctions,
+      switchToAppChain,
+    ],
   );
 
-  const allOk = checklist.every((i) => i.ok);
+  const allOk =
+    checklist.every((i) => i.ok) &&
+    sanctionsAllowsProceed({ isSanctioned: sanctions.isSanctioned, sanctionsLoading: sanctions.loading });
+
+  const receiptData = useMemo((): ReviewReceiptView => {
+    if (mode === 'accept' && selected) {
+      return borrowReceipt(selected, amount, selectedLendingMeta, selectedCollateralMeta);
+    }
+    return requestReceipt(
+      amount,
+      maxRate,
+      duration,
+      collateralAmount,
+      lendingAsset,
+      collateralAsset,
+      lendingMeta,
+      collateralMeta,
+    );
+  }, [
+    amount,
+    collateralAmount,
+    collateralAsset,
+    collateralMeta,
+    duration,
+    lendingAsset,
+    lendingMeta,
+    maxRate,
+    mode,
+    selected,
+    selectedCollateralMeta,
+    selectedLendingMeta,
+  ]);
 
   async function handleAccept() {
     if (!selected || !walletClient || !chain.diamondAddress) return;
@@ -195,7 +350,7 @@ export function BorrowWizard() {
   }
 
   return (
-    <div>
+    <div className="page-frame page-frame--wide">
       <h1 className="page-title">Borrow assets</h1>
       <p className="page-subtitle">
         Tell us what you need, pick a matching lender offer, or post a borrow request.{' '}
@@ -210,31 +365,58 @@ export function BorrowWizard() {
         ))}
       </div>
 
+      {uiMode === 'basic' ? (
+        <p className="form-hint" style={{ marginBottom: 16 }}>
+          Basic mode uses blue-chip assets only — your vault stays on the safest risk tier by default.
+        </p>
+      ) : null}
+
       {step === 'intent' ? (
         <>
-          <div className="field">
-            <label>Asset to borrow</label>
-            <input value={lendingAsset} onChange={(e) => setLendingAsset(e.target.value)} placeholder="Token address" />
+          <div className="wizard-intent-form">
+            <BasicAssetPicker
+              kind="stablecoin"
+              chainId={chain.chainId}
+              value={lendingAsset}
+              onChange={setLendingAsset}
+              label="Asset to borrow"
+              hint="Stablecoins and other widely-used borrow assets."
+            />
+            <AmountField
+              label="Amount to borrow"
+              value={amount}
+              onChange={setAmount}
+              placeholder="e.g. 100"
+            />
+            <BasicAssetPicker
+              kind="collateral"
+              chainId={chain.chainId}
+              value={collateralAsset}
+              onChange={setCollateralAsset}
+              label="Collateral asset"
+              hint="Major liquid assets (top market-cap tokens on this chain)."
+            />
+            <div className="wizard-intent-terms">
+              <DurationSelect value={duration} onChange={setDuration} hint={null} />
+              <div className="field">
+                <label>Maximum interest rate (% APR)</label>
+                <input
+                  value={maxRate}
+                  onChange={(e) => setMaxRate(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="e.g. 8"
+                />
+              </div>
+              <p className="form-hint wizard-intent-terms-hint">
+                Bucketed durations improve offer matching.
+              </p>
+            </div>
           </div>
-          <div className="field">
-            <label>Amount</label>
-            <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="e.g. 100" />
+          <div className="wizard-actions">
+            <button type="button" className="btn btn-primary" onClick={() => setStep('match')}>
+              Find matching offers
+            </button>
           </div>
-          <div className="field">
-            <label>Collateral asset</label>
-            <input value={collateralAsset} onChange={(e) => setCollateralAsset(e.target.value)} placeholder="Token address" />
-          </div>
-          <div className="field">
-            <label>Duration (days)</label>
-            <input value={duration} onChange={(e) => setDuration(e.target.value)} inputMode="numeric" />
-          </div>
-          <div className="field">
-            <label>Maximum interest rate (%)</label>
-            <input value={maxRate} onChange={(e) => setMaxRate(e.target.value)} inputMode="decimal" />
-          </div>
-          <button type="button" className="btn btn-primary" onClick={() => setStep('match')}>
-            Find matching offers
-          </button>
         </>
       ) : null}
 
@@ -256,9 +438,12 @@ export function BorrowWizard() {
               >
                 <strong>Lender offer #{o.offerId}</strong>
                 <div style={{ color: 'var(--text-secondary)' }}>
-                  {formatBpsAsPercent(o.interestRateBps)} · {o.durationDays} days
+                  {formatBpsAsPercent(o.interestRateBps)} APR · {o.durationDays} days
                 </div>
-                <div>Borrow {shortenAddr(o.lendingAsset)} · Lock {shortenAddr(o.collateralAsset)}</div>
+                <div>
+                  Borrow <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset)} /> · Lock{' '}
+                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset)} />
+                </div>
               </button>
             ))}
           </div>
@@ -267,13 +452,21 @@ export function BorrowWizard() {
               <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
                 No lender offers fit right now. Post a borrow request — collateral locks now and funds arrive when a lender accepts.
               </p>
-              <div className="field">
-                <label>Collateral to lock</label>
-                <input value={collateralAmount} onChange={(e) => setCollateralAmount(e.target.value)} inputMode="decimal" />
-              </div>
+              <AmountField
+                label="Collateral to lock"
+                value={collateralAmount}
+                onChange={setCollateralAmount}
+                placeholder="e.g. 0.1"
+                availableLabel={<CollateralBalanceHint assessment={collateralBalance} variant="available" />}
+                shortfallLabel={<CollateralBalanceHint assessment={collateralBalance} variant="shortfall" />}
+                hint="Checked against your wallet and Vaipakam vault combined."
+              />
               <button
                 type="button"
                 className="btn btn-primary"
+                disabled={
+                  Number(collateralAmount) <= 0 || collateralBalance.sufficient === false
+                }
                 onClick={() => {
                   setMode('request');
                   setStep('check');
@@ -283,20 +476,31 @@ export function BorrowWizard() {
               </button>
             </div>
           ) : null}
-          <button type="button" className="btn btn-secondary" style={{ marginTop: 12 }} onClick={() => setStep('intent')}>
-            Back
-          </button>
+          <div className="wizard-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setStep('intent')}>
+              Back
+            </button>
+          </div>
         </>
       ) : null}
 
       {(step === 'check' && (selected || mode === 'request')) ? (
         <>
+          {collateralBalance.shortfall ? (
+            <div className="banner banner-warn" style={{ marginBottom: 12 }}>
+              <CollateralBalanceHint assessment={collateralBalance} variant="shortfall" />
+            </div>
+          ) : collateralBalance.available && mode === 'accept' ? (
+            <p className="form-hint" style={{ marginBottom: 12 }}>
+              <CollateralBalanceHint assessment={collateralBalance} variant="available" />
+            </p>
+          ) : null}
           <EligibilityChecklist items={checklist} />
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            I understand the risks and agree to the platform terms.
+            <RiskConsentLabel />
           </label>
-          <div className="sticky-cta" style={{ display: 'flex', gap: 8 }}>
+          <div className="sticky-cta wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('match')}>Back</button>
             <button type="button" className="btn btn-primary" disabled={!allOk} onClick={() => setStep('review')}>
               Continue to review
@@ -307,15 +511,9 @@ export function BorrowWizard() {
 
       {step === 'review' ? (
         <>
-          <ReviewReceipt
-            data={
-              mode === 'accept' && selected
-                ? borrowReceipt(selected, amount)
-                : requestReceipt(amount, maxRate, duration, collateralAmount)
-            }
-          />
+          <ReviewReceipt data={receiptData} />
           {txError ? <div className="banner banner-error">{txError}</div> : null}
-          <div className="sticky-cta" style={{ display: 'flex', gap: 8 }}>
+          <div className="sticky-cta wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('check')}>Back</button>
             <button
               type="button"

@@ -10,10 +10,12 @@ import {
   plainHealthLabel,
   repayLoanFull,
 } from '@vaipakam/defi-client';
-import { shortenAddr } from '@vaipakam/lib/address';
+import { AssetAmount } from '../components/AssetAmount';
 import { HelpLink } from '../components/HelpLink';
+import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
 import { useLoanHealth } from '../hooks/useLoanHealth';
+import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useDiamondContract, useReadChain } from '../hooks/useDiamond';
 
 export function PositionDetailPage() {
@@ -22,14 +24,17 @@ export function PositionDetailPage() {
   const chain = useReadChain();
   const { address } = useWallet();
   const diamond = useDiamondContract();
-  const origin = import.meta.env.VITE_INDEXER_ORIGIN;
+  const origin = useIndexerOrigin();
   const { data: hf } = useLoanHealth(id);
 
   const { data: loan, isLoading, refetch } = useQuery({
     queryKey: ['loan', chain.chainId, id],
     enabled: Number.isFinite(id),
-    queryFn: () => fetchLoanById(origin, chain.chainId, id),
+    queryFn: () => fetchLoanById(origin ?? undefined, chain.chainId, id),
   });
+
+  const lendingMeta = useTokenMeta(loan?.lendingAsset ?? null);
+  const collateralMeta = useTokenMeta(loan?.collateralAsset ?? null);
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -79,8 +84,28 @@ export function PositionDetailPage() {
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 10 }}>
-        <div><strong>Locked collateral:</strong> {loan.collateralAmount} ({shortenAddr(loan.collateralAsset)})</div>
-        <div><strong>Principal:</strong> {loan.principal} ({shortenAddr(loan.lendingAsset)})</div>
+        <div>
+          <strong>Locked collateral:</strong>{' '}
+          <AssetAmount
+            mode="raw"
+            amount={loan.collateralAmount}
+            address={loan.collateralAsset}
+            meta={collateralMeta}
+            assetType={loan.collateralAssetType}
+            tokenId={loan.collateralTokenId}
+          />
+        </div>
+        <div>
+          <strong>Principal:</strong>{' '}
+          <AssetAmount
+            mode="raw"
+            amount={loan.principal}
+            address={loan.lendingAsset}
+            meta={lendingMeta}
+            assetType={loan.assetType}
+            tokenId={loan.tokenId}
+          />
+        </div>
         <div><strong>Interest:</strong> {formatBpsAsPercent(loan.interestRateBps)} over {loan.durationDays} days</div>
         {isBorrower ? <div style={{ color: 'var(--text-secondary)' }}>{health.detail}</div> : null}
         <details>

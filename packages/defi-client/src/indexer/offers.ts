@@ -1,4 +1,4 @@
-import type { ActiveOffersPage, IndexedOffer } from '../types/offers.js';
+import type { ActiveOffersPage, CreatorOffersPage, IndexedOffer } from '../types/offers.js';
 import { fetchIndexerJson } from './client.js';
 import { OFFER_TYPE_BORROWER, OFFER_TYPE_LENDER } from '../types/offers.js';
 
@@ -28,6 +28,46 @@ export async function fetchAllActiveOffers(
     before = res.nextBefore;
   }
   return all;
+}
+
+export async function fetchOffersByCreator(
+  indexerOrigin: string | undefined,
+  chainId: number,
+  creator: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<CreatorOffersPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return fetchIndexerJson<CreatorOffersPage>(
+    indexerOrigin,
+    `/offers/by-creator/${creator.toLowerCase()}?${params}`,
+  );
+}
+
+export async function fetchAllOffersByCreator(
+  indexerOrigin: string | undefined,
+  chainId: number,
+  creator: string,
+): Promise<IndexedOffer[]> {
+  const all: IndexedOffer[] = [];
+  let before: number | undefined;
+  for (let page = 0; page < 25; page++) {
+    const res = await fetchOffersByCreator(indexerOrigin, chainId, creator, {
+      limit: 100,
+      before,
+    });
+    if (!res) break;
+    all.push(...res.offers);
+    if (res.nextBefore == null) break;
+    before = res.nextBefore;
+  }
+  return all;
+}
+
+/** Wallet-owned offers still open on the book. */
+export function filterActiveOffersByCreator(offers: IndexedOffer[]): IndexedOffer[] {
+  return offers.filter((o) => o.status === 'active');
 }
 
 /** Lender offers a borrower can accept (B1 journey). */

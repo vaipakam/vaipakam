@@ -4,6 +4,7 @@ import { ConnectKitButton } from 'connectkit';
 import { useMode } from '../context/ModeContext';
 import { useWallet } from '../context/WalletContext';
 import { useMyLoans } from '../hooks/useIndexedLoans';
+import { useMyOffers } from '../hooks/useMyOffers';
 import { HelpLink } from './HelpLink';
 
 const INTENTS = [
@@ -17,9 +18,11 @@ export function IntentHome() {
   const { mode } = useMode();
   const { address } = useWallet();
   const { data: loans } = useMyLoans();
+  const { data: offers } = useMyOffers();
+  const positionCount = (loans?.length ?? 0) + (offers?.length ?? 0);
 
   return (
-    <div>
+    <div className="page-frame">
       <h1 className="page-title">What do you want to do?</h1>
       <p className="page-subtitle">
         {mode === 'basic'
@@ -35,10 +38,10 @@ export function IntentHome() {
         </div>
       ) : null}
 
-      {loans && loans.length > 0 ? (
+      {positionCount > 0 ? (
         <div className="banner banner-warn" style={{ marginBottom: 16 }}>
-          You have {loans.length} active position{loans.length === 1 ? '' : 's'}.{' '}
-          <Link to="/positions">Manage them</Link>
+          You have {positionCount} open position{positionCount === 1 ? '' : 's'} (loans and
+          offers). <Link to="/positions">Manage them</Link>
         </div>
       ) : null}
 

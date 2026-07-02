@@ -1,8 +1,14 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { claimAsBorrower, claimAsLender, formatBpsAsPercent } from '@vaipakam/defi-client';
-import { shortenAddr } from '@vaipakam/lib/address';
+import {
+  claimAsBorrower,
+  claimAsLender,
+  formatBpsAsPercent,
+  type IndexedLoan,
+} from '@vaipakam/defi-client';
+import { AssetSymbolLink } from '../components/AssetSymbolLink';
 import { HelpLink } from '../components/HelpLink';
+import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
 import { useClaimables } from '../hooks/useClaimables';
 import { useDiamondContract } from '../hooks/useDiamond';
@@ -53,31 +59,13 @@ export function ClaimsPage() {
         {rows.map((loan) => {
           const side = data?.asBorrower.some((l) => l.loanId === loan.loanId) ? 'borrower' : 'lender';
           return (
-            <div key={`${side}-${loan.loanId}`} className="position-card">
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <strong>Loan #{loan.loanId}</strong>
-                <span>{side === 'borrower' ? 'Borrower claim' : 'Lender claim'}</span>
-              </div>
-              <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-                {shortenAddr(loan.lendingAsset)} · {formatBpsAsPercent(loan.interestRateBps)} · {loan.status}
-              </div>
-              <p style={{ fontSize: '0.85rem', marginTop: 4 }}>
-                {side === 'borrower'
-                  ? 'You can claim returned collateral or rebates after settlement.'
-                  : 'You can claim principal plus interest after the borrower repaid.'}
-              </p>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busyId === loan.loanId}
-                  onClick={() => void claim(loan.loanId, side)}
-                >
-                  Claim
-                </button>
-                <Link to={`/positions/${loan.loanId}`} className="btn btn-secondary">Details</Link>
-              </div>
-            </div>
+            <ClaimLoanCard
+              key={`${side}-${loan.loanId}`}
+              loan={loan}
+              side={side}
+              busy={busyId === loan.loanId}
+              onClaim={() => void claim(loan.loanId, side)}
+            />
           );
         })}
       </div>
@@ -86,6 +74,46 @@ export function ClaimsPage() {
           Nothing to claim right now. <Link to="/positions">View positions</Link>
         </p>
       ) : null}
+    </div>
+  );
+}
+
+function ClaimLoanCard({
+  loan,
+  side,
+  busy,
+  onClaim,
+}: {
+  loan: IndexedLoan;
+  side: 'borrower' | 'lender';
+  busy: boolean;
+  onClaim: () => void;
+}) {
+  const lendingMeta = useTokenMeta(loan.lendingAsset);
+
+  return (
+    <div className="position-card">
+      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <strong>Loan #{loan.loanId}</strong>
+        <span>{side === 'borrower' ? 'Borrower claim' : 'Lender claim'}</span>
+      </div>
+      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+        <AssetSymbolLink address={loan.lendingAsset} meta={lendingMeta} /> ·{' '}
+        {formatBpsAsPercent(loan.interestRateBps)} · {loan.status}
+      </div>
+      <p style={{ fontSize: '0.85rem', marginTop: 4 }}>
+        {side === 'borrower'
+          ? 'You can claim returned collateral or rebates after settlement.'
+          : 'You can claim principal plus interest after the borrower repaid.'}
+      </p>
+      <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+        <button type="button" className="btn btn-primary" disabled={busy} onClick={onClaim}>
+          Claim
+        </button>
+        <Link to={`/positions/${loan.loanId}`} className="btn btn-secondary">
+          Details
+        </Link>
+      </div>
     </div>
   );
 }

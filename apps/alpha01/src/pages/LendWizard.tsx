@@ -2,26 +2,110 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
-import type { IndexedOffer, ReviewReceiptData } from '@vaipakam/defi-client';
+import type { IndexedOffer } from '@vaipakam/defi-client';
 import {
   acceptOfferFlow,
   createLenderOffer,
   formatBpsAsPercent,
   OFFER_DURATION_DEFAULT_DAYS,
 } from '@vaipakam/defi-client';
-import { shortenAddr } from '@vaipakam/lib/address';
+import { AmountField } from '../components/AmountField';
+import { AssetAmount } from '../components/AssetAmount';
+import { AssetSymbolLink } from '../components/AssetSymbolLink';
+import { DurationSelect } from '../components/DurationSelect';
 import { EligibilityChecklist } from '../components/EligibilityChecklist';
 import { FlowDone } from '../components/FlowDone';
 import { HelpLink } from '../components/HelpLink';
-import { ReviewReceipt } from '../components/ReviewReceipt';
+import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
+import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useBorrowerOffersForLend } from '../hooks/useBorrowerOffers';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
-import { baseEligibilityItems } from '../lib/eligibility';
+import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
+
+import { peekTokenMeta, useTokenMeta, type TokenMeta } from '../lib/tokenMeta';
 
 type Path = 'fund' | 'create';
 type Step = 'choose' | 'pick' | 'inputs' | 'check' | 'review' | 'done';
+
+function fundReceipt(
+  offer: IndexedOffer,
+  lendingMeta: TokenMeta | null,
+  collateralMeta: TokenMeta | null,
+): ReviewReceiptView {
+  return {
+    youReceive: {
+      label: 'You receive',
+      value: `Expected interest if the borrower repays on time (${formatBpsAsPercent(offer.interestRateBpsMax || offer.interestRateBps)} APR).`,
+      hint: 'Interest is not guaranteed — it depends on borrower repayment.',
+    },
+    youLock: {
+      label: 'You lock',
+      value: (
+        <>
+          <AssetAmount mode="raw" amount={offer.amount} address={offer.lendingAsset} meta={lendingMeta} /> until
+          the loan closes.
+        </>
+      ),
+      hint: 'Principal moves to your vault custody for the loan term.',
+    },
+    youMayOwe: { label: 'You may owe', value: 'Protocol yield fee at settlement (separate from gas).' },
+    youCanLose: {
+      label: 'You can lose',
+      value: (
+        <>
+          Recovery depends on{' '}
+          <AssetAmount
+            mode="raw"
+            amount={offer.collateralAmount}
+            address={offer.collateralAsset}
+            meta={collateralMeta}
+            assetType={offer.collateralAssetType}
+            tokenId={offer.collateralTokenId}
+          />{' '}
+          collateral if the borrower defaults.
+        </>
+      ),
+      hint: 'Illiquid collateral may transfer in full on default.',
+    },
+    fees: { label: 'Fees', value: 'Treasury yield fee at settlement. Network gas is separate.' },
+    whenEnds: { label: 'When this ends', value: `After ${offer.durationDays} days or borrower repayment.` },
+  };
+}
+
+function createReceipt(
+  amount: string,
+  rate: string,
+  duration: string,
+  lendingAsset: string,
+  lendingMeta: TokenMeta | null,
+): ReviewReceiptView {
+  return {
+    youReceive: {
+      label: 'You receive',
+      value: `${rate}% APR expected interest when matched`,
+      hint: 'Expected interest if the borrower repays on time — not guaranteed.',
+    },
+    youLock: {
+      label: 'You lock',
+      value: (
+        <>
+          <AssetAmount mode="human" amount={amount} address={lendingAsset} meta={lendingMeta} /> until accepted or
+          cancelled
+        </>
+      ),
+      hint: 'Lent asset stays in your vault until the offer is accepted or cancelled.',
+    },
+    youMayOwe: { label: 'You may owe', value: 'Nothing beyond gas to post the offer.' },
+    youCanLose: {
+      label: 'You can lose',
+      value: 'Principal remains locked until a borrower accepts or you cancel.',
+    },
+    fees: { label: 'Fees', value: 'Protocol yield fee at settlement (separate from gas).' },
+    whenEnds: { label: 'When this ends', value: `Offer duration ${duration} days, or until cancelled.` },
+  };
+}
 
 export function LendWizard() {
   const navigate = useNavigate();
@@ -46,6 +130,10 @@ export function LendWizard() {
   const lendingAsset = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
   const collateralAsset = chain.wrappedNativeAddress ?? activeChain?.wrappedNativeAddress ?? '';
 
+  const lendingMeta = useTokenMeta(lendingAsset || null);
+  const selectedLendingMeta = useTokenMeta(selected?.lendingAsset ?? null);
+  const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
+
   const checklist = useMemo(
     () => [
       ...baseEligibilityItems({
@@ -63,48 +151,16 @@ export function LendWizard() {
     [address, amount, chain.name, connect, consent, isCorrectChain, path, sanctions, switchToAppChain],
   );
 
-  const allOk = checklist.every((i) => i.ok);
+  const allOk =
+    checklist.every((i) => i.ok) &&
+    sanctionsAllowsProceed({ isSanctioned: sanctions.isSanctioned, sanctionsLoading: sanctions.loading });
 
-  const fundReceipt = (offer: IndexedOffer): ReviewReceiptData => ({
-    youReceive: {
-      label: 'You receive',
-      value: `Expected interest if the borrower repays on time (${formatBpsAsPercent(offer.interestRateBpsMax || offer.interestRateBps)}).`,
-      hint: 'Interest is not guaranteed — it depends on borrower repayment.',
-    },
-    youLock: {
-      label: 'You lock',
-      value: `${offer.amount} ${shortenAddr(offer.lendingAsset)}`,
-      hint: 'Principal moves to your vault custody for the loan term.',
-    },
-    youMayOwe: { label: 'You may owe', value: 'Protocol yield fee at settlement (separate from gas).' },
-    youCanLose: {
-      label: 'You can lose',
-      value: 'Recovery depends on collateral if the borrower defaults.',
-      hint: 'Illiquid collateral may transfer in full on default.',
-    },
-    fees: { label: 'Fees', value: 'Treasury yield fee at settlement. Network gas is separate.' },
-    whenEnds: { label: 'When this ends', value: `After ${offer.durationDays} days or borrower repayment.` },
-  });
-
-  const createReceipt: ReviewReceiptData = {
-    youReceive: {
-      label: 'You receive',
-      value: `${rate}% expected interest when matched`,
-      hint: 'Expected interest if the borrower repays on time — not guaranteed.',
-    },
-    youLock: {
-      label: 'You lock',
-      value: `${amount || '—'} until accepted or cancelled`,
-      hint: 'Lent asset stays in your vault until the offer is accepted or cancelled.',
-    },
-    youMayOwe: { label: 'You may owe', value: 'Nothing beyond gas to post the offer.' },
-    youCanLose: {
-      label: 'You can lose',
-      value: 'Principal remains locked until a borrower accepts or you cancel.',
-    },
-    fees: { label: 'Fees', value: 'Protocol yield fee at settlement (separate from gas).' },
-    whenEnds: { label: 'When this ends', value: `Offer duration ${duration} days, or until cancelled.` },
-  };
+  const receiptData = useMemo((): ReviewReceiptView => {
+    if (path === 'fund' && selected) {
+      return fundReceipt(selected, selectedLendingMeta, selectedCollateralMeta);
+    }
+    return createReceipt(amount, rate, duration, lendingAsset, lendingMeta);
+  }, [amount, duration, lendingAsset, lendingMeta, path, rate, selected, selectedCollateralMeta, selectedLendingMeta]);
 
   async function handleFund() {
     if (!selected || !walletClient || !chain.diamondAddress) return;
@@ -159,7 +215,7 @@ export function LendWizard() {
   }
 
   return (
-    <div>
+    <div className="page-frame page-frame--wide">
       <h1 className="page-title">Earn by lending</h1>
       <p className="page-subtitle">
         Fund a borrower request or post your own lending offer. <HelpLink anchor="lend" />
@@ -192,28 +248,55 @@ export function LendWizard() {
               >
                 <strong>Request #{o.offerId}</strong>
                 <div style={{ color: 'var(--text-secondary)' }}>
-                  Wants {shortenAddr(o.lendingAsset)} · {formatBpsAsPercent(o.interestRateBpsMax || o.interestRateBps)}
+                  Wants <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset)} /> ·{' '}
+                  {formatBpsAsPercent(o.interestRateBpsMax || o.interestRateBps)} APR
                 </div>
-                <div>Collateral: {shortenAddr(o.collateralAsset)}</div>
+                <div>
+                  Collateral:{' '}
+                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset)} />
+                </div>
               </button>
             ))}
           </div>
           {!isLoading && (borrowerOffers?.length ?? 0) === 0 ? (
             <p style={{ color: 'var(--text-secondary)' }}>No borrower requests right now. Try creating a lending offer.</p>
           ) : null}
-          <button type="button" className="btn btn-secondary" style={{ marginTop: 12 }} onClick={() => setStep('choose')}>Back</button>
+          <div className="wizard-actions">
+            <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>Back</button>
+          </div>
         </>
       ) : null}
 
       {step === 'inputs' ? (
         <>
-          <div className="field"><label>Amount to lend</label><input value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
-          <div className="field"><label>Interest rate (%)</label><input value={rate} onChange={(e) => setRate(e.target.value)} /></div>
-          <div className="field"><label>Duration (days)</label><input value={duration} onChange={(e) => setDuration(e.target.value)} /></div>
+          <div className="wizard-intent-form">
+            <AmountField
+              label="Amount to lend"
+              value={amount}
+              onChange={setAmount}
+              placeholder="e.g. 1000"
+            />
+            <div className="wizard-intent-terms">
+              <DurationSelect value={duration} onChange={setDuration} hint={null} />
+              <div className="field">
+                <label>Interest rate (% APR)</label>
+                <input
+                  value={rate}
+                  onChange={(e) => setRate(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="e.g. 6"
+                />
+              </div>
+              <p className="form-hint wizard-intent-terms-hint">
+                Bucketed durations improve offer matching.
+              </p>
+            </div>
+          </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Pair: {shortenAddr(lendingAsset)} lent against {shortenAddr(collateralAsset)} collateral.
+            Pair: <AssetSymbolLink address={lendingAsset} meta={lendingMeta} /> lent against{' '}
+            <AssetSymbolLink address={collateralAsset} meta={peekTokenMeta(collateralAsset)} /> collateral.
           </p>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>Back</button>
             <button type="button" className="btn btn-primary" disabled={Number(amount) <= 0} onClick={() => setStep('check')}>Continue</button>
           </div>
@@ -225,9 +308,9 @@ export function LendWizard() {
           <EligibilityChecklist items={checklist} />
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
             <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
-            I understand the risks and agree to the platform terms.
+            <RiskConsentLabel />
           </label>
-          <div className="sticky-cta" style={{ display: 'flex', gap: 8 }}>
+          <div className="sticky-cta wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep(path === 'fund' ? 'pick' : 'inputs')}>Back</button>
             <button type="button" className="btn btn-primary" disabled={!allOk} onClick={() => setStep('review')}>Review</button>
           </div>
@@ -236,9 +319,9 @@ export function LendWizard() {
 
       {step === 'review' ? (
         <>
-          <ReviewReceipt data={path === 'fund' && selected ? fundReceipt(selected) : createReceipt} />
+          <ReviewReceipt data={receiptData} />
           {txError ? <div className="banner banner-error">{txError}</div> : null}
-          <div className="sticky-cta" style={{ display: 'flex', gap: 8 }}>
+          <div className="sticky-cta wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('check')}>Back</button>
             <button
               type="button"

@@ -1,0 +1,42 @@
+import { getCanonicalAssetsForChain } from '@vaipakam/lib/canonicalAssets';
+import type { CoinGeckoToken } from '@vaipakam/lib/coingecko';
+
+const CANONICAL_LABELS: Record<string, { symbol: string; name: string }> = {
+  '0x4200000000000000000000000000000000000006': { symbol: 'WETH', name: 'Wrapped Ether' },
+  '0x036cbd53842c5426634e7929541ec2318f3dcf7e': { symbol: 'USDC', name: 'USD Coin (testnet)' },
+  '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14': { symbol: 'WETH', name: 'Wrapped Ether (Sepolia)' },
+  '0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8': { symbol: 'USDC', name: 'USD Coin (Sepolia)' },
+};
+
+function canonicalEntry(chainId: number, address: string): CoinGeckoToken {
+  const key = address.toLowerCase();
+  const label = CANONICAL_LABELS[key];
+  return {
+    id: `canonical-${chainId}-${key}`,
+    symbol: label?.symbol ?? 'TOKEN',
+    name: label?.name ?? 'Canonical asset',
+    image: null,
+    marketCapRank: null,
+    contractAddress: key,
+  };
+}
+
+/** Merge CoinGecko list with per-chain canonicals; canonicals win on address collision. */
+export function mergeCuratedTokens(
+  chainId: number,
+  remote: CoinGeckoToken[],
+): CoinGeckoToken[] {
+  const byAddr = new Map<string, CoinGeckoToken>();
+  for (const t of remote) byAddr.set(t.contractAddress.toLowerCase(), t);
+  for (const addr of getCanonicalAssetsForChain(chainId)) {
+    const key = addr.toLowerCase();
+    if (!byAddr.has(key)) byAddr.set(key, canonicalEntry(chainId, key));
+  }
+  return [...byAddr.values()].sort((a, b) => {
+    const ra = a.marketCapRank ?? 9999;
+    const rb = b.marketCapRank ?? 9999;
+    if (ra !== rb) return ra - rb;
+    return a.symbol.localeCompare(b.symbol);
+  });
+}
+

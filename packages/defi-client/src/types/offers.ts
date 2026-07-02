@@ -4,6 +4,8 @@ export type OfferAssetKind = 'erc20' | 'erc721' | 'erc1155';
 export const OFFER_TYPE_LENDER = 0;
 export const OFFER_TYPE_BORROWER = 1;
 export const ASSET_TYPE_ERC20 = 0;
+export const ASSET_TYPE_ERC721 = 1;
+export const ASSET_TYPE_ERC1155 = 2;
 
 export interface IndexedOffer {
   chainId: number;
@@ -36,6 +38,13 @@ export interface IndexedOffer {
 
 export interface ActiveOffersPage {
   chainId: number;
+  offers: IndexedOffer[];
+  nextBefore: number | null;
+}
+
+export interface CreatorOffersPage {
+  chainId: number;
+  creator: string;
   offers: IndexedOffer[];
   nextBefore: number | null;
 }
