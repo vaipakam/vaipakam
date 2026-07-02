@@ -53,6 +53,12 @@ export function guidedDefaultAssetDecimals(symbol: string) {
   return GUIDED_ASSET_DECIMALS[symbol] ?? null;
 }
 
+export function resolveGuidedAssetEnvOverride(symbol: string): GuidedAssetOverride | null {
+  const configured = GUIDED_ASSET_ENV[symbol];
+  if (!isGuidedAssetAddress(configured?.address)) return null;
+  return { address: configured.address, decimals: String(parseAssetDecimals(configured.decimals, symbol) ?? '') };
+}
+
 function isGuidedAssetOverride(value: unknown): value is GuidedAssetOverride {
   return Boolean(
     value &&

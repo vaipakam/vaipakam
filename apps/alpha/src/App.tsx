@@ -41,6 +41,7 @@ import {
   isGuidedAssetAddress,
   readGuidedAssetOverrides,
   resolveGuidedAsset,
+  resolveGuidedAssetEnvOverride,
   shortAddress,
   writeGuidedAssetOverrides,
   type GuidedAssetOverride,
@@ -1859,8 +1860,11 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
       unavailableReason: 'Guided mode needs oracle-priced collateral sizing for ' + selectedAsset + ' backed by ' + collateralLabel + ' before wallet checks can run.',
     };
   }
-  const checkedRequiredInput = requiredInput as string;
-  const requiredAmount = parseGuidedUnits(checkedRequiredInput, asset.decimals);
+  if (!requiredInput) {
+    // Defensive: prior guards should make this unreachable, but keep the user-facing error precise if flow logic changes.
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
+  }
+  const requiredAmount = parseGuidedUnits(requiredInput, asset.decimals);
   if (requiredAmount === null) {
     return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: asset.symbol + ' supports at most ' + asset.decimals + ' decimal places. Shorten the amount before wallet checks can run.' };
   }
@@ -2471,9 +2475,11 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
             {GUIDED_CONFIGURABLE_ASSETS.map((symbol) => {
               const defaultDecimals = guidedDefaultAssetDecimals(symbol);
               const deploymentAddress = guidedDeploymentAssetAddress(symbol);
+              const envEntry = resolveGuidedAssetEnvOverride(symbol);
               const entry = deploymentAddress
                 ? { address: deploymentAddress, decimals: String(defaultDecimals ?? '') }
-                : assetOverrides[symbol] ?? { address: '', decimals: String(defaultDecimals ?? '') };
+                : assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(defaultDecimals ?? '') };
+              const sourcedFromEnv = Boolean(envEntry && !deploymentAddress && !assetOverrides[symbol]);
               const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
               return (
                 <div className="asset-registry-row" key={symbol}>
@@ -2499,6 +2505,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                     />
                   </label>
                   {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
+                  {sourcedFromEnv ? <small>Resolved from environment. Editing stores a browser override for this device.</small> : null}
                   {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
                 </div>
               );
