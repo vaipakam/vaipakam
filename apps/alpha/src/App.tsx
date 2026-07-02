@@ -47,7 +47,7 @@ import {
   type GuidedAssetOverride,
   type GuidedAssetResolution,
 } from './guidedAssets';
-import { Component, useEffect, useMemo, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
@@ -916,6 +916,9 @@ function FlowPage({
     () => buildGuidedWalletCheckSpec(flow, selectedAsset, normalizedAmount, assetOverrides),
     [assetOverrides, flow, normalizedAmount, selectedAsset],
   );
+  const walletCheckContextKey = [flow.kind, selectedAsset, normalizedAmount ?? '', wallet.account ?? '', wallet.chainId ?? '', walletCheckSpec.asset?.address ?? '', walletCheckSpec.spender ?? '', walletCheckSpec.requiredAmount?.toString() ?? ''].join('|');
+  const walletCheckContextRef = useRef(walletCheckContextKey);
+  walletCheckContextRef.current = walletCheckContextKey;
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
   const simulationDisabledReason = simulationCanRun || simulationResult.status === 'running'
     ? null
@@ -982,6 +985,7 @@ function FlowPage({
     setWalletCheckResult({ status: 'running', message: 'Checking wallet balance and allowance...' });
     try {
       const accountAtCheckTime = wallet.account;
+      const contextAtCheckTime = walletCheckContextRef.current;
       const [balanceHex, allowanceHex] = await Promise.all([
         ethereum.request({
           method: 'eth_call',
@@ -1005,6 +1009,7 @@ function FlowPage({
       } catch {
         // Balance and allowance reads succeeded; skip the stale-account probe if the wallet rejects it.
       }
+      if (walletCheckContextRef.current !== contextAtCheckTime) return;
       const balance = parseEthCallUint(balanceHex);
       const allowance = parseEthCallUint(allowanceHex);
       const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
@@ -2030,6 +2035,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   const collateralAsset = resolveGuidedAsset(collateralLabel, assetOverrides);
   const collateralAmountInput = guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, amountInput);
   const borrowPairSupported = !isBorrow || guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, '1') !== null;
+  const earnPairSupported = isBorrow || collateralAmountInput !== null;
   const encodingBlockers = [];
   const submissionBlockers = [];
   if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
@@ -2044,7 +2050,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
     if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
   }
-  if (borrowPairSupported) {
+  if (borrowPairSupported && earnPairSupported) {
     submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
   }
   const blockers = [...encodingBlockers, ...submissionBlockers];
