@@ -1,7 +1,10 @@
 import { useCallback, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Wallet } from 'lucide-react';
 import type { Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import AutoLendIntentCard from '../components/app/AutoLendIntentCard';
+import { SanctionsBanner } from '../components/app/SanctionsBanner';
 import {
   MyLenderIntentsCard,
   type ManageIntentPair,
@@ -28,6 +31,7 @@ import { invalidateLenderIntentsCache } from '../hooks/useLenderIntentsByOwner';
  * header + the "not available here" note.
  */
 export default function AutoLend() {
+  const { t } = useTranslation();
   const { address } = useWallet();
 
   // The overview list's "Manage" button hands the pair up to the auto-lend card
@@ -64,6 +68,22 @@ export default function AutoLend() {
     setAutoLendBusy(busy);
   }, []);
 
+  // #886 Codex P3 — both child cards return null without a connected wallet, so
+  // guard the whole page with the connect prompt (mirrors the Dashboard state
+  // this surface was lifted from) instead of rendering a header over an empty
+  // "create an intent below" body.
+  if (!address) {
+    return (
+      <div className="empty-state" style={{ minHeight: '60vh' }}>
+        <div className="empty-state-icon">
+          <Wallet size={28} />
+        </div>
+        <h3>{t('autoLend.connectTitle')}</h3>
+        <p>{t('autoLend.connectBody')}</p>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '1.5rem', maxWidth: 720 }}>
       <h1>Auto-lend</h1>
@@ -73,6 +93,15 @@ export default function AutoLend() {
         your vault until a match lands. Create an intent below, and manage every
         pair you run from the list.
       </p>
+
+      {/* #886 Codex P2 — the auto-lend write paths (setLenderIntent /
+          fundLenderIntent / withdrawal) are sanctions-gated and revert for a
+          flagged wallet. Surface the same pre-sign banner the Dashboard showed
+          above these cards before they moved here. */}
+      <SanctionsBanner
+        address={address as `0x${string}`}
+        label={t('banners.sanctionsLabelWallet')}
+      />
 
       {/* Overview of every standing intent the wallet owns across pairs (incl.
           paused ones), with a "Manage" deep-link into the auto-lend card below.

@@ -766,11 +766,13 @@
   },
   "autoLendSummary": {
     "title": "Auto-lend",
-    "active_one": "{{count}} active standing intent",
-    "active_other": "{{count}} active standing intents",
-    "manage": "Manage",
-    "setupPrompt": "Automate your lending with a standing intent",
-    "setup": "Set up"
+    "standing_one": "{{count}} standing intent",
+    "standing_other": "{{count}} standing intents",
+    "manage": "Manage"
+  },
+  "autoLend": {
+    "connectTitle": "Connect your wallet",
+    "connectBody": "Connect a wallet to post a standing lend intent and let a delegated keeper fill matching borrower demand on your behalf."
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",

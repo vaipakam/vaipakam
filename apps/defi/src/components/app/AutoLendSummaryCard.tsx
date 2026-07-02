@@ -13,30 +13,34 @@ interface Props {
  * lives on its own {@link AutoLend} page (`/auto-lend`).
  *
  * Replaces the full create-card + multi-intent list that used to sit on the
- * Dashboard. Shows the wallet's active-intent count (or a "set up" prompt at
- * zero) and deep-links to the page. The zero-state CTA is deliberate: auto-lend
- * sits in the Advanced nav group, so this widget is how a Basic-mode lender
- * discovers the feature.
+ * Dashboard: shows the wallet's standing-intent count and deep-links to the
+ * page.
  *
- * Self-hides when there's no connected wallet or the per-owner intent read
- * errors (e.g. the intent/auto-lend facet set isn't cut on the current chain) —
- * so it never renders a link into a page that can't function here.
+ * Renders ONLY when the wallet actually holds at least one standing intent
+ * (`total > 0`). This is deliberate (Codex #886 P2): `useLenderIntentsByOwner`
+ * returns an empty NON-error result on chains where the intent facet set isn't
+ * cut, so gating on `error` would still surface a live link into a page whose
+ * cards all self-hide. A positive count instead guarantees the feature exists
+ * on this chain and the wallet has something to manage. First-time discovery
+ * (zero intents) is served by the Advanced nav's "Auto-lend" entry, not this
+ * widget — matching #878's "compact summary, or nothing" acceptance option.
+ *
+ * The count is the wallet's TOTAL standing intents (active + paused), so the
+ * label says "standing intents", never "active" (Codex #886 P2 — `total`
+ * includes paused entries in the owner registry).
  */
 export function AutoLendSummaryCard({ address }: Props) {
   const { t } = useTranslation();
-  const { total, loading, error } = useLenderIntentsByOwner(
+  const { total } = useLenderIntentsByOwner(
     (address as Address | null) ?? null,
   );
 
   if (!address) return null;
-  // Facet not cut on this chain (or read failed) — hide rather than link into a
-  // page whose cards would all self-hide.
-  if (error) return null;
-  // Avoid a flash before the first read resolves.
-  if (loading && total === 0n) return null;
+  // Only surface once the wallet holds ≥1 standing intent — see the docstring
+  // for why a count, not an error check, is the right feature gate here.
+  if (total <= 0n) return null;
 
   const count = Number(total);
-  const hasIntents = count > 0;
 
   return (
     <Link
@@ -70,9 +74,7 @@ export function AutoLendSummaryCard({ address }: Props) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600 }}>{t('autoLendSummary.title')}</div>
         <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-          {hasIntents
-            ? t('autoLendSummary.active', { count })
-            : t('autoLendSummary.setupPrompt')}
+          {t('autoLendSummary.standing', { count })}
         </div>
       </div>
       <span
@@ -86,9 +88,7 @@ export function AutoLendSummaryCard({ address }: Props) {
           flexShrink: 0,
         }}
       >
-        {hasIntents
-          ? t('autoLendSummary.manage')
-          : t('autoLendSummary.setup')}
+        {t('autoLendSummary.manage')}
         <ChevronRight size={16} aria-hidden="true" />
       </span>
     </Link>
