@@ -107,13 +107,21 @@ export async function fetchTokenMeta(
   return task;
 }
 
-/** True when on-chain metadata has been fetched (symbol present in cache). */
+function metaForAddress(meta: TokenMeta | null | undefined, address: string): TokenMeta | null {
+  const key = address.toLowerCase();
+  if (meta?.address?.toLowerCase() === key && meta.symbol) return meta;
+  const peeked = peekTokenMeta(address);
+  if (peeked?.address?.toLowerCase() === key && peeked.symbol) return peeked;
+  return null;
+}
+
+/** True when on-chain metadata has been fetched for this exact address. */
 export function hasResolvedTokenDecimals(
   meta: TokenMeta | null | undefined,
   address: string,
 ): boolean {
-  const resolved = meta ?? peekTokenMeta(address);
-  return !!resolved?.symbol && Number.isFinite(resolved.decimals) && resolved.decimals > 0;
+  const resolved = metaForAddress(meta, address);
+  return !!resolved && Number.isFinite(resolved.decimals) && resolved.decimals > 0;
 }
 
 export function requireTokenDecimals(
@@ -121,8 +129,8 @@ export function requireTokenDecimals(
   address: string,
   label: string,
 ): number {
-  const resolved = meta ?? peekTokenMeta(address);
-  if (!resolved?.symbol || !Number.isFinite(resolved.decimals)) {
+  const resolved = metaForAddress(meta, address);
+  if (!resolved || !Number.isFinite(resolved.decimals)) {
     throw new Error(`${label} token metadata is still loading`);
   }
   return resolved.decimals;
@@ -147,10 +155,17 @@ export function useTokenMeta(address: string | null | undefined): TokenMeta | nu
   });
 
   useEffect(() => {
-    if (!address) return;
+    if (!address) {
+      setMeta(null);
+      return;
+    }
+    const key = address.toLowerCase();
+    seedMemoryFromStorage();
+    setMeta(key === ZERO_ADDRESS ? nativeMeta() : memoryCache.get(key) ?? null);
+
     let cancelled = false;
     void fetchTokenMeta(address, publicClient).then((m) => {
-      if (!cancelled) setMeta(m);
+      if (!cancelled && m.address.toLowerCase() === key) setMeta(m);
     });
     return () => {
       cancelled = true;

@@ -16,7 +16,9 @@ import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
 import { useLoanHealth } from '../hooks/useLoanHealth';
 import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
-import { useDiamondContract, useReadChain } from '../hooks/useDiamond';
+import { useWalletClient } from 'wagmi';
+import type { Address } from 'viem';
+import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 
 export function PositionDetailPage() {
   const { loanId } = useParams();
@@ -24,6 +26,8 @@ export function PositionDetailPage() {
   const chain = useReadChain();
   const { address, isCorrectChain } = useWallet();
   const diamond = useDiamondContract();
+  const publicClient = useDiamondPublicClient();
+  const { data: walletClient } = useWalletClient();
   const origin = useIndexerOrigin();
   const { data: hf } = useLoanHealth(id);
 
@@ -56,7 +60,16 @@ export function PositionDetailPage() {
     setBusy(true);
     setMsg(null);
     try {
-      if (action === 'repay') await repayLoanFull({ diamond, loanId: BigInt(loan!.loanId) });
+      if (action === 'repay') {
+        if (!walletClient || !chain.diamondAddress) throw new Error('Wallet not connected');
+        await repayLoanFull({
+          diamond,
+          publicClient,
+          walletClient,
+          diamondAddress: chain.diamondAddress as Address,
+          loan: loan!,
+        });
+      }
       if (action === 'claim-lender') await claimAsLender({ diamond, loanId: BigInt(loan!.loanId) });
       if (action === 'claim-borrower') await claimAsBorrower({ diamond, loanId: BigInt(loan!.loanId) });
       setMsg('Transaction confirmed.');

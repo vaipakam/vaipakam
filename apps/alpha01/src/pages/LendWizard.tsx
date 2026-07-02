@@ -127,6 +127,7 @@ export function LendWizard() {
   const [step, setStep] = useState<Step>('choose');
   const [selected, setSelected] = useState<IndexedOffer | null>(null);
   const [amount, setAmount] = useState('');
+  const [collateralAmount, setCollateralAmount] = useState('');
   const [rate, setRate] = useState('5');
   const [duration, setDuration] = useState(String(OFFER_DURATION_DEFAULT_DAYS));
   const [consent, setConsent] = useState(false);
@@ -137,6 +138,7 @@ export function LendWizard() {
   const collateralAsset = chain.wrappedNativeAddress ?? activeChain?.wrappedNativeAddress ?? '';
 
   const lendingMeta = useTokenMeta(lendingAsset || null);
+  const collateralMeta = useTokenMeta(collateralAsset || null);
   const selectedLendingMeta = useTokenMeta(selected?.lendingAsset ?? null);
   const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
 
@@ -156,6 +158,11 @@ export function LendWizard() {
         ? [
             { id: 'amount', label: 'Lend amount entered', ok: Number(amount) > 0 },
             {
+              id: 'collateral',
+              label: 'Collateral requirement entered',
+              ok: Number(collateralAmount) > 0,
+            },
+            {
               id: 'lending-decimals',
               label: lendingMeta?.symbol
                 ? `${lendingMeta.symbol} decimals loaded`
@@ -169,6 +176,7 @@ export function LendWizard() {
       address,
       amount,
       chain.name,
+      collateralAmount,
       connect,
       consent,
       isCorrectChain,
@@ -219,9 +227,11 @@ export function LendWizard() {
     setTxError(null);
     try {
       const lendingDecimals = requireTokenDecimals(lendingMeta, lendingAsset, 'Lending asset');
-      const collateralDecimals = hasResolvedTokenDecimals(null, collateralAsset)
-        ? requireTokenDecimals(null, collateralAsset, 'Collateral asset')
-        : 18;
+      const collateralDecimals = requireTokenDecimals(
+        collateralMeta,
+        collateralAsset,
+        'Collateral asset',
+      );
       await createLenderOffer({
         diamond,
         publicClient,
@@ -234,7 +244,7 @@ export function LendWizard() {
           amount,
           interestRate: rate,
           collateralAsset,
-          collateralAmount: '0',
+          collateralAmount,
           durationDays: duration,
           riskAndTermsConsent: consent,
         },
@@ -310,6 +320,13 @@ export function LendWizard() {
               onChange={setAmount}
               placeholder="e.g. 1000"
             />
+            <AmountField
+              label="Collateral borrowers must lock"
+              value={collateralAmount}
+              onChange={setCollateralAmount}
+              placeholder="e.g. 0.1"
+              hint="Minimum collateral required to accept this offer."
+            />
             <div className="wizard-intent-terms">
               <DurationSelect value={duration} onChange={setDuration} hint={null} />
               <div className="field">
@@ -336,7 +353,9 @@ export function LendWizard() {
               type="button"
               className="btn btn-primary"
               disabled={
-                Number(amount) <= 0 || !hasResolvedTokenDecimals(lendingMeta, lendingAsset)
+                Number(amount) <= 0 ||
+                Number(collateralAmount) <= 0 ||
+                !hasResolvedTokenDecimals(lendingMeta, lendingAsset)
               }
               onClick={() => setStep('check')}
             >

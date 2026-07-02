@@ -33,16 +33,28 @@ export async function acceptOfferFlow(opts: {
     consent: opts.consent,
   });
 
-  if (opts.offer.assetType === ASSET_TYPE_ERC20) {
-    const isLenderOffer = opts.offer.offerType === OFFER_TYPE_LENDER;
-    const token = (isLenderOffer ? opts.offer.collateralAsset : opts.offer.lendingAsset) as Address;
-    const rawAmount = isLenderOffer ? opts.offer.collateralAmount : opts.offer.amount;
+  const isLenderOffer = opts.offer.offerType === OFFER_TYPE_LENDER;
+  if (isLenderOffer) {
+    if (opts.offer.collateralAssetType === ASSET_TYPE_ERC20) {
+      const amount = BigInt(opts.offer.collateralAmount || '0');
+      if (amount > 0n) {
+        await ensureErc20Allowance({
+          publicClient: opts.publicClient,
+          walletClient: opts.walletClient,
+          token: opts.offer.collateralAsset as Address,
+          spender: opts.diamondAddress,
+          amount,
+        });
+      }
+    }
+  } else if (opts.offer.assetType === ASSET_TYPE_ERC20) {
+    const rawAmount = opts.offer.amountMax || opts.offer.amount;
     const amount = BigInt(rawAmount || '0');
     if (amount > 0n) {
       await ensureErc20Allowance({
         publicClient: opts.publicClient,
         walletClient: opts.walletClient,
-        token,
+        token: opts.offer.lendingAsset as Address,
         spender: opts.diamondAddress,
         amount,
       });
