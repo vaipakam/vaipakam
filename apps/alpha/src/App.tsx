@@ -2411,7 +2411,8 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
   };
   const updateAssetOverride = (symbol: string, field: keyof GuidedAssetOverride, value: string) => {
     if (guidedDeploymentAssetAddress(symbol)) return;
-    const current = assetOverrides[symbol] ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
+    const envEntry = resolveGuidedAssetEnvOverride(symbol);
+    const current = assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
     const nextEntry = { ...current, [field]: value.trim() };
     const next = { ...assetOverrides, [symbol]: nextEntry };
     if (!nextEntry.address && (!nextEntry.decimals || nextEntry.decimals === String(guidedDefaultAssetDecimals(symbol) ?? ''))) {
