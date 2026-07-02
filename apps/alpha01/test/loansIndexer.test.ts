@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchAllLoansForWallet } from '@vaipakam/defi-client';
+import { fetchAllLoansForWallet, IndexerRequestError } from '@vaipakam/defi-client';
 
 describe('fetchAllLoansForWallet', () => {
   it('reads by-current-holder, not the removed by-wallet path', async () => {
@@ -22,5 +22,16 @@ describe('fetchAllLoansForWallet', () => {
     const loans = await fetchAllLoansForWallet('https://indexer.test', 84532, '0xAbC');
     expect(loans).toHaveLength(1);
     expect(loans[0]?.loanId).toBe(3);
+  });
+
+  it('throws when the indexer returns a non-2xx response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('chain not configured', { status: 503 })),
+    );
+
+    await expect(fetchAllLoansForWallet('https://indexer.test', 84532, '0xabc')).rejects.toBeInstanceOf(
+      IndexerRequestError,
+    );
   });
 });

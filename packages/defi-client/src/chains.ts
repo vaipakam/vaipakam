@@ -21,8 +21,6 @@ interface ChainMeta {
   predominantStableAddress?: string | null;
 }
 
-const INDEXER_ONLY_CHAIN_IDS = new Set<number>([97]);
-
 function normalizeAddress(addr: string | null): string | null {
   if (addr == null) return null;
   const trimmed = addr.trim();
@@ -35,9 +33,7 @@ function normalizeAddress(addr: string | null): string | null {
 
 function buildChainConfig(getEnv: EnvGetter, meta: ChainMeta): ChainConfig {
   const dep: Deployment | undefined = getDeployment(meta.chainId);
-  const userFacingDiamond = INDEXER_ONLY_CHAIN_IDS.has(meta.chainId)
-    ? null
-    : (dep?.diamond ?? null);
+  const userFacingDiamond = dep?.diamond ?? null;
   return {
     chainId: meta.chainId,
     chainIdHex: meta.chainIdHex,

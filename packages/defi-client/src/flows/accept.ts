@@ -17,6 +17,11 @@ export async function acceptOfferFlow(opts: {
 }) {
   const user = opts.walletClient.account?.address as Address | undefined;
   if (!user) throw new Error('Wallet not connected');
+  if (opts.offer.chainId !== opts.chainId) {
+    throw new Error(
+      `Offer #${opts.offer.offerId} is on chain ${opts.offer.chainId}, but the wallet is on chain ${opts.chainId}. Switch networks and re-select the offer.`,
+    );
+  }
 
   await ensureUserVault({
     diamond: opts.diamond,

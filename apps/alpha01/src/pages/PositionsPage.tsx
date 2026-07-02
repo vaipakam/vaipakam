@@ -10,8 +10,8 @@ import { useMyOffers } from '../hooks/useMyOffers';
 export function PositionsPage() {
   const { address, connect } = useWallet();
   const indexerOrigin = useIndexerOrigin();
-  const { data: loans, isLoading: loansLoading } = useMyLoans();
-  const { data: offers, isLoading: offersLoading } = useMyOffers();
+  const { data: loans, isLoading: loansLoading, isError: loansError, error: loansErr } = useMyLoans();
+  const { data: offers, isLoading: offersLoading, isError: offersError, error: offersErr } = useMyOffers();
 
   if (!address) {
     return (
@@ -26,9 +26,14 @@ export function PositionsPage() {
   }
 
   const loading = loansLoading || offersLoading;
+  const indexerError = loansError || offersError;
+  const indexerErrorMsg =
+    (loansErr instanceof Error ? loansErr.message : null) ??
+    (offersErr instanceof Error ? offersErr.message : null) ??
+    'Indexer request failed';
   const loanList = loans ?? [];
   const offerList = offers ?? [];
-  const empty = !loading && loanList.length === 0 && offerList.length === 0;
+  const empty = !loading && !indexerError && loanList.length === 0 && offerList.length === 0;
 
   return (
     <div className="page-frame page-frame--wide">
@@ -41,6 +46,12 @@ export function PositionsPage() {
         <div className="banner banner-warn" style={{ marginBottom: 16 }}>
           Indexer is not configured. Set <code>VITE_INDEXER_ORIGIN</code> in{' '}
           <code>.env.local</code> to load positions.
+        </div>
+      ) : null}
+
+      {indexerError ? (
+        <div className="banner banner-error" style={{ marginBottom: 16 }}>
+          Could not load positions from the indexer: {indexerErrorMsg}
         </div>
       ) : null}
 

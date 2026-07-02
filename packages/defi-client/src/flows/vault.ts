@@ -1,16 +1,15 @@
 import type { Address, PublicClient } from 'viem';
 import type { DiamondHandle, TxResponse } from '../diamondClient.js';
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as Address;
+
 export async function getUserVaultAddress(
   diamond: DiamondHandle,
   user: Address,
 ): Promise<Address | null> {
   try {
-    const getUserVault = diamond.getUserVault as unknown as {
-      staticCall: (u: Address) => Promise<Address>;
-    };
-    const vault = (await getUserVault.staticCall(user)) as Address;
-    if (!vault || vault === '0x0000000000000000000000000000000000000000') return null;
+    const vault = (await diamond.getUserVaultAddress(user)) as Address;
+    if (!vault || vault === ZERO_ADDRESS) return null;
     return vault;
   } catch {
     return null;

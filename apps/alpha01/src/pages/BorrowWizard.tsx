@@ -156,7 +156,7 @@ export function BorrowWizard() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
-  const { data: offers, isLoading } = useLenderOffersForBorrow();
+  const { data: offers, isLoading, isError: offersError, error: offersErr } = useLenderOffersForBorrow();
 
   const lendingDefault = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
   const collateralDefault = chain.wrappedNativeAddress ?? activeChain?.wrappedNativeAddress ?? '';
@@ -479,6 +479,11 @@ export function BorrowWizard() {
 
       {step === 'match' ? (
         <>
+          {offersError ? (
+            <div className="banner banner-error">
+              Could not load offers: {offersErr instanceof Error ? offersErr.message : 'Indexer request failed'}
+            </div>
+          ) : null}
           {isLoading ? <p>Loading offers…</p> : null}
           <div className="position-list">
             {matched.slice(0, 20).map((o) => (
@@ -504,7 +509,7 @@ export function BorrowWizard() {
               </button>
             ))}
           </div>
-          {!isLoading && matched.length === 0 ? (
+          {!isLoading && !offersError && matched.length === 0 ? (
             <div className="card" style={{ marginTop: 12 }}>
               <p style={{ color: 'var(--text-secondary)', marginBottom: 12 }}>
                 No lender offers fit right now. Post a borrow request — collateral locks now and funds arrive when a lender accepts.

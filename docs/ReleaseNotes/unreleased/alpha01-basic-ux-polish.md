@@ -11,3 +11,5 @@ Codex review follow-ups (P1/P2): accept-term binding now mirrors stored offer fi
 Round 2: ERC-20 approvals zero stale allowances first; borrow checklist blocks while collateral balance is unresolved; `settled` loans no longer show a borrower claim CTA; linked-loan id reads fail closed except on legacy missing-selector deploys; read-chain resolution skips wallet chains without a Diamond.
 
 Round 3: position cards and borrow wizard reset assets on chain change; lender `settled` claims removed; create-lending balance gate; risk-terms hash fail-closed; APR capped at 100%; collateral hint labels wallet-only.
+
+Round 4: BNB testnet restored as user-facing; token decimals fail closed without persisting a bogus 18; risk-disclosure link targets the Basic guide anchor; vault reads use the view getter; indexer outages surface errors instead of empty portfolios; accept flow rejects cross-chain offer/wallet mismatches.

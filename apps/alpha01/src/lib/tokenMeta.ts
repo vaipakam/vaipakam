@@ -84,19 +84,22 @@ export async function fetchTokenMeta(
         abi: ERC20_ABI,
         client: publicClient,
       });
-      const [symbol, decimals] = await Promise.all([
-        token.read.symbol().catch(() => ''),
-        token.read
-          .decimals()
-          .then((d) => Number(d))
-          .catch(() => 18),
+      const [symbolResult, decimalsResult] = await Promise.allSettled([
+        token.read.symbol(),
+        token.read.decimals().then((d) => Number(d)),
       ]);
-      const meta: TokenMeta = { address: key, symbol, decimals };
-      if (symbol) {
+      const symbol = symbolResult.status === 'fulfilled' ? symbolResult.value : '';
+      const decimals =
+        decimalsResult.status === 'fulfilled' && Number.isFinite(decimalsResult.value)
+          ? decimalsResult.value
+          : null;
+      if (symbol && decimals != null) {
+        const meta: TokenMeta = { address: key, symbol, decimals };
         memoryCache.set(key, meta);
         persist(meta);
+        return meta;
       }
-      return meta;
+      return { address: key, symbol, decimals: decimals ?? 18 };
     } catch {
       return fallback;
     } finally {
@@ -117,11 +120,14 @@ function metaForAddress(meta: TokenMeta | null | undefined, address: string): To
 
 /** True when on-chain metadata has been fetched for this exact address. */
 export function hasResolvedTokenDecimals(
-  meta: TokenMeta | null | undefined,
+  _meta: TokenMeta | null | undefined,
   address: string,
 ): boolean {
-  const resolved = metaForAddress(meta, address);
-  return !!resolved && Number.isFinite(resolved.decimals) && resolved.decimals > 0;
+  const key = address.toLowerCase();
+  if (key === ZERO_ADDRESS) return true;
+  const cached = memoryCache.get(key);
+  if (!cached || cached.address.toLowerCase() !== key || !cached.symbol) return false;
+  return Number.isFinite(cached.decimals) && cached.decimals > 0;
 }
 
 export function requireTokenDecimals(

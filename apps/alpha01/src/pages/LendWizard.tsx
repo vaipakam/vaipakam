@@ -123,7 +123,7 @@ export function LendWizard() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
-  const { data: borrowerOffers, isLoading } = useBorrowerOffersForLend();
+  const { data: borrowerOffers, isLoading, isError: offersError, error: offersErr } = useBorrowerOffersForLend();
 
   const [path, setPath] = useState<Path>('fund');
   const [step, setStep] = useState<Step>('choose');
@@ -363,6 +363,12 @@ export function LendWizard() {
 
       {step === 'pick' ? (
         <>
+          {offersError ? (
+            <div className="banner banner-error">
+              Could not load borrower requests:{' '}
+              {offersErr instanceof Error ? offersErr.message : 'Indexer request failed'}
+            </div>
+          ) : null}
           {isLoading ? <p>Loading borrower requests…</p> : null}
           <div className="position-list">
             {(borrowerOffers ?? []).slice(0, 20).map((o) => (
@@ -385,7 +391,7 @@ export function LendWizard() {
               </button>
             ))}
           </div>
-          {!isLoading && (borrowerOffers?.length ?? 0) === 0 ? (
+          {!isLoading && !offersError && (borrowerOffers?.length ?? 0) === 0 ? (
             <p style={{ color: 'var(--text-secondary)' }}>No borrower requests right now. Try creating a lending offer.</p>
           ) : null}
           <div className="wizard-actions">
