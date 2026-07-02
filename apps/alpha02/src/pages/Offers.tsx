@@ -1,8 +1,9 @@
 /**
  * Offer Book — a browse surface (advanced navigation, still readable
- * in plain language). Accepting an offer from here is the next
- * alpha02 milestone; for now rows explain the market and guide users
- * into the guided flows.
+ * in plain language). Each ERC-20/ERC-20 row deep-links into the
+ * guided flow's review step ("Use this offer" → /borrow?offer=N for
+ * lending offers, /lend?offer=N for borrow requests), so accepting
+ * from the book shares the exact receipt/checklist/signing path.
  *
  * Empty-state honesty rule (audit F-20260702-001): "no offers" is
  * only said when the indexer POSITIVELY returned zero offers; a
@@ -12,8 +13,10 @@ import { BookOpen, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { copy } from '../content/copy';
 import { useActiveOffers } from '../data/hooks';
+import { useActiveChain } from '../chain/useActiveChain';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { useTokenMeta } from '../contracts/erc20';
+import { AssetType } from '../lib/types';
 import {
   formatBpsAsPercent,
   formatDurationDays,
@@ -23,15 +26,30 @@ import {
 import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
+  const { address } = useActiveChain();
   const meta = useTokenMeta(offer.lendingAsset);
   const collateralMeta = useTokenMeta(offer.collateralAsset);
   const isLending = offer.offerType === 0;
   const amount = meta.data
-    ? formatTokenAmount(offer.amountMax, meta.data.decimals)
+    ? formatTokenAmount(
+        isLending ? offer.amountMax : offer.amount,
+        meta.data.decimals,
+      )
     : '…';
   const rate = isLending
     ? formatBpsAsPercent(offer.interestRateBps)
     : formatBpsAsPercent(offer.interestRateBpsMax);
+
+  // "Use this offer" routes into the guided flow's review step. Only
+  // ERC-20/ERC-20 offers for now (NFT legs need the rental/NFT-aware
+  // approval surface), and never the creator's own offer.
+  const acceptable =
+    offer.assetType === AssetType.ERC20 &&
+    offer.collateralAssetType === AssetType.ERC20 &&
+    (!address || offer.creator.toLowerCase() !== address.toLowerCase());
+  const acceptHref = isLending
+    ? `/borrow?offer=${offer.offerId}`
+    : `/lend?offer=${offer.offerId}`;
 
   return (
     <div className="item-row">
@@ -47,9 +65,15 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           {shortAddress(offer.creator)}
         </span>
       </span>
-      <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>
-        {isLending ? 'Lender' : 'Borrower'}
-      </span>
+      {acceptable ? (
+        <Link to={acceptHref} className="btn btn-primary btn-sm">
+          Use this offer
+        </Link>
+      ) : (
+        <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>
+          {isLending ? 'Lender' : 'Borrower'}
+        </span>
+      )}
     </div>
   );
 }
@@ -85,10 +109,9 @@ export function Offers() {
             ))}
           </div>
           <p className="muted" style={{ marginTop: 16 }}>
-            To take one of these, use the guided{' '}
-            <Link to="/borrow">Borrow</Link> or <Link to="/lend">Lend</Link>{' '}
-            flows — one-tap accept from this page arrives in an upcoming
-            alpha02 build.
+            “Use this offer” takes you through the same review-and-sign steps
+            as the guided <Link to="/borrow">Borrow</Link> and{' '}
+            <Link to="/lend">Lend</Link> flows.
           </p>
         </>
       )}

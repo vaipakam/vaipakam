@@ -1,34 +1,45 @@
 /**
- * Guided offer flow — the shared engine behind Borrow and Lend.
+ * Guided offer flow — the shared engine behind Borrow and Lend,
+ * covering journeys B1/B2 (borrower) and L1/L2 (lender) from
+ * docs/TestScopes/BasicUserJourneyMap.md:
  *
- * Same three steps either side (BasicUserUXSimplification.md):
- *   1. Details    — only the inputs the job needs, bucketed duration,
- *                   plain role-asymmetric wording.
- *   2. Review     — eligibility checklist (fixable items), the
- *                   six-row review receipt, and the single risk+terms
- *                   consent. Sign only unlocks when every check passes.
- *   3. Done       — what changed + one primary next action.
+ *   Details → Offers → [Your terms, post-only] → Review & sign → Done
  *
- * On sign it approves the asset the creator locks (lender: principal,
- * borrower: collateral) for the Diamond, then calls
- * `createOffer(payload)` with the battle-tested payload mapping from
- * lib/offerSchema. Advanced mode reveals opt-ins (partial repayment,
- * pro-rata interest) without changing the flow shape.
+ * After the user says what asset and roughly how much, the flow first
+ * shows MATCHING OPEN OFFERS (accept path — the loan opens
+ * immediately); posting their own offer/request is the explicit
+ * fallback. Both paths end at the same six-row review receipt and
+ * fixable-items checklist, and the single risk+terms consent.
+ *
+ * Accept path mechanics (#662): the acceptor signs an EIP-712
+ * `AcceptTerms` built from the CANONICAL on-chain offer
+ * (contracts/useAcceptTerms.ts), the acceptor-side ERC-20 is approved
+ * for the exact canonical amount, then `acceptOffer(id, terms, sig)`.
+ * Post path: approve the locked side, then `createOffer(payload)`
+ * with the verbatim-copied offerSchema mapping.
+ *
+ * Deep link: `?offer=<id>` (the Offer Book's "Use this offer") lands
+ * directly on Review with that offer selected, when it is still open
+ * and on this flow's side of the market.
  */
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { CircleCheck, LoaderCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
+import { parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { useDiamondWrite } from '../contracts/diamond';
+import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import {
   ensureAllowance,
   isAddressLike,
   useTokenBalance,
   useTokenMeta,
 } from '../contracts/erc20';
+import { useActiveOffers, useOffer } from '../data/hooks';
+import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
   gracePeriodLabel,
@@ -37,7 +48,9 @@ import {
   validateOfferForm,
   type OfferFormState,
 } from '../lib/offerSchema';
+import { AssetType } from '../lib/types';
 import {
+  formatBpsAsPercent,
   formatDurationDays,
   formatTokenAmount,
   fullTermInterest,
@@ -49,9 +62,9 @@ import { ReviewReceipt, type ReceiptData } from './ReviewReceipt';
 import { StepNav } from './StepNav';
 import { useEligibility } from './useEligibility';
 
-const STEPS = ['Details', 'Review & sign', 'Done'] as const;
-
 type Side = 'lender' | 'borrower';
+type FlowStep = 'details' | 'choose' | 'terms' | 'review' | 'done';
+type FlowMode = 'accept' | 'post';
 
 interface SideCopy {
   title: string;
@@ -65,6 +78,12 @@ interface SideCopy {
   submitLabel: string;
   doneTitle: string;
   doneBody: string;
+  matchTitle: string;
+  matchLede: string;
+  matchEmpty: string;
+  orPost: string;
+  acceptSubmitLabel: string;
+  acceptDoneBody: string;
 }
 
 const SIDE_COPY: Record<Side, SideCopy> = {
@@ -80,12 +99,18 @@ const SIDE_COPY: Record<Side, SideCopy> = {
     submitLabel: copy.lend.postOffer,
     doneTitle: copy.lend.posted,
     doneBody: copy.lend.postedNext,
+    matchTitle: copy.match.lendTitle,
+    matchLede: copy.match.lendLede,
+    matchEmpty: copy.match.emptyLend,
+    orPost: copy.match.orPostLend,
+    acceptSubmitLabel: 'Fund this borrower',
+    acceptDoneBody: copy.match.lenderNext,
   },
   borrower: {
     title: copy.borrow.title,
     lede: copy.borrow.lede,
     amountLabel: 'How much do you want to borrow?',
-    amountHint: 'Funds arrive when a lender accepts your request.',
+    amountHint: 'We’ll look for lenders offering close to this amount.',
     rateLabel: 'Highest yearly interest rate you’ll accept (%)',
     rateHint: 'Lenders offering at or below this rate can fund you.',
     collateralLabel: 'Collateral you will lock',
@@ -93,8 +118,67 @@ const SIDE_COPY: Record<Side, SideCopy> = {
     submitLabel: copy.borrow.postRequest,
     doneTitle: copy.borrow.posted,
     doneBody: copy.borrow.postedNext,
+    matchTitle: copy.match.borrowTitle,
+    matchLede: copy.match.borrowLede,
+    matchEmpty: copy.match.emptyBorrow,
+    orPost: copy.match.orPostBorrow,
+    acceptSubmitLabel: 'Borrow this now',
+    acceptDoneBody: copy.match.borrowerNext,
   },
 };
+
+/** The headline principal of an offer row, role-correct: a lender
+ *  offer's size is `amountMax`; a borrower request's is `amount`
+ *  (mirrors `_bindTermsToOffer` for direct accepts). */
+function offerPrincipal(offer: IndexedOffer): bigint {
+  return BigInt(offer.offerType === 0 ? offer.amountMax : offer.amount);
+}
+
+function offerRateBps(offer: IndexedOffer): number {
+  return offer.offerType === 0 ? offer.interestRateBps : offer.interestRateBpsMax;
+}
+
+function MatchOfferRow({
+  offer,
+  side,
+  onChoose,
+}: {
+  offer: IndexedOffer;
+  side: Side;
+  onChoose: () => void;
+}) {
+  const lendingMeta = useTokenMeta(offer.lendingAsset);
+  const collateralMeta = useTokenMeta(offer.collateralAsset);
+  const principal = offerPrincipal(offer);
+  const amountStr = lendingMeta.data
+    ? `${formatTokenAmount(principal, lendingMeta.data.decimals)} ${lendingMeta.data.symbol}`
+    : '…';
+  const collateralStr = collateralMeta.data
+    ? `${formatTokenAmount(offer.collateralAmount, collateralMeta.data.decimals)} ${collateralMeta.data.symbol}`
+    : '…';
+
+  return (
+    <div className="item-row">
+      <span className="row-main">
+        <span className="row-title">
+          {side === 'borrower' ? 'Borrow' : 'Lend'} {amountStr} at{' '}
+          {formatBpsAsPercent(offerRateBps(offer))} yearly
+        </span>
+        <br />
+        <span className="row-sub">
+          {formatDurationDays(offer.durationDays)} ·{' '}
+          {side === 'borrower'
+            ? `you lock ${collateralStr} as collateral`
+            : `they lock ${collateralStr} as collateral`}{' '}
+          · offer #{offer.offerId}
+        </span>
+      </span>
+      <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>
+        {copy.match.choose}
+      </button>
+    </div>
+  );
+}
 
 export function OfferFlow({ side }: { side: Side }) {
   const text = SIDE_COPY[side];
@@ -103,31 +187,87 @@ export function OfferFlow({ side }: { side: Side }) {
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const { sign: signAcceptTerms } = useAcceptTermsSigning();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<FlowStep>('details');
+  const [mode, setMode] = useState<FlowMode>('post');
+  const [selected, setSelected] = useState<IndexedOffer | null>(null);
   const [form, setForm] = useState<OfferFormState>({
     ...initialOfferForm,
     offerType: side,
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
   const set = (patch: Partial<OfferFormState>) =>
     setForm((f) => ({ ...f, ...patch }));
 
-  // Live token facts for both legs.
+  // ---- Deep link (?offer=<id>) from the Offer Book -------------------
+  const offerParam = searchParams.get('offer');
+  const deepLinkId = offerParam !== null ? Number(offerParam) : undefined;
+  const deepLinkQuery = useOffer(
+    deepLinkId !== undefined && Number.isFinite(deepLinkId) ? deepLinkId : undefined,
+  );
+  useEffect(() => {
+    if (deepLinkId === undefined || selected || step !== 'details') return;
+    const row = deepLinkQuery.data;
+    if (row === undefined || row === null) return; // loading / indexer down
+    const wantedType = side === 'borrower' ? 0 : 1;
+    if (row.offerType !== wantedType) {
+      setDeepLinkNotice(copy.match.wrongSide);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (row.status !== 'active') {
+      setDeepLinkNotice(copy.match.offerGone);
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset }));
+    setSelected(row);
+    setMode('accept');
+    setStep('review');
+  }, [deepLinkId, deepLinkQuery.data, selected, step, side, setSearchParams]);
+
+  // ---- Token facts ----------------------------------------------------
   const lendingMeta = useTokenMeta(form.lendingAsset || undefined);
   const collateralMeta = useTokenMeta(form.collateralAsset || undefined);
+  // Accept mode: the selected offer's collateral leg (borrower side pays it).
+  const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset);
 
-  // What the CREATOR locks at create time (approval + balance target):
-  // lender → principal; borrower → collateral.
-  const lockedAssetAddress = side === 'lender' ? form.lendingAsset : form.collateralAsset;
-  const lockedMeta = side === 'lender' ? lendingMeta : collateralMeta;
+  // What the connected wallet must PAY/LOCK for the current path:
+  //   post+lender    → principal            (form.lendingAsset)
+  //   post+borrower  → collateral           (form.collateralAsset)
+  //   accept+borrower→ offer's collateral   (selected.collateralAsset)
+  //   accept+lender  → offer's principal    (selected.lendingAsset)
+  const lockedAssetAddress =
+    mode === 'accept' && selected
+      ? side === 'borrower'
+        ? selected.collateralAsset
+        : selected.lendingAsset
+      : side === 'lender'
+        ? form.lendingAsset
+        : form.collateralAsset;
+  const lockedMeta =
+    mode === 'accept' && selected
+      ? side === 'borrower'
+        ? selectedCollateralMeta
+        : lendingMeta
+      : side === 'lender'
+        ? lendingMeta
+        : collateralMeta;
   const lockedBalance = useTokenBalance(lockedAssetAddress || undefined);
 
   const lockedAmount = useMemo(() => {
+    if (mode === 'accept' && selected) {
+      return side === 'borrower'
+        ? BigInt(selected.collateralAmount)
+        : BigInt(selected.amount);
+    }
     const meta = lockedMeta.data;
     const raw = side === 'lender' ? form.amount : form.collateralAmount;
     if (!meta || !raw || Number(raw) <= 0) return undefined;
@@ -140,7 +280,7 @@ export function OfferFlow({ side }: { side: Side }) {
     } catch {
       return undefined;
     }
-  }, [form, side, lockedMeta.data, lendingMeta.data, collateralMeta.data]);
+  }, [mode, selected, form, side, lockedMeta.data, lendingMeta.data, collateralMeta.data]);
 
   const checks = useEligibility({
     asset: lockedAssetAddress
@@ -154,23 +294,118 @@ export function OfferFlow({ side }: { side: Side }) {
     consent: form.riskAndTermsConsent,
   });
 
+  // ---- Matching offers -------------------------------------------------
+  const activeOffers = useActiveOffers(100);
+  const desiredWei = useMemo(() => {
+    if (!lendingMeta.data || !form.amount || Number(form.amount) <= 0) return null;
+    try {
+      return parseUnits(form.amount, lendingMeta.data.decimals);
+    } catch {
+      return null;
+    }
+  }, [form.amount, lendingMeta.data]);
+
+  const matches = useMemo(() => {
+    const rows = activeOffers.data;
+    if (!Array.isArray(rows) || !isAddressLike(form.lendingAsset)) return rows === null ? null : [];
+    const wantedType = side === 'borrower' ? 0 : 1;
+    const abs = (v: bigint) => (v < 0n ? -v : v);
+    return rows
+      .filter(
+        (o) =>
+          o.offerType === wantedType &&
+          o.assetType === AssetType.ERC20 &&
+          o.collateralAssetType === AssetType.ERC20 &&
+          o.lendingAsset.toLowerCase() === form.lendingAsset.toLowerCase() &&
+          (!address || o.creator.toLowerCase() !== address.toLowerCase()),
+      )
+      .sort((a, b) => {
+        if (desiredWei !== null) {
+          const da = abs(offerPrincipal(a) - desiredWei);
+          const db = abs(offerPrincipal(b) - desiredWei);
+          if (da !== db) return da < db ? -1 : 1;
+        }
+        // Better rate breaks ties: borrowers want low, lenders want high.
+        return side === 'borrower'
+          ? offerRateBps(a) - offerRateBps(b)
+          : offerRateBps(b) - offerRateBps(a);
+      })
+      .slice(0, 5);
+  }, [activeOffers.data, form.lendingAsset, side, address, desiredWei]);
+
+  // ---- Step plumbing ----------------------------------------------------
+  const stepLabels =
+    mode === 'post'
+      ? (['Details', 'Offers', 'Your terms', 'Review & sign', 'Done'] as const)
+      : (['Details', 'Offers', 'Review & sign', 'Done'] as const);
+  const stepIndex =
+    step === 'details'
+      ? 0
+      : step === 'choose'
+        ? 1
+        : step === 'terms'
+          ? 2
+          : step === 'review'
+            ? mode === 'post'
+              ? 3
+              : 2
+            : stepLabels.length - 1;
+
+  const detailsComplete = isAddressLike(form.lendingAsset) && Number(form.amount) > 0;
   const formError = validateOfferForm(form);
-  const detailsComplete =
-    isAddressLike(form.lendingAsset) &&
+  const postDetailsComplete =
+    detailsComplete &&
     isAddressLike(form.collateralAsset) &&
-    Number(form.amount) > 0 &&
     Number(form.collateralAmount) > 0 &&
     form.interestRate !== '';
 
+  // ---- Review receipt ----------------------------------------------------
   const receipt = useMemo((): ReceiptData | null => {
+    if (mode === 'accept' && selected) {
+      const lending = lendingMeta.data;
+      const collateral = selectedCollateralMeta.data;
+      if (!lending || !collateral) return null;
+      const principal = offerPrincipal(selected);
+      const interest = fullTermInterest(
+        principal,
+        offerRateBps(selected),
+        selected.durationDays,
+      );
+      const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
+      const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
+      const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
+      const durationStr = formatDurationDays(selected.durationDays);
+      const grace = gracePeriodLabel(selected.durationDays);
+
+      if (side === 'borrower') {
+        return {
+          youReceive: `${principalStr} now (minus the 0.1% initiation fee).`,
+          youLock: `${collateralStr} as collateral, now.`,
+          youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
+          youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
+          fees: copy.fees.borrowerLIF,
+          whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
+        };
+      }
+      return {
+        youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+        youLock: `${principalStr} lent to the borrower, now.`,
+        youMayOwe: 'Nothing — the borrower owes you.',
+        youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.`,
+        fees: copy.fees.lenderYieldFee,
+        whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${grace}). You then claim your funds.`,
+      };
+    }
+
+    // Post mode — receipt from the user's own terms.
     const lending = lendingMeta.data;
     const collateral = collateralMeta.data;
-    if (!lending || !collateral || !detailsComplete) return null;
+    if (!lending || !collateral || !postDetailsComplete) return null;
     const payload = toCreateOfferPayload(form, {
       lending: lending.decimals,
       collateral: collateral.decimals,
     });
-    const principal = payload.amountMax; // headline amount both sides
+    const principal = payload.amountMax;
     const rateBps = side === 'lender' ? payload.interestRateBps : payload.interestRateBpsMax;
     const interest = fullTermInterest(principal, rateBps, payload.durationDays);
     const principalStr = `${formatTokenAmount(principal, lending.decimals)} ${lending.symbol}`;
@@ -185,7 +420,7 @@ export function OfferFlow({ side }: { side: Side }) {
         youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
         youMayOwe: 'Nothing — the borrower owes you.',
         youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.`,
-        fees: `${copy.fees.lenderYieldFee}`,
+        fees: copy.fees.lenderYieldFee,
         whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
       };
     }
@@ -194,44 +429,89 @@ export function OfferFlow({ side }: { side: Side }) {
       youLock: `${collateralStr} as collateral, starting now.`,
       youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
       youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
-      fees: `${copy.fees.borrowerLIF}`,
+      fees: copy.fees.borrowerLIF,
       whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
     };
-  }, [form, side, detailsComplete, lendingMeta.data, collateralMeta.data]);
+  }, [
+    mode,
+    selected,
+    side,
+    form,
+    postDetailsComplete,
+    lendingMeta.data,
+    collateralMeta.data,
+    selectedCollateralMeta.data,
+  ]);
 
   const canSign =
     allChecksPass(checks) &&
-    formError === null &&
     receipt !== null &&
+    (mode === 'accept' ? selected !== null : formError === null) &&
     !submitting;
 
-  async function submit() {
+  // ---- Submission ----------------------------------------------------
+  async function submitPost() {
     if (!receipt || !address || !walletChain || !walletClient || !publicClient) return;
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const payload = toCreateOfferPayload(form, {
-        lending: lendingMeta.data?.decimals,
-        collateral: collateralMeta.data?.decimals,
-      });
-      // The Diamond pulls the creator's locked side at create time.
-      const token = (side === 'lender'
-        ? payload.lendingAsset
-        : payload.collateralAsset) as `0x${string}`;
-      const amount = side === 'lender' ? payload.amountMax : payload.collateralAmount;
+    const payload = toCreateOfferPayload(form, {
+      lending: lendingMeta.data?.decimals,
+      collateral: collateralMeta.data?.decimals,
+    });
+    const token = (side === 'lender'
+      ? payload.lendingAsset
+      : payload.collateralAsset) as `0x${string}`;
+    const amount = side === 'lender' ? payload.amountMax : payload.collateralAmount;
+    await ensureAllowance({
+      publicClient,
+      walletClient,
+      token,
+      owner: address,
+      spender: walletChain.diamondAddress,
+      amount,
+    });
+    const { hash } = await write('createOffer', [payload]);
+    setTxHash(hash);
+  }
+
+  async function submitAccept() {
+    if (!selected || !address || !walletChain || !walletClient || !publicClient) return;
+    // Sign canonical terms first; approval amounts come from the SIGNED
+    // terms (canonical), not the indexer row.
+    const { terms, signature } = await signAcceptTerms({
+      offerId: BigInt(selected.offerId),
+      consent: form.riskAndTermsConsent,
+    });
+    const acceptorPaysCollateral = side === 'borrower';
+    const paysErc20 = acceptorPaysCollateral
+      ? terms.collateralAssetType === AssetType.ERC20
+      : terms.assetType === AssetType.ERC20;
+    if (paysErc20) {
       await ensureAllowance({
         publicClient,
         walletClient,
-        token,
+        token: acceptorPaysCollateral ? terms.collateralAsset : terms.lendingAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount,
+        amount: acceptorPaysCollateral ? terms.collateralAmount : terms.amount,
       });
-      const { hash } = await write('createOffer', [payload]);
-      setTxHash(hash);
-      setStep(2);
+    }
+    const { hash } = await write('acceptOffer', [
+      BigInt(selected.offerId),
+      terms,
+      signature,
+    ]);
+    setTxHash(hash);
+  }
+
+  async function submit() {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      if (mode === 'accept') await submitAccept();
+      else await submitPost();
+      setStep('done');
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setSubmitError(
@@ -244,13 +524,23 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }
 
+  // ---- Render ----------------------------------------------------
+  const doneTitle = mode === 'accept' ? copy.match.loanOpened : text.doneTitle;
+  const doneBody = mode === 'accept' ? text.acceptDoneBody : text.doneBody;
+
   return (
     <div>
       <h1 className="page-title">{text.title}</h1>
       <p className="page-lede">{text.lede}</p>
-      <StepNav steps={STEPS} current={step} />
+      <StepNav steps={stepLabels} current={stepIndex} />
 
-      {step === 0 ? (
+      {deepLinkNotice && step === 'details' ? (
+        <div className="banner banner-warn" role="alert">
+          <span className="banner-body">{deepLinkNotice}</span>
+        </div>
+      ) : null}
+
+      {step === 'details' ? (
         <div className="card">
           <AssetPicker
             id="lending-asset"
@@ -271,18 +561,6 @@ export function OfferFlow({ side }: { side: Side }) {
             <span className="field-hint">{text.amountHint}</span>
           </div>
           <div className="field">
-            <label htmlFor="rate">{text.rateLabel}</label>
-            <input
-              id="rate"
-              className="input"
-              inputMode="decimal"
-              placeholder="5"
-              value={form.interestRate}
-              onChange={(e) => set({ interestRate: e.target.value.trim() })}
-            />
-            <span className="field-hint">{text.rateHint}</span>
-          </div>
-          <div className="field">
             <label htmlFor="duration">Duration</label>
             <select
               id="duration"
@@ -296,6 +574,90 @@ export function OfferFlow({ side }: { side: Side }) {
                 </option>
               ))}
             </select>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            disabled={!detailsComplete}
+            onClick={() => {
+              setSelected(null);
+              setStep('choose');
+            }}
+          >
+            See matching offers
+          </button>
+        </div>
+      ) : null}
+
+      {step === 'choose' ? (
+        <div className="stack">
+          <div className="card">
+            <div className="card-title">
+              <Search aria-hidden />
+              <h2 style={{ margin: 0 }}>{text.matchTitle}</h2>
+            </div>
+            <p className="muted">{text.matchLede}</p>
+            {activeOffers.isLoading ? (
+              <p className="muted">Looking for matches…</p>
+            ) : matches === null ? (
+              <p className="muted">{copy.match.unavailable}</p>
+            ) : matches.length === 0 ? (
+              <p className="muted">{text.matchEmpty}</p>
+            ) : (
+              <>
+                <div className="row-list">
+                  {matches.map((o) => (
+                    <MatchOfferRow
+                      key={o.offerId}
+                      offer={o}
+                      side={side}
+                      onChoose={() => {
+                        setSelected(o);
+                        setMode('accept');
+                        setStep('review');
+                      }}
+                    />
+                  ))}
+                </div>
+                <p className="muted" style={{ marginTop: 8 }}>
+                  {copy.match.wholeOfferNote}
+                </p>
+              </>
+            )}
+          </div>
+          <div className="cluster">
+            <button type="button" className="btn btn-secondary" onClick={() => setStep('details')}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ flex: 1 }}
+              onClick={() => {
+                setSelected(null);
+                setMode('post');
+                setStep('terms');
+              }}
+            >
+              {text.orPost}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'terms' ? (
+        <div className="card">
+          <div className="field">
+            <label htmlFor="rate">{text.rateLabel}</label>
+            <input
+              id="rate"
+              className="input"
+              inputMode="decimal"
+              placeholder="5"
+              value={form.interestRate}
+              onChange={(e) => set({ interestRate: e.target.value.trim() })}
+            />
+            <span className="field-hint">{text.rateHint}</span>
           </div>
           <AssetPicker
             id="collateral-asset"
@@ -343,25 +705,39 @@ export function OfferFlow({ side }: { side: Side }) {
             </fieldset>
           ) : null}
 
-          <button
-            type="button"
-            className="btn btn-primary btn-block"
-            disabled={!detailsComplete}
-            onClick={() => setStep(1)}
-          >
-            Continue to review
-          </button>
+          <div className="cluster">
+            <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>
+              Back
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ flex: 1 }}
+              disabled={!postDetailsComplete}
+              onClick={() => setStep('review')}
+            >
+              Continue to review
+            </button>
+          </div>
         </div>
       ) : null}
 
-      {step === 1 ? (
+      {step === 'review' ? (
         <div className="stack">
+          {mode === 'accept' && selected ? (
+            <div className="banner banner-info">
+              <span className="banner-body">
+                You’re {side === 'borrower' ? 'accepting lending offer' : 'funding borrow request'}{' '}
+                #{selected.offerId}. {copy.match.wholeOfferNote}
+              </span>
+            </div>
+          ) : null}
           <div className="card">
             <h3>Before you sign</h3>
             <Checklist items={checks} />
           </div>
           <div className="card">
-            {receipt ? <ReviewReceipt data={receipt} /> : null}
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
             <label
               className="cluster"
               style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
@@ -383,7 +759,7 @@ export function OfferFlow({ side }: { side: Side }) {
               <button
                 type="button"
                 className="btn btn-secondary"
-                onClick={() => setStep(0)}
+                onClick={() => setStep(mode === 'post' ? 'terms' : 'choose')}
                 disabled={submitting}
               >
                 Back
@@ -398,22 +774,26 @@ export function OfferFlow({ side }: { side: Side }) {
                 {submitting ? (
                   <LoaderCircle className="spin" aria-hidden size={18} />
                 ) : null}
-                {submitting ? 'Waiting for wallet…' : text.submitLabel}
+                {submitting
+                  ? 'Waiting for wallet…'
+                  : mode === 'accept'
+                    ? text.acceptSubmitLabel
+                    : text.submitLabel}
               </button>
             </div>
           </div>
         </div>
       ) : null}
 
-      {step === 2 ? (
+      {step === 'done' ? (
         <div className="card" style={{ textAlign: 'center' }}>
           <CircleCheck
             aria-hidden
             size={40}
             style={{ color: 'var(--ok)', marginBottom: 8 }}
           />
-          <h2>{text.doneTitle}</h2>
-          <p className="muted">{text.doneBody}</p>
+          <h2>{doneTitle}</h2>
+          <p className="muted">{doneBody}</p>
           {txHash && walletChain ? (
             <p className="muted">
               <a

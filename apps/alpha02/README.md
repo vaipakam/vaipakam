@@ -61,25 +61,30 @@ findings:
 ## Status / follow-ups
 
 Wired end-to-end: shell, themes, modes, wallet connect + chain gating,
-home, guided borrow/lend (post offer with allowance handling),
-positions list + loan detail with repay/claim, Claim Center, Offer
-Book (browse), VPFI education page, settings, help, not-found.
+home, guided borrow/lend — both the ACCEPT path (matching open offers
+surfaced first; EIP-712 `AcceptTerms` signed against the canonical
+on-chain offer via `contracts/useAcceptTerms.ts`, exact-amount
+approval from the signed terms, `acceptOffer`) and the POST path
+(`createOffer` with allowance handling) — Offer Book browse with
+"Use this offer" deep links into the same review step, positions list
++ loan detail with repay/claim, Claim Center, VPFI education page,
+settings, help, not-found.
 
 Next milestones (in rough order):
 
-1. Accept-offer path (guided "use an existing offer" in Borrow/Lend —
-   `acceptOffer` + terms/signature plumbing from apps/defi).
-2. NFT rental flows (post + rent, ERC-4907; `pages/Rent.tsx` is
+1. NFT rental flows (post + rent, ERC-4907; `pages/Rent.tsx` is
    education-only today).
-3. VPFI vault deposit/withdraw + live tier/consent state.
-4. On-chain fallback reads when the indexer is unavailable.
-5. Health-factor / liquidation-price display on loan details for
+2. VPFI vault deposit/withdraw + live tier/consent state.
+3. On-chain fallback reads when the indexer is unavailable.
+4. Health-factor / liquidation-price display on loan details for
    liquid collateral (RiskFacet reads).
-6. Cancel-offer action on the Positions page.
-7. Sanctions banner + ToS gate parity, i18n catalog extraction from
+5. Cancel-offer action on the Positions page.
+6. Sanctions banner + ToS gate parity, i18n catalog extraction from
    `content/copy.ts`, Playwright journeys (B1, L1, M1, C1 first).
-8. Promote `lib/offerSchema.ts` (and other pure logic shared with
+7. Promote `lib/offerSchema.ts` (and other pure logic shared with
    apps/defi) into `packages/lib` instead of keeping copies.
+8. Permit2 accept/create paths (skip the separate approve tx where
+   the wallet supports it — apps/defi has the reference plumbing).
 
 ## Commands
 

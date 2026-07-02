@@ -77,6 +77,32 @@ export const copy = {
 
   consentLabel: 'I understand and agree to the Risk Disclosures and Vaipakam Terms.',
 
+  match: {
+    borrowTitle: 'Lenders ready to fund you now',
+    borrowLede:
+      'These offers match your asset. Accepting one opens the loan immediately — you take the offer’s full amount and terms.',
+    lendTitle: 'Borrowers waiting for funding',
+    lendLede:
+      'These requests match your asset. Funding one opens the loan immediately at the request’s terms.',
+    wholeOfferNote: 'Offers are taken whole — the amount shown is what the loan will be.',
+    choose: 'Choose',
+    emptyBorrow: 'No matching offers right now.',
+    emptyLend: 'No matching requests right now.',
+    orPostBorrow: 'Post my own borrow request instead',
+    orPostLend: 'Post my own lending offer instead',
+    unavailable:
+      'We couldn’t load matching offers right now. You can still post your own below.',
+    loanOpened: 'Loan opened',
+    borrowerNext:
+      'The funds are in your Vaipakam Vault and your collateral is locked. Repay by the due date to get it back — everything is under My positions.',
+    lenderNext:
+      'Your funds are lent and the borrower’s collateral is locked. Track repayment under My positions; you’ll claim your funds back after they repay.',
+    wrongSide:
+      'That link points to the other side of the market — a lending offer is accepted from Borrow, a borrow request from Lend.',
+    offerGone:
+      'That offer is no longer open. Browse current matches below or post your own.',
+  },
+
   borrow: {
     title: 'Borrow assets',
     lede: 'Tell us what you need and what you can lock as collateral. We’ll show you exactly what you’d owe before anything is signed.',

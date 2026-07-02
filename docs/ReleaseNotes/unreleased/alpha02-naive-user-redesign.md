@@ -25,6 +25,18 @@ out the five findings of the 2026-07-02 naive-user browser audit
 (curated asset picker, honest offer-book empty states, availability-first
 VPFI state, user-centred network copy, no blank route dead-ends).
 
+The accept-offer journeys (B1: borrower uses an existing lender offer;
+L1: lender funds an existing borrow request) are wired as the guided
+flows' primary path: after the user states asset, amount, and duration,
+the flow surfaces matching open offers first — accepting one opens the
+loan immediately — and posting their own offer is the explicit
+fallback. Accepting signs the EIP-712 AcceptTerms against the canonical
+on-chain offer (ported from apps/defi's useAcceptTermsSigning, with the
+fail-closed risk-terms-hash behaviour preserved), approves the
+acceptor-side asset for the exact signed amount, and calls acceptOffer.
+The Offer Book gains a "Use this offer" action that deep-links into the
+same review-and-sign step.
+
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
 Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT

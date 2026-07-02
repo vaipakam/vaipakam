@@ -18,6 +18,7 @@ import {
   fetchLoanById,
   fetchLoansByBorrower,
   fetchLoansByLender,
+  fetchOfferById,
   fetchOffersByCreator,
   type IndexedLoan,
   type IndexedOffer,
@@ -73,6 +74,18 @@ export function useMyLoans() {
         })
         .sort((a, b) => b.startAt - a.startAt);
     },
+  });
+}
+
+/** One offer by id on the read chain (deep-link target from the
+ *  Offer Book's "Use this offer" action). */
+export function useOffer(offerId: number | undefined) {
+  const { readChain } = useActiveChain();
+  return useQuery({
+    queryKey: ['offer', readChain.chainId, offerId],
+    enabled: offerId !== undefined && Number.isFinite(offerId),
+    refetchInterval: REFRESH_MS,
+    queryFn: () => fetchOfferById(readChain.chainId, offerId!),
   });
 }
 

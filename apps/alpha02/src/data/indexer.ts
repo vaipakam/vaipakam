@@ -100,6 +100,13 @@ export interface CreatorOffersPage {
   nextBefore: number | null;
 }
 
+export function fetchOfferById(
+  chainId: number,
+  offerId: number,
+): Promise<IndexedOffer | null> {
+  return getJson<IndexedOffer>(`/offers/${offerId}?chainId=${chainId}`);
+}
+
 export function fetchOffersByCreator(
   chainId: number,
   creator: string,
