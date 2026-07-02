@@ -1816,11 +1816,12 @@ VPFI token deployment begins in Phase 1 through the token contract and minting p
   - the shared platform-level consent for using vaulted VPFI toward `Yield Fee` and `Loan Initiation Fee` discounts should be shown in the app on `Dashboard`, so users can manage the setting independently of the VPFI vault page
 - **Vault-Held VPFI:** VPFI held in the user's Vaipakam Vault counts toward balance-based fee-discount tiers only. It does not earn a staking yield; the former `5% APR` staking-reward program and its claim surface are removed.
 - **Reward Claim Surfaces:** Platform-interaction rewards should be claimed from `Claim Center`, and `Dashboard` may summarize interaction-reward state. There is no staking-reward claim card.
-- **VPFI Received From Protocol-Fee Flows:** VPFI received through protocol-fee utility paths should be handled as:
-  - `38%` converted into ETH through the configured on-chain swap-aggregator proxy
-  - `38%` converted into wBTC through the approved treasury recycling path
-  - `24%` retained as VPFI
-- **Surplus Rule:** If the Insurance / Bug Bounty pool grows above `2%` of total VPFI supply, the excess VPFI should be recycled using the same `38 / 38 / 24` Treasury Recycling Rule. This is a treasury-strengthening conversion, not a token burn.
+- **VPFI Received From Protocol-Fee Flows:** VPFI received through protocol-fee utility paths is recycled through a **governance-configurable** treasury-conversion path (an ordered target list with per-target thresholds), not a hard-coded split. The **recommended launch configuration** is:
+  - `38%` converted into ETH through the configured on-chain swap-aggregator proxy (recommended)
+  - `38%` converted into wBTC through the approved treasury recycling path (recommended)
+  - `24%` retained as VPFI (recommended)
+  - until governance configures conversion targets, the recycling path is inert and received VPFI is simply retained by Treasury
+- **Surplus Rule:** If the Insurance / Bug Bounty pool grows above `2%` of total VPFI supply, the excess VPFI should be recycled through the same configured conversion path (recommended: the `38 / 38 / 24` allocation above). This is a treasury-strengthening conversion, not a token burn.
 - **Revenue Distribution:** Treasury-controlled tokenomics flows should support pull-based staking and reward claims rather than automatic periodic token pushes once the broader tokenomics system is live.
 - **Treasury Dashboard:** A public dashboard (e.g., built with Dune Analytics or similar tools, integrated into the Vaipakam frontend) will display real-time treasury data:
   - Total income from fees.

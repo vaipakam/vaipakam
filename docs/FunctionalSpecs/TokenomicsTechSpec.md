@@ -276,7 +276,7 @@ Diamond surface (Phase 1 to add):
 
 - `RewardReporterFacet` (on every mirror): day-close reporting and local chain-interest views
 - `RewardAggregatorFacet` (on Base only): inbound report handling, day finalization once the grace window elapses, and known-global-interest views
-- `ClaimFacet` (on every chain): `claimInteractionRewards(dayId[])` using `knownGlobalInterest[dayId]` as denominator
+- `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` (no arguments) — auto-walks a bounded window of finalized days from the caller's stored cursor, paying each covered day out using `knownGlobalInterest[dayId]` as that day's denominator, and returns `(paid, fromDay, toDay)`. The claim reverts for a day whose `knownGlobalInterest[dayId]` has not yet been broadcast, so callers never claim ahead of finalization. (The surface is deliberately cursor-driven rather than caller-supplied `dayId[]`, so integrators do not select days explicitly.)
 
 Testing requirements beyond §9:
 
@@ -357,7 +357,7 @@ Borrower rules (Phase 5 and later):
 - when the VPFI path succeeds, `100%` of the requested lending asset is delivered to the borrower because the initiation fee has been satisfied entirely from vaulted VPFI
 - the borrower-side rebate bps at proper settlement must equal the user's current effective discount at that fee-application moment: Base reads the canonical accumulator, and mirrors read the authenticated cached tier
 - on proper close (normal repay, borrower preclose, refinance), the Diamond splits the held VPFI into a borrower rebate (held × effective-discount-bps / 10000) and a treasury share (the remainder); the rebate becomes claimable on the borrower's position NFT and is paid out atomically with the normal borrower claim; the treasury share is accrued to Treasury at settlement
-- on default or HF-based liquidation, the entire held VPFI is forfeited to Treasury with no rebate
+- on default or HF-based liquidation, the borrower receives no rebate and the entire held VPFI is forfeited; for a matched loan the matcher's configured share is paid to the matcher first and the net is directed to Treasury, and for an unmatched loan the full held VPFI goes to Treasury (consistent with the matcher-share-applies-on-forfeiture rule above and the VPFI discount design)
 - on refinance, the OLD loan's borrower rebate is credited at settlement (the borrower earned that window fairly); the NEW loan gets a fresh opening snapshot and tracks a new independent window
 - pre-upgrade loans that predate Phase 5 carry zero-valued custody and no opening snapshot, so they silently settle with no rebate — they never paid VPFI up front
 
@@ -436,7 +436,7 @@ Settlement:
 - borrower rebate formula: `rebate = heldVPFI * effectiveDiscountBps / 10000`
 - the borrower rebate is claimable by the borrower-side Vaipakam NFT holder and is paid with the ordinary borrower claim
 - the unrewarded remainder of the held VPFI becomes Treasury's share
-- on default or HF-based liquidation, the borrower rebate is `0` and all VPFI held for that loan is forfeited to Treasury
+- on default or HF-based liquidation, the borrower rebate is `0` and the held VPFI is forfeited: for a matched loan the matcher's configured share is paid to the matcher first and the net is forfeited to Treasury; for an unmatched loan the full held VPFI is forfeited to Treasury
 
 Storage requirements:
 
@@ -526,13 +526,13 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
-All VPFI received as fees is recycled as follows (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner):
+VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets and per-target thresholds (`setTreasuryConvertTargets` / `setTreasuryConvertThresholds`), and `convertTreasuryAsset` performs the conversions once targets are configured; it is inert until then. The `38 / 38 / 24` allocation below is the **recommended launch configuration**, not a protocol-enforced constant:
 
-- **`38%` → Buy ETH**
-- **`38%` → Buy wBTC**
-- **`24%` → Held as VPFI**
+- **`38%` → Buy ETH** (recommended)
+- **`38%` → Buy wBTC** (recommended)
+- **`24%` → Held as VPFI** (recommended)
 
-If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled using the same `38 / 38 / 24` split.
+If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same configured conversion path (recommended: the `38 / 38 / 24` allocation above).
 
 Buyback dormancy and fee-converted VPFI routing:
 
