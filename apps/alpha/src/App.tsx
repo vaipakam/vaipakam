@@ -908,7 +908,7 @@ function FlowPage({
     [assetOverrides, flow, normalizedAmount, selectedAsset],
   );
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
-  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
+  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'not-run' && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
     ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
     : walletCheckResult.message;
@@ -1776,7 +1776,6 @@ function guidedCollateralAmountInput(principalSymbol: string, collateralSymbol: 
   const principalAmount = Number(principalAmountInput);
   if (!Number.isFinite(principalAmount) || principalAmount <= 0) return null;
   if (principalSymbol === 'mUSDC' && collateralSymbol === 'mWETH') return decimalFromNumber(principalAmount / 1000);
-  if (principalSymbol === 'mWETH' && collateralSymbol === 'mUSDC') return decimalFromNumber(principalAmount * 1000);
   return null;
 }
 
@@ -1789,22 +1788,36 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
   const isBorrow = flow.kind === 'borrow';
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
   const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset, assetOverrides);
-  const collateralAmountInput = isBorrow ? guidedCollateralAmountInput(selectedAsset, collateralLabel, amountInput) : null;
+  const collateralAmountInput = guidedCollateralAmountInput(selectedAsset, collateralLabel, amountInput);
   const requiredInput = isBorrow ? collateralAmountInput : amountInput;
   const requiredLabel = (requiredInput ?? '0') + ' ' + asset.symbol;
   if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
   if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
   if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
+  if (!amountInput) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
+  }
+  if (!collateralAmountInput) {
+    return {
+      asset,
+      requiredAmount: null,
+      requiredLabel,
+      spender: null,
+      unavailableReason: 'Guided mode needs oracle-priced collateral sizing for ' + selectedAsset + ' backed by ' + collateralLabel + ' before wallet checks can run.',
+    };
+  }
+  if (!requiredInput) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
+  }
   if (isBorrow) {
     return {
       asset,
-      requiredAmount: requiredInput ? parseUnits(requiredInput, asset.decimals) : null,
+      requiredAmount: parseUnits(requiredInput, asset.decimals),
       requiredLabel,
       spender: null,
       unavailableReason: 'Borrow collateral is deposited into your personal vault. Vaipakam needs the vault address before it can check or request token approval.',
     };
   }
-  if (!requiredInput) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before it can check wallet readiness.' };
   return { asset, requiredAmount: parseUnits(requiredInput, asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
 }
 
@@ -2252,7 +2265,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
         </section>
       ) : null}
 
-      {canPreviewPositions && preparedActions.length > 0 ? (
+      {preparedActions.length > 0 ? (
         <section className="prepared-actions panel-surface" aria-label="Prepared guided actions">
           <div className="plan-heading">
             <div>
