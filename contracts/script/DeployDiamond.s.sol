@@ -68,6 +68,7 @@ import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {LegalFacet} from "../src/facets/LegalFacet.sol";
@@ -220,6 +221,7 @@ contract DeployDiamond is Script {
         InteractionRewardsFacet interactionRewardsFacet = new InteractionRewardsFacet();
         RewardReporterFacet rewardReporterFacet = new RewardReporterFacet();
         RewardAggregatorFacet rewardAggregatorFacet = new RewardAggregatorFacet();
+        RewardRemittanceFacet rewardRemittanceFacet = new RewardRemittanceFacet();
         ConfigFacet configFacet = new ConfigFacet();
         // #394 (Codex #647) — numeraire / PAD / periodic-interest config
         // carved off `ConfigFacet` to keep it under EIP-170. Sibling
@@ -250,7 +252,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](61);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](62);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -471,6 +473,7 @@ contract DeployDiamond is Script {
             address(riskAccessFacet),
             _getRiskAccessFacetSelectors()
         );
+        cuts[61] = _buildCut(address(rewardRemittanceFacet), _getRewardRemittanceSelectors());
         // #594 — standalone holder-only consolidation entry points are cut at
         // slot 24 (see the #687-B note above).
 
@@ -781,6 +784,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("interactionRewardsFacet", address(interactionRewardsFacet));
         Deployments.writeFacet("rewardReporterFacet",     address(rewardReporterFacet));
         Deployments.writeFacet("rewardAggregatorFacet",   address(rewardAggregatorFacet));
+        Deployments.writeFacet("rewardRemittanceFacet",   address(rewardRemittanceFacet));
         Deployments.writeFacet("configFacet",             address(configFacet));
         // #394 (Codex #647 round-8 P2) — persist the carved-out NumeraireConfigFacet
         // so addresses.json (explorer verification / upgrade scripts / audits) can
@@ -850,6 +854,7 @@ contract DeployDiamond is Script {
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
         console.log("RewardAggregatorFacet:", address(rewardAggregatorFacet));
+        console.log("RewardRemittanceFacet:", address(rewardRemittanceFacet));
         console.log("ConfigFacet:          ", address(configFacet));
         console.log("NumeraireConfigFacet: ", address(numeraireConfigFacet));
         console.log("RiskAccessFacet:      ", address(riskAccessFacet));
@@ -2252,6 +2257,17 @@ contract DeployDiamond is Script {
         s[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         s[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         s[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
+    }
+
+    function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](7);
+        s[0] = RewardRemittanceFacet.remitRewardBudget.selector;
+        s[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        s[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        s[3] = RewardRemittanceFacet.getRewardBudgetRemitted.selector;
+        s[4] = RewardRemittanceFacet.getRewardBudgetRemittedTotal.selector;
+        s[5] = RewardRemittanceFacet.getRewardBudgetRemittedGlobal.selector;
+        s[6] = RewardRemittanceFacet.getRewardRemittanceKeeper.selector;
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {

@@ -68,6 +68,7 @@ import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardRemittanceFacet} from "../src/facets/RewardRemittanceFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {NumeraireConfigFacet} from "../src/facets/NumeraireConfigFacet.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -1671,6 +1672,22 @@ contract HelperTest {
         selectors[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         selectors[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         selectors[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
+        return selectors;
+    }
+
+    function getRewardRemittanceFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](7);
+        selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
+        selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
+        selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
+        selectors[3] = RewardRemittanceFacet.getRewardBudgetRemitted.selector;
+        selectors[4] = RewardRemittanceFacet.getRewardBudgetRemittedTotal.selector;
+        selectors[5] = RewardRemittanceFacet.getRewardBudgetRemittedGlobal.selector;
+        selectors[6] = RewardRemittanceFacet.getRewardRemittanceKeeper.selector;
         return selectors;
     }
 
