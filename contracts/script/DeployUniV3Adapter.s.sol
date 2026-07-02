@@ -229,9 +229,19 @@ contract DeployUniV3Adapter is Script {
             );
             return;
         }
-        if (idx != 0) {
-            console.log("  Note: index != 0. On a with-0x chain the aggregators own slots 0/1 and");
-            console.log("  UniV3 is expected at 2 - confirm serverQuotes CHAIN_SWAP.adapters.univ3 matches.");
+        // With-0x chain: DeploySwapAdapters always registers the 0x + 1inch pair,
+        // so the keeper/frontend registries expect 0x=slot0, 1inch=slot1,
+        // UniV3=slot2. The DANGEROUS case is UniV3 landing in an aggregator slot
+        // (0 or 1) — happens if this deploy ran before the aggregators, or
+        // INITIAL_SETTLERS was omitted — because the keeper would then send 0x/
+        // 1inch calldata to the UniV3 adapter. Warn LOUDLY there (idx == 0 must
+        // NOT be silent on a with-0x chain); an unexpected slot >2 is a softer note.
+        if (idx < 2) {
+            console.log("  WARNING: on a with-0x chain UniV3 is expected at slot 2 (0x=0, 1inch=1), but");
+            console.log("  it landed at an aggregator slot - the keeper would misroute aggregator calldata");
+            console.log("  to UniV3. Deploy the 0x/1inch adapters FIRST, or fix serverQuotes CHAIN_SWAP.");
+        } else if (idx != 2) {
+            console.log("  Note: UniV3 at slot != 2 - confirm serverQuotes CHAIN_SWAP.adapters.univ3 matches.");
         }
     }
 
@@ -252,11 +262,20 @@ contract DeployUniV3Adapter is Script {
     }
 
     /// @dev The oracle's configured v3 factory for this chain — used to confirm
-    ///      the router belongs to the same DEX. Returns 0 if unset (the caller
-    ///      then skips the factory-match, keeping the exactInputSingle-selector
-    ///      check as the floor).
+    ///      the router belongs to the same DEX. This is ConfigureOracle's var, so
+    ///      it MUST resolve to the same key that script reads. #862 round-2: the
+    ///      two prefix maps diverge on chain 1 — this script's CCIP_SLUG map uses
+    ///      `ETHEREUM_`, but `ConfigureOracle._prefix()` uses `MAINNET_`. Try the
+    ///      CCIP_SLUG prefix (+ bare) first, then ConfigureOracle's prefix, so an
+    ///      operator who set the oracle-documented `MAINNET_UNISWAP_V3_FACTORY`
+    ///      isn't rejected by the now-hard factory requirement above.
     function _resolveFactory() internal view returns (address) {
-        return _resolveChainAddr("UNISWAP_V3_FACTORY");
+        address a = _resolveChainAddr("UNISWAP_V3_FACTORY");
+        if (a != address(0)) return a;
+        // The only prefix divergence with ConfigureOracle._prefix() is chain 1
+        // (MAINNET_ vs this script's ETHEREUM_); accept its key there.
+        if (block.chainid == 1) return vm.envOr("MAINNET_UNISWAP_V3_FACTORY", address(0));
+        return address(0);
     }
 
     /// @dev Chain-prefixed `<CHAIN>_<key>` first, then bare `<key>` fallback.

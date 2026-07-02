@@ -217,23 +217,26 @@ contract ConfigureOracle is Script {
             );
         }
 
-        // Swap-adapter (liquidation-route) state is the swap-adapters phase's +
-        // the keeper's responsibility, NOT this oracle-config script's. #862:
-        // ConfigureOracle used to HARD-require the adapter list here, which
-        // coupled the swap-adapters and configure phases and cascaded into a pile
-        // of index/ordering/marker edge cases. It now only SURFACES a likely-
-        // broken liquidation route as an ADVISORY warning and proceeds — the
-        // deploy flow (swap-adapters phase) and the keeper's per-chain CHAIN_SWAP
-        // map remain the source of truth for which adapter sits at which index.
+        // Liquidation-route sanity. #862 split this into two concerns:
+        //   • EXISTENCE — a hard gate. An empty adapter list means every
+        //     liquidation reverts in LibSwap.swapWithFailover, so a configure run
+        //     BEFORE the swap-adapters phase (e.g. an out-of-order
+        //     `--phase configure`) must not be allowed to mark the chain
+        //     configured with no route at all.
+        //   • ORDERING/index — advisory only. Which adapter sits at which slot is
+        //     the swap-adapters phase's + the keeper's CHAIN_SWAP responsibility;
+        //     HARD-requiring a specific slot here was the coupling that cascaded
+        //     into a pile of index/marker edge cases, so it stays a warning.
         address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
-        if (adapters.length == 0) {
-            console.log("WARNING: no swap adapter registered - LibSwap.swapWithFailover reverts on an empty list, so liquidations will fail. Run the swap-adapters phase / DeployUniV3Adapter before relying on this chain.");
-        } else if (zeroEx == address(0)) {
-            // No-0x chain: the keeper routes univ3=0, so slot 0 MUST be the UniV3
-            // adapter. This is purely advisory (#862 demoted it from a hard
-            // require), so the adapterName() read must NOT revert and re-couple
-            // the phases — a broken/stale slot-0 adapter that can't answer
-            // adapterName() has to surface as a warning, not a script abort.
+        require(
+            adapters.length > 0,
+            "ConfigureOracle: no swap adapter registered - LibSwap.swapWithFailover reverts on an empty list, so liquidations would fail. Run the swap-adapters phase / DeployUniV3Adapter before --phase configure."
+        );
+        if (zeroEx == address(0)) {
+            // No-0x chain: the keeper routes univ3=0, so slot 0 SHOULD be the UniV3
+            // adapter. Advisory (see above), so the adapterName() read must NOT
+            // revert and re-couple the phases — a broken/stale slot-0 adapter that
+            // can't answer adapterName() has to surface as a warning, not an abort.
             try ISwapAdapter(adapters[0]).adapterName() returns (string memory nm) {
                 if (keccak256(bytes(nm)) != keccak256(bytes("UniswapV3"))) {
                     console.log("WARNING: no-0x chain but swap-adapter index 0 is not the UniV3 adapter - the keeper (univ3=0) would misroute. Reorder / re-register via DeployUniV3Adapter.");
