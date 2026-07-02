@@ -45,7 +45,7 @@ import {
   type GuidedAssetOverride,
   type GuidedAssetResolution,
 } from './guidedAssets';
-import { Component, useEffect, useState } from 'react';
+import { Component, useEffect, useMemo, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
@@ -876,6 +876,7 @@ function FlowPage({
   const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
   const [walletCheckResult, setWalletCheckResult] = useState<GuidedWalletCheckResult>({ status: 'not-run', message: 'Not checked yet' });
   const [approvalResult, setApprovalResult] = useState<GuidedApprovalResult>({ status: 'not-started', message: 'No approval requested' });
+  const [assetOverrides] = useState<Record<string, GuidedAssetOverride>>(() => readGuidedAssetOverrides());
 
   useEffect(() => {
     setReviewed(false);
@@ -894,16 +895,22 @@ function FlowPage({
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
-  const transactionPlan = buildGuidedTransactionPlan(flow, selectedAsset, numericAmount);
+  const transactionPlan = useMemo(
+    () => buildGuidedTransactionPlan(flow, selectedAsset, numericAmount, assetOverrides),
+    [assetOverrides, flow, numericAmount, selectedAsset],
+  );
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
-  const walletCheckSpec = buildGuidedWalletCheckSpec(flow, selectedAsset, numericAmount);
+  const walletCheckSpec = useMemo(
+    () => buildGuidedWalletCheckSpec(flow, selectedAsset, numericAmount, assetOverrides),
+    [assetOverrides, flow, numericAmount, selectedAsset],
+  );
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
-  const approvalCanRun = walletCheckCanRun && approvalResult.status !== 'pending';
+  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
     ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
     : walletCheckResult.message;
@@ -974,7 +981,7 @@ function FlowPage({
       const hasBalance = balance >= walletCheckSpec.requiredAmount;
       const hasAllowance = allowance >= walletCheckSpec.requiredAmount;
       if (hasBalance && hasAllowance) {
-        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and Diamond allowance for the guided amount.', balance: balanceLabel, allowance: allowanceLabel });
+        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and approval for the guided amount.', balance: balanceLabel, allowance: allowanceLabel });
         return;
       }
       setWalletCheckResult({
@@ -1181,9 +1188,9 @@ function FlowPage({
           <section className="contract-draft" aria-label="Contract draft">
             <div className="contract-draft-heading">
               <div>
-                <p className="eyebrow">Borrow setup</p>
+                <p className="eyebrow">{guidedSetupEyebrow(flow)}</p>
                 <h3>{guidedActionSummary(flow)}</h3>
-                <p className="guided-action-copy">Finish these checks before Vaipakam opens your wallet for a borrow transaction.</p>
+                <p className="guided-action-copy">Finish these checks before Vaipakam opens your wallet for this transaction.</p>
               </div>
               <span className="simulation-pill"><ReceiptText size={16} /> {guidedReadinessLabel(transactionPlan.contractDraft.readiness)}</span>
             </div>
@@ -1192,8 +1199,8 @@ function FlowPage({
               <Metric label={flow.kind === 'borrow' ? 'You lock' : flow.kind === 'earn' ? 'Borrower locks' : 'NFT or buffer'} value={transactionPlan.contractDraft.collateralAsset} />
               <Metric label="Safety target" value={transactionPlan.contractDraft.safetyIndicator} />
               <Metric label="Collateral estimate" value={transactionPlan.contractDraft.collateralEstimate} />
-              <Metric label="Interest" value={humanRateLabel(transactionPlan.contractDraft.interestRateBps)} />
-              <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
+              <Metric label="Interest" value={humanRateLabel(transactionPlan.contractDraft.interestRateBps) + guidedDefaultTermsSuffix(flow)} />
+              <Metric label="Duration" value={transactionPlan.contractDraft.durationDays + guidedDefaultTermsSuffix(flow)} />
               <Metric label="Token setup" value={transactionPlan.contractDraft.assetSource} />
               <Metric label="Wallet data" value={humanCalldataStatus(transactionPlan.contractDraft.calldataStatus)} />
             </div>
@@ -1689,6 +1696,12 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 }
 
 
+function guidedSetupEyebrow(flow: GuidedFlow) {
+  if (flow.kind === 'earn') return 'Lending setup';
+  if (flow.kind === 'borrow') return 'Borrow setup';
+  return 'Rental setup';
+}
+
 function guidedActionSummary(flow: GuidedFlow) {
   if (flow.kind === 'borrow') return 'Set up your borrow request';
   if (flow.kind === 'earn') return 'Set up your lending offer';
@@ -1699,6 +1712,10 @@ function guidedReadinessLabel(readiness: GuidedContractDraft['readiness']) {
   if (readiness === 'Ready for simulation') return 'Ready for safety test';
   if (readiness === 'Uses rental path') return 'Rental setup needed';
   return 'Needs token setup';
+}
+
+function guidedDefaultTermsSuffix(flow: GuidedFlow) {
+  return flow.kind === 'rent' ? '' : ' · guided default';
 }
 
 function humanRateLabel(value: string) {
@@ -1735,6 +1752,7 @@ function humanBlockerText(blocker: string) {
 }
 
 function parseEthCallUint(value: unknown) {
+  if (value === '0x') return 0n;
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error('provider returned an invalid uint256 value');
   return BigInt(value);
 }
@@ -1744,7 +1762,7 @@ function decimalInputForUnits(value: number) {
   return value.toFixed(8).replace(/\.?0+$/, '');
 }
 
-function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedWalletCheckSpec {
+function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedWalletCheckSpec {
   const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond ?? null;
   if (flow.kind === 'rent') {
     return { asset: null, requiredAmount: null, requiredLabel: 'rental terms pending', spender: diamond, unavailableReason: 'Rental wallet checks need the selected NFT, prepay token, and refundable buffer first.' };
@@ -1752,12 +1770,21 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, num
 
   const isBorrow = flow.kind === 'borrow';
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
-  const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset);
+  const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset, assetOverrides);
   const requiredValue = isBorrow ? numericAmount * 1.5 : numericAmount;
   const requiredLabel = decimalInputForUnits(requiredValue) + ' ' + asset.symbol;
   if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
   if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
   if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
+  if (isBorrow) {
+    return {
+      asset,
+      requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals),
+      requiredLabel,
+      spender: null,
+      unavailableReason: 'Borrow collateral is deposited into your personal vault. Vaipakam needs the vault address before it can check or request token approval.',
+    };
+  }
   return { asset, requiredAmount: parseUnits(decimalInputForUnits(requiredValue), asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
 }
 
@@ -1832,7 +1859,8 @@ function encodeGuidedCreateOfferDraft({
   }
 
   const principalAmount = parseUnits(String(numericAmount), principalAsset.decimals);
-  const collateralAmount = parseUnits(String(numericAmount), collateralAsset.decimals);
+  // Guided mode uses a conservative 150% placeholder until oracle-priced collateral sizing is wired.
+  const collateralAmount = parseUnits(decimalInputForUnits(numericAmount * 1.5), collateralAsset.decimals);
   const isBorrow = flow.kind === 'borrow';
   const params = {
     offerType: isBorrow ? 1 : 0,
@@ -1873,11 +1901,11 @@ function encodeGuidedCreateOfferDraft({
   };
 }
 
-function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedContractDraft {
+function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedContractDraft {
   const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
   const amountText = formatFlowAmount(flow, numericAmount);
   if (flow.kind === 'rent') {
-    const prepayToken = resolveGuidedAsset('mUSDC');
+    const prepayToken = resolveGuidedAsset('mUSDC', assetOverrides);
     const blockers = ['Confirm the rental-specific action path before opening the wallet.', 'Resolve NFT collection, token standard, token id, and refundable buffer.'];
     if (!prepayToken.address) blockers.push('Approved prepay token address must be confirmed for mUSDC.');
     return {
@@ -1903,8 +1931,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
 
   const isBorrow = flow.kind === 'borrow';
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
-  const principalAsset = resolveGuidedAsset(selectedAsset);
-  const collateralAsset = resolveGuidedAsset(collateralLabel);
+  const principalAsset = resolveGuidedAsset(selectedAsset, assetOverrides);
+  const collateralAsset = resolveGuidedAsset(collateralLabel, assetOverrides);
   const encodingBlockers = [];
   const submissionBlockers = [];
   if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
@@ -1938,11 +1966,11 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   };
 }
 
-function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedTransactionPlan {
+function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number, assetOverrides: Record<string, GuidedAssetOverride>): GuidedTransactionPlan {
   const amountText = formatFlowAmount(flow, numericAmount);
   const deploymentTarget = guidedDeploymentTarget();
   const previewState = guidedPreviewState();
-  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount);
+  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount, assetOverrides);
   if (flow.kind === 'earn') {
     return {
       intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
@@ -2179,7 +2207,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
               <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
               <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
-              <button type="button" onClick={() => setFilter('all')}><ReceiptText size={16} /> Prepared ({preparedCount})</button>
+              <button type="button" onClick={() => setFilter('all')}><ReceiptText size={16} /> Show all</button>
             </>
           ) : null}
         </div>

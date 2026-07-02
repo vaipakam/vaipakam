@@ -53,12 +53,24 @@ export function guidedDefaultAssetDecimals(symbol: string) {
   return GUIDED_ASSET_DECIMALS[symbol] ?? null;
 }
 
+function isGuidedAssetOverride(value: unknown): value is GuidedAssetOverride {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    typeof (value as GuidedAssetOverride).address === 'string' &&
+    typeof (value as GuidedAssetOverride).decimals === 'string',
+  );
+}
+
 export function readGuidedAssetOverrides(): Record<string, GuidedAssetOverride> {
   if (typeof window === 'undefined') return {};
   try {
     const raw = window.localStorage.getItem(GUIDED_ASSET_OVERRIDE_STORAGE_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, GuidedAssetOverride> : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, GuidedAssetOverride] => isGuidedAssetOverride(entry[1])),
+    );
   } catch {
     return {};
   }
@@ -79,7 +91,7 @@ function resolvedAsset(symbol: string, address: string, decimals: number | null,
   };
 }
 
-export function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
+export function resolveGuidedAsset(symbol: string, overrides: Record<string, GuidedAssetOverride> = readGuidedAssetOverrides()): GuidedAssetResolution {
   if (symbol === 'VPFI' && BASE_SEPOLIA_DEPLOYMENT?.vpfiToken) {
     return resolvedAsset(symbol, BASE_SEPOLIA_DEPLOYMENT.vpfiToken, GUIDED_ASSET_DECIMALS.VPFI, 'deployment');
   }
@@ -89,7 +101,7 @@ export function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
   }
 
   const configured = GUIDED_ASSET_ENV[symbol];
-  const override = readGuidedAssetOverrides()[symbol];
+  const override = overrides[symbol];
   if (isGuidedAssetAddress(override?.address)) {
     return resolvedAsset(symbol, override.address, parseAssetDecimals(override.decimals, symbol), 'environment');
   }
