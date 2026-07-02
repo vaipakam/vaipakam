@@ -1130,6 +1130,10 @@ const claimItems: ClaimItem[] = [
 function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [reviewedClaimIds, setReviewedClaimIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<'all' | ClaimItem['source']>('all');
+
+  useEffect(() => {
+    setReviewedClaimIds([]);
+  }, [wallet.account]);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewClaims = walletReady && baseReady;
@@ -1326,6 +1330,10 @@ function buildOfferReceiptRows(offer: MarketOffer) {
 function Activity({ wallet }: { wallet: WalletState }) {
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAcknowledgedIds([]);
+  }, [wallet.account]);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewActivity = walletReady && baseReady;
@@ -1416,6 +1424,10 @@ function Activity({ wallet }: { wallet: WalletState }) {
 function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
   const [reviewedActions, setReviewedActions] = useState<string[]>([]);
+
+  useEffect(() => {
+    setReviewedActions([]);
+  }, [wallet.account]);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewPositions = walletReady && baseReady;
@@ -1695,7 +1707,7 @@ function NotFound() {
   return (
     <section className="recovery-card panel-surface">
       <p className="eyebrow">Not found</p>
-      <h2>That page does not exist.</h2>
+      <h1>That page does not exist.</h1>
       <p>Return to the guided start screen or open the help guide to find the right workflow.</p>
       <div className="hero-actions">
         <NavLink className="primary-action" to="/">Back to start</NavLink>
@@ -1805,7 +1817,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
           </label>
           <label>
             <span>Slippage cap</span>
-            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => { const raw = Number(event.target.value); setSlippage(Number.isNaN(raw) ? '0' : String(Math.max(0, Math.min(25, raw)))); }} />
+            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => { const value = event.target.value; if (value === '') { setSlippage(''); return; } const raw = Number(value); if (!Number.isNaN(raw)) setSlippage(String(Math.max(0, Math.min(25, raw)))); }} />
           </label>
         </div>
       </section>
@@ -1820,7 +1832,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
           <Metric label="Risk mode" value={riskMode} />
           <Metric label="Oracle route" value={oracleRoute} />
           <Metric label="Automation" value={automation} />
-          <Metric label="Slippage cap" value={slippage + '%'} />
+          <Metric label="Slippage cap" value={(slippage || '0') + '%'} />
         </div>
         <div className="diagnostic-panel">
           <div>
