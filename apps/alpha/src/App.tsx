@@ -2848,7 +2848,7 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
 function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount: number) {
   const amount = numericAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
   if (flow.kind === 'borrow') {
-    const repay = (numericAmount * 1.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const repay = (numericAmount * 1.071).toLocaleString(undefined, { maximumFractionDigits: 4 });
     return [
       ['You receive', amount + ' ' + selectedAsset],
       ['You lock', 'Collateral sized from the selected offer and safety buffer.'],
