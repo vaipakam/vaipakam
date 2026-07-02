@@ -1772,7 +1772,6 @@ function humanRateLabel(value: string) {
 }
 
 function humanCalldataStatus(value: string) {
-  if (value.includes('calldata inputs')) return 'Waiting for token setup';
   if (value.includes('Encoded')) return 'Ready for safety test';
   if (value.includes('Rental')) return 'Waiting for rental details';
   return value;
@@ -2045,7 +2044,9 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
     if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
   }
-  submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
+  if (borrowPairSupported) {
+    submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
+  }
   const blockers = [...encodingBlockers, ...submissionBlockers];
   const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, amountInput, collateralAmountInput, encodingBlockers });
 
