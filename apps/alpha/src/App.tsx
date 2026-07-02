@@ -1829,7 +1829,7 @@ function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, princ
   const estimatedValue = numericAmount * 1.5;
   const formattedValue = estimatedValue.toLocaleString(undefined, { maximumFractionDigits: 4 });
   if (flow.kind === 'borrow') return 'Collateral amount needs oracle-priced sizing before wallet submission.';
-  return 'Borrower should lock about ' + formattedValue + ' ' + principalSymbol + '-equivalent of collateral value.';
+  return 'Borrower should lock about ' + formattedValue + ' ' + collateralSymbol + '-equivalent of collateral value.';
 }
 
 function guidedSafetyIndicator(flow: GuidedFlow) {
@@ -2209,7 +2209,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
   const urgentCount = scopedPositions.filter((position) => position.urgency === 'urgent').length;
   const claimableCount = scopedPositions.filter((position) => position.claimable).length;
   const completedCount = canPreviewPositions ? reviewedActions.length : 0;
-  const preparedCount = canPreviewPositions ? preparedActions.length : 0;
+  const preparedCount = preparedActions.length;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
     { title: 'Positions', body: scopedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
@@ -2551,7 +2551,7 @@ function DataRights({ wallet, onStorageCleared }: { wallet: WalletState; onStora
           <p>Removes Vaipakam preferences, analytics opt-in state, and session crash notes from this browser only.</p>
           {confirmClear ? (
             <div className="confirm-strip">
-              <span>Clear Vaipakam local settings and support notes from this browser?</span>
+              <span>Clear Vaipakam local settings, support notes, and any locally prepared action drafts from this browser?</span>
               <button className="danger-action" type="button" onClick={clearLocalData}>Confirm clear</button>
               <button className="secondary-action" type="button" onClick={() => setConfirmClear(false)}>Cancel</button>
             </div>
