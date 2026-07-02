@@ -906,7 +906,7 @@ function FlowPage({
     () => buildGuidedTransactionPlan(flow, selectedAsset, numericAmount, normalizedAmount, assetOverrides),
     [assetOverrides, flow, normalizedAmount, numericAmount, selectedAsset],
   );
-  const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
+  const checklistRows = buildChecklistRows(flow, wallet, numericAmount, walletCheckResult.status);
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
@@ -1859,10 +1859,8 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
       unavailableReason: 'Guided mode needs oracle-priced collateral sizing for ' + selectedAsset + ' backed by ' + collateralLabel + ' before wallet checks can run.',
     };
   }
-  if (!requiredInput) {
-    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
-  }
-  const requiredAmount = parseGuidedUnits(requiredInput, asset.decimals);
+  const checkedRequiredInput = requiredInput as string;
+  const requiredAmount = parseGuidedUnits(checkedRequiredInput, asset.decimals);
   if (requiredAmount === null) {
     return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: asset.symbol + ' supports at most ' + asset.decimals + ' decimal places. Shorten the amount before wallet checks can run.' };
   }
@@ -2804,15 +2802,16 @@ function preflightGapLabel(value: number | undefined, noun: string) {
   return value + ' ' + noun + (value === 1 ? '' : 's');
 }
 
-function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number) {
+function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number, walletCheckStatus: GuidedWalletCheckResult['status']) {
   const connected = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const walletCheckPassed = walletCheckStatus === 'passed';
   if (flow.kind === 'borrow') {
     return [
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Borrow amount entered' : 'Enter borrow amount', ready: numericAmount > 0 },
-      { label: 'Repay route will be checked before signing', ready: false },
+      { label: walletCheckPassed ? 'Collateral balance and approval passed in Step 4' : 'Check collateral balance and approval in Step 4', ready: walletCheckPassed },
     ];
   }
   if (flow.kind === 'rent') {
@@ -2820,14 +2819,14 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Rental duration entered' : 'Enter rental duration', ready: numericAmount > 0 },
-      { label: 'Close and claim path will be checked before signing', ready: false },
+      { label: walletCheckPassed ? 'Rental funding checks passed in Step 4' : 'Check rental funding in Step 4', ready: walletCheckPassed },
     ];
   }
   return [
     { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
     { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
     { label: numericAmount > 0 ? 'Lend amount entered' : 'Enter lend amount', ready: numericAmount > 0 },
-    { label: 'Allowance will be checked before signing', ready: false },
+    { label: walletCheckPassed ? 'Token balance and allowance passed in Step 4' : 'Check token balance and allowance in Step 4', ready: walletCheckPassed },
   ];
 }
 
