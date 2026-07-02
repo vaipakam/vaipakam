@@ -19,6 +19,7 @@ import {
   fetchLoansByBorrower,
   fetchLoansByLender,
   fetchOfferById,
+  fetchOffersByCreator,
   fetchOffersByCurrentHolder,
   type IndexedLoan,
   type IndexedOffer,
@@ -40,8 +41,9 @@ export function useActiveOffers() {
     queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
-      // ANY page failing (including later cursor pages) → unavailable.
-      // Publishing a confident half-book would let guided matching say
+      // ANY page failing (including later cursor pages) → unavailable,
+      // and so does hitting the page cap with a cursor still open —
+      // publishing a confident half-book would let guided matching say
       // "no matching offers" while the match sits on the missing page.
       const all: IndexedOffer[] = [];
       let before: number | undefined;
@@ -52,10 +54,10 @@ export function useActiveOffers() {
         });
         if (page === null) return null;
         all.push(...page.offers);
-        if (page.nextBefore === null) break;
+        if (page.nextBefore === null) return all;
         before = page.nextBefore;
       }
-      return all;
+      return null; // cap reached with more pages remaining → truncated
     },
   });
 }
@@ -155,9 +157,11 @@ export function useLoan(loanId: number | undefined) {
   });
 }
 
-/** Open offers the connected wallet can MANAGE — keyed on the CURRENT
- *  position-NFT holder, not the immutable creator, so a transferred
- *  offer NFT follows its new owner (and leaves its old one). */
+/** Open offers the wallet is involved in: UNION of offers it CREATED
+ *  (cancelOffer authorizes only the creator until expiry —
+ *  OfferCancelFacet #195) and offers whose position NFT it currently
+ *  HOLDS (visibility for secondary-market recipients). The UI keys
+ *  the cancel action on `offer.creator === wallet`. */
 export function useMyOffers() {
   const { readChain, address } = useActiveChain();
   return useQuery({
@@ -166,16 +170,31 @@ export function useMyOffers() {
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
       if (!address) return [];
-      const offers = await fetchAllPages<IndexedOffer>((before) =>
-        fetchOffersByCurrentHolder(readChain.chainId, address, {
-          limit: 100,
-          before,
-        }).then((p) =>
-          p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
+      const [created, held] = await Promise.all([
+        fetchAllPages<IndexedOffer>((before) =>
+          fetchOffersByCreator(readChain.chainId, address, {
+            limit: 100,
+            before,
+          }).then((p) =>
+            p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
+          ),
         ),
-      );
-      if (offers === null) return null;
-      return offers.filter((o) => o.status === 'active');
+        fetchAllPages<IndexedOffer>((before) =>
+          fetchOffersByCurrentHolder(readChain.chainId, address, {
+            limit: 100,
+            before,
+          }).then((p) =>
+            p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
+          ),
+        ),
+      ]);
+      if (created === null || held === null) return null;
+      const seen = new Set<number>();
+      return [...created, ...held].filter((o) => {
+        if (o.status !== 'active' || seen.has(o.offerId)) return false;
+        seen.add(o.offerId);
+        return true;
+      });
     },
   });
 }

@@ -23,10 +23,11 @@ import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { useLoanRisk, healthView } from '../data/risk';
+import { useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance, useTokenMeta } from '../contracts/erc20';
+import { ensureAllowance, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import {
   formatBpsAsPercent,
   formatDate,
@@ -155,6 +156,46 @@ export function PositionDetails() {
     Boolean(loan.data && loan.data.status === 'active' && !loanIsRental),
   );
 
+  // Sanctions: addCollateral and both claim paths screen msg.sender on
+  // chain — gate them BEFORE the approval/click so a flagged wallet
+  // never pays gas for a doomed tx. Repay/close stays open (Tier-2
+  // wind-down is deliberately unscreened).
+  const sanctions = useSanctionsCheck();
+  const sanctionsClear = sanctions.ready && !sanctions.flagged;
+
+  // Balance gates: approve() succeeds regardless of balance, so check
+  // the wallet actually holds the typed amount before any approval.
+  const collateralBalance = useTokenBalance(
+    loanIsRental ? undefined : loan.data?.collateralAsset,
+  );
+  const principalBalance = useTokenBalance(
+    loanIsRental ? undefined : loan.data?.lendingAsset,
+  );
+  const collateralInputWei = useMemo(() => {
+    if (!collateralMeta.data || !isPositiveDecimal(collateralInput)) return null;
+    try {
+      return parseUnits(collateralInput, collateralMeta.data.decimals);
+    } catch {
+      return null;
+    }
+  }, [collateralInput, collateralMeta.data]);
+  const partialInputWei = useMemo(() => {
+    if (!principalMeta.data || !isPositiveDecimal(partialInput)) return null;
+    try {
+      return parseUnits(partialInput, principalMeta.data.decimals);
+    } catch {
+      return null;
+    }
+  }, [partialInput, principalMeta.data]);
+  const collateralOverBalance =
+    collateralInputWei !== null &&
+    collateralBalance.data !== undefined &&
+    collateralInputWei > collateralBalance.data;
+  const partialOverBalance =
+    partialInputWei !== null &&
+    principalBalance.data !== undefined &&
+    partialInputWei > principalBalance.data;
+
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title="Loading the loan…" />;
   }
@@ -177,7 +218,15 @@ export function PositionDetails() {
 
   const action: Action = (() => {
     if (claimed) return null; // claim already made this session
-    if (role === 'borrower' && row.status === 'active') return 'repay';
+    // fallback_pending is CURABLE: the contracts still accept full
+    // repayment (and add-collateral) while a failed liquidation waits
+    // for retry — never leave the borrower without the cure action.
+    if (
+      role === 'borrower' &&
+      (row.status === 'active' || row.status === 'fallback_pending')
+    ) {
+      return 'repay';
+    }
     if (role === 'borrower' && row.status === 'repaid') return 'claim-borrower';
     // After a default/liquidation the borrower may still have a
     // residual entitlement (liquidation surplus) — the Claim Center
@@ -229,7 +278,9 @@ export function PositionDetails() {
         }
         await write('repayLoan', [BigInt(row.loanId)]);
         setDoneMessage(
-          'Repayment confirmed. Your collateral is ready — claim it below or from the Claim Center.',
+          isRental
+            ? 'Rental closed. Any refundable buffer is ready — claim it from the Claim Center.'
+            : 'Repayment confirmed. Your collateral is ready — claim it below or from the Claim Center.',
         );
       } else if (kind === 'claim-borrower') {
         await write('claimAsBorrower', [BigInt(row.loanId)]);
@@ -431,7 +482,7 @@ export function PositionDetails() {
         </dl>
       </section>
 
-      {role === 'borrower' && row.status === 'active' && !isRental && hasCollateral && collateral ? (
+      {role === 'borrower' && (row.status === 'active' || row.status === 'fallback_pending') && !isRental && hasCollateral && collateral ? (
         <section className="card">
           <div className="card-title">
             <ShieldPlus aria-hidden />
@@ -454,12 +505,23 @@ export function PositionDetails() {
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || !onSupportedChain || !isPositiveDecimal(collateralInput)}
+              disabled={
+                busy ||
+                !onSupportedChain ||
+                !sanctionsClear ||
+                collateralInputWei === null ||
+                collateralOverBalance
+              }
               onClick={() => void runAddCollateral()}
             >
               Add
             </button>
           </div>
+          {collateralOverBalance ? (
+            <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+              {copy.errors.needMore(collateral.symbol)}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -488,12 +550,22 @@ export function PositionDetails() {
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={busy || !onSupportedChain || !isPositiveDecimal(partialInput)}
+              disabled={
+                busy ||
+                !onSupportedChain ||
+                partialInputWei === null ||
+                partialOverBalance
+              }
               onClick={() => void runPartialRepay()}
             >
               Repay part
             </button>
           </div>
+          {partialOverBalance ? (
+            <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
+              {copy.errors.needMore(principal.symbol)}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -513,7 +585,11 @@ export function PositionDetails() {
         <button
           type="button"
           className="btn btn-primary btn-block"
-          disabled={busy || !onSupportedChain}
+          disabled={
+            busy ||
+            !onSupportedChain ||
+            (action !== 'repay' && !sanctionsClear)
+          }
           onClick={() => action && void run(action)}
         >
           {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}

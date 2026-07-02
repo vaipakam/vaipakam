@@ -38,6 +38,14 @@ export function useVaultAssets() {
   const publicClient = usePublicClient({ chainId: readChain.chainId });
   const loans = useMyLoans();
   const offers = useMyOffers();
+  // The candidate list depends on loans+offers — a failed dependency
+  // must surface as UNAVAILABLE, not as a canonical-only scan that
+  // renders an incomplete "where my assets sit" page.
+  const depsUnavailable = loans.data === null || offers.data === null;
+  const depsLoading =
+    !depsUnavailable &&
+    (loans.data === undefined || offers.data === undefined) &&
+    Boolean(address);
 
   // Candidate ERC-20 set: canonical + every ERC-20 leg we know about.
   const candidates = new Set<string>(
@@ -60,9 +68,13 @@ export function useVaultAssets() {
   }
   const tokenList = [...candidates].sort();
 
-  return useQuery({
+  const query = useQuery({
     queryKey: ['vaultAssets', readChain.chainId, address?.toLowerCase(), tokenList.join(',')],
-    enabled: Boolean(address) && Boolean(publicClient),
+    enabled:
+      Boolean(address) &&
+      Boolean(publicClient) &&
+      !depsUnavailable &&
+      !depsLoading,
     refetchInterval: 30_000,
     queryFn: async (): Promise<VaultSnapshot> => {
       const vault = (await publicClient!.readContract({
@@ -145,4 +157,6 @@ export function useVaultAssets() {
       return { vaultAddress: vault, assets };
     },
   });
+
+  return { ...query, depsUnavailable, depsLoading };
 }

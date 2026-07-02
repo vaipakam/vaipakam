@@ -25,7 +25,12 @@ import type { IndexedOffer } from '../data/indexer';
 function OfferRow({ offer }: { offer: IndexedOffer }) {
   const isRental = offer.assetType !== AssetType.ERC20;
   const meta = useTokenMeta(isRental ? undefined : offer.lendingAsset);
-  const { onSupportedChain } = useActiveChain();
+  const { onSupportedChain, address } = useActiveChain();
+  // cancelOffer authorizes only the CREATOR until the offer expires —
+  // a wallet merely holding a transferred offer NFT gets no cancel
+  // button (it would revert NotCreatorOrNotExpired).
+  const isCreator =
+    Boolean(address) && offer.creator.toLowerCase() === address!.toLowerCase();
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -70,7 +75,9 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           ) : null}
         </span>
       </span>
-      {!confirming ? (
+      {!isCreator ? (
+        <span className="badge badge-neutral">Held — managed by its creator</span>
+      ) : !confirming ? (
         <button
           type="button"
           className="btn btn-secondary btn-sm"

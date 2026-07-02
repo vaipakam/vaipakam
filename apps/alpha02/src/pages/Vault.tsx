@@ -31,9 +31,9 @@ export function Vault() {
             </button>
           }
         />
-      ) : vault.isLoading ? (
+      ) : vault.isLoading || vault.depsLoading ? (
         <EmptyState icon={LoaderCircle} title="Reading your vault…" />
-      ) : vault.isError || !vault.data ? (
+      ) : vault.depsUnavailable || vault.isError || !vault.data ? (
         <UnavailableState body={copy.vault.unavailable} />
       ) : vault.data.vaultAddress === null ? (
         <EmptyState icon={Landmark} title="No vault yet" body={copy.vault.noVaultYet} />

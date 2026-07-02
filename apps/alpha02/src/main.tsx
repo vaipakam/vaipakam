@@ -26,7 +26,13 @@ const queryClient = new QueryClient({
 function ConnectKitThemed({ children }: { children: React.ReactNode }) {
   const { resolved } = useTheme();
   return (
-    <ConnectKitProvider mode={resolved} options={{ initialChainId: 0 }}>
+    <ConnectKitProvider
+      mode={resolved}
+      // Let wallets on UNSUPPORTED chains connect — alpha02's own
+      // NetworkBanner then guides the switch. ConnectKit's default
+      // gate would block the connection before the banner can render.
+      options={{ initialChainId: 0, enforceSupportedChains: false }}
+    >
       {children}
     </ConnectKitProvider>
   );

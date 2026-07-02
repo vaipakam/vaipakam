@@ -110,9 +110,13 @@ export function fetchOfferById(
 export function fetchOffersByCreator(
   chainId: number,
   creator: string,
+  opts: { limit?: number; before?: number } = {},
 ): Promise<CreatorOffersPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
   return getJson<CreatorOffersPage>(
-    `/offers/by-creator/${creator.toLowerCase()}?chainId=${chainId}`,
+    `/offers/by-creator/${creator.toLowerCase()}?${params}`,
   );
 }
 

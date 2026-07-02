@@ -128,6 +128,10 @@ function ListNftFlow() {
   // (VpfiNotAllowedAsRentalPrepay) — catch it BEFORE the user pays for
   // setApprovalForAll on the NFT.
   const vpfi = useVpfi();
+  // Until the VPFI-token read settles we can't rule the prepay asset
+  // in or out — hold the checklist PENDING rather than letting a VPFI
+  // prepay slip through and revert after the NFT approval.
+  const vpfiKnown = vpfi.data !== undefined || vpfi.isError;
   const prepayIsVpfi =
     Boolean(vpfi.data?.token) &&
     prepayAsset.toLowerCase() === vpfi.data!.token!.toLowerCase();
@@ -155,11 +159,13 @@ function ListNftFlow() {
             : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
         state: prepayIsVpfi
           ? 'fail'
-          : prepayMeta.isError
-            ? 'fail'
-            : prepayMeta.data
-              ? 'pass'
-              : 'pending',
+          : !vpfiKnown
+            ? 'pending'
+            : prepayMeta.isError
+              ? 'fail'
+              : prepayMeta.data
+                ? 'pass'
+                : 'pending',
       },
       {
         id: 'live-fees',
@@ -169,7 +175,7 @@ function ListNftFlow() {
     ];
     // wallet + network first, then the rental-specific facts, then consent.
     return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
-  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, fees.ready]);
+  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, vpfiKnown, fees.ready]);
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!form || !dailyFeeWei || !prepayMeta.data) return null;
@@ -204,10 +210,20 @@ function ListNftFlow() {
 
   const formError = form ? validateOfferForm(form) : null;
   const canSign =
-    allChecksPass(checks) && receipt !== null && formError === null && !busy;
+    allChecksPass(checks) &&
+    receipt !== null &&
+    formError === null &&
+    // wallet client hydrates async after isConnected — without these a
+    // click in the gap would silently no-op.
+    Boolean(walletClient) &&
+    Boolean(publicClient) &&
+    !busy;
 
   async function submit() {
-    if (!form || !address || !walletChain || !walletClient || !publicClient) return;
+    if (!form || !address || !walletChain || !walletClient || !publicClient) {
+      setError(copy.wallet.connectFirst);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -582,7 +598,12 @@ function RentNftFlow() {
     };
   }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
 
-  const canSign = allChecksPass(checks) && receipt !== null && !busy;
+  const canSign =
+    allChecksPass(checks) &&
+    receipt !== null &&
+    Boolean(walletClient) &&
+    Boolean(publicClient) &&
+    !busy;
 
   async function submit() {
     if (!selected || !address || !walletChain || !walletClient || !publicClient) {
