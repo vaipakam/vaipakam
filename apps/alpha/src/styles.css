@@ -1027,6 +1027,15 @@ dd {
   line-height: 1.45;
 }
 
+.inline-text-link {
+  display: inline-flex;
+  margin-left: 8px;
+  color: var(--blue);
+  font-weight: 800;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .calldata-preview {
   overflow-wrap: anywhere;
   margin: 0;

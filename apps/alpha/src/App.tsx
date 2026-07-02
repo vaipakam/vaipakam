@@ -1199,7 +1199,15 @@ function FlowPage({
             </div>
             {transactionPlan.contractDraft.blockers.length > 0 ? (
               <ul className="blocker-list" aria-label="What still needs attention">
-                {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {humanBlockerText(blocker)}</li>)}
+                {transactionPlan.contractDraft.blockers.map((blocker) => {
+                  const action = blockerAction(blocker);
+                  return (
+                    <li key={blocker}>
+                      <AlertTriangle size={16} />
+                      <span>{humanBlockerText(blocker)}{action ? <NavLink className="inline-text-link" to={action.href}>{action.label}</NavLink> : null}</span>
+                    </li>
+                  );
+                })}
               </ul>
             ) : null}
             <details className="technical-details">
@@ -1705,14 +1713,21 @@ function humanCalldataStatus(value: string) {
   return value;
 }
 
+function blockerAction(blocker: string) {
+  if (blocker.startsWith('Approved token address must be confirmed for ') || blocker.startsWith('Approved collateral address must be confirmed for ')) {
+    return { href: '/settings', label: 'Open Settings' };
+  }
+  return null;
+}
+
 function humanBlockerText(blocker: string) {
   if (blocker.startsWith('Approved token address must be confirmed for ')) {
     const symbol = blocker.replace('Approved token address must be confirmed for ', '').replace('.', '');
-    return symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.';
+    return symbol + ' token address is missing. Add it under Base Sepolia assets. ';
   }
   if (blocker.startsWith('Approved collateral address must be confirmed for ')) {
     const symbol = blocker.replace('Approved collateral address must be confirmed for ', '').replace('.', '');
-    return symbol + ' collateral token address is missing. Open Settings, then add it under Base Sepolia assets.';
+    return symbol + ' collateral token address is missing. Add it under Base Sepolia assets. ';
   }
   if (blocker.includes('Wallet balance, allowance, oracle price, and collateral safety')) return 'After token setup, Vaipakam still needs to check your balance, approval, price, and collateral safety.';
   if (blocker.includes('Funding balance, allowance, and borrower collateral safety')) return 'After token setup, Vaipakam still needs to check funding balance, approval, and borrower collateral safety.';
