@@ -2244,7 +2244,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](12);
+        s = new bytes4[](13);
         s[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         s[1] = RewardAggregatorFacet.finalizeDay.selector;
         s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -2257,6 +2257,7 @@ contract DeployDiamond is Script {
         s[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         s[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         s[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
+        s[12] = RewardAggregatorFacet.backfillDayInclusion.selector;
     }
 
     function _getRewardRemittanceSelectors() internal pure returns (bytes4[] memory s) {

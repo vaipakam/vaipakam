@@ -1659,7 +1659,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](12);
+        selectors = new bytes4[](13);
         selectors[0] = RewardAggregatorFacet.onChainReportReceived.selector;
         selectors[1] = RewardAggregatorFacet.finalizeDay.selector;
         selectors[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
@@ -1672,6 +1672,7 @@ contract HelperTest {
         selectors[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
         selectors[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
         selectors[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
+        selectors[12] = RewardAggregatorFacet.backfillDayInclusion.selector;
         return selectors;
     }
 

@@ -265,5 +265,30 @@ contract RewardRemittanceFacetTest is SetupTest {
         remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
     }
 
+    // ─── backfillDayInclusion (#776 upgrade-migration path) ────────────────
+
+    function test_Backfill_RequiresAdmin() public {
+        _finalizeDay1();
+        vm.prank(stranger);
+        vm.expectRevert();
+        RewardAggregatorFacet(address(diamond)).backfillDayInclusion(1);
+    }
+
+    function test_Backfill_RevertsOnUnfinalizedDay() public {
+        vm.expectRevert(IVaipakamErrors.DayNotReadyToFinalize.selector);
+        RewardAggregatorFacet(address(diamond)).backfillDayInclusion(1);
+    }
+
+    function test_Backfill_IdempotentKeepsSlicesRemittable() public {
+        _finalizeDay1();
+        (uint256 before, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        // finalizeDay already set the flags; backfill must be a safe no-op that
+        // leaves the (already-correct) slices intact.
+        RewardAggregatorFacet(address(diamond)).backfillDayInclusion(1);
+        (uint256 afterQ, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        assertEq(afterQ, before, "backfill idempotent");
+        assertGt(afterQ, 0, "slice still remittable");
+    }
+
     receive() external payable {}
 }
