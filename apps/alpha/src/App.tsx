@@ -1506,8 +1506,8 @@ function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
   return 'Deployment artifact';
 }
 
-function guidedSimulationStatus(calldata: Hex | null, blockers: string[]) {
-  if (!calldata) return blockers.length > 0 ? 'Unavailable until preflight clears' : 'Unavailable until calldata is ready';
+function guidedSimulationStatus(calldata: Hex | null, encodingBlockers: string[]) {
+  if (!calldata) return encodingBlockers.length > 0 ? 'Unavailable until calldata inputs resolve' : 'Unavailable until calldata is ready';
   return 'Ready for eth_call simulation';
 }
 
@@ -1516,16 +1516,16 @@ function encodeGuidedCreateOfferDraft({
   principalAsset,
   collateralAsset,
   numericAmount,
-  blockers,
+  encodingBlockers,
 }: {
   flow: GuidedFlow;
   principalAsset: GuidedAssetResolution;
   collateralAsset: GuidedAssetResolution;
   numericAmount: number;
-  blockers: string[];
+  encodingBlockers: string[];
 }): { calldata: Hex | null; status: string } {
   if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
-  if (blockers.length > 0) return { calldata: null, status: 'Withheld until preflight clears' };
+  if (encodingBlockers.length > 0) return { calldata: null, status: 'Withheld until calldata inputs resolve' };
   if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
     return { calldata: null, status: 'Withheld until assets resolve' };
   }
@@ -1602,15 +1602,17 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
   const principalAsset = resolveGuidedAsset(selectedAsset);
   const collateralAsset = resolveGuidedAsset(collateralLabel);
-  const blockers = [];
-  if (!diamond) blockers.push('Base Sepolia Diamond address is not available in deployments.json.');
-  if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) blockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
-  if (!principalAsset.address) blockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
-  if (principalAsset.address && principalAsset.decimals === null) blockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
-  if (!collateralAsset.address) blockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
-  if (collateralAsset.address && collateralAsset.decimals === null) blockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
-  blockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
-  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, numericAmount, blockers });
+  const encodingBlockers = [];
+  const submissionBlockers = [];
+  if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
+  if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) encodingBlockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
+  if (!principalAsset.address) encodingBlockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
+  if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
+  if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
+  if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
+  submissionBlockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
+  const blockers = [...encodingBlockers, ...submissionBlockers];
+  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, numericAmount, encodingBlockers });
 
   return {
     call: 'OfferCreateFacet.createOffer(params)',
@@ -1625,8 +1627,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     assetSource: guidedAssetSourceLabel(principalAsset, collateralAsset),
     calldataStatus: encoded.status,
     calldata: encoded.calldata,
-    simulationStatus: guidedSimulationStatus(encoded.calldata, blockers),
-    readiness: blockers.length === 0 ? 'Ready for simulation' : 'Needs approved assets',
+    simulationStatus: guidedSimulationStatus(encoded.calldata, encodingBlockers),
+    readiness: encoded.calldata ? 'Ready for simulation' : 'Needs approved assets',
     blockers,
   };
 }
