@@ -396,10 +396,10 @@ const RENT_RATES: Record<string, number> = {
 };
 
 const marketOffers: MarketOffer[] = [
-  { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% APR', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
-  { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% APR', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
+  { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% for term', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
+  { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% for term', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
   { id: 'rent-game-nft', kind: 'rent', title: 'Rent game NFT access', asset: 'Game NFT', counterAsset: 'mUSDC', amount: '7 days', rate: '3 mUSDC/day', term: '7 days', risk: 'Low', recommended: true, nextAction: 'Review rental receipt' },
-  { id: 'lend-vpfi', kind: 'lend', title: 'Lend VPFI to active borrower', asset: 'VPFI', counterAsset: 'mUSDC', amount: '10,000', rate: '9.2% APR', term: '14 days', risk: 'High', recommended: false, nextAction: 'Open advanced review' },
+  { id: 'lend-vpfi', kind: 'lend', title: 'Lend VPFI to active borrower', asset: 'VPFI', counterAsset: 'mUSDC', amount: '10,000', rate: '9.2% for term', term: '14 days', risk: 'High', recommended: false, nextAction: 'Open advanced review' },
   { id: 'rent-membership-nft', kind: 'rent', title: 'Rent membership NFT', asset: 'Membership NFT', counterAsset: 'mUSDC', amount: '3 days', rate: '8 mUSDC/day', term: '3 days', risk: 'Medium', recommended: false, nextAction: 'Review rental receipt' },
 ];
 
@@ -1845,6 +1845,9 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
   const collateralAmountInput = guidedCollateralAmountInput(selectedAsset, collateralLabel, amountInput);
   const requiredInput = isBorrow ? collateralAmountInput : amountInput;
   const requiredLabel = (requiredInput ?? '0') + ' ' + asset.symbol;
+  if (isBorrow && guidedCollateralAmountInput(selectedAsset, collateralLabel, '1') === null) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode does not yet support ' + selectedAsset + ' as a borrow principal. Try mUSDC.' };
+  }
   if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
   if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
   if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
@@ -2872,7 +2875,7 @@ function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount
   }
   const interest = (numericAmount * 0.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
   return [
-    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' interest if repaid.'],
+    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' ' + selectedAsset + ' interest if repaid.'],
     ['You lock', amount + ' ' + selectedAsset + ' until repay, cancel, or settlement.'],
     ['You may owe', 'No repayment obligation; gas is needed for offer actions.'],
     ['You can lose', 'Time value and settlement route risk if collateral cannot execute.'],
