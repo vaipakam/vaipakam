@@ -766,7 +766,15 @@ echo "     (ConfigureCcip.s.sol; see the follow-up note below)."
 # subset of adapters that DID register. See
 # `script/DeploySwapAdapters.s.sol` for the env-var contract and
 # the rotation flow.
-if [ "${INITIAL_SETTLERS:-}" = "" ]; then
+if [ "$CHAIN_ID" = "97" ]; then
+  # #862: never register 0x/1inch on a known no-0x-backend chain (BNB testnet)
+  # even if a stale INITIAL_SETTLERS is left in the shared .env — they'd be
+  # useless AND would push the UniV3 adapter off index 0 (the keeper +
+  # ConfigureOracle expect UniV3 at index 0 on no-0x chains). Liquidations route
+  # via the [5cc] UniV3/PancakeSwap adapter only.
+  echo
+  echo "[5cb] Skipping DeploySwapAdapters — no-0x chain $CHAIN_SLUG ($CHAIN_ID); ignoring INITIAL_SETTLERS. Liquidations route via the UniV3 adapter ([5cc])."
+elif [ "${INITIAL_SETTLERS:-}" = "" ]; then
   echo
   echo "[5cb] Skipping DeploySwapAdapters — INITIAL_SETTLERS env var not set."
   echo "      (Set INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... to deploy."
@@ -793,7 +801,18 @@ fi
 # adapters keep indices 0/1 and this appends after; on a no-aggregator chain
 # it lands at index 0. Skipped when <SLUG>_UNISWAP_V3_ROUTER is unset.
 UNIV3_ROUTER_VAR="${CCIP_SLUG}_UNISWAP_V3_ROUTER"
-if [ "${!UNIV3_ROUTER_VAR:-}" = "" ]; then
+if [ "$CHAIN_ID" = "97" ] && [ "${!UNIV3_ROUTER_VAR:-}" = "" ]; then
+  # #862: no-0x chain (BNB testnet) — the UniV3/PancakeSwap adapter is the SOLE
+  # liquidation route (0x/1inch skipped in 5cb). ConfigureOracle now only WARNS
+  # on a missing adapter, so this standalone flow must be the guarantor: hard-fail
+  # rather than skip, or the chain ships with no liquidation route at all.
+  echo
+  echo "[5cc] FATAL: ${UNIV3_ROUTER_VAR} is REQUIRED on no-0x chain $CHAIN_SLUG ($CHAIN_ID)." >&2
+  echo "      The on-chain UniV3/PancakeSwap adapter is the only liquidation route here" >&2
+  echo "      (0x/1inch have no testnet backend and are skipped in [5cb]). Set" >&2
+  echo "      ${UNIV3_ROUTER_VAR} to the chain's UniV3-style SwapRouter and re-run." >&2
+  exit 1
+elif [ "${!UNIV3_ROUTER_VAR:-}" = "" ]; then
   echo
   echo "[5cc] Skipping DeployUniV3Adapter — ${UNIV3_ROUTER_VAR} not set."
   echo "      (Set it to the chain's UniV3-style SwapRouter; REQUIRED on no-0x"
