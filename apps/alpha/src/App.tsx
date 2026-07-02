@@ -146,7 +146,7 @@ type GuidedContractDraft = {
   calldataStatus: string;
   calldata: Hex | null;
   simulationStatus: string;
-  readiness: 'Ready for simulation' | 'Needs approved assets' | 'Uses rental path';
+  readiness: 'Ready for simulation' | 'Needs approved assets' | 'Needs pricing' | 'Uses rental path';
   blockers: string[];
 };
 
@@ -1764,6 +1764,7 @@ function guidedActionSummary(flow: GuidedFlow) {
 function guidedReadinessLabel(readiness: GuidedContractDraft['readiness']) {
   if (readiness === 'Ready for simulation') return 'Ready for safety test';
   if (readiness === 'Uses rental path') return 'Rental setup needed';
+  if (readiness === 'Needs pricing') return 'Amount or pricing needed';
   return 'Needs token setup';
 }
 
@@ -1783,7 +1784,12 @@ function humanCalldataStatus(value: string) {
 }
 
 function blockerAction(blocker: string) {
-  if (blocker.startsWith('Approved token address must be confirmed for ') || blocker.startsWith('Approved collateral address must be confirmed for ')) {
+  if (
+    blocker.startsWith('Approved token address must be confirmed for ') ||
+    blocker.startsWith('Approved collateral address must be confirmed for ') ||
+    blocker.startsWith('Token decimals must be confirmed for ') ||
+    blocker.startsWith('Collateral decimals must be confirmed for ')
+  ) {
     return { href: '/settings', label: 'Open Settings' };
   }
   return null;
@@ -1951,7 +1957,10 @@ function encodeGuidedCreateOfferDraft({
   encodingBlockers: string[];
 }): { calldata: Hex | null; status: string } {
   if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
-  if (encodingBlockers.length > 0) return { calldata: null, status: 'Waiting for token setup' };
+  if (encodingBlockers.length > 0) {
+    const pricingOrAmountOnly = encodingBlockers.every((blocker) => blocker.includes('Oracle-priced collateral sizing') || blocker.includes('Enter a valid decimal amount'));
+    return { calldata: null, status: pricingOrAmountOnly ? 'Waiting for amount or collateral pricing' : 'Waiting for token setup' };
+  }
   if (!amountInput || !collateralAmountInput) return { calldata: null, status: 'Waiting for priced collateral sizing' };
   if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
     return { calldata: null, status: 'Withheld until assets resolve' };
@@ -2072,7 +2081,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     calldataStatus: encoded.status,
     calldata: encoded.calldata,
     simulationStatus: guidedSimulationStatus(encoded.calldata, encodingBlockers),
-    readiness: encoded.calldata ? 'Ready for simulation' : 'Needs approved assets',
+    readiness: encoded.calldata ? 'Ready for simulation' : encoded.status.includes('amount or collateral pricing') ? 'Needs pricing' : 'Needs approved assets',
     blockers,
   };
 }
