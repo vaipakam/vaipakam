@@ -1,5 +1,5 @@
 import { ASSET_TYPE_ERC721, ASSET_TYPE_ERC1155 } from '@vaipakam/defi-client';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import {
   formatHumanAssetAmount,
   formatIndexedAmount,
@@ -7,8 +7,14 @@ import {
   formatRawAssetAmount,
   formatRawTokenAmount,
 } from '../src/lib/formatAsset';
+import { resetTokenMetaCacheForTests } from '../src/lib/tokenMeta';
 
 describe('formatAsset', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    resetTokenMetaCacheForTests();
+  });
+
   it('formats human amounts with symbol', () => {
     expect(formatHumanAssetAmount('0.1', { address: '0x1', symbol: 'mWETH', decimals: 18, chainId: 84532 }, '0x1')).toBe(
       '0.1 mWETH',
@@ -20,6 +26,13 @@ describe('formatAsset', () => {
 
   it('formats raw on-chain amounts with decimals', () => {
     expect(formatRawTokenAmount('1000000', 6)).toBe('1');
+    localStorage.setItem(
+      'vaipakam:alpha01:tokenMeta:v2',
+      JSON.stringify({
+        '84532:0x1': { address: '0x1', symbol: 'mWETH', decimals: 18, chainId: 84532 },
+      }),
+    );
+    resetTokenMetaCacheForTests();
     expect(
       formatRawAssetAmount('1000000000000000000', { address: '0x1', symbol: 'mWETH', decimals: 18, chainId: 84532 }, '0x1'),
     ).toBe('1 mWETH');

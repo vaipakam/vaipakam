@@ -1,7 +1,15 @@
 import { ASSET_TYPE_ERC1155, ASSET_TYPE_ERC20, ASSET_TYPE_ERC721 } from '@vaipakam/defi-client';
 import { formatUnits } from 'viem';
 import { shortenAddr } from '@vaipakam/lib/address';
-import type { TokenMeta } from './tokenMeta';
+import { hasResolvedTokenDecimals, type TokenMeta } from './tokenMeta';
+
+function rawAmountDecimalsResolved(
+  meta: TokenMeta | null | undefined,
+  address: string,
+): boolean {
+  if (!meta) return false;
+  return hasResolvedTokenDecimals(meta, address, meta.chainId);
+}
 
 export function isNftAssetType(assetType: number): boolean {
   return assetType === ASSET_TYPE_ERC721 || assetType === ASSET_TYPE_ERC1155;
@@ -62,10 +70,10 @@ export function formatRawAssetAmount(
     const symbol = resolveSymbol(meta, address);
     return symbol ? `${label} ${symbol}` : label;
   }
-  if (meta?.decimals == null) {
+  if (!rawAmountDecimalsResolved(meta, address)) {
     return raw.trim() || '—';
   }
-  const amount = formatRawTokenAmount(raw, meta.decimals);
+  const amount = formatRawTokenAmount(raw, meta!.decimals);
   const symbol = resolveSymbol(meta, address);
   return symbol ? `${amount} ${symbol}` : amount;
 }
@@ -73,11 +81,11 @@ export function formatRawAssetAmount(
 export function formatIndexedAmount(
   raw: string,
   meta: TokenMeta | null | undefined,
-  _address: string,
+  address: string,
   assetType: number,
   tokenId: string,
 ): string {
   if (isNftAssetType(assetType)) return formatNftLabel(assetType, raw, tokenId);
-  if (meta?.decimals == null) return raw.trim() || '—';
-  return formatRawTokenAmount(raw, meta.decimals);
+  if (!rawAmountDecimalsResolved(meta, address)) return raw.trim() || '—';
+  return formatRawTokenAmount(raw, meta!.decimals);
 }

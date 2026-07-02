@@ -23,3 +23,5 @@ Round 7: Activity merge preserves all actor rows; enrichment includes current-ho
 Round 8: Open offers list is current-holder only so transferred-away positions cannot be cancelled from alpha01; fund-lend receipt discloses principal leaves wallet custody; position cards render asset symbols as text inside the loan link (no nested anchors).
 
 Round 9: Borrow/lend offer pickers exclude self-authored offers and render plain symbols inside selectable rows; raw amount formatting no longer assumes 18 decimals; canonical asset labels use lowercase keys; loan detail and activity pages surface indexer errors instead of empty/not-found states.
+
+Round 10: Raw formatting uses cache-resolved decimals only; offer pickers require wallet connect and clear stale selections; unhealed indexer stubs filtered from lend picker; loan detail warns when indexer origin is missing; lender active loans show Active status; activity merge reserves participant slots; defaulted lender claims show collateral; claim buttons respect wallet chain.

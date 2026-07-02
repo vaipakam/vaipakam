@@ -138,6 +138,17 @@ export function filterLenderOffersForBorrow(offers: IndexedOffer[]): IndexedOffe
   );
 }
 
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+
+/** Drop indexer stub rows inserted before inline RPC heal (0x / zero amount). */
+export function isHealedIndexerOffer(o: IndexedOffer): boolean {
+  if (o.lendingAsset.toLowerCase() === ZERO_ADDRESS) return false;
+  const amount = o.amount?.trim() ?? '';
+  const amountMax = o.amountMax?.trim() ?? '';
+  if (amount === '0' && (!amountMax || amountMax === '0')) return false;
+  return true;
+}
+
 /** Borrower requests a lender can fund (L1 journey). */
 export function filterBorrowerOffersForLend(offers: IndexedOffer[]): IndexedOffer[] {
   return offers.filter(
@@ -145,7 +156,8 @@ export function filterBorrowerOffersForLend(offers: IndexedOffer[]): IndexedOffe
       o.status === 'active' &&
       o.offerType === OFFER_TYPE_BORROWER &&
       isAlpha01Erc20Offer(o) &&
-      isDirectAcceptableOffer(o),
+      isDirectAcceptableOffer(o) &&
+      isHealedIndexerOffer(o),
   );
 }
 

@@ -151,6 +151,17 @@ export function LendWizard() {
     setCollateralAsset(collateralDefault || '');
   }, [chain.chainId, lendingDefault, collateralDefault]);
 
+  useEffect(() => {
+    if (!selected) return;
+    const wallet = address?.toLowerCase();
+    const stillListed = (borrowerOffers ?? []).some((o) => o.offerId === selected.offerId);
+    const selfTrade = wallet && selected.creator.toLowerCase() === wallet;
+    if (!stillListed || selfTrade) {
+      setSelected(null);
+      if (path === 'fund') setStep('pick');
+    }
+  }, [address, borrowerOffers, path, selected]);
+
   const lendingMeta = useTokenMeta(lendingAsset || null);
   const collateralMeta = useTokenMeta(collateralAsset || null);
   const selectedLendingMeta = useTokenMeta(selected?.lendingAsset ?? null);

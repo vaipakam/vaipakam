@@ -63,6 +63,14 @@ function seedMemoryFromStorage() {
   storageSeeded = true;
 }
 
+/** Vitest helper — reload memory cache from localStorage between cases. */
+export function resetTokenMetaCacheForTests(): void {
+  memoryCache.clear();
+  inflight.clear();
+  storageSeeded = false;
+  seedMemoryFromStorage();
+}
+
 function nativeMeta(chainId: number): TokenMeta {
   return { address: ZERO_ADDRESS, symbol: 'ETH', decimals: 18, chainId };
 }
@@ -81,7 +89,7 @@ export async function fetchTokenMeta(
   if (existing) return existing;
 
   const normalized = address.toLowerCase();
-  const fallback: TokenMeta = { address: normalized, symbol: '', decimals: 18, chainId };
+  const fallback: TokenMeta = { address: normalized, symbol: '', decimals: 0, chainId };
   if (!publicClient) return fallback;
 
   const task = (async () => {
@@ -106,7 +114,8 @@ export async function fetchTokenMeta(
         persist(meta);
         return meta;
       }
-      return { address: normalized, symbol, decimals: decimals ?? 18, chainId };
+      // Do not treat a failed decimals() read as 18 — leave unresolved (not cached).
+      return { address: normalized, symbol: symbol || '', decimals: decimals ?? 0, chainId };
     } catch {
       return fallback;
     } finally {

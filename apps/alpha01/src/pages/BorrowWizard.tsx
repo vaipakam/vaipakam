@@ -193,6 +193,20 @@ export function BorrowWizard() {
     setCollateralAsset(collateralDefault || '');
   }, [chain.chainId, lendingDefault, collateralDefault]);
 
+  useEffect(() => {
+    if (!selected) return;
+    const wallet = address?.toLowerCase();
+    const stillListed = (offers ?? []).some((o) => o.offerId === selected.offerId);
+    const selfTrade = wallet && selected.creator.toLowerCase() === wallet;
+    if (!stillListed || selfTrade) {
+      setSelected(null);
+      if (mode === 'accept') {
+        setMode('request');
+        setStep('match');
+      }
+    }
+  }, [address, mode, offers, selected]);
+
   const matched = useMemo(() => {
     const pool = offers ?? [];
     const lendingDecimals = lendingMeta?.decimals ?? 18;

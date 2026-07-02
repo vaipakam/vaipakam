@@ -33,9 +33,9 @@ export function PositionDetailPage() {
   const { data: hf } = useLoanHealth(id);
 
   const { data: loan, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['loan', chain.chainId, id],
-    enabled: Number.isFinite(id),
-    queryFn: () => fetchLoanById(origin ?? undefined, chain.chainId, id),
+    queryKey: ['loan', chain.chainId, id, origin],
+    enabled: Number.isFinite(id) && Boolean(origin),
+    queryFn: () => fetchLoanById(origin!, chain.chainId, id),
   });
 
   const lendingMeta = useTokenMeta(loan?.lendingAsset ?? null);
@@ -43,6 +43,18 @@ export function PositionDetailPage() {
 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+
+  if (!origin) {
+    return (
+      <div>
+        <p className="banner banner-warn">
+          Indexer is not configured. Set <code>VITE_INDEXER_ORIGIN</code> in <code>.env.local</code>{' '}
+          to load loan details.
+        </p>
+        <Link to="/positions">← Back to positions</Link>
+      </div>
+    );
+  }
 
   if (isLoading) return <p>Loading loan…</p>;
   if (isError) {
@@ -94,7 +106,9 @@ export function PositionDetailPage() {
 
   const statusLabel =
     loan.status === 'active'
-      ? health.label
+      ? isBorrower
+        ? health.label
+        : 'Active'
       : loan.status === 'repaid'
         ? 'Repaid — ready to claim'
         : loan.status;

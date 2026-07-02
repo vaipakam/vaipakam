@@ -14,7 +14,7 @@ import { useClaimables } from '../hooks/useClaimables';
 import { useDiamondContract } from '../hooks/useDiamond';
 
 export function ClaimsPage() {
-  const { address, connect } = useWallet();
+  const { address, connect, isCorrectChain } = useWallet();
   const { data, isLoading, isError, error, refetch } = useClaimables();
   const diamond = useDiamondContract();
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -70,6 +70,7 @@ export function ClaimsPage() {
             loan={loan}
             side={side}
             busy={busyId === loan.loanId}
+            canClaim={isCorrectChain}
             onClaim={() => void claim(loan.loanId, side)}
           />
         ))}
@@ -87,17 +88,23 @@ function ClaimLoanCard({
   loan,
   side,
   busy,
+  canClaim,
   onClaim,
 }: {
   loan: IndexedLoan;
   side: 'borrower' | 'lender';
   busy: boolean;
+  canClaim: boolean;
   onClaim: () => void;
 }) {
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
-  const displayAsset = side === 'borrower' ? loan.collateralAsset : loan.lendingAsset;
-  const displayMeta = side === 'borrower' ? collateralMeta : lendingMeta;
+  const lenderDefaulted =
+    side === 'lender' && (loan.status === 'defaulted' || loan.status === 'liquidated');
+  const claimAsset =
+    side === 'borrower' || lenderDefaulted ? loan.collateralAsset : loan.lendingAsset;
+  const claimMeta =
+    side === 'borrower' || lenderDefaulted ? collateralMeta : lendingMeta;
 
   return (
     <div className="position-card">
@@ -106,16 +113,18 @@ function ClaimLoanCard({
         <span>{side === 'borrower' ? 'Borrower claim' : 'Lender claim'}</span>
       </div>
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        <AssetSymbolLink address={displayAsset} meta={displayMeta} /> ·{' '}
+        <AssetSymbolLink address={claimAsset} meta={claimMeta} /> ·{' '}
         {formatBpsAsPercent(loan.interestRateBps)} · {loan.status}
       </div>
       <p style={{ fontSize: '0.85rem', marginTop: 4 }}>
         {side === 'borrower'
           ? 'You can claim returned collateral or rebates after settlement.'
-          : 'You can claim principal plus interest after the borrower repaid.'}
+          : lenderDefaulted
+            ? 'You can claim collateral or liquidation proceeds after default.'
+            : 'You can claim principal plus interest after the borrower repaid.'}
       </p>
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-        <button type="button" className="btn btn-primary" disabled={busy} onClick={onClaim}>
+        <button type="button" className="btn btn-primary" disabled={busy || !canClaim} onClick={onClaim}>
           Claim
         </button>
         <Link to={`/positions/${loan.loanId}`} className="btn btn-secondary">

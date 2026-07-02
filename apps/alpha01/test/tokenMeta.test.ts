@@ -14,7 +14,7 @@ vi.mock('viem', async (importOriginal) => {
   };
 });
 
-import { fetchTokenMeta, hasResolvedTokenDecimals } from '../src/lib/tokenMeta';
+import { fetchTokenMeta, hasResolvedTokenDecimals, resetTokenMetaCacheForTests } from '../src/lib/tokenMeta';
 
 const CHAIN_A = 84532;
 const CHAIN_B = 421614;
@@ -24,6 +24,7 @@ describe('fetchTokenMeta', () => {
     read.symbol.mockReset();
     read.decimals.mockReset();
     localStorage.clear();
+    resetTokenMetaCacheForTests();
   });
 
   it('does not treat fallback decimals as resolved when decimals() fails', async () => {
@@ -33,7 +34,7 @@ describe('fetchTokenMeta', () => {
 
     const meta = await fetchTokenMeta(token, {} as PublicClient, CHAIN_A);
     expect(meta.symbol).toBe('USDC');
-    expect(meta.decimals).toBe(18);
+    expect(meta.decimals).toBe(0);
     expect(hasResolvedTokenDecimals(meta, token, CHAIN_A)).toBe(false);
   });
 
