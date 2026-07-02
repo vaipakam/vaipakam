@@ -762,6 +762,13 @@ function isRateLimitError(message: string): boolean {
  *   `getLogs N-M: limit exceeded`).
  */
 function isBlockRangeOrSizeError(message: string): boolean {
+  // Rate-limit errors take precedence and must NOT be treated as a
+  // block-range/size cap: the broad "limit exceeded" / "exceeds … limit"
+  // patterns below would otherwise also match "rate limit exceeded", and a
+  // throttled provider would then get its block window halved (more requests)
+  // instead of staying purely on the retry/backoff path in safeGetLogs. Defer
+  // to isRateLimitError first so persistent throttling surfaces as-is.
+  if (isRateLimitError(message)) return false;
   return /block range|range.*too (?:large|wide|big)|response size|query returned more than|too many (?:logs|results)|limit exceeded|exceed(?:s|ed)?.*(?:limit|maximum)|reduce the (?:block )?range/i.test(
     message,
   );
