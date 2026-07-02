@@ -9,6 +9,12 @@ import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
+/// @dev Minimal metadata surface a Uniswap-V3 periphery SwapRouter exposes,
+///      used to preflight the router before wrapping it in an adapter.
+interface IUniV3SwapRouterMeta {
+    function factory() external view returns (address);
+}
+
 /**
  * @title DeployUniV3Adapter
  * @notice Per-chain deploy of the on-chain Uniswap-V3-style DEX swap adapter
@@ -67,6 +73,38 @@ contract DeployUniV3Adapter is Script {
         require(
             router.code.length > 0,
             "DeployUniV3Adapter: UNISWAP_V3_ROUTER has no bytecode on this chain"
+        );
+
+        // Validate the router is a genuine Uniswap-V3-style SwapRouter of the
+        // SAME DEX as the oracle's factory — not the SmartRouter / QuoterV2 /
+        // migrator / an EOA / a different DEX. On a no-0x chain (BNB testnet) a
+        // wrong router would still deploy+register an adapter that ConfigureOracle
+        // counts as the liquidation route, then revert on every real
+        // exactInputSingle. Two checks:
+        //  (1) factory() must equal the configured <CHAIN>_UNISWAP_V3_FACTORY
+        //      (same DEX as the oracle's pool-depth gate).
+        //  (2) the deadline-carrying UniV3 exactInputSingle selector (0x414bf389)
+        //      must be present in the router bytecode — the QuoterV2 (which also
+        //      has factory()) exposes quoteExactInputSingle, NOT exactInputSingle,
+        //      so this rejects the common "pasted the quoter" mistake.
+        address expectedFactory = _resolveFactory();
+        try IUniV3SwapRouterMeta(router).factory() returns (address routerFactory) {
+            require(
+                expectedFactory == address(0) || routerFactory == expectedFactory,
+                string.concat(
+                    "DeployUniV3Adapter: router.factory() ",
+                    vm.toString(routerFactory),
+                    " != configured UNISWAP_V3_FACTORY ",
+                    vm.toString(expectedFactory),
+                    " - wrong router or DEX?"
+                )
+            );
+        } catch {
+            revert("DeployUniV3Adapter: router has no factory() - not a Uniswap-V3 SwapRouter");
+        }
+        require(
+            _bytecodeHasSelector(router, 0x414bf389),
+            "DeployUniV3Adapter: router lacks exactInputSingle(...,deadline,...) selector 0x414bf389 - not a UniV3 SwapRouter (SmartRouter/Quoter/migrator?)"
         );
 
         // Chain-aware: read THIS chain's addresses.json (like ConfigureOracle /
@@ -133,16 +171,27 @@ contract DeployUniV3Adapter is Script {
 
         console.log("  UniV3Adapter:", address(adapter));
 
-        // Readback — fail loud if the registration didn't take.
+        // Readback — fail loud if the registration didn't take, and surface the
+        // adapter's INDEX. The keeper's swap-quote registry (serverQuotes
+        // CHAIN_SWAP.adapters.univ3) is a static index into this on-chain list;
+        // it MUST equal the index logged here. On a no-aggregator chain (BNB
+        // testnet) the UniV3 adapter is the sole/first entry → index 0. Warn
+        // loudly if it landed elsewhere so the operator updates the keeper
+        // (otherwise the keeper would submit UniV3 routing to the wrong adapter).
         address[] memory registered = AdminFacet(diamond).getSwapAdapters();
-        bool found;
+        uint256 idx = type(uint256).max;
         for (uint256 i = 0; i < registered.length; i++) {
-            if (registered[i] == address(adapter)) found = true;
+            if (registered[i] == address(adapter)) idx = i;
         }
-        require(found, "DeployUniV3Adapter: adapter not registered post-deploy");
+        require(idx != type(uint256).max, "DeployUniV3Adapter: adapter not registered post-deploy");
 
         console.log("");
         console.log("Done. Diamond.getSwapAdapters() length:", registered.length);
+        console.log("  UniV3 adapter index (keeper CHAIN_SWAP.adapters.univ3 must match):", idx);
+        if (idx != 0) {
+            console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
+            console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP.");
+        }
         console.log("Record the adapter under `swapAdapters.uniV3` in the chain's addresses.json.");
     }
 
@@ -151,6 +200,19 @@ contract DeployUniV3Adapter is Script {
     ///      that currently use an on-chain DEX route are mapped; extend as
     ///      needed (a bare env always works as the escape hatch).
     function _resolveRouter() internal view returns (address) {
+        return _resolveChainAddr("UNISWAP_V3_ROUTER");
+    }
+
+    /// @dev The oracle's configured v3 factory for this chain — used to confirm
+    ///      the router belongs to the same DEX. Returns 0 if unset (the caller
+    ///      then skips the factory-match, keeping the exactInputSingle-selector
+    ///      check as the floor).
+    function _resolveFactory() internal view returns (address) {
+        return _resolveChainAddr("UNISWAP_V3_FACTORY");
+    }
+
+    /// @dev Chain-prefixed `<CHAIN>_<key>` first, then bare `<key>` fallback.
+    function _resolveChainAddr(string memory key) internal view returns (address) {
         string memory prefix;
         uint256 chainId = block.chainid;
         if (chainId == 97) prefix = "BNB_TESTNET_";
@@ -160,8 +222,27 @@ contract DeployUniV3Adapter is Script {
 
         address prefixed = bytes(prefix).length == 0
             ? address(0)
-            : vm.envOr(string.concat(prefix, "UNISWAP_V3_ROUTER"), address(0));
+            : vm.envOr(string.concat(prefix, key), address(0));
         if (prefixed != address(0)) return prefixed;
-        return vm.envOr("UNISWAP_V3_ROUTER", address(0));
+        return vm.envOr(key, address(0));
+    }
+
+    /// @dev True if `sel` (a 4-byte function selector) appears anywhere in the
+    ///      contract's runtime bytecode — a heuristic for "the contract exposes
+    ///      this function". Runs in the LOCAL script VM (pre-broadcast), so the
+    ///      O(codeLen) scan is not gas-metered. Used to tell a real SwapRouter
+    ///      (has exactInputSingle) from the QuoterV2 (has quoteExactInputSingle).
+    function _bytecodeHasSelector(address a, bytes4 sel) internal view returns (bool) {
+        bytes memory code = a.code;
+        if (code.length < 4) return false;
+        for (uint256 i = 0; i + 4 <= code.length; i++) {
+            if (
+                code[i] == sel[0] && code[i + 1] == sel[1]
+                    && code[i + 2] == sel[2] && code[i + 3] == sel[3]
+            ) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -37,4 +37,15 @@ the chain rather than skipping it.
 Every BNB-testnet address was verified on-chain before use (the price feed, the
 PancakeSwap factory / router / quoter — the router and quoter both confirmed to
 share the oracle's configured factory), and the result was confirmed by checking
-that the numeraire asset classifies as liquid on the BNB-testnet diamond.
+that the numeraire asset classifies as liquid on the BNB-testnet diamond. The
+adapter-deploy step also validates the router before wrapping it (its factory
+must match the oracle's, and its bytecode must expose the swap entry-point — so
+the quoter or another periphery contract can't be registered by mistake).
+
+Scope note: this configures the oracle's numeraire and the liquidation route.
+Making ordinary BNB-testnet *assets* tradeable/liquid is a separate matter —
+that needs real quote-asset pools and per-asset price feeds, and BNB testnet has
+only thin real liquidity, so lifecycle rehearsals on the chain deploy their own
+mock market fixtures (the same way the positive-flow rehearsal already does).
+BNB testnet's role here is a cross-chain mirror; full local lending markets are
+a mainnet concern where the real bridged-WETH9 and deep pools exist.
