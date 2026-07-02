@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { toBorrowerOfferPayload, toCreateOfferPayload } from '@vaipakam/defi-client';
+import { parseInterestBps, toBorrowerOfferPayload, toCreateOfferPayload } from '@vaipakam/defi-client';
 
 const baseForm = {
   offerType: 'lender' as const,
@@ -12,6 +12,13 @@ const baseForm = {
   durationDays: '30',
   riskAndTermsConsent: true,
 };
+
+describe('parseInterestBps', () => {
+  it('rejects rates above the protocol cap', () => {
+    expect(() => parseInterestBps('100.01')).toThrow(/protocol cap/);
+    expect(parseInterestBps('100')).toBe(10_000n);
+  });
+});
 
 describe('toCreateOfferPayload', () => {
   it('uses ABI field names and partial fill for lender ERC-20 offers', () => {

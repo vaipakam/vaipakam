@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { IndexedLoan } from '@vaipakam/defi-client';
-import { formatBpsAsPercent } from '@vaipakam/defi-client';
+import { formatBpsAsPercent, loanRoleForWallet } from '@vaipakam/defi-client';
 import { shortenAddr } from '@vaipakam/lib/address';
 import { AssetSymbolLink } from './AssetSymbolLink';
 import { useTokenMeta } from '../lib/tokenMeta';
@@ -14,7 +14,14 @@ export function PositionCard({ loan }: Props) {
   const { address } = useWallet();
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
-  const role = address?.toLowerCase() === loan.lender.toLowerCase() ? 'Lender' : 'Borrower';
+  const walletRole = loanRoleForWallet(loan, address);
+  const role = walletRole === 'lender' ? 'Lender' : walletRole === 'borrower' ? 'Borrower' : 'Holder';
+  const counterparty =
+    walletRole === 'lender'
+      ? loan.borrower
+      : walletRole === 'borrower'
+        ? loan.lender
+        : loan.lender;
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="position-card">
@@ -28,7 +35,7 @@ export function PositionCard({ loan }: Props) {
         {loan.durationDays} days · {formatBpsAsPercent(loan.interestRateBps)}
       </div>
       <div style={{ fontSize: '0.85rem' }}>
-        Counterparty: {shortenAddr(role === 'Lender' ? loan.borrower : loan.lender)}
+        Counterparty: {shortenAddr(counterparty)}
       </div>
     </Link>
   );

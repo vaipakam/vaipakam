@@ -145,8 +145,13 @@ export function LendWizard() {
   const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
 
   const fundLendingAsset = path === 'fund' && selected ? selected.lendingAsset : null;
+  const createLendingAsset = path === 'create' ? lendingAsset || null : null;
   const { data: fundBalance, isLoading: fundBalanceLoading } = useSpendableBalance(
     fundLendingAsset,
+    address,
+  );
+  const { data: createBalance, isLoading: createBalanceLoading } = useSpendableBalance(
+    createLendingAsset,
     address,
   );
   const fundPrincipalCheck = useMemo(
@@ -162,6 +167,19 @@ export function LendWizard() {
           })
         : null,
     [fundBalance, fundBalanceLoading, path, selected, selectedLendingMeta],
+  );
+  const createPrincipalCheck = useMemo(
+    () =>
+      path === 'create'
+        ? assessCollateralBalance({
+            needHuman: amount,
+            balance: createBalance,
+            tokenAddress: lendingAsset,
+            meta: lendingMeta,
+            loading: createBalanceLoading,
+          })
+        : null,
+    [amount, createBalance, createBalanceLoading, lendingAsset, lendingMeta, path],
   );
 
   const checklist = useMemo(
@@ -204,6 +222,29 @@ export function LendWizard() {
                 : 'Loading lending token decimals…',
               ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
             },
+            createPrincipalCheck?.loading
+              ? {
+                  id: 'principal-balance',
+                  label: 'Checking wallet principal balance…',
+                  ok: false,
+                }
+              : createPrincipalCheck?.sufficient === true
+                ? {
+                    id: 'principal-balance',
+                    label: 'Wallet has enough principal to post',
+                    ok: true,
+                  }
+                : createPrincipalCheck?.sufficient === false
+                  ? {
+                      id: 'principal-balance',
+                      label: 'Insufficient wallet balance for lend amount',
+                      ok: false,
+                    }
+                  : {
+                      id: 'principal-balance',
+                      label: 'Principal balance unavailable',
+                      ok: false,
+                    },
           ]
         : []),
     ],
@@ -217,6 +258,7 @@ export function LendWizard() {
       isCorrectChain,
       lendingAsset,
       lendingMeta,
+      createPrincipalCheck,
       fundPrincipalCheck,
       path,
       sanctions,

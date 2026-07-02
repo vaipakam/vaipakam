@@ -9,3 +9,5 @@ Follow-up: on-chain Terms gate parity with the classic defi app is deferred — 
 Codex review follow-ups (P1/P2): accept-term binding now mirrors stored offer fields; spendable balance counts wallet only; open offers and positions resolve role via current-holder indexing; direct-accept pickers hide NFT legs, partial fills, and expired GTT rows; lender fund flow checks wallet principal before approval; sanctions screening fails closed when the oracle read errors.
 
 Round 2: ERC-20 approvals zero stale allowances first; borrow checklist blocks while collateral balance is unresolved; `settled` loans no longer show a borrower claim CTA; linked-loan id reads fail closed except on legacy missing-selector deploys; read-chain resolution skips wallet chains without a Diamond.
+
+Round 3: position cards and borrow wizard reset assets on chain change; lender `settled` claims removed; create-lending balance gate; risk-terms hash fail-closed; APR capped at 100%; collateral hint labels wallet-only.

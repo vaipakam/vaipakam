@@ -97,8 +97,14 @@ export async function signAcceptTerms(opts: {
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getCurrentRiskTermsHash',
     })) as Hex;
-  } catch {
-    // Pre-gate deploys may lack the getter.
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/function selector|not found|missing revert data/i.test(msg)) {
+      riskTermsHash =
+        '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
+    } else {
+      throw new Error(`Could not read current risk terms hash: ${msg}`);
+    }
   }
 
   const isERC20 = Number(o.assetType) === ASSET_TYPE_ERC20;

@@ -27,7 +27,11 @@ export function formatDurationBucketLabel(days: number): string {
 export function parseInterestBps(percent: string): bigint {
   const n = Number(percent);
   if (!Number.isFinite(n) || n < 0) throw new Error('Invalid interest rate');
-  return BigInt(Math.round(n * 100));
+  const bps = BigInt(Math.round(n * 100));
+  if (bps > MAX_INTEREST_BPS) {
+    throw new Error('Interest rate exceeds protocol cap (100% APR)');
+  }
+  return bps;
 }
 
 export function toBorrowerOfferPayload(

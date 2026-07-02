@@ -53,7 +53,6 @@ export function borrowerPrimaryAction(opts: {
   if (opts.role === 'lender') {
     if (
       opts.loanStatus === 'repaid' ||
-      opts.loanStatus === 'settled' ||
       opts.loanStatus === 'defaulted' ||
       opts.loanStatus === 'liquidated'
     ) {

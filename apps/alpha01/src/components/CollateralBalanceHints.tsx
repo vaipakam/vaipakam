@@ -19,7 +19,7 @@ export function CollateralBalanceHint({ assessment, variant }: Props) {
           address={assessment.available.address}
           meta={assessment.available.meta}
         />{' '}
-        (wallet + vault)
+        (wallet)
       </>
     );
   }

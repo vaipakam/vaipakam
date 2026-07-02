@@ -180,9 +180,9 @@ export function BorrowWizard() {
   const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
 
   useEffect(() => {
-    if (lendingDefault) setLendingAsset((v) => v || lendingDefault);
-    if (collateralDefault) setCollateralAsset((v) => v || collateralDefault);
-  }, [lendingDefault, collateralDefault]);
+    setLendingAsset(lendingDefault || '');
+    setCollateralAsset(collateralDefault || '');
+  }, [chain.chainId, lendingDefault, collateralDefault]);
 
   const matched = useMemo(() => {
     const pool = offers ?? [];

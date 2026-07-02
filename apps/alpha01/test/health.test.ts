@@ -15,5 +15,8 @@ describe('borrowerPrimaryAction', () => {
     expect(
       borrowerPrimaryAction({ role: 'lender', loanStatus: 'defaulted', healthTone: 'ok' }).action,
     ).toBe('claim-lender');
+    expect(
+      borrowerPrimaryAction({ role: 'lender', loanStatus: 'settled', healthTone: 'ok' }).action,
+    ).toBe('none');
   });
 });
