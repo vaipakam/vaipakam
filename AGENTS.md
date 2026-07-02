@@ -187,6 +187,31 @@ Sub-rules:
   profile suffix): no caption needed — nothing project-specific to
   explain.
 
+## PR Push and Review Trigger Account Procedure
+
+When updating PRs in this repository, keep Git writes and trigger comments
+separate so branch protection and attribution stay clean:
+
+- Push code, docs, config, and workflow diffs with the local `Raja4Shekar`
+  GitHub account when that account is available. Commits from this path are
+  expected to be signed and satisfy the repository's verified-signature rule.
+- Use the GitHub connector `vaipakam` account only for posting review trigger
+  comments such as `@claude adversarial-review`. Do not use the connector
+  to create or update files unless the user explicitly approves that trade-off.
+- After every push to an active PR, post the requested trigger comment from the
+  connector account. The standing trigger for Claude-only review rounds is:
+  `@claude adversarial-review`.
+- Do not post Codex trigger comments unless the user explicitly asks for one.
+- If a workflow-file change is needed and the local token lacks `workflow`
+  scope, stop and ask the user to refresh local auth/scope. Do not fall back to
+  connector-created workflow commits when verified signatures are required.
+- For monitoring review feedback during active work, prefer the Codex-owned
+  single-instance delta poller at `/home/pranav/.codex/scripts/pr-poll-once.sh`
+  when it is available; run it for the active PR so it exits on the first new
+  PR delta. If the poller is unavailable, fall back to manually polling PR
+  comments/checks about every five minutes. Do not add a notification workflow
+  unless the user explicitly asks to revisit that approach.
+
 ## Verification history — what we know about AGENTS.md being read
 
 | Date | Evidence | Conclusion |
