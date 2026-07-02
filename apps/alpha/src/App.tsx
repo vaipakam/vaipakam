@@ -597,7 +597,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
     return (
       <section className="recovery-card panel-surface" role="alert">
         <p className="eyebrow">Recovery</p>
-        <h2>This page could not render safely.</h2>
+        <h1>This page could not render safely.</h1>
         <p>The rest of Vaipakam is still available. A redacted crash note was saved in this browser session for support.</p>
         <p className="support-note">Crash details stay in browser storage and can be exported from Data Rights.</p>
         <div className="hero-actions">
@@ -1805,7 +1805,7 @@ function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrai
           </label>
           <label>
             <span>Slippage cap</span>
-            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => setSlippage(String(Math.max(0, Math.min(25, Number(event.target.value) || 0))))} />
+            <input type="number" min="0" max="25" step="0.1" inputMode="decimal" value={slippage} onChange={(event) => { const raw = Number(event.target.value); setSlippage(Number.isNaN(raw) ? '0' : String(Math.max(0, Math.min(25, raw)))); }} />
           </label>
         </div>
       </section>
