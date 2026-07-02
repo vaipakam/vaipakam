@@ -46,6 +46,9 @@ importers:
 
   apps/alpha:
     dependencies:
+      '@vaipakam/contracts':
+        specifier: workspace:^
+        version: link:../../packages/contracts
       lucide-react:
         specifier: ^1.8.0
         version: 1.14.0(react@19.2.6)

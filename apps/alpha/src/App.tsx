@@ -29,6 +29,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
+import { getDeployment } from '@vaipakam/contracts/deployments';
 import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
@@ -100,6 +101,7 @@ type GuidedFlow = {
 type GuidedTransactionPlan = {
   intentTitle: string;
   previewState: string;
+  deploymentTarget: string;
   primaryAction: string;
   sequence: string[];
   safetyCopy: string;
@@ -119,6 +121,8 @@ type PreparedGuidedAction = {
 };
 
 const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
+const BASE_SEPOLIA_CHAIN_ID_DECIMAL = 84532;
+const BASE_SEPOLIA_DEPLOYMENT = getDeployment(BASE_SEPOLIA_CHAIN_ID_DECIMAL);
 const BASE_SEPOLIA_PARAMS = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   chainName: 'Base Sepolia',
@@ -891,6 +895,8 @@ function FlowPage({
           <label className="app-field">
             <span>{flow.amountLabel}</span>
             <input
+              id={flow.kind + '-amount'}
+              name={flow.kind + '-amount'}
               inputMode="decimal"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
@@ -958,6 +964,10 @@ function FlowPage({
             <div>
               <span className="position-kind">Wallet action</span>
               <strong>{transactionPlan.primaryAction}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Contract target</span>
+              <strong>{transactionPlan.deploymentTarget}</strong>
             </div>
             <div>
               <span className="position-kind">Status</span>
@@ -1403,34 +1413,52 @@ function formatFlowAmount(flow: GuidedFlow, numericAmount: number) {
   return numericAmount.toLocaleString();
 }
 
+function guidedDeploymentTarget() {
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond) return 'Base Sepolia deployment unavailable';
+  const offerCreateFacet = BASE_SEPOLIA_DEPLOYMENT.facets.offerCreateFacet;
+  if (!offerCreateFacet) return shortAddress(BASE_SEPOLIA_DEPLOYMENT.diamond) + ' · offer facet missing';
+  return shortAddress(BASE_SEPOLIA_DEPLOYMENT.diamond) + ' · OfferCreateFacet ready';
+}
+
+function guidedPreviewState() {
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond) return 'Deployment missing';
+  if (!BASE_SEPOLIA_DEPLOYMENT.facets.offerCreateFacet) return 'Facet target missing';
+  return 'Ready for simulation target';
+}
+
 function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedTransactionPlan {
   const amountText = formatFlowAmount(flow, numericAmount);
+  const deploymentTarget = guidedDeploymentTarget();
+  const previewState = guidedPreviewState();
   if (flow.kind === 'earn') {
     return {
       intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
-      previewState: 'Simulation boundary ready',
+      previewState,
+      deploymentTarget,
       primaryAction: 'Approve asset, then create offer',
       sequence: ['Check allowance', 'Approve only the selected amount if needed', 'Create offer from reviewed terms', 'Track offer NFT and cancellation path'],
-      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. Until the contract adapter is connected, this remains a local preparation record.',
+      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. The generated deployment bundle now supplies the Diamond target for the next simulation and write slice.',
       destination: '/offers',
     };
   }
   if (flow.kind === 'borrow') {
     return {
       intentTitle: 'Prepare borrow request for ' + amountText + ' ' + selectedAsset,
-      previewState: 'Health preview boundary ready',
+      previewState,
+      deploymentTarget,
       primaryAction: 'Deposit collateral, then create or accept terms',
       sequence: ['Confirm collateral balance', 'Deposit collateral into Vaipakam Vault', 'Create or accept the reviewed borrow terms', 'Track repayment, add-collateral, and claim paths'],
-      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. This local plan is the handoff point for live health-factor reads.',
+      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. The generated deployment bundle now supplies the Diamond target for live health-factor and offer simulation wiring.',
       destination: '/manage',
     };
   }
   return {
     intentTitle: 'Prepare NFT rental for ' + amountText,
-    previewState: 'Rental expiry boundary ready',
+    previewState,
+    deploymentTarget,
     primaryAction: 'Prepay rental, then start rental rights',
     sequence: ['Confirm NFT standard support', 'Approve prepaid rental token if needed', 'Start rental with reviewed expiry', 'Track close, owner claim, and renter refund lanes'],
-    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit.',
+    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit. The generated deployment bundle now supplies the Diamond target for rental-offer simulation wiring.',
     destination: '/offers',
   };
 }
