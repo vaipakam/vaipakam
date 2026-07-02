@@ -75,8 +75,28 @@ export function useVaultAssets() {
         return { vaultAddress: null, assets: [] };
       }
 
+      // VPFI deposits arrive via the VPFI page, not via any loan or
+      // offer, and VPFI isn't a canonical asset — without this the
+      // vault of a VPFI-only depositor reads "empty".
+      const scanTokens = [...tokenList];
+      try {
+        const vpfiToken = (await publicClient!.readContract({
+          address: readChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getVPFIToken',
+        })) as string;
+        if (
+          vpfiToken.toLowerCase() !== ZERO_ADDRESS &&
+          !scanTokens.includes(vpfiToken.toLowerCase())
+        ) {
+          scanTokens.push(vpfiToken.toLowerCase());
+        }
+      } catch {
+        // VPFI facet absent — scan proceeds without it.
+      }
+
       const rows = await Promise.all(
-        tokenList.map(async (tokenLower): Promise<VaultAssetRow | null> => {
+        scanTokens.map(async (tokenLower): Promise<VaultAssetRow | null> => {
           const token = tokenLower as `0x${string}`;
           try {
             const [raw, tracked, locked, symbol, decimals] = await Promise.all([

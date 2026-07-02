@@ -37,6 +37,7 @@ import {
   useRentalBufferBps,
 } from '../data/protocol';
 import { useProtocolFees, bpsToPercentText } from '../data/fees';
+import { useVpfi } from '../data/vpfi';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -123,6 +124,13 @@ function ListNftFlow() {
   const detailsComplete = form !== null;
 
   const baseChecks = useEligibility({ consent });
+  // The contract rejects VPFI as a rental prepay asset
+  // (VpfiNotAllowedAsRentalPrepay) — catch it BEFORE the user pays for
+  // setApprovalForAll on the NFT.
+  const vpfi = useVpfi();
+  const prepayIsVpfi =
+    Boolean(vpfi.data?.token) &&
+    prepayAsset.toLowerCase() === vpfi.data!.token!.toLowerCase();
   const checks = useMemo((): CheckItem[] => {
     const extra: CheckItem[] = [
       {
@@ -140,15 +148,28 @@ function ListNftFlow() {
       },
       {
         id: 'prepay-token',
-        label: prepayMeta.isError
-          ? copy.errors.notAToken
-          : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
-        state: prepayMeta.isError ? 'fail' : prepayMeta.data ? 'pass' : 'pending',
+        label: prepayIsVpfi
+          ? 'VPFI can’t be used as the rental payment asset — pick another token.'
+          : prepayMeta.isError
+            ? copy.errors.notAToken
+            : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
+        state: prepayIsVpfi
+          ? 'fail'
+          : prepayMeta.isError
+            ? 'fail'
+            : prepayMeta.data
+              ? 'pass'
+              : 'pending',
+      },
+      {
+        id: 'live-fees',
+        label: fees.ready ? 'Live fee terms loaded' : 'Loading live fee terms…',
+        state: fees.ready ? 'pass' : 'pending',
       },
     ];
     // wallet + network first, then the rental-specific facts, then consent.
     return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
-  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data]);
+  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, fees.ready]);
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!form || !dailyFeeWei || !prepayMeta.data) return null;

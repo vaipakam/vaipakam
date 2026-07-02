@@ -13,7 +13,12 @@ import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseUnits } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  parseUnits,
+} from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
@@ -81,8 +86,15 @@ export function PositionDetails() {
     refetchInterval: 60_000,
     queryFn: async () => {
       const row = loan.data!;
-      const ownerOf = async (tokenId: string): Promise<string | null> => {
-        if (!/^[1-9]\d*$/.test(tokenId)) return null;
+      // Tri-state per side: an address (live owner), 'burned' (the
+      // token positively no longer exists — its claim was made), or a
+      // THROW on transport errors so the query lands in error state.
+      // Collapsing burned and unreadable into one null previously let
+      // the historical party look actionable on burned positions.
+      const ownerOf = async (
+        tokenId: string,
+      ): Promise<string | 'burned'> => {
+        if (!/^[1-9]\d*$/.test(tokenId)) return 'burned';
         try {
           return (await readClient!.readContract({
             address: readChain.diamondAddress,
@@ -90,8 +102,13 @@ export function PositionDetails() {
             functionName: 'ownerOf',
             args: [BigInt(tokenId)],
           })) as string;
-        } catch {
-          return null; // burned / not readable
+        } catch (err) {
+          const isRevert =
+            err instanceof BaseError &&
+            (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+              err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+          if (isRevert) return 'burned';
+          throw err;
         }
       };
       const [lenderOwner, borrowerOwner] = await Promise.all([
@@ -102,18 +119,34 @@ export function PositionDetails() {
     },
   });
 
-  const role: 'lender' | 'borrower' | 'viewer' = useMemo(() => {
+  // 'checking' while the owner reads are in flight — actions render
+  // only once the role is CONFIRMED, so a transferred position never
+  // flashes controls at its previous holder.
+  const role: 'lender' | 'borrower' | 'viewer' | 'checking' = useMemo(() => {
     const row = loan.data;
     if (!row || !address) return 'viewer';
     const me = address.toLowerCase();
     const owners = nftOwners.data;
-    if (owners?.borrowerOwner?.toLowerCase() === me) return 'borrower';
-    if (owners?.lenderOwner?.toLowerCase() === me) return 'lender';
-    // Owner reads unavailable/burned → historical addresses.
-    if (owners?.borrowerOwner == null && row.borrower.toLowerCase() === me) return 'borrower';
-    if (owners?.lenderOwner == null && row.lender.toLowerCase() === me) return 'lender';
-    return 'viewer';
-  }, [loan.data, address, nftOwners.data]);
+    if (owners) {
+      if (owners.borrowerOwner !== 'burned' && owners.borrowerOwner.toLowerCase() === me) {
+        return 'borrower';
+      }
+      if (owners.lenderOwner !== 'burned' && owners.lenderOwner.toLowerCase() === me) {
+        return 'lender';
+      }
+      // Burned side = that claim was already made; the historical
+      // address gets NO actionable role from it.
+      return 'viewer';
+    }
+    if (nftOwners.isError) {
+      // Transport failure — can't verify live ownership. Fall back to
+      // the historical addresses (the wallet prompt still protects).
+      if (row.borrower.toLowerCase() === me) return 'borrower';
+      if (row.lender.toLowerCase() === me) return 'lender';
+      return 'viewer';
+    }
+    return 'checking';
+  }, [loan.data, address, nftOwners.data, nftOwners.isError]);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.

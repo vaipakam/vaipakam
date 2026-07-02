@@ -21,6 +21,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useSanctionsCheck } from '../data/sanctions';
 import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
 import { useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
@@ -41,6 +42,11 @@ export function Vpfi() {
   const queryClient = useQueryClient();
 
   const tierRows = useVpfiTierTable();
+  // Deposits (and consent writes) revert for flagged wallets — block
+  // BEFORE the approval tx, same gate as the offer flows. Held pending
+  // while the check loads.
+  const sanctions = useSanctionsCheck();
+  const sanctionsClear = sanctions.ready && !sanctions.flagged;
   const [action, setAction] = useState<VaultAction>('deposit');
   const [amount, setAmount] = useState('');
   const [reviewing, setReviewing] = useState(false);
@@ -250,7 +256,7 @@ export function Vpfi() {
               <input
                 type="checkbox"
                 checked={snapshot.consent}
-                disabled={busy || !onSupportedChain}
+                disabled={busy || !onSupportedChain || !sanctionsClear}
                 onChange={() => void toggleConsent()}
                 style={{ marginTop: 3 }}
               />
@@ -356,7 +362,7 @@ export function Vpfi() {
                 type="button"
                 className="btn btn-primary btn-block"
                 style={{ marginTop: 16 }}
-                disabled={busy || !onSupportedChain || !amountWei || overMax}
+                disabled={busy || !onSupportedChain || !sanctionsClear || !amountWei || overMax}
                 onClick={() => void runVaultAction()}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}

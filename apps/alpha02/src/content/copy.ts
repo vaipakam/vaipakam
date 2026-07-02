@@ -272,7 +272,7 @@ export const copy = {
     line2:
       'New positions (offers, loans, rentals, deposits) are blocked and will not go through.',
     line3:
-      'Winding down existing positions — repaying, closing, claiming — stays open. If you believe this is an error, contact the oracle provider (Chainalysis).',
+      'Repaying and closing existing positions stays open so your counterparties can be made whole, but claims and payouts to this wallet are blocked while it is flagged. If you believe this is an error, contact the oracle provider (Chainalysis).',
   },
 
   risk: {

@@ -85,7 +85,7 @@ export function Activity() {
       let before: string | undefined;
       for (let i = 0; i < 5; i++) {
         const page = await fetchActivity(readChain.chainId, { limit: 100, before });
-        if (page === null) return mine.length > 0 ? mine : null;
+        if (page === null) return null; // any page failing → unavailable
         mine.push(
           ...page.events.filter((ev) => {
             if (ev.actor && ev.actor.toLowerCase() === me) return true;

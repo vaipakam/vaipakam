@@ -116,6 +116,28 @@ export function fetchOffersByCreator(
   );
 }
 
+export interface HolderOffersPage {
+  chainId: number;
+  offers: IndexedOffer[];
+  nextBefore: number | null;
+}
+
+/** Offers whose position NFT the wallet CURRENTLY holds — the manage/
+ *  cancel surface must key on this, not the immutable creator, so a
+ *  transferred offer NFT follows its new owner. */
+export function fetchOffersByCurrentHolder(
+  chainId: number,
+  holder: string,
+  opts: { limit?: number; before?: number } = {},
+): Promise<HolderOffersPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
+  return getJson<HolderOffersPage>(
+    `/offers/by-current-holder/${holder.toLowerCase()}?${params}`,
+  );
+}
+
 export type IndexedLoanStatus =
   | 'active'
   | 'repaid'
@@ -165,18 +187,26 @@ export interface ParticipantLoansPage {
 export function fetchLoansByLender(
   chainId: number,
   lender: string,
+  opts: { limit?: number; before?: number } = {},
 ): Promise<ParticipantLoansPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
   return getJson<ParticipantLoansPage>(
-    `/loans/by-lender/${lender.toLowerCase()}?chainId=${chainId}`,
+    `/loans/by-lender/${lender.toLowerCase()}?${params}`,
   );
 }
 
 export function fetchLoansByBorrower(
   chainId: number,
   borrower: string,
+  opts: { limit?: number; before?: number } = {},
 ): Promise<ParticipantLoansPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (opts.limit) params.set('limit', String(opts.limit));
+  if (opts.before) params.set('before', String(opts.before));
   return getJson<ParticipantLoansPage>(
-    `/loans/by-borrower/${borrower.toLowerCase()}?chainId=${chainId}`,
+    `/loans/by-borrower/${borrower.toLowerCase()}?${params}`,
   );
 }
 

@@ -19,7 +19,7 @@ import {
   fetchLoansByBorrower,
   fetchLoansByLender,
   fetchOfferById,
-  fetchOffersByCreator,
+  fetchOffersByCurrentHolder,
   type IndexedLoan,
   type IndexedOffer,
 } from './indexer';
@@ -40,6 +40,9 @@ export function useActiveOffers() {
     queryKey: ['activeOffers', readChain.chainId],
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
+      // ANY page failing (including later cursor pages) → unavailable.
+      // Publishing a confident half-book would let guided matching say
+      // "no matching offers" while the match sits on the missing page.
       const all: IndexedOffer[] = [];
       let before: number | undefined;
       for (let i = 0; i < ACTIVE_OFFERS_MAX_PAGES; i++) {
@@ -47,7 +50,7 @@ export function useActiveOffers() {
           limit: ACTIVE_OFFERS_PAGE,
           before,
         });
-        if (page === null) return all.length > 0 ? all : null;
+        if (page === null) return null;
         all.push(...page.offers);
         if (page.nextBefore === null) break;
         before = page.nextBefore;
@@ -61,8 +64,32 @@ export interface PositionLoan extends IndexedLoan {
   role: 'lender' | 'borrower';
 }
 
+const MY_PAGES_MAX = 5;
+
+/** Follow a cursor-paginated fetcher to exhaustion (page cap as a
+ *  runaway bound). Returns null on ANY page failure — a partial list
+ *  rendered as complete is exactly the dishonesty the null contract
+ *  exists to prevent. */
+async function fetchAllPages<T>(
+  fetchPage: (
+    before: number | undefined,
+  ) => Promise<{ rows: T[]; nextBefore: number | null } | null>,
+): Promise<T[] | null> {
+  const all: T[] = [];
+  let before: number | undefined;
+  for (let i = 0; i < MY_PAGES_MAX; i++) {
+    const page = await fetchPage(before);
+    if (page === null) return null;
+    all.push(...page.rows);
+    if (page.nextBefore === null) return all;
+    before = page.nextBefore;
+  }
+  return all; // page cap reached — bounded, not silent (cap is generous)
+}
+
 /** Every loan where the connected wallet is lender or borrower,
- *  newest first. `null` = indexer unavailable. */
+ *  newest first. `null` = indexer unavailable. Follows pagination so
+ *  wallets with more than one page of positions see all of them. */
 export function useMyLoans() {
   const { readChain, address } = useActiveChain();
   return useQuery({
@@ -72,15 +99,23 @@ export function useMyLoans() {
     queryFn: async (): Promise<PositionLoan[] | null> => {
       if (!address) return [];
       const [asLender, asBorrower] = await Promise.all([
-        fetchLoansByLender(readChain.chainId, address),
-        fetchLoansByBorrower(readChain.chainId, address),
+        fetchAllPages<IndexedLoan>((before) =>
+          fetchLoansByLender(readChain.chainId, address, { limit: 100, before }).then(
+            (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
+          ),
+        ),
+        fetchAllPages<IndexedLoan>((before) =>
+          fetchLoansByBorrower(readChain.chainId, address, { limit: 100, before }).then(
+            (p) => (p === null ? null : { rows: p.loans, nextBefore: p.nextBefore }),
+          ),
+        ),
       ]);
       // EITHER side failing means the list would be silently partial —
       // that's "unavailable", never a confident half-answer.
       if (asLender === null || asBorrower === null) return null;
       const rows: PositionLoan[] = [
-        ...(asLender?.loans ?? []).map((l) => ({ ...l, role: 'lender' as const })),
-        ...(asBorrower?.loans ?? []).map((l) => ({ ...l, role: 'borrower' as const })),
+        ...asLender.map((l) => ({ ...l, role: 'lender' as const })),
+        ...asBorrower.map((l) => ({ ...l, role: 'borrower' as const })),
       ];
       // A wallet can be both sides of one loan in odd cases; dedupe by
       // loanId+role and sort newest first.
@@ -120,7 +155,9 @@ export function useLoan(loanId: number | undefined) {
   });
 }
 
-/** The connected wallet's open offers. */
+/** Open offers the connected wallet can MANAGE — keyed on the CURRENT
+ *  position-NFT holder, not the immutable creator, so a transferred
+ *  offer NFT follows its new owner (and leaves its old one). */
 export function useMyOffers() {
   const { readChain, address } = useActiveChain();
   return useQuery({
@@ -129,9 +166,16 @@ export function useMyOffers() {
     refetchInterval: REFRESH_MS,
     queryFn: async (): Promise<IndexedOffer[] | null> => {
       if (!address) return [];
-      const page = await fetchOffersByCreator(readChain.chainId, address);
-      if (page === null) return null;
-      return page.offers.filter((o) => o.status === 'active');
+      const offers = await fetchAllPages<IndexedOffer>((before) =>
+        fetchOffersByCurrentHolder(readChain.chainId, address, {
+          limit: 100,
+          before,
+        }).then((p) =>
+          p === null ? null : { rows: p.offers, nextBefore: p.nextBefore },
+        ),
+      );
+      if (offers === null) return null;
+      return offers.filter((o) => o.status === 'active');
     },
   });
 }
