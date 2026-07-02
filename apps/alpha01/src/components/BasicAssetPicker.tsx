@@ -93,7 +93,11 @@ export function BasicAssetPicker({ kind, chainId, value, onChange, label, hint }
   const notice = deriveNotice(kind, allowCustom, value, selected, verification, verifying);
   const blockExplorer = getChainByChainId(chainId)?.blockExplorer ?? '';
   const pickerMeta = selected
-    ? { address: selected.contractAddress, symbol: selected.symbol, decimals: 18 }
+    ? {
+        address: selected.contractAddress,
+        symbol: selected.symbol,
+        decimals: peekTokenMeta(selected.contractAddress)?.decimals ?? 18,
+      }
     : peekTokenMeta(value);
 
   return (
@@ -155,7 +159,11 @@ export function BasicAssetPicker({ kind, chainId, value, onChange, label, hint }
                 >
                   <AssetSymbolLink
                     address={t.contractAddress}
-                    meta={{ address: t.contractAddress, symbol: t.symbol, decimals: 18 }}
+                    meta={{
+                      address: t.contractAddress,
+                      symbol: t.symbol,
+                      decimals: peekTokenMeta(t.contractAddress)?.decimals ?? 18,
+                    }}
                     className="basic-asset-picker-symbol"
                   />
                   <span className="basic-asset-picker-meta">{t.name}</span>

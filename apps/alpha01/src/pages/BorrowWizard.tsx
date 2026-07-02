@@ -33,15 +33,15 @@ import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility
 import { assessCollateralBalance } from '../lib/balanceCheck';
 import { peekTokenMeta, useTokenMeta, type TokenMeta } from '../lib/tokenMeta';
 
-type Step = 'intent' | 'match' | 'request' | 'check' | 'review' | 'done';
+type Step = 'intent' | 'match' | 'check' | 'review' | 'done';
 type Mode = 'accept' | 'request';
 
 function borrowReceipt(
   offer: IndexedOffer,
-  borrowAmount: string,
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
 ): ReviewReceiptView {
+  const borrowAmount = offer.amountMax || offer.amount;
   return {
     youReceive: {
       label: 'You receive',
@@ -49,8 +49,8 @@ function borrowReceipt(
         <>
           You are borrowing{' '}
           <AssetAmount
-            mode={borrowAmount.trim() ? 'human' : 'raw'}
-            amount={borrowAmount.trim() ? borrowAmount : offer.amountMax || offer.amount}
+            mode="raw"
+            amount={borrowAmount}
             address={offer.lendingAsset}
             meta={lendingMeta}
           />
@@ -269,7 +269,7 @@ export function BorrowWizard() {
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (mode === 'accept' && selected) {
-      return borrowReceipt(selected, amount, selectedLendingMeta, selectedCollateralMeta);
+      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta);
     }
     return requestReceipt(
       amount,
@@ -323,6 +323,9 @@ export function BorrowWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
+      const lendingDecimals = lendingMeta?.decimals ?? peekTokenMeta(lendingAsset)?.decimals ?? 18;
+      const collateralDecimals =
+        collateralMeta?.decimals ?? peekTokenMeta(collateralAsset)?.decimals ?? 18;
       await createBorrowerOffer({
         diamond,
         publicClient,
@@ -339,8 +342,8 @@ export function BorrowWizard() {
           durationDays: duration,
           riskAndTermsConsent: consent,
         },
+        decimals: { lending: lendingDecimals, collateral: collateralDecimals },
       });
-      setMode('request');
       setStep('done');
     } catch (e) {
       setTxError(e instanceof Error ? e.message : 'Transaction failed');
@@ -359,7 +362,7 @@ export function BorrowWizard() {
 
       <div className="wizard-steps">
         {['intent', 'match', 'check', 'review', 'done'].map((s) => (
-          <span key={s} className={`wizard-step ${step === s || (step === 'request' && s === 'match') ? 'active' : ''}`}>
+          <span key={s} className={`wizard-step ${step === s ? 'active' : ''}`}>
             {s === 'intent' ? 'Your needs' : s === 'match' ? 'Offers' : s === 'check' ? 'Eligibility' : s === 'review' ? 'Review' : 'Done'}
           </span>
         ))}

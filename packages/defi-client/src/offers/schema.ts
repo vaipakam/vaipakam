@@ -11,6 +11,14 @@ export const OFFER_DURATION_BUCKETS_DAYS: readonly number[] = [
 
 export const OFFER_DURATION_DEFAULT_DAYS = 30;
 
+/** Mirrors LibVaipakam.MAX_INTEREST_BPS (100% APR protocol cap). */
+const MAX_INTEREST_BPS = 10_000n;
+
+export interface OfferPayloadDecimals {
+  lending?: number;
+  collateral?: number;
+}
+
 export function formatDurationBucketLabel(days: number): string {
   if (days === 365) return '1 year';
   return `${days} days`;
@@ -22,30 +30,30 @@ export function parseInterestBps(percent: string): bigint {
   return BigInt(Math.round(n * 100));
 }
 
-export function toBorrowerOfferPayload(form: CreateOfferForm) {
+export function toBorrowerOfferPayload(
+  form: CreateOfferForm,
+  decimals: OfferPayloadDecimals = {},
+) {
   if (form.offerType !== 'borrower') throw new Error('Borrower offer required');
-  const base = toCreateOfferPayload({ ...form, offerType: 'borrower' });
-  return {
-    ...base,
-    offerType: 1,
-    amount: parseUnits(form.amount || '0', 18),
-    amountMax: 0n,
-    interestRateBps: 0n,
-    interestRateBpsMax: parseInterestBps(form.interestRate || '0'),
-    collateralAmount: parseUnits(form.collateralAmount || '0', 18),
-  };
+  return toCreateOfferPayload({ ...form, offerType: 'borrower' }, decimals);
 }
 
-export function toCreateOfferPayload(form: CreateOfferForm) {
+export function toCreateOfferPayload(
+  form: CreateOfferForm,
+  decimals: OfferPayloadDecimals = {},
+) {
   if (!form.riskAndTermsConsent) throw new Error('Risk and terms consent required');
   const duration = Number(form.durationDays);
   if (duration < MIN_OFFER_DURATION_DAYS || duration > MAX_OFFER_DURATION_DAYS) {
     throw new Error('Duration out of range');
   }
 
+  const lendingDecimals = decimals.lending ?? 18;
+  const collateralDecimals = decimals.collateral ?? 18;
+
   const isLender = form.offerType === 'lender';
-  const lendingAmount = parseUnits(form.amount || '0', 18);
-  const collateralAmount = parseUnits(form.collateralAmount || '0', 18);
+  const lendingAmount = parseUnits(form.amount || '0', lendingDecimals);
+  const collateralAmount = parseUnits(form.collateralAmount || '0', collateralDecimals);
   const rateBps = parseInterestBps(form.interestRate || '0');
   const lenderMinPartial = lendingAmount / 10n || 1n;
 
@@ -56,11 +64,11 @@ export function toCreateOfferPayload(form: CreateOfferForm) {
     lendingAsset: form.lendingAsset,
     collateralAsset: form.collateralAsset,
     amount: isLender ? lenderMinPartial : lendingAmount,
-    amountMax: isLender ? lendingAmount : 0n,
+    amountMax: lendingAmount,
     interestRateBps: isLender ? rateBps : 0n,
-    interestRateBpsMax: isLender ? 0n : rateBps,
+    interestRateBpsMax: isLender ? MAX_INTEREST_BPS : rateBps,
     collateralAmount,
-    collateralAmountMax: 0n,
+    collateralAmountMax: collateralAmount,
     durationDays: BigInt(duration),
     tokenId: 0n,
     collateralTokenId: 0n,

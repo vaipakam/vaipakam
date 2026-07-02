@@ -30,6 +30,7 @@ const ERC20_ABI = [
 const STORAGE_KEY = 'vaipakam:alpha01:tokenMeta:v1';
 const memoryCache = new Map<string, TokenMeta>();
 const inflight = new Map<string, Promise<TokenMeta>>();
+let storageSeeded = false;
 
 function loadPersisted(): Record<string, TokenMeta> {
   try {
@@ -51,9 +52,10 @@ function persist(meta: TokenMeta) {
 }
 
 function seedMemoryFromStorage() {
-  if (memoryCache.size > 0) return;
+  if (storageSeeded) return;
   const persisted = loadPersisted();
   for (const [k, v] of Object.entries(persisted)) memoryCache.set(k, v);
+  storageSeeded = true;
 }
 
 function nativeMeta(): TokenMeta {

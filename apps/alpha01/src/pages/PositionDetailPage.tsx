@@ -22,7 +22,7 @@ export function PositionDetailPage() {
   const { loanId } = useParams();
   const id = Number(loanId);
   const chain = useReadChain();
-  const { address } = useWallet();
+  const { address, isCorrectChain } = useWallet();
   const diamond = useDiamondContract();
   const origin = useIndexerOrigin();
   const { data: hf } = useLoanHealth(id);
@@ -120,17 +120,32 @@ export function PositionDetailPage() {
 
       <div style={{ marginTop: 16 }}>
         {primary.action === 'repay' ? (
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run('repay')}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !isCorrectChain}
+            onClick={() => void run('repay')}
+          >
             {primary.label}
           </button>
         ) : null}
         {primary.action === 'claim-collateral' ? (
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run('claim-borrower')}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !isCorrectChain}
+            onClick={() => void run('claim-borrower')}
+          >
             {primary.label}
           </button>
         ) : null}
         {primary.action === 'claim-lender' ? (
-          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run('claim-lender')}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || !isCorrectChain}
+            onClick={() => void run('claim-lender')}
+          >
             {primary.label}
           </button>
         ) : null}

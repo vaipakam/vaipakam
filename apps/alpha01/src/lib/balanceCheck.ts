@@ -27,6 +27,14 @@ export function parseHumanAmount(amount: string, decimals: number): bigint | nul
   }
 }
 
+function parseRawAmount(raw: string): bigint | null {
+  try {
+    return BigInt(raw);
+  } catch {
+    return null;
+  }
+}
+
 export function assessCollateralBalance(opts: {
   needHuman: string;
   needRaw?: string;
@@ -44,7 +52,7 @@ export function assessCollateralBalance(opts: {
 
   const need =
     parseHumanAmount(opts.needHuman, opts.balance.decimals) ??
-    (opts.needRaw ? BigInt(opts.needRaw) : null);
+    (opts.needRaw ? parseRawAmount(opts.needRaw) : null);
 
   const haveHuman = trimFraction(formatUnits(opts.balance.total, opts.balance.decimals));
   const meta: TokenMeta = {

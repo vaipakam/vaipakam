@@ -51,6 +51,19 @@ describe('assessCollateralBalance', () => {
     expect(result.shortfall).toBeNull();
   });
 
+  it('ignores invalid raw need strings', () => {
+    const result = assessCollateralBalance({
+      needHuman: '',
+      needRaw: 'not-a-wei-amount',
+      balance,
+      tokenAddress,
+      meta: null,
+      loading: false,
+    });
+    expect(result.sufficient).toBeNull();
+    expect(result.shortfall).toBeNull();
+  });
+
   it('reports loading state', () => {
     const result = assessCollateralBalance({
       needHuman: '0.1',

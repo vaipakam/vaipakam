@@ -189,6 +189,9 @@ export function LendWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
+      const lendingDecimals = lendingMeta?.decimals ?? peekTokenMeta(lendingAsset)?.decimals ?? 18;
+      const collateralDecimals =
+        peekTokenMeta(collateralAsset)?.decimals ?? 18;
       await createLenderOffer({
         diamond,
         publicClient,
@@ -205,6 +208,7 @@ export function LendWizard() {
           durationDays: duration,
           riskAndTermsConsent: consent,
         },
+        decimals: { lending: lendingDecimals, collateral: collateralDecimals },
       });
       setStep('done');
     } catch (e) {

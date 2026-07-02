@@ -1,7 +1,11 @@
 import type { Address, PublicClient, WalletClient } from 'viem';
 import type { DiamondHandle, TxResponse } from '../diamondClient.js';
 import type { CreateOfferForm } from '../types/offers.js';
-import { toCreateOfferPayload, toBorrowerOfferPayload } from '../offers/schema.js';
+import {
+  toCreateOfferPayload,
+  toBorrowerOfferPayload,
+  type OfferPayloadDecimals,
+} from '../offers/schema.js';
 import { ensureUserVault } from './vault.js';
 import { ensureErc20Allowance } from './allowance.js';
 
@@ -32,8 +36,9 @@ export async function createLenderOffer(opts: {
   walletClient: WalletClient;
   diamondAddress: Address;
   form: CreateOfferForm;
+  decimals?: OfferPayloadDecimals;
 }) {
-  const payload = toCreateOfferPayload(opts.form);
+  const payload = toCreateOfferPayload(opts.form, opts.decimals);
   const lockAmount = payload.amountMax > 0n ? payload.amountMax : payload.amount;
   await prepCreate({
     ...opts,
@@ -51,12 +56,15 @@ export async function createBorrowerOffer(opts: {
   walletClient: WalletClient;
   diamondAddress: Address;
   form: CreateOfferForm;
+  decimals?: OfferPayloadDecimals;
 }) {
-  const payload = toBorrowerOfferPayload(opts.form);
+  const payload = toBorrowerOfferPayload(opts.form, opts.decimals);
+  const lockAmount =
+    payload.collateralAmountMax > 0n ? payload.collateralAmountMax : payload.collateralAmount;
   await prepCreate({
     ...opts,
     lockToken: opts.form.collateralAsset as Address,
-    lockAmount: payload.collateralAmount,
+    lockAmount,
   });
   const tx = (await opts.diamond.createOffer(payload)) as TxResponse;
   await tx.wait();
