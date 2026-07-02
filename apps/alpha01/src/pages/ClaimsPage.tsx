@@ -30,7 +30,10 @@ export function ClaimsPage() {
     );
   }
 
-  const rows = [...(data?.asBorrower ?? []), ...(data?.asLender ?? [])];
+  const rows = [
+    ...(data?.asBorrower ?? []).map((loan) => ({ loan, side: 'borrower' as const })),
+    ...(data?.asLender ?? []).map((loan) => ({ loan, side: 'lender' as const })),
+  ];
 
   async function claim(loanId: number, side: 'borrower' | 'lender') {
     setBusyId(loanId);
@@ -56,18 +59,15 @@ export function ClaimsPage() {
       {msg ? <div className="banner banner-warn">{msg}</div> : null}
       {isLoading ? <p>Loading claimables…</p> : null}
       <div className="position-list">
-        {rows.map((loan) => {
-          const side = data?.asBorrower.some((l) => l.loanId === loan.loanId) ? 'borrower' : 'lender';
-          return (
-            <ClaimLoanCard
-              key={`${side}-${loan.loanId}`}
-              loan={loan}
-              side={side}
-              busy={busyId === loan.loanId}
-              onClaim={() => void claim(loan.loanId, side)}
-            />
-          );
-        })}
+        {rows.map(({ loan, side }) => (
+          <ClaimLoanCard
+            key={`${side}-${loan.loanId}`}
+            loan={loan}
+            side={side}
+            busy={busyId === loan.loanId}
+            onClaim={() => void claim(loan.loanId, side)}
+          />
+        ))}
       </div>
       {!isLoading && rows.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>

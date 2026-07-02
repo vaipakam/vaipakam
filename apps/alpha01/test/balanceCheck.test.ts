@@ -4,7 +4,7 @@ import { assessCollateralBalance } from '../src/lib/balanceCheck';
 const balance = {
   wallet: 50_000_000_000_000_000n,
   vault: 50_000_000_000_000_000n,
-  total: 100_000_000_000_000_000n,
+  total: 50_000_000_000_000_000n,
   decimals: 18,
   symbol: 'mWETH',
 };
@@ -20,7 +20,7 @@ describe('assessCollateralBalance', () => {
       meta: null,
       loading: false,
     });
-    expect(result.available?.amount).toBe('0.1');
+    expect(result.available?.amount).toBe('0.05');
     expect(result.available?.meta?.symbol).toBe('mWETH');
     expect(result.shortfall).toBeNull();
     expect(result.sufficient).toBeNull();
@@ -36,12 +36,12 @@ describe('assessCollateralBalance', () => {
     });
     expect(result.sufficient).toBe(false);
     expect(result.shortfall?.need.amount).toBe('0.2');
-    expect(result.shortfall?.have.amount).toBe('0.1');
+    expect(result.shortfall?.have.amount).toBe('0.05');
   });
 
-  it('passes when total covers need', () => {
+  it('passes when wallet balance covers need', () => {
     const result = assessCollateralBalance({
-      needHuman: '0.1',
+      needHuman: '0.05',
       balance,
       tokenAddress,
       meta: null,

@@ -9,6 +9,7 @@ export function baseEligibilityItems(opts: {
   consent: boolean;
   isSanctioned: boolean;
   sanctionsLoading: boolean;
+  sanctionsUnverified?: boolean;
 }): ChecklistItem[] {
   const items: ChecklistItem[] = [
     {
@@ -34,6 +35,13 @@ export function baseEligibilityItems(opts: {
       label: 'Checking wallet eligibility…',
       ok: false,
     });
+  } else if (opts.sanctionsUnverified) {
+    items.push({
+      id: 'sanctions',
+      label: 'Could not verify wallet eligibility',
+      ok: false,
+      fixLabel: 'Retry by reconnecting',
+    });
   } else if (opts.isSanctioned) {
     items.push({
       id: 'sanctions',
@@ -57,6 +65,7 @@ export function baseEligibilityItems(opts: {
 export function sanctionsAllowsProceed(opts: {
   isSanctioned: boolean;
   sanctionsLoading: boolean;
+  sanctionsUnverified?: boolean;
 }): boolean {
-  return !opts.sanctionsLoading && !opts.isSanctioned;
+  return !opts.sanctionsLoading && !opts.isSanctioned && !opts.sanctionsUnverified;
 }

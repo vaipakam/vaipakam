@@ -39,12 +39,27 @@ describe('baseEligibilityItems', () => {
     });
     expect(items.find((i) => i.id === 'sanctions')?.label).toBe('Checking wallet eligibility…');
   });
+
+  it('fails closed when sanctions screening cannot be verified', () => {
+    const items = baseEligibilityItems({
+      ...base,
+      isSanctioned: false,
+      sanctionsLoading: false,
+      sanctionsUnverified: true,
+    });
+    const row = items.find((i) => i.id === 'sanctions');
+    expect(row?.label).toBe('Could not verify wallet eligibility');
+    expect(row?.ok).toBe(false);
+  });
 });
 
 describe('sanctionsAllowsProceed', () => {
-  it('blocks while loading or flagged', () => {
+  it('blocks while loading, flagged, or unverified', () => {
     expect(sanctionsAllowsProceed({ isSanctioned: false, sanctionsLoading: true })).toBe(false);
     expect(sanctionsAllowsProceed({ isSanctioned: true, sanctionsLoading: false })).toBe(false);
+    expect(
+      sanctionsAllowsProceed({ isSanctioned: false, sanctionsLoading: false, sanctionsUnverified: true }),
+    ).toBe(false);
     expect(sanctionsAllowsProceed({ isSanctioned: false, sanctionsLoading: false })).toBe(true);
   });
 });

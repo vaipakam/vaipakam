@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  fetchAllOffersByCreator,
+  fetchAllOffersByCurrentHolder,
   filterActiveOffersByCreator,
 } from '@vaipakam/defi-client';
 import { useWallet } from '../context/WalletContext';
@@ -17,7 +17,7 @@ export function useMyOffers() {
     enabled: Boolean(address && origin),
     queryFn: async () => {
       if (!address || !origin) return [];
-      const all = await fetchAllOffersByCreator(origin, chain.chainId, address);
+      const all = await fetchAllOffersByCurrentHolder(origin, chain.chainId, address);
       return filterActiveOffersByCreator(all);
     },
     staleTime: 20_000,

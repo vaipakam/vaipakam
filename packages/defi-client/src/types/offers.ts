@@ -19,6 +19,7 @@ export interface IndexedOffer {
   collateralAssetType: number;
   amount: string;
   amountMax: string;
+  amountFilled?: string;
   interestRateBps: number;
   interestRateBpsMax: number;
   collateralAmount: string;

@@ -30,7 +30,7 @@ import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hoo
 import { useMode } from '../context/ModeContext';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
-import { assessCollateralBalance } from '../lib/balanceCheck';
+import { assessCollateralBalance, parseHumanAmount } from '../lib/balanceCheck';
 import {
   hasResolvedTokenDecimals,
   peekTokenMeta,
@@ -186,13 +186,18 @@ export function BorrowWizard() {
 
   const matched = useMemo(() => {
     const pool = offers ?? [];
+    const lendingDecimals = lendingMeta?.decimals ?? 18;
+    const minBorrowAmountWei = parseHumanAmount(amount, lendingDecimals) ?? undefined;
+    const parsedRate = Number(maxRate);
+    const maxRateBps = Number.isFinite(parsedRate) ? Math.round(parsedRate * 100) : undefined;
     return matchOffersToBorrowIntent(pool, {
       lendingAsset: lendingAsset || undefined,
       collateralAsset: collateralAsset || undefined,
       durationDays: Number(duration) || undefined,
-      maxRateBps: Math.round(Number(maxRate) * 100) || undefined,
+      maxRateBps,
+      minBorrowAmountWei,
     });
-  }, [offers, lendingAsset, collateralAsset, duration, maxRate]);
+  }, [amount, offers, lendingAsset, collateralAsset, duration, lendingMeta, maxRate]);
 
   const collateralToken =
     mode === 'accept' && selected ? selected.collateralAsset : collateralAsset;
@@ -235,6 +240,7 @@ export function BorrowWizard() {
         consent,
         isSanctioned: sanctions.isSanctioned,
         sanctionsLoading: sanctions.loading,
+        sanctionsUnverified: sanctions.unverified,
       }),
       ...(mode === 'request'
         ? [
@@ -289,7 +295,11 @@ export function BorrowWizard() {
 
   const allOk =
     checklist.every((i) => i.ok) &&
-    sanctionsAllowsProceed({ isSanctioned: sanctions.isSanctioned, sanctionsLoading: sanctions.loading });
+    sanctionsAllowsProceed({
+      isSanctioned: sanctions.isSanctioned,
+      sanctionsLoading: sanctions.loading,
+      sanctionsUnverified: sanctions.unverified,
+    });
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (mode === 'accept' && selected) {

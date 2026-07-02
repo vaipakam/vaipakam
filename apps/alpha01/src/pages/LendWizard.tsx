@@ -21,7 +21,9 @@ import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useBorrowerOffersForLend } from '../hooks/useBorrowerOffers';
+import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
+import { assessCollateralBalance } from '../lib/balanceCheck';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import {
@@ -142,6 +144,26 @@ export function LendWizard() {
   const selectedLendingMeta = useTokenMeta(selected?.lendingAsset ?? null);
   const selectedCollateralMeta = useTokenMeta(selected?.collateralAsset ?? null);
 
+  const fundLendingAsset = path === 'fund' && selected ? selected.lendingAsset : null;
+  const { data: fundBalance, isLoading: fundBalanceLoading } = useSpendableBalance(
+    fundLendingAsset,
+    address,
+  );
+  const fundPrincipalCheck = useMemo(
+    () =>
+      path === 'fund' && selected
+        ? assessCollateralBalance({
+            needHuman: '',
+            needRaw: selected.amount,
+            balance: fundBalance,
+            tokenAddress: selected.lendingAsset,
+            meta: selectedLendingMeta,
+            loading: fundBalanceLoading,
+          })
+        : null,
+    [fundBalance, fundBalanceLoading, path, selected, selectedLendingMeta],
+  );
+
   const checklist = useMemo(
     () => [
       ...baseEligibilityItems({
@@ -153,7 +175,20 @@ export function LendWizard() {
         consent,
         isSanctioned: sanctions.isSanctioned,
         sanctionsLoading: sanctions.loading,
+        sanctionsUnverified: sanctions.unverified,
       }),
+      ...(path === 'fund' && selected
+        ? [
+            {
+              id: 'principal-balance',
+              label:
+                fundPrincipalCheck?.sufficient === false
+                  ? 'Insufficient wallet balance to fund principal'
+                  : 'Wallet has enough principal to fund',
+              ok: fundPrincipalCheck?.sufficient === true,
+            },
+          ]
+        : []),
       ...(path === 'create'
         ? [
             { id: 'amount', label: 'Lend amount entered', ok: Number(amount) > 0 },
@@ -182,15 +217,21 @@ export function LendWizard() {
       isCorrectChain,
       lendingAsset,
       lendingMeta,
+      fundPrincipalCheck,
       path,
       sanctions,
+      selected,
       switchToAppChain,
     ],
   );
 
   const allOk =
     checklist.every((i) => i.ok) &&
-    sanctionsAllowsProceed({ isSanctioned: sanctions.isSanctioned, sanctionsLoading: sanctions.loading });
+    sanctionsAllowsProceed({
+      isSanctioned: sanctions.isSanctioned,
+      sanctionsLoading: sanctions.loading,
+      sanctionsUnverified: sanctions.unverified,
+    });
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (path === 'fund' && selected) {

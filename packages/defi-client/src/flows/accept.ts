@@ -48,7 +48,7 @@ export async function acceptOfferFlow(opts: {
       }
     }
   } else if (opts.offer.assetType === ASSET_TYPE_ERC20) {
-    const rawAmount = opts.offer.amountMax || opts.offer.amount;
+    const rawAmount = opts.offer.amount;
     const amount = BigInt(rawAmount || '0');
     if (amount > 0n) {
       await ensureErc20Allowance({

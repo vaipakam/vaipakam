@@ -51,7 +51,12 @@ export function borrowerPrimaryAction(opts: {
     }
   }
   if (opts.role === 'lender') {
-    if (opts.loanStatus === 'repaid' || opts.loanStatus === 'settled') {
+    if (
+      opts.loanStatus === 'repaid' ||
+      opts.loanStatus === 'settled' ||
+      opts.loanStatus === 'defaulted' ||
+      opts.loanStatus === 'liquidated'
+    ) {
       return { action: 'claim-lender', label: 'Claim lender proceeds' };
     }
   }

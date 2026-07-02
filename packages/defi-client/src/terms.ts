@@ -131,18 +131,17 @@ export async function signAcceptTerms(opts: {
     prepayAsset: o.prepayAsset as Address,
     useFullTermInterest: Boolean(o.useFullTermInterest),
     allowsPartialRepay: Boolean(o.allowsPartialRepay),
-    allowsPrepayListing: false,
-    allowsParallelSale: false,
-    refinanceTargetLoanId: 0n,
+    allowsPrepayListing: Boolean(o.allowsPrepayListing),
+    allowsParallelSale: Boolean(o.allowsParallelSale),
+    refinanceTargetLoanId: (o.refinanceTargetLoanId as bigint) ?? 0n,
     linkedLoanId,
     parallelSaleOrderHash:
-      '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex,
-    periodicInterestCadence: 0,
+      ((o.parallelSaleOrderHash as Hex | undefined) ??
+        '0x0000000000000000000000000000000000000000000000000000000000000000') as Hex,
+    periodicInterestCadence: Number(o.periodicInterestCadence ?? 0),
     riskAndTermsConsent: opts.consent,
-    acknowledgedIlliquidLendingAsset:
-      '0x0000000000000000000000000000000000000000' as Address,
-    acknowledgedIlliquidCollateralAsset:
-      '0x0000000000000000000000000000000000000000' as Address,
+    acknowledgedIlliquidLendingAsset: o.lendingAsset as Address,
+    acknowledgedIlliquidCollateralAsset: o.collateralAsset as Address,
     nonce,
     deadline,
     riskTermsHash,

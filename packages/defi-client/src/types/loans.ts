@@ -12,6 +12,8 @@ export interface IndexedLoan {
     | 'internal_matched';
   lender: string;
   borrower: string;
+  lenderCurrentOwner?: string | null;
+  borrowerCurrentOwner?: string | null;
   principal: string;
   collateralAmount: string;
   lendingAsset: string;

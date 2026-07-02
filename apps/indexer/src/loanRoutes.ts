@@ -109,6 +109,8 @@ function loanToJson(row: LoanRow): Record<string, unknown> {
     collateralTokenId: row.collateral_token_id,
     lenderTokenId: row.lender_token_id,
     borrowerTokenId: row.borrower_token_id,
+    lenderCurrentOwner: row.lender_current_owner,
+    borrowerCurrentOwner: row.borrower_current_owner,
     interestRateBps: row.interest_rate_bps,
     startTime: row.start_time,
     allowsPartialRepay: row.allows_partial_repay === 1,

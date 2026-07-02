@@ -6,14 +6,10 @@ export async function checkSanctioned(
   diamondAddress: Address,
   who: Address,
 ): Promise<boolean> {
-  try {
-    return (await publicClient.readContract({
-      address: diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'isSanctionedAddress',
-      args: [who],
-    })) as boolean;
-  } catch {
-    return false;
-  }
+  return (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'isSanctionedAddress',
+    args: [who],
+  })) as boolean;
 }

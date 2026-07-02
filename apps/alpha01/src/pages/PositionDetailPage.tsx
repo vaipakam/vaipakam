@@ -8,6 +8,7 @@ import {
   fetchLoanById,
   formatBpsAsPercent,
   plainHealthLabel,
+  loanRoleForWallet,
   repayLoanFull,
 } from '@vaipakam/defi-client';
 import { AssetAmount } from '../components/AssetAmount';
@@ -46,9 +47,8 @@ export function PositionDetailPage() {
   if (isLoading) return <p>Loading loan…</p>;
   if (!loan) return <p>Loan not found.</p>;
 
-  const isLender = address?.toLowerCase() === loan.lender.toLowerCase();
-  const isBorrower = address?.toLowerCase() === loan.borrower.toLowerCase();
-  const role = isBorrower ? 'borrower' : isLender ? 'lender' : 'other';
+  const role = loanRoleForWallet(loan, address);
+  const isBorrower = role === 'borrower';
   const health = plainHealthLabel(isBorrower ? hf : null);
   const primary = borrowerPrimaryAction({
     role: role === 'other' ? 'other' : role,

@@ -64,7 +64,8 @@ export function useSpendableBalance(
       return {
         wallet,
         vault,
-        total: wallet + vault,
+        /** Wallet-only — vault custody is not spendable for new locks/approvals. */
+        total: wallet,
         decimals: Number(decimalsRaw),
         symbol: symbolRaw || 'tokens',
       };

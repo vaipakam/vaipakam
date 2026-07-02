@@ -8,6 +8,7 @@ export * from './indexer/activity.js';
 export * from './types/activity.js';
 export * from './preflight/sanctions.js';
 export * from './health.js';
+export * from './loans/role.js';
 export * from './flows/allowance.js';
 export * from './flows/vault.js';
 export * from './offers/schema.js';
