@@ -1936,8 +1936,15 @@ function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
   return 'Ready from deployment';
 }
 
+function hasOnlyPricingOrAmountBlockers(encodingBlockers: string[]) {
+  return encodingBlockers.length > 0 && encodingBlockers.every((blocker) => blocker.includes('Oracle-priced collateral sizing') || blocker.includes('Enter a valid decimal amount'));
+}
+
 function guidedSimulationStatus(calldata: Hex | null, encodingBlockers: string[]) {
-  if (!calldata) return encodingBlockers.length > 0 ? 'Waiting for token setup' : 'Unavailable until calldata is ready';
+  if (!calldata) {
+    if (encodingBlockers.length === 0) return 'Unavailable until calldata is ready';
+    return hasOnlyPricingOrAmountBlockers(encodingBlockers) ? 'Waiting for collateral pricing' : 'Waiting for token setup';
+  }
   return 'Ready for eth_call simulation';
 }
 
@@ -1958,8 +1965,7 @@ function encodeGuidedCreateOfferDraft({
 }): { calldata: Hex | null; status: string } {
   if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
   if (encodingBlockers.length > 0) {
-    const pricingOrAmountOnly = encodingBlockers.every((blocker) => blocker.includes('Oracle-priced collateral sizing') || blocker.includes('Enter a valid decimal amount'));
-    return { calldata: null, status: pricingOrAmountOnly ? 'Waiting for amount or collateral pricing' : 'Waiting for token setup' };
+    return { calldata: null, status: hasOnlyPricingOrAmountBlockers(encodingBlockers) ? 'Waiting for amount or collateral pricing' : 'Waiting for token setup' };
   }
   if (!amountInput || !collateralAmountInput) return { calldata: null, status: 'Waiting for priced collateral sizing' };
   if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
@@ -2437,6 +2443,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
     if (guidedDeploymentAssetAddress(symbol)) return;
     const envEntry = resolveGuidedAssetEnvOverride(symbol);
     const current = assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
+    if (field === 'decimals' && !current.address) return;
     const nextEntry = { ...current, [field]: value.trim() };
     const next = { ...assetOverrides, [symbol]: nextEntry };
     if (!nextEntry.address) {
@@ -2509,6 +2516,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                 ? 'Originally resolved from environment. Browser override is saved for this device.'
                 : 'Resolved from environment. Editing stores a browser override for this device.';
               const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
+              const decimalsDisabled = Boolean(deploymentAddress || !entry.address);
               const decimalsValue = Number(entry.decimals);
               const decimalsValid = !entry.decimals || (Number.isInteger(decimalsValue) && decimalsValue >= 0 && decimalsValue <= 36);
               return (
@@ -2532,11 +2540,13 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                       onChange={(event) => updateAssetOverride(symbol, 'decimals', event.target.value)}
                       placeholder={defaultDecimals === null ? '18' : String(defaultDecimals)}
                       readOnly={Boolean(deploymentAddress)}
+                      disabled={decimalsDisabled}
                       aria-invalid={!decimalsValid}
                     />
                   </label>
                   {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
                   {sourcedFromEnv ? <small>{envNote}</small> : null}
+                  {!deploymentAddress && !entry.address ? <small>Add a token address before changing decimals.</small> : null}
                   {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
                   {!deploymentAddress && !decimalsValid ? <small className="inline-error">Enter a whole number between 0 and 36.</small> : null}
                 </div>
