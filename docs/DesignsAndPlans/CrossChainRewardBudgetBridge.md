@@ -74,10 +74,27 @@ All four inputs are already on Base after finalization:
 - `globalLenderNum[D]` = `s.dailyGlobalLenderInterestNumeraire18[D]`
   (written by finalize); borrower analogous.
 
-Because Σ over chains of `chainNum` = `globalNum`, Σ over chains of
-`budget[·][D]` = `halfPool[D]` (lender) + `halfPool[D]` (borrower) =
-that day's full emission. So the remittances partition the 69M pool
-exactly — no over-emission is possible from the slice math itself.
+**Zero-denominator guard (as-built):** each half is added only when its
+global denominator is non-zero — a finalized day with no activity on one
+side (`globalLenderNum == 0`, e.g. every clean-repay was borrower-side)
+contributes 0 from that half instead of dividing by zero. `halfPool == 0`
+(day 0 / pre-emissions) short-circuits to a zero slice.
+
+**Participation gate (as-built):** the slice is non-zero ONLY for a chain
+whose numerator was actually folded into `D`'s finalized denominator —
+tracked by a per-day `chainDailyIncluded[D][chainId]` flag that
+`RewardAggregatorFacet._finalizeAndWrite` sets for each expected+reported
+chain. This closes the "ops removed a chain from `expectedSourceChainIds`
+after it reported but before `finalizeDay`" hole: that chain is excluded
+from `globalNum` yet keeps its stale `chainDailyNum`, so an ungated slice
+would divide the stale numerator by the smaller denominator and over-send.
+The flag snapshots participation AT finalize, so it is also immune to any
+post-finalize expected-set edit.
+
+Because Σ over *included* chains of `chainNum` = `globalNum`, Σ over those
+chains of `budget[·][D]` = `halfPool[D]` (lender) + `halfPool[D]`
+(borrower) = that day's full emission. So the remittances partition the
+69M pool exactly — no over-emission is possible from the slice math itself.
 
 **Rounding:** integer division floors each slice; the dust (≤ nChains
 wei per half per day) stays on Base. Base is a consumer chain too, so
@@ -98,12 +115,26 @@ pool. A per-`(chainId, dayId)` non-zero entry blocks re-remittance
 (idempotent; safe to retry a whole batch — already-sent days are
 skipped).
 
+**The reservation is symmetric (as-built).** The guard above runs on the
+remit side, but the Base *claim* side must reserve remitted budget too, or
+Base could pay its own claimants the VPFI already shipped to mirrors and
+jointly breach the 69M cap. So `LibInteractionRewards.poolRemaining()` and
+the `InteractionRewardsFacet` claim/sweep caps subtract
+`interactionPoolPaidOut + rewardBudgetRemittedGlobal` (not just
+`paidOut`), and `getInteractionSnapshot()` reports the same reserved
+`remaining`. `rewardBudgetRemittedGlobal` is Base-only (remittance is
+`onlyCanonical`), so on a mirror it is 0 and the bound collapses to the
+plain `CAP − paidOut`.
+
 Mirror-side (observability only — claims draw from raw balance, so this
 is not load-bearing for payout):
 ```
-mapping(uint256 => uint256) rewardBudgetReceived; // dayId => amount, for reconciliation/monitoring
-uint256                     rewardBudgetReceivedTotal;
+address rewardRemittanceReceiver;   // the receiver authorized to call the ingress
+uint256 rewardBudgetReceivedTotal;  // cumulative VPFI credited from Base, for reconciliation
 ```
+(A per-day received map was considered but dropped — the batch's `dayIds`
+ride the `RewardBudgetReceived` event for reconciliation, so only the
+running total needs to persist.)
 
 ## 5. Base-side sender — `RewardRemittanceFacet`
 
@@ -111,22 +142,37 @@ New facet (keeps `RewardAggregatorFacet` under the EIP-170 size limit;
 verify at build):
 
 ```solidity
-function remitRewardBudget(uint32 dstChainId, uint256[] calldata dayIds)
-    external payable /* onlyOwner or onlyRewardKeeper — see §9 open Q */
+function remitRewardBudget(
+    uint32 dstChainId,
+    uint256[] calldata dayIds,
+    uint256 perRemittanceCap        // operator/keeper sizes it under the live lane (§7)
+) external payable /* ADMIN or the optional rewardRemittanceKeeper (§9.1) */
 {
+    // reject empty dayIds; require perRemittanceCap in (0, CAP]
     // for each dayId:
-    //   require s.dailyGlobalFinalized[dayId]              (else NotFinalized)
-    //   require rewardBudgetRemitted[dstChainId][dayId]==0 (else AlreadyRemitted — skip, don't revert the batch)
-    //   slice = _computeSlice(dstChainId, dayId)           (§3)
-    //   mark rewardBudgetRemitted[dstChainId][dayId] = slice; accumulate total
-    // guard: rewardBudgetRemittedGlobal + interactionPoolPaidOut <= CAP
-    // guard: total <= perRemittanceCap (§7 rate-limit safety)
+    //   require s.dailyGlobalFinalized[dayId]              (else RewardDayNotFinalized)
+    //   if rewardBudgetRemitted[dstChainId][dayId] != 0 → CONTINUE (skip; NOT a revert)
+    //   slice = LibInteractionRewards.chainRewardBudgetForDay(dstChainId, dayId) (§3)
+    //   if slice > 0: mark rewardBudgetRemitted[dstChainId][dayId] = slice; total += slice
+    //        (writing the marker on the first pass also de-dupes a dayId repeated in this call)
+    // if total == 0 → revert NothingToRemit
+    // guard: total <= perRemittanceCap                    (else RemittanceExceedsCap)
+    // guard: rewardBudgetRemittedGlobal + interactionPoolPaidOut + total <= CAP (else RewardPoolCapExceeded)
+    // effects (CEI): rewardBudgetRemittedGlobal += total; rewardBudgetRemittedTotal[dst] += total
     // approve CcipMessenger for `total` canonical VPFI (exact amount, per feedback_token_approvals)
+    // fee = CcipMessenger.quoteMessageFee(...); require msg.value >= fee
     // CcipMessenger.sendMessage{value: fee}(
-    //     dstChainId, payload=abi.encode(dayIds, slices, total), [TokenAmount(vpfi, total)], destGasLimit)
-    // emit RewardBudgetRemitted(dstChainId, dayIds, total, messageId)
+    //     dstChainId, payload=abi.encode(dayIds, total), [TokenAmount(vpfi, total)], destGasLimit)
+    // refund (msg.value - fee) to msg.sender
+    // emit RewardBudgetRemitted(dstChainId, total, dayIds.length, messageId)
 }
 ```
+
+Note `perRemittanceCap` is a first-class parameter of the send API (not a
+storage knob) so each send is independently chunked. Already-remitted days
+are **skipped, not reverted** — a whole-batch retry after a partial/failed
+send is safe (§8). Marking the first occurrence of a day also collapses an
+accidentally-duplicated `dayId` within one call to a single slice.
 
 The canonical 69M pool is held on Base, so the VPFI to send comes from
 the Base Diamond's balance (locked into the CCT `LockReleaseTokenPool`
@@ -134,8 +180,14 @@ on send; an equal amount of `VPFIMirrorToken` is minted on the
 destination — 1:1 CCT invariant preserved).
 
 A companion view `quoteRewardBudget(dstChainId, dayIds) → (total, perDay[])`
-lets the keeper/operator compute amounts + `CcipMessenger.quoteMessageFee`
-before sending.
+lets the keeper/operator compute the VPFI amounts (it applies the same
+skip/de-dup as the send path). **CCIP fee:** the keeper can't call
+`CcipMessenger.quoteMessageFee` directly — the messenger authorizes quotes
+by `channelOf[msg.sender]`, and the keeper EOA is not a registered handler.
+For PR1 the fee is handled by over-paying `msg.value` on
+`remitRewardBudget` and receiving the surplus back (the refund line above);
+a convenience Diamond-side fee-quote view (the Diamond *is* the handler, so
+it can quote) lands with the keeper automation in PR4.
 
 ## 6. Mirror-side receiver — `RewardRemittanceReceiver`
 
@@ -145,9 +197,12 @@ Per-mirror UUPS contract mirroring `BuybackRemittanceReceiver`:
   `tokens[0].token == vpfiMirror`; `tokens[0].amount == decoded total`
   (declared-vs-delivered check, exactly like `BuybackRemittanceReceiver`).
 - Forwards the delivered `VPFIMirrorToken` into the mirror Diamond
-  (`safeTransfer(diamond, amount)`) and calls a thin ingress
-  `IRewardBudgetIngress(diamond).onRewardBudgetReceived(dayIds, slices)`
-  to record `rewardBudgetReceived` for monitoring.
+  (`safeTransfer(diamond, amount)`, fee-on-transfer-safe: it credits the
+  Diamond's actual balance delta) and calls the thin ingress
+  `IRewardBudgetIngress(diamond).onRewardBudgetReceived(token, amount, dayIds, sourceChainId)`
+  to record `rewardBudgetReceivedTotal` + emit for monitoring. The payload
+  is `abi.encode(dayIds, total)`; the receiver cross-checks
+  `tokens[0].amount == total` (declared-vs-delivered).
 - `GuardianPausable` on the receive path (matches every cross-chain
   contract); a paused inbound reverts and CCIP marks it re-executable.
 
@@ -177,10 +232,13 @@ Claims are unchanged: the Diamond's now-funded balance satisfies
   message, manually re-executable once unpaused — nothing is lost (same
   guarantee as the buyback path).
 - **Partial finalization:** `remitRewardBudget` only accepts days where
-  `dailyGlobalFinalized[dayId]` — a zeroed/forced-finalized chain
-  (Insurance-pool reconciliation, IncidentRunbook §2) still finalizes,
-  so its slice is computed against the finalized denominator like any
-  other.
+  `dailyGlobalFinalized[dayId]`. A chain zeroed at finalization — because
+  the grace window elapsed before it reported, or `forceFinalizeDay`
+  closed the day early (Insurance-pool reconciliation, IncidentRunbook §2)
+  — is NOT flagged in `chainDailyIncluded[D]`, so its slice is **zero**
+  and it can never spend budget that belongs to the chains actually folded
+  into `D`'s denominator (§3 participation gate). A chain that DID report
+  and WAS included finalizes and remits normally.
 - **Re-org / late marker:** remittance runs only against finalized
   (immutable) day state, so no re-org exposure beyond CCIP's own.
 
