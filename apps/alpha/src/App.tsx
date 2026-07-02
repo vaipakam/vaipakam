@@ -60,6 +60,7 @@ type WalletState = {
 type FlowKind = 'earn' | 'borrow' | 'rent';
 type OfferKind = 'lend' | 'borrow' | 'rent';
 type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
+type GuidedSimulationResult = { status: 'not-run' | 'running' | 'passed' | 'failed'; message: string };
 
 declare global {
   interface Window {
@@ -834,15 +835,18 @@ function FlowPage({
   const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
   const [reviewed, setReviewed] = useState(false);
   const [planPrepared, setPlanPrepared] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
 
   useEffect(() => {
     setReviewed(false);
     setPlanPrepared(false);
+    setSimulationResult({ status: 'not-run', message: 'Not run yet' });
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
     setReviewed(false);
     setPlanPrepared(false);
+    setSimulationResult({ status: 'not-run', message: 'Not run yet' });
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
@@ -852,6 +856,8 @@ function FlowPage({
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
+  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
+  const simulationMessage = simulationResult.status === 'not-run' ? transactionPlan.contractDraft.simulationStatus : simulationResult.message;
   const prepareActionLabel = planPrepared
     ? 'Saved in portfolio'
     : preflightGapCount > 0
@@ -884,6 +890,30 @@ function FlowPage({
       setReviewed(true);
     }
   };
+  const runGuidedSimulation = async () => {
+    const calldata = transactionPlan.contractDraft.calldata;
+    const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
+    const ethereum = window.ethereum;
+    if (!reviewedOnReadyWallet || !calldata || !diamond || !wallet.account || actionsPaused) {
+      setSimulationResult({ status: 'failed', message: 'Simulation is unavailable until wallet, network, target, and calldata are ready.' });
+      return;
+    }
+    if (!ethereum) {
+      setSimulationResult({ status: 'failed', message: 'No injected wallet provider is available for eth_call simulation.' });
+      return;
+    }
+    setSimulationResult({ status: 'running', message: 'Running eth_call simulation...' });
+    try {
+      await ethereum.request({
+        method: 'eth_call',
+        params: [{ from: wallet.account, to: diamond, data: calldata }, 'latest'],
+      });
+      setSimulationResult({ status: 'passed', message: 'Simulation passed with eth_call. Wallet submission remains blocked until balance, allowance, and risk checks pass.' });
+    } catch (error) {
+      setSimulationResult({ status: 'failed', message: 'Simulation failed: ' + formatSimulationError(error) });
+    }
+  };
+
   const prepareGuidedAction = () => {
     if (!reviewed || !canProceed || actionsPaused) return;
     onPrepareAction({
@@ -899,7 +929,7 @@ function FlowPage({
       preflightGapCount,
       calldataStatus: transactionPlan.contractDraft.calldataStatus,
       calldataPreview: transactionPlan.contractDraft.calldata ? shortCalldata(transactionPlan.contractDraft.calldata) : null,
-      simulationStatus: transactionPlan.contractDraft.simulationStatus,
+      simulationStatus: simulationMessage,
     });
     setPlanPrepared(true);
   };
@@ -1036,7 +1066,7 @@ function FlowPage({
               <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
               <Metric label="Asset source" value={transactionPlan.contractDraft.assetSource} />
               <Metric label="Calldata" value={transactionPlan.contractDraft.calldataStatus} />
-              <Metric label="Simulation" value={transactionPlan.contractDraft.simulationStatus} />
+              <Metric label="Simulation" value={simulationMessage} />
             </div>
             {transactionPlan.contractDraft.calldata ? (
               <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
@@ -1046,6 +1076,15 @@ function FlowPage({
                 {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {blocker}</li>)}
               </ul>
             ) : null}
+            <div className={simulationResult.status === 'failed' ? 'simulation-check failed' : simulationResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
+              <div>
+                <span className="position-kind">No-send simulation</span>
+                <strong>{simulationMessage}</strong>
+              </div>
+              <button className="secondary-action" type="button" onClick={runGuidedSimulation} disabled={!simulationCanRun || simulationResult.status === 'running'}>
+                {simulationResult.status === 'running' ? 'Simulating...' : 'Run simulation'}
+              </button>
+            </div>
           </section>
           <ol className="plan-steps">
             {transactionPlan.sequence.map((step) => <li key={step}>{step}</li>)}
@@ -1480,6 +1519,13 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   );
 }
 
+
+function formatSimulationError(error: unknown) {
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return 'provider rejected the eth_call request';
+}
 
 function formatFlowAmount(flow: GuidedFlow, numericAmount: number) {
   if (flow.kind === 'rent') return numericAmount.toLocaleString() + ' day' + (numericAmount === 1 ? '' : 's');
