@@ -761,6 +761,12 @@ function FlowPage({
     setReviewed(false);
   }, [flow.kind, selectedAsset, amount]);
 
+  useEffect(() => {
+    if (!walletReady || !isBaseSepolia) {
+      setReviewed(false);
+    }
+  }, [walletReady, isBaseSepolia, wallet.account]);
+
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
   const actionLabel = actionsPaused
@@ -1031,8 +1037,11 @@ const vpfiTiers = [
 function VaultUtility({ wallet }: { wallet: WalletState }) {
   const [tab, setTab] = useState<VaultTab>('assets');
   const connected = Boolean(wallet.account);
-  const freeCount = vaultAssets.filter((asset) => asset.free !== '0').length;
-  const lockedCount = vaultAssets.filter((asset) => asset.locked !== '0' && asset.locked !== '0.00').length;
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const canPreviewVault = connected && baseReady;
+  const visibleVaultAssets = canPreviewVault ? vaultAssets : [];
+  const freeCount = visibleVaultAssets.filter((asset) => asset.free !== '0').length;
+  const lockedCount = visibleVaultAssets.filter((asset) => asset.locked !== '0' && asset.locked !== '0.00').length;
 
   return (
     <div className="vault-page">
@@ -1044,7 +1053,7 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
         <div className="panel-surface">
           <p className="eyebrow">Wallet</p>
           <strong>{connected ? 'Connected' : 'Read only'}</strong>
-          <span>{wallet.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Base Sepolia' : 'Switch for actions'}</span>
+          <span>{baseReady ? 'Base Sepolia' : 'Switch for actions'}</span>
         </div>
         <div className="panel-surface">
           <p className="eyebrow">Free assets</p>
@@ -1078,7 +1087,13 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
         </section>
       ) : (
         <section className="vault-table panel-surface" aria-label="Vault assets">
-          {vaultAssets.map((asset) => (
+          {!canPreviewVault ? (
+            <div className="empty-state">
+              <h3>{connected ? 'Switch to Base Sepolia to review vault balances' : 'Connect wallet to review vault balances'}</h3>
+              <p>Wallet-specific vault rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
+            </div>
+          ) : null}
+          {visibleVaultAssets.map((asset) => (
             <article className="vault-row" key={asset.asset} aria-label={asset.asset + ' vault balance'}>
               <strong>{asset.asset}</strong>
               <span>Free: {asset.free}</span>
@@ -1202,7 +1217,12 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const blocker = actionsPaused ? 'Actions paused in Settings' : !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
   const receiptRows = buildOfferReceiptRows(selectedOffer);
-  const reviewed = reviewedOfferId === selectedOffer.id;
+  const reviewed = reviewedOfferId === selectedOffer.id && walletReady && baseReady;
+  useEffect(() => {
+    if (!walletReady || !baseReady) {
+      setReviewedOfferId(null);
+    }
+  }, [walletReady, baseReady, wallet.account]);
   const selectOfferFilter = (nextFilter: OfferKind | 'all') => {
     setFilter(nextFilter);
     const nextVisibleOffers = marketOffers.filter((offer) => nextFilter === 'all' || offer.kind === nextFilter);
@@ -1255,7 +1275,7 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
           <button
             className="primary-action wide"
             type="button"
-            disabled={reviewed}
+            disabled={actionsPaused || reviewed}
             onClick={() => { if (actionsPaused) return; if (!walletReady) { onConnectWallet(); return; } if (!baseReady) { onSwitchNetwork(); return; } setReviewedOfferId(selectedOffer.id); }}
           >
             {reviewed ? 'Reviewed locally' : blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
@@ -1304,9 +1324,11 @@ function Activity({ wallet }: { wallet: WalletState }) {
   const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([]);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
-  const visibleItems = activityItems.filter((item) => filter === 'all' || item.source === filter);
-  const reviewCount = activityItems.filter((item) => item.status === 'Needs review').length;
-  const localCount = activityItems.filter((item) => item.status === 'Local queue').length;
+  const canPreviewActivity = walletReady && baseReady;
+  const scopedActivityItems = canPreviewActivity ? activityItems : [];
+  const visibleItems = scopedActivityItems.filter((item) => filter === 'all' || item.source === filter);
+  const reviewCount = scopedActivityItems.filter((item) => item.status === 'Needs review').length;
+  const localCount = scopedActivityItems.filter((item) => item.status === 'Local queue').length;
   const acknowledgedCount = acknowledgedIds.length;
 
   const acknowledge = (id: string) => {
@@ -1352,6 +1374,12 @@ function Activity({ wallet }: { wallet: WalletState }) {
       </section>
 
       <section className="activity-list panel-surface" aria-label="Readable activity timeline">
+        {!canPreviewActivity ? (
+          <div className="empty-state">
+            <h3>{walletReady ? 'Switch to Base Sepolia to review activity' : 'Connect wallet to review activity'}</h3>
+            <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
+          </div>
+        ) : null}
         {visibleItems.map((item) => {
           const acknowledged = acknowledgedIds.includes(item.id);
           return (
