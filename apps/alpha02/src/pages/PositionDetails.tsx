@@ -17,6 +17,7 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
+  erc20Abi,
   parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
@@ -257,6 +258,20 @@ export function PositionDetails() {
           args: [BigInt(row.loanId)],
         })) as bigint;
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
+          // approve() succeeds no matter the balance — check the wallet
+          // actually holds the full amount due BEFORE asking for an
+          // approval signature, so a short wallet gets a plain "you
+          // need more X" instead of a doomed approve→revert pair.
+          const held = await publicClient.readContract({
+            address: row.lendingAsset as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          });
+          if (held < totalDue) {
+            setError(copy.errors.needMore(principalMeta.data?.symbol ?? 'the repayment asset'));
+            return;
+          }
           // The owed amount STEPS UP at each elapsed-day boundary
           // (whole-day interest flooring) and by 0.5%/day late fee —
           // an exact-amount approval can be short by the time repayLoan
@@ -510,6 +525,10 @@ export function PositionDetails() {
                 !onSupportedChain ||
                 !sanctionsClear ||
                 collateralInputWei === null ||
+                // balance still loading → over-balance can't be judged
+                // yet, so hold the button rather than let a short
+                // wallet through to a doomed approval.
+                collateralBalance.data === undefined ||
                 collateralOverBalance
               }
               onClick={() => void runAddCollateral()}
@@ -554,6 +573,7 @@ export function PositionDetails() {
                 busy ||
                 !onSupportedChain ||
                 partialInputWei === null ||
+                principalBalance.data === undefined ||
                 partialOverBalance
               }
               onClick={() => void runPartialRepay()}

@@ -30,7 +30,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import {
   ensureAllowance,
@@ -396,6 +396,9 @@ export function OfferFlow({ side }: { side: Side }) {
           o.assetType === AssetType.ERC20 &&
           o.collateralAssetType === AssetType.ERC20 &&
           o.lendingAsset.toLowerCase() === form.lendingAsset.toLowerCase() &&
+          // Partially-filled offers are matcher-only: acceptOffer reverts
+          // OfferPartiallyFilled, so never surface them as pickable.
+          BigInt(o.amountFilled || '0') === 0n &&
           (!address || o.creator.toLowerCase() !== address.toLowerCase()),
       )
       .sort((a, b) => {
@@ -554,9 +557,16 @@ export function OfferFlow({ side }: { side: Side }) {
     selectedCollateralMeta.data,
   ]);
 
+  const isOwnSelectedOffer =
+    mode === 'accept' &&
+    selected !== null &&
+    Boolean(address) &&
+    selected.creator.toLowerCase() === address!.toLowerCase();
+
   const canSign =
     allChecksPass(checks) &&
     receipt !== null &&
+    !isOwnSelectedOffer &&
     (mode === 'accept' ? selected !== null : formError === null) &&
     // The wallet client hydrates asynchronously after `isConnected`
     // flips true — without this gate a click in that window would
@@ -602,6 +612,25 @@ export function OfferFlow({ side }: { side: Side }) {
     // different chain is a different offer; never cross that silently.
     if (selected.chainId !== walletChain.chainId) {
       throw new Error(copy.match.termsChanged);
+    }
+    // Re-check ownership at SUBMIT time: the wallet may have connected
+    // (or changed) after the offer was selected while disconnected.
+    if (selected.creator.toLowerCase() === address.toLowerCase()) {
+      throw new Error(copy.match.ownOffer);
+    }
+    // The contract screens the offer CREATOR too — if they were
+    // flagged after posting, the accept is doomed; fail before any
+    // signature or approval (fail-open on read errors).
+    const creatorFlagged = await publicClient
+      .readContract({
+        address: walletChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'isSanctionedAddress',
+        args: [selected.creator as `0x${string}`],
+      })
+      .catch(() => false);
+    if (creatorFlagged) {
+      throw new Error(copy.match.counterpartyBlocked);
     }
     // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row.

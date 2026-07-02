@@ -17,7 +17,11 @@ const NFT_ABI = parseAbi([
   'function balanceOf(address account, uint256 id) view returns (uint256)',
   'function isApprovedForAll(address owner, address operator) view returns (bool)',
   'function setApprovalForAll(address operator, bool approved)',
+  'function supportsInterface(bytes4 interfaceId) view returns (bool)',
 ]);
+
+/** ERC-165 interface id for IERC4907 (rentable-NFT user rights). */
+const IERC4907_INTERFACE_ID = '0xad092b5c' as const;
 
 export type NftStandard = typeof AssetType.ERC721 | typeof AssetType.ERC1155;
 
@@ -67,6 +71,39 @@ export function useNftOwnership(
         const needed = BigInt(quantity || '1');
         return balance >= (needed > 0n ? needed : 1n);
       } catch {
+        return null;
+      }
+    },
+  });
+}
+
+/** Does this ERC-721 collection implement IERC4907 (on-chain renter
+ *  rights)? The vault rents non-4907 NFTs too — it keeps its own renter
+ *  registry and only FORWARDS setUser when the collection supports it
+ *  (VaipakamVaultImplementation.setUser) — so `false` is a heads-up,
+ *  not a blocker: apps outside Vaipakam won't see the renter.
+ *  `undefined` while loading, `null` when the read failed. */
+export function useNftRentalSupport(contract: string, standard: NftStandard) {
+  const { walletChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const enabled =
+    standard === AssetType.ERC721 && isAddressLike(contract) && Boolean(publicClient);
+
+  return useQuery({
+    queryKey: ['nftRentalSupport', walletChain?.chainId, contract.toLowerCase()],
+    enabled,
+    queryFn: async (): Promise<boolean | null> => {
+      try {
+        return await publicClient!.readContract({
+          address: contract as `0x${string}`,
+          abi: NFT_ABI,
+          functionName: 'supportsInterface',
+          args: [IERC4907_INTERFACE_ID],
+        });
+      } catch {
+        // ERC-721 mandates ERC-165, so a revert usually means "no such
+        // method" → effectively unsupported; transport failures land
+        // here too, so report "couldn't check" rather than a hard no.
         return null;
       }
     },

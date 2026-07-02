@@ -104,6 +104,8 @@ export const copy = {
       'That’s your own offer — you can cancel it from My positions, but you can’t accept it yourself.',
     offerGone:
       'That offer is no longer open. Browse current matches below or post your own.',
+    counterpartyBlocked:
+      'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
       'We couldn’t find that offer — the link may be old, or the data source is catching up. Browse current offers below.',
     termsChanged:
@@ -165,6 +167,10 @@ export const copy = {
       'We couldn’t load rental listings right now. Please try again in a moment.',
     notDebt:
       'A rental is not a loan: there’s nothing to repay — your fees are prepaid and your rights simply end when the term does.',
+    no4907Warning:
+      'Heads up: this NFT collection doesn’t support the on-chain rental standard (ERC-4907). Renting still works — Vaipakam tracks the renter’s use rights in your vault — but apps and games outside Vaipakam won’t recognise the renter.',
+    no4907Unknown:
+      'We couldn’t check whether this NFT collection supports the on-chain rental standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the renter — renting inside Vaipakam still works.',
   },
 
   positions: {
@@ -253,6 +259,10 @@ export const copy = {
     empty: 'No activity yet. It appears here as you use Vaipakam.',
     unavailable:
       'We couldn’t load your activity right now. Please try again in a moment.',
+    truncatedNote:
+      'Showing recent activity only — the protocol feed is busy and older events may not be listed.',
+    truncatedEmpty:
+      'Nothing of yours in recent protocol activity. Older events may exist that we couldn’t scan right now.',
   },
 
   rewards: {

@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyClaimables } from '../data/hooks';
 import { useInteractionRewards } from '../data/rewards';
+import { useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -25,6 +26,11 @@ import type { PositionLoan } from '../data/hooks';
 function RewardsCard() {
   const rewards = useInteractionRewards();
   const { onSupportedChain } = useActiveChain();
+  // claimInteractionRewards has NO on-chain sanctions screen (unlike the
+  // Tier-1 entry points), so this UI gate is load-bearing: a flagged
+  // wallet must not be handed a working payout button.
+  const sanctions = useSanctionsCheck();
+  const sanctionsClear = sanctions.ready && !sanctions.flagged;
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
@@ -66,7 +72,7 @@ function RewardsCard() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy || !onSupportedChain}
+            disabled={busy || !onSupportedChain || !sanctionsClear}
             onClick={() => void claim()}
           >
             {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}

@@ -76,13 +76,20 @@ export function Activity() {
     ],
     enabled: Boolean(address),
     refetchInterval: 60_000,
-    queryFn: async () => {
+    queryFn: async (): Promise<{
+      events: IndexedActivityEvent[];
+      truncated: boolean;
+    } | null> => {
       // Protocol-wide feed, so one busy day can push a wallet's events
       // past the first page — follow the cursor a few pages before
       // giving up, and stop early once we have plenty of matches.
+      // Stopping with the cursor still open means the scan is
+      // TRUNCATED, and the page must say so instead of rendering the
+      // partial slice as the wallet's complete history.
       const me = address!.toLowerCase();
       const mine: IndexedActivityEvent[] = [];
       let before: string | undefined;
+      let truncated = true;
       for (let i = 0; i < 5; i++) {
         const page = await fetchActivity(readChain.chainId, { limit: 100, before });
         if (page === null) return null; // any page failing → unavailable
@@ -95,10 +102,14 @@ export function Activity() {
             return argsStr.toLowerCase().includes(me);
           }),
         );
-        if (page.nextBefore === null || mine.length >= 50) break;
+        if (page.nextBefore === null) {
+          truncated = false;
+          break;
+        }
+        if (mine.length >= 50) break; // plenty to show — still truncated
         before = page.nextBefore;
       }
-      return mine;
+      return { events: mine, truncated };
     },
   });
 
@@ -121,14 +132,28 @@ export function Activity() {
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
       ) : activity.data === null || activity.data === undefined ? (
         <UnavailableState body={copy.activity.unavailable} />
-      ) : activity.data.length === 0 ? (
-        <EmptyState icon={History} title={copy.activity.empty} />
+      ) : activity.data.events.length === 0 ? (
+        <EmptyState
+          icon={History}
+          title={
+            activity.data.truncated
+              ? copy.activity.truncatedEmpty
+              : copy.activity.empty
+          }
+        />
       ) : (
-        <div className="row-list">
-          {activity.data.map((event) => (
-            <ActivityRow key={`${event.txHash}-${event.logIndex}`} event={event} />
-          ))}
-        </div>
+        <>
+          {activity.data.truncated ? (
+            <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
+              <span className="banner-body">{copy.activity.truncatedNote}</span>
+            </div>
+          ) : null}
+          <div className="row-list">
+            {activity.data.events.map((event) => (
+              <ActivityRow key={`${event.txHash}-${event.logIndex}`} event={event} />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

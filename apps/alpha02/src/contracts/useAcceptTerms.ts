@@ -153,6 +153,11 @@ export function useAcceptTermsSigning() {
       if (expiresAt !== 0n && expiresAt <= BigInt(Math.floor(Date.now() / 1000))) {
         throw new Error(copy.match.offerGone);
       }
+      // A partially matched offer can only be consumed by the matcher
+      // path — direct acceptOffer reverts OfferPartiallyFilled.
+      if ((o.amountFilled as bigint) > 0n) {
+        throw new Error(copy.match.offerGone);
+      }
 
       // #725 — auto-linked sale/offset target loan id; 0 for a normal
       // offer. Read from chain so a sale-vehicle / preclose-offset offer

@@ -26,10 +26,10 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
-import { ensureNftApproval, useNftOwnership } from '../contracts/nft';
+import { ensureNftApproval, useNftOwnership, useNftRentalSupport } from '../contracts/nft';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import {
   readRentalBufferBps,
@@ -88,6 +88,12 @@ function ListNftFlow() {
   const standardEnum =
     standard === 'erc721' ? AssetType.ERC721 : AssetType.ERC1155;
   const ownership = useNftOwnership(contract, standardEnum, tokenId, quantity);
+  // ERC-4907 is a heads-up, not a gate: the vault rents non-4907 NFTs
+  // via its own renter registry (VaipakamVaultImplementation.setUser
+  // only forwards when the collection supports it) — same first-party
+  // semantic every ERC-1155 rental uses. We warn the owner that
+  // external apps won't see the renter, and let them list.
+  const rentalSupport = useNftRentalSupport(contract, standardEnum);
 
   const dailyFeeWei = useMemo(() => {
     if (!prepayMeta.data || !dailyFee || Number(dailyFee) <= 0) return null;
@@ -280,7 +286,8 @@ function ListNftFlow() {
               autoComplete="off"
             />
             <span className="field-hint">
-              The NFT must support rentals (ERC-4907 for single NFTs).
+              Single NFTs that support ERC-4907 give renters use rights other
+              apps can see; other NFTs still rent, tracked inside Vaipakam.
             </span>
           </div>
           <div className="field">
@@ -361,6 +368,15 @@ function ListNftFlow() {
           <div className="banner banner-info">
             <span className="banner-body">{copy.rent.custodyNote}</span>
           </div>
+          {standard === 'erc721' && rentalSupport.data !== true && !rentalSupport.isLoading ? (
+            <div className="banner banner-warn" role="status">
+              <span className="banner-body">
+                {rentalSupport.data === false
+                  ? copy.rent.no4907Warning
+                  : copy.rent.no4907Unknown}
+              </span>
+            </div>
+          ) : null}
           <div className="card">
             <h3>Before you sign</h3>
             <Checklist items={checks} />
@@ -617,6 +633,24 @@ function RentNftFlow() {
       // another chain is a different rental.
       if (selected.chainId !== walletChain.chainId) {
         throw new Error(copy.match.termsChanged);
+      }
+      // Re-check at submit time: the wallet may have changed since the
+      // listing was selected (deep link → connect the owner wallet).
+      if (selected.creator.toLowerCase() === address.toLowerCase()) {
+        throw new Error(copy.match.ownOffer);
+      }
+      // acceptOffer screens BOTH parties — if the owner was flagged
+      // after listing, abort before any signature or prepay approval.
+      const ownerFlagged = await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'isSanctionedAddress',
+          args: [selected.creator as `0x${string}`],
+        })
+        .catch(() => false); // fail-open, mirroring useSanctionsCheck
+      if (ownerFlagged) {
+        throw new Error(copy.match.counterpartyBlocked);
       }
       const { terms, signature } = await signAcceptTerms({
         offerId: BigInt(selected.offerId),

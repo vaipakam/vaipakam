@@ -86,7 +86,7 @@ async function fetchAllPages<T>(
     if (page.nextBefore === null) return all;
     before = page.nextBefore;
   }
-  return all; // page cap reached — bounded, not silent (cap is generous)
+  return null; // cap hit with a cursor still open — truncated ≠ complete
 }
 
 /** Every loan where the connected wallet is lender or borrower,
