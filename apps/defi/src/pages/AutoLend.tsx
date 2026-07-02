@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Wallet } from 'lucide-react';
+import { Wallet, Repeat } from 'lucide-react';
 import type { Address } from 'viem';
 import { useWallet } from '../context/WalletContext';
 import AutoLendIntentCard from '../components/app/AutoLendIntentCard';
@@ -10,6 +10,7 @@ import {
   type ManageIntentPair,
 } from '../components/app/MyLenderIntentsCard';
 import { invalidateLenderIntentsCache } from '../hooks/useLenderIntentsByOwner';
+import { useAutoLendFacetAvailable } from '../hooks/useAutoLendFacetAvailable';
 
 /**
  * #878 — dedicated Auto-lend (standing intent) page.
@@ -33,6 +34,7 @@ import { invalidateLenderIntentsCache } from '../hooks/useLenderIntentsByOwner';
 export default function AutoLend() {
   const { t } = useTranslation();
   const { address } = useWallet();
+  const facetAvailable = useAutoLendFacetAvailable();
 
   // The overview list's "Manage" button hands the pair up to the auto-lend card
   // below (which owns every write) and scrolls it into view. The nonce fires the
@@ -80,6 +82,28 @@ export default function AutoLend() {
         </div>
         <h3>{t('autoLend.connectTitle')}</h3>
         <p>{t('autoLend.connectBody')}</p>
+      </div>
+    );
+  }
+
+  // #886 Codex P3 — on a supported Diamond whose auto-lend/intent facets aren't
+  // cut, both child cards self-hide and the list read returns empty, so the
+  // "create an intent below" copy would point at nothing. When the facet probe
+  // says the feature is DEFINITIVELY absent (not merely a transient/unknown
+  // read — see {useAutoLendFacetAvailable}), show an explicit unavailable state
+  // instead. `null` (unknown) falls through to the normal render, where the
+  // card handles its own transient-retry state.
+  if (facetAvailable === false) {
+    return (
+      <div style={{ padding: '1.5rem', maxWidth: 720 }}>
+        <h1>Auto-lend</h1>
+        <div className="empty-state" style={{ minHeight: '40vh' }}>
+          <div className="empty-state-icon">
+            <Repeat size={28} />
+          </div>
+          <h3>{t('autoLend.unavailableTitle')}</h3>
+          <p>{t('autoLend.unavailableBody')}</p>
+        </div>
       </div>
     );
   }

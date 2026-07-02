@@ -772,7 +772,9 @@
   },
   "autoLend": {
     "connectTitle": "Connect your wallet",
-    "connectBody": "Connect a wallet to post a standing lend intent and let a delegated keeper fill matching borrower demand on your behalf."
+    "connectBody": "Connect a wallet to post a standing lend intent and let a delegated keeper fill matching borrower demand on your behalf.",
+    "unavailableTitle": "Auto-lend isn't available on this network",
+    "unavailableBody": "The standing lender-intent feature isn't deployed on the network your wallet is connected to. Switch to a supported network to create and manage auto-lend intents."
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",
