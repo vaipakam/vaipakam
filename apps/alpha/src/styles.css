@@ -987,6 +987,19 @@ dd {
   line-height: 1.45;
 }
 
+.calldata-preview {
+  overflow-wrap: anywhere;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(49, 93, 149, 0.18);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--blue);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
 .plan-heading {
   display: flex;
   align-items: flex-start;

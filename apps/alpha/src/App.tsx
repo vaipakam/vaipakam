@@ -29,7 +29,9 @@ import {
   Trash2,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
+import { encodeFunctionData, parseUnits, type Abi, type Address, type Hex } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
+import OfferCreateFacetAbi from '@vaipakam/contracts/abis/OfferCreateFacet.json';
 import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
@@ -119,6 +121,8 @@ type GuidedContractDraft = {
   interestRateBps: string;
   durationDays: string;
   fillMode: string;
+  calldataStatus: string;
+  calldata: Hex | null;
   readiness: 'Ready for simulation' | 'Needs approved assets' | 'Uses rental path';
   blockers: string[];
 };
@@ -127,6 +131,7 @@ type GuidedAssetResolution = {
   symbol: string;
   display: string;
   address: string | null;
+  decimals: number | null;
 };
 
 type PreparedGuidedAction = {
@@ -154,11 +159,12 @@ const BASE_SEPOLIA_PARAMS = {
   rpcUrls: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
-const GUIDED_ASSET_ENV: Record<string, string | undefined> = {
-  mUSDC: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_ADDRESS,
-  mWETH: import.meta.env.VITE_BASE_SEPOLIA_WETH_ADDRESS,
-  mWBTC: import.meta.env.VITE_BASE_SEPOLIA_WBTC_ADDRESS,
+const GUIDED_ASSET_ENV: Record<string, { address?: string; decimals?: string }> = {
+  mUSDC: { address: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_DECIMALS },
+  mWETH: { address: import.meta.env.VITE_BASE_SEPOLIA_WETH_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_WETH_DECIMALS },
+  mWBTC: { address: import.meta.env.VITE_BASE_SEPOLIA_WBTC_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_WBTC_DECIMALS },
 };
+const OFFER_CREATE_ABI = OfferCreateFacetAbi as Abi;
 
 const tasks: Task[] = [
   {
@@ -1029,7 +1035,11 @@ function FlowPage({
               <Metric label="Rate" value={transactionPlan.contractDraft.interestRateBps} />
               <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
               <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
+              <Metric label="Calldata" value={transactionPlan.contractDraft.calldataStatus} />
             </div>
+            {transactionPlan.contractDraft.calldata ? (
+              <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
+            ) : null}
             {transactionPlan.contractDraft.blockers.length > 0 ? (
               <ul className="blocker-list" aria-label="Preflight blockers">
                 {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {blocker}</li>)}
@@ -1492,26 +1502,97 @@ function isHexAddress(value: string | undefined): value is string {
   return /^0x[a-fA-F0-9]{40}$/.test(value ?? '');
 }
 
+function parseAssetDecimals(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : null;
+}
+
 function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
   if (symbol === 'VPFI' && BASE_SEPOLIA_DEPLOYMENT?.vpfiToken) {
     return {
       symbol,
       address: BASE_SEPOLIA_DEPLOYMENT.vpfiToken,
+      decimals: 18,
       display: symbol + ' · ' + shortAddress(BASE_SEPOLIA_DEPLOYMENT.vpfiToken),
     };
   }
-  const configuredAddress = GUIDED_ASSET_ENV[symbol];
-  if (isHexAddress(configuredAddress)) {
+  const configured = GUIDED_ASSET_ENV[symbol];
+  if (isHexAddress(configured?.address)) {
+    const decimals = parseAssetDecimals(configured.decimals);
     return {
       symbol,
-      address: configuredAddress,
-      display: symbol + ' · ' + shortAddress(configuredAddress),
+      address: configured.address,
+      decimals,
+      display: symbol + ' · ' + shortAddress(configured.address) + (decimals === null ? ' · decimals needed' : ''),
     };
   }
   return {
     symbol,
     address: null,
+    decimals: null,
     display: symbol + ' · address needed',
+  };
+}
+
+function encodeGuidedCreateOfferDraft({
+  flow,
+  principalAsset,
+  collateralAsset,
+  numericAmount,
+  blockers,
+}: {
+  flow: GuidedFlow;
+  principalAsset: GuidedAssetResolution;
+  collateralAsset: GuidedAssetResolution;
+  numericAmount: number;
+  blockers: string[];
+}): { calldata: Hex | null; status: string } {
+  if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
+  if (blockers.length > 0) return { calldata: null, status: 'Withheld until preflight clears' };
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
+    return { calldata: null, status: 'Withheld until assets resolve' };
+  }
+
+  const principalAmount = parseUnits(String(numericAmount), principalAsset.decimals);
+  const collateralAmount = parseUnits(String(numericAmount), collateralAsset.decimals);
+  const isBorrow = flow.kind === 'borrow';
+  const params = {
+    offerType: isBorrow ? 1 : 0,
+    lendingAsset: principalAsset.address as Address,
+    amount: principalAmount,
+    interestRateBps: BigInt(isBorrow ? 710 : 650),
+    collateralAsset: collateralAsset.address as Address,
+    collateralAmount,
+    durationDays: BigInt(isBorrow ? 21 : 30),
+    assetType: 0,
+    tokenId: 0n,
+    quantity: 0n,
+    creatorRiskAndTermsConsent: true,
+    prepayAsset: '0x0000000000000000000000000000000000000000' as Address,
+    collateralAssetType: 0,
+    collateralTokenId: 0n,
+    collateralQuantity: 0n,
+    allowsPartialRepay: true,
+    amountMax: 0n,
+    interestRateBpsMax: 0n,
+    collateralAmountMax: 0n,
+    periodicInterestCadence: 0,
+    expiresAt: 0n,
+    fillMode: 0,
+    allowsPrepayListing: false,
+    allowsParallelSale: false,
+    refinanceTargetLoanId: 0n,
+    useFullTermInterest: false,
+  };
+
+  return {
+    calldata: encodeFunctionData({
+      abi: OFFER_CREATE_ABI,
+      functionName: 'createOffer',
+      args: [params],
+    }) as Hex,
+    status: 'Encoded for simulation',
   };
 }
 
@@ -1532,6 +1613,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
       interestRateBps: 'Not applicable',
       durationDays: amountText,
       fillMode: 'Rental terms',
+      calldataStatus: 'Rental path pending',
+      calldata: null,
       readiness: 'Uses rental path',
       blockers,
     };
@@ -1545,8 +1628,11 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   if (!diamond) blockers.push('Base Sepolia Diamond address is not available in deployments.json.');
   if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) blockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
   if (!principalAsset.address) blockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
+  if (principalAsset.address && principalAsset.decimals === null) blockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
   if (!collateralAsset.address) blockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
+  if (collateralAsset.address && collateralAsset.decimals === null) blockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
   blockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
+  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, numericAmount, blockers });
 
   return {
     call: 'OfferCreateFacet.createOffer(params)',
@@ -1558,6 +1644,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     interestRateBps: isBorrow ? '710 bps' : '650 bps',
     durationDays: isBorrow ? '21 days' : '30 days',
     fillMode: 'Single fill',
+    calldataStatus: encoded.status,
+    calldata: encoded.calldata,
     readiness: blockers.length === 0 ? 'Ready for simulation' : 'Needs approved assets',
     blockers,
   };
