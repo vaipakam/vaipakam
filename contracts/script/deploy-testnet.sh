@@ -1130,7 +1130,16 @@ EOF
   # On a no-aggregator chain (only the router set) the UniV3 adapter lands at
   # index 0, which the keeper's no-0x config + ConfigureOracle both require.
   if [ -n "${INITIAL_SETTLERS:-}" ]; then
-    if [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ]; then
+    if [ "$CHAIN_ID" = "97" ]; then
+      # #862: never register 0x/1inch on a known no-0x-backend chain even if a
+      # stale INITIAL_SETTLERS is left in the shared .env — they'd be useless AND
+      # would push the UniV3 adapter off index 0 (the keeper + ConfigureOracle
+      # expect UniV3 at index 0 on no-0x chains).
+      echo "  [aggregators] SKIP on no-0x chain $CHAIN_SLUG ($CHAIN_ID) — 0x has no testnet backend here; ignoring INITIAL_SETTLERS. Liquidations route via the UniV3 adapter only."
+    elif [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ] || [ -f "$MARKERS_DIR/phase-swap-adapters.done" ]; then
+      # #862: pre-marker-split deploys only have phase-swap-adapters.done; treat
+      # it as aggregators-done so a rerun to add UniV3 doesn't append a duplicate
+      # 0x/1inch pair.
       echo "  [aggregators] 0x/1inch already registered (marker exists) — skipping to avoid a duplicate pair."
     else
       forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"

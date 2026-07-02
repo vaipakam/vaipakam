@@ -87,10 +87,17 @@ contract DeployUniV3Adapter is Script {
         //      must be present in the router bytecode — the QuoterV2 (which also
         //      has factory()) exposes quoteExactInputSingle, NOT exactInputSingle,
         //      so this rejects the common "pasted the quoter" mistake.
+        // #862: REQUIRE the configured factory — do NOT let a missing/misspelled
+        // <CHAIN>_UNISWAP_V3_FACTORY silently skip the same-DEX check (it's the
+        // same var ConfigureOracle uses, so it must be set for a coherent deploy).
         address expectedFactory = _resolveFactory();
+        require(
+            expectedFactory != address(0),
+            "DeployUniV3Adapter: <CHAIN>_UNISWAP_V3_FACTORY (or UNISWAP_V3_FACTORY) is required so the router can be verified against the same DEX the oracle uses"
+        );
         try IUniV3SwapRouterMeta(router).factory() returns (address routerFactory) {
             require(
-                expectedFactory == address(0) || routerFactory == expectedFactory,
+                routerFactory == expectedFactory,
                 string.concat(
                     "DeployUniV3Adapter: router.factory() ",
                     vm.toString(routerFactory),

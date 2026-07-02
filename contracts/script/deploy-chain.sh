@@ -766,7 +766,15 @@ echo "     (ConfigureCcip.s.sol; see the follow-up note below)."
 # subset of adapters that DID register. See
 # `script/DeploySwapAdapters.s.sol` for the env-var contract and
 # the rotation flow.
-if [ "${INITIAL_SETTLERS:-}" = "" ]; then
+if [ "$CHAIN_ID" = "97" ]; then
+  # #862: never register 0x/1inch on a known no-0x-backend chain (BNB testnet)
+  # even if a stale INITIAL_SETTLERS is left in the shared .env — they'd be
+  # useless AND would push the UniV3 adapter off index 0 (the keeper +
+  # ConfigureOracle expect UniV3 at index 0 on no-0x chains). Liquidations route
+  # via the [5cc] UniV3/PancakeSwap adapter only.
+  echo
+  echo "[5cb] Skipping DeploySwapAdapters — no-0x chain $CHAIN_SLUG ($CHAIN_ID); ignoring INITIAL_SETTLERS. Liquidations route via the UniV3 adapter ([5cc])."
+elif [ "${INITIAL_SETTLERS:-}" = "" ]; then
   echo
   echo "[5cb] Skipping DeploySwapAdapters — INITIAL_SETTLERS env var not set."
   echo "      (Set INITIAL_SETTLERS=0xSettlerA,0xSettlerB,... to deploy."
