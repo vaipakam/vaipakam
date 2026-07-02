@@ -902,11 +902,24 @@ function FlowPage({
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
   const preflightGapCount = transactionPlan.contractDraft.blockers.length;
-  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
   const walletCheckSpec = useMemo(
     () => buildGuidedWalletCheckSpec(flow, selectedAsset, normalizedAmount, assetOverrides),
     [assetOverrides, flow, normalizedAmount, selectedAsset],
   );
+  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
+  const simulationDisabledReason = simulationCanRun || simulationResult.status === 'running'
+    ? null
+    : !reviewedOnReadyWallet
+      ? 'Review the receipt with a connected Base Sepolia wallet before simulation.'
+      : !transactionPlan.contractDraft.calldata
+        ? transactionPlan.contractDraft.simulationStatus
+        : walletCheckResult.status !== 'passed'
+          ? walletCheckSpec.unavailableReason
+            ? 'Simulation requires a passed wallet check first. ' + walletCheckSpec.unavailableReason
+            : 'Run and pass wallet readiness before simulation.'
+          : actionsPaused
+            ? 'Actions are paused from Settings.'
+            : null;
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
   const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'not-run' && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
@@ -1259,9 +1272,12 @@ function FlowPage({
                 <span className="position-kind">No-send simulation</span>
                 <strong>{simulationMessage}</strong>
               </div>
-              <button className="secondary-action" type="button" onClick={runGuidedSimulation} disabled={!simulationCanRun || simulationResult.status === 'running'}>
-                {simulationResult.status === 'running' ? 'Simulating...' : 'Run simulation'}
-              </button>
+              <div className="check-action-stack">
+                <button className="secondary-action" type="button" onClick={runGuidedSimulation} disabled={!simulationCanRun || simulationResult.status === 'running'} title={simulationDisabledReason ?? undefined}>
+                  {simulationResult.status === 'running' ? 'Simulating...' : 'Run simulation'}
+                </button>
+                {simulationDisabledReason ? <small>{simulationDisabledReason}</small> : null}
+              </div>
             </div>
           </section>
           <ol className="plan-steps">
@@ -1753,6 +1769,14 @@ function humanBlockerText(blocker: string) {
   return blocker;
 }
 
+function parseGuidedUnits(value: string, decimals: number) {
+  try {
+    return parseUnits(value, decimals);
+  } catch {
+    return null;
+  }
+}
+
 function parseEthCallUint(value: unknown) {
   if (value === '0x') return 0n;
   if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error('provider returned an invalid uint256 value');
@@ -1809,16 +1833,20 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
   if (!requiredInput) {
     return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
   }
+  const requiredAmount = parseGuidedUnits(requiredInput, asset.decimals);
+  if (requiredAmount === null) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: asset.symbol + ' supports at most ' + asset.decimals + ' decimal places. Shorten the amount before wallet checks can run.' };
+  }
   if (isBorrow) {
     return {
       asset,
-      requiredAmount: parseUnits(requiredInput, asset.decimals),
+      requiredAmount,
       requiredLabel,
       spender: null,
       unavailableReason: 'Borrow collateral is deposited into your personal vault. Vaipakam needs the vault address before it can check or request token approval.',
     };
   }
-  return { asset, requiredAmount: parseUnits(requiredInput, asset.decimals), requiredLabel, spender: diamond, unavailableReason: null };
+  return { asset, requiredAmount, requiredLabel, spender: diamond, unavailableReason: null };
 }
 
 function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string, collateralAmountInput: string | null) {
@@ -1897,8 +1925,9 @@ function encodeGuidedCreateOfferDraft({
     return { calldata: null, status: 'Withheld until assets resolve' };
   }
 
-  const principalAmount = parseUnits(amountInput, principalAsset.decimals);
-  const collateralAmount = parseUnits(collateralAmountInput, collateralAsset.decimals);
+  const principalAmount = parseGuidedUnits(amountInput, principalAsset.decimals);
+  const collateralAmount = parseGuidedUnits(collateralAmountInput, collateralAsset.decimals);
+  if (principalAmount === null || collateralAmount === null) return { calldata: null, status: 'Waiting for valid token precision' };
   const isBorrow = flow.kind === 'borrow';
   const interestRateBps = BigInt(isBorrow ? 710 : 650);
   const params = {
