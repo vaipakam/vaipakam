@@ -690,7 +690,7 @@ function Home({ mode }: { mode: Mode }) {
           </p>
           <div className="hero-actions">
             <NavLink className="primary-action" to="/earn">Start lending <ArrowRight size={18} /></NavLink>
-            <NavLink className="secondary-action" to="/advanced">Open advanced tools</NavLink>
+            <NavLink className="secondary-action" to="/advanced">Explore advanced tools</NavLink>
           </div>
         </div>
         <div className="position-card" aria-label="Example portfolio health card">
@@ -758,12 +758,6 @@ function FlowPage({
   const [reviewed, setReviewed] = useState(false);
 
   useEffect(() => {
-    setSelectedAsset(flow.defaultAsset);
-    setAmount(flow.defaultAmount);
-    setReviewed(false);
-  }, [flow.kind, flow.defaultAsset, flow.defaultAmount]);
-
-  useEffect(() => {
     setReviewed(false);
   }, [flow.kind, selectedAsset, amount]);
 
@@ -775,19 +769,23 @@ function FlowPage({
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
-  const actionLabel = actionsPaused
-    ? 'Actions paused'
-    : !walletReady
-      ? 'Connect wallet'
-      : !isBaseSepolia
-        ? 'Switch to Base Sepolia'
+  const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
+  const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
+  const needsAmount = walletReady && isBaseSepolia && !canProceed;
+  const actionLabel = !walletReady
+    ? 'Connect wallet'
+    : !isBaseSepolia
+      ? 'Switch to Base Sepolia'
+      : actionBlocked
+        ? 'Actions paused'
         : canProceed
           ? reviewed
-            ? 'Receipt reviewed locally'
+            ? 'Receipt reviewed until page reload'
             : flow.actionLabel
           : 'Enter an amount';
+  const primaryDisabled = actionBlocked || reviewedOnReadyWallet || needsAmount;
+  const showPrimaryArrow = !primaryDisabled || !walletReady || !isBaseSepolia;
   const handlePrimaryAction = () => {
-    if (actionsPaused) return;
     if (!walletReady) {
       onConnectWallet();
       return;
@@ -796,6 +794,7 @@ function FlowPage({
       onSwitchNetwork();
       return;
     }
+    if (actionsPaused) return;
     if (canProceed) {
       setReviewed(true);
     }
@@ -872,10 +871,10 @@ function FlowPage({
               </div>
             ))}
           </dl>
-          <button className="primary-action wide" type="button" disabled={actionsPaused || (reviewed && walletReady && isBaseSepolia) || (walletReady && isBaseSepolia && !canProceed)} onClick={handlePrimaryAction}>
-            {actionLabel} <ArrowRight size={18} />
+          <button className="primary-action wide" type="button" disabled={primaryDisabled} onClick={handlePrimaryAction}>
+            {actionLabel} {showPrimaryArrow ? <ArrowRight size={18} /> : null}
           </button>
-          {reviewed ? <p className="inline-success">Receipt reviewed locally for this session. Contract submission will be wired behind this review step.</p> : null}
+          {reviewed ? <p className="inline-success">Receipt reviewed until page reload. Contract submission will be wired behind this review step.</p> : null}
           {actionsPaused ? <p className="inline-error">New action CTAs are paused from Settings.</p> : null}
           {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
@@ -1203,9 +1202,9 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
                 <p>{item.detail}</p>
               </div>
               <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
-              <span>{claimed ? 'Reviewed locally for this session' : item.status}</span>
+              <span>{claimed ? 'Reviewed until page reload' : item.status}</span>
               <button type="button" disabled={actionsPaused || claimed || !ready} onClick={() => claim(item.id)}>
-                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed this session' : ready ? 'Review claim' : 'Not ready'}
+                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed until reload' : ready ? 'Review claim' : 'Not ready'}
               </button>
             </article>
           );
@@ -1223,7 +1222,8 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   const visibleOffers = marketOffers.filter((offer) => filter === 'all' || offer.kind === filter);
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
-  const blocker = actionsPaused ? 'Actions paused in Settings' : !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
+  const offerActionBlocked = actionsPaused && walletReady && baseReady;
+  const blocker = !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : offerActionBlocked ? 'Actions paused in Settings' : null;
   const receiptRows = buildOfferReceiptRows(selectedOffer);
   const reviewed = reviewedOfferId === selectedOffer.id && walletReady && baseReady;
   useEffect(() => {
@@ -1279,14 +1279,14 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
             ))}
           </dl>
           {blocker ? <p className="inline-error">{blocker}</p> : null}
-          {reviewed ? <p className="inline-success">Reviewed locally for this session. Contract action is not submitted yet.</p> : null}
+          {reviewed ? <p className="inline-success">Reviewed until page reload. Contract action is not submitted yet.</p> : null}
           <button
             className="primary-action wide"
             type="button"
-            disabled={actionsPaused || reviewed}
-            onClick={() => { if (actionsPaused) return; if (!walletReady) { onConnectWallet(); return; } if (!baseReady) { onSwitchNetwork(); return; } setReviewedOfferId(selectedOffer.id); }}
+            disabled={offerActionBlocked || reviewed}
+            onClick={() => { if (!walletReady) { onConnectWallet(); return; } if (!baseReady) { onSwitchNetwork(); return; } if (actionsPaused) return; setReviewedOfferId(selectedOffer.id); }}
           >
-            {reviewed ? 'Reviewed this session' : blocker ?? selectedOffer.nextAction} <ArrowRight size={18} />
+            {reviewed ? 'Reviewed until reload' : blocker ?? selectedOffer.nextAction} {!offerActionBlocked && !reviewed ? <ArrowRight size={18} /> : null}
           </button>
         </aside>
       </section>
@@ -1406,7 +1406,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
               <div className="activity-action">
                 <span>{item.safeForGuided ? 'Guided-safe' : 'Advanced context'} · Next: {item.nextAction}</span>
                 <button type="button" onClick={() => acknowledge(item.id)} disabled={acknowledged}>
-                  {acknowledged ? 'Acknowledged this session' : 'Mark acknowledged'}
+                  {acknowledged ? 'Acknowledged until reload' : 'Mark acknowledged'}
                 </button>
               </div>
             </article>
@@ -1510,7 +1510,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
               <span>{position.status}</span>
               <strong>{position.amount}</strong>
               <button type="button" onClick={() => completeAction(position.id)} disabled={actionsBlocked || done}>
-                {!walletReady ? 'Connect wallet' : !baseReady ? 'Switch network' : actionsPaused ? 'Actions paused' : done ? 'Reviewed this session' : 'Review: ' + position.nextAction}
+                {!walletReady ? 'Connect wallet' : !baseReady ? 'Switch network' : actionsPaused ? 'Actions paused' : done ? 'Reviewed until reload' : 'Review: ' + position.nextAction}
               </button>
             </article>
           );
