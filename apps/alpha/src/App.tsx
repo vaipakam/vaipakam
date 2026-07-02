@@ -97,6 +97,27 @@ type GuidedFlow = {
   steps: Step[];
 };
 
+type GuidedTransactionPlan = {
+  intentTitle: string;
+  previewState: string;
+  primaryAction: string;
+  sequence: string[];
+  safetyCopy: string;
+  destination: string;
+};
+
+type PreparedGuidedAction = {
+  id: string;
+  kind: FlowKind;
+  title: string;
+  asset: string;
+  amount: string;
+  status: 'Prepared locally';
+  createdAtLabel: string;
+  nextStep: string;
+  sequence: string[];
+};
+
 const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
 const BASE_SEPOLIA_PARAMS = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
@@ -379,6 +400,7 @@ function App() {
     return readAppStorage('mode') === 'advanced' ? 'advanced' : 'guided';
   });
   const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
+  const [preparedActions, setPreparedActions] = useState<PreparedGuidedAction[]>([]);
   const [actionsPaused, setActionsPausedState] = useState(() => readAppStorage('actionsPaused') === 'true');
   const [riskGuardrail, setRiskGuardrailState] = useState<RiskGuardrail>(() => {
     const stored = readAppStorage('risk');
@@ -410,6 +432,14 @@ function App() {
     setModeState('guided');
     setRiskGuardrailState('guided');
     setActionsPausedState(false);
+    setPreparedActions([]);
+  };
+  const addPreparedAction = (action: Omit<PreparedGuidedAction, 'id' | 'createdAtLabel'>) => {
+    const id = action.kind + '-' + Date.now().toString(36);
+    setPreparedActions((current) => [
+      { ...action, id, createdAtLabel: 'just now' },
+      ...current.filter((item) => item.kind !== action.kind || item.asset !== action.asset || item.amount !== action.amount),
+    ].slice(0, 6));
   };
 
   useEffect(() => {
@@ -418,6 +448,10 @@ function App() {
       writeLocalAppStorage('mode', 'guided');
     }
   }, [advancedAllowed, mode]);
+
+  useEffect(() => {
+    setPreparedActions([]);
+  }, [wallet.account]);
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -550,14 +584,14 @@ function App() {
         <RouteErrorBoundary>
           <Routes>
           <Route path="/" element={<Home mode={mode} riskGuardrail={riskGuardrail} />} />
-          <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
+          <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
+          <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
           <Route path="/offers" element={<OfferBook wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/claims" element={<Claims wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
-          <Route path="/activity" element={<Activity wallet={wallet} />} />
-          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/activity" element={<Activity wallet={wallet} preparedActions={preparedActions} />} />
+          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} preparedActions={preparedActions} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/advanced" element={<Advanced wallet={wallet} riskGuardrail={riskGuardrail} />} />
           <Route path="/settings" element={<SettingsPanel riskGuardrail={riskGuardrail} actionsPaused={actionsPaused} onRiskGuardrailChange={setRiskGuardrail} onActionsPausedChange={setActionsPaused} />} />
           <Route path="/data-rights" element={<DataRights wallet={wallet} onStorageCleared={resetLocalAppState} />} />
@@ -747,6 +781,7 @@ function FlowPage({
   actionsPaused,
   onConnectWallet,
   onSwitchNetwork,
+  onPrepareAction,
 }: {
   flow: GuidedFlow;
   mode: Mode;
@@ -754,6 +789,7 @@ function FlowPage({
   actionsPaused: boolean;
   onConnectWallet: () => void;
   onSwitchNetwork: () => void;
+  onPrepareAction: (action: Omit<PreparedGuidedAction, 'id' | 'createdAtLabel'>) => void;
 }) {
   const [selectedAsset, setSelectedAsset] = useState(flow.defaultAsset);
   const [amount, setAmount] = useState(flow.defaultAmount);
@@ -762,16 +798,20 @@ function FlowPage({
   const walletReady = Boolean(wallet.account);
   const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
   const [reviewed, setReviewed] = useState(false);
+  const [planPrepared, setPlanPrepared] = useState(false);
 
   useEffect(() => {
     setReviewed(false);
+    setPlanPrepared(false);
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
     setReviewed(false);
+    setPlanPrepared(false);
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
+  const transactionPlan = buildGuidedTransactionPlan(flow, selectedAsset, numericAmount);
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
@@ -802,6 +842,19 @@ function FlowPage({
     if (canProceed) {
       setReviewed(true);
     }
+  };
+  const prepareGuidedAction = () => {
+    if (!reviewed || !canProceed || actionsPaused) return;
+    onPrepareAction({
+      kind: flow.kind,
+      title: transactionPlan.intentTitle,
+      asset: selectedAsset,
+      amount: formatFlowAmount(flow, numericAmount),
+      status: 'Prepared locally',
+      nextStep: transactionPlan.primaryAction,
+      sequence: transactionPlan.sequence,
+    });
+    setPlanPrepared(true);
   };
 
   return (
@@ -878,11 +931,51 @@ function FlowPage({
           <button className="primary-action wide" type="button" disabled={primaryDisabled} onClick={handlePrimaryAction}>
             {actionLabel} {showPrimaryArrow ? <ArrowRight size={18} /> : null}
           </button>
-          {reviewed ? <p className="inline-success">Receipt reviewed until page reload. Contract submission will be wired behind this review step.</p> : null}
+          {reviewed ? <p className="inline-success">Receipt reviewed. Prepare the transaction plan below before any wallet submission.</p> : null}
           {actionsPaused ? <p className="inline-error">New action CTAs are paused from Settings.</p> : null}
           {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
       </section>
+
+      {reviewed ? (
+        <section className="transaction-plan panel-surface" aria-label="Guided transaction plan">
+          <div className="plan-heading">
+            <div>
+              <p className="eyebrow">Step 4</p>
+              <h2>{transactionPlan.intentTitle}</h2>
+              <p>{transactionPlan.safetyCopy}</p>
+            </div>
+            <div className="simulation-pill">
+              <Network size={16} />
+              <span>{transactionPlan.previewState}</span>
+            </div>
+          </div>
+          <div className="plan-grid">
+            <div>
+              <span className="position-kind">Selected terms</span>
+              <strong>{formatFlowAmount(flow, numericAmount)} · {selectedAsset}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Wallet action</span>
+              <strong>{transactionPlan.primaryAction}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Status</span>
+              <strong>{planPrepared ? 'Prepared locally' : 'Ready to prepare'}</strong>
+            </div>
+          </div>
+          <ol className="plan-steps">
+            {transactionPlan.sequence.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+          <div className="hero-actions">
+            <button className="primary-action" type="button" onClick={prepareGuidedAction} disabled={planPrepared || actionsPaused}>
+              {planPrepared ? 'Prepared in portfolio' : 'Prepare local action'}
+            </button>
+            <NavLink className="secondary-action" to={transactionPlan.destination}>Open next workspace</NavLink>
+          </div>
+          <p className="field-hint">This stores a local prepared action only. The next implementation slice can replace this boundary with a simulated wagmi/viem contract request and real wallet submission.</p>
+        </section>
+      ) : null}
 
       {mode === 'advanced' ? (
         <section className="advanced-settings panel-surface">
@@ -1305,6 +1398,43 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 }
 
 
+function formatFlowAmount(flow: GuidedFlow, numericAmount: number) {
+  if (flow.kind === 'rent') return numericAmount.toLocaleString() + ' day' + (numericAmount === 1 ? '' : 's');
+  return numericAmount.toLocaleString();
+}
+
+function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedTransactionPlan {
+  const amountText = formatFlowAmount(flow, numericAmount);
+  if (flow.kind === 'earn') {
+    return {
+      intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
+      previewState: 'Simulation boundary ready',
+      primaryAction: 'Approve asset, then create offer',
+      sequence: ['Check allowance', 'Approve only the selected amount if needed', 'Create offer from reviewed terms', 'Track offer NFT and cancellation path'],
+      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. Until the contract adapter is connected, this remains a local preparation record.',
+      destination: '/offers',
+    };
+  }
+  if (flow.kind === 'borrow') {
+    return {
+      intentTitle: 'Prepare borrow request for ' + amountText + ' ' + selectedAsset,
+      previewState: 'Health preview boundary ready',
+      primaryAction: 'Deposit collateral, then create or accept terms',
+      sequence: ['Confirm collateral balance', 'Deposit collateral into Vaipakam Vault', 'Create or accept the reviewed borrow terms', 'Track repayment, add-collateral, and claim paths'],
+      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. This local plan is the handoff point for live health-factor reads.',
+      destination: '/manage',
+    };
+  }
+  return {
+    intentTitle: 'Prepare NFT rental for ' + amountText,
+    previewState: 'Rental expiry boundary ready',
+    primaryAction: 'Prepay rental, then start rental rights',
+    sequence: ['Confirm NFT standard support', 'Approve prepaid rental token if needed', 'Start rental with reviewed expiry', 'Track close, owner claim, and renter refund lanes'],
+    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit.',
+    destination: '/offers',
+  };
+}
+
 function buildOfferReceiptRows(offer: MarketOffer) {
   if (offer.kind === 'borrow') {
     return [
@@ -1337,7 +1467,7 @@ function buildOfferReceiptRows(offer: MarketOffer) {
 }
 
 
-function Activity({ wallet }: { wallet: WalletState }) {
+function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedActions: PreparedGuidedAction[] }) {
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([]);
 
@@ -1347,7 +1477,18 @@ function Activity({ wallet }: { wallet: WalletState }) {
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewActivity = walletReady && baseReady;
-  const scopedActivityItems = canPreviewActivity ? activityItems : [];
+  const preparedActivityItems: ActivityItem[] = preparedActions.map((action) => ({
+    id: action.id,
+    source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
+    title: action.title,
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode. No transaction has been submitted.',
+    status: 'Local queue',
+    when: action.createdAtLabel,
+    impact: 'Ready for the next wallet-submission wiring step without claiming on-chain completion.',
+    nextAction: action.nextStep,
+    safeForGuided: true,
+  }));
+  const scopedActivityItems = canPreviewActivity ? [...preparedActivityItems, ...activityItems] : [];
   const visibleItems = scopedActivityItems.filter((item) => filter === 'all' || item.source === filter);
   const reviewCount = scopedActivityItems.filter((item) => item.status === 'Needs review').length;
   const localCount = scopedActivityItems.filter((item) => item.status === 'Local queue').length;
@@ -1431,7 +1572,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
+function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; preparedActions: PreparedGuidedAction[]; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
   const [reviewedActions, setReviewedActions] = useState<string[]>([]);
 
@@ -1454,9 +1595,11 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
   const urgentCount = scopedPositions.filter((position) => position.urgency === 'urgent').length;
   const claimableCount = scopedPositions.filter((position) => position.claimable).length;
   const completedCount = canPreviewPositions ? reviewedActions.length : 0;
+  const preparedCount = canPreviewPositions ? preparedActions.length : 0;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
     { title: 'Positions', body: scopedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
+    { title: 'Prepared', body: preparedCount + ' guided action draft' + (preparedCount === 1 ? '' : 's') + ' ready for the next workspace.', icon: <ReceiptText /> },
     { title: 'Vault', body: 'Locked and free balances are separated before any withdrawal or claim.', icon: <LockKeyhole /> },
     { title: 'Rewards', body: claimableCount + ' claimable item and VPFI utility status kept visible.', icon: <Coins /> },
   ];
@@ -1492,6 +1635,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
               <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
               <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
               <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
+              <button type="button" onClick={() => setFilter('all')}><ReceiptText size={16} /> Prepared ({preparedCount})</button>
             </>
           ) : null}
         </div>
@@ -1503,6 +1647,35 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
             <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
               {option}
             </button>
+          ))}
+        </section>
+      ) : null}
+
+      {canPreviewPositions && preparedActions.length > 0 ? (
+        <section className="prepared-actions panel-surface" aria-label="Prepared guided actions">
+          <div className="plan-heading">
+            <div>
+              <p className="eyebrow">Prepared locally</p>
+              <h2>Guided actions ready for contract wiring</h2>
+            </div>
+            <span className="simulation-pill"><ReceiptText size={16} /> {preparedActions.length} draft{preparedActions.length === 1 ? '' : 's'}</span>
+          </div>
+          {preparedActions.map((action) => (
+            <article className="activity-row" key={action.id} aria-label={action.title}>
+              <div className="activity-main">
+                <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
+                <h2>{action.title}</h2>
+                <p>{action.amount} {action.asset}. No transaction has been submitted.</p>
+              </div>
+              <div className="activity-impact">
+                <strong>{action.status}</strong>
+                <span>{action.sequence.join(' → ')}</span>
+              </div>
+              <div className="activity-action">
+                <span>Next: {action.nextStep}</span>
+                <NavLink className="secondary-action" to={action.kind === 'earn' ? '/offers' : action.kind === 'borrow' ? '/manage' : '/offers'}>Open workspace</NavLink>
+              </div>
+            </article>
           ))}
         </section>
       ) : null}
