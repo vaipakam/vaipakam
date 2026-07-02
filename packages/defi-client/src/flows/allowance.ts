@@ -27,6 +27,19 @@ export async function ensureErc20Allowance(opts: {
   const account = opts.walletClient.account;
   if (!account) throw new Error('Wallet has no account');
 
+  // USDT-style tokens require zeroing a stale partial allowance before raising it.
+  if (current > 0n) {
+    const resetHash = await opts.walletClient.writeContract({
+      address: opts.token,
+      abi: erc20Abi,
+      functionName: 'approve',
+      args: [opts.spender, 0n],
+      account,
+      chain: opts.walletClient.chain,
+    });
+    await opts.publicClient.waitForTransactionReceipt({ hash: resetHash });
+  }
+
   const hash = await opts.walletClient.writeContract({
     address: opts.token,
     abi: erc20Abi,

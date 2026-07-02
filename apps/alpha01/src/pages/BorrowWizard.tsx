@@ -262,15 +262,31 @@ export function BorrowWizard() {
             },
           ]
         : []),
-      ...(collateralBalance.sufficient != null
+      ...(mode === 'accept' || mode === 'request'
         ? [
-            {
-              id: 'collateral-balance',
-              label: collateralBalance.sufficient
-                ? 'Enough collateral in wallet or vault'
-                : 'Insufficient collateral balance',
-              ok: collateralBalance.sufficient,
-            },
+            collateralBalance.loading
+              ? {
+                  id: 'collateral-balance',
+                  label: 'Checking collateral balance…',
+                  ok: false,
+                }
+              : collateralBalance.sufficient === true
+                ? {
+                    id: 'collateral-balance',
+                    label: 'Enough collateral in wallet',
+                    ok: true,
+                  }
+                : collateralBalance.sufficient === false
+                  ? {
+                      id: 'collateral-balance',
+                      label: 'Insufficient collateral balance',
+                      ok: false,
+                    }
+                  : {
+                      id: 'collateral-balance',
+                      label: 'Collateral balance unavailable',
+                      ok: false,
+                    },
           ]
         : []),
     ],
@@ -280,6 +296,7 @@ export function BorrowWizard() {
       chain.name,
       collateralAmount,
       collateralAsset,
+      collateralBalance.loading,
       collateralBalance.sufficient,
       collateralMeta,
       connect,

@@ -15,7 +15,7 @@ function resolveReadChain(viewChainId: number | null, activeChain: ChainConfig |
     const override = CHAIN_REGISTRY[viewChainId];
     if (override?.diamondAddress) return override;
   }
-  if (activeChain) return activeChain;
+  if (activeChain?.diamondAddress) return activeChain;
   return DEFAULT_CHAIN;
 }
 

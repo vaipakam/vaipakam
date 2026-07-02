@@ -40,7 +40,7 @@ export function borrowerPrimaryAction(opts: {
   healthTone: 'ok' | 'warn' | 'risk';
 }): { action: 'repay' | 'claim-collateral' | 'claim-lender' | 'add-collateral' | 'none'; label: string } {
   if (opts.role === 'borrower') {
-    if (opts.loanStatus === 'repaid' || opts.loanStatus === 'settled') {
+    if (opts.loanStatus === 'repaid') {
       return { action: 'claim-collateral', label: 'Claim collateral' };
     }
     if (opts.loanStatus === 'active') {

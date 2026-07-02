@@ -79,8 +79,14 @@ export async function signAcceptTerms(opts: {
       functionName: 'getOfferLinkedLoanId',
       args: [opts.offerId],
     })) as bigint;
-  } catch {
-    linkedLoanId = 0n;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Pre-linked-loan deploys lack the getter — zero is the only bindable value.
+    if (/function selector|not found|missing revert data/i.test(msg)) {
+      linkedLoanId = 0n;
+    } else {
+      throw new Error(`Could not read linked loan id for accept terms: ${msg}`);
+    }
   }
 
   let riskTermsHash =
