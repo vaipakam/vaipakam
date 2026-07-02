@@ -2030,16 +2030,21 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   const principalAsset = resolveGuidedAsset(selectedAsset, assetOverrides);
   const collateralAsset = resolveGuidedAsset(collateralLabel, assetOverrides);
   const collateralAmountInput = guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, amountInput);
+  const borrowPairSupported = !isBorrow || guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, '1') !== null;
   const encodingBlockers = [];
   const submissionBlockers = [];
   if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
   if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) encodingBlockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
-  if (!principalAsset.address) encodingBlockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
-  if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
-  if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
-  if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
-  if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
-  if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
+  if (!borrowPairSupported) {
+    encodingBlockers.push('Guided mode does not yet support ' + principalAsset.symbol + ' as a borrow principal. Try mUSDC.');
+  } else {
+    if (!principalAsset.address) encodingBlockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
+    if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
+    if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
+    if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
+    if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
+    if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
+  }
   submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
   const blockers = [...encodingBlockers, ...submissionBlockers];
   const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, amountInput, collateralAmountInput, encodingBlockers });
