@@ -35,8 +35,14 @@ import {Deployments} from "./lib/Deployments.sol";
  *        - <CHAIN>_ETH_DENOMINATOR   : `Denominations.ETH` sentinel (0x...0EEE)
  *        - <CHAIN>_SEQUENCER_UPTIME_FEED : l2 sequencer uptime feed
  *                                          (set address(0) on L1s / leave unset)
- *        - <CHAIN>_ZEROX_PROXY       : 0x Exchange Proxy (liquidation route)
- *        - <CHAIN>_ZEROX_ALLOWANCE_TARGET : 0x token-puller (usually same as proxy)
+ *        - <CHAIN>_ZEROX_PROXY       : 0x Exchange Proxy (liquidation route).
+ *                                     OPTIONAL — omit on chains with no 0x
+ *                                     backend (e.g. BNB testnet 97). When
+ *                                     omitted, a registered on-chain DEX
+ *                                     ISwapAdapter (e.g. UniV3Adapter →
+ *                                     PancakeSwap V3) must cover liquidations.
+ *        - <CHAIN>_ZEROX_ALLOWANCE_TARGET : 0x token-puller (usually same as
+ *                                     proxy). Set both ZEROX vars or neither.
  *        - VPFI_STABLE_FEED_SYMBOLS  : comma-separated ERC20 symbols, e.g. "USDC,USDT,DAI"
  *          per symbol:
  *        - <CHAIN>_<SYMBOL>_FEED      : Chainlink <SYMBOL>/USD feed address
@@ -59,6 +65,8 @@ contract ConfigureOracle is Script {
         if (chainId == 421614) return "ARB_SEPOLIA_";
         if (chainId == 11155420) return "OP_SEPOLIA_";
         if (chainId == 80002) return "POLYGON_AMOY_";
+        if (chainId == 97) return "BNB_TESTNET_";
+        if (chainId == 56) return "BNB_";
         revert(string.concat("ConfigureOracle: unsupported chainId ", vm.toString(chainId)));
     }
 
@@ -92,8 +100,14 @@ contract ConfigureOracle is Script {
         address ethDenom = _resolveAddressStrict("ETH_DENOMINATOR");
         // l1 has no sequencer feed; L2s do. Address(0) disables the check.
         address sequencerFeed = _resolveAddress("SEQUENCER_UPTIME_FEED");
-        address zeroEx = _resolveAddressStrict("ZEROX_PROXY");
-        address allowanceTarget = _resolveAddressStrict("ZEROX_ALLOWANCE_TARGET");
+        // 0x liquidation route. Optional: REQUIRED where 0x is deployed (all
+        // mainnets incl. BNB mainnet, + most testnets), but some chains have no
+        // 0x backend — BNB testnet (97) is the case: 0x's Swap API covers BNB
+        // mainnet (56) but not the testnet, and no Settler/AllowanceHolder is
+        // deployed there. Such chains route liquidations through an on-chain DEX
+        // adapter instead (see the swap-adapter enforcement below).
+        address zeroEx = _resolveAddress("ZEROX_PROXY");
+        address allowanceTarget = _resolveAddress("ZEROX_ALLOWANCE_TARGET");
         // Feed Registry only exists on Ethereum mainnet; optional.
         address feedRegistry = _resolveAddress("CHAINLINK_REGISTRY");
 
@@ -172,8 +186,28 @@ contract ConfigureOracle is Script {
         if (feedRegistry != address(0)) {
             oa.setChainlinkRegistry(feedRegistry);
         }
-        af.setZeroExProxy(zeroEx);
-        af.setallowanceTarget(allowanceTarget);
+        // Set the 0x route when configured; when it isn't, skip it but REFUSE to
+        // leave the Diamond with NO liquidation venue — at least one on-chain DEX
+        // ISwapAdapter must already be registered (e.g. UniV3Adapter → PancakeSwap
+        // V3 on BNB testnet; run DeployUniV3Adapter.s.sol BEFORE this script).
+        if (zeroEx != address(0)) {
+            require(
+                allowanceTarget != address(0),
+                "ConfigureOracle: ZEROX_PROXY set but ZEROX_ALLOWANCE_TARGET missing (set both or neither)"
+            );
+            af.setZeroExProxy(zeroEx);
+            af.setallowanceTarget(allowanceTarget);
+        } else {
+            require(
+                allowanceTarget == address(0),
+                "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
+            );
+            require(
+                af.getSwapAdapters().length > 0,
+                "ConfigureOracle: no liquidation route - set <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET), or register an on-chain DEX swap adapter first (DeployUniV3Adapter.s.sol)"
+            );
+            console.log("0x unset - liquidation via registered on-chain swap adapter(s) only (e.g. PancakeSwap V3 on BNB testnet).");
+        }
 
         // Stable-token feeds — optional, registered one symbol at a time.
         string memory csv = vm.envOr("VPFI_STABLE_FEED_SYMBOLS", string(""));

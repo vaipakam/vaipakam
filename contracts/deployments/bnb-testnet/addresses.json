@@ -66,5 +66,8 @@
   "vpfiTokenPool": "0xDC9940Bd84A079F56aE7f84ACA46f94C70152120",
   "vpfiPoolRateGovernor": "0xf17fd429249e6D48fA4bB1BB7ae4c0C16182Fa27",
   "rewardMessenger": "0xFf46546B0A6C5376ddE6c0936b0dd266f11A70c0",
-  "vpfiMirror": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d"
+  "vpfiMirror": "0x3E50DD64e82Ab967026AB38B65aCD736d0255e1d",
+  "swapAdapters": {
+    "uniV3": "0x246b05E45e45B6eA5eb695c9E128aaD7519E0Adc"
+  }
 }
