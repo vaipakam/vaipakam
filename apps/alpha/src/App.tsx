@@ -285,6 +285,12 @@ type MarketOffer = {
   nextAction: string;
 };
 
+const RENT_RATES: Record<string, number> = {
+  'Game NFT': 3,
+  'Membership NFT': 8,
+  'Utility NFT': 5,
+};
+
 const marketOffers: MarketOffer[] = [
   { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% APR', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
   { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% APR', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
@@ -1432,7 +1438,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
   const completedCount = canPreviewPositions ? reviewedActions.length : 0;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
-    { title: 'Positions', body: managedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
+    { title: 'Positions', body: scopedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
     { title: 'Vault', body: 'Locked and free balances are separated before any withdrawal or claim.', icon: <LockKeyhole /> },
     { title: 'Rewards', body: claimableCount + ' claimable item and VPFI utility status kept visible.', icon: <Coins /> },
   ];
@@ -1896,13 +1902,14 @@ function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount
     ];
   }
   if (flow.kind === 'rent') {
-    const fee = (numericAmount * 3).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const dailyRate = RENT_RATES[selectedAsset] ?? RENT_RATES[flow.defaultAsset] ?? 3;
+    const fee = (numericAmount * dailyRate).toLocaleString(undefined, { maximumFractionDigits: 4 });
     return [
       ['You receive', amount + ' days of ' + selectedAsset + ' use rights.'],
       ['You lock', fee + ' mUSDC rental prepay plus any refundable buffer.'],
       ['You may owe', 'No loan repayment; closure may require gas.'],
       ['You can lose', 'Rental fee is spent, and buffer can be claimable if terms fail.'],
-      ['Fees', 'Rental fee, protocol fee, any VPFI discount, and gas.'],
+      ['Fees', dailyRate + ' mUSDC/day rental fee, protocol fee, any VPFI discount, and gas.'],
       ['When this ends', 'Rental expires, renter closes, or owner claims per terms.'],
     ];
   }

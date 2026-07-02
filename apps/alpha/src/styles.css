@@ -503,13 +503,14 @@ dd {
 
 .offer-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  grid-template-columns: minmax(0, 1.25fr) minmax(min(320px, 100%), 0.75fr);
   gap: 14px;
   align-items: start;
 }
 
 .offer-list,
 .offer-review {
+  min-width: 0;
   display: grid;
   gap: 16px;
 }
