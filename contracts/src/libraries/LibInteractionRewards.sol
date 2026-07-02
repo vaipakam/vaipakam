@@ -98,6 +98,44 @@ library LibInteractionRewards {
             (LibVaipakam.BASIS_POINTS * 365 * 2);
     }
 
+    /// @notice #776 — the aggregate VPFI a chain's users collectively accrue
+    ///         for day `dayId`, i.e. that chain's finalized reward *slice*.
+    /// @dev    Telescopes the per-user accrual: Σ_users(userNum × half/global)
+    ///         = chainNum × half/global, evaluated for each of the lender and
+    ///         borrower halves. Uses the FINALIZED global denominators
+    ///         (`dailyGlobal*InterestNumeraire18[dayId]`), so callers MUST gate
+    ///         on `s.dailyGlobalFinalized[dayId]` first. Integer division
+    ///         floors each half; the ≤1-wei-per-half dust stays on Base (a
+    ///         consumer chain), matching how the claim path already floors, so
+    ///         the remittances can never exceed the day's emission. Returns 0
+    ///         when the day pre-dates emissions (`half == 0`) or a global
+    ///         denominator is zero (no interest on that side that day).
+    /// @param s       Diamond storage.
+    /// @param chainId Mirror whose slice to compute.
+    /// @param dayId   Finalized day.
+    /// @return budget VPFI owed to `chainId` for `dayId` (18-dec).
+    function chainRewardBudgetForDay(
+        LibVaipakam.Storage storage s,
+        uint32 chainId,
+        uint256 dayId
+    ) internal view returns (uint256 budget) {
+        uint256 half = halfPoolForDay(dayId);
+        if (half == 0) return 0;
+        uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
+        if (gLender != 0) {
+            budget +=
+                (half * s.chainDailyLenderInterestNumeraire18[dayId][chainId]) /
+                gLender;
+        }
+        uint256 gBorrower = s.dailyGlobalBorrowerInterestNumeraire18[dayId];
+        if (gBorrower != 0) {
+            budget +=
+                (half *
+                    s.chainDailyBorrowerInterestNumeraire18[dayId][chainId]) /
+                gBorrower;
+        }
+    }
+
     /// @notice Current day index (days since launch). Reverts when the
     ///         launch timestamp is unset or in the future.
     function currentDay() internal view returns (uint256) {
