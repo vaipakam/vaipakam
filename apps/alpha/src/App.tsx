@@ -70,7 +70,7 @@ type FlowKind = 'earn' | 'borrow' | 'rent';
 type OfferKind = 'lend' | 'borrow' | 'rent';
 type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
 type GuidedSimulationResult = { status: 'not-run' | 'running' | 'passed' | 'failed'; message: string };
-type GuidedWalletCheckResult = { status: 'not-run' | 'running' | 'passed' | 'failed' | 'unavailable'; message: string; balance?: string; allowance?: string };
+type GuidedWalletCheckResult = { status: 'not-run' | 'running' | 'passed' | 'failed' | 'unavailable'; message: string; balance?: string; allowance?: string; needsApproval?: boolean };
 type GuidedApprovalResult = { status: 'not-started' | 'pending' | 'submitted' | 'failed'; message: string; txHash?: string };
 type GuidedWalletCheckSpec = { asset: GuidedAssetResolution | null; requiredAmount: bigint | null; requiredLabel: string; spender: string | null; unavailableReason: string | null };
 
@@ -394,12 +394,17 @@ const RENT_RATES: Record<string, number> = {
   'Membership NFT': 8,
   'Utility NFT': 5,
 };
+const GUIDED_EARN_RATE_BPS = 650;
+const GUIDED_BORROW_RATE_BPS = 710;
+const GUIDED_EARN_DURATION_DAYS = 30;
+const GUIDED_BORROW_DURATION_DAYS = 21;
+const MAX_INTEREST_BPS = 10_000n;
 
 const marketOffers: MarketOffer[] = [
-  { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% for term', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
-  { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% for term', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
+  { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% APR', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
+  { id: 'borrow-musdc-weth', kind: 'borrow', title: 'Borrow mUSDC with mWETH collateral', asset: 'mUSDC', counterAsset: 'mWETH', amount: '1,000', rate: '7.1% APR', term: '21 days', risk: 'Medium', recommended: true, nextAction: 'Review borrow receipt' },
   { id: 'rent-game-nft', kind: 'rent', title: 'Rent game NFT access', asset: 'Game NFT', counterAsset: 'mUSDC', amount: '7 days', rate: '3 mUSDC/day', term: '7 days', risk: 'Low', recommended: true, nextAction: 'Review rental receipt' },
-  { id: 'lend-vpfi', kind: 'lend', title: 'Lend VPFI to active borrower', asset: 'VPFI', counterAsset: 'mUSDC', amount: '10,000', rate: '9.2% for term', term: '14 days', risk: 'High', recommended: false, nextAction: 'Open advanced review' },
+  { id: 'lend-vpfi', kind: 'lend', title: 'Lend VPFI to active borrower', asset: 'VPFI', counterAsset: 'mUSDC', amount: '10,000', rate: '9.2% APR', term: '14 days', risk: 'High', recommended: false, nextAction: 'Open advanced review' },
   { id: 'rent-membership-nft', kind: 'rent', title: 'Rent membership NFT', asset: 'Membership NFT', counterAsset: 'mUSDC', amount: '3 days', rate: '8 mUSDC/day', term: '3 days', risk: 'Medium', recommended: false, nextAction: 'Review rental receipt' },
 ];
 
@@ -919,6 +924,9 @@ function FlowPage({
   const walletCheckContextKey = [flow.kind, selectedAsset, normalizedAmount ?? '', wallet.account ?? '', wallet.chainId ?? '', walletCheckSpec.asset?.address ?? '', walletCheckSpec.spender ?? '', walletCheckSpec.requiredAmount?.toString() ?? ''].join('|');
   const walletCheckContextRef = useRef(walletCheckContextKey);
   walletCheckContextRef.current = walletCheckContextKey;
+  const simulationContextKey = [walletCheckContextKey, transactionPlan.contractDraft.target, transactionPlan.contractDraft.calldata ?? ''].join('|');
+  const simulationContextRef = useRef(simulationContextKey);
+  simulationContextRef.current = simulationContextKey;
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
   const simulationDisabledReason = simulationCanRun || simulationResult.status === 'running'
     ? null
@@ -934,7 +942,7 @@ function FlowPage({
             ? 'Actions are paused from Settings.'
             : null;
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
-  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'not-run' && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending' && approvalResult.status !== 'submitted';
+  const approvalCanRun = walletCheckCanRun && walletCheckResult.needsApproval === true && approvalResult.status !== 'pending' && approvalResult.status !== 'submitted';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
     ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
     : walletCheckResult.message;
@@ -1017,7 +1025,7 @@ function FlowPage({
       const hasBalance = balance >= walletCheckSpec.requiredAmount;
       const hasAllowance = allowance >= walletCheckSpec.requiredAmount;
       if (hasBalance && hasAllowance) {
-        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and approval for the guided amount.', balance: balanceLabel, allowance: allowanceLabel });
+        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and approval for the guided amount.', balance: balanceLabel, allowance: allowanceLabel, needsApproval: false });
         return;
       }
       setWalletCheckResult({
@@ -1025,6 +1033,7 @@ function FlowPage({
         message: (!hasBalance ? 'Balance is below ' + walletCheckSpec.requiredLabel + '. ' : '') + (!hasAllowance ? 'Allowance is below ' + walletCheckSpec.requiredLabel + '.' : ''),
         balance: balanceLabel,
         allowance: allowanceLabel,
+        needsApproval: hasBalance && !hasAllowance,
       });
     } catch (error) {
       setWalletCheckResult({ status: 'failed', message: 'Wallet readiness check failed: ' + formatSimulationError(error) });
@@ -1074,9 +1083,11 @@ function FlowPage({
       setSimulationResult({ status: 'failed', message: 'No injected wallet provider is available for eth_call simulation.' });
       return;
     }
+    const contextAtSimulationTime = simulationContextRef.current;
     setSimulationResult({ status: 'running', message: 'Running eth_call simulation...' });
     try {
       if (walletCheckResult.status !== 'passed') {
+        if (simulationContextRef.current !== contextAtSimulationTime) return;
         setSimulationResult({ status: 'failed', message: 'Check wallet readiness before running simulation so allowance and balance errors are explained first.' });
         return;
       }
@@ -1084,8 +1095,10 @@ function FlowPage({
         method: 'eth_call',
         params: [{ from: wallet.account, to: diamond, data: calldata }, 'latest'],
       });
+      if (simulationContextRef.current !== contextAtSimulationTime) return;
       setSimulationResult({ status: 'passed', message: 'Simulation passed with eth_call. Wallet submission remains blocked until balance, allowance, and risk checks pass.' });
     } catch (error) {
+      if (simulationContextRef.current !== contextAtSimulationTime) return;
       setSimulationResult({ status: 'failed', message: 'Simulation failed: ' + formatSimulationError(error) });
     }
   };
@@ -1773,7 +1786,7 @@ function guidedDefaultTermsSuffix(flow: GuidedFlow) {
 }
 
 function humanRateLabel(value: string) {
-  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% for term';
+  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% APR';
   return value;
 }
 
@@ -1976,7 +1989,9 @@ function encodeGuidedCreateOfferDraft({
   const collateralAmount = parseGuidedUnits(collateralAmountInput, collateralAsset.decimals);
   if (principalAmount === null || collateralAmount === null) return { calldata: null, status: 'Waiting for valid token precision' };
   const isBorrow = flow.kind === 'borrow';
-  const interestRateBps = BigInt(isBorrow ? 710 : 650);
+  const displayedRateBps = BigInt(isBorrow ? GUIDED_BORROW_RATE_BPS : GUIDED_EARN_RATE_BPS);
+  const interestRateBps = isBorrow ? 0n : displayedRateBps;
+  const interestRateBpsMax = isBorrow ? displayedRateBps : MAX_INTEREST_BPS;
   const params = {
     offerType: isBorrow ? 1 : 0,
     lendingAsset: principalAsset.address as Address,
@@ -1984,7 +1999,7 @@ function encodeGuidedCreateOfferDraft({
     interestRateBps,
     collateralAsset: collateralAsset.address as Address,
     collateralAmount,
-    durationDays: BigInt(isBorrow ? 21 : 30),
+    durationDays: BigInt(isBorrow ? GUIDED_BORROW_DURATION_DAYS : GUIDED_EARN_DURATION_DAYS),
     assetType: 0,
     tokenId: 0n,
     quantity: 0n,
@@ -1995,7 +2010,7 @@ function encodeGuidedCreateOfferDraft({
     collateralQuantity: 0n,
     allowsPartialRepay: true,
     amountMax: principalAmount,
-    interestRateBpsMax: interestRateBps,
+    interestRateBpsMax,
     collateralAmountMax: collateralAmount,
     periodicInterestCadence: 0,
     expiresAt: 0n,
@@ -2080,8 +2095,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     amount: amountText + ' ' + selectedAsset,
     collateralEstimate: guidedCollateralEstimate(flow, numericAmount, principalAsset.symbol, collateralAsset.symbol, collateralAmountInput),
     safetyIndicator: guidedSafetyIndicator(flow),
-    interestRateBps: isBorrow ? '710 bps' : '650 bps',
-    durationDays: isBorrow ? '21 days' : '30 days',
+    interestRateBps: (isBorrow ? GUIDED_BORROW_RATE_BPS : GUIDED_EARN_RATE_BPS) + ' bps',
+    durationDays: (isBorrow ? GUIDED_BORROW_DURATION_DAYS : GUIDED_EARN_DURATION_DAYS) + ' days',
     fillMode: 'Single fill',
     assetSource: guidedAssetSourceLabel(principalAsset, collateralAsset),
     calldataStatus: encoded.status,
@@ -2882,11 +2897,13 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
 function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount: number) {
   const amount = numericAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
   if (flow.kind === 'borrow') {
-    const repay = (numericAmount * 1.071).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const interest = numericAmount * (GUIDED_BORROW_RATE_BPS / 10_000) * (GUIDED_BORROW_DURATION_DAYS / 365);
+    const repay = (numericAmount + interest).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const interestLabel = interest.toLocaleString(undefined, { maximumFractionDigits: 4 });
     return [
       ['You receive', amount + ' ' + selectedAsset],
       ['You lock', 'Collateral sized from the selected offer and safety buffer.'],
-      ['You may owe', repay + ' ' + selectedAsset + ' including example interest.'],
+      ['You may owe', repay + ' ' + selectedAsset + ', including about ' + interestLabel + ' ' + selectedAsset + ' term interest at the guided APR.'],
       ['You can lose', 'Collateral can be claimed or liquidated after default.'],
       ['Fees', 'Protocol fee, any VPFI discount, swap slippage if used, and gas.'],
       ['When this ends', 'Repay, preclose, refinance, add collateral, or settle after default.'],
@@ -2904,9 +2921,9 @@ function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount
       ['When this ends', 'Rental expires, renter closes, or owner claims per terms.'],
     ];
   }
-  const interest = (numericAmount * 0.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const interest = (numericAmount * (GUIDED_EARN_RATE_BPS / 10_000) * (GUIDED_EARN_DURATION_DAYS / 365)).toLocaleString(undefined, { maximumFractionDigits: 4 });
   return [
-    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' ' + selectedAsset + ' interest if repaid.'],
+    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' ' + selectedAsset + ' term interest if repaid at the guided APR.'],
     ['You lock', amount + ' ' + selectedAsset + ' until repay, cancel, or settlement.'],
     ['You may owe', 'No repayment obligation; gas is needed for offer actions.'],
     ['You can lose', 'Time value and settlement route risk if collateral cannot execute.'],

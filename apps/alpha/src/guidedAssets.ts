@@ -84,7 +84,11 @@ export function readGuidedAssetOverrides(): Record<string, GuidedAssetOverride> 
 
 export function writeGuidedAssetOverrides(overrides: Record<string, GuidedAssetOverride>) {
   if (typeof window === 'undefined') return;
-  window.localStorage.setItem(GUIDED_ASSET_OVERRIDE_STORAGE_KEY, JSON.stringify(overrides));
+  try {
+    window.localStorage.setItem(GUIDED_ASSET_OVERRIDE_STORAGE_KEY, JSON.stringify(overrides));
+  } catch {
+    // Browser storage is optional; keep the in-memory registry usable if writes fail.
+  }
 }
 
 function resolvedAsset(symbol: string, address: string, decimals: number | null, source: GuidedAssetResolution['source']): GuidedAssetResolution {
