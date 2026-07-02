@@ -755,9 +755,14 @@ function isRateLimitError(message: string): boolean {
  * - Alchemy paid:  "Log response size exceeded..."
  * - Infura:        "query returned more than 10000 results"
  * - QuickNode:     "eth_getLogs is limited to a ... block range"
+ * - BSC data-seed: "limit exceeded" (BNB testnet's public RPC — a terse
+ *   result/range cap with no "block range" wording, so it slipped past the
+ *   patterns above and the scan threw hard instead of downshifting; this is
+ *   what left BNB testnet's log-index permanently failing on
+ *   `getLogs N-M: limit exceeded`).
  */
 function isBlockRangeOrSizeError(message: string): boolean {
-  return /block range|range.*too (?:large|wide|big)|response size|query returned more than|too many (?:logs|results)/i.test(
+  return /block range|range.*too (?:large|wide|big)|response size|query returned more than|too many (?:logs|results)|limit exceeded|exceed(?:s|ed)?.*(?:limit|maximum)|reduce the (?:block )?range/i.test(
     message,
   );
 }
