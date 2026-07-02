@@ -866,7 +866,7 @@ function FlowPage({
               </div>
             ))}
           </dl>
-          <button className="primary-action wide" type="button" disabled={actionsPaused || reviewed || (walletReady && isBaseSepolia && !canProceed)} onClick={handlePrimaryAction}>
+          <button className="primary-action wide" type="button" disabled={actionsPaused || (reviewed && walletReady && isBaseSepolia) || (walletReady && isBaseSepolia && !canProceed)} onClick={handlePrimaryAction}>
             {actionLabel} <ArrowRight size={18} />
           </button>
           {reviewed ? <p className="inline-success">Receipt reviewed locally. Contract submission will be wired behind this review step.</p> : null}
