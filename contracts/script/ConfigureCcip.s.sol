@@ -29,6 +29,12 @@ interface ITreasuryFacetCcip {
     function setBuybackRemittanceReceiver(address receiver) external;
 }
 
+/// @dev #776 — the `RewardRemittanceFacet` setter this script needs on a
+///      mirror Diamond (authorizes the mirror-side receiver's ingress call).
+interface IRewardRemittanceConfig {
+    function setRewardRemittanceReceiver(address receiver) external;
+}
+
 /**
  * @title ConfigureCcip
  * @notice T-068 Phase 6 — wires the Chainlink CCIP cross-chain stack on
@@ -117,6 +123,16 @@ contract ConfigureCcip is Script {
     ///      handler.
     bytes32 internal constant VPFI_BUYBACK_CHANNEL =
         keccak256("vaipakam.ccip.channel.vpfi-buyback");
+    /// @dev #776 — reward-budget remittance channel (Base→mirror). On Base the
+    ///      Diamond is the source-sender (registered as the handler so
+    ///      `CcipMessenger.sendMessage`'s `channelOf[msg.sender]` lookup routes
+    ///      correctly — safe because the Base Diamond is NOT the buyback handler
+    ///      there); on each mirror the `RewardRemittanceReceiver` is the inbound
+    ///      handler (a distinct address from the mirror Diamond, which holds the
+    ///      buyback channel — so the one-to-one `channelOf[handler]` binding
+    ///      never collides).
+    bytes32 internal constant VPFI_REWARD_BUDGET_CHANNEL =
+        keccak256("vaipakam.ccip.channel.vpfi-reward-budget");
 
     /// @dev Everything `run()` resolves once, threaded through the wiring
     ///      steps — keeps each step a small, readable unit.
@@ -133,6 +149,11 @@ contract ConfigureCcip is Script {
         // (the inbound CCIP handler); on mirrors this is the Diamond
         // itself (the source-sender for outbound `remitBuyback`).
         address localBuybackHandler;
+        // #776 — reward-budget channel handler on THIS chain. On Base the
+        // Diamond (source-sender for `remitRewardBudget`); on a mirror the
+        // local RewardRemittanceReceiver (inbound handler + the address the
+        // Diamond's `setRewardRemittanceReceiver` authorizes).
+        address localRewardBudgetHandler;
         address registry;
         address moduleOwner;
         address guardian;
@@ -192,6 +213,9 @@ contract ConfigureCcip is Script {
                 ".buybackRemittanceReceiver",
                 "BUYBACK_REMITTANCE_RECEIVER"
             );
+            // #776 — on Base, the reward-budget SEND handler is the Diamond.
+            c.localRewardBudgetHandler =
+                Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
         } else {
             c.localToken =
                 Deployments.readAddress(".vpfiMirror", "VPFI_MIRROR_ADDRESS");
@@ -201,6 +225,12 @@ contract ConfigureCcip is Script {
             // `channelOf[msg.sender]` lookup routes correctly.
             c.localBuybackHandler =
                 Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+            // #776 — on a mirror, the reward-budget inbound handler is the
+            // local RewardRemittanceReceiver.
+            c.localRewardBudgetHandler = Deployments.readAddress(
+                ".rewardRemittanceReceiver",
+                "REWARD_REMITTANCE_RECEIVER"
+            );
         }
 
         require(c.laneChainIds.length > 0, "ConfigureCcip: no lanes given");
@@ -248,6 +278,7 @@ contract ConfigureCcip is Script {
         _registerCct(c);
         _setBroadcastDestinations(c);
         _wireDiamondBuybackConfig(c);
+        _wireDiamondRewardBudgetConfig(c);
 
         vm.stopBroadcast();
 
@@ -296,7 +327,14 @@ contract ConfigureCcip is Script {
         CcipMessenger m = CcipMessenger(c.messenger);
         m.registerChannel(VPFI_REWARD_CHANNEL, c.rewardMessenger);
         m.registerChannel(VPFI_BUYBACK_CHANNEL, c.localBuybackHandler);
-        console.log("Channels registered: vpfi-reward, vpfi-buyback.");
+        // #776 — reward-budget channel: Base Diamond (send) / mirror receiver
+        // (recv). No collision with buyback: on Base the Diamond is not the
+        // buyback handler, on a mirror the handler is the receiver (distinct
+        // address from the Diamond).
+        m.registerChannel(VPFI_REWARD_BUDGET_CHANNEL, c.localRewardBudgetHandler);
+        console.log(
+            "Channels registered: vpfi-reward, vpfi-buyback, vpfi-reward-budget."
+        );
     }
 
     /// @dev Set the remote business peer for each channel. Hub-and-spoke:
@@ -321,6 +359,13 @@ contract ConfigureCcip is Script {
                     cid,
                     Deployments.readAddressForChain(cid, ".diamond")
                 );
+                // #776 — Base peers with each mirror's RewardRemittanceReceiver
+                // (the inbound handler its reward-budget sends deliver to).
+                m.setChannelPeer(
+                    VPFI_REWARD_BUDGET_CHANNEL,
+                    cid,
+                    Deployments.readAddressForChain(cid, ".rewardRemittanceReceiver")
+                );
                 console.log("  channel peers wired -> mirror", cid);
             }
         } else {
@@ -337,6 +382,13 @@ contract ConfigureCcip is Script {
                 Deployments.readAddressForChain(
                     c.baseChainId, ".buybackRemittanceReceiver"
                 )
+            );
+            // #776 — mirrors peer the reward-budget channel with the Base
+            // Diamond (the source-sender for `remitRewardBudget`).
+            m.setChannelPeer(
+                VPFI_REWARD_BUDGET_CHANNEL,
+                c.baseChainId,
+                Deployments.readAddressForChain(c.baseChainId, ".diamond")
             );
             console.log("  channel peers wired -> Base", c.baseChainId);
         }
@@ -384,7 +436,13 @@ contract ConfigureCcip is Script {
             // fast-pause reason the messenger does. Wiring it here
             // closes the operator-memory footgun documented in #201.
             GuardianPausable(c.localToken).setGuardian(c.guardian);
-            console.log("Guardian set on messenger / reward / mirrorToken:", c.guardian);
+            // #776 — the mirror-only `RewardRemittanceReceiver` also extends
+            // `GuardianPausable`; wire the same guardian onto its inbound path.
+            GuardianPausable(c.localRewardBudgetHandler).setGuardian(c.guardian);
+            console.log(
+                "Guardian set on messenger / reward / mirrorToken / rewardReceiver:",
+                c.guardian
+            );
         } else {
             // Codex Sub 3.A round-4 P2 #2 — the Base-side
             // BuybackRemittanceReceiver also extends GuardianPausable;
@@ -552,6 +610,26 @@ contract ConfigureCcip is Script {
             console.log("Diamond buyback receiver wired ->", c.localBuybackHandler);
         }
         console.log("Diamond crossChainMessenger wired ->", c.messenger);
+    }
+
+    /// @dev #776 — mirror only: authorize the local RewardRemittanceReceiver
+    ///      as the caller of the Diamond's `onRewardBudgetReceived` ingress.
+    ///      Without this, the receiver forwards the VPFI but the ingress call
+    ///      reverts `NotRewardRemittanceReceiver`, so CCIP parks the message as
+    ///      re-executable (no funds lost) until it is wired. Base sends and so
+    ///      needs no receiver — the `crossChainMessenger` it remits over is
+    ///      already wired by {_wireDiamondBuybackConfig}.
+    function _wireDiamondRewardBudgetConfig(Ctx memory c) internal {
+        if (c.canonical) return;
+        address diamond =
+            Deployments.readAddress(".diamond", "DIAMOND_ADDRESS");
+        IRewardRemittanceConfig(diamond).setRewardRemittanceReceiver(
+            c.localRewardBudgetHandler
+        );
+        console.log(
+            "Diamond reward-budget receiver wired ->",
+            c.localRewardBudgetHandler
+        );
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

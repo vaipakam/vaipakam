@@ -79,6 +79,23 @@ contract RewardRemittanceFacet is
     /// @custom:event-category informational/config
     event RewardRemittanceKeeperUpdated(address indexed keeper);
 
+    /// @notice Emitted (mirror side) when a reward budget is received + credited.
+    /// @param sourceChainId Base chain id the budget came from.
+    /// @param token         Local VPFI token credited.
+    /// @param amount        VPFI credited to this Diamond.
+    /// @param dayCount      Number of day ids in the batch.
+    /// @custom:event-category informational/reward-transport
+    event RewardBudgetReceived(
+        uint256 indexed sourceChainId,
+        address indexed token,
+        uint256 amount,
+        uint256 dayCount
+    );
+
+    /// @notice Emitted when the mirror-side receiver address is set/cleared.
+    /// @custom:event-category informational/config
+    event RewardRemittanceReceiverUpdated(address indexed receiver);
+
     // ─── Errors (facet-local; shared ones come from IVaipakamErrors) ──────
 
     /// @notice Caller is neither ADMIN nor the configured remittance keeper.
@@ -102,6 +119,11 @@ contract RewardRemittanceFacet is
     error InsufficientRemittanceFee(uint256 provided, uint256 required);
     /// @notice Native fee refund to the caller failed.
     error RemittanceRefundFailed();
+    /// @notice `onRewardBudgetReceived` called by an address other than the
+    ///         configured mirror-side receiver.
+    error NotRewardRemittanceReceiver(address caller);
+    /// @notice The credited token is not this Diamond's VPFI token.
+    error RewardBudgetTokenMismatch(address expected, address delivered);
 
     // ─── Modifiers ────────────────────────────────────────────────────────
 
@@ -270,6 +292,52 @@ contract RewardRemittanceFacet is
         emit RewardRemittanceKeeperUpdated(keeper);
     }
 
+    /**
+     * @notice Set (or clear, with `address(0)`) the mirror-side
+     *         {RewardRemittanceReceiver} authorized to call
+     *         {onRewardBudgetReceived} on this (mirror) Diamond.
+     * @dev    ADMIN-only. Base leaves this unset.
+     */
+    function setRewardRemittanceReceiver(
+        address receiver
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        LibVaipakam.storageSlot().rewardRemittanceReceiver = receiver;
+        emit RewardRemittanceReceiverUpdated(receiver);
+    }
+
+    // ─── Mirror-side ingress ──────────────────────────────────────────────
+
+    /**
+     * @notice Record a reward budget the {RewardRemittanceReceiver} has already
+     *         forwarded (as VPFI) into this mirror Diamond.
+     * @dev    Monitoring-only: the VPFI is already in the Diamond's balance
+     *         (the receiver transferred it before this call), and
+     *         `claimInteractionRewards` pays from that balance. This just
+     *         records the funded total + emits an event for reconciliation.
+     *         Trust chain: gated to the registered receiver, whose own
+     *         `onCrossChainMessage` is gated to the CCIP messenger.
+     * @param token         Token credited — must be this Diamond's VPFI.
+     * @param amount        VPFI amount credited.
+     * @param dayIds        Days the batch covered (for the event log).
+     * @param sourceChainId Base chain id the budget came from.
+     */
+    function onRewardBudgetReceived(
+        address token,
+        uint256 amount,
+        uint256[] calldata dayIds,
+        uint256 sourceChainId
+    ) external nonReentrant whenNotPaused {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        if (msg.sender != s.rewardRemittanceReceiver) {
+            revert NotRewardRemittanceReceiver(msg.sender);
+        }
+        if (token != s.vpfiToken) {
+            revert RewardBudgetTokenMismatch(s.vpfiToken, token);
+        }
+        s.rewardBudgetReceivedTotal += amount;
+        emit RewardBudgetReceived(sourceChainId, token, amount, dayIds.length);
+    }
+
     // ─── Views ────────────────────────────────────────────────────────────
 
     /**
@@ -349,5 +417,15 @@ contract RewardRemittanceFacet is
     /// @notice The configured keeper EOA (address(0) = owner-only).
     function getRewardRemittanceKeeper() external view returns (address) {
         return LibVaipakam.storageSlot().rewardRemittanceKeeper;
+    }
+
+    /// @notice The mirror-side receiver authorized for {onRewardBudgetReceived}.
+    function getRewardRemittanceReceiver() external view returns (address) {
+        return LibVaipakam.storageSlot().rewardRemittanceReceiver;
+    }
+
+    /// @notice Cumulative VPFI reward budget received from Base on this mirror.
+    function getRewardBudgetReceivedTotal() external view returns (uint256) {
+        return LibVaipakam.storageSlot().rewardBudgetReceivedTotal;
     }
 }

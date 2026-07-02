@@ -290,5 +290,48 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertGt(afterQ, 0, "slice still remittable");
     }
 
+    // ─── mirror-side ingress: onRewardBudgetReceived (#776 PR2) ────────────
+
+    function test_SetReceiver_RequiresAdmin() public {
+        vm.prank(stranger);
+        vm.expectRevert();
+        remit.setRewardRemittanceReceiver(address(0x4EC7));
+    }
+
+    function test_Ingress_RecordsReceivedFromRegisteredReceiver() public {
+        address rcv = address(0x4EC7);
+        remit.setRewardRemittanceReceiver(rcv);
+        assertEq(remit.getRewardRemittanceReceiver(), rcv, "receiver set");
+        vm.prank(rcv);
+        remit.onRewardBudgetReceived(address(vpfiTok), 123e18, _days(1), CHAIN_BASE);
+        assertEq(remit.getRewardBudgetReceivedTotal(), 123e18, "recorded total");
+    }
+
+    function test_Ingress_RevertsForNonReceiver() public {
+        remit.setRewardRemittanceReceiver(address(0x4EC7));
+        vm.prank(stranger);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.NotRewardRemittanceReceiver.selector,
+                stranger
+            )
+        );
+        remit.onRewardBudgetReceived(address(vpfiTok), 1e18, _days(1), CHAIN_BASE);
+    }
+
+    function test_Ingress_RevertsOnTokenMismatch() public {
+        address rcv = address(0x4EC7);
+        remit.setRewardRemittanceReceiver(rcv);
+        vm.prank(rcv);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RewardBudgetTokenMismatch.selector,
+                address(vpfiTok),
+                address(0xDEAD)
+            )
+        );
+        remit.onRewardBudgetReceived(address(0xDEAD), 1e18, _days(1), CHAIN_BASE);
+    }
+
     receive() external payable {}
 }
