@@ -21,7 +21,7 @@ interface ChainMeta {
   predominantStableAddress?: string | null;
 }
 
-function normalizeAddress(addr: string | null): string | null {
+function normalizeAddress(addr: string | null | undefined): string | null {
   if (addr == null) return null;
   const trimmed = addr.trim();
   if (trimmed.length === 0) return null;
@@ -31,9 +31,41 @@ function normalizeAddress(addr: string | null): string | null {
   return getAddress(trimmed.toLowerCase());
 }
 
+function envKeyForChain(meta: ChainMeta, suffix: string): string {
+  return `VITE_${meta.shortName.toUpperCase().replace(/-/g, '_')}_${suffix}`;
+}
+
+function resolveChainAsset(
+  getEnv: EnvGetter,
+  meta: ChainMeta,
+  dep: Deployment | undefined,
+  opts: {
+    metaAddress?: string | null;
+    envSuffix: string;
+    deploymentKey: keyof Pick<Deployment, 'weth' | 'mockERC20A'>;
+  },
+): string | null {
+  const fromMeta = normalizeAddress(opts.metaAddress ?? null);
+  if (fromMeta) return fromMeta;
+  const fromEnv = normalizeAddress(getEnv(envKeyForChain(meta, opts.envSuffix)) ?? null);
+  if (fromEnv) return fromEnv;
+  const fromDep = dep?.[opts.deploymentKey];
+  return fromDep ? normalizeAddress(fromDep) : null;
+}
+
 function buildChainConfig(getEnv: EnvGetter, meta: ChainMeta): ChainConfig {
   const dep: Deployment | undefined = getDeployment(meta.chainId);
   const userFacingDiamond = dep?.diamond ?? null;
+  const wrappedNativeAddress = resolveChainAsset(getEnv, meta, dep, {
+    metaAddress: meta.wrappedNativeAddress,
+    envSuffix: 'WRAPPED_NATIVE',
+    deploymentKey: 'weth',
+  });
+  const predominantStableAddress = resolveChainAsset(getEnv, meta, dep, {
+    metaAddress: meta.predominantStableAddress,
+    envSuffix: 'PREDOMINANT_STABLE',
+    deploymentKey: 'mockERC20A',
+  });
   return {
     chainId: meta.chainId,
     chainIdHex: meta.chainIdHex,
@@ -52,9 +84,9 @@ function buildChainConfig(getEnv: EnvGetter, meta: ChainMeta): ChainConfig {
     nativeGasSymbol: meta.nativeGasSymbol,
     nativeGasCoinGeckoSlug: meta.testnet ? 'ethereum' : 'ethereum',
     bridgedWethCoinGeckoSlug: null,
-    wrappedNativeAddress: meta.wrappedNativeAddress ?? null,
+    wrappedNativeAddress,
     bridgedWethAddress: null,
-    predominantStableAddress: meta.predominantStableAddress ?? null,
+    predominantStableAddress,
   };
 }
 
@@ -64,10 +96,34 @@ const CHAIN_METAS: ChainMeta[] = [
   { chainId: 84532, chainIdHex: '0x14a34', name: 'Base Sepolia', shortName: 'base-sep', rpcUrlEnvKey: 'VITE_BASE_SEPOLIA_RPC_URL', rpcUrlDefault: 'https://sepolia.base.org', blockExplorer: 'https://sepolia.basescan.org', isCanonicalVPFI: true, testnet: true, nativeGasSymbol: 'ETH', wrappedNativeAddress: '0x4200000000000000000000000000000000000006', predominantStableAddress: '0x036CbD53842c5426634e7929541eC2318f3dCF7e' },
   { chainId: 11155111, chainIdHex: '0xaa36a7', name: 'Sepolia', shortName: 'sep', rpcUrlEnvKey: 'VITE_SEPOLIA_RPC_URL', rpcUrlDefault: 'https://ethereum-sepolia-rpc.publicnode.com', blockExplorer: 'https://sepolia.etherscan.io', isCanonicalVPFI: false, testnet: true, nativeGasSymbol: 'ETH' },
   { chainId: 42161, chainIdHex: '0xa4b1', name: 'Arbitrum', shortName: 'arb', rpcUrlEnvKey: 'VITE_ARBITRUM_RPC_URL', rpcUrlDefault: 'https://arb1.arbitrum.io/rpc', blockExplorer: 'https://arbiscan.io', isCanonicalVPFI: false, testnet: false, nativeGasSymbol: 'ETH' },
-  { chainId: 421614, chainIdHex: '0x66eee', name: 'Arbitrum Sepolia', shortName: 'arb-sep', rpcUrlEnvKey: 'VITE_ARBITRUM_SEPOLIA_RPC_URL', rpcUrlDefault: 'https://sepolia-rollup.arbitrum.io/rpc', blockExplorer: 'https://sepolia.arbiscan.io', isCanonicalVPFI: false, testnet: true, nativeGasSymbol: 'ETH' },
+  {
+    chainId: 421614,
+    chainIdHex: '0x66eee',
+    name: 'Arbitrum Sepolia',
+    shortName: 'arb-sep',
+    rpcUrlEnvKey: 'VITE_ARBITRUM_SEPOLIA_RPC_URL',
+    rpcUrlDefault: 'https://sepolia-rollup.arbitrum.io/rpc',
+    blockExplorer: 'https://sepolia.arbiscan.io',
+    isCanonicalVPFI: false,
+    testnet: true,
+    nativeGasSymbol: 'ETH',
+    wrappedNativeAddress: '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73',
+  },
   { chainId: 10, chainIdHex: '0xa', name: 'Optimism', shortName: 'op', rpcUrlEnvKey: 'VITE_OPTIMISM_RPC_URL', rpcUrlDefault: 'https://mainnet.optimism.io', blockExplorer: 'https://optimistic.etherscan.io', isCanonicalVPFI: false, testnet: false, nativeGasSymbol: 'ETH' },
   { chainId: 56, chainIdHex: '0x38', name: 'BNB Chain', shortName: 'bnb', rpcUrlEnvKey: 'VITE_BNB_RPC_URL', rpcUrlDefault: 'https://bsc-dataseed.binance.org', blockExplorer: 'https://bscscan.com', isCanonicalVPFI: false, testnet: false, nativeGasSymbol: 'BNB' },
-  { chainId: 97, chainIdHex: '0x61', name: 'BNB Testnet', shortName: 'bnb-test', rpcUrlEnvKey: 'VITE_BNB_TESTNET_RPC_URL', rpcUrlDefault: 'https://data-seed-prebsc-1-s1.binance.org:8545', blockExplorer: 'https://testnet.bscscan.com', isCanonicalVPFI: false, testnet: true, nativeGasSymbol: 'BNB' },
+  {
+    chainId: 97,
+    chainIdHex: '0x61',
+    name: 'BNB Testnet',
+    shortName: 'bnb-test',
+    rpcUrlEnvKey: 'VITE_BNB_TESTNET_RPC_URL',
+    rpcUrlDefault: 'https://data-seed-prebsc-1-s1.binance.org:8545',
+    blockExplorer: 'https://testnet.bscscan.com',
+    isCanonicalVPFI: false,
+    testnet: true,
+    nativeGasSymbol: 'BNB',
+    wrappedNativeAddress: '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd',
+  },
 ];
 
 export interface ChainModule {

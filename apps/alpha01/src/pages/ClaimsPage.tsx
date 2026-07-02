@@ -15,7 +15,7 @@ import { useDiamondContract } from '../hooks/useDiamond';
 
 export function ClaimsPage() {
   const { address, connect } = useWallet();
-  const { data, isLoading, refetch } = useClaimables();
+  const { data, isLoading, isError, error, refetch } = useClaimables();
   const diamond = useDiamondContract();
   const [busyId, setBusyId] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -57,6 +57,11 @@ export function ClaimsPage() {
         Collect collateral, principal, or proceeds after a loan settles. <HelpLink anchor="claims" />
       </p>
       {msg ? <div className="banner banner-warn">{msg}</div> : null}
+      {isError ? (
+        <div className="banner banner-error" style={{ marginBottom: 16 }}>
+          Could not load claimables: {error instanceof Error ? error.message : 'Indexer request failed'}
+        </div>
+      ) : null}
       {isLoading ? <p>Loading claimables…</p> : null}
       <div className="position-list">
         {rows.map(({ loan, side }) => (
@@ -69,7 +74,7 @@ export function ClaimsPage() {
           />
         ))}
       </div>
-      {!isLoading && rows.length === 0 ? (
+      {!isLoading && !isError && rows.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>
           Nothing to claim right now. <Link to="/positions">View positions</Link>
         </p>
@@ -90,6 +95,9 @@ function ClaimLoanCard({
   onClaim: () => void;
 }) {
   const lendingMeta = useTokenMeta(loan.lendingAsset);
+  const collateralMeta = useTokenMeta(loan.collateralAsset);
+  const displayAsset = side === 'borrower' ? loan.collateralAsset : loan.lendingAsset;
+  const displayMeta = side === 'borrower' ? collateralMeta : lendingMeta;
 
   return (
     <div className="position-card">
@@ -98,7 +106,7 @@ function ClaimLoanCard({
         <span>{side === 'borrower' ? 'Borrower claim' : 'Lender claim'}</span>
       </div>
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        <AssetSymbolLink address={loan.lendingAsset} meta={lendingMeta} /> ·{' '}
+        <AssetSymbolLink address={displayAsset} meta={displayMeta} /> ·{' '}
         {formatBpsAsPercent(loan.interestRateBps)} · {loan.status}
       </div>
       <p style={{ fontSize: '0.85rem', marginTop: 4 }}>

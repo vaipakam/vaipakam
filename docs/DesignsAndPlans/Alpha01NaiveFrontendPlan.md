@@ -7,7 +7,7 @@
 - [`BasicUserUXSimplification.md`](./BasicUserUXSimplification.md) — product principles (PR #827)
 - [`BasicUserJourneyMap.md`](../TestScopes/BasicUserJourneyMap.md) — testable journeys + PF IDs
 - [`ProjectDetailsREADME.md`](../FunctionalSpecs/ProjectDetailsREADME.md) — protocol behaviour oracle
-- [`TokenomicsTechSpec.md`](../TokenomicsTechSpec.md) — VPFI copy constraints
+- [`TokenomicsTechSpec.md`](../FunctionalSpecs/TokenomicsTechSpec.md) — VPFI copy constraints
 
 ## 1. Why this doc exists
 

@@ -13,3 +13,5 @@ Round 2: ERC-20 approvals zero stale allowances first; borrow checklist blocks w
 Round 3: position cards and borrow wizard reset assets on chain change; lender `settled` claims removed; create-lending balance gate; risk-terms hash fail-closed; APR capped at 100%; collateral hint labels wallet-only.
 
 Round 4: BNB testnet restored as user-facing; token decimals fail closed without persisting a bogus 18; risk-disclosure link targets the Basic guide anchor; vault reads use the view getter; indexer outages surface errors instead of empty portfolios; accept flow rejects cross-chain offer/wallet mismatches.
+
+Round 5: Arb Sepolia and BNB testnet borrow/lend defaults now resolve wrapped-native addresses (with deployment/env fallbacks for mock stable); open offers can be cancelled from Positions; ERC-20 approvals verify receipt success and re-read allowance; borrow matcher requires an exact principal match for direct accept; Claims surfaces indexer failures and shows collateral for borrower claims; create-lending gates on collateral decimals; Help links target real Basic guide anchors; AGENTS.md points at the canonical `~/.codex/scripts/` poller path.

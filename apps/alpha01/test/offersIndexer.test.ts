@@ -74,12 +74,13 @@ describe('offer filters', () => {
 });
 
 describe('matchOffersToBorrowIntent', () => {
-  it('filters by minimum borrow amount in wei', () => {
+  it('matches only offers whose principal equals the entered borrow amount', () => {
     const pool = [
       baseOffer({ offerId: 1, amount: '500', amountMax: '500' }),
       baseOffer({ offerId: 2, amount: '2000', amountMax: '2000' }),
+      baseOffer({ offerId: 3, amount: '1000', amountMax: '1000' }),
     ];
     const matched = matchOffersToBorrowIntent(pool, { minBorrowAmountWei: 1000n });
-    expect(matched.map((o) => o.offerId)).toEqual([2]);
+    expect(matched.map((o) => o.offerId)).toEqual([3]);
   });
 });

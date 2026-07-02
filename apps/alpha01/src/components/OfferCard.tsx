@@ -6,9 +6,11 @@ import { useTokenMeta } from '../lib/tokenMeta';
 
 interface Props {
   offer: IndexedOffer;
+  onCancel?: () => void;
+  cancelling?: boolean;
 }
 
-export function OfferCard({ offer }: Props) {
+export function OfferCard({ offer, onCancel, cancelling = false }: Props) {
   const lendingMeta = useTokenMeta(offer.lendingAsset || null);
   const collateralMeta = useTokenMeta(offer.collateralAsset || null);
   const isLender = offer.offerType === OFFER_TYPE_LENDER;
@@ -50,6 +52,18 @@ export function OfferCard({ offer }: Props) {
           tokenId={offer.collateralTokenId}
         />
       </div>
+      {onCancel ? (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={cancelling}
+            onClick={onCancel}
+          >
+            {cancelling ? 'Cancelling…' : 'Cancel offer'}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

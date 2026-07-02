@@ -177,7 +177,9 @@ export function matchOffersToBorrowIntent(
     }
     if (intent.minBorrowAmountWei != null && intent.minBorrowAmountWei > 0n) {
       const principal = BigInt(o.amountMax || o.amount || '0');
-      if (principal < intent.minBorrowAmountWei) return false;
+      // Direct accept always opens the full offer principal — treat the
+      // user's entered amount as an exact target, not a minimum floor.
+      if (principal !== intent.minBorrowAmountWei) return false;
     }
     return true;
   });

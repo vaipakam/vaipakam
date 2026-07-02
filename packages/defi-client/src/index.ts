@@ -17,6 +17,7 @@ export * from './flows/accept.js';
 export * from './flows/repay.js';
 export * from './flows/claim.js';
 export * from './flows/createOffer.js';
+export * from './flows/cancelOffer.js';
 export * from './types/receipt.js';
 export * from './types/offers.js';
 export * from './types/loans.js';

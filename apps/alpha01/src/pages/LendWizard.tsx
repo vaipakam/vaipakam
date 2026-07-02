@@ -222,6 +222,13 @@ export function LendWizard() {
                 : 'Loading lending token decimals…',
               ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
             },
+            {
+              id: 'collateral-decimals',
+              label: collateralMeta?.symbol
+                ? `${collateralMeta.symbol} decimals loaded`
+                : 'Loading collateral token decimals…',
+              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset),
+            },
             createPrincipalCheck?.loading
               ? {
                   id: 'principal-balance',
@@ -253,6 +260,8 @@ export function LendWizard() {
       amount,
       chain.name,
       collateralAmount,
+      collateralAsset,
+      collateralMeta,
       connect,
       consent,
       isCorrectChain,

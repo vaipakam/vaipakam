@@ -1,3 +1,5 @@
+import { useState } from 'react';
+import { cancelOffer } from '@vaipakam/defi-client';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { HelpLink } from '../components/HelpLink';
 import { OfferCard } from '../components/OfferCard';
@@ -6,12 +8,22 @@ import { useWallet } from '../context/WalletContext';
 import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useMyLoans } from '../hooks/useIndexedLoans';
 import { useMyOffers } from '../hooks/useMyOffers';
+import { useDiamondContract } from '../hooks/useDiamond';
 
 export function PositionsPage() {
   const { address, connect } = useWallet();
   const indexerOrigin = useIndexerOrigin();
+  const diamond = useDiamondContract();
   const { data: loans, isLoading: loansLoading, isError: loansError, error: loansErr } = useMyLoans();
-  const { data: offers, isLoading: offersLoading, isError: offersError, error: offersErr } = useMyOffers();
+  const {
+    data: offers,
+    isLoading: offersLoading,
+    isError: offersError,
+    error: offersErr,
+    refetch: refetchOffers,
+  } = useMyOffers();
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
 
   if (!address) {
     return (
@@ -35,6 +47,20 @@ export function PositionsPage() {
   const offerList = offers ?? [];
   const empty = !loading && !indexerError && loanList.length === 0 && offerList.length === 0;
 
+  async function handleCancelOffer(offerId: number) {
+    setCancellingId(offerId);
+    setCancelMsg(null);
+    try {
+      await cancelOffer({ diamond, offerId: BigInt(offerId) });
+      setCancelMsg(`Offer #${offerId} cancelled.`);
+      await refetchOffers();
+    } catch (e) {
+      setCancelMsg(e instanceof Error ? e.message : 'Cancel failed');
+    } finally {
+      setCancellingId(null);
+    }
+  }
+
   return (
     <div className="page-frame page-frame--wide">
       <h1 className="page-title">My positions</h1>
@@ -52,6 +78,12 @@ export function PositionsPage() {
       {indexerError ? (
         <div className="banner banner-error" style={{ marginBottom: 16 }}>
           Could not load positions from the indexer: {indexerErrorMsg}
+        </div>
+      ) : null}
+
+      {cancelMsg ? (
+        <div className="banner banner-warn" style={{ marginBottom: 16 }}>
+          {cancelMsg}
         </div>
       ) : null}
 
@@ -76,7 +108,12 @@ export function PositionsPage() {
           <ErrorBoundary>
             <div className="position-list">
               {offerList.map((offer) => (
-                <OfferCard key={offer.offerId} offer={offer} />
+                <OfferCard
+                  key={offer.offerId}
+                  offer={offer}
+                  cancelling={cancellingId === offer.offerId}
+                  onCancel={() => void handleCancelOffer(offer.offerId)}
+                />
               ))}
             </div>
           </ErrorBoundary>
