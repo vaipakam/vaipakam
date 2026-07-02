@@ -104,11 +104,19 @@ interface ChainMeta {
  *  (filters `diamondAddress !== null`) and flips `isChainSupported` false so
  *  protocol calls are gated off — a user can't select a half-configured chain.
  *
- *  BNB testnet (97): cross-chain stack + diamond are deployed and indexed, but
- *  its `ConfigureOracle` follow-up hasn't run (no `wethContract`/ETH feed), so
- *  `OracleFacet` fail-closes every asset to Illiquid → lending/risk flows would
- *  break. Remove 97 here once the BNB oracle setup lands. (#856/#859 Codex.) */
-const INDEXER_ONLY_CHAIN_IDS = new Set<number>([97]);
+ *  Currently EMPTY — every deployed chain in the bundle is user-facing.
+ *
+ *  History: BNB testnet (97) sat here from #859 while its cross-chain stack +
+ *  diamond were deployed and indexed but its `ConfigureOracle` follow-up hadn't
+ *  run (no `wethContract`/ETH feed), so `OracleFacet` fail-closed every asset to
+ *  Illiquid. That follow-up landed in #860 (mock-WETH numeraire + real ETH/USD
+ *  feed + PancakeSwap-V3 liquidation adapter) and PartialFlows are indexed on 97,
+ *  so it graduated to user-facing. (Note: on the testnet the mock WETH is
+ *  unpaired, so only the numeraire is deep-liquid — real BNB-testnet assets still
+ *  value/route conservatively; an accepted testnet/mirror limitation, not a
+ *  reason to hide the chain.) Add a chainId here when a new chain is in the
+ *  bundle for indexing but not yet oracle-configured. (#856/#859 Codex.) */
+const INDEXER_ONLY_CHAIN_IDS = new Set<number>([]);
 
 /** Folds a `ChainMeta` + the matching deployments-JSON record into a
  *  full `ChainConfig`. RPC URL still comes from the operator's
