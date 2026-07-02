@@ -149,6 +149,8 @@ type PreparedGuidedAction = {
   nextStep: string;
   sequence: string[];
   contractCall: string;
+  collateralEstimate: string;
+  safetyIndicator: string;
   readiness: GuidedContractDraft['readiness'];
   preflightGapCount: number;
   calldataStatus: string;
@@ -927,6 +929,8 @@ function FlowPage({
       nextStep: transactionPlan.primaryAction,
       sequence: transactionPlan.sequence,
       contractCall: transactionPlan.contractDraft.call,
+      collateralEstimate: transactionPlan.contractDraft.collateralEstimate,
+      safetyIndicator: transactionPlan.contractDraft.safetyIndicator,
       readiness: transactionPlan.contractDraft.readiness,
       preflightGapCount,
       calldataStatus: transactionPlan.contractDraft.calldataStatus,
@@ -1788,7 +1792,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     id: action.id,
     source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
     title: action.title,
-    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. Simulation: ' + action.simulationStatus + '. No transaction has been submitted.',
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Collateral: ' + action.collateralEstimate + '. Safety: ' + action.safetyIndicator + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. Simulation: ' + action.simulationStatus + '. No transaction has been submitted.',
     status: 'Local queue',
     when: action.createdAtLabel,
     impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : preflightGapLabel(action.preflightGapCount, 'preflight gap') + ' must be resolved before wallet submission.',
@@ -1972,7 +1976,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <div className="activity-main">
                 <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
                 <h2>{action.title}</h2>
-                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Calldata: {action.calldataPreview ?? action.calldataStatus}. Simulation: {action.simulationStatus}. No transaction has been submitted.</p>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Collateral: {action.collateralEstimate}. Safety: {action.safetyIndicator}. Calldata: {action.calldataPreview ?? action.calldataStatus}. Simulation: {action.simulationStatus}. No transaction has been submitted.</p>
               </div>
               <div className="activity-impact">
                 <strong>{action.status}</strong>
