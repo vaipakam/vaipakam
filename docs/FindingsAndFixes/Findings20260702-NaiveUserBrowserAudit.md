@@ -17,8 +17,8 @@ Artifacts saved under `cdpwalkthrough/`:
 - Browser: Chrome remote-debugged at `127.0.0.1:9222`.
 - App page: `https://defi.vaipakam.com/create-offer` during the final pass.
 - Wallet provider: MetaMask injected and connected.
-- Selected account: `0xE87319E4f4Cd0a0BD6ff2C087d038ac90D6023Cb`.
-- Additional connected account exposed by MetaMask: `0x90F79bf6EB2c4f870365E785982E1f101E93b906`.
+- Selected account: `0xE873...23Cb`.
+- Additional connected account exposed by MetaMask: `0x90F7...b906`.
 - Initial chain: Anvil Local Testnet, `0x7a69`.
 - Final supported-chain pass: Base Sepolia, `0x14a34`.
 

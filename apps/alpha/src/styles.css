@@ -1360,10 +1360,16 @@ dd {
 
   .nav-link {
     justify-content: center;
+    gap: 6px;
+    padding: 8px 6px;
+    font-size: 0.82rem;
   }
 
   .nav-link span {
-    display: none;
+    display: inline;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: center;
   }
 
   .sidebar-note {
@@ -1376,6 +1382,10 @@ dd {
   .help-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .offer-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1387,7 +1397,8 @@ dd {
   .topbar-controls,
   .hero-panel,
   .flow-hero,
-  .decision-strip {
+  .decision-strip,
+  .offer-layout {
     grid-template-columns: 1fr;
     flex-direction: column;
   }

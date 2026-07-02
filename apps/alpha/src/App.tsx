@@ -33,6 +33,7 @@ import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
+type RiskGuardrail = 'guided' | 'liquid' | 'advanced';
 
 type EthereumProvider = {
   request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
@@ -327,7 +328,43 @@ const APP_STORAGE_KEYS = {
 function readAppStorage(key: keyof typeof APP_STORAGE_KEYS) {
   if (typeof window === 'undefined') return null;
   const storageKey = APP_STORAGE_KEYS[key];
-  return window.localStorage.getItem(storageKey) ?? window.sessionStorage.getItem(storageKey);
+  try {
+    return window.localStorage.getItem(storageKey) ?? window.sessionStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalAppStorage(key: keyof typeof APP_STORAGE_KEYS, value: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(APP_STORAGE_KEYS[key], value);
+  } catch {
+    // Storage can be disabled in hardened browser contexts; UI state should still work in memory.
+  }
+}
+
+function removeAppStorageValue(storageKey: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignore unavailable localStorage.
+  }
+  try {
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    // Ignore unavailable sessionStorage.
+  }
+}
+
+function readRawStorageValue(storageKey: string) {
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.localStorage.getItem(storageKey) ?? window.sessionStorage.getItem(storageKey);
+  } catch {
+    return null;
+  }
 }
 
 function App() {
@@ -337,14 +374,39 @@ function App() {
   });
   const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
   const [actionsPaused, setActionsPausedState] = useState(() => readAppStorage('actionsPaused') === 'true');
+  const [riskGuardrail, setRiskGuardrailState] = useState<RiskGuardrail>(() => {
+    const stored = readAppStorage('risk');
+    return stored === 'liquid' || stored === 'advanced' ? stored : 'guided';
+  });
+  const advancedAllowed = riskGuardrail === 'advanced';
   const setActionsPaused = (paused: boolean) => {
     setActionsPausedState(paused);
-    window.localStorage.setItem(APP_STORAGE_KEYS.actionsPaused, String(paused));
+    writeLocalAppStorage('actionsPaused', String(paused));
+  };
+  const setRiskGuardrail = (nextGuardrail: RiskGuardrail) => {
+    setRiskGuardrailState(nextGuardrail);
+    writeLocalAppStorage('risk', nextGuardrail);
+    if (nextGuardrail !== 'advanced') {
+      setModeState('guided');
+      writeLocalAppStorage('mode', 'guided');
+    }
   };
   const setMode = (nextMode: Mode) => {
+    if (nextMode === 'advanced' && !advancedAllowed) {
+      setModeState('guided');
+      writeLocalAppStorage('mode', 'guided');
+      return;
+    }
     setModeState(nextMode);
-    window.localStorage.setItem(APP_STORAGE_KEYS.mode, nextMode);
+    writeLocalAppStorage('mode', nextMode);
   };
+
+  useEffect(() => {
+    if (!advancedAllowed && mode === 'advanced') {
+      setModeState('guided');
+      writeLocalAppStorage('mode', 'guided');
+    }
+  }, [advancedAllowed, mode]);
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -426,6 +488,12 @@ function App() {
       if (maybeError.code === 4902) {
         try {
           await ethereum.request({ method: 'wallet_addEthereumChain', params: [BASE_SEPOLIA_PARAMS] });
+          await ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: BASE_SEPOLIA_CHAIN_ID }] });
+          const chainIdResult = await ethereum.request({ method: 'eth_chainId' });
+          if (chainIdResult !== BASE_SEPOLIA_CHAIN_ID) {
+            setWallet((current) => ({ ...current, detected: true, chainId: typeof chainIdResult === 'string' ? chainIdResult : current.chainId, error: 'Base Sepolia was added but is not active yet.' }));
+            return;
+          }
           setWallet((current) => ({ ...current, detected: true, chainId: BASE_SEPOLIA_CHAIN_ID, error: null }));
         } catch {
           setWallet((current) => ({ ...current, detected: true, error: 'Base Sepolia add-chain request was rejected or failed.' }));
@@ -439,13 +507,13 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar" aria-label="Vaipakam navigation">
-        <a className="brand" href="/">
+        <NavLink className="brand" to="/">
           <span className="brand-mark">V</span>
           <span>
             <strong>Vaipakam</strong>
             <small>Task-first protocol UI</small>
           </span>
-        </a>
+        </NavLink>
         <nav className="nav-list">
           <AppNavLink to="/" label="Start" icon={<Sparkles />} />
           <AppNavLink to="/earn" label="Earn" icon={<PiggyBank />} />
@@ -467,20 +535,20 @@ function App() {
       </aside>
 
       <main className="main-surface">
-        <TopBar mode={mode} wallet={wallet} onConnectWallet={connectWallet} onModeChange={setMode} />
+        <TopBar mode={mode} wallet={wallet} riskGuardrail={riskGuardrail} onConnectWallet={connectWallet} onModeChange={setMode} />
         <RouteErrorBoundary>
           <Routes>
           <Route path="/" element={<Home mode={mode} />} />
-          <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/rent" element={<FlowPage flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/offers" element={<OfferBook wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/claims" element={<Claims wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} />} />
+          <Route path="/claims" element={<Claims wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
           <Route path="/activity" element={<Activity wallet={wallet} />} />
-          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} />} />
-          <Route path="/advanced" element={<Advanced wallet={wallet} />} />
-          <Route path="/settings" element={<SettingsPanel actionsPaused={actionsPaused} onActionsPausedChange={setActionsPaused} />} />
+          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/advanced" element={<Advanced wallet={wallet} riskGuardrail={riskGuardrail} />} />
+          <Route path="/settings" element={<SettingsPanel riskGuardrail={riskGuardrail} actionsPaused={actionsPaused} onRiskGuardrailChange={setRiskGuardrail} onActionsPausedChange={setActionsPaused} />} />
           <Route path="/data-rights" element={<DataRights wallet={wallet} />} />
           <Route path="/help" element={<Help />} />
           <Route path="*" element={<NotFound />} />
@@ -511,7 +579,11 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
       message: error instanceof Error ? error.message : 'Unknown route error',
       componentStack: (info.componentStack ?? '').slice(0, 800),
     };
-    window.sessionStorage.setItem(APP_STORAGE_KEYS.lastError, JSON.stringify(entry));
+    try {
+      window.sessionStorage.setItem(APP_STORAGE_KEYS.lastError, JSON.stringify(entry));
+    } catch {
+      // The recovery screen still renders if session storage is blocked.
+    }
   }
 
   render() {
@@ -534,7 +606,7 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBo
 
 function AppNavLink({ to, label, icon }: { to: string; label: string; icon: ReactNode }) {
   return (
-    <NavLink to={to} end={to === '/'} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+    <NavLink to={to} end={to === '/'} aria-label={label} title={label} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
       {icon}
       <span>{label}</span>
     </NavLink>
@@ -544,14 +616,17 @@ function AppNavLink({ to, label, icon }: { to: string; label: string; icon: Reac
 function TopBar({
   mode,
   wallet,
+  riskGuardrail,
   onConnectWallet,
   onModeChange,
 }: {
   mode: Mode;
   wallet: WalletState;
+  riskGuardrail: RiskGuardrail;
   onConnectWallet: () => void;
   onModeChange: (mode: Mode) => void;
 }) {
+  const advancedAllowed = riskGuardrail === 'advanced';
   return (
     <header className="topbar">
       <div>
@@ -584,6 +659,8 @@ function TopBar({
             className={mode === 'advanced' ? 'selected' : ''}
             type="button"
             aria-pressed={mode === 'advanced'}
+            disabled={!advancedAllowed}
+            title={advancedAllowed ? 'Open advanced mode' : 'Enable Advanced allowed in Settings first'}
             onClick={() => onModeChange('advanced')}
           >
             Advanced
@@ -673,6 +750,17 @@ function FlowPage({
   const walletReady = Boolean(wallet.account);
   const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
   const [reviewed, setReviewed] = useState(false);
+
+  useEffect(() => {
+    setSelectedAsset(flow.defaultAsset);
+    setAmount(flow.defaultAmount);
+    setReviewed(false);
+  }, [flow.kind, flow.defaultAsset, flow.defaultAmount]);
+
+  useEffect(() => {
+    setReviewed(false);
+  }, [flow.kind, selectedAsset, amount]);
+
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
   const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
   const actionLabel = actionsPaused
@@ -902,7 +990,7 @@ const activityItems: ActivityItem[] = [
   },
 ];
 
-type PositionFilter = 'all' | 'urgent' | 'claimable' | 'loans' | 'rentals';
+type PositionFilter = 'all' | 'urgent' | 'claimable' | 'loans' | 'rentals' | 'reviewed';
 
 type ManagedPosition = {
   id: string;
@@ -1021,15 +1109,17 @@ const claimItems: ClaimItem[] = [
   { id: 'discount-vpfi', source: 'discount', title: 'VPFI fee discount', amount: '0', asset: 'VPFI', status: 'Informational', detail: 'Register VPFI to unlock discount tiers once wired.' },
 ];
 
-function Claims({ wallet, actionsPaused, onConnectWallet }: { wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void }) {
+function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [reviewedClaimIds, setReviewedClaimIds] = useState<string[]>([]);
   const [filter, setFilter] = useState<'all' | ClaimItem['source']>('all');
   const walletReady = Boolean(wallet.account);
-  const visibleClaims = claimItems.filter((item) => filter === 'all' || item.source === filter);
-  const readyCount = claimItems.filter((item) => item.status === 'Ready' && !reviewedClaimIds.includes(item.id)).length;
-  const totalReady = claimItems
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const canPreviewClaims = walletReady && baseReady;
+  const visibleClaims = canPreviewClaims ? claimItems.filter((item) => filter === 'all' || item.source === filter) : [];
+  const readyCount = canPreviewClaims ? claimItems.filter((item) => item.status === 'Ready' && !reviewedClaimIds.includes(item.id)).length : 0;
+  const totalReady = canPreviewClaims ? claimItems
     .filter((item) => item.status === 'Ready' && item.asset === 'mUSDC' && !reviewedClaimIds.includes(item.id))
-    .reduce((sum, item) => sum + Number(item.amount.replace(/,/g, '')), 0);
+    .reduce((sum, item) => sum + Number(item.amount.replace(/,/g, '')), 0) : 0;
 
   const claim = (id: string) => {
     setReviewedClaimIds((current) => current.includes(id) ? current : [...current, id]);
@@ -1052,7 +1142,7 @@ function Claims({ wallet, actionsPaused, onConnectWallet }: { wallet: WalletStat
         <div className="panel-surface">
           <p className="eyebrow">Wallet</p>
           <strong>{walletReady ? 'Connected' : 'Not connected'}</strong>
-          <span>{wallet.chainId === BASE_SEPOLIA_CHAIN_ID ? 'Base Sepolia' : 'Network check needed'}</span>
+          <span>{baseReady ? 'Base Sepolia' : 'Network check needed'}</span>
         </div>
       </section>
 
@@ -1064,7 +1154,20 @@ function Claims({ wallet, actionsPaused, onConnectWallet }: { wallet: WalletStat
         ))}
       </section>
 
-      <p className="page-intro compact">These rows preview the Claim Center layout until live claim reads are wired for the connected wallet.</p>
+      <p className="page-intro compact">Claim rows stay hidden until a connected wallet is on Base Sepolia. This prevents fixture data from looking like funds available to every visitor.</p>
+      {!walletReady ? (
+        <section className="empty-state panel-surface">
+          <h3>Connect wallet to review claimables</h3>
+          <p>Vaipakam will show claimable previews only after it can scope them to your connected wallet.</p>
+          <button className="primary-action" type="button" onClick={onConnectWallet}>Connect wallet</button>
+        </section>
+      ) : !baseReady ? (
+        <section className="empty-state panel-surface">
+          <h3>Switch to Base Sepolia</h3>
+          <p>Claim previews are gated until the active network matches the supported Vaipakam deployment.</p>
+          <button className="primary-action" type="button" onClick={onSwitchNetwork}>Switch to Base Sepolia</button>
+        </section>
+      ) : null}
       <section className="claim-list panel-surface" aria-label="Claimable item previews">
         {visibleClaims.map((item) => {
           const claimed = reviewedClaimIds.includes(item.id);
@@ -1078,8 +1181,8 @@ function Claims({ wallet, actionsPaused, onConnectWallet }: { wallet: WalletStat
               </div>
               <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
               <span>{claimed ? 'Reviewed locally' : item.status}</span>
-              <button type="button" disabled={actionsPaused || claimed || !ready} onClick={walletReady ? () => claim(item.id) : onConnectWallet}>
-                {!walletReady ? 'Connect wallet' : actionsPaused ? 'Actions paused' : claimed ? 'Reviewed' : ready ? 'Review claim' : 'Not ready'}
+              <button type="button" disabled={actionsPaused || claimed || !ready} onClick={() => claim(item.id)}>
+                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed' : ready ? 'Review claim' : 'Not ready'}
               </button>
             </article>
           );
@@ -1100,6 +1203,14 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
   const blocker = actionsPaused ? 'Actions paused in Settings' : !walletReady ? 'Connect wallet to continue' : !baseReady ? 'Switch to Base Sepolia before signing' : null;
   const receiptRows = buildOfferReceiptRows(selectedOffer);
   const reviewed = reviewedOfferId === selectedOffer.id;
+  const selectOfferFilter = (nextFilter: OfferKind | 'all') => {
+    setFilter(nextFilter);
+    const nextVisibleOffers = marketOffers.filter((offer) => nextFilter === 'all' || offer.kind === nextFilter);
+    if (!nextVisibleOffers.some((offer) => offer.id === selectedOfferId)) {
+      setSelectedOfferId(nextVisibleOffers[0]?.id ?? marketOffers[0].id);
+    }
+    setReviewedOfferId(null);
+  };
 
   return (
     <div className="offers-page">
@@ -1111,7 +1222,7 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
         <div className="offer-list panel-surface">
           <div className="portfolio-tools" aria-label="Offer filters">
             {(['all', 'lend', 'borrow', 'rent'] as Array<OfferKind | 'all'>).map((option) => (
-              <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
+              <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => selectOfferFilter(option)}>
                 {option}
               </button>
             ))}
@@ -1268,7 +1379,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletState; actionsPaused: boolean }) {
+function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
   const [reviewedActions, setReviewedActions] = useState<string[]>([]);
   const visiblePositions = managedPositions.filter((position) => {
@@ -1276,8 +1387,12 @@ function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletSta
     if (filter === 'claimable') return Boolean(position.claimable);
     if (filter === 'loans') return position.kind === 'loan' || position.kind === 'offer';
     if (filter === 'rentals') return position.kind === 'rental';
+    if (filter === 'reviewed') return reviewedActions.includes(position.id);
     return true;
   });
+  const walletReady = Boolean(wallet.account);
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const actionsBlocked = actionsPaused && walletReady && baseReady;
   const urgentCount = managedPositions.filter((position) => position.urgency === 'urgent').length;
   const claimableCount = managedPositions.filter((position) => position.claimable).length;
   const completedCount = reviewedActions.length;
@@ -1289,6 +1404,15 @@ function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletSta
   ];
 
   const completeAction = (id: string) => {
+    if (!walletReady) {
+      onConnectWallet();
+      return;
+    }
+    if (!baseReady) {
+      onSwitchNetwork();
+      return;
+    }
+    if (actionsPaused) return;
     setReviewedActions((current) => current.includes(id) ? current : [...current, id]);
   };
 
@@ -1307,12 +1431,12 @@ function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletSta
         <div className="action-list">
           <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
           <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
-          <button type="button" onClick={() => setFilter('all')}><Coins size={16} /> Completed ({completedCount})</button>
+          <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
         </div>
       </section>
 
       <section className="portfolio-tools panel-surface" aria-label="Portfolio filters">
-        {(['all', 'urgent', 'claimable', 'loans', 'rentals'] as PositionFilter[]).map((option) => (
+        {(['all', 'urgent', 'claimable', 'loans', 'rentals', 'reviewed'] as PositionFilter[]).map((option) => (
           <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
             {option}
           </button>
@@ -1330,8 +1454,8 @@ function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletSta
               </div>
               <span>{position.status}</span>
               <strong>{position.amount}</strong>
-              <button type="button" onClick={() => completeAction(position.id)} disabled={actionsPaused || done}>
-                {actionsPaused ? 'Actions paused' : done ? 'Reviewed' : 'Review: ' + position.nextAction}
+              <button type="button" onClick={() => completeAction(position.id)} disabled={actionsBlocked || done}>
+                {!walletReady ? 'Connect wallet' : !baseReady ? 'Switch network' : actionsPaused ? 'Actions paused' : done ? 'Reviewed' : 'Review: ' + position.nextAction}
               </button>
             </article>
           );
@@ -1342,23 +1466,21 @@ function Manage({ mode, wallet, actionsPaused }: { mode: Mode; wallet: WalletSta
 }
 
 
-function SettingsPanel({ actionsPaused, onActionsPausedChange }: { actionsPaused: boolean; onActionsPausedChange: (paused: boolean) => void }) {
-  const [riskGuardrail, setRiskGuardrail] = useState(() => readAppStorage('risk') ?? 'guided');
+function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, onActionsPausedChange }: { riskGuardrail: RiskGuardrail; actionsPaused: boolean; onRiskGuardrailChange: (guardrail: RiskGuardrail) => void; onActionsPausedChange: (paused: boolean) => void }) {
   const [language, setLanguage] = useState(() => readAppStorage('language') ?? 'English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
 
-  const updateRisk = (value: string) => {
-    setRiskGuardrail(value);
-    localStorage.setItem(APP_STORAGE_KEYS.risk, value);
+  const updateRisk = (value: RiskGuardrail) => {
+    onRiskGuardrailChange(value);
   };
   const updateLanguage = (value: string) => {
     setLanguage(value);
-    localStorage.setItem(APP_STORAGE_KEYS.language, value);
+    writeLocalAppStorage('language', value);
   };
   const updateLocalAnalytics = (value: boolean) => {
     setLocalAnalytics(value);
-    localStorage.setItem(APP_STORAGE_KEYS.analytics, String(value));
+    writeLocalAppStorage('analytics', String(value));
   };
 
   return (
@@ -1381,7 +1503,7 @@ function SettingsPanel({ actionsPaused, onActionsPausedChange }: { actionsPaused
           </label>
           <label>
             <span>Risk guardrail</span>
-            <select value={riskGuardrail} onChange={(event) => updateRisk(event.target.value)}>
+            <select value={riskGuardrail} onChange={(event) => updateRisk(event.target.value as RiskGuardrail)}>
               <option value="guided">Guided only</option>
               <option value="liquid">Liquid assets</option>
               <option value="advanced">Advanced allowed</option>
@@ -1438,7 +1560,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
   const buildReport = () => {
     const snapshot = storageKeys.reduce<Record<string, string | null>>((result, key) => {
-      result[key] = window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+      result[key] = readRawStorageValue(key);
       return result;
     }, {});
     const nextReport = JSON.stringify({
@@ -1463,8 +1585,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
 
   const clearLocalData = () => {
     storageKeys.forEach((key) => {
-      window.localStorage.removeItem(key);
-      window.sessionStorage.removeItem(key);
+      removeAppStorageValue(key);
     });
     setReport('');
     setConfirmClear(false);
@@ -1570,7 +1691,7 @@ function Help() {
   );
 }
 
-function Advanced({ wallet }: { wallet: WalletState }) {
+function Advanced({ wallet, riskGuardrail }: { wallet: WalletState; riskGuardrail: RiskGuardrail }) {
   const [riskMode, setRiskMode] = useState('Blue-chip only');
   const [oracleRoute, setOracleRoute] = useState('Primary + fallback');
   const [automation, setAutomation] = useState('Manual approval');
@@ -1581,6 +1702,16 @@ function Advanced({ wallet }: { wallet: WalletState }) {
     : wallet.account && wallet.chainId === BASE_SEPOLIA_CHAIN_ID
       ? 'Run #' + diagnosticRun + ': Base Sepolia connected, wallet readable, no blocking UI state found.'
       : 'Run #' + diagnosticRun + ': Connect wallet and switch to Base Sepolia before using advanced actions.';
+
+  if (riskGuardrail !== 'advanced') {
+    return (
+      <div className="advanced-page">
+        <SectionHeading eyebrow="Advanced mode" title="Advanced controls are locked by your guardrail" />
+        <p className="page-intro">Your current risk guardrail keeps Vaipakam in guided mode. Enable Advanced allowed in Settings when you are ready to use custom markets, automation, diagnostics, and risk controls.</p>
+        <NavLink className="primary-action" to="/settings">Open Settings</NavLink>
+      </div>
+    );
+  }
 
   return (
     <div className="advanced-page">
@@ -1684,7 +1815,7 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Borrow amount entered' : 'Enter borrow amount', ready: numericAmount > 0 },
-      { label: 'Repay route preview available', ready: true },
+      { label: 'Repay route preview pending contract wiring', ready: false },
     ];
   }
   if (flow.kind === 'rent') {
@@ -1692,14 +1823,14 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Rental duration entered' : 'Enter rental duration', ready: numericAmount > 0 },
-      { label: 'Close and claim path visible', ready: true },
+      { label: 'Close and claim path pending contract wiring', ready: false },
     ];
   }
   return [
     { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
     { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
     { label: numericAmount > 0 ? 'Lend amount entered' : 'Enter lend amount', ready: numericAmount > 0 },
-    { label: 'Allowance check ready for contract wiring', ready: true },
+    { label: 'Allowance check pending contract wiring', ready: false },
   ];
 }
 
@@ -1744,7 +1875,11 @@ function shortAddress(address: string) {
 
 function chainLabel(chainId: string | null) {
   if (chainId === '0x14a34') return 'Base Sepolia';
+  if (chainId === '0x2105') return 'Base';
+  if (chainId === '0x1') return 'Ethereum';
   if (chainId === '0xaa36a7') return 'Sepolia';
+  if (chainId === '0x66eee') return 'Arbitrum Sepolia';
+  if (chainId === '0x38') return 'BNB Chain';
   if (chainId === '0x89') return 'Polygon';
   return chainId ? 'Chain ' + Number(chainId) : 'Unknown network';
 }
