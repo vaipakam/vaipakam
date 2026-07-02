@@ -62,8 +62,10 @@ export function formatRawAssetAmount(
     const symbol = resolveSymbol(meta, address);
     return symbol ? `${label} ${symbol}` : label;
   }
-  const decimals = meta?.decimals ?? 18;
-  const amount = formatRawTokenAmount(raw, decimals);
+  if (meta?.decimals == null) {
+    return raw.trim() || '—';
+  }
+  const amount = formatRawTokenAmount(raw, meta.decimals);
   const symbol = resolveSymbol(meta, address);
   return symbol ? `${amount} ${symbol}` : amount;
 }
@@ -76,5 +78,6 @@ export function formatIndexedAmount(
   tokenId: string,
 ): string {
   if (isNftAssetType(assetType)) return formatNftLabel(assetType, raw, tokenId);
-  return formatRawTokenAmount(raw, meta?.decimals ?? 18);
+  if (meta?.decimals == null) return raw.trim() || '—';
+  return formatRawTokenAmount(raw, meta.decimals);
 }

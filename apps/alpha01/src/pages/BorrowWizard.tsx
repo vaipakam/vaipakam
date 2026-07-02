@@ -15,7 +15,6 @@ import {
 import { AmountField } from '../components/AmountField';
 import { CollateralBalanceHint } from '../components/CollateralBalanceHints';
 import { AssetAmount } from '../components/AssetAmount';
-import { AssetSymbolLink } from '../components/AssetSymbolLink';
 import { BasicAssetPicker } from '../components/BasicAssetPicker';
 import { DurationSelect } from '../components/DurationSelect';
 import { EligibilityChecklist } from '../components/EligibilityChecklist';
@@ -33,6 +32,7 @@ import { useMode } from '../context/ModeContext';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import { assessCollateralBalance, parseHumanAmount } from '../lib/balanceCheck';
+import { resolveSymbol } from '../lib/formatAsset';
 import {
   hasResolvedTokenDecimals,
   peekTokenMeta,
@@ -520,8 +520,8 @@ export function BorrowWizard() {
                   {formatBpsAsPercent(o.interestRateBps)} APR · {o.durationDays} days
                 </div>
                 <div>
-                  Borrow <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset, chain.chainId)} /> · Lock{' '}
-                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset, chain.chainId)} />
+                  Borrow {resolveSymbol(peekTokenMeta(o.lendingAsset, chain.chainId), o.lendingAsset)} · Lock{' '}
+                  {resolveSymbol(peekTokenMeta(o.collateralAsset, chain.chainId), o.collateralAsset)}
                 </div>
               </button>
             ))}

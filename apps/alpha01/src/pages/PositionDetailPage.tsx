@@ -32,7 +32,7 @@ export function PositionDetailPage() {
   const origin = useIndexerOrigin();
   const { data: hf } = useLoanHealth(id);
 
-  const { data: loan, isLoading, refetch } = useQuery({
+  const { data: loan, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['loan', chain.chainId, id],
     enabled: Number.isFinite(id),
     queryFn: () => fetchLoanById(origin ?? undefined, chain.chainId, id),
@@ -45,6 +45,17 @@ export function PositionDetailPage() {
   const [msg, setMsg] = useState<string | null>(null);
 
   if (isLoading) return <p>Loading loan…</p>;
+  if (isError) {
+    const msg = error instanceof Error ? error.message : 'Indexer request failed';
+    return (
+      <div>
+        <p className="banner banner-error">Could not load loan from the indexer: {msg}</p>
+        <button type="button" className="btn btn-secondary" onClick={() => void refetch()}>
+          Retry
+        </button>
+      </div>
+    );
+  }
   if (!loan) return <p>Loan not found.</p>;
 
   const role = loanRoleForWallet(loan, address);

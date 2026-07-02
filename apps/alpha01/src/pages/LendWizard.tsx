@@ -25,6 +25,7 @@ import { useBorrowerOffersForLend } from '../hooks/useBorrowerOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 import { assessCollateralBalance } from '../lib/balanceCheck';
+import { resolveSymbol } from '../lib/formatAsset';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import {
@@ -409,12 +410,12 @@ export function LendWizard() {
               >
                 <strong>Request #{o.offerId}</strong>
                 <div style={{ color: 'var(--text-secondary)' }}>
-                  Wants <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset, chain.chainId)} /> ·{' '}
+                  Wants {resolveSymbol(peekTokenMeta(o.lendingAsset, chain.chainId), o.lendingAsset)} ·{' '}
                   {formatBpsAsPercent(o.interestRateBpsMax || o.interestRateBps)} APR
                 </div>
                 <div>
                   Collateral:{' '}
-                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset, chain.chainId)} />
+                  {resolveSymbol(peekTokenMeta(o.collateralAsset, chain.chainId), o.collateralAsset)}
                 </div>
               </button>
             ))}

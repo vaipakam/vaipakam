@@ -29,8 +29,17 @@ function formatWhen(unixSec: number): string {
 export function ActivityPage() {
   const { address, connect } = useWallet();
   const chain = useReadChain();
-  const { data, isLoading, isFetchingNextPage, hasNextPage, fetchNextPage, refetch, isRefetching } =
-    useIndexedActivity();
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+    refetch,
+    isRefetching,
+  } = useIndexedActivity();
 
   const groups = useMemo(() => {
     const events = data?.pages.flatMap((p) => p?.events ?? []) ?? [];
@@ -73,6 +82,13 @@ export function ActivityPage() {
       </div>
 
       {isLoading ? <p>Loading activity…</p> : null}
+
+      {isError ? (
+        <div className="banner banner-error" style={{ marginBottom: 16 }}>
+          Could not load activity from the indexer:{' '}
+          {error instanceof Error ? error.message : 'Indexer request failed'}
+        </div>
+      ) : null}
 
       <div className="activity-feed">
         {groups.map((group) => {
@@ -117,7 +133,7 @@ export function ActivityPage() {
         })}
       </div>
 
-      {!isLoading && groups.length === 0 ? (
+      {!isLoading && !isError && groups.length === 0 ? (
         <p style={{ color: 'var(--text-secondary)' }}>
           No activity yet. Borrow, lend, or post an offer to get started.
         </p>

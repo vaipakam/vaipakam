@@ -21,3 +21,5 @@ Round 6: Cancel offer is gated to the on-chain creator; create-lending adds cura
 Round 7: Activity merge preserves all actor rows; enrichment includes current-holder loans/offers; token metadata cache is chain-scoped; Positions merges creator + holder offers for cancel paths; borrow receipts read live LIF from the diamond; CoinGecko lists clear on chain switch; borrow-request collateral hint is wallet-only.
 
 Round 8: Open offers list is current-holder only so transferred-away positions cannot be cancelled from alpha01; fund-lend receipt discloses principal leaves wallet custody; position cards render asset symbols as text inside the loan link (no nested anchors).
+
+Round 9: Borrow/lend offer pickers exclude self-authored offers and render plain symbols inside selectable rows; raw amount formatting no longer assumes 18 decimals; canonical asset labels use lowercase keys; loan detail and activity pages surface indexer errors instead of empty/not-found states.

@@ -3,20 +3,25 @@ import {
   fetchAllActiveOffers,
   filterLenderOffersForBorrow,
 } from '@vaipakam/defi-client';
+import { useWallet } from '../context/WalletContext';
 import { useIndexerOrigin } from './useIndexerOrigin';
 import { useReadChain } from './useDiamond';
 
 export function useLenderOffersForBorrow() {
   const chain = useReadChain();
+  const { address } = useWallet();
   const origin = useIndexerOrigin();
 
   return useQuery({
-    queryKey: ['lender-offers', chain.chainId, origin],
+    queryKey: ['lender-offers', chain.chainId, origin, address],
     enabled: Boolean(origin),
     queryFn: async () => {
       if (!origin) return [];
       const all = await fetchAllActiveOffers(origin, chain.chainId);
-      return filterLenderOffersForBorrow(all);
+      const wallet = address?.toLowerCase();
+      return filterLenderOffersForBorrow(all).filter(
+        (o) => !wallet || o.creator.toLowerCase() !== wallet,
+      );
     },
     staleTime: 30_000,
   });

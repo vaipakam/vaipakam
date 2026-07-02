@@ -4,8 +4,8 @@ import type { CoinGeckoToken } from '@vaipakam/lib/coingecko';
 const CANONICAL_LABELS: Record<string, { symbol: string; name: string }> = {
   '0x4200000000000000000000000000000000000006': { symbol: 'WETH', name: 'Wrapped Ether' },
   '0x036cbd53842c5426634e7929541ec2318f3dcf7e': { symbol: 'USDC', name: 'USD Coin (testnet)' },
-  '0xfFf9976782d46CC05630D1f6eBAb18b2324d6B14': { symbol: 'WETH', name: 'Wrapped Ether (Sepolia)' },
-  '0x94a9D9AC8a22534E3FaCa9F4e7F2E2cf85d5E4C8': { symbol: 'USDC', name: 'USD Coin (Sepolia)' },
+  '0xfff9976782d46cc05630d1f6ebab18b2324d6b14': { symbol: 'WETH', name: 'Wrapped Ether (Sepolia)' },
+  '0x94a9d9ac8a22534e3facaf4e7f2e2cf85d5e4c8': { symbol: 'USDC', name: 'USD Coin (Sepolia)' },
   '0x980b62da83eff3d4576c647993b0c1d7faf17c73': { symbol: 'WETH', name: 'Wrapped Ether (Arb Sepolia)' },
   '0xae13d989dac2f0debff460ac112a837c89baa7cd': { symbol: 'WBNB', name: 'Wrapped BNB (testnet)' },
 };
