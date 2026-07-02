@@ -180,3 +180,44 @@ Compare the frontend ABI/type expected by `useProtocolConfig()` with the current
 - Loan details after loan: `cdpwalkthrough/pf-postloan-connected-04-loan-details.png`
 - Offer details after loan: `cdpwalkthrough/pf-postloan-connected-05-offer-details.png`
 - Diagnostics drawer: `cdpwalkthrough/pf-diagnostics-02-drawer-open.png`
+
+## Resolution — #833 (frontend) + #780 (accept-offer gas messaging)
+
+Root-cause triage split these findings into two classes: **genuine frontend
+bugs** (fixed in code) and **stale local Anvil deployment** artifacts (the
+walkthrough ran against an Anvil diamond built from older contracts than the
+frontend ABIs; the current `src/` ABI matches the shipped frontend ABI, and the
+Base/Arb/BNB testnets — freshly deployed from current contracts — decode
+cleanly). The latter are resolved by redeploying the local Anvil diamond from
+current contracts, not by frontend workarounds (which would mask a contract
+that no longer exists).
+
+| Finding | Class | Resolution |
+| --- | --- | --- |
+| **F-001** accept/detail economics (10 vs 100 mUSDC) | frontend bug | **Fixed.** New pure `offerHeadline()` helper (`apps/defi/src/lib/offerHeadline.ts`) applies the #183 canonical role-aware mapping (lender ERC-20 → `amountMax`/`interestRateBps`; borrower → `amount`/`interestRateBpsMax`; NFT → `amount`/`interestRateBps`) — the same endpoints `useAcceptTermsSigning` and the Offer Book row use. Wired into `AcceptReviewModal` (principal, projected repayment, LIF, net proceeds, rate) and `OfferDetails` (principal, rate). Unit-tested. |
+| **F-002** create-offer sim false-revert | frontend bug | **Fixed.** `useTxSimulation` gained an opt-in `allowAllowanceRevert` flag + benign `approval-needed` verdict; the create-offer preview sets it, so the pre-approval `ERC20InsufficientAllowance` (0xfb8f41b2) shows "Token approval required first" instead of an alarming "would revert". |
+| **F-003** Permit2 submits a doomed tx before fallback | frontend bug | **Fixed.** A read-only `publicClient.call` preflight now runs the `acceptOfferWithPermit` calldata before the wallet broadcast; on revert it falls through to the classic path without ever prompting a doomed on-chain send. |
+| **F-004** post-loan reads not visible (log-index deployBlock=0) | frontend robustness | **Fixed** for the local case: the log-index scan no longer bails when `deployBlock ≤ 0` on chain 31337 (a genesis scan is cheap on a local node) — it clamps to genesis and scans. (The `getLoanDetails` bigint + `getLoanCollateralLien`-missing sub-items are stale-Anvil — see below.) |
+| **F-005** llamarpc CORS on Anvil | frontend bug | **Fixed.** `useEnsName` skips ENS resolution entirely on chain 31337, so no mainnet public-RPC probe fires on local Anvil. |
+| **F-006** cookie banner over protocol CTAs | frontend UX | **Fixed.** Consent banner `z-index` lowered 9500 → 999 so transaction review modals (z-index 1000, full-screen backdrop) cover it — the "Accept all" no longer precedes the protocol "Accept". |
+| **F-007** `getProtocolConfigBundle` bool-decode | **stale Anvil** | The current `ConfigFacet.getProtocolConfigBundle` returns 15 fields (…`maxOfferDurationDays`), matching the frontend ABI; the walkthrough's Anvil diamond predated `maxOfferDurationDays`, so a 14-field response mis-decoded against the 15-field ABI. **Resolved by redeploying Anvil from current contracts.** No frontend change. |
+| F-004 `getLoanDetails` bigint safe-integer throw | **stale Anvil** | Same cause class — the stale Anvil `getLoanDetails` tuple shape no longer matches the current ABI, so an address-holding slot decoded into a small-int field. Resolved by fresh Anvil redeploy. |
+| F-004 `getLoanCollateralLien` "function not available" | **stale Anvil** | `MetricsFacet.getLoanCollateralLien` isn't cut into the stale Anvil diamond. Already degrades gracefully (lien → null, single diagnostic; no hard failure). Resolved by fresh Anvil redeploy that cuts the current facet set. |
+
+**#780** (historical `acceptOffer` "exceeds max transaction gas limit"): the
+historical trace shows the pre-typed-terms 2-arg `acceptOffer(uint256,bool)`
+call shape — a stale ABI against a diamond that had moved on, which is exactly
+the estimateGas-fallback failure mode. The current typed
+`acceptOffer(uint256,AcceptTerms,bytes)` flow already runs `ensureAllowance`
+before the write (the direct mitigation), and F-003's Permit2 preflight removes
+the other doomed-tx path. As the remaining preflight-messaging deliverable,
+`decodeContractError` now recognises the "exceeds max transaction gas limit"
+phrase and, when no concrete revert selector is decodable, rewrites it to
+explain it is usually an approval/stale-ABI artefact rather than a real gas
+shortage — so users can tell a gas cap from a true revert. Unit-tested.
+
+**Remaining validation**: a fresh-Anvil browser re-walkthrough of the
+create → accept → post-loan flow is the gold-standard confirmation for the
+stale-Anvil subset (F-007 + the two F-004 decode sub-items) and for the
+end-to-end visibility criterion; the frontend code fixes above are covered by
+typecheck + unit tests.

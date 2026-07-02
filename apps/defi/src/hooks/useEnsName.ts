@@ -1,7 +1,17 @@
 import { useEffect, useState } from 'react';
+import { useChainId } from 'wagmi';
 import { createPublicClient, http, isAddress, type Address } from 'viem';
 import { mainnet, base } from 'viem/chains';
 import { CHAIN_REGISTRY } from '../contracts/config';
+
+/** Local/dev chains where ENS resolution is meaningless and would only fire
+ *  noisy cross-origin probes at public mainnet RPCs (F-20260630-005). A user
+ *  connected to Anvil is offline-by-design; skip the lookup entirely so the
+ *  console isn't flooded with `eth.llamarpc.com` CORS rejections that mask
+ *  real wallet/chain failures. ENS still resolves normally on every real
+ *  network (mainnet + testnets) — an address's mainnet ENS name is valid
+ *  regardless of which chain the user is transacting on. */
+const ENS_SKIP_CHAIN_IDS = new Set<number>([31337]);
 
 /**
  * ENS / Basenames reverse resolution — Phase 8a.1.
@@ -104,15 +114,21 @@ export interface UseEnsNameResult {
  * back to `shortenAddr` when `name` is null.
  */
 export function useEnsName(addr: string | null | undefined): UseEnsNameResult {
+  // Active chain — on local Anvil we short-circuit before any external RPC
+  // probe (see {ENS_SKIP_CHAIN_IDS}). `useChainId` returns the connected
+  // wallet's chain, or the config default when disconnected.
+  const chainId = useChainId();
+  const skipEns = ENS_SKIP_CHAIN_IDS.has(chainId);
+
   const [state, setState] = useState<UseEnsNameResult>(() => {
-    if (!addr || !isAddress(addr)) return { name: null, loading: false };
+    if (skipEns || !addr || !isAddress(addr)) return { name: null, loading: false };
     const cached = loadCache(addr);
     if (cached) return { name: cached.name, loading: false };
     return { name: null, loading: true };
   });
 
   useEffect(() => {
-    if (!addr || !isAddress(addr)) {
+    if (skipEns || !addr || !isAddress(addr)) {
       setState({ name: null, loading: false });
       return;
     }
@@ -149,7 +165,7 @@ export function useEnsName(addr: string | null | undefined): UseEnsNameResult {
     return () => {
       cancelled = true;
     };
-  }, [addr]);
+  }, [addr, skipEns]);
 
   return state;
 }
