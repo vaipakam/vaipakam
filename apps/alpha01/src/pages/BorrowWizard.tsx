@@ -7,7 +7,6 @@ import {
   acceptOfferFlow,
   createBorrowerOffer,
   formatBpsAsPercent,
-  LOAN_INITIATION_FEE_BPS,
   matchOffersToBorrowIntent,
   netBorrowProceedsWei,
   OFFER_DURATION_DEFAULT_DAYS,
@@ -25,6 +24,7 @@ import { HelpLink } from '../components/HelpLink';
 import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
 import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
+import { useLoanInitiationFeeBps } from '../hooks/useProtocolConfig';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
@@ -48,11 +48,13 @@ function borrowReceipt(
   offer: IndexedOffer,
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
+  lifBps: number,
 ): ReviewReceiptView {
   const borrowAmount = offer.amountMax || offer.amount;
   const principalWei = BigInt(borrowAmount || '0');
-  const netWei = netBorrowProceedsWei(principalWei);
-  const lifBpsLabel = formatBpsAsPercent(Number(LOAN_INITIATION_FEE_BPS));
+  const lifBpsBig = BigInt(lifBps);
+  const netWei = netBorrowProceedsWei(principalWei, lifBpsBig);
+  const lifBpsLabel = formatBpsAsPercent(lifBps);
   return {
     youReceive: {
       label: 'You receive',
@@ -162,6 +164,7 @@ export function BorrowWizard() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
+  const { data: lifBps = 10 } = useLoanInitiationFeeBps();
   const { data: offers, isLoading, isError: offersError, error: offersErr } = useLenderOffersForBorrow();
 
   const lendingDefault = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
@@ -221,6 +224,7 @@ export function BorrowWizard() {
         balance: spendableBalance,
         tokenAddress: collateralToken,
         meta: mode === 'accept' ? selectedCollateralMeta : collateralMeta,
+        chainId: chain.chainId,
         loading: balanceLoading,
       }),
     [
@@ -257,14 +261,14 @@ export function BorrowWizard() {
               label: lendingMeta?.symbol
                 ? `${lendingMeta.symbol} decimals loaded`
                 : 'Loading borrow asset decimals…',
-              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
+              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset, chain.chainId),
             },
             {
               id: 'collateral-decimals',
               label: collateralMeta?.symbol
                 ? `${collateralMeta.symbol} decimals loaded`
                 : 'Loading collateral decimals…',
-              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset),
+              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset, chain.chainId),
             },
           ]
         : []),
@@ -326,7 +330,7 @@ export function BorrowWizard() {
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (mode === 'accept' && selected) {
-      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta);
+      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta, lifBps);
     }
     return requestReceipt(
       amount,
@@ -351,6 +355,7 @@ export function BorrowWizard() {
     selected,
     selectedCollateralMeta,
     selectedLendingMeta,
+    lifBps,
   ]);
 
   async function handleAccept() {
@@ -380,11 +385,17 @@ export function BorrowWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
-      const lendingDecimals = requireTokenDecimals(lendingMeta, lendingAsset, 'Borrow asset');
+      const lendingDecimals = requireTokenDecimals(
+        lendingMeta,
+        lendingAsset,
+        'Borrow asset',
+        chain.chainId,
+      );
       const collateralDecimals = requireTokenDecimals(
         collateralMeta,
         collateralAsset,
         'Collateral asset',
+        chain.chainId,
       );
       await createBorrowerOffer({
         diamond,
@@ -509,8 +520,8 @@ export function BorrowWizard() {
                   {formatBpsAsPercent(o.interestRateBps)} APR · {o.durationDays} days
                 </div>
                 <div>
-                  Borrow <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset)} /> · Lock{' '}
-                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset)} />
+                  Borrow <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset, chain.chainId)} /> · Lock{' '}
+                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset, chain.chainId)} />
                 </div>
               </button>
             ))}
@@ -527,7 +538,7 @@ export function BorrowWizard() {
                 placeholder="e.g. 0.1"
                 availableLabel={<CollateralBalanceHint assessment={collateralBalance} variant="available" />}
                 shortfallLabel={<CollateralBalanceHint assessment={collateralBalance} variant="shortfall" />}
-                hint="Checked against your wallet and Vaipakam vault combined."
+                hint="Checked against your wallet balance only."
               />
               <button
                 type="button"

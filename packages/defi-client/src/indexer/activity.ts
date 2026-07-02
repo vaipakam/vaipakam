@@ -1,6 +1,13 @@
 import type { ActivityFilters, ActivityPage, IndexedActivityEvent } from '../types/activity.js';
-import { fetchOffersByCreator } from './offers.js';
-import { fetchLoansByBorrower, fetchLoansByLender } from './loans.js';
+import {
+  fetchOffersByCreator,
+  fetchOffersByCurrentHolder,
+} from './offers.js';
+import {
+  fetchLoansByBorrower,
+  fetchLoansByCurrentHolder,
+  fetchLoansByLender,
+} from './loans.js';
 import { fetchIndexerJson } from './client.js';
 
 export async function fetchActivity(
@@ -35,6 +42,19 @@ function mergeActivityEvents(...lists: IndexedActivityEvent[][]): IndexedActivit
   });
 }
 
+/** Keep every actor row; fill remaining slots with participant-only events. */
+export function mergeWalletActivityEvents(
+  actorEvents: IndexedActivityEvent[],
+  participantEvents: IndexedActivityEvent[],
+  limit: number,
+): IndexedActivityEvent[] {
+  const actorKeys = new Set(actorEvents.map(activityKey));
+  const participantOnly = participantEvents.filter((event) => !actorKeys.has(activityKey(event)));
+  const sortedExtras = mergeActivityEvents(participantOnly);
+  const room = Math.max(0, limit - actorEvents.length);
+  return mergeActivityEvents(actorEvents, sortedExtras.slice(0, room));
+}
+
 /**
  * Wallet activity feed: actor-scoped rows plus loan/offer timelines where the
  * wallet is a participant but not the indexed actor (e.g. lender on OfferAccepted).
@@ -58,16 +78,23 @@ export async function fetchWalletActivity(
   // Pagination continues on the actor cursor only; participant enrichment runs once.
   if (filters.before) return actorPage;
 
-  const [lenderLoans, borrowerLoans, creatorOffers] = await Promise.all([
-    fetchLoansByLender(indexerOrigin, chainId, normalized, { limit: 50 }),
-    fetchLoansByBorrower(indexerOrigin, chainId, normalized, { limit: 50 }),
-    fetchOffersByCreator(indexerOrigin, chainId, normalized, { limit: 50 }),
-  ]);
+  const [lenderLoans, borrowerLoans, holderLoans, creatorOffers, holderOffers] =
+    await Promise.all([
+      fetchLoansByLender(indexerOrigin, chainId, normalized, { limit: 50 }),
+      fetchLoansByBorrower(indexerOrigin, chainId, normalized, { limit: 50 }),
+      fetchLoansByCurrentHolder(indexerOrigin, chainId, normalized, { limit: 50 }),
+      fetchOffersByCreator(indexerOrigin, chainId, normalized, { limit: 50 }),
+      fetchOffersByCurrentHolder(indexerOrigin, chainId, normalized, { limit: 50 }),
+    ]);
 
   const loanIds = new Set<number>();
   for (const loan of lenderLoans?.loans ?? []) loanIds.add(loan.loanId);
   for (const loan of borrowerLoans?.loans ?? []) loanIds.add(loan.loanId);
-  const offerIds = new Set((creatorOffers?.offers ?? []).map((o) => o.offerId));
+  for (const loan of holderLoans?.loans ?? []) loanIds.add(loan.loanId);
+
+  const offerIds = new Set<number>();
+  for (const offer of creatorOffers?.offers ?? []) offerIds.add(offer.offerId);
+  for (const offer of holderOffers?.offers ?? []) offerIds.add(offer.offerId);
 
   const timelinePages = await Promise.all([
     ...[...loanIds].slice(0, 25).map((loanId) =>
@@ -79,7 +106,7 @@ export async function fetchWalletActivity(
   ]);
 
   const participantEvents = timelinePages.flatMap((page) => page?.events ?? []);
-  const events = mergeActivityEvents(actorPage.events, participantEvents).slice(0, limit);
+  const events = mergeWalletActivityEvents(actorPage.events, participantEvents, limit);
 
   return { ...actorPage, events };
 }

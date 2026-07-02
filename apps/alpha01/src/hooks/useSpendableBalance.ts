@@ -26,7 +26,7 @@ export function useSpendableBalance(
     queryFn: async (): Promise<SpendableBalance> => {
       const token = tokenAddress as Address;
       const user = userAddress as Address;
-      const cached = peekTokenMeta(token);
+      const cached = peekTokenMeta(token, chain.chainId);
       const [wallet, vaultAddr, decimalsRaw, symbolRaw] = await Promise.all([
         publicClient.readContract({
           address: token,

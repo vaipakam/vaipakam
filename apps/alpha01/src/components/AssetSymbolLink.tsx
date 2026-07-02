@@ -14,7 +14,7 @@ interface Props {
 
 export function AssetSymbolLink({ address, meta, showIcon = false, className }: Props) {
   const chain = useReadChain();
-  const resolved = meta ?? peekTokenMeta(address);
+  const resolved = meta ?? peekTokenMeta(address, chain.chainId);
   const symbol = resolveSymbol(resolved, address);
   const href = contractExplorerUrl(chain.blockExplorer, address);
 

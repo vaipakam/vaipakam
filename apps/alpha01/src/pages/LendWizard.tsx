@@ -174,6 +174,7 @@ export function LendWizard() {
             balance: fundBalance,
             tokenAddress: selected.lendingAsset,
             meta: selectedLendingMeta,
+            chainId: chain.chainId,
             loading: fundBalanceLoading,
           })
         : null,
@@ -187,6 +188,7 @@ export function LendWizard() {
             balance: createBalance,
             tokenAddress: lendingAsset,
             meta: lendingMeta,
+            chainId: chain.chainId,
             loading: createBalanceLoading,
           })
         : null,
@@ -231,14 +233,14 @@ export function LendWizard() {
               label: lendingMeta?.symbol
                 ? `${lendingMeta.symbol} decimals loaded`
                 : 'Loading lending token decimals…',
-              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset),
+              ok: hasResolvedTokenDecimals(lendingMeta, lendingAsset, chain.chainId),
             },
             {
               id: 'collateral-decimals',
               label: collateralMeta?.symbol
                 ? `${collateralMeta.symbol} decimals loaded`
                 : 'Loading collateral token decimals…',
-              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset),
+              ok: hasResolvedTokenDecimals(collateralMeta, collateralAsset, chain.chainId),
             },
             createPrincipalCheck?.loading
               ? {
@@ -329,11 +331,17 @@ export function LendWizard() {
     setSubmitting(true);
     setTxError(null);
     try {
-      const lendingDecimals = requireTokenDecimals(lendingMeta, lendingAsset, 'Lending asset');
+      const lendingDecimals = requireTokenDecimals(
+        lendingMeta,
+        lendingAsset,
+        'Lending asset',
+        chain.chainId,
+      );
       const collateralDecimals = requireTokenDecimals(
         collateralMeta,
         collateralAsset,
         'Collateral asset',
+        chain.chainId,
       );
       await createLenderOffer({
         diamond,
@@ -401,12 +409,12 @@ export function LendWizard() {
               >
                 <strong>Request #{o.offerId}</strong>
                 <div style={{ color: 'var(--text-secondary)' }}>
-                  Wants <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset)} /> ·{' '}
+                  Wants <AssetSymbolLink address={o.lendingAsset} meta={peekTokenMeta(o.lendingAsset, chain.chainId)} /> ·{' '}
                   {formatBpsAsPercent(o.interestRateBpsMax || o.interestRateBps)} APR
                 </div>
                 <div>
                   Collateral:{' '}
-                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset)} />
+                  <AssetSymbolLink address={o.collateralAsset} meta={peekTokenMeta(o.collateralAsset, chain.chainId)} />
                 </div>
               </button>
             ))}
@@ -470,7 +478,7 @@ export function LendWizard() {
           </div>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
             Pair: <AssetSymbolLink address={lendingAsset} meta={lendingMeta} /> lent against{' '}
-            <AssetSymbolLink address={collateralAsset} meta={peekTokenMeta(collateralAsset)} /> collateral.
+            <AssetSymbolLink address={collateralAsset} meta={peekTokenMeta(collateralAsset, chain.chainId)} /> collateral.
           </p>
           <div className="wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>Back</button>
@@ -482,8 +490,8 @@ export function LendWizard() {
                 !collateralAsset ||
                 Number(amount) <= 0 ||
                 Number(collateralAmount) <= 0 ||
-                !hasResolvedTokenDecimals(lendingMeta, lendingAsset) ||
-                !hasResolvedTokenDecimals(collateralMeta, collateralAsset)
+                !hasResolvedTokenDecimals(lendingMeta, lendingAsset, chain.chainId) ||
+                !hasResolvedTokenDecimals(collateralMeta, collateralAsset, chain.chainId)
               }
               onClick={() => setStep('check')}
             >

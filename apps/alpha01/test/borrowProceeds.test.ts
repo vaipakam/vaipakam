@@ -6,4 +6,8 @@ describe('netBorrowProceedsWei', () => {
     expect(LOAN_INITIATION_FEE_BPS).toBe(10n);
     expect(netBorrowProceedsWei(1_000_000n)).toBe(999_000n);
   });
+
+  it('accepts a live governance fee override', () => {
+    expect(netBorrowProceedsWei(1_000_000n, 25n)).toBe(997_500n);
+  });
 });

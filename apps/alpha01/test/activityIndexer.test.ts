@@ -1,5 +1,50 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchActivity, fetchWalletActivity } from '@vaipakam/defi-client';
+import {
+  fetchActivity,
+  fetchWalletActivity,
+  mergeWalletActivityEvents,
+  type IndexedActivityEvent,
+} from '@vaipakam/defi-client';
+
+function event(
+  kind: string,
+  blockNumber: number,
+  logIndex: number,
+  overrides: Partial<IndexedActivityEvent> = {},
+): IndexedActivityEvent {
+  return {
+    chainId: 84532,
+    blockNumber,
+    logIndex,
+    txHash: `0x${String(blockNumber).padStart(64, '0')}`,
+    kind,
+    loanId: null,
+    offerId: null,
+    actor: '0xabc',
+    args: {},
+    blockAt: blockNumber,
+    ...overrides,
+  };
+}
+
+describe('mergeWalletActivityEvents', () => {
+  it('keeps every actor row even when participant events are newer', () => {
+    const actorEvents = [event('OfferCreated', 1, 0), event('OfferCanceled', 2, 0)];
+    const participantEvents = [
+      event('LoanInitiated', 99, 1, { actor: '0xdef' }),
+      event('OfferAccepted', 98, 1, { actor: '0xdef' }),
+    ];
+    const tight = mergeWalletActivityEvents(actorEvents, participantEvents, 2);
+    expect(tight.map((e) => e.kind)).toEqual(['OfferCanceled', 'OfferCreated']);
+    const roomy = mergeWalletActivityEvents(actorEvents, participantEvents, 4);
+    expect(roomy.map((e) => e.kind)).toEqual([
+      'LoanInitiated',
+      'OfferAccepted',
+      'OfferCanceled',
+      'OfferCreated',
+    ]);
+  });
+});
 
 describe('fetchActivity', () => {
   it('queries the indexer activity endpoint with actor filter', async () => {
@@ -34,13 +79,13 @@ describe('fetchWalletActivity', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (url.includes('/loans/by-borrower/')) {
+      if (url.includes('/loans/by-borrower/') || url.includes('/loans/by-current-holder/')) {
         return new Response(
           JSON.stringify({ chainId: 84532, side: 'borrower', address: '0xabc', loans: [], nextBefore: null }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (url.includes('/offers/by-creator/')) {
+      if (url.includes('/offers/by-creator/') || url.includes('/offers/by-current-holder/')) {
         return new Response(
           JSON.stringify({ chainId: 84532, creator: '0xabc', offers: [], nextBefore: null }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },

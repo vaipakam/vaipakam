@@ -10,6 +10,7 @@ const balance = {
 };
 
 const tokenAddress = '0x4200000000000000000000000000000000000006';
+const chainId = 84532;
 
 describe('assessCollateralBalance', () => {
   it('shows available balance before an amount is entered', () => {
@@ -18,6 +19,7 @@ describe('assessCollateralBalance', () => {
       balance,
       tokenAddress,
       meta: null,
+      chainId,
       loading: false,
     });
     expect(result.available?.amount).toBe('0.05');
@@ -32,6 +34,7 @@ describe('assessCollateralBalance', () => {
       balance,
       tokenAddress,
       meta: null,
+      chainId,
       loading: false,
     });
     expect(result.sufficient).toBe(false);
@@ -45,6 +48,7 @@ describe('assessCollateralBalance', () => {
       balance,
       tokenAddress,
       meta: null,
+      chainId,
       loading: false,
     });
     expect(result.sufficient).toBe(true);
@@ -58,6 +62,7 @@ describe('assessCollateralBalance', () => {
       balance,
       tokenAddress,
       meta: null,
+      chainId,
       loading: false,
     });
     expect(result.sufficient).toBeNull();
@@ -70,6 +75,7 @@ describe('assessCollateralBalance', () => {
       balance,
       tokenAddress,
       meta: null,
+      chainId,
       loading: true,
     });
     expect(result.loading).toBe(true);

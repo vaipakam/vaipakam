@@ -41,6 +41,7 @@ export function assessCollateralBalance(opts: {
   balance: SpendableBalance | undefined;
   tokenAddress: string;
   meta: TokenMeta | null;
+  chainId: number;
   loading: boolean;
 }): CollateralBalanceAssessment {
   if (opts.loading) {
@@ -55,10 +56,11 @@ export function assessCollateralBalance(opts: {
     (opts.needRaw ? parseRawAmount(opts.needRaw) : null);
 
   const haveHuman = trimFraction(formatUnits(opts.balance.total, opts.balance.decimals));
-  const meta: TokenMeta = {
+  const meta: TokenMeta = opts.meta ?? {
     address: opts.tokenAddress,
     symbol: opts.balance.symbol,
     decimals: opts.balance.decimals,
+    chainId: opts.chainId,
   };
   const available: AssetQuantity = {
     amount: haveHuman,

@@ -16,6 +16,9 @@ vi.mock('viem', async (importOriginal) => {
 
 import { fetchTokenMeta, hasResolvedTokenDecimals } from '../src/lib/tokenMeta';
 
+const CHAIN_A = 84532;
+const CHAIN_B = 421614;
+
 describe('fetchTokenMeta', () => {
   beforeEach(() => {
     read.symbol.mockReset();
@@ -28,19 +31,23 @@ describe('fetchTokenMeta', () => {
     read.symbol.mockResolvedValue('USDC');
     read.decimals.mockRejectedValue(new Error('rpc timeout'));
 
-    const meta = await fetchTokenMeta(token, {} as PublicClient);
+    const meta = await fetchTokenMeta(token, {} as PublicClient, CHAIN_A);
     expect(meta.symbol).toBe('USDC');
     expect(meta.decimals).toBe(18);
-    expect(hasResolvedTokenDecimals(meta, token)).toBe(false);
+    expect(hasResolvedTokenDecimals(meta, token, CHAIN_A)).toBe(false);
   });
 
-  it('caches only when symbol and decimals both succeed', async () => {
+  it('caches per chain so the same address on another chain re-fetches', async () => {
     const token = '0x4200000000000000000000000000000000000006';
-    read.symbol.mockResolvedValue('WETH');
-    read.decimals.mockResolvedValue(18);
+    read.symbol.mockResolvedValueOnce('WETH').mockResolvedValueOnce('WETH');
+    read.decimals.mockResolvedValueOnce(18).mockResolvedValueOnce(8);
 
-    const meta = await fetchTokenMeta(token, {} as PublicClient);
-    expect(meta.decimals).toBe(18);
-    expect(hasResolvedTokenDecimals(meta, token)).toBe(true);
+    const onA = await fetchTokenMeta(token, {} as PublicClient, CHAIN_A);
+    const onB = await fetchTokenMeta(token, {} as PublicClient, CHAIN_B);
+
+    expect(onA.decimals).toBe(18);
+    expect(onB.decimals).toBe(8);
+    expect(hasResolvedTokenDecimals(onA, token, CHAIN_A)).toBe(true);
+    expect(hasResolvedTokenDecimals(onB, token, CHAIN_B)).toBe(true);
   });
 });

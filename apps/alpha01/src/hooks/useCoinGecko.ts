@@ -16,6 +16,7 @@ export function useTopTokens(chainId: number | null | undefined, limit = 30) {
   useEffect(() => {
     if (!chainId) return;
     let cancelled = false;
+    setTokens(EMPTY);
     setLoading(true);
     void fetchTopTokensForChain(chainId, limit)
       .then((t) => {
@@ -42,6 +43,7 @@ export function useStablecoins(chainId: number | null | undefined) {
   useEffect(() => {
     if (!chainId) return;
     let cancelled = false;
+    setTokens(EMPTY);
     setLoading(true);
     void fetchStablecoinsForChain(chainId)
       .then((t) => {

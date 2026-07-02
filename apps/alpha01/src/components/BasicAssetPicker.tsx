@@ -64,7 +64,7 @@ export function BasicAssetPicker({ kind, chainId, value, onChange, label, hint }
 
   const displaySymbol = selected
     ? selected.symbol
-    : peekTokenMeta(value)?.symbol || (value ? shortenAddr(value) : '');
+    : peekTokenMeta(value, chainId)?.symbol || (value ? shortenAddr(value) : '');
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -96,9 +96,10 @@ export function BasicAssetPicker({ kind, chainId, value, onChange, label, hint }
     ? {
         address: selected.contractAddress,
         symbol: selected.symbol,
-        decimals: peekTokenMeta(selected.contractAddress)?.decimals ?? 18,
+        decimals: peekTokenMeta(selected.contractAddress, chainId)?.decimals ?? 18,
+        chainId,
       }
-    : peekTokenMeta(value);
+    : peekTokenMeta(value, chainId);
 
   return (
     <div className="field basic-asset-picker" ref={rootRef}>
@@ -162,7 +163,8 @@ export function BasicAssetPicker({ kind, chainId, value, onChange, label, hint }
                     meta={{
                       address: t.contractAddress,
                       symbol: t.symbol,
-                      decimals: peekTokenMeta(t.contractAddress)?.decimals ?? 18,
+                      decimals: peekTokenMeta(t.contractAddress, chainId)?.decimals ?? 18,
+                      chainId,
                     }}
                     className="basic-asset-picker-symbol"
                   />
