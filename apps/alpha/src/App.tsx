@@ -544,7 +544,7 @@ function App() {
         <TopBar mode={mode} wallet={wallet} riskGuardrail={riskGuardrail} onConnectWallet={connectWallet} onModeChange={setMode} />
         <RouteErrorBoundary>
           <Routes>
-          <Route path="/" element={<Home mode={mode} />} />
+          <Route path="/" element={<Home mode={mode} riskGuardrail={riskGuardrail} />} />
           <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
@@ -677,7 +677,8 @@ function TopBar({
   );
 }
 
-function Home({ mode }: { mode: Mode }) {
+function Home({ mode, riskGuardrail }: { mode: Mode; riskGuardrail: RiskGuardrail }) {
+  const advancedAllowed = riskGuardrail === 'advanced';
   return (
     <div className="page-grid">
       <section className="hero-panel">
@@ -686,11 +687,11 @@ function Home({ mode }: { mode: Mode }) {
           <h1>Put idle assets to work, access liquidity, or rent NFT utility with clear terms before every signature.</h1>
           <p>
             Vaipakam combines peer-to-peer ERC-20 credit markets, vault-backed collateral, temporary NFT use rights, claims, rewards, and VPFI utility in a single connected app.
-            {mode === 'guided' ? ' Guided mode keeps recommended paths and receipts front and center.' : ' Advanced mode opens custom markets, automation, diagnostics, and risk controls.'}
+            {mode === 'guided' ? ' Guided mode keeps recommended paths and receipts front and center.' : ' Advanced mode opens custom markets, automation, diagnostics, and risk controls.'}{!advancedAllowed ? ' Advanced tools are previewable and unlock from Settings.' : ''}
           </p>
           <div className="hero-actions">
             <NavLink className="primary-action" to="/earn">Start lending <ArrowRight size={18} /></NavLink>
-            <NavLink className="secondary-action" to="/advanced">Explore advanced tools</NavLink>
+            <NavLink className="secondary-action" to="/advanced">{advancedAllowed ? 'Open advanced tools' : 'Preview advanced tools'}</NavLink>
           </div>
         </div>
         <div className="position-card" aria-label="Example portfolio health card">
@@ -1043,6 +1044,8 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewVault = connected && baseReady;
   const visibleVaultAssets = canPreviewVault ? vaultAssets : [];
+  const vaultTabs: VaultTab[] = canPreviewVault ? ['assets', 'locks', 'vpfi'] : ['vpfi'];
+  const activeVaultTab: VaultTab = canPreviewVault ? tab : 'vpfi';
   const freeCount = visibleVaultAssets.filter((asset) => asset.free !== '0').length;
   const lockedCount = visibleVaultAssets.filter((asset) => asset.locked !== '0' && asset.locked !== '0.00').length;
 
@@ -1071,14 +1074,14 @@ function VaultUtility({ wallet }: { wallet: WalletState }) {
       </section>
 
       <section className="portfolio-tools panel-surface" aria-label="Vault tabs">
-        {(['assets', 'locks', 'vpfi'] as VaultTab[]).map((option) => (
-          <button className={tab === option ? 'selected' : ''} type="button" key={option} aria-pressed={tab === option} onClick={() => setTab(option)}>
+        {vaultTabs.map((option) => (
+          <button className={activeVaultTab === option ? 'selected' : ''} type="button" key={option} aria-pressed={activeVaultTab === option} onClick={() => setTab(option)}>
             {option}
           </button>
         ))}
       </section>
 
-      {tab === 'vpfi' ? (
+      {activeVaultTab === 'vpfi' ? (
         <section className="vpfi-grid">
           {vpfiTiers.map((tier) => (
             <article className="panel-surface vpfi-card" key={tier.tier}>
@@ -1507,6 +1510,13 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
             </button>
           </div>
         ) : null}
+        {canPreviewPositions && visiblePositions.length === 0 ? (
+          <div className="empty-state">
+            <h2>{filter === 'reviewed' ? 'No positions reviewed until reload' : 'No positions match this filter'}</h2>
+            <p>{filter === 'reviewed' ? 'Switch to All to see open positions for this wallet.' : 'Try a different portfolio filter.'}</p>
+            <button className="secondary-action" type="button" onClick={() => setFilter('all')}>Show all positions</button>
+          </div>
+        ) : null}
         {visiblePositions.map((position) => {
           const done = reviewedActions.includes(position.id);
           return (
@@ -1566,9 +1576,10 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
             <span>Risk guardrail</span>
             <select value={riskGuardrail} onChange={(event) => updateRisk(event.target.value as RiskGuardrail)}>
               <option value="guided">Guided only</option>
-              <option value="liquid">Liquid assets</option>
+              <option value="liquid">Liquid assets preview</option>
               <option value="advanced">Advanced allowed</option>
             </select>
+            <small>{riskGuardrail === 'liquid' ? 'Liquid-asset filtering will apply when live markets are wired; advanced tools remain locked.' : 'Advanced allowed unlocks custom markets and automation.'}</small>
           </label>
         </article>
 
