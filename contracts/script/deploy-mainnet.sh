@@ -940,10 +940,13 @@ EOF
   # there's no aggregator-skip branch here, unlike deploy-testnet.sh's BNB
   # testnet case.)
   if [ -n "${INITIAL_SETTLERS:-}" ]; then
-    # #862: pre-marker-split deploys only have phase-swap-adapters.done; treat it
-    # as aggregators-done so a rerun to add UniV3 doesn't append a duplicate pair.
-    if [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ] || [ -f "$MARKERS_DIR/phase-swap-adapters.done" ]; then
-      echo "  [aggregators] 0x/1inch already registered (marker exists) — skipping to avoid a duplicate pair."
+    # #862: only the AGGREGATOR-specific marker proves DeploySwapAdapters ran.
+    # (An earlier revision also honoured the old combined phase-swap-adapters.done
+    # marker, but that's ambiguous — it was written even when INITIAL_SETTLERS was
+    # empty and only UniV3 landed, so trusting it would skip 0x/1inch forever on a
+    # later rerun. Pre-live: no in-progress pre-split deploy exists to migrate.)
+    if [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ]; then
+      echo "  [aggregators] 0x/1inch already registered ($MARKERS_DIR/swap-adapters-aggregators.done) — skipping to avoid a duplicate pair."
     else
       forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
       date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/swap-adapters-aggregators.done"

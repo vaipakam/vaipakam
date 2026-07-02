@@ -167,16 +167,7 @@ contract DeployUniV3Adapter is Script {
                 );
                 console.log("  Already registered UniswapV3 adapter (same router):", existing[i]);
                 console.log("  Index (keeper CHAIN_SWAP.adapters.univ3 must match):", i);
-                // Same index-drift warning as the fresh-deploy path — the keeper
-                // hard-codes univ3=0 on no-aggregator chains, so a UniV3 adapter
-                // that ended up at a non-zero slot (another adapter registered
-                // first / list reordered) means the keeper would submit UniV3
-                // calls to the wrong slot and never hit this Pancake adapter.
-                if (i != 0) {
-                    console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
-                    console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP,");
-                    console.log("  or reorder so the UniV3 adapter is at index 0.");
-                }
+                _assertOrWarnSlot(i, existing.length);
                 console.log("  Nothing to do.");
                 return;
             }
@@ -206,11 +197,50 @@ contract DeployUniV3Adapter is Script {
         console.log("");
         console.log("Done. Diamond.getSwapAdapters() length:", registered.length);
         console.log("  UniV3 adapter index (keeper CHAIN_SWAP.adapters.univ3 must match):", idx);
-        if (idx != 0) {
-            console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
-            console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP.");
-        }
+        _assertOrWarnSlot(idx, registered.length);
         console.log("Record the adapter under `swapAdapters.uniV3` in the chain's addresses.json.");
+    }
+
+    /// @dev Guard the UniV3 adapter's slot against the keeper's per-chain
+    ///      `CHAIN_SWAP.adapters.univ3` index.
+    ///
+    ///      On a NO-0x-backend chain (BNB testnet 97) the UniV3 adapter is the
+    ///      SOLE liquidation route and the keeper hard-codes `univ3=0`, so slot 0
+    ///      is not a preference — it's a correctness invariant. #862: any non-zero
+    ///      slot there means a stale adapter (an aggregator that shouldn't exist
+    ///      on a no-0x chain, or a prior mis-registration) sits ahead of UniV3;
+    ///      ConfigureOracle now only WARNS, so if this passed too the diamond
+    ///      could be "marked configured" while the keeper silently misroutes.
+    ///      HARD-FAIL instead and tell the operator to clean the stale adapter(s).
+    ///
+    ///      On a with-0x chain the aggregators legitimately own slots 0/1 and
+    ///      UniV3 is expected at 2 — a non-zero index is fine, so only warn.
+    function _assertOrWarnSlot(uint256 idx, uint256 total) internal view {
+        if (_isNo0xBackendChain()) {
+            require(
+                idx == 0,
+                string.concat(
+                    "DeployUniV3Adapter: no-0x chain requires the UniV3 adapter at index 0 (keeper univ3=0), but it is at index ",
+                    vm.toString(idx),
+                    " of ",
+                    vm.toString(total),
+                    " - a stale adapter sits ahead of it (no aggregators should exist on a no-0x chain). Remove it via AdminFacet.removeSwapAdapter, then re-run."
+                )
+            );
+            return;
+        }
+        if (idx != 0) {
+            console.log("  Note: index != 0. On a with-0x chain the aggregators own slots 0/1 and");
+            console.log("  UniV3 is expected at 2 - confirm serverQuotes CHAIN_SWAP.adapters.univ3 matches.");
+        }
+    }
+
+    /// @dev Chains where 0x has NO backend, so the on-chain UniV3/PancakeSwap
+    ///      adapter is the only liquidation route and MUST sit at index 0. Mirror
+    ///      of ConfigureOracle._isNo0xBackendChain (BNB testnet 97; 0x covers BNB
+    ///      mainnet 56, so that is NOT here).
+    function _isNo0xBackendChain() internal view returns (bool) {
+        return block.chainid == 97;
     }
 
     /// @dev Resolve the SwapRouter: chain-prefixed `<CHAIN>_UNISWAP_V3_ROUTER`

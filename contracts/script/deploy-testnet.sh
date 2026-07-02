@@ -1089,6 +1089,16 @@ phase_swap_adapters() {
   # have no liquidation route, and ConfigureOracle would then hard-fail).
   local _univ3_router_var="${CCIP_SLUG}_UNISWAP_V3_ROUTER"
   local _univ3_router="${!_univ3_router_var:-}"
+  # #862: on a no-0x-backend chain (BNB testnet 97) the on-chain DEX adapter is
+  # the SOLE liquidation route — 0x/1inch have no backend, and ConfigureOracle
+  # now only WARNS on a missing adapter, so the shell must be the guarantor.
+  # Hard-require the router; a stale INITIAL_SETTLERS in a shared .env must NOT
+  # be allowed to satisfy the "at least one source" gate below and leave the
+  # chain with no route (aggregators get skipped on 97 further down).
+  if [ "$CHAIN_ID" = "97" ] && [ -z "$_univ3_router" ]; then
+    echo "Refusing --phase swap-adapters on no-0x chain $CHAIN_SLUG ($CHAIN_ID): ${_univ3_router_var} is REQUIRED. The on-chain UniV3/PancakeSwap adapter is the only liquidation route here (0x/1inch have no testnet backend); 0x/1inch aggregators are skipped on this chain even if INITIAL_SETTLERS is set." >&2
+    exit 1
+  fi
   if [ -z "${INITIAL_SETTLERS:-}" ] && [ -z "$_univ3_router" ]; then
     cat >&2 <<EOF
 Refusing --phase swap-adapters: no swap adapter would be registered.
@@ -1136,11 +1146,14 @@ EOF
       # would push the UniV3 adapter off index 0 (the keeper + ConfigureOracle
       # expect UniV3 at index 0 on no-0x chains).
       echo "  [aggregators] SKIP on no-0x chain $CHAIN_SLUG ($CHAIN_ID) — 0x has no testnet backend here; ignoring INITIAL_SETTLERS. Liquidations route via the UniV3 adapter only."
-    elif [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ] || [ -f "$MARKERS_DIR/phase-swap-adapters.done" ]; then
-      # #862: pre-marker-split deploys only have phase-swap-adapters.done; treat
-      # it as aggregators-done so a rerun to add UniV3 doesn't append a duplicate
-      # 0x/1inch pair.
-      echo "  [aggregators] 0x/1inch already registered (marker exists) — skipping to avoid a duplicate pair."
+    elif [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ]; then
+      # #862: only the AGGREGATOR-specific marker proves DeploySwapAdapters ran.
+      # (An earlier revision also honoured the old combined phase-swap-adapters.done
+      # marker, but Codex correctly flagged that as ambiguous — that marker was
+      # written even when INITIAL_SETTLERS was empty and only UniV3 landed, so
+      # trusting it would skip 0x/1inch forever on a later rerun. Pre-live testnets
+      # deploy fresh, so there's no real in-progress pre-split deploy to migrate.)
+      echo "  [aggregators] 0x/1inch already registered ($MARKERS_DIR/swap-adapters-aggregators.done) — skipping to avoid a duplicate pair."
     else
       forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow --gas-estimate-multiplier "${FORGE_GAS_MULTIPLIER:-130}"
       date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/swap-adapters-aggregators.done"
