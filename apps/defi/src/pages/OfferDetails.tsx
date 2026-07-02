@@ -15,6 +15,7 @@ import {
 } from '../lib/indexerClient';
 import {
   toOfferData,
+  offerHeadline,
   type OfferData,
   type RawOffer,
   OFFER_TYPE_LABELS,
@@ -513,7 +514,7 @@ export default function OfferDetails() {
                     address={offerForDisplay.lendingAsset}
                   />
                   <TokenAmount
-                    amount={offerForDisplay.amount}
+                    amount={offerHeadline(offerForDisplay).principal}
                     address={offerForDisplay.lendingAsset}
                   />{' '}
                   <AssetLink
@@ -558,7 +559,7 @@ export default function OfferDetails() {
                   {t('offerDetails.rate', { defaultValue: 'Rate' })}
                 </span>
                 <span className="data-value">
-                  {bpsToPercent(offerForDisplay.interestRateBps)}
+                  {bpsToPercent(offerHeadline(offerForDisplay).rateBps)}
                 </span>
               </div>
 

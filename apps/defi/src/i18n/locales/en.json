@@ -650,7 +650,9 @@
     "scanning": "Simulating transaction…",
     "okTitle": "Simulated OK — this transaction will not revert.",
     "revertPrefix": "This transaction would revert:",
-    "revertSuffix": "Review the details above before signing."
+    "revertSuffix": "Review the details above before signing.",
+    "approvalNeededTitle": "Token approval required first",
+    "approvalNeededBody": "The app will request an ERC-20 approval before submitting. Once approved, the transaction is ready — nothing else is blocking it."
   },
   "consent": {
     "dismissAria": "Dismiss — we'll ask again next visit",

@@ -3,7 +3,14 @@
   left: 16px;
   right: 16px;
   bottom: 16px;
-  z-index: 9500;
+  /* F-20260630-006 — sit BELOW transaction review modals (which use
+     z-index: 1000 with a full-screen dimming backdrop). At the old 9500 the
+     first-visit cookie banner floated over the offer Accept / Confirm CTAs,
+     so its "Accept all" preceded the protocol "Accept" in visual + pointer
+     order — easy to mis-click. At 999 the modal backdrop covers the banner
+     whenever a transaction flow is open, while it still sits above ordinary
+     page chrome on non-modal screens. */
+  z-index: 999;
   display: flex;
   justify-content: center;
   pointer-events: none;

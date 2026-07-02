@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../i18n';
-import type { Address, Hex } from 'viem';
+import { encodeFunctionData, type Address, type Hex } from 'viem';
 import { LiquidityPreflightBanner } from '../components/app/LiquidityPreflightBanner';
 import { useLiquidityPreflight } from '../hooks/useLiquidityPreflight';
 import { useRiskAccessPreflight, type RiskPreflight } from '../hooks/useRiskAccessPreflight';
@@ -30,6 +30,10 @@ import { useOnchainActiveOfferIds } from '../hooks/useOnchainActiveOfferIds';
 import { useIndexedActiveOffers } from '../hooks/useIndexedActiveOffers';
 import { useActiveOffersByAssetPairRanked } from '../hooks/useActiveOffersByAssetPairRanked';
 import { OFFER_BOOK_PAGE_SIZE } from '../lib/offerBookConfig';
+// #183 canonical role-aware headline reader (F-20260630-001). Re-exported so
+// OfferDetails + tests can import it from the OfferBook barrel.
+import { offerHeadline } from '../lib/offerHeadline';
+export { offerHeadline } from '../lib/offerHeadline';
 import { OFFER_DURATION_BUCKETS_DAYS } from '../lib/offerSchema';
 import { useRescanCooldown } from '../hooks/useRescanCooldown';
 import { RescanButton } from '../components/app/RescanButton';
@@ -892,6 +896,28 @@ export default function OfferBook() {
           amount: offer.collateralAmount,
           spender: diamondAddr,
         });
+        // F-20260630-003 — read-only preflight of the Permit2 accept BEFORE
+        // asking the wallet to broadcast. Permit2 is frequently unavailable on
+        // local mocks / chains without the canonical Permit2 contract; without
+        // this check the wallet submits a tx that mines-but-reverts (wasting
+        // gas + confusing the user) before the catch silently retries the
+        // classic path. A viem `eth_call` runs the exact calldata for free; on
+        // any revert we throw into the catch below, which falls through to the
+        // classic approve+accept path without ever prompting a doomed on-chain
+        // send. The Permit2 EIP-712 signature above is gasless, so re-signing
+        // for classic (which needs none) costs the user nothing but one popup.
+        if (publicClient) {
+          const permitCalldata = encodeFunctionData({
+            abi: DIAMOND_ABI,
+            functionName: 'acceptOfferWithPermit',
+            args: [offerId, terms, acceptSig, permit, signature] as never,
+          });
+          await publicClient.call({
+            account: address as Address,
+            to: diamondAddr,
+            data: permitCalldata,
+          });
+        }
         const tx = await (
           diamond as unknown as {
             acceptOfferWithPermit: (
@@ -1663,12 +1689,18 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
         ? 'The collateral leg'
         : '';
   const isERC20 = offer.assetType === 0;
+  // #183 canonical mapping (F-20260630-001) — the accept modal, the Offer Book
+  // row, and the accept-terms signer must all read the same role-aware headline
+  // so the principal/rate the user reviews equals what direct-accept locks. For
+  // a lender ERC-20 offer that's `amountMax` (not `offer.amount`, which is the
+  // `minPartialFillAmount`); see {offerHeadline}.
+  const { principal: headlineAmount, rateBps: effectiveRateBps } = offerHeadline(offer);
   // APR interest in whole units. For NFT rental offers the `amount` is a
   // daily fee rather than a principal, so we skip the projection there.
   const projectedInterest = isERC20
-    ? (offer.amount * offer.interestRateBps * offer.durationDays) / (10000n * 365n)
+    ? (headlineAmount * effectiveRateBps * offer.durationDays) / (10000n * 365n)
     : null;
-  const projectedRepayment = projectedInterest !== null ? offer.amount + projectedInterest : null;
+  const projectedRepayment = projectedInterest !== null ? headlineAmount + projectedInterest : null;
   const sideLabel = offer.offerType === 0 ? 'Lender posts principal' : 'Borrower posts collateral';
 
   return (
@@ -1728,13 +1760,13 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
 
           <dt style={{ opacity: 0.7 }}>{isERC20 ? 'Principal' : 'Daily rental fee'}</dt>
           <dd style={{ margin: 0 }}>
-            <span className="mono"><TokenAmount amount={offer.amount} address={offer.lendingAsset} compact /></span>{' '}
+            <span className="mono"><TokenAmount amount={headlineAmount} address={offer.lendingAsset} compact /></span>{' '}
             <AssetSymbol address={offer.lendingAsset} />
             {' '}<span style={{ opacity: 0.6 }}>({ASSET_TYPE_LABELS[offer.assetType]})</span>
           </dd>
 
           <dt style={{ opacity: 0.7 }}>Rate (APR)</dt>
-          <dd style={{ margin: 0 }}>{bpsToPercent(offer.interestRateBps)}</dd>
+          <dd style={{ margin: 0 }}>{bpsToPercent(effectiveRateBps)}</dd>
 
           <dt style={{ opacity: 0.7 }}>Duration</dt>
           <dd style={{ margin: 0 }}>{offer.durationDays.toString()} days</dd>
@@ -1751,7 +1783,7 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
               <dd style={{ margin: 0 }}>
                 <span className="mono"><TokenAmount amount={projectedRepayment} address={offer.lendingAsset} compact /></span>{' '}
                 <AssetSymbol address={offer.lendingAsset} />
-                <span style={{ opacity: 0.6 }}> (principal + {bpsToPercent(offer.interestRateBps)} APR × {offer.durationDays.toString()}d)</span>
+                <span style={{ opacity: 0.6 }}> (principal + {bpsToPercent(effectiveRateBps)} APR × {offer.durationDays.toString()}d)</span>
               </dd>
             </>
           )}
@@ -1759,8 +1791,8 @@ function AcceptReviewModal({ offer, illiquid, consent, onConsentChange, submitti
           {isERC20 && (() => {
             const discountFires = !!discountPreview?.willFire;
             const baseFeeBps = BigInt(protocolConfig?.loanInitiationFeeBps ?? 10);
-            const normalFee = (offer.amount * baseFeeBps) / 10000n;
-            const netToBorrower = discountFires ? offer.amount : offer.amount - normalFee;
+            const normalFee = (headlineAmount * baseFeeBps) / 10000n;
+            const netToBorrower = discountFires ? headlineAmount : headlineAmount - normalFee;
             const tier = discountPreview?.tier ?? 0;
             const baseFeePctLabel = formatBpsPct(protocolConfig?.loanInitiationFeeBps ?? 10);
             return (
