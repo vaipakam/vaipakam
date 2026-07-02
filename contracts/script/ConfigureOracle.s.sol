@@ -195,21 +195,12 @@ contract ConfigureOracle is Script {
         );
         console.log("Pre-flight: broadcaster holds Diamond owner + ADMIN_ROLE");
 
-        // Pre-flight the liquidation-route config BEFORE any broadcast. A later
-        // `require` inside the broadcast would NOT roll back the earlier oracle
-        // setters (setWethContract/feeds/factory), leaving the chain with pricing
-        // enabled but no liquidation venue — the exact state this guard prevents.
-        //
-        // A registered ISwapAdapter is ALWAYS required — the live liquidation
-        // path (LibSwap.swapWithFailover) reverts on an empty `s.swapAdapters`,
-        // and the legacy `zeroExProxy` storage alone is NOT a usable route. So
-        // adapters must be registered BEFORE ConfigureOracle on EVERY chain
-        // (deploy order: swap-adapters phase / DeployUniV3Adapter → configure).
-        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
-        require(
-            adapters.length > 0,
-            "ConfigureOracle: no swap adapter registered - run the swap-adapters phase (DeploySwapAdapters) / DeployUniV3Adapter BEFORE ConfigureOracle; LibSwap needs >=1 adapter, zeroExProxy storage alone is not a route"
-        );
+        // Validate THIS script's own inputs before any broadcast: the ZEROX_*
+        // env pair must be set together or not at all, and omitting 0x is only
+        // legal on a chain 0x has no backend for (else a production 0x-supported
+        // chain — e.g. BNB mainnet 56 — could silently drop its 0x venue). 0x's
+        // Swap API covers every mainnet we target (incl. BNB mainnet) + most
+        // testnets; BNB testnet (97) is the sole no-backend chain here.
         if (zeroEx != address(0)) {
             require(
                 allowanceTarget != address(0),
@@ -220,26 +211,39 @@ contract ConfigureOracle is Script {
                 allowanceTarget == address(0),
                 "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
             );
-            // Omitting 0x is only allowed on chains 0x has NO backend for —
-            // otherwise a production 0x-supported chain (e.g. BNB mainnet 56)
-            // could silently ship with only a UniV3 adapter and drop its intended
-            // 0x liquidation venue. 0x's Swap API covers every mainnet we target
-            // (incl. BNB mainnet) + most testnets; BNB testnet (97) is the sole
-            // no-backend chain here. Extend `_isNo0xBackendChain` as needed.
             require(
                 _isNo0xBackendChain(),
                 "ConfigureOracle: <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET) is REQUIRED - 0x is available on this chain. Only known no-0x-backend chains (BNB testnet 97) may omit it and route via an on-chain DEX adapter"
             );
-            // No-0x chain: liquidations route through the on-chain DEX adapter,
-            // and the keeper submits UniV3 calls to swap-adapter INDEX 0. So slot
-            // 0 MUST be the UniV3 adapter — a stale aggregator adapter or a
-            // wrong-slot UniV3 would decode the keeper's fee bytes wrong / revert,
-            // leaving no usable route despite a non-empty list.
-            require(
-                keccak256(bytes(ISwapAdapter(adapters[0]).adapterName()))
-                    == keccak256(bytes("UniswapV3")),
-                "ConfigureOracle: no-0x chain requires the UniV3 adapter at swap-adapter index 0 (keeper expects univ3=0) - register it first via DeployUniV3Adapter.s.sol"
-            );
+        }
+
+        // Liquidation-route sanity. #862 split this into two concerns:
+        //   • EXISTENCE — a hard gate. An empty adapter list means every
+        //     liquidation reverts in LibSwap.swapWithFailover, so a configure run
+        //     BEFORE the swap-adapters phase (e.g. an out-of-order
+        //     `--phase configure`) must not be allowed to mark the chain
+        //     configured with no route at all.
+        //   • ORDERING/index — advisory only. Which adapter sits at which slot is
+        //     the swap-adapters phase's + the keeper's CHAIN_SWAP responsibility;
+        //     HARD-requiring a specific slot here was the coupling that cascaded
+        //     into a pile of index/marker edge cases, so it stays a warning.
+        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
+        require(
+            adapters.length > 0,
+            "ConfigureOracle: no swap adapter registered - LibSwap.swapWithFailover reverts on an empty list, so liquidations would fail. Run the swap-adapters phase / DeployUniV3Adapter before --phase configure."
+        );
+        if (zeroEx == address(0)) {
+            // No-0x chain: the keeper routes univ3=0, so slot 0 SHOULD be the UniV3
+            // adapter. Advisory (see above), so the adapterName() read must NOT
+            // revert and re-couple the phases — a broken/stale slot-0 adapter that
+            // can't answer adapterName() has to surface as a warning, not an abort.
+            try ISwapAdapter(adapters[0]).adapterName() returns (string memory nm) {
+                if (keccak256(bytes(nm)) != keccak256(bytes("UniswapV3"))) {
+                    console.log("WARNING: no-0x chain but swap-adapter index 0 is not the UniV3 adapter - the keeper (univ3=0) would misroute. Reorder / re-register via DeployUniV3Adapter.");
+                }
+            } catch {
+                console.log("WARNING: no-0x chain but swap-adapter index 0 did not answer adapterName() - it looks broken/stale. Remove it and re-register via DeployUniV3Adapter so UniV3 sits at index 0.");
+            }
         }
 
         vm.startBroadcast(deployerKey);

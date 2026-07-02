@@ -87,10 +87,17 @@ contract DeployUniV3Adapter is Script {
         //      must be present in the router bytecode — the QuoterV2 (which also
         //      has factory()) exposes quoteExactInputSingle, NOT exactInputSingle,
         //      so this rejects the common "pasted the quoter" mistake.
+        // #862: REQUIRE the configured factory — do NOT let a missing/misspelled
+        // <CHAIN>_UNISWAP_V3_FACTORY silently skip the same-DEX check (it's the
+        // same var ConfigureOracle uses, so it must be set for a coherent deploy).
         address expectedFactory = _resolveFactory();
+        require(
+            expectedFactory != address(0),
+            "DeployUniV3Adapter: <CHAIN>_UNISWAP_V3_FACTORY (or UNISWAP_V3_FACTORY) is required so the router can be verified against the same DEX the oracle uses"
+        );
         try IUniV3SwapRouterMeta(router).factory() returns (address routerFactory) {
             require(
-                expectedFactory == address(0) || routerFactory == expectedFactory,
+                routerFactory == expectedFactory,
                 string.concat(
                     "DeployUniV3Adapter: router.factory() ",
                     vm.toString(routerFactory),
@@ -160,16 +167,7 @@ contract DeployUniV3Adapter is Script {
                 );
                 console.log("  Already registered UniswapV3 adapter (same router):", existing[i]);
                 console.log("  Index (keeper CHAIN_SWAP.adapters.univ3 must match):", i);
-                // Same index-drift warning as the fresh-deploy path — the keeper
-                // hard-codes univ3=0 on no-aggregator chains, so a UniV3 adapter
-                // that ended up at a non-zero slot (another adapter registered
-                // first / list reordered) means the keeper would submit UniV3
-                // calls to the wrong slot and never hit this Pancake adapter.
-                if (i != 0) {
-                    console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
-                    console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP,");
-                    console.log("  or reorder so the UniV3 adapter is at index 0.");
-                }
+                _assertOrWarnSlot(i, existing.length);
                 console.log("  Nothing to do.");
                 return;
             }
@@ -199,11 +197,60 @@ contract DeployUniV3Adapter is Script {
         console.log("");
         console.log("Done. Diamond.getSwapAdapters() length:", registered.length);
         console.log("  UniV3 adapter index (keeper CHAIN_SWAP.adapters.univ3 must match):", idx);
-        if (idx != 0) {
-            console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
-            console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP.");
-        }
+        _assertOrWarnSlot(idx, registered.length);
         console.log("Record the adapter under `swapAdapters.uniV3` in the chain's addresses.json.");
+    }
+
+    /// @dev Guard the UniV3 adapter's slot against the keeper's per-chain
+    ///      `CHAIN_SWAP.adapters.univ3` index.
+    ///
+    ///      On a NO-0x-backend chain (BNB testnet 97) the UniV3 adapter is the
+    ///      SOLE liquidation route and the keeper hard-codes `univ3=0`, so slot 0
+    ///      is not a preference — it's a correctness invariant. #862: any non-zero
+    ///      slot there means a stale adapter (an aggregator that shouldn't exist
+    ///      on a no-0x chain, or a prior mis-registration) sits ahead of UniV3;
+    ///      ConfigureOracle now only WARNS, so if this passed too the diamond
+    ///      could be "marked configured" while the keeper silently misroutes.
+    ///      HARD-FAIL instead and tell the operator to clean the stale adapter(s).
+    ///
+    ///      On a with-0x chain the aggregators legitimately own slots 0/1 and
+    ///      UniV3 is expected at 2 — a non-zero index is fine, so only warn.
+    function _assertOrWarnSlot(uint256 idx, uint256 total) internal view {
+        if (_isNo0xBackendChain()) {
+            require(
+                idx == 0,
+                string.concat(
+                    "DeployUniV3Adapter: no-0x chain requires the UniV3 adapter at index 0 (keeper univ3=0), but it is at index ",
+                    vm.toString(idx),
+                    " of ",
+                    vm.toString(total),
+                    " - a stale adapter sits ahead of it (no aggregators should exist on a no-0x chain). Remove it via AdminFacet.removeSwapAdapter, then re-run."
+                )
+            );
+            return;
+        }
+        // With-0x chain: DeploySwapAdapters always registers the 0x + 1inch pair,
+        // so the keeper/frontend registries expect 0x=slot0, 1inch=slot1,
+        // UniV3=slot2. The DANGEROUS case is UniV3 landing in an aggregator slot
+        // (0 or 1) — happens if this deploy ran before the aggregators, or
+        // INITIAL_SETTLERS was omitted — because the keeper would then send 0x/
+        // 1inch calldata to the UniV3 adapter. Warn LOUDLY there (idx == 0 must
+        // NOT be silent on a with-0x chain); an unexpected slot >2 is a softer note.
+        if (idx < 2) {
+            console.log("  WARNING: on a with-0x chain UniV3 is expected at slot 2 (0x=0, 1inch=1), but");
+            console.log("  it landed at an aggregator slot - the keeper would misroute aggregator calldata");
+            console.log("  to UniV3. Deploy the 0x/1inch adapters FIRST, or fix serverQuotes CHAIN_SWAP.");
+        } else if (idx != 2) {
+            console.log("  Note: UniV3 at slot != 2 - confirm serverQuotes CHAIN_SWAP.adapters.univ3 matches.");
+        }
+    }
+
+    /// @dev Chains where 0x has NO backend, so the on-chain UniV3/PancakeSwap
+    ///      adapter is the only liquidation route and MUST sit at index 0. Mirror
+    ///      of ConfigureOracle._isNo0xBackendChain (BNB testnet 97; 0x covers BNB
+    ///      mainnet 56, so that is NOT here).
+    function _isNo0xBackendChain() internal view returns (bool) {
+        return block.chainid == 97;
     }
 
     /// @dev Resolve the SwapRouter: chain-prefixed `<CHAIN>_UNISWAP_V3_ROUTER`
@@ -215,11 +262,30 @@ contract DeployUniV3Adapter is Script {
     }
 
     /// @dev The oracle's configured v3 factory for this chain — used to confirm
-    ///      the router belongs to the same DEX. Returns 0 if unset (the caller
-    ///      then skips the factory-match, keeping the exactInputSingle-selector
-    ///      check as the floor).
+    ///      the router belongs to the same DEX. This is ConfigureOracle's var, so
+    ///      it MUST resolve to the same key that script reads. #862 round-2: the
+    ///      two prefix maps diverge on chain 1 — this script's CCIP_SLUG map uses
+    ///      `ETHEREUM_`, but `ConfigureOracle._prefix()` uses `MAINNET_`. Try the
+    ///      CCIP_SLUG prefix (+ bare) first, then ConfigureOracle's prefix, so an
+    ///      operator who set the oracle-documented `MAINNET_UNISWAP_V3_FACTORY`
+    ///      isn't rejected by the now-hard factory requirement above.
     function _resolveFactory() internal view returns (address) {
-        return _resolveChainAddr("UNISWAP_V3_FACTORY");
+        // 1) This script's CCIP_SLUG-prefixed key (ETHEREUM_ on chain 1).
+        string memory prefix = _ccipSlugPrefix();
+        if (bytes(prefix).length != 0) {
+            address p = vm.envOr(string.concat(prefix, "UNISWAP_V3_FACTORY"), address(0));
+            if (p != address(0)) return p;
+        }
+        // 2) ConfigureOracle's prefix where it diverges (chain 1: MAINNET_). The
+        //    factory is ConfigureOracle's var, so prefer its documented key OVER a
+        //    stale/global bare value that a shared multi-chain env might carry —
+        //    otherwise the hard factory check could reject a valid mainnet router.
+        if (block.chainid == 1) {
+            address m = vm.envOr("MAINNET_UNISWAP_V3_FACTORY", address(0));
+            if (m != address(0)) return m;
+        }
+        // 3) Bare escape hatch, last.
+        return vm.envOr("UNISWAP_V3_FACTORY", address(0));
     }
 
     /// @dev Chain-prefixed `<CHAIN>_<key>` first, then bare `<key>` fallback.

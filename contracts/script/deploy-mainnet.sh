@@ -936,9 +936,17 @@ EOF
   echo
   # Aggregators FIRST (stable indices 0x=0, 1inch=1); UniV3 appends (=2), or lands
   # at index 0 on a no-aggregator chain — matching the keeper's per-chain map.
+  # (No no-0x-backend chain exists on mainnet — every mainnet 0x covers — so
+  # there's no aggregator-skip branch here, unlike deploy-testnet.sh's BNB
+  # testnet case.)
   if [ -n "${INITIAL_SETTLERS:-}" ]; then
+    # #862: only the AGGREGATOR-specific marker proves DeploySwapAdapters ran.
+    # (An earlier revision also honoured the old combined phase-swap-adapters.done
+    # marker, but that's ambiguous — it was written even when INITIAL_SETTLERS was
+    # empty and only UniV3 landed, so trusting it would skip 0x/1inch forever on a
+    # later rerun. Pre-live: no in-progress pre-split deploy exists to migrate.)
     if [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ]; then
-      echo "  [aggregators] 0x/1inch already registered (marker exists) — skipping to avoid a duplicate pair."
+      echo "  [aggregators] 0x/1inch already registered ($MARKERS_DIR/swap-adapters-aggregators.done) — skipping to avoid a duplicate pair."
     else
       forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
       date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/swap-adapters-aggregators.done"
