@@ -1798,8 +1798,8 @@ function humanBlockerText(blocker: string) {
     const symbol = blocker.replace('Approved collateral address must be confirmed for ', '').replace('.', '');
     return symbol + ' collateral token address is missing. Add it under Base Sepolia assets. ';
   }
-  if (blocker.includes('Wallet balance, allowance, oracle price, and collateral safety')) return 'After token setup, Vaipakam still needs to check your balance, approval, price, and collateral safety.';
-  if (blocker.includes('Funding balance, allowance, and borrower collateral safety')) return 'After token setup, Vaipakam still needs to check funding balance, approval, and borrower collateral safety.';
+  if (blocker.includes('Wallet balance, allowance, oracle price, and collateral safety')) return 'Run the wallet readiness check in Step 4 before wallet submission.';
+  if (blocker.includes('Funding balance, allowance, and borrower collateral safety')) return 'Run the wallet readiness check in Step 4 before wallet submission.';
   return blocker;
 }
 
