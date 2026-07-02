@@ -235,6 +235,7 @@ button {
 .vault-page,
 .activity-page,
 .settings-page,
+.data-rights-page,
 .help-page {
   display: grid;
   gap: 22px;
@@ -729,9 +730,70 @@ dd {
   color: var(--muted);
 }
 
-.settings-grid {
+
+.data-rights-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.data-card {
+  display: grid;
+  gap: 14px;
+}
+
+.data-card > span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  background: #e5f4ee;
+  color: var(--brand-strong);
+}
+
+.data-card h3,
+.recovery-card h2 {
+  margin: 0;
+}
+
+.data-card p,
+.recovery-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.danger-zone > span {
+  background: #fff7f8;
+  color: #9b2838;
+}
+
+.report-preview pre,
+.recovery-card code {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101b19;
+  color: #f4fbf6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.recovery-card {
+  max-width: 820px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1315,6 +1377,7 @@ dd {
   .diagnostic-panel,
   .settings-summary,
   .settings-grid,
+  .data-rights-grid,
   .activity-summary,
   .activity-row,
   .vpfi-grid,

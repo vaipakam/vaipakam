@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BadgeCheck,
   Box,
+  Download,
   BriefcaseBusiness,
   CandlestickChart,
   CheckCircle2,
@@ -25,10 +26,11 @@ import {
   Store,
   Wallet,
   Settings as SettingsIcon,
+  Trash2,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
+import { Component, useEffect, useState } from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
 
@@ -434,7 +436,8 @@ function App() {
 
       <main className="main-surface">
         <TopBar mode={mode} wallet={wallet} onConnectWallet={connectWallet} onModeChange={setMode} />
-        <Routes>
+        <RouteErrorBoundary>
+          <Routes>
           <Route path="/" element={<Home mode={mode} />} />
           <Route path="/earn" element={<FlowPage flow={guidedFlows.earn} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/borrow" element={<FlowPage flow={guidedFlows.borrow} mode={mode} wallet={wallet} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
@@ -446,11 +449,54 @@ function App() {
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/settings" element={<SettingsPanel />} />
+          <Route path="/data-rights" element={<DataRights wallet={wallet} />} />
           <Route path="/help" element={<Help />} />
-        </Routes>
+          <Route path="*" element={<NotFound />} />
+          </Routes>
+        </RouteErrorBoundary>
       </main>
     </div>
   );
+}
+
+
+type RouteErrorBoundaryState = {
+  hasError: boolean;
+  message: string;
+};
+
+class RouteErrorBoundary extends Component<{ children: ReactNode }, RouteErrorBoundaryState> {
+  state: RouteErrorBoundaryState = { hasError: false, message: '' };
+
+  static getDerivedStateFromError(error: unknown): RouteErrorBoundaryState {
+    return { hasError: true, message: error instanceof Error ? error.message : 'Unknown route error' };
+  }
+
+  componentDidCatch(error: unknown, info: ErrorInfo) {
+    const entry = {
+      at: new Date().toISOString(),
+      type: 'route-crash',
+      message: error instanceof Error ? error.message : 'Unknown route error',
+      componentStack: (info.componentStack ?? '').slice(0, 800),
+    };
+    window.sessionStorage.setItem('vaipakam-alpha-last-error', JSON.stringify(entry));
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <section className="recovery-card panel-surface" role="alert">
+        <p className="eyebrow">Recovery</p>
+        <h2>This page could not render safely.</h2>
+        <p>The rest of Vaipakam Alpha is still available. A redacted crash note was saved in this browser session for support.</p>
+        <code>{this.state.message}</code>
+        <div className="hero-actions">
+          <button className="primary-action" type="button" onClick={() => window.location.reload()}>Reload page</button>
+          <a className="secondary-action" href="/">Back to start</a>
+        </div>
+      </section>
+    );
+  }
 }
 
 function AlphaNavLink({ to, label, icon }: { to: string; label: string; icon: ReactNode }) {
@@ -1307,6 +1353,13 @@ function SettingsPanel() {
         </article>
 
         <article className="settings-card panel-surface">
+          <p className="eyebrow">Privacy</p>
+          <h3>Browser data and support</h3>
+          <p>Export or clear alpha-local settings without touching public chain history.</p>
+          <NavLink className="secondary-action" to="/data-rights">Open data rights</NavLink>
+        </article>
+
+        <article className="settings-card panel-surface">
           <p className="eyebrow">Emergency</p>
           <h3>{emergencyPause ? 'New actions paused locally' : 'Actions available'}</h3>
           <p>Pausing here does not touch contracts. It prevents the alpha UI from presenting new action CTAs until resumed.</p>
@@ -1323,6 +1376,104 @@ function SettingsPanel() {
         <Metric label="Emergency state" value={emergencyPause ? 'Paused' : 'Normal'} />
       </section>
     </div>
+  );
+}
+
+
+function DataRights({ wallet }: { wallet: WalletState }) {
+  const [report, setReport] = useState('');
+  const [cleared, setCleared] = useState(false);
+  const storageKeys = ['vaipakam-alpha-mode', 'vaipakam-alpha-risk', 'vaipakam-alpha-language', 'vaipakam-alpha-analytics', 'vaipakam-alpha-last-error'];
+
+  const buildReport = () => {
+    const snapshot = storageKeys.reduce<Record<string, string | null>>((result, key) => {
+      result[key] = window.localStorage.getItem(key) ?? window.sessionStorage.getItem(key);
+      return result;
+    }, {});
+    const nextReport = JSON.stringify({
+      generatedAt: new Date().toISOString(),
+      wallet: wallet.account ? shortAddress(wallet.account) : 'not connected',
+      chain: chainLabel(wallet.chainId),
+      alphaStorage: snapshot,
+      note: 'Browser-local Vaipakam Alpha report. Public on-chain state is not included and cannot be erased by this action.',
+    }, null, 2);
+    setReport(nextReport);
+  };
+
+  const downloadReport = () => {
+    if (!report) return;
+    const url = URL.createObjectURL(new Blob([report], { type: 'application/json' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'vaipakam-alpha-local-report.json';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const clearLocalData = () => {
+    const confirmed = window.confirm('Clear Vaipakam Alpha local settings and support notes from this browser?');
+    if (!confirmed) return;
+    storageKeys.forEach((key) => {
+      window.localStorage.removeItem(key);
+      window.sessionStorage.removeItem(key);
+    });
+    setReport('');
+    setCleared(true);
+  };
+
+  return (
+    <div className="data-rights-page">
+      <SectionHeading eyebrow="Data rights" title="Control the browser data this alpha stores" />
+      <p className="page-intro">
+        Vaipakam Alpha can clear its local preferences and support notes from this browser. It cannot erase public blockchain history, wallet transactions, or state held by deployed contracts.
+      </p>
+
+      <section className="data-rights-grid">
+        <article className="data-card panel-surface">
+          <span><Download size={20} /></span>
+          <h3>Export local alpha report</h3>
+          <p>Creates a redacted browser-local snapshot of alpha preferences, route crash notes, wallet status, and network status for support.</p>
+          <div className="hero-actions">
+            <button className="secondary-action" type="button" onClick={buildReport}>Generate report</button>
+            <button className="primary-action" type="button" onClick={downloadReport} disabled={!report}>Download</button>
+          </div>
+        </article>
+
+        <article className="data-card panel-surface danger-zone">
+          <span><Trash2 size={20} /></span>
+          <h3>Clear alpha-local data</h3>
+          <p>Removes Vaipakam Alpha preferences, analytics opt-in state, and session crash notes from this browser only.</p>
+          <button className="danger-action" type="button" onClick={clearLocalData}>Clear local alpha data</button>
+          {cleared ? <p className="inline-success">Local alpha data cleared in this browser.</p> : null}
+        </article>
+
+        <article className="data-card panel-surface">
+          <span><ShieldCheck size={20} /></span>
+          <h3>What cannot be erased here</h3>
+          <p>On-chain offers, loans, claims, NFT rental state, vault locks, and transaction history are public network records. This page only controls local browser data.</p>
+          <NavLink className="secondary-action" to="/help">Read the plain-language guide</NavLink>
+        </article>
+      </section>
+
+      <section className="report-preview panel-surface" aria-label="Local report preview">
+        <p className="eyebrow">Report preview</p>
+        <pre>{report || 'Generate a report to preview the browser-local payload before downloading.'}</pre>
+      </section>
+    </div>
+  );
+}
+
+function NotFound() {
+  return (
+    <section className="recovery-card panel-surface">
+      <p className="eyebrow">Not found</p>
+      <h2>That alpha page does not exist.</h2>
+      <p>Return to the guided start screen or open the help guide to find the right workflow.</p>
+      <div className="hero-actions">
+        <NavLink className="primary-action" to="/">Back to start</NavLink>
+        <NavLink className="secondary-action" to="/help">Open help</NavLink>
+      </div>
+    </section>
   );
 }
 
