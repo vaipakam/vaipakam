@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Address } from "viem";
+import { isNo0xBackendChain } from "../contracts/swapRegistry";
 
 /**
  * Phase 7b.1 frontend — UX-layer liquidity preflight.
@@ -164,6 +165,12 @@ export function useLiquidityPreflight(
     !!input.diamond &&
     !!input.workerOrigin &&
     !!input.chainId &&
+    // Skip on chains with no 0x backend (e.g. BNB testnet): this preflight only
+    // knows the /quote/0x route, which returns no-route there and would render a
+    // false red warning even though the on-chain PancakeSwap adapter is a usable
+    // venue. The OracleFacet.checkLiquidity gate is unchanged (real boundary); a
+    // Pancake/UniV3-quote preflight for these chains is a future enhancement.
+    !(input.chainId && isNo0xBackendChain(input.chainId)) &&
     input.collateralAssetType === "erc20" &&
     input.collateralAmount > 0n;
 

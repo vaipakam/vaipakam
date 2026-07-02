@@ -11,6 +11,15 @@ on-chain PancakeSwap-based liquidation route), and sample loan/offer flows are
 already being indexed on the chain, so the chain has graduated from
 "indexed-only" to fully user-facing.
 
+Making the chain fully usable (not just visible) also required teaching the app
+about its liquidation venue. Because BNB testnet has no 0x aggregator backend,
+its swaps route through an on-chain PancakeSwap-based adapter. Two frontend
+surfaces are now aware of that: the swap-quote registry knows the chain's
+PancakeSwap quoter, fee tiers, and adapter slot (so the health-factor liquidation
+button works instead of staying disabled), and the create/accept liquidity
+preview skips its 0x-only check on chains that have no 0x backend (so valid pairs
+are no longer flagged with a false "no route" warning).
+
 One caveat worth knowing on the testnet specifically: only the chain's numeraire
 asset is deeply liquid, so offers using other BNB-testnet assets will be valued
 and routed conservatively. That is an accepted limitation of the testnet
