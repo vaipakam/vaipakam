@@ -277,9 +277,15 @@ contract RewardRemittanceFacet is
      *         call over `dayIds` would send to `dstChainId`, and the per-day
      *         breakdown. Non-reverting — non-finalized or already-remitted days
      *         contribute 0.
-     * @return total  Sum of the un-remitted slices.
+     * @dev    Mirrors {remitRewardBudget}'s in-call de-duplication: a `dayId`
+     *         repeated in `dayIds` contributes only on its FIRST occurrence
+     *         (later duplicates yield 0). Without this the quote would
+     *         over-count a duplicated day — remit marks it on the first pass, so
+     *         the send would fit under a cap the quote reported as too large.
+     * @return total  Sum of the un-remitted slices (each day counted once).
      * @return perDay `perDay[i]` = amount `dayIds[i]` would contribute (0 if
-     *                not finalized or already remitted).
+     *                not finalized, already remitted, or a repeat of an earlier
+     *                entry in `dayIds`).
      */
     function quoteRewardBudget(
         uint32 dstChainId,
@@ -289,7 +295,20 @@ contract RewardRemittanceFacet is
         perDay = new uint256[](dayIds.length);
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
+            // Skip a day already seen earlier in THIS call — the send path
+            // marks the first occurrence and no-ops the rest.
+            bool seen;
+            for (uint256 j; j < i; ) {
+                if (dayIds[j] == dayId) {
+                    seen = true;
+                    break;
+                }
+                unchecked {
+                    ++j;
+                }
+            }
             if (
+                !seen &&
                 s.dailyGlobalFinalized[dayId] &&
                 s.rewardBudgetRemitted[dstChainId][dayId] == 0
             ) {

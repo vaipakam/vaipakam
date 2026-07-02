@@ -111,6 +111,23 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertGt(expectedArb, 0, "non-zero");
     }
 
+    function test_Quote_DeduplicatesRepeatedDays() public {
+        _finalizeDay1();
+        (uint256 single, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        // Same day twice must NOT double-count — the send path marks the first
+        // occurrence, so the quote counts day 1 exactly once.
+        uint256[] memory dup = new uint256[](2);
+        dup[0] = 1;
+        dup[1] = 1;
+        (uint256 total, uint256[] memory perDay) = remit.quoteRewardBudget(
+            CHAIN_ARB,
+            dup
+        );
+        assertEq(total, single, "duplicate day counted once");
+        assertEq(perDay[0], single, "first occurrence carries the slice");
+        assertEq(perDay[1], 0, "repeat contributes zero");
+    }
+
     function test_Slices_SumToFullDayEmission() public {
         _finalizeDay1();
         uint256 half = LibInteractionRewards.halfPoolForDay(1);
