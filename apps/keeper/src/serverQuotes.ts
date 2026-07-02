@@ -72,6 +72,9 @@ interface ChainSwap {
 }
 
 const COMMON_FEE_TIERS = [500, 3000, 10000] as const;
+// PancakeSwap V3 uses different fee tiers than Uniswap V3 (0.25% instead of
+// 0.3%): 0.01% / 0.05% / 0.25% / 1%. Used on chains routed through PancakeSwap.
+const PANCAKE_V3_FEE_TIERS = [100, 500, 2500, 10000] as const;
 const BALANCER_V2_VAULT_CANONICAL =
   '0xBA12222222228d8Ba445958a75a0704d566BF2C8' as const;
 
@@ -118,6 +121,23 @@ const CHAIN_SWAP: Record<number, ChainSwap> = {
     balancerV2SubgraphUrl: null,
     uniV3FeeTiers: COMMON_FEE_TIERS,
     adapters: { zeroex: 0, oneinch: 1, univ3: null, balancerv2: 3 },
+  },
+  // BNB testnet — 0x/1inch have NO testnet backend (0x's API covers BNB
+  // mainnet 56, not 97), so the ONLY liquidation route is the on-chain
+  // PancakeSwap V3 UniV3Adapter. `univ3: 0` is a STATIC index into the
+  // Diamond's on-chain getSwapAdapters() list (same static-mirror pattern as
+  // every other chain here) and MUST equal the index DeployUniV3Adapter.s.sol
+  // logs at registration — the UniV3 adapter is the sole/first entry on this
+  // no-aggregator chain, so index 0 (verified on-chain). If aggregator adapters
+  // are ever registered before it, bump this to match. Quote via PancakeSwap's
+  // V3 QuoterV2 (factory-matched to the oracle's UNISWAP_V3_FACTORY) over
+  // Pancake's fee tiers. Balancer V2 not on BNB.
+  97: {
+    uniV3Quoter: '0xbC203d7f83677c7ed3F7acEc959963E7F4ECC5C2',
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: null,
+    uniV3FeeTiers: PANCAKE_V3_FEE_TIERS,
+    adapters: { zeroex: null, oneinch: null, univ3: 0, balancerv2: null },
   },
 };
 
