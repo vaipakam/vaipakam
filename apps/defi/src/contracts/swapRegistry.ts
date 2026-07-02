@@ -105,6 +105,10 @@ const UNIV3_DEPLOYMENTS: Record<number, { quoter: string; router: string } | nul
 
 const COMMON_FEE_TIERS = [500, 3000, 10000] as const;
 
+// PancakeSwap V3 (a Uniswap V3 fork) fee tiers — BNB testnet routes UniV3-style
+// quotes through Pancake's QuoterV2. Mirror of the keeper's PANCAKE_V3_FEE_TIERS.
+const PANCAKE_V3_FEE_TIERS = [100, 500, 2500, 10000] as const;
+
 // The Graph's hosted service has been migrating to the decentralized
 // network. The URLs below default to the legacy hosted endpoints so
 // dev / testnet works out of the box; operators should override via
@@ -176,9 +180,50 @@ function _chainEnvPrefix(chainId: number): string {
       return 'ZKEVM';
     case 56:
       return 'BNB';
+    case 97:
+      return 'BNB_TESTNET';
     default:
       return `CHAIN_${chainId}`;
   }
+}
+
+/**
+ * BNB testnet (97) — dedicated entry. 0x/1inch have NO testnet backend (#860:
+ * 0x's Swap API covers BNB mainnet 56, not 97), so the ONLY swap adapter is the
+ * on-chain PancakeSwap V3 UniV3Adapter, registered at storage index 0. The
+ * generic {@link buildEntry} can't express this (it assumes 0x=0 / 1inch=1 /
+ * univ3=2 + Uniswap fee tiers), so this chain is built explicitly.
+ *
+ * PancakeSwap V3 is a Uniswap V3 fork, so its QuoterV2 answers the same
+ * `quoteExactInputSingle` the UniV3 quote path uses. This MUST stay in lockstep
+ * with the keeper's `serverQuotes` CHAIN_SWAP[97] (same QuoterV2, fee tiers, and
+ * `univ3: 0` index).
+ */
+function buildBnbTestnetEntry(): ChainSwapRegistry {
+  return {
+    chainId: 97,
+    uniV3Quoter: optString(
+      'VITE_BNB_TESTNET_UNIV3_QUOTER',
+      '0xbC203d7f83677c7ed3F7acEc959963E7F4ECC5C2',
+    ),
+    // PancakeSwap V3 SwapRouter on BSC testnet — the UniV3Adapter's immutable
+    // target (#860). Informational (review-time verification), env-overridable.
+    uniV3Router: optString(
+      'VITE_BNB_TESTNET_UNIV3_ROUTER',
+      '0x1b81D678ffb9C0263b24A97847620C99d213eB14',
+    ),
+    balancerVault: BALANCER_V2_VAULT_CANONICAL,
+    balancerV2SubgraphUrl: null, // Balancer V2 not on BNB
+    uniV3FeeTiers: PANCAKE_V3_FEE_TIERS,
+    adapters: [
+      // 0x / 1inch have no backend on 97 → not registered.
+      { kind: 'zeroex', adapterIdx: optIdx('VITE_BNB_TESTNET_ZEROEX_ADAPTER_IDX', null) },
+      { kind: 'oneinch', adapterIdx: optIdx('VITE_BNB_TESTNET_ONEINCH_ADAPTER_IDX', null) },
+      // Sole/first adapter → index 0 (verified on-chain at #860 registration).
+      { kind: 'univ3', adapterIdx: optIdx('VITE_BNB_TESTNET_UNIV3_ADAPTER_IDX', 0) },
+      { kind: 'balancerv2', adapterIdx: optIdx('VITE_BNB_TESTNET_BALANCERV2_ADAPTER_IDX', null) },
+    ],
+  };
 }
 
 const REGISTRY_BY_CHAIN: Record<number, ChainSwapRegistry> = {
@@ -188,10 +233,25 @@ const REGISTRY_BY_CHAIN: Record<number, ChainSwapRegistry> = {
   10: buildEntry(10),
   1101: buildEntry(1101),
   56: buildEntry(56),
+  97: buildBnbTestnetEntry(),
 };
 
 export function getSwapRegistry(chainId: number): ChainSwapRegistry | null {
   return REGISTRY_BY_CHAIN[chainId] ?? null;
+}
+
+/**
+ * True when this chain has NO 0x aggregator adapter registered — i.e. the 0x
+ * Swap API has no backend there (BNB testnet 97 is the current case). 0x-only
+ * UX flows (the liquidity preflight) must SKIP 0x on these chains and rely on
+ * the on-chain UniV3/PancakeSwap route + the OracleFacet.checkLiquidity gate
+ * (the real security boundary). Derived from the registry so it stays in
+ * lockstep with the adapter config rather than a separately-maintained list.
+ */
+export function isNo0xBackendChain(chainId: number): boolean {
+  const reg = REGISTRY_BY_CHAIN[chainId];
+  if (!reg) return false;
+  return reg.adapters.find((a) => a.kind === 'zeroex')?.adapterIdx == null;
 }
 
 export function adapterIdxFor(
