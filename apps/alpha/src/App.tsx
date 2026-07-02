@@ -406,6 +406,11 @@ function App() {
     setModeState(nextMode);
     writeLocalAppStorage('mode', nextMode);
   };
+  const resetLocalAppState = () => {
+    setModeState('guided');
+    setRiskGuardrailState('guided');
+    setActionsPausedState(false);
+  };
 
   useEffect(() => {
     if (!advancedAllowed && mode === 'advanced') {
@@ -555,7 +560,7 @@ function App() {
           <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/advanced" element={<Advanced wallet={wallet} riskGuardrail={riskGuardrail} />} />
           <Route path="/settings" element={<SettingsPanel riskGuardrail={riskGuardrail} actionsPaused={actionsPaused} onRiskGuardrailChange={setRiskGuardrail} onActionsPausedChange={setActionsPaused} />} />
-          <Route path="/data-rights" element={<DataRights wallet={wallet} />} />
+          <Route path="/data-rights" element={<DataRights wallet={wallet} onStorageCleared={resetLocalAppState} />} />
           <Route path="/help" element={<Help />} />
           <Route path="*" element={<NotFound />} />
           </Routes>
@@ -1195,26 +1200,28 @@ function Claims({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { w
           <button className="primary-action" type="button" onClick={onSwitchNetwork}>Switch to Base Sepolia</button>
         </section>
       ) : null}
-      <section className="claim-list panel-surface" aria-label="Claimable item previews">
-        {visibleClaims.map((item) => {
-          const claimed = reviewedClaimIds.includes(item.id);
-          const ready = item.status === 'Ready' && !claimed;
-          return (
-            <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id} aria-label={item.title}>
-              <div>
-                <span className="position-kind">{item.source}</span>
-                <h2>{item.title}</h2>
-                <p>{item.detail}</p>
-              </div>
-              <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
-              <span>{claimed ? 'Reviewed until page reload' : item.status}</span>
-              <button type="button" disabled={actionsPaused || claimed || !ready} onClick={() => claim(item.id)}>
-                {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed until reload' : ready ? 'Review claim' : 'Not ready'}
-              </button>
-            </article>
-          );
-        })}
-      </section>
+      {canPreviewClaims ? (
+        <section className="claim-list panel-surface" aria-label="Claimable item previews">
+          {visibleClaims.map((item) => {
+            const claimed = reviewedClaimIds.includes(item.id);
+            const ready = item.status === 'Ready' && !claimed;
+            return (
+              <article className={ready ? 'claim-row ready' : 'claim-row'} key={item.id} aria-label={item.title}>
+                <div>
+                  <span className="position-kind">{item.source}</span>
+                  <h2>{item.title}</h2>
+                  <p>{item.detail}</p>
+                </div>
+                <strong>{claimed ? 'Reviewed' : item.amount + ' ' + item.asset}</strong>
+                <span>{claimed ? 'Reviewed until page reload' : item.status}</span>
+                <button type="button" disabled={actionsPaused || claimed || !ready} onClick={() => claim(item.id)}>
+                  {actionsPaused ? 'Actions paused' : claimed ? 'Reviewed until reload' : ready ? 'Review claim' : 'Not ready'}
+                </button>
+              </article>
+            );
+          })}
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -1624,7 +1631,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
 }
 
 
-function DataRights({ wallet }: { wallet: WalletState }) {
+function DataRights({ wallet, onStorageCleared }: { wallet: WalletState; onStorageCleared: () => void }) {
   const [report, setReport] = useState('');
   const [cleared, setCleared] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -1662,6 +1669,7 @@ function DataRights({ wallet }: { wallet: WalletState }) {
     setReport('');
     setConfirmClear(false);
     setCleared(true);
+    onStorageCleared();
   };
 
   return (
