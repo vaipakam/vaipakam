@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Coins,
   Gauge,
+  History,
   HandCoins,
   Landmark,
   Layers3,
@@ -46,6 +47,7 @@ type WalletState = {
 
 type FlowKind = 'earn' | 'borrow' | 'rent';
 type OfferKind = 'lend' | 'borrow' | 'rent';
+type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
 
 declare global {
   interface Window {
@@ -418,6 +420,7 @@ function App() {
           <AlphaNavLink to="/offers" label="Offers" icon={<Store />} />
           <AlphaNavLink to="/claims" label="Claims" icon={<ReceiptText />} />
           <AlphaNavLink to="/vault" label="Vault" icon={<LockKeyhole />} />
+          <AlphaNavLink to="/activity" label="Activity" icon={<History />} />
           <AlphaNavLink to="/manage" label="Manage" icon={<BriefcaseBusiness />} />
           <AlphaNavLink to="/advanced" label="Advanced" icon={<SlidersHorizontal />} />
           <AlphaNavLink to="/settings" label="Settings" icon={<SettingsIcon />} />
@@ -439,6 +442,7 @@ function App() {
           <Route path="/offers" element={<OfferBook wallet={wallet} onConnectWallet={connectWallet} />} />
           <Route path="/claims" element={<Claims wallet={wallet} onConnectWallet={connectWallet} />} />
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
+          <Route path="/activity" element={<Activity wallet={wallet} />} />
           <Route path="/manage" element={<Manage mode={mode} />} />
           <Route path="/advanced" element={<Advanced />} />
           <Route path="/settings" element={<SettingsPanel />} />
@@ -723,6 +727,88 @@ function FlowPage({
   );
 }
 
+
+type ActivityItem = {
+  id: string;
+  source: Exclude<ActivityFilter, 'all'>;
+  title: string;
+  detail: string;
+  status: 'Observed' | 'Needs review' | 'Local queue' | 'Waiting';
+  when: string;
+  impact: string;
+  nextAction: string;
+  safeForGuided: boolean;
+};
+
+const activityItems: ActivityItem[] = [
+  {
+    id: 'wallet-base-sepolia',
+    source: 'wallet',
+    title: 'Wallet connected on Base Sepolia',
+    detail: 'The alpha can read wallet and network state before showing action CTAs.',
+    status: 'Observed',
+    when: 'Now',
+    impact: 'Actions can stay gated to the supported test network.',
+    nextAction: 'Continue guided flow',
+    safeForGuided: true,
+  },
+  {
+    id: 'offer-review-musdc',
+    source: 'offer',
+    title: 'Lending offer receipt reviewed',
+    detail: '2,500 mUSDC against mWETH was reviewed locally before any signing path.',
+    status: 'Local queue',
+    when: '12 min ago',
+    impact: 'No on-chain offer is created until the wallet confirms a real transaction.',
+    nextAction: 'Open offer review',
+    safeForGuided: true,
+  },
+  {
+    id: 'loan-claim-ready',
+    source: 'loan',
+    title: 'Loan #2 repayment claim ready',
+    detail: 'Claimable mUSDC should remain visible in Claims and Manage until collected.',
+    status: 'Needs review',
+    when: '1 hr ago',
+    impact: 'Value may sit idle if the user misses the claim lane.',
+    nextAction: 'Review claim',
+    safeForGuided: true,
+  },
+  {
+    id: 'rental-expiry',
+    source: 'rental',
+    title: 'Game NFT rental expires soon',
+    detail: 'The renter or owner may need a close or claim action after expiry.',
+    status: 'Waiting',
+    when: '2 days left',
+    impact: 'The buffer path depends on the rental ending state.',
+    nextAction: 'Track expiry',
+    safeForGuided: true,
+  },
+  {
+    id: 'vault-lock',
+    source: 'vault',
+    title: 'mUSDC split between free and locked balances',
+    detail: 'The vault view separates assets that can move now from assets backing obligations.',
+    status: 'Observed',
+    when: 'Today',
+    impact: 'Prevents a user from assuming all visible balance is withdrawable.',
+    nextAction: 'Inspect locks',
+    safeForGuided: true,
+  },
+  {
+    id: 'reward-vpfi',
+    source: 'reward',
+    title: 'VPFI interaction reward preview',
+    detail: 'Reward rows are informational until a claimable proof or contract action is available.',
+    status: 'Waiting',
+    when: 'Today',
+    impact: 'Avoids presenting projected rewards as spendable tokens.',
+    nextAction: 'Open rewards',
+    safeForGuided: false,
+  },
+];
+
 type PositionFilter = 'all' | 'urgent' | 'claimable' | 'loans' | 'rentals';
 
 type ManagedPosition = {
@@ -1003,6 +1089,87 @@ function buildOfferReceiptRows(offer: MarketOffer) {
     ['Fees', 'Protocol fee, any VPFI discount, and network gas.'],
     ['When this ends', 'Borrower repays, lender cancels, or lender claims after default.'],
   ];
+}
+
+
+function Activity({ wallet }: { wallet: WalletState }) {
+  const [filter, setFilter] = useState<ActivityFilter>('all');
+  const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([]);
+  const walletReady = Boolean(wallet.account);
+  const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const visibleItems = activityItems.filter((item) => filter === 'all' || item.source === filter);
+  const reviewCount = activityItems.filter((item) => item.status === 'Needs review').length;
+  const localCount = activityItems.filter((item) => item.status === 'Local queue').length;
+  const acknowledgedCount = acknowledgedIds.length;
+
+  const acknowledge = (id: string) => {
+    setAcknowledgedIds((current) => current.includes(id) ? current : [...current, id]);
+  };
+
+  return (
+    <div className="activity-page">
+      <SectionHeading eyebrow="Activity" title="A readable timeline of what needs attention" />
+      <p className="page-intro">
+        Activity separates observed wallet state, local alpha queues, and actions that still need review. It should never make a local preview look like an on-chain transaction.
+      </p>
+
+      <section className="activity-summary">
+        <div className="panel-surface">
+          <p className="eyebrow">Wallet</p>
+          <strong>{walletReady ? 'Connected' : 'Read only'}</strong>
+          <span>{baseReady ? 'Base Sepolia ready' : 'Actions stay gated'}</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Needs review</p>
+          <strong>{reviewCount}</strong>
+          <span>user action before signing</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Local queue</p>
+          <strong>{localCount}</strong>
+          <span>not submitted on-chain</span>
+        </div>
+        <div className="panel-surface">
+          <p className="eyebrow">Acknowledged</p>
+          <strong>{acknowledgedCount}</strong>
+          <span>marked locally, not deleted</span>
+        </div>
+      </section>
+
+      <section className="portfolio-tools panel-surface" aria-label="Activity filters">
+        {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
+          <button className={filter === option ? 'selected' : ''} type="button" key={option} onClick={() => setFilter(option)}>
+            {option}
+          </button>
+        ))}
+      </section>
+
+      <section className="activity-list panel-surface" aria-label="Readable activity timeline">
+        {visibleItems.map((item) => {
+          const acknowledged = acknowledgedIds.includes(item.id);
+          return (
+            <article className={item.status === 'Needs review' ? 'activity-row needs-review' : 'activity-row'} key={item.id}>
+              <div className="activity-main">
+                <span className="position-kind">{item.source} · {item.when}</span>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+              <div className="activity-impact">
+                <strong>{item.status}</strong>
+                <span>{item.impact}</span>
+              </div>
+              <div className="activity-action">
+                <span>{item.safeForGuided ? 'Guided-safe' : 'Advanced context'} · Next: {item.nextAction}</span>
+                <button type="button" onClick={() => acknowledge(item.id)} disabled={acknowledged}>
+                  {acknowledged ? 'Acknowledged' : 'Mark acknowledged'}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
 }
 
 function Manage({ mode }: { mode: Mode }) {

@@ -233,6 +233,7 @@ button {
 .offers-page,
 .claims-page,
 .vault-page,
+.activity-page,
 .settings-page,
 .help-page {
   display: grid;
@@ -557,22 +558,26 @@ dd {
   grid-template-columns: minmax(110px, 0.42fr) minmax(0, 1fr);
 }
 
-.claim-summary {
+.claim-summary,
+.activity-summary {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
 
-.claim-summary .panel-surface {
+.claim-summary .panel-surface,
+.activity-summary .panel-surface {
   display: grid;
   gap: 5px;
 }
 
-.claim-summary strong {
+.claim-summary strong,
+.activity-summary strong {
   font-size: 1.8rem;
 }
 
-.claim-summary span {
+.claim-summary span,
+.activity-summary span {
   color: var(--muted);
 }
 
@@ -621,6 +626,66 @@ dd {
 .claim-row button:disabled {
   cursor: default;
   opacity: 0.58;
+}
+
+
+.activity-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.activity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.35fr) minmax(190px, 0.9fr) minmax(160px, 0.7fr);
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.activity-row.needs-review {
+  border-color: rgba(166, 77, 95, 0.45);
+  background: #fff7f8;
+}
+
+.activity-main h3 {
+  margin: 3px 0 4px;
+  font-size: 1rem;
+}
+
+.activity-main p,
+.activity-impact span,
+.activity-action span {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.activity-impact,
+.activity-action {
+  display: grid;
+  gap: 8px;
+}
+
+.activity-action button {
+  min-height: 38px;
+  border: 1px solid rgba(20, 107, 92, 0.28);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--brand-strong);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.activity-action button:disabled {
+  cursor: default;
+  opacity: 0.62;
 }
 
 .vault-table {
@@ -1200,7 +1265,7 @@ dd {
   }
 
   .nav-list {
-    grid-template-columns: repeat(11, minmax(0, 1fr));
+    grid-template-columns: repeat(12, minmax(0, 1fr));
   }
 
   .nav-link {
@@ -1250,6 +1315,8 @@ dd {
   .diagnostic-panel,
   .settings-summary,
   .settings-grid,
+  .activity-summary,
+  .activity-row,
   .vpfi-grid,
   .vault-row,
   .claim-summary,
@@ -1276,16 +1343,19 @@ dd {
 
   .offer-review dl div,
   .claim-row,
+  .activity-row,
   .choice-grid,
   .receipt-card dl div {
     grid-template-columns: 1fr;
   }
 
-  .claim-row {
+  .claim-row,
+  .activity-row {
     width: 100%;
   }
 
-  .claim-row > * {
+  .claim-row > *,
+  .activity-row > * {
     min-width: 0;
   }
 
