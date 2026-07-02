@@ -159,6 +159,17 @@ contract DeployUniV3Adapter is Script {
                     )
                 );
                 console.log("  Already registered UniswapV3 adapter (same router):", existing[i]);
+                console.log("  Index (keeper CHAIN_SWAP.adapters.univ3 must match):", i);
+                // Same index-drift warning as the fresh-deploy path — the keeper
+                // hard-codes univ3=0 on no-aggregator chains, so a UniV3 adapter
+                // that ended up at a non-zero slot (another adapter registered
+                // first / list reordered) means the keeper would submit UniV3
+                // calls to the wrong slot and never hit this Pancake adapter.
+                if (i != 0) {
+                    console.log("  WARNING: index != 0. On chains with NO aggregator adapters (e.g. BNB");
+                    console.log("  testnet) the keeper expects univ3=0. Update serverQuotes CHAIN_SWAP,");
+                    console.log("  or reorder so the UniV3 adapter is at index 0.");
+                }
                 console.log("  Nothing to do.");
                 return;
             }

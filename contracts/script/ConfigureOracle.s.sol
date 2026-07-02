@@ -6,6 +6,7 @@ import {console} from "forge-std/console.sol";
 import {OracleAdminFacet} from "../src/facets/OracleAdminFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {AccessControlFacet} from "../src/facets/AccessControlFacet.sol";
+import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
 import {Deployments} from "./lib/Deployments.sol";
 
@@ -189,9 +190,17 @@ contract ConfigureOracle is Script {
         // `require` inside the broadcast would NOT roll back the earlier oracle
         // setters (setWethContract/feeds/factory), leaving the chain with pricing
         // enabled but no liquidation venue — the exact state this guard prevents.
-        // Either 0x is fully configured, or it's fully absent AND an on-chain DEX
-        // ISwapAdapter is already registered (e.g. UniV3Adapter → PancakeSwap V3
-        // on BNB testnet; run DeployUniV3Adapter.s.sol BEFORE this script).
+        //
+        // A registered ISwapAdapter is ALWAYS required — the live liquidation
+        // path (LibSwap.swapWithFailover) reverts on an empty `s.swapAdapters`,
+        // and the legacy `zeroExProxy` storage alone is NOT a usable route. So
+        // adapters must be registered BEFORE ConfigureOracle on EVERY chain
+        // (deploy order: swap-adapters phase / DeployUniV3Adapter → configure).
+        address[] memory adapters = AdminFacet(diamond).getSwapAdapters();
+        require(
+            adapters.length > 0,
+            "ConfigureOracle: no swap adapter registered - run the swap-adapters phase (DeploySwapAdapters) / DeployUniV3Adapter BEFORE ConfigureOracle; LibSwap needs >=1 adapter, zeroExProxy storage alone is not a route"
+        );
         if (zeroEx != address(0)) {
             require(
                 allowanceTarget != address(0),
@@ -202,9 +211,15 @@ contract ConfigureOracle is Script {
                 allowanceTarget == address(0),
                 "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
             );
+            // No-0x chain: liquidations route through the on-chain DEX adapter,
+            // and the keeper submits UniV3 calls to swap-adapter INDEX 0. So slot
+            // 0 MUST be the UniV3 adapter — a stale aggregator adapter or a
+            // wrong-slot UniV3 would decode the keeper's fee bytes wrong / revert,
+            // leaving no usable route despite a non-empty list.
             require(
-                AdminFacet(diamond).getSwapAdapters().length > 0,
-                "ConfigureOracle: no liquidation route - set <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET), or register an on-chain DEX swap adapter first (DeployUniV3Adapter.s.sol)"
+                keccak256(bytes(ISwapAdapter(adapters[0]).adapterName()))
+                    == keccak256(bytes("UniswapV3")),
+                "ConfigureOracle: no-0x chain requires the UniV3 adapter at swap-adapter index 0 (keeper expects univ3=0) - register it first via DeployUniV3Adapter.s.sol"
             );
         }
 
