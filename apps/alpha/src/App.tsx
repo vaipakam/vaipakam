@@ -972,6 +972,7 @@ function FlowPage({
     }
     setWalletCheckResult({ status: 'running', message: 'Checking wallet balance and allowance...' });
     try {
+      const accountAtCheckTime = wallet.account;
       const [balanceHex, allowanceHex] = await Promise.all([
         ethereum.request({
           method: 'eth_call',
@@ -988,6 +989,9 @@ function FlowPage({
           }, 'latest'],
         }),
       ]);
+      const accountsAfterCheck = await ethereum.request({ method: 'eth_accounts' });
+      const nextAccounts = Array.isArray(accountsAfterCheck) ? accountsAfterCheck : [];
+      if (typeof nextAccounts[0] === 'string' && nextAccounts[0] !== accountAtCheckTime) return;
       const balance = parseEthCallUint(balanceHex);
       const allowance = parseEthCallUint(allowanceHex);
       const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
@@ -1824,7 +1828,7 @@ function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amo
   if (!amountInput) {
     return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
   }
-  if (!collateralAmountInput) {
+  if (isBorrow && !collateralAmountInput) {
     return {
       asset,
       requiredAmount: null,
@@ -2056,9 +2060,9 @@ function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, num
       intentTitle: 'Prepare borrow request for ' + amountText + ' ' + selectedAsset,
       previewState,
       deploymentTarget,
-      primaryAction: 'Deposit collateral, then create or accept terms',
+      primaryAction: 'Approve collateral, then create or accept terms',
       contractDraft,
-      sequence: ['Confirm collateral balance', 'Deposit collateral into Vaipakam Vault', 'Create or accept the reviewed borrow terms', 'Track repayment, add-collateral, and claim paths'],
+      sequence: ['Confirm collateral balance', 'Approve collateral token to Diamond if needed', 'Call createOffer; collateral deposits atomically in the same transaction', 'Track repayment, add-collateral, and claim paths'],
       safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. The generated deployment bundle supplies the Diamond target; collateral sizing, approved asset checks, and simulation are the remaining gates before wallet submission.',
       destination: '/manage',
     };
