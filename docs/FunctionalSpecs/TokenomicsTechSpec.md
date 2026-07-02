@@ -532,7 +532,7 @@ VPFI received as fees is recycled through a **governance-configurable** treasury
 
 The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper still shows the historical `38 / 38 / 24`; reconciling that marketing copy with the design doc's recommended list is a separate follow-up.)
 
-If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same configured conversion path (recommended: the `38 / 38 / 24` allocation above).
+If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same governance-configured conversion path (using whatever target allocation governance has set — there is no separate surplus-specific split).
 
 Buyback dormancy and fee-converted VPFI routing:
 
@@ -782,7 +782,9 @@ Acceptance criteria:
   conversion, full `0.1%` LIF computation, and exact VPFI deduction before
   sending `100%` of requested lending asset to the borrower
 - properly closed loans credit an effective-tier VPFI rebate; defaulted or
-  HF-liquidated loans forfeit the held VPFI to Treasury
+  HF-liquidated loans forfeit the held VPFI with no rebate — a matched loan
+  pays the matcher's configured share first and forfeits the net to Treasury,
+  an unmatched loan forfeits the full amount to Treasury
 - event transparency, NatSpec coverage, and Diamond storage compatibility are
   satisfied
 
