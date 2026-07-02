@@ -528,11 +528,9 @@ Frontend expectations:
 
 ## 9. Treasury Recycling Rule
 
-VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum USD value and a maximum interval (`setTreasuryConvertThresholds`) — that gate when a conversion may run. These thresholds are protocol-wide, not per-target and not per-asset: a single minimum-value gate and a single shared last-conversion timer are consulted for every input asset, so converting any one asset resets the interval gate for all of them. `convertTreasuryAsset` performs the conversions, but only when (a) targets are configured and (b) the Diamond itself is the treasury (Diamond-as-treasury mode); in external-treasury deployments (Treasury is a separate multisig/address) this path is unavailable and configuring targets does not enable it. The `38 / 38 / 24` allocation below is the **recommended launch configuration**, not a protocol-enforced constant:
+VPFI received as fees is recycled through a **governance-configurable** treasury-conversion path, not a hard-coded protocol split (the fixed-rate-sale ETH inflow described historically in §8 was removed with that program — see the supersede banner). Governance sets an ordered list of conversion targets, each carrying a per-target allocation in basis points (`setTreasuryConvertTargets`), plus **global** conversion-eligibility thresholds — a minimum **numeraire** value and a maximum interval (`setTreasuryConvertThresholds`) — that gate when a conversion may run. (The threshold is denominated in the protocol's active numeraire, which is USD by default but governance-rotatable; it is not hard-wired to USD.) These thresholds are protocol-wide, not per-target and not per-asset: a single minimum-value gate and a single shared last-conversion timer are consulted for every input asset, so converting any one asset resets the interval gate for all of them. `convertTreasuryAsset` performs the conversions, but only when (a) targets are configured and (b) the Diamond itself is the treasury (Diamond-as-treasury mode); in external-treasury deployments (Treasury is a separate multisig/address) this path is unavailable and configuring targets does not enable it.
 
-- **`38%` → Buy ETH** (recommended)
-- **`38%` → Buy wBTC** (recommended)
-- **`24%` → Held as VPFI** (recommended)
+The specific launch allocation is a governance choice made at deploy time, not a protocol constant. The **authoritative recommended target list lives in the treasury conversion design** ([`docs/DesignsAndPlans/TreasuryFunctionalSpec.md`](../DesignsAndPlans/TreasuryFunctionalSpec.md)); the historical `38 / 38 / 24` (ETH / wBTC / retained-VPFI) split is illustrative only. (The public whitepaper still shows the historical `38 / 38 / 24`; reconciling that marketing copy with the design doc's recommended list is a separate follow-up.)
 
 If the insurance / bug bounty pool exceeds `2%` of total supply, any surplus VPFI is also recycled through the same configured conversion path (recommended: the `38 / 38 / 24` allocation above).
 
@@ -723,7 +721,7 @@ Testing requirements:
 - include liquid-asset borrower LIF VPFI tests across every discount tier
 - include effective-tier borrower rebate tests for min-history pending, last-minute top-up, withdraw-down, mirror-cache stale, and governance-tier-version-change cases
 - include illiquid-asset fallback tests where the borrower pays the normal lending-asset LIF
-- include default and HF-liquidation tests proving held VPFI is forfeited to Treasury with no rebate
+- include default and HF-liquidation tests proving held VPFI is forfeited with no rebate, covering BOTH cases: a matched loan pays the matcher's configured share first and forfeits the net to Treasury, and an unmatched loan forfeits the full held VPFI to Treasury
 - include normal repayment, borrower preclose, and refinance tests proving proper rebate crediting
 - include tests that vault-held VPFI updates fee-discount accrual without being counted as collateral
 
