@@ -24,6 +24,7 @@ import {
   formatDurationDays,
   formatTokenAmount,
   fullTermInterest,
+  shortAddress,
 } from '../lib/format';
 import { loanStateView } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -45,7 +46,15 @@ export function PositionDetails() {
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
 
-  const principalMeta = useTokenMeta(loan.data?.lendingAsset);
+  // For rentals the "principal" leg is the NFT contract — no ERC-20
+  // metadata to read there.
+  const loanIsRental =
+    loan.data !== null &&
+    loan.data !== undefined &&
+    loan.data.assetType !== AssetType.ERC20;
+  const principalMeta = useTokenMeta(
+    loanIsRental ? undefined : loan.data?.lendingAsset,
+  );
   const collateralMeta = useTokenMeta(loan.data?.collateralAsset ?? undefined);
 
   const role: 'lender' | 'borrower' | 'viewer' = useMemo(() => {
@@ -67,6 +76,7 @@ export function PositionDetails() {
 
   const row = loan.data;
   const view = loanStateView(row);
+  const isRental = row.assetType !== AssetType.ERC20;
   const principal = principalMeta.data;
   const collateral = collateralMeta.data;
   const interest = fullTermInterest(
@@ -139,33 +149,54 @@ export function PositionDetails() {
   const interestStr = principal
     ? `${formatTokenAmount(interest, principal.decimals)} ${principal.symbol}`
     : '…';
-  const collateralStr = collateral
-    ? `${formatTokenAmount(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
-    : '…';
+  const hasCollateral =
+    row.collateralAsset.toLowerCase() !==
+      '0x0000000000000000000000000000000000000000' &&
+    BigInt(row.collateralAmount) > 0n;
+  const collateralStr = !hasCollateral
+    ? 'No collateral'
+    : collateral
+      ? `${formatTokenAmount(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
+      : '…';
+  const nftStr = `NFT ${shortAddress(row.lendingAsset)} #${row.tokenId}`;
   const dueDate = formatDate(row.startTime + row.durationDays * 86_400);
 
   const actionLabel =
     action === 'repay'
-      ? 'Repay this loan'
+      ? isRental
+        ? 'Close this rental'
+        : 'Repay this loan'
       : action === 'claim-borrower'
-        ? 'Claim my collateral'
+        ? isRental
+          ? 'Claim my buffer back'
+          : 'Claim my collateral'
         : action === 'claim-lender'
-          ? row.status === 'repaid'
-            ? 'Claim my funds'
-            : 'Claim the collateral'
+          ? isRental
+            ? 'Claim fees & reclaim NFT'
+            : row.status === 'repaid'
+              ? 'Claim my funds'
+              : 'Claim the collateral'
           : null;
 
   return (
     <div className="stack">
       <div className="spread">
         <div>
-          <h1 className="page-title">Loan #{row.loanId}</h1>
+          <h1 className="page-title">
+            {isRental ? 'Rental' : 'Loan'} #{row.loanId}
+          </h1>
           <p className="muted" style={{ margin: 0 }}>
-            {role === 'borrower'
-              ? `You borrowed ${principalStr}`
-              : role === 'lender'
-                ? `You lent ${principalStr}`
-                : `A loan of ${principalStr} between two other wallets`}
+            {isRental
+              ? role === 'borrower'
+                ? `You rent ${nftStr}`
+                : role === 'lender'
+                  ? `Your ${nftStr} is rented out`
+                  : `A rental of ${nftStr} between two other wallets`
+              : role === 'borrower'
+                ? `You borrowed ${principalStr}`
+                : role === 'lender'
+                  ? `You lent ${principalStr}`
+                  : `A loan of ${principalStr} between two other wallets`}
           </p>
         </div>
         <span className={`badge badge-${view.badge}`}>{view.label}</span>
@@ -175,27 +206,38 @@ export function PositionDetails() {
         <dl className="receipt" style={{ margin: 0 }}>
           <div className="receipt-row">
             <dt>Locked</dt>
-            <dd>{collateralStr} collateral (borrower’s)</dd>
+            <dd>
+              {isRental
+                ? `${nftStr} stays in the owner’s vault${hasCollateral ? `, plus ${collateralStr} collateral` : ''}`
+                : `${collateralStr} collateral (borrower’s)`}
+            </dd>
           </div>
           <div className="receipt-row">
             <dt>Owed</dt>
             <dd>
-              {principalStr} + up to ~{interestStr} interest
+              {isRental
+                ? 'Nothing to repay — rental fees were prepaid (late fees only if closed past the due date).'
+                : `${principalStr} + up to ~${interestStr} interest`}
             </dd>
           </div>
           <div className="receipt-row">
             <dt>Terms</dt>
             <dd>
-              {formatBpsAsPercent(row.interestRateBps)} yearly ·{' '}
-              {formatDurationDays(row.durationDays)} · due {dueDate}
+              {isRental
+                ? `${formatDurationDays(row.durationDays)} · ends ${dueDate}`
+                : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
             </dd>
           </div>
           <div className="receipt-row receipt-risk">
             <dt>If nothing happens</dt>
             <dd>
-              {role === 'borrower'
-                ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
-                : copy.positions.whatIfNothingLender}
+              {isRental
+                ? role === 'borrower'
+                  ? 'Your use rights end at the due date and the prepaid buffer goes to the owner — close on time to get it back.'
+                  : 'The renter’s rights reset after the due date and grace period; your fees stay claimable here.'
+                : role === 'borrower'
+                  ? copy.positions.whatIfNothingBorrower(collateral?.symbol ?? 'locked')
+                  : copy.positions.whatIfNothingLender}
             </dd>
           </div>
         </dl>

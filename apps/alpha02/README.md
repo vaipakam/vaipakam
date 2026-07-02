@@ -70,20 +70,27 @@ approval from the signed terms, `acceptOffer`) and the POST path
 + loan detail with repay/claim, Claim Center, VPFI education page,
 settings, help, not-found.
 
+Also wired: NFT rental (N1 owner listing with ownership check +
+`setApprovalForAll` + daily-fee-scaled `createOffer`; N2 browse +
+rent with prepay/buffer receipt and canonical-terms accept — see the
+units note atop `pages/Rent.tsx`), VPFI vault (availability-first
+state, effective-vs-raw tier with "warming up" note, consent toggle,
+deposit/withdraw behind the review receipt), and rental-aware
+positions/detail wording (a rental never reads as debt).
+
 Next milestones (in rough order):
 
-1. NFT rental flows (post + rent, ERC-4907; `pages/Rent.tsx` is
-   education-only today).
-2. VPFI vault deposit/withdraw + live tier/consent state.
-3. On-chain fallback reads when the indexer is unavailable.
-4. Health-factor / liquidation-price display on loan details for
+1. On-chain fallback reads when the indexer is unavailable.
+2. Health-factor / liquidation-price display on loan details for
    liquid collateral (RiskFacet reads).
-5. Cancel-offer action on the Positions page.
-6. Sanctions banner + ToS gate parity, i18n catalog extraction from
-   `content/copy.ts`, Playwright journeys (B1, L1, M1, C1 first).
-7. Promote `lib/offerSchema.ts` (and other pure logic shared with
+3. Cancel-offer action on the Positions page.
+4. Renter-posted rental requests (PF-044) + rental deep links from
+   the Offer Book.
+5. Sanctions banner + ToS gate parity, i18n catalog extraction from
+   `content/copy.ts`, Playwright journeys (B1, L1, N1, M1, C1, V1).
+6. Promote `lib/offerSchema.ts` (and other pure logic shared with
    apps/defi) into `packages/lib` instead of keeping copies.
-8. Permit2 accept/create paths (skip the separate approve tx where
+7. Permit2 accept/create paths (skip the separate approve tx where
    the wallet supports it — apps/defi has the reference plumbing).
 
 ## Commands

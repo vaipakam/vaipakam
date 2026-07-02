@@ -1,50 +1,687 @@
 /**
- * NFT rental entry — deliberately separated from debt lending
- * (Journey N1/N2: "the app does not describe NFT rental as a debt
- * loan"). The guided posting/renting flows are the next alpha02
- * milestone; this page already teaches the custody model correctly
- * so the mental model is right before the writes arrive.
+ * NFT rental — journeys N1 (owner lists an NFT) and N2 (user rents
+ * one), kept deliberately separate from debt lending: nothing here is
+ * called a loan, there is no "repay", and the custody model (NFT
+ * stays vaulted; renter gets temporary use rights only) is stated
+ * before anything is signed.
+ *
+ * Money model (mirrors OfferFacet): the renter prepays
+ * `dailyFee × days` plus a refundable buffer (live
+ * `rentalBufferBps`); rentals settle prepaid fees, not APR interest,
+ * so listings are created with a 0% rate.
+ *
+ * NOTE on units: the on-chain daily fee is RAW wei of the prepay
+ * asset (`toCreateOfferPayload` does `BigInt(amount)` for NFT legs).
+ * This page converts the human "10 USDC per day" input with the
+ * payment asset's live decimals BEFORE building the payload —
+ * apps/defi's form writes the typed number through unscaled, which
+ * this page intentionally does NOT copy (candidate
+ * _CodeVsDocsAudit entry).
  */
-import { Images, KeyRound } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
+import { usePublicClient, useWalletClient } from 'wagmi';
+import { useQueryClient } from '@tanstack/react-query';
+import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
+import { useActiveChain } from '../chain/useActiveChain';
+import { useDiamondWrite } from '../contracts/diamond';
+import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
+import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
+import { ensureNftApproval, useNftOwnership } from '../contracts/nft';
+import { useActiveOffers } from '../data/hooks';
+import { useRentalBufferBps, totalRentalPrepay } from '../data/protocol';
+import type { IndexedOffer } from '../data/indexer';
+import {
+  OFFER_DURATION_BUCKETS_DAYS,
+  initialOfferForm,
+  toCreateOfferPayload,
+  validateOfferForm,
+  type OfferFormState,
+} from '../lib/offerSchema';
+import { AssetType } from '../lib/types';
+import { formatDurationDays, formatTokenAmount, shortAddress } from '../lib/format';
+import { AssetPicker } from '../components/AssetPicker';
+import { Checklist, allChecksPass, type CheckItem } from '../components/Checklist';
+import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
+import { StepNav } from '../components/StepNav';
+import { useEligibility } from '../components/useEligibility';
 
+type Path = 'own' | 'want' | null;
+
+function bufferPct(bufferBps: number): string {
+  return `${Number((bufferBps / 100).toFixed(2))}%`;
+}
+
+function submitErrorText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return /rejected|denied|cancel/i.test(message)
+    ? copy.errors.txRejected
+    : `${copy.errors.txFailed} (${message.slice(0, 160)})`;
+}
+
+// ---------------------------------------------------------------- N1
+function ListNftFlow() {
+  const { address, walletChain } = useActiveChain();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const bufferBps = useRentalBufferBps();
+
+  const [step, setStep] = useState<'details' | 'review' | 'done'>('details');
+  const [standard, setStandard] = useState<'erc721' | 'erc1155'>('erc721');
+  const [contract, setContract] = useState('');
+  const [tokenId, setTokenId] = useState('');
+  const [quantity, setQuantity] = useState('1');
+  const [prepayAsset, setPrepayAsset] = useState('');
+  const [dailyFee, setDailyFee] = useState('');
+  const [durationDays, setDurationDays] = useState('30');
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+
+  const prepayMeta = useTokenMeta(prepayAsset || undefined);
+  const standardEnum =
+    standard === 'erc721' ? AssetType.ERC721 : AssetType.ERC1155;
+  const ownership = useNftOwnership(contract, standardEnum, tokenId, quantity);
+
+  const dailyFeeWei = useMemo(() => {
+    if (!prepayMeta.data || !dailyFee || Number(dailyFee) <= 0) return null;
+    try {
+      return parseUnits(dailyFee, prepayMeta.data.decimals);
+    } catch {
+      return null;
+    }
+  }, [dailyFee, prepayMeta.data]);
+
+  const form = useMemo((): OfferFormState | null => {
+    if (!dailyFeeWei || !isAddressLike(contract) || tokenId === '') return null;
+    return {
+      ...initialOfferForm,
+      offerType: 'lender',
+      assetType: standard,
+      lendingAsset: contract,
+      // RAW prepay-asset wei — see the units note in the file header.
+      amount: dailyFeeWei.toString(),
+      interestRate: '0', // rentals settle prepaid fees, not APR
+      durationDays,
+      tokenId,
+      quantity: standard === 'erc1155' ? quantity || '1' : '1',
+      prepayAsset,
+      riskAndTermsConsent: consent,
+    };
+  }, [dailyFeeWei, contract, tokenId, standard, durationDays, quantity, prepayAsset, consent]);
+
+  const detailsComplete = form !== null;
+
+  const baseChecks = useEligibility({ consent });
+  const checks = useMemo((): CheckItem[] => {
+    const extra: CheckItem[] = [
+      {
+        id: 'nft-ownership',
+        label:
+          ownership.data === false || ownership.data === null
+            ? copy.rent.checkNotOwner
+            : copy.rent.checkOwnNft,
+        state:
+          ownership.data === true
+            ? 'pass'
+            : ownership.data === undefined && ownership.isFetching
+              ? 'pending'
+              : ownership.data === undefined
+                ? 'pending'
+                : 'fail',
+      },
+      {
+        id: 'prepay-token',
+        label: prepayMeta.isError
+          ? copy.errors.notAToken
+          : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
+        state: prepayMeta.isError ? 'fail' : prepayMeta.data ? 'pass' : 'pending',
+      },
+    ];
+    // wallet + network first, then the rental-specific facts, then consent.
+    return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
+  }, [baseChecks, ownership.data, ownership.isFetching, prepayMeta.isError, prepayMeta.data]);
+
+  const receipt = useMemo((): ReceiptData | null => {
+    if (!form || !dailyFeeWei || !prepayMeta.data) return null;
+    const days = Number(durationDays);
+    const fees = dailyFeeWei * BigInt(days);
+    const pay = prepayMeta.data.symbol;
+    const feesStr = `${formatTokenAmount(fees, prepayMeta.data.decimals)} ${pay}`;
+    const nftStr = `${shortAddress(contract)} #${tokenId}${
+      standard === 'erc1155' ? ` ×${quantity || '1'}` : ''
+    }`;
+    return {
+      youReceive: `~${feesStr} in rental fees for the full ${formatDurationDays(days)} term — the renter prepays everything up front.`,
+      youLock: `Your NFT ${nftStr} moves into your vault and stays there for the whole listing and rental.`,
+      youMayOwe: 'Nothing.',
+      youCanLose: `Temporary use of the NFT while it is rented — the renter can never transfer or sell it. ${copy.rent.notDebt}`,
+      fees: copy.fees.lenderYieldFee.replace('interest', 'rental fees'),
+      whenThisEnds: `When the rental ends, the renter’s rights reset automatically; you claim your fees and reclaim the NFT from the rental’s detail page.`,
+    };
+  }, [form, dailyFeeWei, prepayMeta.data, durationDays, contract, tokenId, standard, quantity]);
+
+  const formError = form ? validateOfferForm(form) : null;
+  const canSign =
+    allChecksPass(checks) && receipt !== null && formError === null && !busy;
+
+  async function submit() {
+    if (!form || !address || !walletChain || !walletClient || !publicClient) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await ensureNftApproval({
+        publicClient,
+        walletClient,
+        contract: contract as `0x${string}`,
+        owner: address,
+        operator: walletChain.diamondAddress,
+      });
+      const payload = toCreateOfferPayload(form, {});
+      const { hash } = await write('createOffer', [payload]);
+      setTxHash(hash);
+      setStep('done');
+      void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+      void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+    } catch (err) {
+      setError(submitErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <StepNav
+        steps={['Your NFT & price', 'Review & sign', 'Done']}
+        current={step === 'details' ? 0 : step === 'review' ? 1 : 2}
+      />
+
+      {step === 'details' ? (
+        <div className="card">
+          <div className="field">
+            <label htmlFor="nft-standard">NFT type</label>
+            <select
+              id="nft-standard"
+              className="input"
+              value={standard}
+              onChange={(e) => setStandard(e.target.value as 'erc721' | 'erc1155')}
+            >
+              <option value="erc721">Single NFT (ERC-721)</option>
+              <option value="erc1155">Multi-edition NFT (ERC-1155)</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="nft-contract">NFT contract address</label>
+            <input
+              id="nft-contract"
+              className={`input ${contract !== '' && !isAddressLike(contract) ? 'input-invalid' : ''}`}
+              placeholder="0x…"
+              value={contract}
+              onChange={(e) => setContract(e.target.value.trim())}
+              spellCheck={false}
+              autoComplete="off"
+            />
+            <span className="field-hint">
+              The NFT must support rentals (ERC-4907 for single NFTs).
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="nft-token-id">Token id</label>
+            <input
+              id="nft-token-id"
+              className="input"
+              inputMode="numeric"
+              placeholder="1"
+              value={tokenId}
+              onChange={(e) => setTokenId(e.target.value.trim())}
+            />
+          </div>
+          {standard === 'erc1155' ? (
+            <div className="field">
+              <label htmlFor="nft-quantity">Quantity</label>
+              <input
+                id="nft-quantity"
+                className="input"
+                inputMode="numeric"
+                placeholder="1"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value.trim())}
+              />
+            </div>
+          ) : null}
+          <AssetPicker
+            id="prepay-asset"
+            label="Asset renters pay you in"
+            hint="Renters prepay the whole rental in this token."
+            value={prepayAsset}
+            onChange={setPrepayAsset}
+          />
+          <div className="field">
+            <label htmlFor="daily-fee">
+              Daily fee{prepayMeta.data ? ` (${prepayMeta.data.symbol} per day)` : ''}
+            </label>
+            <input
+              id="daily-fee"
+              className="input"
+              inputMode="decimal"
+              placeholder="10"
+              value={dailyFee}
+              onChange={(e) => setDailyFee(e.target.value.trim())}
+            />
+            <span className="field-hint">
+              {copy.rent.bufferNote(bufferPct(bufferBps))}
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="rent-duration">Rental length</label>
+            <select
+              id="rent-duration"
+              className="input"
+              value={durationDays}
+              onChange={(e) => setDurationDays(e.target.value)}
+            >
+              {OFFER_DURATION_BUCKETS_DAYS.map((d) => (
+                <option key={d} value={String(d)}>
+                  {formatDurationDays(d)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            disabled={!detailsComplete}
+            onClick={() => setStep('review')}
+          >
+            Continue to review
+          </button>
+        </div>
+      ) : null}
+
+      {step === 'review' ? (
+        <div className="stack">
+          <div className="banner banner-info">
+            <span className="banner-body">{copy.rent.custodyNote}</span>
+          </div>
+          <div className="card">
+            <h3>Before you sign</h3>
+            <Checklist items={checks} />
+          </div>
+          <div className="card">
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            <label
+              className="cluster"
+              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
+            >
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ flex: 1 }}>{copy.consentLabel}</span>
+            </label>
+            {error ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{error}</span>
+              </div>
+            ) : null}
+            <div className="cluster" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setStep('details')}
+                disabled={busy}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={!canSign}
+                onClick={() => void submit()}
+              >
+                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                {busy ? 'Waiting for wallet…' : copy.rent.postListing}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'done' ? (
+        <div className="card" style={{ textAlign: 'center' }}>
+          <CircleCheck aria-hidden size={40} style={{ color: 'var(--ok)', marginBottom: 8 }} />
+          <h2>{copy.rent.listingPosted}</h2>
+          <p className="muted">{copy.rent.listingPostedNext}</p>
+          {txHash && walletChain ? (
+            <p className="muted">
+              <a
+                href={`${walletChain.blockExplorer}/tx/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View the transaction
+              </a>
+            </p>
+          ) : null}
+          <Link to="/positions" className="btn btn-primary">
+            View my positions
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- N2
+function RentalListingRow({
+  offer,
+  bufferBps,
+  onChoose,
+}: {
+  offer: IndexedOffer;
+  bufferBps: number;
+  onChoose: () => void;
+}) {
+  const prepayMeta = useTokenMeta(offer.prepayAsset);
+  const dailyFee = BigInt(offer.amount);
+  const total = totalRentalPrepay(dailyFee, offer.durationDays, bufferBps);
+  const pay = prepayMeta.data?.symbol ?? '…';
+
+  return (
+    <div className="item-row">
+      <span className="row-main">
+        <span className="row-title">
+          {shortAddress(offer.lendingAsset)} #{offer.tokenId}
+          {offer.assetType === AssetType.ERC1155 ? ` ×${offer.quantity}` : ''}
+        </span>
+        <br />
+        <span className="row-sub">
+          {prepayMeta.data
+            ? `${formatTokenAmount(dailyFee, prepayMeta.data.decimals)} ${pay}/day · ${formatDurationDays(offer.durationDays)} · ${formatTokenAmount(total, prepayMeta.data.decimals)} ${pay} up front (incl. buffer)`
+            : `${formatDurationDays(offer.durationDays)} · listing #${offer.offerId}`}
+        </span>
+      </span>
+      <button type="button" className="btn btn-primary btn-sm" onClick={onChoose}>
+        {copy.match.choose}
+      </button>
+    </div>
+  );
+}
+
+function RentNftFlow() {
+  const { address, walletChain } = useActiveChain();
+  const { data: walletClient } = useWalletClient();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
+  const { write } = useDiamondWrite();
+  const { sign: signAcceptTerms } = useAcceptTermsSigning();
+  const queryClient = useQueryClient();
+  const bufferBps = useRentalBufferBps();
+  const activeOffers = useActiveOffers(100);
+
+  const [step, setStep] = useState<'browse' | 'review' | 'done'>('browse');
+  const [selected, setSelected] = useState<IndexedOffer | null>(null);
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+
+  const listings = useMemo(() => {
+    const rows = activeOffers.data;
+    if (!Array.isArray(rows)) return rows === null ? null : [];
+    return rows.filter(
+      (o) =>
+        o.offerType === 0 &&
+        (o.assetType === AssetType.ERC721 || o.assetType === AssetType.ERC1155) &&
+        (!address || o.creator.toLowerCase() !== address.toLowerCase()),
+    );
+  }, [activeOffers.data, address]);
+
+  const prepayMeta = useTokenMeta(selected?.prepayAsset);
+  const prepayBalance = useTokenBalance(selected?.prepayAsset);
+  const totalPrepay = selected
+    ? totalRentalPrepay(BigInt(selected.amount), selected.durationDays, bufferBps)
+    : undefined;
+
+  const checks = useEligibility({
+    asset: selected
+      ? {
+          meta: prepayMeta.data,
+          metaError: prepayMeta.isError,
+          balance: prepayBalance.data,
+          required: totalPrepay,
+        }
+      : undefined,
+    consent,
+  });
+
+  const receipt = useMemo((): ReceiptData | null => {
+    if (!selected || !prepayMeta.data || totalPrepay === undefined) return null;
+    const pay = prepayMeta.data.symbol;
+    const totalStr = `${formatTokenAmount(totalPrepay, prepayMeta.data.decimals)} ${pay}`;
+    const nftStr = `${shortAddress(selected.lendingAsset)} #${selected.tokenId}`;
+    const durationStr = formatDurationDays(selected.durationDays);
+    return {
+      youReceive: `Use rights of ${nftStr} for ${durationStr}, starting now. ${copy.rent.custodyNote}`,
+      youLock: `${totalStr} prepaid — the full term’s fees plus a ${bufferPct(bufferBps)} refundable buffer.`,
+      youMayOwe: `Nothing more — fees are prepaid. ${copy.rent.notDebt}`,
+      youCanLose: `The ${bufferPct(bufferBps)} buffer if the rental isn’t closed on time. Your use rights end at expiry either way.`,
+      fees: 'The price shown is the rental fee; Vaipakam’s cut comes out of the owner’s earnings, not on top of yours.',
+      whenThisEnds: `Rights reset automatically after ${durationStr}. Close the rental on time from its detail page to get the buffer back.`,
+    };
+  }, [selected, prepayMeta.data, totalPrepay, bufferBps]);
+
+  const canSign = allChecksPass(checks) && receipt !== null && !busy;
+
+  async function submit() {
+    if (!selected || !address || !walletChain || !walletClient || !publicClient) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { terms, signature } = await signAcceptTerms({
+        offerId: BigInt(selected.offerId),
+        consent,
+      });
+      // Renter's pull is dailyFee × days × (1 + buffer) in prepayAsset —
+      // computed from the SIGNED canonical terms, not the indexer row.
+      const canonicalTotal = totalRentalPrepay(
+        terms.amount,
+        Number(terms.durationDays),
+        bufferBps,
+      );
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: terms.prepayAsset,
+        owner: address,
+        spender: walletChain.diamondAddress,
+        amount: canonicalTotal,
+      });
+      const { hash } = await write('acceptOffer', [
+        BigInt(selected.offerId),
+        terms,
+        signature,
+      ]);
+      setTxHash(hash);
+      setStep('done');
+      void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+    } catch (err) {
+      setError(submitErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <StepNav
+        steps={['Choose an NFT', 'Review & sign', 'Done']}
+        current={step === 'browse' ? 0 : step === 'review' ? 1 : 2}
+      />
+
+      {step === 'browse' ? (
+        <div className="card">
+          <div className="card-title">
+            <KeyRound aria-hidden />
+            <h2 style={{ margin: 0 }}>{copy.rent.browseTitle}</h2>
+          </div>
+          {activeOffers.isLoading ? (
+            <p className="muted">Loading rental listings…</p>
+          ) : listings === null ? (
+            <p className="muted">{copy.rent.browseUnavailable}</p>
+          ) : listings.length === 0 ? (
+            <p className="muted">{copy.rent.browseEmpty}</p>
+          ) : (
+            <div className="row-list">
+              {listings.map((o) => (
+                <RentalListingRow
+                  key={o.offerId}
+                  offer={o}
+                  bufferBps={bufferBps}
+                  onChoose={() => {
+                    setSelected(o);
+                    setStep('review');
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {step === 'review' && selected ? (
+        <div className="stack">
+          <div className="banner banner-info">
+            <span className="banner-body">{copy.rent.custodyNote}</span>
+          </div>
+          <div className="card">
+            <h3>Before you sign</h3>
+            <Checklist items={checks} />
+          </div>
+          <div className="card">
+            {receipt ? <ReviewReceipt data={receipt} /> : <p className="muted">Preparing your review…</p>}
+            <label
+              className="cluster"
+              style={{ marginTop: 16, fontSize: '0.9rem', alignItems: 'flex-start' }}
+            >
+              <input
+                type="checkbox"
+                checked={consent}
+                onChange={(e) => setConsent(e.target.checked)}
+                style={{ marginTop: 3 }}
+              />
+              <span style={{ flex: 1 }}>{copy.consentLabel}</span>
+            </label>
+            {error ? (
+              <div className="banner banner-danger" role="alert" style={{ marginTop: 16 }}>
+                <span className="banner-body">{error}</span>
+              </div>
+            ) : null}
+            <div className="cluster" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => {
+                  setSelected(null);
+                  setStep('browse');
+                }}
+                disabled={busy}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={!canSign}
+                onClick={() => void submit()}
+              >
+                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                {busy ? 'Waiting for wallet…' : copy.rent.acceptRental}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {step === 'done' ? (
+        <div className="card" style={{ textAlign: 'center' }}>
+          <CircleCheck aria-hidden size={40} style={{ color: 'var(--ok)', marginBottom: 8 }} />
+          <h2>{copy.rent.rentalOpened}</h2>
+          <p className="muted">{copy.rent.rentalOpenedNext}</p>
+          {txHash && walletChain ? (
+            <p className="muted">
+              <a
+                href={`${walletChain.blockExplorer}/tx/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View the transaction
+              </a>
+            </p>
+          ) : null}
+          <Link to="/positions" className="btn btn-primary">
+            View my positions
+          </Link>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- page
 export function Rent() {
+  const [path, setPath] = useState<Path>(null);
+
   return (
     <div>
       <h1 className="page-title">{copy.rent.title}</h1>
       <p className="page-lede">{copy.rent.lede}</p>
 
-      <div className="banner banner-info">
-        <span className="banner-body">{copy.rent.comingSoon}</span>
-      </div>
-
-      <div className="intent-grid">
-        <div className="intent-card" aria-disabled>
-          <span className="intent-icon">
-            <Images aria-hidden />
-          </span>
-          <span>
-            <h3>{copy.rent.ownPath}</h3>
-            <p>
-              Set a daily fee and a duration. Renters prepay the whole rental
-              plus a small refundable buffer. {copy.rent.custodyNote}
-            </p>
-          </span>
+      {path === null ? (
+        <div className="intent-grid">
+          <button type="button" className="intent-card" onClick={() => setPath('own')}>
+            <span className="intent-icon">
+              <Images aria-hidden />
+            </span>
+            <span style={{ textAlign: 'left' }}>
+              <h3>{copy.rent.ownPath}</h3>
+              <p>{copy.rent.ownPathBlurb}</p>
+            </span>
+          </button>
+          <button type="button" className="intent-card" onClick={() => setPath('want')}>
+            <span className="intent-icon">
+              <KeyRound aria-hidden />
+            </span>
+            <span style={{ textAlign: 'left' }}>
+              <h3>{copy.rent.wantPath}</h3>
+              <p>{copy.rent.wantPathBlurb}</p>
+            </span>
+          </button>
         </div>
-        <div className="intent-card" aria-disabled>
-          <span className="intent-icon">
-            <KeyRound aria-hidden />
-          </span>
-          <span>
-            <h3>{copy.rent.wantPath}</h3>
-            <p>
-              Browse rentable NFTs, see the full prepay before signing, and use
-              the NFT until the rental ends. You get use rights — never
-              ownership.
-            </p>
-          </span>
-        </div>
-      </div>
+      ) : (
+        <>
+          <p className="muted" style={{ marginBottom: 16 }}>
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              onClick={() => setPath(null)}
+            >
+              ← {path === 'own' ? copy.rent.wantPath : copy.rent.ownPath}? Switch
+            </button>
+          </p>
+          {path === 'own' ? <ListNftFlow /> : <RentNftFlow />}
+        </>
+      )}
     </div>
   );
 }

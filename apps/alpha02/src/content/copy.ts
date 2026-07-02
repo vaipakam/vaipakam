@@ -132,11 +132,30 @@ export const copy = {
     title: 'Rent or lend an NFT',
     lede: 'NFT rentals give temporary use rights — never ownership. The NFT stays locked in its owner’s vault for the whole rental.',
     ownPath: 'I own an NFT to rent out',
+    ownPathBlurb: 'Set a daily fee — renters prepay the whole rental up front.',
     wantPath: 'I want to rent an NFT',
+    wantPathBlurb: 'Pay up front, use the NFT until the rental ends.',
     custodyNote:
       'The NFT never leaves vault custody. The renter receives temporary use rights only — not ownership.',
-    comingSoon:
-      'Guided NFT rental is landing in alpha02 shortly. The flow below shows how it will work; posting will be enabled in an upcoming build.',
+    postListing: 'Post rental listing',
+    listingPosted: 'Rental listing posted',
+    listingPostedNext:
+      'Your NFT is held in your vault while the listing is open. When a renter accepts, the rental appears under My positions; cancel the listing any time before that to get the NFT back.',
+    acceptRental: 'Rent this NFT',
+    rentalOpened: 'Rental started',
+    rentalOpenedNext:
+      'You now hold the use rights until the rental ends — the NFT itself stays in the owner’s vault. Your prepaid fees cover the whole term; close on time and the buffer comes back to you.',
+    bufferNote: (pct: string) =>
+      `Renters prepay the full term plus a ${pct} refundable buffer. Close the rental on time and the buffer is returned.`,
+    checkOwnNft: 'You own this NFT',
+    checkNotOwner:
+      'The connected wallet doesn’t own this NFT — check the contract address and token id.',
+    browseTitle: 'NFTs available to rent',
+    browseEmpty: 'No rental listings right now.',
+    browseUnavailable:
+      'We couldn’t load rental listings right now. Please try again in a moment.',
+    notDebt:
+      'A rental is not a loan: there’s nothing to repay — your fees are prepaid and your rights simply end when the term does.',
   },
 
   positions: {

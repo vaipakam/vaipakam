@@ -500,6 +500,15 @@ textarea.input {
     transform 0.1s ease;
 }
 
+/* Intent cards render as <a> for routes and <button> for in-page
+ * path choices — normalize the button form. */
+button.intent-card {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
 .intent-card:hover {
   text-decoration: none;
   border-color: var(--brand);

@@ -37,6 +37,29 @@ acceptor-side asset for the exact signed amount, and calls acceptOffer.
 The Offer Book gains a "Use this offer" action that deep-links into the
 same review-and-sign step.
 
+The VPFI vault journey (V1) is live: the page decides availability
+first (a chain without a registered VPFI token — or a failed check —
+never shows deposit controls), shows the tracked vault balance and the
+ACTIVE effective discount with a plain "warming up" note when the raw
+balance-implied tier is higher (the fee path applies a 30-day average
+behind a minimum-history gate), carries the platform-level consent
+toggle, and runs deposit/withdraw through the shared review receipt
+with exact-amount approvals.
+
+The NFT rental journeys (N1/N2) are live and deliberately separated
+from debt lending: an owner lists an NFT (ownership verified in the
+checklist before any gas, collection approval granted only when
+missing, rentals created at a 0% rate since fees are prepaid), and a
+renter browses listings and rents with the full prepay — daily fee ×
+days plus the live refundable buffer — spelled out before signing,
+computed from the signed canonical terms at approval time. Positions
+and detail pages now speak "rental" for NFT legs (close/claim, never
+"repay"). One deliberate divergence from apps/defi: the daily fee a
+user types is scaled by the payment asset's decimals before it goes
+on-chain; apps/defi's form sends the typed number through unscaled,
+which is flagged in the page header as a candidate code-vs-docs audit
+entry.
+
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
 Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT
