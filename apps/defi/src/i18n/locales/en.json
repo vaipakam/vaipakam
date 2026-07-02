@@ -757,11 +757,20 @@
     "alerts": "Alerts",
     "allowances": "Allowances",
     "dataRights": "Data Rights",
+    "autoLend": "Auto-lend",
     "keepers": "Keepers",
     "riskAccess": "Risk Access",
     "governanceGroupLabel": "Governance",
     "protocolConsole": "Protocol Console",
     "vault": "Your Vaipakam Vault"
+  },
+  "autoLendSummary": {
+    "title": "Auto-lend",
+    "active_one": "{{count}} active standing intent",
+    "active_other": "{{count}} active standing intents",
+    "manage": "Manage",
+    "setupPrompt": "Automate your lending with a standing intent",
+    "setup": "Set up"
   },
   "dataRights": {
     "title": "Your data rights (GDPR / UK GDPR / CCPA)",
