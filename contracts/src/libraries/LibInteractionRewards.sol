@@ -108,22 +108,35 @@ library LibInteractionRewards {
     ///         floors each half; the ≤1-wei-per-half dust stays on Base (a
     ///         consumer chain), matching how the claim path already floors, so
     ///         the remittances can never exceed the day's emission. Returns 0
-    ///         when the day pre-dates emissions (`half == 0`) or a global
-    ///         denominator is zero (no interest on that side that day).
+    ///         when the day pre-dates emissions (`half == 0`), a global
+    ///         denominator is zero (no interest on that side that day), or
+    ///         `chainId` was NOT part of `dayId`'s finalized denominator
+    ///         (`s.chainDailyIncluded[dayId][chainId]` is false). That last gate
+    ///         closes the "expected-set changed between report and finalize"
+    ///         hole: a chain removed from `expectedSourceChainIds` after it
+    ///         reported is excluded from `dailyGlobal*`, but its stale
+    ///         `chainDaily*` would otherwise divide by the smaller denominator
+    ///         and over-send — so a non-participating chain yields a zero slice.
     ///
     ///         #776 over-fund note: this is the UNCAPPED slice. The live claim
     ///         path also applies the §4 per-user VPFI cap
     ///         (`_capVpfiForInterestUsd`), which can make a mirror's users
-    ///         collectively claim LESS than the slice remitted here. The residual
-    ///         VPFI is then stranded on the mirror Diamond — but safely so:
-    ///         it is never lost and an ADMIN can reclaim it via
-    ///         `recoverStuckERC20` (VPFI is not vault-tracked). Under-funding is
-    ///         the only unsafe direction (it would brick a claim), and this can
-    ///         only over-fund. Capping the slice exactly here is infeasible: the
-    ///         per-user cap binds per reward-ENTRY over that entry's multi-day
-    ///         window, whereas Base holds only the per-DAY per-chain aggregate
-    ///         numerators — it cannot reconstruct how the windowed cap lands on
-    ///         each mirror user. So over-fund-is-safe is the deliberate tradeoff.
+    ///         collectively claim LESS than the slice remitted here. Under-funding
+    ///         is the only unsafe direction (it would brick a claim); this path
+    ///         can only over-fund, which is safe because the surplus VPFI is NOT
+    ///         earmarked per-day — it stays in the mirror Diamond's balance and
+    ///         the claim path draws from that balance, so it simply pre-funds
+    ///         subsequent days' claims on the same mirror. Any true terminal
+    ///         excess (a mirror that winds down with unclaimed surplus) is
+    ///         recoverable only by governance/upgrade — there is NO Diamond-
+    ///         balance ERC20 rescue today (`recoverStuckERC20` withdraws a USER's
+    ///         vault proxy, not the Diamond's own VPFI), so this does NOT rely on
+    ///         a permissionless sweep. Capping the slice exactly here is
+    ///         infeasible: the per-user cap binds per reward-ENTRY over that
+    ///         entry's multi-day window, whereas Base holds only the per-DAY
+    ///         per-chain aggregate numerators — it cannot reconstruct how the
+    ///         windowed cap lands on each mirror user. So bounded-over-fund is the
+    ///         deliberate tradeoff.
     /// @param s       Diamond storage.
     /// @param chainId Mirror whose slice to compute.
     /// @param dayId   Finalized day.
@@ -135,6 +148,9 @@ library LibInteractionRewards {
     ) internal view returns (uint256 budget) {
         uint256 half = halfPoolForDay(dayId);
         if (half == 0) return 0;
+        // #776 — only chains whose numerator was folded into `dayId`'s finalized
+        // denominator get a slice; a reported-but-then-de-listed chain is out.
+        if (!s.chainDailyIncluded[dayId][chainId]) return 0;
         uint256 gLender = s.dailyGlobalLenderInterestNumeraire18[dayId];
         if (gLender != 0) {
             budget +=

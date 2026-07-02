@@ -319,6 +319,9 @@ contract RewardAggregatorFacet is
             if (s.chainDailyReported[dayId][chainId]) {
                 globalLender += s.chainDailyLenderInterestNumeraire18[dayId][chainId];
                 globalBorrower += s.chainDailyBorrowerInterestNumeraire18[dayId][chainId];
+                // #776 — snapshot that this chain's numerator IS part of the
+                // finalized denominator, so its reward-budget slice is coherent.
+                s.chainDailyIncluded[dayId][chainId] = true;
                 unchecked {
                     ++participating;
                 }

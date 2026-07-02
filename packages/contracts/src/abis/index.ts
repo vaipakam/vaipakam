@@ -70,6 +70,7 @@ import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // #687-A removed the cross-chain VPFI buy contracts (VpfiBuyAdapter /
 // VpfiBuyReceiver) along with the fixed-rate sale.
 import RewardReporterFacetABI from './RewardReporterFacet.json';
+import RewardRemittanceFacetABI from './RewardRemittanceFacet.json';
 import ConfigFacetABI from './ConfigFacet.json';
 import NumeraireConfigFacetABI from './NumeraireConfigFacet.json';
 import LegalFacetABI from './LegalFacet.json';
@@ -154,6 +155,7 @@ export {
   ProtocolBroadcastFacetABI,
   InteractionRewardsFacetABI,
   RewardReporterFacetABI,
+  RewardRemittanceFacetABI,
   ConfigFacetABI,
   NumeraireConfigFacetABI,
   LegalFacetABI,
@@ -232,6 +234,7 @@ export const DIAMOND_ABI = [
   ...ProtocolBroadcastFacetABI,
   ...InteractionRewardsFacetABI,
   ...RewardReporterFacetABI,
+  ...RewardRemittanceFacetABI,
   ...ConfigFacetABI,
   ...NumeraireConfigFacetABI,
   ...LegalFacetABI,

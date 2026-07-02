@@ -516,7 +516,10 @@ contract InteractionRewardsFacet is
     /// @notice Interaction pool transparency snapshot.
     /// @return cap        69M VPFI hard cap.
     /// @return paidOut    Cumulative VPFI claimed so far.
-    /// @return remaining  `cap - paidOut`.
+    /// @return remaining  Reservable pool: `cap − paidOut −
+    ///                    rewardBudgetRemittedGlobal` (#776 — matches
+    ///                    {getInteractionPoolRemaining} and the live claim cap,
+    ///                    so the three never disagree).
     /// @return launch     Launch timestamp (0 if not started).
     /// @return today      Current day index (0 if not started).
     /// @return aprBps     Annual rate for today (from schedule).
@@ -535,7 +538,7 @@ contract InteractionRewardsFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
         paidOut = s.interactionPoolPaidOut;
-        remaining = cap > paidOut ? cap - paidOut : 0;
+        remaining = LibInteractionRewards.poolRemaining();
         launch = s.interactionLaunchTimestamp;
         (uint256 d, bool active) = LibInteractionRewards.currentDayOrZero();
         if (active) {

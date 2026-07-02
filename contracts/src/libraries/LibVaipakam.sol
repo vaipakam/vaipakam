@@ -4675,6 +4675,16 @@ library LibVaipakam {
         // set, this EOA may also call `remitRewardBudget` (the apps/keeper
         // loop). Setter is ADMIN_ROLE-only.
         address rewardRemittanceKeeper;
+        // #776 — dayId => chainId => was this chain's numerator INCLUDED in
+        // that day's finalized global denominator (i.e. expected AND reported
+        // at `finalizeDay`)? Set by `RewardAggregatorFacet._finalizeAndWrite`.
+        // The reward-budget slice (`LibInteractionRewards.chainRewardBudgetForDay`)
+        // gates on this so a chain that reported but was removed from the
+        // expected set before finalization — whose stale `chainDaily*` would
+        // otherwise divide by the smaller denominator and over-send — yields a
+        // zero slice. Immune to post-finalize expected-set edits (it snapshots
+        // participation AT finalize, not a live membership check).
+        mapping(uint256 => mapping(uint32 => bool)) chainDailyIncluded;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
