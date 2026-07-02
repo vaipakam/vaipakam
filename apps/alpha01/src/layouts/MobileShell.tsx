@@ -3,6 +3,8 @@ import { ConnectKitButton } from 'connectkit';
 import { Home, ArrowDownLeft, ArrowUpRight, LayoutList, MoreHorizontal, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useMode } from '../context/ModeContext';
+import { SanctionsBanner } from '../components/SanctionsBanner';
+import { WrongChainBanner } from '../components/WrongChainBanner';
 
 const NAV = [
   { to: '/', label: 'Home', icon: Home, end: true },
@@ -32,6 +34,8 @@ export function MobileShell() {
       </header>
 
       <main className="shell-main">
+        <SanctionsBanner />
+        <WrongChainBanner />
         <Outlet />
       </main>
 

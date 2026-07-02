@@ -11,6 +11,20 @@ export function parseInterestBps(percent: string): bigint {
   return BigInt(Math.round(n * 100));
 }
 
+export function toBorrowerOfferPayload(form: CreateOfferForm) {
+  if (form.offerType !== 'borrower') throw new Error('Borrower offer required');
+  const base = toCreateOfferPayload({ ...form, offerType: 'borrower' });
+  return {
+    ...base,
+    offerType: 1,
+    amount: parseUnits(form.amount || '0', 18),
+    amountMax: 0n,
+    interestRateBps: 0n,
+    interestRateBpsMax: parseInterestBps(form.interestRate || '0'),
+    collateralAmount: parseUnits(form.collateralAmount || '0', 18),
+  };
+}
+
 export function toCreateOfferPayload(form: CreateOfferForm) {
   if (!form.riskAndTermsConsent) throw new Error('Risk and terms consent required');
   const duration = Number(form.durationDays);

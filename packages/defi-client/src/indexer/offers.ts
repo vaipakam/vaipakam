@@ -1,6 +1,6 @@
 import type { ActiveOffersPage, IndexedOffer } from '../types/offers.js';
 import { fetchIndexerJson } from './client.js';
-import { OFFER_TYPE_LENDER } from '../types/offers.js';
+import { OFFER_TYPE_BORROWER, OFFER_TYPE_LENDER } from '../types/offers.js';
 
 export async function fetchActiveOffers(
   indexerOrigin: string | undefined,
@@ -35,4 +35,40 @@ export function filterLenderOffersForBorrow(offers: IndexedOffer[]): IndexedOffe
   return offers.filter(
     (o) => o.status === 'active' && o.offerType === OFFER_TYPE_LENDER,
   );
+}
+
+/** Borrower requests a lender can fund (L1 journey). */
+export function filterBorrowerOffersForLend(offers: IndexedOffer[]): IndexedOffer[] {
+  return offers.filter(
+    (o) => o.status === 'active' && o.offerType === OFFER_TYPE_BORROWER,
+  );
+}
+
+export interface BorrowIntent {
+  lendingAsset?: string;
+  collateralAsset?: string;
+  durationDays?: number;
+  maxRateBps?: number;
+}
+
+/** Narrow offers to the user's stated borrow intent (Basic mode defaults). */
+export function matchOffersToBorrowIntent(
+  offers: IndexedOffer[],
+  intent: BorrowIntent,
+): IndexedOffer[] {
+  return offers.filter((o) => {
+    if (intent.lendingAsset && o.lendingAsset.toLowerCase() !== intent.lendingAsset.toLowerCase()) {
+      return false;
+    }
+    if (intent.collateralAsset && o.collateralAsset.toLowerCase() !== intent.collateralAsset.toLowerCase()) {
+      return false;
+    }
+    if (intent.durationDays && o.durationDays !== intent.durationDays) {
+      return false;
+    }
+    if (intent.maxRateBps != null && o.interestRateBps > intent.maxRateBps) {
+      return false;
+    }
+    return true;
+  });
 }

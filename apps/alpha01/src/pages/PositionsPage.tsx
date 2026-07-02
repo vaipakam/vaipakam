@@ -1,3 +1,4 @@
+import { HelpLink } from '../components/HelpLink';
 import { useWallet } from '../context/WalletContext';
 import { useMyLoans } from '../hooks/useIndexedLoans';
 import { PositionCard } from '../components/PositionCard';
@@ -19,7 +20,9 @@ export function PositionsPage() {
   return (
     <div>
       <h1 className="page-title">My positions</h1>
-      <p className="page-subtitle">Active loans where you are lender or borrower.</p>
+      <p className="page-subtitle">
+        Active loans where you are lender or borrower. <HelpLink anchor="positions" />
+      </p>
       {isLoading ? <p>Loading…</p> : null}
       <div className="position-list">
         {(loans ?? []).map((loan) => (
