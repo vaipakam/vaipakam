@@ -41,6 +41,7 @@ import {
   isGuidedAssetAddress,
   readGuidedAssetOverrides,
   resolveGuidedAsset,
+  shortAddress,
   writeGuidedAssetOverrides,
   type GuidedAssetOverride,
   type GuidedAssetResolution,
@@ -513,7 +514,7 @@ function App() {
     setPreparedActions((current) => [
       { ...action, id, createdAtLabel: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
       ...current.filter((item) => item.kind !== action.kind || item.asset !== action.asset || item.amount !== action.amount),
-    ].slice(0, 6));
+    ]);
   };
 
   useEffect(() => {
@@ -921,7 +922,7 @@ function FlowPage({
             ? 'Actions are paused from Settings.'
             : null;
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
-  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'not-run' && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending';
+  const approvalCanRun = walletCheckCanRun && walletCheckResult.status !== 'not-run' && walletCheckResult.status !== 'passed' && approvalResult.status !== 'pending' && approvalResult.status !== 'submitted';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
     ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
     : walletCheckResult.message;
@@ -971,20 +972,22 @@ function FlowPage({
     }
     setWalletCheckResult({ status: 'running', message: 'Checking wallet balance and allowance...' });
     try {
-      const balanceHex = await ethereum.request({
-        method: 'eth_call',
-        params: [{
-          to: asset.address,
-          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
-        }, 'latest'],
-      });
-      const allowanceHex = await ethereum.request({
-        method: 'eth_call',
-        params: [{
-          to: asset.address,
-          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
-        }, 'latest'],
-      });
+      const [balanceHex, allowanceHex] = await Promise.all([
+        ethereum.request({
+          method: 'eth_call',
+          params: [{
+            to: asset.address,
+            data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
+          }, 'latest'],
+        }),
+        ethereum.request({
+          method: 'eth_call',
+          params: [{
+            to: asset.address,
+            data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
+          }, 'latest'],
+        }),
+      ]);
       const balance = parseEthCallUint(balanceHex);
       const allowance = parseEthCallUint(allowanceHex);
       const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
@@ -2204,7 +2207,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
               <div className="activity-action">
                 <span>{item.safeForGuided ? 'Guided-safe' : 'Advanced context'} · Next: {item.nextAction}</span>
                 <button type="button" onClick={() => acknowledge(item.id)} disabled={acknowledged}>
-                  {acknowledged ? 'Acknowledged until reload' : 'Mark acknowledged'}
+                  {acknowledged ? 'Acknowledged for this visit' : 'Mark acknowledged'}
                 </button>
               </div>
             </article>
@@ -2842,10 +2845,6 @@ function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount
     ['Fees', 'Treasury fee after any VPFI discount, plus network gas.'],
     ['When this ends', 'Borrower repays, lender cancels before match, or lender claims collateral after default.'],
   ];
-}
-
-function shortAddress(address: string) {
-  return address.slice(0, 6) + '...' + address.slice(-4);
 }
 
 function chainLabel(chainId: string | null) {

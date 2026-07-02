@@ -45,7 +45,7 @@ function parseAssetDecimals(value: string | undefined, symbol: string) {
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : null;
 }
 
-function shortAddress(address: string) {
+export function shortAddress(address: string) {
   return address.slice(0, 6) + '...' + address.slice(-4);
 }
 
