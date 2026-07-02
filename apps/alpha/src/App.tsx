@@ -125,6 +125,8 @@ type GuidedContractDraft = {
   principalAsset: string;
   collateralAsset: string;
   amount: string;
+  collateralEstimate: string;
+  safetyIndicator: string;
   interestRateBps: string;
   durationDays: string;
   fillMode: string;
@@ -1061,6 +1063,8 @@ function FlowPage({
               <Metric label="Principal" value={transactionPlan.contractDraft.principalAsset} />
               <Metric label="Collateral" value={transactionPlan.contractDraft.collateralAsset} />
               <Metric label="Amount" value={transactionPlan.contractDraft.amount} />
+              <Metric label="Collateral estimate" value={transactionPlan.contractDraft.collateralEstimate} />
+              <Metric label="Safety" value={transactionPlan.contractDraft.safetyIndicator} />
               <Metric label="Rate" value={transactionPlan.contractDraft.interestRateBps} />
               <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
               <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
@@ -1520,6 +1524,20 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 }
 
 
+function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string) {
+  if (flow.kind === 'rent') return 'Prepay and refundable buffer are set by the rental offer.';
+  const estimatedValue = numericAmount * 1.5;
+  const formattedValue = estimatedValue.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  if (flow.kind === 'borrow') return 'About ' + formattedValue + ' ' + principalSymbol + '-equivalent of ' + collateralSymbol + ' value before oracle pricing.';
+  return 'Borrower should lock about ' + formattedValue + ' ' + principalSymbol + '-equivalent of collateral value.';
+}
+
+function guidedSafetyIndicator(flow: GuidedFlow) {
+  if (flow.kind === 'rent') return 'Rental buffer pending';
+  if (flow.kind === 'borrow') return 'Healthy target: 150% collateral value before live checks';
+  return 'Healthy target: borrower collateral covers 150% of lent value';
+}
+
 function formatSimulationError(error: unknown) {
   if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
     return (error as { message: string }).message;
@@ -1632,6 +1650,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
       principalAsset: prepayToken.display,
       collateralAsset: selectedAsset + ' · NFT details needed',
       amount: amountText,
+      collateralEstimate: guidedCollateralEstimate(flow, numericAmount, prepayToken.symbol, prepayToken.symbol),
+      safetyIndicator: guidedSafetyIndicator(flow),
       interestRateBps: 'Not applicable',
       durationDays: amountText,
       fillMode: 'Rental terms',
@@ -1656,7 +1676,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
   if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
   if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
   if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
-  submissionBlockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
+  submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
   const blockers = [...encodingBlockers, ...submissionBlockers];
   const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, numericAmount, encodingBlockers });
 
@@ -1667,6 +1687,8 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     principalAsset: principalAsset.display,
     collateralAsset: collateralAsset.display,
     amount: amountText + ' ' + selectedAsset,
+    collateralEstimate: guidedCollateralEstimate(flow, numericAmount, principalAsset.symbol, collateralAsset.symbol),
+    safetyIndicator: guidedSafetyIndicator(flow),
     interestRateBps: isBorrow ? '710 bps' : '650 bps',
     durationDays: isBorrow ? '21 days' : '30 days',
     fillMode: 'Single fill',
