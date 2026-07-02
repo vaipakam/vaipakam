@@ -922,21 +922,12 @@ EOF
     exit 1
   fi
 
-  if phase_already_done "swap-adapters"; then
-    cat >&2 <<EOF
-Refusing --phase swap-adapters: marker file exists at
-$MARKERS_DIR/phase-swap-adapters.done
-
-If you genuinely need to re-run (e.g. a previous deploy failed
-mid-broadcast and the adapters are NOT registered with the
-diamond), delete the marker file manually and rerun. Do NOT
-re-run after a successful deploy — you'll deploy a second pair
-of adapters and register both in the chain, doubling the
-slot count.
-EOF
-    exit 1
-  fi
-
+  # NOTE: no whole-phase refuse — the two adapter families are guarded
+  # INDEPENDENTLY below so the phase is safe to re-run (e.g. to add the UniV3
+  # adapter after the aggregators already landed) without doubling anything:
+  # DeploySwapAdapters is NOT idempotent (appends a fresh 0x+1inch pair each run)
+  # so it's gated by its own marker; DeployUniV3Adapter IS idempotent so it runs
+  # freely (no-ops / fails-loud on a router mismatch).
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-mainnet.sh — swap-adapters  ($CHAIN_SLUG)"
   echo "═══════════════════════════════════════════════════════════════"
@@ -946,7 +937,12 @@ EOF
   # Aggregators FIRST (stable indices 0x=0, 1inch=1); UniV3 appends (=2), or lands
   # at index 0 on a no-aggregator chain — matching the keeper's per-chain map.
   if [ -n "${INITIAL_SETTLERS:-}" ]; then
-    forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+    if [ -f "$MARKERS_DIR/swap-adapters-aggregators.done" ]; then
+      echo "  [aggregators] 0x/1inch already registered (marker exists) — skipping to avoid a duplicate pair."
+    else
+      forge script script/DeploySwapAdapters.s.sol --rpc-url "$RPC" --broadcast --slow
+      date +"%Y-%m-%dT%H:%M:%S%z" > "$MARKERS_DIR/swap-adapters-aggregators.done"
+    fi
   fi
   if [ -n "$_univ3_router" ]; then
     forge script script/DeployUniV3Adapter.s.sol --rpc-url "$RPC" --broadcast --slow

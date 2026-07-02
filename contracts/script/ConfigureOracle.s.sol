@@ -71,6 +71,15 @@ contract ConfigureOracle is Script {
         revert(string.concat("ConfigureOracle: unsupported chainId ", vm.toString(chainId)));
     }
 
+    /// @dev Chains where 0x has NO Swap-API/Settler backend, so ConfigureOracle
+    ///      may omit the ZEROX_* vars and route liquidations via an on-chain DEX
+    ///      adapter instead. 0x covers every mainnet we target (incl. BNB
+    ///      mainnet 56) + most testnets; BNB testnet (97) is the current
+    ///      exception. Add other confirmed no-backend chain IDs here.
+    function _isNo0xBackendChain() internal view returns (bool) {
+        return block.chainid == 97;
+    }
+
     function _resolveAddress(string memory key) internal view returns (address) {
         string memory full = string.concat(_prefix(), key);
         // Try chain-prefixed first; fall back to bare key.
@@ -210,6 +219,16 @@ contract ConfigureOracle is Script {
             require(
                 allowanceTarget == address(0),
                 "ConfigureOracle: ZEROX_ALLOWANCE_TARGET set but ZEROX_PROXY missing (set both or neither)"
+            );
+            // Omitting 0x is only allowed on chains 0x has NO backend for —
+            // otherwise a production 0x-supported chain (e.g. BNB mainnet 56)
+            // could silently ship with only a UniV3 adapter and drop its intended
+            // 0x liquidation venue. 0x's Swap API covers every mainnet we target
+            // (incl. BNB mainnet) + most testnets; BNB testnet (97) is the sole
+            // no-backend chain here. Extend `_isNo0xBackendChain` as needed.
+            require(
+                _isNo0xBackendChain(),
+                "ConfigureOracle: <CHAIN>_ZEROX_PROXY (+ ZEROX_ALLOWANCE_TARGET) is REQUIRED - 0x is available on this chain. Only known no-0x-backend chains (BNB testnet 97) may omit it and route via an on-chain DEX adapter"
             );
             // No-0x chain: liquidations route through the on-chain DEX adapter,
             // and the keeper submits UniV3 calls to swap-adapter INDEX 0. So slot
