@@ -60,6 +60,22 @@ on-chain; apps/defi's form sends the typed number through unscaled,
 which is flagged in the page header as a candidate code-vs-docs audit
 entry.
 
+The completion pass fills out the remaining product surfaces: open
+offers are cancellable from My positions (two-tap confirm, releases
+the locked side); loan details gain a plain-language health row
+(health factor + loan-to-value from RiskFacet — label only in Basic,
+numbers in Advanced, and an explicit "no automatic liquidation" note
+for unpriced/illiquid legs), an add-collateral action, and partial
+repayment for opt-in loans in Advanced mode; a "Your Vaipakam Vault"
+page shows per-asset total/locked/free with totals clamped to the
+protocol-tracked balance; the Claim Center gains the
+interaction-rewards claim with an honest "being finalized" waiting
+state; a sanctions banner (fail-open, shown only to oracle-flagged
+wallets, with wind-down paths explicitly kept open) renders across
+the app; an Activity page joins the Advanced navigation; and NFT
+rental listings in the Offer Book deep-link into the guided renter
+flow.
+
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
 Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT

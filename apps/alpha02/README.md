@@ -73,25 +73,33 @@ settings, help, not-found.
 Also wired: NFT rental (N1 owner listing with ownership check +
 `setApprovalForAll` + daily-fee-scaled `createOffer`; N2 browse +
 rent with prepay/buffer receipt and canonical-terms accept — see the
-units note atop `pages/Rent.tsx`), VPFI vault (availability-first
-state, effective-vs-raw tier with "warming up" note, consent toggle,
-deposit/withdraw behind the review receipt), and rental-aware
-positions/detail wording (a rental never reads as debt).
+units note atop `pages/Rent.tsx`; rental deep links from the Offer
+Book), VPFI vault (availability-first state, effective-vs-raw tier
+with "warming up" note, consent toggle, deposit/withdraw behind the
+review receipt), rental-aware positions/detail wording (a rental
+never reads as debt), cancel-offer with two-tap confirm on Positions,
+health factor + LTV on loan details (plain label in Basic, numbers in
+Advanced; illiquid legs get the no-auto-liquidation note),
+add-collateral, partial repay (Advanced, opt-in loans only), "Your
+Vaipakam Vault" assets page (total/locked/free, tracked-clamped),
+interaction-rewards claim in the Claim Center, the sanctions banner
+(fail-open; full copy shown only to flagged wallets), and an Activity
+page (Advanced nav).
 
 Next milestones (in rough order):
 
 1. On-chain fallback reads when the indexer is unavailable.
-2. Health-factor / liquidation-price display on loan details for
-   liquid collateral (RiskFacet reads).
-3. Cancel-offer action on the Positions page.
-4. Renter-posted rental requests (PF-044) + rental deep links from
-   the Offer Book.
-5. Sanctions banner + ToS gate parity, i18n catalog extraction from
-   `content/copy.ts`, Playwright journeys (B1, L1, N1, M1, C1, V1).
-6. Promote `lib/offerSchema.ts` (and other pure logic shared with
+2. Renter-posted rental requests (PF-044).
+3. ToS acceptance gate parity (dormant while `currentTosVersion` is 0
+   on testnets), i18n catalog extraction from `content/copy.ts`,
+   Playwright journeys (B1, L1, N1, M1, C1, V1).
+4. Liquidation-price display ("price at which HF hits 1.0") next to
+   the health row.
+5. Promote `lib/offerSchema.ts` (and other pure logic shared with
    apps/defi) into `packages/lib` instead of keeping copies.
-7. Permit2 accept/create paths (skip the separate approve tx where
+6. Permit2 accept/create paths (skip the separate approve tx where
    the wallet supports it — apps/defi has the reference plumbing).
+7. Preclose / lender early-withdrawal / refinance surfaces (Advanced).
 
 ## Commands
 

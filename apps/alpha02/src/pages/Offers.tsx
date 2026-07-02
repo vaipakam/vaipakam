@@ -40,16 +40,22 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     ? formatBpsAsPercent(offer.interestRateBps)
     : formatBpsAsPercent(offer.interestRateBpsMax);
 
-  // "Use this offer" routes into the guided flow's review step. Only
-  // ERC-20/ERC-20 offers for now (NFT legs need the rental/NFT-aware
-  // approval surface), and never the creator's own offer.
+  // "Use this offer" routes into the guided flow's review step; NFT
+  // rental listings route into the rental flow. Never the creator's
+  // own offer.
+  const notMine =
+    !address || offer.creator.toLowerCase() !== address.toLowerCase();
+  const isRentalListing = offer.assetType !== AssetType.ERC20 && isLending;
   const acceptable =
-    offer.assetType === AssetType.ERC20 &&
-    offer.collateralAssetType === AssetType.ERC20 &&
-    (!address || offer.creator.toLowerCase() !== address.toLowerCase());
-  const acceptHref = isLending
-    ? `/borrow?offer=${offer.offerId}`
-    : `/lend?offer=${offer.offerId}`;
+    notMine &&
+    (isRentalListing ||
+      (offer.assetType === AssetType.ERC20 &&
+        offer.collateralAssetType === AssetType.ERC20));
+  const acceptHref = isRentalListing
+    ? `/rent?offer=${offer.offerId}`
+    : isLending
+      ? `/borrow?offer=${offer.offerId}`
+      : `/lend?offer=${offer.offerId}`;
 
   return (
     <div className="item-row">
@@ -67,7 +73,7 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
       </span>
       {acceptable ? (
         <Link to={acceptHref} className="btn btn-primary btn-sm">
-          Use this offer
+          {isRentalListing ? 'Rent this NFT' : 'Use this offer'}
         </Link>
       ) : (
         <span className={`badge ${isLending ? 'badge-info' : 'badge-neutral'}`}>

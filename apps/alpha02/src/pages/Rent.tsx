@@ -18,8 +18,8 @@
  * this page intentionally does NOT copy (candidate
  * _CodeVsDocsAudit entry).
  */
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, Images, KeyRound, LoaderCircle } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
@@ -30,7 +30,7 @@ import { useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
 import { ensureNftApproval, useNftOwnership } from '../contracts/nft';
-import { useActiveOffers } from '../data/hooks';
+import { useActiveOffers, useOffer } from '../data/hooks';
 import { useRentalBufferBps, totalRentalPrepay } from '../data/protocol';
 import type { IndexedOffer } from '../data/indexer';
 import {
@@ -434,6 +434,29 @@ function RentNftFlow() {
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
+  // Deep link (?offer=<id>) from the Offer Book's "Rent this NFT".
+  const [searchParams, setSearchParams] = useSearchParams();
+  const offerParam = searchParams.get('offer');
+  const deepLinkId = offerParam !== null ? Number(offerParam) : undefined;
+  const deepLinkQuery = useOffer(
+    deepLinkId !== undefined && Number.isFinite(deepLinkId) ? deepLinkId : undefined,
+  );
+  useEffect(() => {
+    if (deepLinkId === undefined || selected || step !== 'browse') return;
+    const row = deepLinkQuery.data;
+    if (row === undefined || row === null) return;
+    setSearchParams({}, { replace: true });
+    if (
+      row.offerType !== 0 ||
+      row.assetType === AssetType.ERC20 ||
+      row.status !== 'active'
+    ) {
+      return; // not an open rental listing — stay on browse
+    }
+    setSelected(row);
+    setStep('review');
+  }, [deepLinkId, deepLinkQuery.data, selected, step, setSearchParams]);
+
   const listings = useMemo(() => {
     const rows = activeOffers.data;
     if (!Array.isArray(rows)) return rows === null ? null : [];
@@ -640,7 +663,11 @@ function RentNftFlow() {
 
 // ---------------------------------------------------------------- page
 export function Rent() {
-  const [path, setPath] = useState<Path>(null);
+  // A ?offer=<id> deep link goes straight to the renter path.
+  const [initialSearch] = useSearchParams();
+  const [path, setPath] = useState<Path>(
+    initialSearch.get('offer') !== null ? 'want' : null,
+  );
 
   return (
     <div>

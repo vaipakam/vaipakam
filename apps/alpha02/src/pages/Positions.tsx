@@ -1,39 +1,98 @@
 /**
  * My positions — the manage entry point. Answers "what do I have and
  * what needs my attention" with one row per loan; each row leads to
- * the detail page that carries the primary action.
+ * the detail page that carries the primary action. Open offers can be
+ * cancelled from here (journeys B2/L2's cancellation branch —
+ * releases the locked side).
  */
+import { useState } from 'react';
 import { ListChecks, LoaderCircle } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
+import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyLoans, useMyOffers } from '../data/hooks';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { LoanRow } from '../components/LoanRow';
 import { useTokenMeta } from '../contracts/erc20';
-import { formatTokenAmount } from '../lib/format';
+import { AssetType } from '../lib/types';
+import { formatTokenAmount, shortAddress } from '../lib/format';
 import type { IndexedOffer } from '../data/indexer';
 
 function OfferRow({ offer }: { offer: IndexedOffer }) {
-  const meta = useTokenMeta(offer.lendingAsset);
+  const isRental = offer.assetType !== AssetType.ERC20;
+  const meta = useTokenMeta(isRental ? undefined : offer.lendingAsset);
+  const { onSupportedChain } = useActiveChain();
+  const { write } = useDiamondWrite();
+  const queryClient = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const amount = meta.data
     ? formatTokenAmount(offer.amountMax, meta.data.decimals)
     : '…';
   const isLending = offer.offerType === 0;
+  const title = isRental
+    ? `Your NFT listing · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}`
+    : `${isLending ? 'Your lending offer' : 'Your borrow request'} · ${amount} ${meta.data?.symbol ?? ''}`;
+
+  async function cancel() {
+    setBusy(true);
+    setError(null);
+    try {
+      await write('cancelOffer', [BigInt(offer.offerId)]);
+      void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+      void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        /rejected|denied|cancel/i.test(message)
+          ? copy.errors.txRejected
+          : `${copy.errors.txFailed} (${message.slice(0, 120)})`,
+      );
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="item-row">
       <span className="row-main">
-        <span className="row-title">
-          {isLending ? 'Your lending offer' : 'Your borrow request'} · {amount}{' '}
-          {meta.data?.symbol ?? ''}
-        </span>
+        <span className="row-title">{title}</span>
         <br />
         <span className="row-sub">
           Offer #{offer.offerId} · waiting for the other side to accept
+          {error ? (
+            <>
+              <br />
+              <span style={{ color: 'var(--danger)' }}>{error}</span>
+            </>
+          ) : null}
         </span>
       </span>
-      <span className="badge badge-info">Open</span>
+      {!confirming ? (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          disabled={!onSupportedChain}
+          onClick={() => setConfirming(true)}
+        >
+          Cancel offer
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-danger btn-sm"
+          disabled={busy}
+          onClick={() => void cancel()}
+        >
+          {busy ? 'Cancelling…' : 'Confirm — unlock my assets'}
+        </button>
+      )}
     </div>
   );
 }

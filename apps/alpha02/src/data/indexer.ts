@@ -187,6 +187,38 @@ export function fetchLoanById(
   return getJson<IndexedLoan>(`/loans/${loanId}?chainId=${chainId}`);
 }
 
+/** Activity event row — mirrors the worker's shape (see apps/defi
+ *  indexerClient IndexedActivityEvent). */
+export interface IndexedActivityEvent {
+  chainId: number;
+  blockNumber: number;
+  logIndex: number;
+  txHash: string;
+  kind: string;
+  loanId: number | null;
+  offerId: number | null;
+  actor: string | null;
+  args: Record<string, unknown> | string;
+  blockAt: number;
+}
+
+export interface ActivityPage {
+  chainId: number;
+  events: IndexedActivityEvent[];
+  nextBefore: string | null;
+}
+
+export function fetchActivity(
+  chainId: number,
+  actor: string,
+  opts: { limit?: number } = {},
+): Promise<ActivityPage | null> {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  params.set('actor', actor.toLowerCase());
+  if (opts.limit) params.set('limit', String(opts.limit));
+  return getJson<ActivityPage>(`/activity?${params}`);
+}
+
 export interface ClaimablesResponse {
   chainId: number;
   address: string;

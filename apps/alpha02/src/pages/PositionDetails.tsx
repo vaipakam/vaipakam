@@ -10,12 +10,15 @@
  */
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { CircleCheck, LoaderCircle, ShieldQuestion } from 'lucide-react';
+import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
+import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useLoan } from '../data/hooks';
+import { useLoanRisk, healthView } from '../data/risk';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, useTokenMeta } from '../contracts/erc20';
 import {
@@ -42,9 +45,12 @@ export function PositionDetails() {
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
 
+  const { isAdvanced } = useMode();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
+  const [collateralInput, setCollateralInput] = useState('');
+  const [partialInput, setPartialInput] = useState('');
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -64,6 +70,13 @@ export function PositionDetails() {
     if (row.lender.toLowerCase() === address.toLowerCase()) return 'lender';
     return 'viewer';
   }, [loan.data, address]);
+
+  // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
+  // the illiquid-leg revert to `priced: false`.
+  const risk = useLoanRisk(
+    loan.data?.loanId,
+    Boolean(loan.data && loan.data.status === 'active' && !loanIsRental),
+  );
 
   if (loan.isLoading) {
     return <EmptyState icon={LoaderCircle} title="Loading the loan…" />;
@@ -149,6 +162,69 @@ export function PositionDetails() {
   const interestStr = principal
     ? `${formatTokenAmount(interest, principal.decimals)} ${principal.symbol}`
     : '…';
+  async function runAddCollateral() {
+    if (!address || !walletChain || !walletClient || !publicClient || !collateralMeta.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: row.collateralAsset as `0x${string}`,
+        owner: address,
+        spender: walletChain.diamondAddress,
+        amount: wei,
+      });
+      await write('addCollateral', [BigInt(row.loanId), wei]);
+      setDoneMessage('Collateral added — the loan is safer now.');
+      setCollateralInput('');
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        /rejected|denied|cancel/i.test(message)
+          ? copy.errors.txRejected
+          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPartialRepay() {
+    if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const wei = parseUnits(partialInput, principalMeta.data.decimals);
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        spender: walletChain.diamondAddress,
+        amount: wei,
+      });
+      await write('repayPartial', [BigInt(row.loanId), wei]);
+      setDoneMessage('Partial repayment confirmed — you now owe less.');
+      setPartialInput('');
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(
+        /rejected|denied|cancel/i.test(message)
+          ? copy.errors.txRejected
+          : `${copy.errors.txFailed} (${message.slice(0, 160)})`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const hasCollateral =
     row.collateralAsset.toLowerCase() !==
       '0x0000000000000000000000000000000000000000' &&
@@ -228,6 +304,32 @@ export function PositionDetails() {
                 : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
             </dd>
           </div>
+          {!isRental && row.status === 'active' && risk.data ? (
+            <div className="receipt-row">
+              <dt>Health</dt>
+              <dd>
+                {risk.data.priced ? (
+                  <>
+                    <span className={`badge badge-${healthView(risk.data).badge}`}>
+                      {healthView(risk.data).label}
+                    </span>{' '}
+                    {copy.risk.explain}
+                    {isAdvanced ? (
+                      <>
+                        {' '}
+                        <span className="muted">
+                          (health factor {healthView(risk.data).ratio}, loan-to-value{' '}
+                          {healthView(risk.data).ltvPct}; liquidation below 1.00)
+                        </span>
+                      </>
+                    ) : null}
+                  </>
+                ) : (
+                  copy.risk.notPriced
+                )}
+              </dd>
+            </div>
+          ) : null}
           <div className="receipt-row receipt-risk">
             <dt>If nothing happens</dt>
             <dd>
@@ -242,6 +344,72 @@ export function PositionDetails() {
           </div>
         </dl>
       </section>
+
+      {role === 'borrower' && row.status === 'active' && !isRental && hasCollateral && collateral ? (
+        <section className="card">
+          <div className="card-title">
+            <ShieldPlus aria-hidden />
+            <h3 style={{ margin: 0 }}>Add collateral</h3>
+          </div>
+          <p className="muted">
+            Topping up your {collateral.symbol} collateral makes the loan safer
+            and moves liquidation further away.
+          </p>
+          <div className="cluster">
+            <input
+              aria-label="Collateral amount to add"
+              className="input"
+              style={{ flex: 1 }}
+              inputMode="decimal"
+              placeholder="0.0"
+              value={collateralInput}
+              onChange={(e) => setCollateralInput(e.target.value.trim())}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy || !onSupportedChain || !(Number(collateralInput) > 0)}
+              onClick={() => void runAddCollateral()}
+            >
+              Add
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {isAdvanced &&
+      role === 'borrower' &&
+      row.status === 'active' &&
+      !isRental &&
+      row.allowsPartialRepay &&
+      principal ? (
+        <section className="card">
+          <h3>Repay part of the loan</h3>
+          <p className="muted">
+            This loan allows partial repayment. Payments go to interest first,
+            then reduce the amount you owe — the due date never moves.
+          </p>
+          <div className="cluster">
+            <input
+              aria-label="Amount to repay now"
+              className="input"
+              style={{ flex: 1 }}
+              inputMode="decimal"
+              placeholder="0.0"
+              value={partialInput}
+              onChange={(e) => setPartialInput(e.target.value.trim())}
+            />
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy || !onSupportedChain || !(Number(partialInput) > 0)}
+              onClick={() => void runPartialRepay()}
+            >
+              Repay part
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {doneMessage ? (
         <div className="banner banner-info" role="status">

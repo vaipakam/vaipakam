@@ -223,6 +223,56 @@ export const copy = {
       'Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.',
   },
 
+  vault: {
+    title: 'Your Vaipakam Vault',
+    lede: 'Your own on-chain account. Only your wallet controls it — Vaipakam never pools user funds.',
+    noVaultYet:
+      'Your vault is created automatically with your first offer, loan, or deposit. Nothing to set up.',
+    unavailable:
+      'We couldn’t read your vault right now. Your funds are unaffected — please try again in a moment.',
+    lockedHint:
+      'Locked amounts back your open offers, active loans, and rentals. They free up when those close.',
+  },
+
+  activity: {
+    title: 'Activity',
+    lede: 'Everything your wallet has done on Vaipakam, newest first.',
+    empty: 'No activity yet. It appears here as you use Vaipakam.',
+    unavailable:
+      'We couldn’t load your activity right now. Please try again in a moment.',
+  },
+
+  rewards: {
+    title: 'Interaction rewards',
+    blurb:
+      'VPFI rewards from your lending and borrowing activity. They become claimable after a loan closes and the reward day finalizes.',
+    empty: 'No rewards yet. Rewards appear after lending or borrowing activity.',
+    waiting:
+      'Your rewards are being finalized — a reward day closes across all chains before it can be claimed. Check back soon.',
+    claim: 'Claim rewards',
+  },
+
+  sanctions: {
+    title: 'This wallet is listed by the compliance oracle.',
+    line1:
+      'The connected address appears on the on-chain sanctions oracle Vaipakam screens against.',
+    line2:
+      'New positions (offers, loans, rentals, deposits) are blocked and will not go through.',
+    line3:
+      'Winding down existing positions — repaying, closing, claiming — stays open. If you believe this is an error, contact the oracle provider (Chainalysis).',
+  },
+
+  risk: {
+    notPriced:
+      'This loan’s assets aren’t priced by the protocol, so there is no automatic liquidation — the collateral transfers as-is on default.',
+    healthy: 'Healthy',
+    watch: 'Watch closely',
+    danger: 'Close to liquidation',
+    liquidatable: 'Can be liquidated now',
+    explain:
+      'If the collateral’s value falls too far against the borrowed amount, the loan can be liquidated. Adding collateral makes it safer.',
+  },
+
   notFound: {
     title: 'This page doesn’t exist',
     body: 'The link may be old or mistyped. Nothing is lost — your positions are safe.',

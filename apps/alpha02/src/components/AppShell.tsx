@@ -14,8 +14,10 @@ import {
   CircleHelp,
   Coins,
   HandCoins,
+  History,
   House,
   Images,
+  Landmark,
   ListChecks,
   Gift,
   Settings,
@@ -25,6 +27,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useMode } from '../app/ModeContext';
 import { ConnectButton } from './ConnectButton';
 import { NetworkBanner } from './NetworkBanner';
+import { SanctionsBanner } from './SanctionsBanner';
 
 interface NavItem {
   to: string;
@@ -43,8 +46,10 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const SECONDARY_NAV: NavItem[] = [
+  { to: '/vault', label: 'My vault', icon: Landmark },
   { to: '/offers', label: 'Offer Book', icon: BookOpen, advancedOnly: true },
   { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
+  { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
   { to: '/settings', label: 'Settings', icon: Settings },
   { to: '/help', label: 'Help', icon: CircleHelp },
 ];
@@ -109,6 +114,7 @@ export function AppShell() {
 
         <main className="shell-main">
           <NetworkBanner />
+          <SanctionsBanner />
           <Outlet />
         </main>
       </div>
