@@ -154,6 +154,11 @@ const BASE_SEPOLIA_PARAMS = {
   rpcUrls: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
+const GUIDED_ASSET_ENV: Record<string, string | undefined> = {
+  mUSDC: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_ADDRESS,
+  mWETH: import.meta.env.VITE_BASE_SEPOLIA_WETH_ADDRESS,
+  mWBTC: import.meta.env.VITE_BASE_SEPOLIA_WBTC_ADDRESS,
+};
 
 const tasks: Task[] = [
   {
@@ -1483,12 +1488,24 @@ function guidedPreviewState() {
   return 'Ready for simulation target';
 }
 
+function isHexAddress(value: string | undefined): value is string {
+  return /^0x[a-fA-F0-9]{40}$/.test(value ?? '');
+}
+
 function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
   if (symbol === 'VPFI' && BASE_SEPOLIA_DEPLOYMENT?.vpfiToken) {
     return {
       symbol,
       address: BASE_SEPOLIA_DEPLOYMENT.vpfiToken,
       display: symbol + ' · ' + shortAddress(BASE_SEPOLIA_DEPLOYMENT.vpfiToken),
+    };
+  }
+  const configuredAddress = GUIDED_ASSET_ENV[symbol];
+  if (isHexAddress(configuredAddress)) {
+    return {
+      symbol,
+      address: configuredAddress,
+      display: symbol + ' · ' + shortAddress(configuredAddress),
     };
   }
   return {
