@@ -103,9 +103,24 @@ type GuidedTransactionPlan = {
   previewState: string;
   deploymentTarget: string;
   primaryAction: string;
+  contractDraft: GuidedContractDraft;
   sequence: string[];
   safetyCopy: string;
   destination: string;
+};
+
+type GuidedContractDraft = {
+  call: string;
+  target: string;
+  offerType: string;
+  principalAsset: string;
+  collateralAsset: string;
+  amount: string;
+  interestRateBps: string;
+  durationDays: string;
+  fillMode: string;
+  readiness: 'Ready for simulation' | 'Needs approved assets' | 'Uses rental path';
+  blockers: string[];
 };
 
 type PreparedGuidedAction = {
@@ -118,6 +133,8 @@ type PreparedGuidedAction = {
   createdAtLabel: string;
   nextStep: string;
   sequence: string[];
+  contractCall: string;
+  readiness: GuidedContractDraft['readiness'];
 };
 
 const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
@@ -169,7 +186,7 @@ const tasks: Task[] = [
 const earnSteps: Step[] = [
   {
     title: 'Pick the lending path',
-    body: 'Naive users should start with a token pair that Vaipakam can price and liquidate on the active chain. Advanced users can still create custom pairs after acknowledging the extra risk.',
+    body: 'Start with a token pair that Vaipakam can price and liquidate on the active chain. Advanced users can still create custom pairs after acknowledging the extra risk.',
     checks: ['Asset has a known price path', 'Collateral is not the same asset', 'Network has a live Diamond deployment'],
   },
   {
@@ -857,6 +874,8 @@ function FlowPage({
       status: 'Prepared locally',
       nextStep: transactionPlan.primaryAction,
       sequence: transactionPlan.sequence,
+      contractCall: transactionPlan.contractDraft.call,
+      readiness: transactionPlan.contractDraft.readiness,
     });
     setPlanPrepared(true);
   };
@@ -974,6 +993,30 @@ function FlowPage({
               <strong>{planPrepared ? 'Prepared locally' : 'Ready to prepare'}</strong>
             </div>
           </div>
+          <section className="contract-draft" aria-label="Contract draft">
+            <div className="contract-draft-heading">
+              <div>
+                <p className="eyebrow">Action details</p>
+                <h3>{transactionPlan.contractDraft.call}</h3>
+              </div>
+              <span className="simulation-pill"><ReceiptText size={16} /> {transactionPlan.contractDraft.readiness}</span>
+            </div>
+            <div className="draft-grid">
+              <Metric label="Target" value={transactionPlan.contractDraft.target} />
+              <Metric label="Offer type" value={transactionPlan.contractDraft.offerType} />
+              <Metric label="Principal" value={transactionPlan.contractDraft.principalAsset} />
+              <Metric label="Collateral" value={transactionPlan.contractDraft.collateralAsset} />
+              <Metric label="Amount" value={transactionPlan.contractDraft.amount} />
+              <Metric label="Rate" value={transactionPlan.contractDraft.interestRateBps} />
+              <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
+              <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
+            </div>
+            {transactionPlan.contractDraft.blockers.length > 0 ? (
+              <ul className="blocker-list" aria-label="Preflight blockers">
+                {transactionPlan.contractDraft.blockers.map((blocker) => <li key={blocker}><AlertTriangle size={16} /> {blocker}</li>)}
+              </ul>
+            ) : null}
+          </section>
           <ol className="plan-steps">
             {transactionPlan.sequence.map((step) => <li key={step}>{step}</li>)}
           </ol>
@@ -983,7 +1026,7 @@ function FlowPage({
             </button>
             <NavLink className="secondary-action" to={transactionPlan.destination}>Open next workspace</NavLink>
           </div>
-          <p className="field-hint">This stores a local prepared action only. The next implementation slice can replace this boundary with a simulated wagmi/viem contract request and real wallet submission.</p>
+          <p className="field-hint">This stores a local prepared action only. Wallet submission stays unavailable until approved asset addresses, allowance checks, and simulation results are ready.</p>
         </section>
       ) : null}
 
@@ -1426,18 +1469,62 @@ function guidedPreviewState() {
   return 'Ready for simulation target';
 }
 
+function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedContractDraft {
+  const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
+  const amountText = formatFlowAmount(flow, numericAmount);
+  if (flow.kind === 'rent') {
+    return {
+      call: 'Rental offer adapter pending',
+      target: diamond ? shortAddress(diamond) : 'Unavailable',
+      offerType: 'Rental',
+      principalAsset: 'mUSDC prepay token',
+      collateralAsset: selectedAsset,
+      amount: amountText,
+      interestRateBps: 'Not applicable',
+      durationDays: amountText,
+      fillMode: 'Rental terms',
+      readiness: 'Uses rental path',
+      blockers: ['Confirm the rental-specific action path before opening the wallet.', 'Resolve NFT collection, token standard, token id, prepaid token, and refundable buffer.'],
+    };
+  }
+
+  const isBorrow = flow.kind === 'borrow';
+  const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
+  const blockers = [];
+  if (!diamond) blockers.push('Base Sepolia Diamond address is not available in deployments.json.');
+  if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) blockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
+  blockers.push('Approved token addresses must be confirmed for ' + selectedAsset + ' and ' + collateralLabel + '.');
+  blockers.push(isBorrow ? 'Collateral amount and health buffer must be calculated before wallet submission.' : 'Allowance and balance checks must run before wallet submission.');
+
+  return {
+    call: 'OfferCreateFacet.createOffer(params)',
+    target: diamond ? shortAddress(diamond) : 'Unavailable',
+    offerType: isBorrow ? 'Borrow request' : 'Lending offer',
+    principalAsset: selectedAsset,
+    collateralAsset: collateralLabel,
+    amount: amountText + ' ' + selectedAsset,
+    interestRateBps: isBorrow ? '710 bps' : '650 bps',
+    durationDays: isBorrow ? '21 days' : '30 days',
+    fillMode: 'Single fill',
+    readiness: blockers.length === 0 ? 'Ready for simulation' : 'Needs approved assets',
+    blockers,
+  };
+}
+
 function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number): GuidedTransactionPlan {
   const amountText = formatFlowAmount(flow, numericAmount);
   const deploymentTarget = guidedDeploymentTarget();
   const previewState = guidedPreviewState();
+  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount);
   if (flow.kind === 'earn') {
     return {
       intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
       previewState,
       deploymentTarget,
       primaryAction: 'Approve asset, then create offer',
+      contractDraft,
       sequence: ['Check allowance', 'Approve only the selected amount if needed', 'Create offer from reviewed terms', 'Track offer NFT and cancellation path'],
-      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. The generated deployment bundle now supplies the Diamond target for the next simulation and write slice.',
+      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. The generated deployment bundle supplies the Diamond target; approved asset checks and simulation are the remaining gates before wallet submission.',
       destination: '/offers',
     };
   }
@@ -1447,8 +1534,9 @@ function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, num
       previewState,
       deploymentTarget,
       primaryAction: 'Deposit collateral, then create or accept terms',
+      contractDraft,
       sequence: ['Confirm collateral balance', 'Deposit collateral into Vaipakam Vault', 'Create or accept the reviewed borrow terms', 'Track repayment, add-collateral, and claim paths'],
-      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. The generated deployment bundle now supplies the Diamond target for live health-factor and offer simulation wiring.',
+      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. The generated deployment bundle supplies the Diamond target; collateral sizing, approved asset checks, and simulation are the remaining gates before wallet submission.',
       destination: '/manage',
     };
   }
@@ -1457,8 +1545,9 @@ function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, num
     previewState,
     deploymentTarget,
     primaryAction: 'Prepay rental, then start rental rights',
+    contractDraft,
     sequence: ['Confirm NFT standard support', 'Approve prepaid rental token if needed', 'Start rental with reviewed expiry', 'Track close, owner claim, and renter refund lanes'],
-    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit. The generated deployment bundle now supplies the Diamond target for rental-offer simulation wiring.',
+    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit. The generated deployment bundle supplies the Diamond target; the rental-specific action path is the remaining gate before wallet submission.',
     destination: '/offers',
   };
 }
@@ -1509,10 +1598,10 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     id: action.id,
     source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
     title: action.title,
-    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode. No transaction has been submitted.',
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. No transaction has been submitted.',
     status: 'Local queue',
     when: action.createdAtLabel,
-    impact: 'Ready for the next wallet-submission wiring step without claiming on-chain completion.',
+    impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : 'Needs preflight gaps resolved before wallet submission.',
     nextAction: action.nextStep,
     safeForGuided: true,
   }));
@@ -1648,7 +1737,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
   return (
     <div className="manage-page">
       <SectionHeading eyebrow="Portfolio" title="Portfolio review for open obligations" />
-      <p className="page-intro compact">Sample rows show the intended management model until live wallet positions are wired. Wallet: {wallet.account ? shortAddress(wallet.account) : 'not connected'}.</p>
+      <p className="page-intro compact">Wallet-scoped rows stay grouped by the action they need next. Wallet: {wallet.account ? shortAddress(wallet.account) : 'not connected'}.</p>
       <div className="lane-grid">
         {lanes.map((lane) => <Principle key={lane.title} icon={lane.icon} title={lane.title} body={lane.body} />)}
       </div>
@@ -1684,7 +1773,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
           <div className="plan-heading">
             <div>
               <p className="eyebrow">Prepared locally</p>
-              <h2>Guided actions ready for contract wiring</h2>
+              <h2>Guided actions ready for preflight review</h2>
             </div>
             <span className="simulation-pill"><ReceiptText size={16} /> {preparedActions.length} draft{preparedActions.length === 1 ? '' : 's'}</span>
           </div>
@@ -1693,7 +1782,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <div className="activity-main">
                 <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
                 <h2>{action.title}</h2>
-                <p>{action.amount} {action.asset}. No transaction has been submitted.</p>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()}. No transaction has been submitted.</p>
               </div>
               <div className="activity-impact">
                 <strong>{action.status}</strong>
@@ -2097,7 +2186,7 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Borrow amount entered' : 'Enter borrow amount', ready: numericAmount > 0 },
-      { label: 'Repay route preview pending contract wiring', ready: false },
+      { label: 'Repay route will be checked before signing', ready: false },
     ];
   }
   if (flow.kind === 'rent') {
@@ -2105,14 +2194,14 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Rental duration entered' : 'Enter rental duration', ready: numericAmount > 0 },
-      { label: 'Close and claim path pending contract wiring', ready: false },
+      { label: 'Close and claim path will be checked before signing', ready: false },
     ];
   }
   return [
     { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
     { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
     { label: numericAmount > 0 ? 'Lend amount entered' : 'Enter lend amount', ready: numericAmount > 0 },
-    { label: 'Allowance check pending contract wiring', ready: false },
+    { label: 'Allowance will be checked before signing', ready: false },
   ];
 }
 

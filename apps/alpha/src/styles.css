@@ -944,6 +944,49 @@ dd {
   gap: 18px;
 }
 
+.contract-draft {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(49, 93, 149, 0.2);
+  border-radius: 8px;
+  background: #f5f8fc;
+}
+
+.contract-draft-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.contract-draft h3 {
+  margin: 4px 0 0;
+  font-size: 1rem;
+}
+
+.draft-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.blocker-list {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.blocker-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: #7a3f13;
+  line-height: 1.45;
+}
+
 .plan-heading {
   display: flex;
   align-items: flex-start;
@@ -1507,6 +1550,8 @@ dd {
 
   .position-row,
   .plan-heading,
+  .contract-draft-heading,
+  .draft-grid,
   .plan-grid,
   .plan-steps,
   .workbench-grid,
