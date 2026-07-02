@@ -536,8 +536,8 @@ function TopBar({
   return (
     <header className="topbar">
       <div>
-        <p className="eyebrow">Product workspace</p>
-        <h1>Make the first decision easy, then reveal power carefully.</h1>
+        <p className="eyebrow">Vaipakam Protocol</p>
+        <h1>Lend, borrow, rent NFT access, and manage positions from one non-custodial interface.</h1>
       </div>
       <div className="topbar-controls">
         {wallet.account ? (
@@ -580,15 +580,15 @@ function Home({ mode }: { mode: Mode }) {
     <div className="page-grid">
       <section className="hero-panel">
         <div className="hero-copy">
-          <p className="eyebrow">A DeFi + DEX + NFT rental workspace</p>
-          <h2>Vaipakam should feel like choosing an outcome, not decoding a contract.</h2>
+          <p className="eyebrow">Decentralized lending, borrowing, and NFT rentals</p>
+          <h2>Put idle assets to work, access liquidity, or rent NFT utility with clear terms before every signature.</h2>
           <p>
-            Vaipakam starts in {mode} mode with user intent: earn, borrow, rent, or manage. Protocol details such as offer NFTs, vault locks,
-            liquidity tiers, VPFI discounts, and keeper automation become visible at the moment they affect a decision.
+            Vaipakam combines peer-to-peer ERC-20 credit markets, vault-backed collateral, temporary NFT use rights, claims, rewards, and VPFI utility in a single connected app.
+            {mode === 'guided' ? ' Guided mode keeps recommended paths and receipts front and center.' : ' Advanced mode opens custom markets, automation, diagnostics, and risk controls.'}
           </p>
           <div className="hero-actions">
-            <NavLink className="primary-action" to="/earn">Start guided flow <ArrowRight size={18} /></NavLink>
-            <NavLink className="secondary-action" to="/advanced">Open advanced workspace</NavLink>
+            <NavLink className="primary-action" to="/earn">Start lending <ArrowRight size={18} /></NavLink>
+            <NavLink className="secondary-action" to="/advanced">Open advanced tools</NavLink>
           </div>
         </div>
         <div className="position-card" aria-label="Example portfolio health card">
@@ -621,11 +621,11 @@ function Home({ mode }: { mode: Mode }) {
       </section>
 
       <section className="principles band">
-        <SectionHeading eyebrow="Design stance" title="Two modes, one product" />
+        <SectionHeading eyebrow="Protocol safeguards" title="Clear terms before capital moves" />
         <div className="principle-list">
-          <Principle icon={<LifeBuoy />} title="Guided by default" body="New users see recommended paths, plain-language risk, and one action at a time." />
-          <Principle icon={<Layers3 />} title="Advanced when ready" body="Power tools are grouped into an advanced workspace instead of scattered through first-use screens." />
-          <Principle icon={<ReceiptText />} title="Every signature gets a receipt" body="Before signing, the user sees exact terms, likely outcomes, and what changes on-chain." />
+          <Principle icon={<LifeBuoy />} title="Guided paths" body="Recommended lending, borrowing, and rental flows keep the next safe action visible." />
+          <Principle icon={<Layers3 />} title="Advanced controls" body="Custom markets, automation, diagnostics, and risk tools stay available for experienced users." />
+          <Principle icon={<ReceiptText />} title="Review receipts" body="Before signing, users see what they receive, what they lock, what they may owe, fees, loss paths, and how the position ends." />
         </div>
       </section>
     </div>
