@@ -69,6 +69,7 @@ type OfferKind = 'lend' | 'borrow' | 'rent';
 type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
 type GuidedSimulationResult = { status: 'not-run' | 'running' | 'passed' | 'failed'; message: string };
 type GuidedWalletCheckResult = { status: 'not-run' | 'running' | 'passed' | 'failed' | 'unavailable'; message: string; balance?: string; allowance?: string };
+type GuidedApprovalResult = { status: 'not-started' | 'pending' | 'submitted' | 'failed'; message: string; txHash?: string };
 type GuidedWalletCheckSpec = { asset: GuidedAssetResolution | null; requiredAmount: bigint | null; requiredLabel: string; spender: string | null; unavailableReason: string | null };
 
 declare global {
@@ -189,6 +190,13 @@ const ERC20_READ_ABI = [
     stateMutability: 'view',
     inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }],
     outputs: [{ name: 'remaining', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }],
+    outputs: [{ name: 'ok', type: 'bool' }],
   },
 ] as Abi;
 
@@ -867,12 +875,14 @@ function FlowPage({
   const [planPrepared, setPlanPrepared] = useState(false);
   const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
   const [walletCheckResult, setWalletCheckResult] = useState<GuidedWalletCheckResult>({ status: 'not-run', message: 'Not checked yet' });
+  const [approvalResult, setApprovalResult] = useState<GuidedApprovalResult>({ status: 'not-started', message: 'No approval requested' });
 
   useEffect(() => {
     setReviewed(false);
     setPlanPrepared(false);
     setSimulationResult({ status: 'not-run', message: 'Not run yet' });
     setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
+    setApprovalResult({ status: 'not-started', message: 'No approval requested' });
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
@@ -880,6 +890,7 @@ function FlowPage({
     setPlanPrepared(false);
     setSimulationResult({ status: 'not-run', message: 'Not run yet' });
     setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
+    setApprovalResult({ status: 'not-started', message: 'No approval requested' });
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
@@ -892,6 +903,7 @@ function FlowPage({
   const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && !actionsPaused;
   const walletCheckSpec = buildGuidedWalletCheckSpec(flow, selectedAsset, numericAmount);
   const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
+  const approvalCanRun = walletCheckCanRun && approvalResult.status !== 'pending';
   const walletCheckMessage = walletCheckResult.status === 'not-run'
     ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
     : walletCheckResult.message;
@@ -973,6 +985,37 @@ function FlowPage({
       });
     } catch (error) {
       setWalletCheckResult({ status: 'failed', message: 'Wallet readiness check failed: ' + formatSimulationError(error) });
+    }
+  };
+
+  const approveGuidedAsset = async () => {
+    const ethereum = window.ethereum;
+    const asset = walletCheckSpec.asset;
+    if (!reviewedOnReadyWallet || !wallet.account || actionsPaused || walletCheckSpec.unavailableReason || !asset?.address || !walletCheckSpec.requiredAmount || !walletCheckSpec.spender) {
+      setApprovalResult({ status: 'failed', message: walletCheckSpec.unavailableReason ?? 'Approval is not available for this draft yet.' });
+      return;
+    }
+    if (!ethereum) {
+      setApprovalResult({ status: 'failed', message: 'No injected wallet provider is available for approval.' });
+      return;
+    }
+    setApprovalResult({ status: 'pending', message: 'Waiting for wallet approval...' });
+    try {
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: wallet.account,
+          to: asset.address,
+          data: encodeFunctionData({ abi: ERC20_READ_ABI, functionName: 'approve', args: [walletCheckSpec.spender as Address, walletCheckSpec.requiredAmount] }),
+        }],
+      });
+      setApprovalResult({
+        status: 'submitted',
+        message: 'Approval submitted. Recheck wallet readiness after the transaction confirms.',
+        txHash: typeof txHash === 'string' ? txHash : undefined,
+      });
+    } catch (error) {
+      setApprovalResult({ status: 'failed', message: 'Approval rejected or failed: ' + formatSimulationError(error) });
     }
   };
 
@@ -1174,10 +1217,18 @@ function FlowPage({
                   <p>{walletCheckResult.balance ? 'Balance: ' + walletCheckResult.balance : ''}{walletCheckResult.balance && walletCheckResult.allowance ? ' · ' : ''}{walletCheckResult.allowance ? 'Allowance: ' + walletCheckResult.allowance : ''}</p>
                 ) : null}
               </div>
-              <button className="secondary-action" type="button" onClick={runGuidedWalletCheck} disabled={!walletCheckCanRun || walletCheckResult.status === 'running'}>
-                {walletCheckResult.status === 'running' ? 'Checking...' : 'Check wallet'}
-              </button>
+              <div className="check-action-stack">
+                <button className="secondary-action" type="button" onClick={runGuidedWalletCheck} disabled={!walletCheckCanRun || walletCheckResult.status === 'running'}>
+                  {walletCheckResult.status === 'running' ? 'Checking...' : 'Check wallet'}
+                </button>
+                <button className="primary-action" type="button" onClick={approveGuidedAsset} disabled={!approvalCanRun}>
+                  {approvalResult.status === 'pending' ? 'Approving...' : 'Approve token'}
+                </button>
+              </div>
             </div>
+            {approvalResult.status !== 'not-started' ? (
+              <p className={approvalResult.status === 'failed' ? 'inline-error' : 'inline-success'}>{approvalResult.message}{approvalResult.txHash ? ' Tx: ' + shortAddress(approvalResult.txHash) : ''}</p>
+            ) : null}
             <div className={simulationResult.status === 'failed' ? 'simulation-check failed' : simulationResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
               <div>
                 <span className="position-kind">No-send simulation</span>

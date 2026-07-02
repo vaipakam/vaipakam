@@ -1064,6 +1064,13 @@ dd {
   background: #fff3f4;
 }
 
+.check-action-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
 .plan-heading {
   display: flex;
   align-items: flex-start;
