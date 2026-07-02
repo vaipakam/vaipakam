@@ -30,8 +30,14 @@ import {
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
 import { encodeFunctionData, parseUnits, type Abi, type Address, type Hex } from 'viem';
-import { getDeployment } from '@vaipakam/contracts/deployments';
 import OfferCreateFacetAbi from '@vaipakam/contracts/abis/OfferCreateFacet.json';
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID_DECIMAL,
+  BASE_SEPOLIA_DEPLOYMENT,
+  resolveGuidedAsset,
+  type GuidedAssetResolution,
+} from './guidedAssets';
 import { Component, useEffect, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
@@ -121,17 +127,11 @@ type GuidedContractDraft = {
   interestRateBps: string;
   durationDays: string;
   fillMode: string;
+  assetSource: string;
   calldataStatus: string;
   calldata: Hex | null;
   readiness: 'Ready for simulation' | 'Needs approved assets' | 'Uses rental path';
   blockers: string[];
-};
-
-type GuidedAssetResolution = {
-  symbol: string;
-  display: string;
-  address: string | null;
-  decimals: number | null;
 };
 
 type PreparedGuidedAction = {
@@ -151,20 +151,12 @@ type PreparedGuidedAction = {
   calldataPreview: string | null;
 };
 
-const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
-const BASE_SEPOLIA_CHAIN_ID_DECIMAL = 84532;
-const BASE_SEPOLIA_DEPLOYMENT = getDeployment(BASE_SEPOLIA_CHAIN_ID_DECIMAL);
 const BASE_SEPOLIA_PARAMS = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   chainName: 'Base Sepolia',
   nativeCurrency: { name: 'Sepolia Ether', symbol: 'ETH', decimals: 18 },
   rpcUrls: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
   blockExplorerUrls: ['https://sepolia.basescan.org'],
-};
-const GUIDED_ASSET_ENV: Record<string, { address?: string; decimals?: string }> = {
-  mUSDC: { address: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_MUSDC_DECIMALS },
-  mWETH: { address: import.meta.env.VITE_BASE_SEPOLIA_WETH_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_WETH_DECIMALS },
-  mWBTC: { address: import.meta.env.VITE_BASE_SEPOLIA_WBTC_ADDRESS, decimals: import.meta.env.VITE_BASE_SEPOLIA_WBTC_DECIMALS },
 };
 const OFFER_CREATE_ABI = OfferCreateFacetAbi as Abi;
 
@@ -1039,6 +1031,7 @@ function FlowPage({
               <Metric label="Rate" value={transactionPlan.contractDraft.interestRateBps} />
               <Metric label="Duration" value={transactionPlan.contractDraft.durationDays} />
               <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
+              <Metric label="Asset source" value={transactionPlan.contractDraft.assetSource} />
               <Metric label="Calldata" value={transactionPlan.contractDraft.calldataStatus} />
             </div>
             {transactionPlan.contractDraft.calldata ? (
@@ -1502,41 +1495,11 @@ function guidedPreviewState() {
   return 'Ready for simulation target';
 }
 
-function isHexAddress(value: string | undefined): value is string {
-  return /^0x[a-fA-F0-9]{40}$/.test(value ?? '');
-}
-
-function parseAssetDecimals(value: string | undefined) {
-  if (!value) return null;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 36 ? parsed : null;
-}
-
-function resolveGuidedAsset(symbol: string): GuidedAssetResolution {
-  if (symbol === 'VPFI' && BASE_SEPOLIA_DEPLOYMENT?.vpfiToken) {
-    return {
-      symbol,
-      address: BASE_SEPOLIA_DEPLOYMENT.vpfiToken,
-      decimals: 18,
-      display: symbol + ' · ' + shortAddress(BASE_SEPOLIA_DEPLOYMENT.vpfiToken),
-    };
-  }
-  const configured = GUIDED_ASSET_ENV[symbol];
-  if (isHexAddress(configured?.address)) {
-    const decimals = parseAssetDecimals(configured.decimals);
-    return {
-      symbol,
-      address: configured.address,
-      decimals,
-      display: symbol + ' · ' + shortAddress(configured.address) + (decimals === null ? ' · decimals needed' : ''),
-    };
-  }
-  return {
-    symbol,
-    address: null,
-    decimals: null,
-    display: symbol + ' · address needed',
-  };
+function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
+  const sources = new Set(assets.map((asset) => asset.source));
+  if (sources.has('missing')) return 'Needs registry entry';
+  if (sources.has('environment')) return 'Configured in environment';
+  return 'Deployment artifact';
 }
 
 function encodeGuidedCreateOfferDraft({
@@ -1617,6 +1580,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
       interestRateBps: 'Not applicable',
       durationDays: amountText,
       fillMode: 'Rental terms',
+      assetSource: guidedAssetSourceLabel(prepayToken),
       calldataStatus: 'Rental path pending',
       calldata: null,
       readiness: 'Uses rental path',
@@ -1648,6 +1612,7 @@ function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numer
     interestRateBps: isBorrow ? '710 bps' : '650 bps',
     durationDays: isBorrow ? '21 days' : '30 days',
     fillMode: 'Single fill',
+    assetSource: guidedAssetSourceLabel(principalAsset, collateralAsset),
     calldataStatus: encoded.status,
     calldata: encoded.calldata,
     readiness: blockers.length === 0 ? 'Ready for simulation' : 'Needs approved assets',
