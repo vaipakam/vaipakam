@@ -141,6 +141,7 @@ type PreparedGuidedAction = {
   sequence: string[];
   contractCall: string;
   readiness: GuidedContractDraft['readiness'];
+  preflightGapCount: number;
 };
 
 const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
@@ -843,6 +844,12 @@ function FlowPage({
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
+  const preflightGapCount = transactionPlan.contractDraft.blockers.length;
+  const prepareActionLabel = planPrepared
+    ? 'Saved in portfolio'
+    : preflightGapCount > 0
+      ? 'Save preflight draft'
+      : 'Prepare local action';
   const actionLabel = !walletReady
     ? 'Connect wallet'
     : !isBaseSepolia
@@ -882,6 +889,7 @@ function FlowPage({
       sequence: transactionPlan.sequence,
       contractCall: transactionPlan.contractDraft.call,
       readiness: transactionPlan.contractDraft.readiness,
+      preflightGapCount,
     });
     setPlanPrepared(true);
   };
@@ -996,7 +1004,7 @@ function FlowPage({
             </div>
             <div>
               <span className="position-kind">Status</span>
-              <strong>{planPrepared ? 'Prepared locally' : 'Ready to prepare'}</strong>
+              <strong>{planPrepared ? 'Saved locally' : preflightGapCount > 0 ? preflightGapCount + ' preflight gap' + (preflightGapCount === 1 ? '' : 's') : 'Ready to prepare'}</strong>
             </div>
           </div>
           <section className="contract-draft" aria-label="Contract draft">
@@ -1028,7 +1036,7 @@ function FlowPage({
           </ol>
           <div className="hero-actions">
             <button className="primary-action" type="button" onClick={prepareGuidedAction} disabled={planPrepared || actionsPaused}>
-              {planPrepared ? 'Prepared in portfolio' : 'Prepare local action'}
+              {prepareActionLabel}
             </button>
             <NavLink className="secondary-action" to={transactionPlan.destination}>Open next workspace</NavLink>
           </div>
@@ -1628,7 +1636,7 @@ function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedAc
     detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. No transaction has been submitted.',
     status: 'Local queue',
     when: action.createdAtLabel,
-    impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : 'Needs preflight gaps resolved before wallet submission.',
+    impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : preflightGapLabel(action.preflightGapCount, 'preflight gap') + ' must be resolved before wallet submission.',
     nextAction: action.nextStep,
     safeForGuided: true,
   }));
@@ -1809,7 +1817,7 @@ function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet,
               <div className="activity-main">
                 <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
                 <h2>{action.title}</h2>
-                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()}. No transaction has been submitted.</p>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. No transaction has been submitted.</p>
               </div>
               <div className="activity-impact">
                 <strong>{action.status}</strong>
@@ -2204,6 +2212,11 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
   );
 }
 
+
+function preflightGapLabel(value: number | undefined, noun: string) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'untracked ' + noun + 's';
+  return value + ' ' + noun + (value === 1 ? '' : 's');
+}
 
 function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number) {
   const connected = Boolean(wallet.account);
