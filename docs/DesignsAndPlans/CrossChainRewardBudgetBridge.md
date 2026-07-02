@@ -1,7 +1,11 @@
 # Cross-Chain Reward Budget Bridge (#776)
 
 > Design doc — Option C, on-demand Base→mirror VPFI reward-budget
-> remittance. Status: **DRAFT for sign-off** (no code written yet).
+> remittance. Status: **signed off; Base sender implemented in PR #889**
+> (this doc is code-free — the notes tagged "impl PR #889" describe the
+> shipped behaviour of the companion code PR, not code in this PR).
+> Remaining epic stages: PR2 (mirror receiver + deploy/CCIP wiring), PR3
+> (E2E + spec/runbook), PR4 (keeper automation). See §13.
 
 ## 1. Problem
 
@@ -74,13 +78,13 @@ All four inputs are already on Base after finalization:
 - `globalLenderNum[D]` = `s.dailyGlobalLenderInterestNumeraire18[D]`
   (written by finalize); borrower analogous.
 
-**Zero-denominator guard (as-built):** each half is added only when its
+**Zero-denominator guard (impl PR #889):** each half is added only when its
 global denominator is non-zero — a finalized day with no activity on one
 side (`globalLenderNum == 0`, e.g. every clean-repay was borrower-side)
 contributes 0 from that half instead of dividing by zero. `halfPool == 0`
 (day 0 / pre-emissions) short-circuits to a zero slice.
 
-**Participation gate (as-built):** the slice is non-zero ONLY for a chain
+**Participation gate (impl PR #889):** the slice is non-zero ONLY for a chain
 whose numerator was actually folded into `D`'s finalized denominator —
 tracked by a per-day `chainDailyIncluded[D][chainId]` flag that
 `RewardAggregatorFacet._finalizeAndWrite` sets for each expected+reported
@@ -115,7 +119,7 @@ pool. A per-`(chainId, dayId)` non-zero entry blocks re-remittance
 (idempotent; safe to retry a whole batch — already-sent days are
 skipped).
 
-**The reservation is symmetric (as-built).** The guard above runs on the
+**The reservation is symmetric (impl PR #889).** The guard above runs on the
 remit side, but the Base *claim* side must reserve remitted budget too, or
 Base could pay its own claimants the VPFI already shipped to mirrors and
 jointly breach the 69M cap. So `LibInteractionRewards.poolRemaining()` and
@@ -146,7 +150,11 @@ function remitRewardBudget(
     uint32 dstChainId,
     uint256[] calldata dayIds,
     uint256 perRemittanceCap        // operator/keeper sizes it under the live lane (§7)
-) external payable /* ADMIN or the optional rewardRemittanceKeeper (§9.1) */
+)
+    external payable
+    nonReentrant
+    whenNotPaused                   // Diamond-pause-gated, like broadcastGlobal / remitBuyback
+    /* ADMIN or the optional rewardRemittanceKeeper (§9.1) */
 {
     // reject empty dayIds; require perRemittanceCap in (0, CAP]
     // for each dayId:
@@ -173,6 +181,14 @@ storage knob) so each send is independently chunked. Already-remitted days
 are **skipped, not reverted** — a whole-batch retry after a partial/failed
 send is safe (§8). Marking the first occurrence of a day also collapses an
 accidentally-duplicated `dayId` within one call to a single slice.
+
+The send is `whenNotPaused` + `nonReentrant` — the SAME outbound
+pause/reentrancy gate as `RewardAggregatorFacet.broadcastGlobal` and
+`TreasuryFacet.remitBuyback` (see `docs/ops/AdminKeysAndPause.md`), so a
+Diamond-pause incident freezes reward-budget sends alongside every other
+outbound reward/treasury flow even if the CCIP messenger itself is still
+unpaused. Authorization (ADMIN / keeper) is layered ON TOP of the pause
+gate, not instead of it.
 
 The canonical 69M pool is held on Base, so the VPFI to send comes from
 the Base Diamond's balance (locked into the CCT `LockReleaseTokenPool`
@@ -209,15 +225,60 @@ Per-mirror UUPS contract mirroring `BuybackRemittanceReceiver`:
 Claims are unchanged: the Diamond's now-funded balance satisfies
 `safeTransfer(claimant, paid)`.
 
+**Why funding is deliberately fungible across days (not a per-day claim
+reserve).** The per-day remittance accounting (zero-slice, idempotent
+marker) lives on the *Base send* side; on the mirror, claims draw from the
+raw VPFI balance and are gated by `knownGlobalSet[day]` (the broadcast
+denominator), exactly as Base's own claims are gated by finalization. That
+means a mirror's remitted VPFI is fungible: a claimant for a
+broadcast-but-not-yet-remitted day can spend balance that arrived for a
+different day. This is intentional and **safe, not a loss vector**:
+
+- Underfunding is a **safe revert**, never an over-pay. If the balance
+  can't cover a claim, `safeTransfer` reverts the whole (nonReentrant)
+  claim tx — no partial payout, no double-spend — and the user simply
+  retries after the keeper tops the mirror up.
+- It **self-heals**. Σ remitted across all finalized days = Σ claimable
+  (the slice math partitions the pool), so once every finalized day is
+  remitted the balance covers every claim. The transient is purely
+  ordering (early claimants drain first; later ones wait for the next
+  remittance) — a liveness wrinkle inherent to the on-demand model, not a
+  solvency gap.
+- The keeper loop (§13 PR4) keeps mirrors funded ahead of the claim
+  frontier, and the operational invariant is **remit-before-broadcast**
+  for a day so its claim gate opens already funded.
+
+A per-day claim-side *funded gate* was considered and rejected: it would
+re-couple the deliberately-decoupled remit and claim paths (adding
+mirror-side per-day funded state + a claim-path check) to convert a safe,
+self-healing liveness transient into a hard gate — net-negative for a flow
+whose failure mode is already "revert and retry."
+
 ## 7. Rate-limit & fee handling
 
-- `VpfiPoolRateGovernor` caps VPFI CCIP lanes (starting ≈ 50k capacity,
-  ≈ 5.8 VPFI/s refill). Early-schedule daily budgets can exceed a lane
-  bucket. The on-demand design handles this by: (a) a `perRemittanceCap`
-  the operator/keeper sizes under the live lane capacity, and (b)
-  batching over `dayIds` so a large backlog is drained in lane-sized
-  chunks across multiple sends. `quoteRewardBudget` surfaces the total
-  so the caller can chunk.
+- `VpfiPoolRateGovernor` caps VPFI CCIP lanes (the buyback/general
+  starting point is ≈ 50k capacity, ≈ 5.8 VPFI/s refill). Batching over
+  `dayIds` + `perRemittanceCap` drains a MULTI-day backlog in lane-sized
+  chunks. But a **single day is remitted atomically** (its slice is marked
+  and sent as one amount — the design keeps per-`(chain,day)` idempotency
+  rather than partial-day accounting), so batching cannot split one day.
+- **Mandatory lane provisioning (deploy gate).** Because a day is atomic,
+  the Base→mirror reward-budget lane capacity MUST be ≥ the largest single
+  `(chain, day)` slice, or that day can never be sent. That maximum is
+  deploy-time computable from the FIXED emission schedule: it is bounded by
+  `2 × halfPoolForDay(1)` (a chain that is 100% of both sides on the
+  highest-APR day) — on the order of ~200k VPFI. So the reward-budget
+  direction's `CCIP_RATE_CAPACITY` is provisioned to comfortably exceed
+  that bound (NOT the 50k buyback default). The reward-budget lane
+  (Base→mirror outbound) has its own rate-limit bucket, independent of the
+  buyback lane (mirror→Base), so raising it does not affect buyback.
+  `quoteRewardBudget` surfaces each day's slice so the operator/keeper can
+  confirm it fits before sending.
+- **Future option (not v1):** if a lower cap is ever required, partial
+  per-day remittance (send part of a day's slice, track the remitted
+  amount, send the remainder after refill) can replace the atomic marker.
+  Deferred — the provisioning bound above makes it unnecessary for the
+  Phase-1 schedule.
 - CCIP native fee: paid as `msg.value` on `remitRewardBudget`
   (operator/keeper funds it), refund to caller — same shape as
   `broadcastGlobal{value: fee}`.
