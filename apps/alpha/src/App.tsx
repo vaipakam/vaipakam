@@ -1767,7 +1767,7 @@ function guidedDefaultTermsSuffix(flow: GuidedFlow) {
 }
 
 function humanRateLabel(value: string) {
-  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% APR';
+  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% for term';
   return value;
 }
 
@@ -2485,6 +2485,8 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                 ? 'Originally resolved from environment. Browser override is saved for this device.'
                 : 'Resolved from environment. Editing stores a browser override for this device.';
               const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
+              const decimalsValue = Number(entry.decimals);
+              const decimalsValid = !entry.decimals || (Number.isInteger(decimalsValue) && decimalsValue >= 0 && decimalsValue <= 36);
               return (
                 <div className="asset-registry-row" key={symbol}>
                   <strong>{symbol}</strong>
@@ -2506,11 +2508,13 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
                       onChange={(event) => updateAssetOverride(symbol, 'decimals', event.target.value)}
                       placeholder={defaultDecimals === null ? '18' : String(defaultDecimals)}
                       readOnly={Boolean(deploymentAddress)}
+                      aria-invalid={!decimalsValid}
                     />
                   </label>
                   {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
                   {sourcedFromEnv ? <small>{envNote}</small> : null}
                   {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
+                  {!deploymentAddress && !decimalsValid ? <small className="inline-error">Enter a whole number between 0 and 36.</small> : null}
                 </div>
               );
             })}
