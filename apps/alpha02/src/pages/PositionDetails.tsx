@@ -54,6 +54,9 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
+import { LoanSaleFlow } from '../components/LoanSaleFlow';
+import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
+import { useLoanSalePending } from '../data/loanSalePending';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
@@ -67,7 +70,8 @@ type ConfirmSurface =
   | 'partial'
   | 'preclose'
   | 'refinance'
-  | 'early-exit';
+  | 'early-exit'
+  | 'loan-sale';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -231,6 +235,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : (loan.data.lendingAsset as `0x${string}`),
   );
   const refinancePending = refi.offerId !== null;
+
+  // Lender-side sibling: a live Option-2 sale listing. Existence is
+  // the CHAIN's say-so (positionLock on the lender NFT), so a listing
+  // made on another device still shows and interlocks here.
+  const sale = useLoanSalePending(
+    loanId,
+    loan.data?.lenderTokenId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+    !loanIsRental && Boolean(loan.data),
+  );
+  const salePending = sale.state?.listed === true;
 
   // Live loan snapshot — interest MODE and the re-stampable accrual
   // clock live only on-chain (the indexer row lacks them). The quoted
@@ -1278,9 +1295,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : copy.earlyExit.checking}
             </p>
           </section>
+        ) : salePending ? (
+          // A live sale listing owns the lender's exit story — the
+          // pending card below explains and offers cancel/restore.
+          null
         ) : loanLive.data.chainNow <
           loanLive.data.live.startTime +
             loanLive.data.live.durationDays * 86_400n ? (
+          <>
           <EarlyExitFlow
             row={row}
             live={loanLive.data.live}
@@ -1296,7 +1318,44 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               setDoneMessage(copy.earlyExit.done);
             }}
           />
+          <section className="card">
+            <LoanSaleFlow
+              row={row}
+              live={loanLive.data.live}
+              chainNow={loanLive.data.chainNow}
+              principalMeta={principal}
+              confirmOpen={confirmingSurface === 'loan-sale'}
+              onOpenConfirm={() => setConfirmingSurface('loan-sale')}
+              onCloseConfirm={() =>
+                setConfirmingSurface((s) => (s === 'loan-sale' ? null : s))
+              }
+              onListed={(offerId) => {
+                sale.remember(offerId);
+                setDoneMessage(copy.loanSale.done);
+              }}
+            />
+          </section>
+          </>
         ) : null
+      ) : null}
+
+      {/* The live sale listing's standing surface — chain-authoritative
+          (positionLock), outside the strategy gates so it survives
+          data hiccups, mode switches, and other-device listings. */}
+      {sale.state?.listed &&
+      !isRental &&
+      address &&
+      (role === 'lender' || sale.state.offerId !== null) ? (
+        <LoanSalePendingCard
+          loanId={row.loanId}
+          lenderTokenId={row.lenderTokenId}
+          state={sale.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={sale.clear}
+        />
       ) : null}
 
       {/* The live request's standing surface — rendered on the MARKER

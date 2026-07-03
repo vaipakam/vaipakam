@@ -85,3 +85,17 @@ bought-out offer can briefly linger as available in off-chain data,
 confirming always re-verifies the chosen offer live and re-reads the
 payout with chain time, asking for a fresh review if anything
 material moved.
+
+Lenders can also list a position for sale at their own rate. The
+review states, before anything is signed, that the lender position
+NFT is locked until the sale completes or the listing is cancelled,
+and that the settlement — the larger of interest accrued by
+acceptance or the rate difference for the remaining term — is pulled
+from the seller's wallet inside the buyer's transaction, which is why
+listing sets a standing approval sized to a worst case that never
+grows with time. The listing's status card is driven by the chain
+itself (the lock on the position NFT), so a listing made on another
+device still appears, still warns when the approval or balance would
+make a buyer's acceptance fail (with a restore action that first
+verifies the listing still stands), and cancelling — where the
+listing id is known — unlocks the NFT and removes the approval.

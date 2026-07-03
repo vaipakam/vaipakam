@@ -743,6 +743,24 @@ converge. Its intended behaviour (the test oracle for that surface):
   unchanged terms, not expired) and re-reads the payout with chain
   time, re-reviewing on material drift. The protocol's cut comes out
   of the forfeited interest, never beyond the shown figure.
+- The lender can instead LIST the position for sale at a rate of
+  their choosing. Before confirming, the review must disclose: the
+  lender position NFT is locked for transfer until the sale
+  completes or the listing is cancelled; the settlement (the larger
+  of interest accrued by acceptance or the rate difference for the
+  remaining term — never both) is pulled from the seller's wallet
+  inside the buyer's transaction, so listing sets a standing
+  approval sized to a bounded worst case that never grows with mere
+  passage of time, with only the actual amount ever pulled; and a
+  rate above the loan's own attracts buyers at the seller's cost.
+  The listing's standing surface is chain-authoritative (the lock on
+  the position NFT), so a listing made on another device still
+  shows, still warns when the standing approval or balance no
+  longer covers settlement (with a verified restore action), and
+  still interlocks the sell-into-offer exit; cancellation (which
+  unlocks the NFT) is offered where the listing's identifier is
+  known and also removes the standing approval. While a listing
+  stands, the sell-into-offer exit is not offered.
 
 ## Key UX Requirements
 

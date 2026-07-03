@@ -298,6 +298,38 @@ export const copy = {
       'We couldn’t read this loan’s exit details right now — retrying.',
   },
 
+  loanSale: {
+    title: 'List this position for sale',
+    blurb:
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction.',
+    rateLabel: 'Yearly rate the buyer earns',
+    action: 'Review listing',
+    confirm: 'Confirm — list my position',
+    // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
+    // NFT lock must be disclosed BEFORE confirmation.
+    lockWarning:
+      'Listing locks your lender position NFT — it can’t be transferred until the sale completes or you cancel the listing. Your claim rights are unaffected.',
+    approvalNote: (amount: string) =>
+      `Listing sets a standing approval of up to ${amount} — the worst case of what settling the sale can pull from your wallet at acceptance (the larger of interest accrued by then or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction.`,
+    sweetenNote:
+      'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term comes out of your wallet at completion.',
+    done:
+      'Position listed. When a buyer accepts, the sale settles automatically — keep the standing approval (and enough balance for the settlement figure) in place until then, or cancel the listing below.',
+    pending: (offerId: string) =>
+      `Sale listing #${offerId} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid the outstanding amount and the settlement is pulled in the same transaction.`,
+    pendingNoId:
+      'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Your lender NFT is locked while the listing stands.',
+    allowanceShort:
+      'The standing settlement approval (or your wallet balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right now. Restore it below or cancel the listing.',
+    restore: 'Restore the settlement approval',
+    restored: 'Settlement approval restored — the listing can complete again.',
+    cancel: 'Cancel listing',
+    cancelled:
+      'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed. The loan continues unchanged.',
+    cancelledRevokeFailed:
+      'Listing cancelled and your lender NFT unlocked. The standing settlement approval couldn’t be removed automatically — you can revoke it from your wallet’s token-approvals view.',
+  },
+
   positions: {
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',
