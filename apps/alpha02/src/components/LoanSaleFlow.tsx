@@ -21,7 +21,7 @@ import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
-import { ensureAllowance } from '../contracts/erc20';
+import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
   assertPositionNftHeldLive,
@@ -48,6 +48,8 @@ export function LoanSaleFlow({
   onOpenConfirm,
   onCloseConfirm,
   onListed,
+  busy,
+  setBusy,
 }: {
   row: IndexedLoan;
   live: LoanLive;
@@ -58,6 +60,11 @@ export function LoanSaleFlow({
   onCloseConfirm: () => void;
   /** Hands the created listing's offer id to the page-owned state. */
   onListed: (offerId: string) => void;
+  /** SHARED lender-block write lock (also held by the instant-exit
+   *  card): two exits racing each other would grant the standing
+   *  approval and then revert the listing when the other sale mines. */
+  busy: boolean;
+  setBusy: (b: boolean) => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -65,7 +72,6 @@ export function LoanSaleFlow({
   const { write } = useDiamondWrite();
   const queryClient = useQueryClient();
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Seed at the loan's own rate — the no-shortfall starting point.
   const [rateInput, setRateInput] = useState(
@@ -102,6 +108,11 @@ export function LoanSaleFlow({
     if (rateBps === null) return;
     setBusy(true);
     setError(null);
+    // Tracks whether THIS attempt granted the settlement approval, so
+    // an abandoned/reverted listing step can unwind it (no dangling
+    // payoff-sized authorization behind a pristine form).
+    let approvalGranted = false;
+    let approvalToken: `0x${string}` | null = null;
     try {
       // Tier-1 — the listing routes the buyer's principal to the
       // seller; re-screen live.
@@ -162,6 +173,8 @@ export function LoanSaleFlow({
         spender: walletChain.diamondAddress,
         amount: liveBound,
       });
+      approvalGranted = true;
+      approvalToken = liveLoan.principalAsset;
       const { receipt } = await write('createLoanSaleOffer', [
         BigInt(row.loanId),
         rateBps,
@@ -179,6 +192,23 @@ export function LoanSaleFlow({
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
       setError(submitErrorText(err));
+      // The listing never landed but the settlement approval mined —
+      // best-effort unwind (mirrors the refinance flow's rule): a
+      // second rejection just leaves the wallet's approvals view as
+      // the remedy, with the error banner already showing.
+      if (approvalGranted && approvalToken) {
+        try {
+          await revokeAllowance({
+            publicClient,
+            walletClient,
+            token: approvalToken,
+            owner: address,
+            spender: walletChain.diamondAddress,
+          });
+        } catch {
+          // Leave the submit error as the surfaced failure.
+        }
+      }
     } finally {
       setBusy(false);
     }

@@ -1328,6 +1328,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               setSoldThisSession(true);
               setDoneMessage(copy.earlyExit.done);
             }}
+            busy={busy}
+            setBusy={setBusy}
           />
           <section className="card">
             <LoanSaleFlow
@@ -1344,6 +1346,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 sale.remember(offerId);
                 setDoneMessage(copy.loanSale.done);
               }}
+              busy={busy}
+              setBusy={setBusy}
             />
           </section>
           </>
@@ -1356,7 +1360,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       {sale.state?.listed &&
       !isRental &&
       address &&
-      (role === 'lender' || sale.state.offerId !== null) ? (
+      // Bound to the wallet the settlement pull binds to — a
+      // non-holder on the listing device must not see funding
+      // verdicts (or grant approvals) for someone else's sale.
+      (role === 'lender' || sale.state.isHolder) ? (
         <LoanSalePendingCard
           loanId={row.loanId}
           lenderTokenId={row.lenderTokenId}

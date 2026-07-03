@@ -61,6 +61,8 @@ export function EarlyExitFlow({
   onOpenConfirm,
   onCloseConfirm,
   onSold,
+  busy,
+  setBusy,
 }: {
   row: IndexedLoan;
   live: LoanLive;
@@ -76,6 +78,10 @@ export function EarlyExitFlow({
    *  (mode toggle, gate flicker) can't resurrect the stale-indexer
    *  picker inside the ownership-refresh window. */
   onSold: () => void;
+  /** SHARED lender-block write lock (also held by the sale-listing
+   *  card) — two exit writes must never be in flight together. */
+  busy: boolean;
+  setBusy: (b: boolean) => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -84,7 +90,6 @@ export function EarlyExitFlow({
   const queryClient = useQueryClient();
   const offers = useActiveOffers();
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 

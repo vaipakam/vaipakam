@@ -126,6 +126,8 @@ export const copy = {
       'Checking how these assets are priced by the protocol…',
     liquidityCheckFailed:
       'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
+    linkedLoanCheckFailed:
+      'We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.',
   },
 
   borrow: {
@@ -303,7 +305,7 @@ export const copy = {
   loanSale: {
     title: 'List this position for sale',
     blurb:
-      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction.',
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
     rateLabel: 'Yearly rate the buyer earns',
     action: 'Review listing',
     confirm: 'Confirm — list my position',
@@ -330,6 +332,12 @@ export const copy = {
       'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed (if you have other listings or requests using the same token, restore their approvals from their cards). The loan continues unchanged.',
     cancelledRevokeFailed:
       'Listing cancelled and your lender NFT unlocked. The standing settlement approval couldn’t be removed automatically — you can revoke it from your wallet’s token-approvals view.',
+    cancelSoon:
+      'Cancellation opens a few minutes after listing — try again shortly.',
+    restoreAborted:
+      'This listing is no longer standing (sold, cancelled, or unlocked) — nothing was approved. Refresh to see the latest state.',
+    loanSettledWhileListed:
+      'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT and remove the standing approval.',
     fundingUnknown:
       'We couldn’t identify this listing’s offer record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous approval and balance in place.',
     ended:

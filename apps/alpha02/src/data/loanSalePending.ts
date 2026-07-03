@@ -21,13 +21,15 @@
  * action cover the long tail. All money math is
  * `sellerEconomics` — the single facet-exact mirror.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { erc20Abi } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
   BASIS_POINTS,
+  CANCEL_COOLDOWN_SECONDS,
+  LOAN_STATUS_ACTIVE,
   SECONDS_PER_YEAR,
   interestRemainingDaysOf,
   readLoanLive,
@@ -37,7 +39,6 @@ import {
 import { fetchOffersByCreator } from './indexer';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
-import { CANCEL_COOLDOWN_SECONDS } from './refinancePending';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
@@ -80,6 +81,13 @@ const marker = makePendingMarkerStore('alpha02.loanSaleOffer');
 export interface LoanSalePendingState {
   /** The lender NFT is lock-tagged for a sale — a listing exists. */
   listed: boolean;
+  /** The loan is still Active — a settled loan's listing can never
+   *  complete (accepts revert); cancel-to-unlock is the only move. */
+  loanActive: boolean;
+  /** Connected wallet currently HOLDS the lender NFT — the only
+   *  wallet the settlement pull binds to. Funding legs and the
+   *  cancel/restore actions are meaningless for anyone else. */
+  isHolder: boolean;
   /** Live-verified listing offer id (marker or recovered); null when
    *  unknown — cancel is unavailable and funding is UNKNOWN then. */
   offerId: string | null;
@@ -107,10 +115,15 @@ export function useLoanSalePending(
   const { readChain, address } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const [markerId, setMarkerId] = useState<string | null>(null);
+  // The recovery probe is expensive (indexer page + serial link
+  // reads) — budget a few attempts per (chain, loan, wallet) episode
+  // instead of re-firing on every 30s tick forever.
+  const probeBudgetRef = useRef(3);
 
   useEffect(() => {
     setMarkerId(marker.read(readChain.chainId, loanId));
-  }, [readChain.chainId, loanId]);
+    probeBudgetRef.current = 3;
+  }, [readChain.chainId, loanId, address]);
 
   const remember = useCallback(
     (id: string) => {
@@ -145,79 +158,112 @@ export function useLoanSalePending(
     refetchInterval: 30_000,
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
-      const [lock, live, latestBlock, allowance, balance] = await Promise.all([
-        readClient!.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'positionLock',
-          args: [BigInt(lenderTokenId!)],
-        }) as Promise<number | bigint>,
-        readLoanLive(readClient!, diamond, loanId),
-        readClient!.getBlock({ blockTag: 'latest' }),
-        address
-          ? (readClient!.readContract({
-              address: principalAsset!,
-              abi: erc20Abi,
-              functionName: 'allowance',
-              args: [address, diamond],
-            }) as Promise<bigint>)
-          : Promise.resolve(0n),
-        address
-          ? (readClient!.readContract({
-              address: principalAsset!,
-              abi: erc20Abi,
-              functionName: 'balanceOf',
-              args: [address],
-            }) as Promise<bigint>)
-          : Promise.resolve(0n),
-      ]);
-      const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
-
-      // Resolve the listing's offer id: marker first, else recover by
-      // probing the connected wallet's own open offers (the indexer
-      // has no linked-loan column; getOfferLinkedLoanId is the
-      // authoritative link).
-      let resolvedId: string | null = null;
-      if (listed) {
-        const candidateIds: string[] = [];
-        if (markerId !== null) candidateIds.push(markerId);
-        if (markerId === null && address) {
-          const page = await fetchOffersByCreator(readChain.chainId, address, {
-            limit: 50,
-          });
-          for (const o of page?.offers ?? []) {
-            if (o.status === 'active' && o.offerType === 1) {
-              candidateIds.push(String(o.offerId));
-            }
-          }
-        }
-        for (const id of candidateIds) {
-          const linked = (await readClient!.readContract({
+      const [lock, live, latestBlock, allowance, balance, holder] =
+        await Promise.all([
+          readClient!.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'getOfferLinkedLoanId',
-            args: [BigInt(id)],
-          })) as bigint;
-          if (linked === BigInt(loanId)) {
-            resolvedId = id;
-            break;
+            functionName: 'positionLock',
+            args: [BigInt(lenderTokenId!)],
+          }) as Promise<number | bigint>,
+          readLoanLive(readClient!, diamond, loanId),
+          readClient!.getBlock({ blockTag: 'latest' }),
+          address
+            ? (readClient!.readContract({
+                address: principalAsset!,
+                abi: erc20Abi,
+                functionName: 'allowance',
+                args: [address, diamond],
+              }) as Promise<bigint>)
+            : Promise.resolve(0n),
+          address
+            ? (readClient!.readContract({
+                address: principalAsset!,
+                abi: erc20Abi,
+                functionName: 'balanceOf',
+                args: [address],
+              }) as Promise<bigint>)
+            : Promise.resolve(0n),
+          readClient!
+            .readContract({
+              address: diamond,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'ownerOf',
+              args: [BigInt(lenderTokenId!)],
+            })
+            .catch(() => null) as Promise<string | null>,
+        ]);
+      const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
+      // The settlement pull binds to the CURRENT lender-NFT holder —
+      // funding math and card actions for any other connected wallet
+      // would be wrong (and Restore would grant a dangling approval
+      // from a wallet the facet never pulls from).
+      const isHolder =
+        Boolean(address) &&
+        holder !== null &&
+        holder.toLowerCase() === address!.toLowerCase();
+
+      // Resolve the listing's offer id: verify the marker; on any
+      // failure fall through to probing the holder's own open offers
+      // (the indexer has no linked-loan column; getOfferLinkedLoanId
+      // is the authoritative link). All recovery reads are BEST
+      // EFFORT — a hiccup here must never discard the authoritative
+      // lock verdict above (the card would silently vanish over a
+      // live lock, resurrecting the listing form).
+      let resolvedId: string | null = null;
+      if (listed) {
+        try {
+          const candidateIds: string[] = [];
+          if (markerId !== null) candidateIds.push(markerId);
+          if (isHolder && probeBudgetRef.current > 0) {
+            // Recovery probe: capped at the most recent offers, and
+            // budgeted so a permanently-unresolvable listing doesn't
+            // re-fire ~50 serial reads every 30s forever.
+            probeBudgetRef.current -= 1;
+            const page = await fetchOffersByCreator(readChain.chainId, address!, {
+              limit: 50,
+            });
+            for (const o of page?.offers ?? []) {
+              if (o.status === 'active' && o.offerType === 1) {
+                const id = String(o.offerId);
+                if (!candidateIds.includes(id)) candidateIds.push(id);
+              }
+            }
           }
+          for (const id of candidateIds) {
+            const linked = (await readClient!.readContract({
+              address: diamond,
+              abi: DIAMOND_ABI_VIEM,
+              functionName: 'getOfferLinkedLoanId',
+              args: [BigInt(id)],
+            })) as bigint;
+            if (linked === BigInt(loanId)) {
+              resolvedId = id;
+              break;
+            }
+          }
+        } catch {
+          resolvedId = null;
         }
       }
       let saleRateBps: bigint | null = null;
       let createdAt = 0n;
       if (resolvedId !== null) {
-        const offer = (await readClient!.readContract({
-          address: diamond,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getOfferDetails',
-          args: [BigInt(resolvedId)],
-        })) as { interestRateBps: number; createdAt: bigint };
-        saleRateBps = BigInt(offer.interestRateBps);
-        createdAt = offer.createdAt;
+        try {
+          const offer = (await readClient!.readContract({
+            address: diamond,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getOfferDetails',
+            args: [BigInt(resolvedId)],
+          })) as { interestRateBps: number; createdAt: bigint };
+          saleRateBps = BigInt(offer.interestRateBps);
+          createdAt = offer.createdAt;
+        } catch {
+          saleRateBps = null;
+        }
       }
 
-      const fundingKnown = Boolean(address) && listed && saleRateBps !== null;
+      const fundingKnown = isHolder && listed && saleRateBps !== null;
       const requiredNow = fundingKnown
         ? saleSettlementNow(live, saleRateBps!, latestBlock.timestamp)
         : 0n;
@@ -226,27 +272,44 @@ export function useLoanSalePending(
         : 0n;
       return {
         listed,
+        loanActive: live.status === LOAN_STATUS_ACTIVE,
+        isHolder,
         offerId: resolvedId,
         saleRateBps,
         cancelUnlocked:
           resolvedId !== null &&
+          saleRateBps !== null &&
           latestBlock.timestamp >= createdAt + CANCEL_COOLDOWN_SECONDS,
         requiredNow,
         requiredBound,
         fundingKnown,
-        allowanceShort: fundingKnown && allowance < requiredNow,
-        balanceShort: fundingKnown && balance < requiredNow,
+        // The funding watch only matters while the sale can still
+        // complete — a settled loan's listing is cancel-only.
+        allowanceShort:
+          fundingKnown &&
+          live.status === LOAN_STATUS_ACTIVE &&
+          allowance < requiredNow,
+        balanceShort:
+          fundingKnown &&
+          live.status === LOAN_STATUS_ACTIVE &&
+          balance < requiredNow,
       };
     },
   });
 
   // Recovery found the id but the marker didn't have it — persist.
+  // Conversely, a marker that FAILED verification while a listing
+  // stands is stale (cancel + relist from another device): clear it
+  // so the next tick's probe can find the real one.
   useEffect(() => {
     const d = query.data;
     if (d?.listed && d.offerId !== null && d.offerId !== markerId) {
       remember(d.offerId);
     }
-  }, [query.data, markerId, remember]);
+    if (d?.listed && d.offerId === null && markerId !== null) {
+      clear();
+    }
+  }, [query.data, markerId, remember, clear]);
 
   // The listing ended (accepted or cancelled elsewhere) while our
   // marker was set — surface the outcome once, then self-heal.

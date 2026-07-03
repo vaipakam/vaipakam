@@ -1243,6 +1243,22 @@ export function OfferFlow({ side }: { side: Side }) {
               </span>
             </div>
           ) : null}
+          {mode === 'accept' && !linkedLoanKnown && linkedLoan.isError ? (
+            // Same dead-Sign-button rule as the liquidity gate: a
+            // blocked check must name itself and offer the retry.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.match.linkedLoanCheckFailed}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => void linkedLoan.refetch()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
           {!liquidityKnown ? (
             legLiquidity.isError ? (
               // A dead Sign button with no reason reads as broken —

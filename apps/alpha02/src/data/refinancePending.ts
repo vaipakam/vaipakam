@@ -23,6 +23,7 @@ import { usePublicClient } from 'wagmi';
 import { erc20Abi } from 'viem';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
+  CANCEL_COOLDOWN_SECONDS,
   LOAN_STATUS_ACTIVE,
   readLoanLive,
   refinancePayoffOf,
@@ -31,10 +32,6 @@ import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
-
-/** Mirrors LibVaipakam.MIN_OFFER_CANCEL_DELAY — cancels inside this
- *  window revert CancelCooldownActive. */
-export const CANCEL_COOLDOWN_SECONDS = 300n;
 
 const marker = makePendingMarkerStore('alpha02.refinanceOffer');
 

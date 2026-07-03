@@ -80,6 +80,11 @@ export function refinancePayoffOf(live: LoanLive): bigint {
 export const SECONDS_PER_YEAR = 365n * 86_400n;
 export const BASIS_POINTS = 10_000n;
 
+/** Mirrors LibVaipakam.MIN_OFFER_CANCEL_DELAY — cancels inside this
+ *  window revert CancelCooldownActive. Protocol-wide (any offer),
+ *  not specific to any one flow. */
+export const CANCEL_COOLDOWN_SECONDS = 300n;
+
 /** Seller economics of selling a lender position into a buy offer —
  *  one definition for the picker rows, the review receipt, and the
  *  submit re-check. Mirrors EarlyWithdrawalFacet's net settlement TO

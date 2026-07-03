@@ -760,10 +760,23 @@ converge. Its intended behaviour (the test oracle for that surface):
   The listing's standing surface is chain-authoritative (the lock on
   the position NFT), so a listing made on another device still
   shows, still warns when the standing approval or balance no
-  longer covers settlement (with a verified restore action), and
-  still interlocks the sell-into-offer exit; where the listing's
-  identifier can't be recovered, the funding state is reported as
-  unverifiable — never a false all-clear. Cancellation (which
+  longer covers settlement (with a verified restore action that
+  always clears the CURRENT live requirement plus fresh headroom,
+  not just the original bound), and still interlocks the
+  sell-into-offer exit; where the listing's identifier can't be
+  recovered (the recovery search covers the wallet's recent offers
+  and retries a bounded number of times), the funding state is
+  reported as unverifiable — never a false all-clear. The funding
+  verdicts and the cancel/restore actions bind to the wallet that
+  currently HOLDS the lender position — any other wallet on the
+  same device sees the listing's existence but no funding verdicts
+  and no actions. A momentary data failure never hides the listing
+  surface while the lock stands, and a listing whose loan has since
+  settled says so plainly and steers to cancel-to-unlock instead of
+  nagging about funding. The two lender exits share one write lock
+  so their transactions can never race each other, and an exit
+  listing whose posting fails after the approval was granted unwinds
+  that approval best-effort. Cancellation (which
   unlocks the NFT, becomes available after the protocol's cancel
   cooldown judged by chain time, and also removes the standing
   approval — with a note that other standing uses of the same token

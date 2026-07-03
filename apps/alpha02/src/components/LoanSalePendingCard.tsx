@@ -15,15 +15,19 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
-import { readLoanLive } from '../contracts/loanLive';
+import {
+  BASIS_POINTS,
+  SECONDS_PER_YEAR,
+  readLoanLive,
+  sellerEconomics,
+} from '../contracts/loanLive';
 import {
   LOCK_EARLY_WITHDRAWAL_SALE,
   saleSettlementBound,
   type LoanSalePendingState,
 } from '../data/loanSalePending';
-import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { formatTokenAmount } from '../lib/format';
 
 export function LoanSalePendingCard({
@@ -115,21 +119,28 @@ export function LoanSalePendingCard({
         publicClient.getBlock({ blockTag: 'latest' }),
       ]);
       if (Number(lock) !== LOCK_EARLY_WITHDRAWAL_SALE) {
-        setError(copy.refinance.reapproveAborted);
+        setError(copy.loanSale.restoreAborted);
         void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
         return;
       }
+      // Past the original pad the static bound can sit BELOW what a
+      // buyer's accept now pulls — restore must always clear the
+      // live requirement plus fresh growth margin, or the red banner
+      // returns on the next tick behind a false success message.
+      const rate = state.saleRateBps ?? liveLoan.interestRateBps;
+      const bound = saleSettlementBound(liveLoan, rate, latestBlock.timestamp);
+      const liveNow = sellerEconomics(liveLoan, rate, latestBlock.timestamp).cost;
+      const growthMargin =
+        (liveLoan.principal * liveLoan.interestRateBps * 30n * 86_400n) /
+        (SECONDS_PER_YEAR * BASIS_POINTS);
+      const target = liveNow + growthMargin > bound ? liveNow + growthMargin : bound;
       await ensureAllowance({
         publicClient,
         walletClient,
         token: liveLoan.principalAsset,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: saleSettlementBound(
-          liveLoan,
-          state.saleRateBps ?? liveLoan.interestRateBps,
-          latestBlock.timestamp,
-        ),
+        amount: target,
       });
       setDone(copy.loanSale.restored);
       void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
@@ -145,12 +156,14 @@ export function LoanSalePendingCard({
       <h3>{copy.loanSale.title}</h3>
       <div className="banner banner-warn" role="status">
         <span className="banner-body">
-          {state.offerId
-            ? copy.loanSale.pending(state.offerId)
-            : copy.loanSale.pendingNoId}
+          {!state.loanActive
+            ? copy.loanSale.loanSettledWhileListed
+            : state.offerId
+              ? copy.loanSale.pending(state.offerId)
+              : copy.loanSale.pendingNoId}
         </span>
       </div>
-      {state.listed && !state.fundingKnown ? (
+      {state.listed && state.loanActive && state.isHolder && !state.fundingKnown ? (
         <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">{copy.loanSale.fundingUnknown}</span>
         </div>
@@ -166,7 +179,7 @@ export function LoanSalePendingCard({
         </div>
       ) : null}
       <div className="cluster" style={{ marginTop: 12 }}>
-        {state.offerId ? (
+        {state.offerId && state.isHolder ? (
           <button
             type="button"
             className="btn btn-secondary"
@@ -178,7 +191,7 @@ export function LoanSalePendingCard({
             {copy.loanSale.cancel}
           </button>
         ) : null}
-        {state.allowanceShort ? (
+        {state.allowanceShort && state.isHolder ? (
           <button
             type="button"
             className="btn btn-secondary"
@@ -189,9 +202,9 @@ export function LoanSalePendingCard({
           </button>
         ) : null}
       </div>
-      {state.offerId && !state.cancelUnlocked ? (
+      {state.offerId && state.isHolder && !state.cancelUnlocked ? (
         <p className="field-hint" style={{ marginTop: 8 }}>
-          {copy.refinance.cancelSoon}
+          {copy.loanSale.cancelSoon}
         </p>
       ) : null}
       {done ? (

@@ -97,9 +97,11 @@ plus a month's headroom. The listing's status card is driven by the
 chain itself (the lock on the position NFT), so a listing made on
 another device still appears, still warns when the approval or
 balance would make a buyer's acceptance fail (with a restore action
-that first verifies the listing still stands; where the listing's
-record can't be identified the card says the funding can't be
-verified rather than showing a false all-clear), and cancelling —
+that first verifies the listing still stands and always covers the
+current live requirement; where the listing's record can't be
+identified the card says the funding can't be verified rather than
+showing a false all-clear, and everything money-related binds only
+to the wallet that actually holds the position), and cancelling —
 where the listing id is known, once the protocol's short cancel
 cooldown passes — unlocks the NFT and removes the approval, with the
 outcome reported on the page. A listing that ends off-page (accepted
