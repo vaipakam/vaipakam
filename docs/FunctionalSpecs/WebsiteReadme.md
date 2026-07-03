@@ -672,10 +672,13 @@ converge. Its intended behaviour (the test oracle for that surface):
   omitting the feature. A compliance-flagged wallet is not shown
   close-early at all; its open path remains the wind-down repayment.
   Only one pending-action review can be open on the page at a time.
-- Advanced mode offers refinancing to the borrower of an active,
-  not-yet-matured ERC-20 loan: the borrower posts a refinance request
-  for exactly the loan's outstanding amount at a chosen rate ceiling
-  and duration, and a lender's acceptance completes everything in one
+- Advanced mode offers refinancing on an active, not-yet-matured
+  ERC-20 loan — and only while the position still belongs to the
+  wallet that originally took the loan (collateral carry-over binds
+  to the original borrower; a transferred position is not offered
+  refinancing). The borrower posts a refinance request for exactly
+  the loan's outstanding amount at a chosen rate ceiling and
+  duration, and a lender's acceptance completes everything in one
   transaction — new loan opened, old lender paid off from the
   borrower's wallet, old loan closed, collateral moved across without
   unlocking. Before posting, the review must state: the payoff is
@@ -683,16 +686,27 @@ converge. Its intended behaviour (the test oracle for that surface):
   pro-rata, regardless of the loan's interest mode) plus the
   protocol's cut inside it; the spare wallet balance to keep while
   the request is open (payoff interest plus the new loan's initiation
-  fee — the new principal arrives in the same transaction); and that
-  a short balance only makes the acceptance fail, taking nothing.
-  Posting sets on-chain guardrails bounding the completion to the
-  reviewed rate ceiling and end-date window, and the request has a
-  stated lifetime after which acceptance fails safely. The page
-  tracks the pending request, verifies it against the chain (a
-  cancelled or replaced request clears itself), shows its state, and
-  offers cancellation any time before acceptance. Loans on a periodic
-  interest schedule carry a visible warning that an overdue period
-  blocks completion until settled.
+  fee — the new principal arrives in the same transaction); that a
+  short balance only makes the acceptance fail, taking nothing; that
+  posting takes multiple wallet confirmations whose earlier steps
+  persist if abandoned partway; and, for a loan on a periodic
+  interest schedule, that the replacement loan will not carry a
+  payment schedule. The request carries its own on-chain expiry
+  matching the reviewed lifetime — acceptance past it fails safely
+  regardless of any wider pre-existing guardrails — plus guardrails
+  bounding completion to the reviewed rate ceiling. The page tracks
+  the pending request, verifies it against the chain (a cancelled or
+  replaced request clears itself), shows its state and expiry — the
+  pending view and its cancel action must survive the loan crossing
+  maturity — and warns when the standing payoff approval or wallet
+  balance no longer covers completion, with a way to restore it.
+  Cancellation is offered from the same page (it becomes available a
+  few minutes after posting, per the protocol's cancel cooldown) and
+  also removes the standing payoff approval. While a request is
+  live, partial repayment is held off with an explanation — changing
+  the amount would make the request permanently unacceptable. Loans
+  on a periodic interest schedule carry a visible warning that an
+  overdue period blocks completion until settled.
 
 ## Key UX Requirements
 

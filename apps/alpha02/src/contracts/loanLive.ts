@@ -14,6 +14,9 @@ export const LOAN_STATUS_ACTIVE = 0;
 export interface LoanLive {
   /** LibVaipakam.LoanStatus as a number (Active = 0). */
   status: number;
+  /** The ORIGINAL borrower stored at init — NOT the current
+   *  borrower-NFT holder. Carry-over refinance binds to this. */
+  borrower: `0x${string}`;
   principal: bigint;
   principalAsset: `0x${string}`;
   interestRateBps: bigint;
@@ -64,6 +67,7 @@ export async function readLoanLive(
   })) as LoanLive;
   return {
     status: Number(raw.status),
+    borrower: raw.borrower,
     principal: raw.principal,
     principalAsset: raw.principalAsset,
     interestRateBps: raw.interestRateBps,

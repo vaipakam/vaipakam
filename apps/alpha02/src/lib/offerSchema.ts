@@ -17,8 +17,23 @@ import { AssetType } from './types';
  * stays focused on JSX and event wiring.
  */
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Mirrors `LibVaipakam.MAX_INTEREST_BPS` (10_000 = 100% APR) — the
+ *  protocol's upper-sanity cap on rates. Exported so every surface
+ *  that validates a rate input shares ONE ceiling; if the contract
+ *  ever raises it, this constant follows. */
+export const MAX_INTEREST_BPS = 10_000;
+
+/** Percent-string → BPS, the ONE rounding rule every rate input uses
+ *  ("7.5" → 750). Returns null for non-parseable input. */
+export function percentToBps(s: string): number | null {
+  if (s === '') return null;
+  const parsed = parseFloat(s);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100);
+}
 
 /**
  * Loan-duration bounds. Single source of truth — both the Create-Offer
@@ -409,16 +424,10 @@ export function toCreateOfferPayload(
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
 
-  const rateBps = s.interestRate === ''
-    ? 0
-    : Math.round(parseFloat(s.interestRate) * 100);
+  const rateBps = percentToBps(s.interestRate) ?? 0;
 
   // #183 — canonical role-aware mapping. See doc-block above for the
-  // full mapping table. `MAX_INTEREST_BPS` mirrors
-  // `LibVaipakam.MAX_INTEREST_BPS` (10_000 = 100% APR) — the protocol's
-  // upper-sanity cap on rates. Hard-coded here for now; if the contract
-  // ever raises it, this constant follows.
-  const MAX_INTEREST_BPS = 10_000;
+  // full mapping table.
 
   const isLender = s.offerType === 'lender';
 
@@ -541,7 +550,16 @@ export interface RefinanceSourceLoan {
 export function toRefinanceOfferPayload(
   oldLoan: RefinanceSourceLoan,
   oldLoanId: number | bigint,
-  terms: { rateBpsMax: number; durationDays: number; consent: boolean },
+  terms: {
+    rateBpsMax: number;
+    durationDays: number;
+    consent: boolean;
+    /** Unix-seconds Good-Til-Time — the request's OWN on-chain
+     *  expiry. Load-bearing: the reviewed "stays acceptable for ~N
+     *  days" promise is enforced HERE (accept refuses an expired
+     *  offer), not by the caps window, which may pre-exist looser. */
+    expiresAt: bigint;
+  },
 ): CreateOfferPayload {
   return {
     offerType: 1,
@@ -566,7 +584,7 @@ export function toRefinanceOfferPayload(
     periodicInterestCadence: 0,
     allowsParallelSale: false,
     fillMode: 1,
-    expiresAt: 0n,
+    expiresAt: terms.expiresAt,
     allowsPrepayListing: false,
     refinanceTargetLoanId: BigInt(oldLoanId),
     useFullTermInterest: oldLoan.useFullTermInterest,

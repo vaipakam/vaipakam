@@ -41,8 +41,10 @@ close or repayment the page stops offering repay-family actions until
 fresh data confirms the loan's state, and only one pending-action
 review can be open at a time.
 
-Advanced mode also gains refinancing: the borrower of an active,
-not-yet-matured loan can post a refinance request — a borrow offer for
+Advanced mode also gains refinancing: the original borrower of an
+active, not-yet-matured loan (refinancing is only offered while the
+position hasn't changed hands — collateral carry-over is tied to the
+original borrower) can post a refinance request — a borrow offer for
 exactly the loan's outstanding amount, marked so that the moment any
 lender accepts it, one transaction opens the new loan, pays the old
 lender off from the borrower's wallet, closes the old loan, and moves
@@ -50,8 +52,17 @@ the collateral across without ever unlocking it. The review states the
 payoff rule plainly (always principal plus the full remaining term's
 interest — the exiting lender's fixed entitlement, regardless of the
 loan's day-by-day setting), how much spare balance the wallet must
-keep while the request is open, and that a short balance simply makes
-an acceptance fail with nothing taken. Posting sets on-chain
-guardrails at the reviewed rate ceiling and end-date window, and the
-request can be cancelled any time before acceptance from the same
-page, which remembers and live-verifies the pending request.
+keep while the request is open, that a short balance simply makes an
+acceptance fail with nothing taken, that posting takes up to three
+wallet confirmations whose earlier steps persist if abandoned partway,
+and — for loans on a periodic payment schedule — that the replacement
+loan won't carry one. The request expires on-chain at the reviewed
+lifetime, so a forgotten request can't be accepted months later, and
+completion is additionally bounded to the reviewed rate ceiling. The
+page remembers and live-verifies the pending request (its view and
+cancel action survive the loan crossing maturity), warns when the
+standing payoff approval or balance no longer covers completion and
+offers to restore it, holds off partial repayment while the request
+is live (a changed amount would strand the request), and cancels in
+place — cancellation opens a few minutes after posting per the
+protocol's cooldown, and also removes the standing payoff approval.

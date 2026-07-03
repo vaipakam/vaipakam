@@ -230,18 +230,32 @@ export const copy = {
     periodicWarning:
       'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
     done:
-      'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below any time before that.',
+      'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
     pending: (offerId: string) =>
       `Refinance request #${offerId} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
+    pendingExpires: (date: string) =>
+      `The request expires on ${date} if nobody accepts it.`,
     pendingAccepted:
       'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
     cancel: 'Cancel refinance request',
-    cancelled: 'Refinance request cancelled — this loan continues unchanged.',
-    checking: 'Checking this loan’s refinance details…',
-    checkFailed:
-      'We couldn’t read this loan’s refinance details right now — retrying.',
+    cancelSoon:
+      'Cancellation opens a few minutes after posting — try again shortly.',
+    cancelled:
+      'Refinance request cancelled and the payoff approval removed — this loan continues unchanged.',
+    cancelledRevokeFailed:
+      'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
+    allowanceShort:
+      'The payoff approval or your wallet balance no longer covers this request — a lender’s acceptance would fail right now. Restore it below or cancel the request.',
+    reapprove: 'Restore the payoff approval',
+    reapproved: 'Payoff approval restored — the request can complete again.',
     guardrailNote:
-      'Your request carries on-chain guardrails: it can only complete at or below the rate you set here, and only for a new loan ending within the window you reviewed.',
+      'Your request carries its own expiry and on-chain guardrails: it can only complete at or below the rate you set here, and never after the expiry you see in this review.',
+    cadenceChangeNote:
+      'Your current loan pays interest on a schedule. The replacement loan will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.',
+    multiStepNote:
+      'Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.',
+    partialBlockedByPending:
+      'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
   },
 
   positions: {
@@ -323,6 +337,8 @@ export const copy = {
       'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
     refinanceMatured:
       'This loan is past its due date, so it can no longer be refinanced — nothing was sent. Use Repay to settle it, including any late fees.',
+    refinanceNotOriginalBorrower:
+      'This position changed hands since the loan began, so its collateral can’t carry over into a refinance — nothing was sent. Repaying or closing early stays available.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

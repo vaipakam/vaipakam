@@ -93,6 +93,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay button and the close-early card would re-appear and invite
   // a second, reverting submit (LoanNotActive).
   const [closedThisSession, setClosedThisSession] = useState(false);
+  // Reported up by RefinanceFlow: a live refinance request freezes
+  // the offer at the CURRENT principal, so a partial repayment would
+  // make it permanently unacceptable — the partial surface holds off.
+  const [refinancePending, setRefinancePending] = useState(false);
   // Position writes show the six-row receipt BEFORE any wallet prompt.
   // One slot (not one flag per surface) — opening a surface closes any
   // other, so two receipts never invite conflicting signatures.
@@ -1039,6 +1043,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             This loan allows partial repayment. Payments go to interest first,
             then reduce the amount you owe — the due date never moves.
           </p>
+          {refinancePending ? (
+            // A live refinance request is frozen at the CURRENT
+            // principal — a partial would strand it unacceptable
+            // forever (the contract rejects any accept once amount >
+            // live principal). Explain instead of failing later.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.refinance.partialBlockedByPending}
+              </span>
+            </div>
+          ) : (
+          <>
           <div className="cluster">
             <input
               aria-label="Amount to repay now"
@@ -1089,6 +1105,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               />
             </div>
           ) : null}
+          </>
+          )}
         </section>
       ) : null}
 
@@ -1117,10 +1135,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : copy.preclose.checking}
             </p>
           </section>
-        ) : loanLive.data.chainNow <
-          loanLive.data.live.startTime +
-            loanLive.data.live.durationDays * 86_400n ? (
+        ) : (
         <>
+        {loanLive.data.chainNow <
+        loanLive.data.live.startTime +
+          loanLive.data.live.durationDays * 86_400n ? (
         <section className="card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
@@ -1170,24 +1189,37 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             </div>
           )}
         </section>
-        {/* Refinance shares the strategy gates with close-early:
-            advanced borrower, live-verified Active, pre-maturity by
-            chain time, sanctions-clear (Tier-1 at accept). */}
-        <RefinanceFlow
-          row={row}
-          live={loanLive.data.live}
-          principalMeta={principal}
-          confirmOpen={confirmingSurface === 'refinance'}
-          onOpenConfirm={() => setConfirmingSurface('refinance')}
-          onCloseConfirm={() =>
-            setConfirmingSurface((s) => (s === 'refinance' ? null : s))
-          }
-        />
+        ) : // Matured (by live chain time + live term): close-early no
+          // longer applies — the plain Repay path below is the one
+          // that settles a matured loan, late fees included.
+          null}
+        {/* Refinance shares the strategy gates with close-early
+            (advanced borrower, live-verified Active, sanctions-clear
+            — Tier-1 at accept), PLUS: only the ORIGINAL borrower
+            (carry-over binds to the borrower stored at init; a
+            transferred position would silently re-pledge fresh
+            collateral). Maturity is handled INSIDE the component so a
+            pending request's banner and cancel affordance survive
+            crossing maturity. Keyed by chain so a chain switch
+            re-seeds the locally stored pending marker. */}
+        {address &&
+        address.toLowerCase() === row.borrower.toLowerCase() ? (
+          <RefinanceFlow
+            key={readChain.chainId}
+            row={row}
+            live={loanLive.data.live}
+            chainNow={loanLive.data.chainNow}
+            principalMeta={principal}
+            confirmOpen={confirmingSurface === 'refinance'}
+            onOpenConfirm={() => setConfirmingSurface('refinance')}
+            onCloseConfirm={() =>
+              setConfirmingSurface((s) => (s === 'refinance' ? null : s))
+            }
+            onPendingChange={setRefinancePending}
+          />
+        ) : null}
         </>
-        ) : // Matured (by live chain time + live term): close-early and
-          // refinance no longer apply — the plain Repay path below is
-          // the one that settles a matured loan, late fees included.
-          null
+        )
       ) : null}
 
       {doneMessage ? (
