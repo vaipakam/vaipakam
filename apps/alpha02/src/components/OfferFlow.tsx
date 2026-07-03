@@ -713,26 +713,32 @@ export function OfferFlow({ side }: { side: Side }) {
       throw new Error(copy.match.termsChanged);
     }
     // Sign canonical terms; approval amounts come from the SIGNED
-    // terms (canonical), not the indexer row.
-    const { terms, signature } = await signAcceptTerms({
-      offerId: BigInt(selected.offerId),
-      consent: form.riskAndTermsConsent,
-    });
-    // The canonical terms must still MATCH what the user reviewed —
-    // the creator can edit an offer in place, and the indexer row can
-    // lag the OfferModified event.
-    const reviewedMatchesSigned =
-      terms.lendingAsset.toLowerCase() === selected.lendingAsset.toLowerCase() &&
-      terms.collateralAsset.toLowerCase() === selected.collateralAsset.toLowerCase() &&
-      terms.amount === offerPrincipal(selected) &&
-      terms.interestRateBps === BigInt(offerRateBps(selected)) &&
-      terms.collateralAmount === BigInt(selected.collateralAmount) &&
-      Number(terms.durationDays) === selected.durationDays;
-    if (!reviewedMatchesSigned) {
-      void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
-      void queryClient.invalidateQueries({ queryKey: ['offer'] });
-      throw new Error(copy.match.termsChanged);
+    // terms (canonical), not the indexer row. The REVIEWED terms are
+    // passed in so the hook compares canonical-vs-reviewed BEFORE the
+    // wallet is asked to sign — the user never signs terms they didn't
+    // review, even in the abort path.
+    let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
+    try {
+      signed = await signAcceptTerms({
+        offerId: BigInt(selected.offerId),
+        consent: form.riskAndTermsConsent,
+        expected: {
+          lendingAsset: selected.lendingAsset,
+          collateralAsset: selected.collateralAsset,
+          amount: offerPrincipal(selected),
+          interestRateBps: BigInt(offerRateBps(selected)),
+          collateralAmount: BigInt(selected.collateralAmount),
+          durationDays: selected.durationDays,
+        },
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message === copy.match.termsChanged) {
+        void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+        void queryClient.invalidateQueries({ queryKey: ['offer'] });
+      }
+      throw err;
     }
+    const { terms, signature } = signed;
     const acceptorPaysCollateral = side === 'borrower';
     const paysErc20 = acceptorPaysCollateral
       ? terms.collateralAssetType === AssetType.ERC20

@@ -6,6 +6,11 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -44,10 +49,17 @@ export function useInteractionRewards() {
           pending: preview[0] ?? 0n,
           waiting: (claimability[4] ?? 0n) > 0n,
         };
-      } catch {
-        // Rewards facet absent / read failure — show the quiet empty
-        // state; rewards are never load-bearing for the main journeys.
-        return { pending: 0n, waiting: false };
+      } catch (err) {
+        // Only a REVERT/zero-data means "rewards facet absent on this
+        // chain" → the quiet empty state. A transport failure is NOT
+        // "no rewards" — rethrow so the card shows unavailable instead
+        // of telling a user with claimable VPFI there's nothing.
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) return { pending: 0n, waiting: false };
+        throw err;
       }
     },
   });

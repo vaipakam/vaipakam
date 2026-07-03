@@ -64,8 +64,11 @@ export function PositionDetails() {
   // without this latch the button would re-enable and invite a
   // second, reverting claim.
   const [claimed, setClaimed] = useState(false);
-  // Position writes show the six-row receipt BEFORE any wallet prompt.
+  // Position writes show the six-row receipt BEFORE any wallet prompt
+  // — one flag per write surface on this page.
   const [confirming, setConfirming] = useState(false);
+  const [confirmingCollateral, setConfirmingCollateral] = useState(false);
+  const [confirmingPartial, setConfirmingPartial] = useState(false);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -380,6 +383,7 @@ export function PositionDetails() {
       await write('addCollateral', [BigInt(row.loanId), wei]);
       setDoneMessage('Collateral added — the loan is safer now.');
       setCollateralInput('');
+      setConfirmingCollateral(false);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
     } catch (err) {
@@ -418,6 +422,32 @@ export function PositionDetails() {
         setError(copy.errors.partialOverPrincipal);
         return;
       }
+      // repayPartial pays the CURRENT lender-position holder DIRECTLY
+      // and reverts if that wallet is sanctioned — screen the resolved
+      // holder before the approval (full repay stays open: it defers
+      // the lender's proceeds to a screened claim instead).
+      const lenderHolder = (await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'ownerOf',
+          args: [BigInt(row.lenderTokenId)],
+        })
+        .catch(() => null)) as string | null;
+      if (lenderHolder) {
+        const lenderFlagged = await publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'isSanctionedAddress',
+            args: [lenderHolder as `0x${string}`],
+          })
+          .catch(() => false);
+        if (lenderFlagged) {
+          setError(copy.errors.lenderBlockedPartial);
+          return;
+        }
+      }
       const accrualStart =
         live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
       const nowSec = BigInt(Math.floor(Date.now() / 1000));
@@ -449,6 +479,7 @@ export function PositionDetails() {
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage('Partial repayment confirmed — you now owe less.');
       setPartialInput('');
+      setConfirmingPartial(false);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
@@ -594,6 +625,18 @@ export function PositionDetails() {
                 : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
             </dd>
           </div>
+          {!isRental && row.status === 'active' && !risk.data ? (
+            // A missing risk read must LOOK missing — hiding the row
+            // would render a possibly-liquidatable loan as complete.
+            <div className="receipt-row">
+              <dt>Health</dt>
+              <dd>
+                {risk.isError
+                  ? 'We couldn’t read this loan’s health right now — retrying. Liquidation protection still applies on-chain.'
+                  : 'Checking this loan’s health…'}
+              </dd>
+            </div>
+          ) : null}
           {!isRental && row.status === 'active' && risk.data ? (
             <div className="receipt-row">
               <dt>Health</dt>
@@ -671,7 +714,7 @@ export function PositionDetails() {
                 collateralBalance.data === undefined ||
                 collateralOverBalance
               }
-              onClick={() => void runAddCollateral()}
+              onClick={() => setConfirmingCollateral(true)}
             >
               Add
             </button>
@@ -680,6 +723,40 @@ export function PositionDetails() {
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {copy.errors.needMore(collateral.symbol)}
             </p>
+          ) : null}
+          {confirmingCollateral && collateralInputWei !== null ? (
+            <div style={{ marginTop: 16 }}>
+              <ReviewReceipt
+                data={{
+                  youReceive: 'Nothing now — a safer loan (liquidation moves further away).',
+                  youLock: `${collateralInput} ${collateral.symbol} more collateral, returned with the rest when the loan closes properly.`,
+                  youMayOwe: 'Nothing more — this doesn’t change what you owe.',
+                  youCanLose: 'The added amount joins the existing collateral — it’s at stake the same way if the loan defaults.',
+                  fees: 'None.',
+                  whenThisEnds: 'The top-up applies immediately.',
+                }}
+              />
+              <div className="cluster" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmingCollateral(false)}
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={busy}
+                  onClick={() => void runAddCollateral()}
+                >
+                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                  {busy ? 'Waiting for wallet…' : 'Confirm — add collateral'}
+                </button>
+              </div>
+            </div>
           ) : null}
         </section>
       ) : null}
@@ -718,7 +795,7 @@ export function PositionDetails() {
                 principalBalance.data === undefined ||
                 partialOverBalance
               }
-              onClick={() => void runPartialRepay()}
+              onClick={() => setConfirmingPartial(true)}
             >
               Repay part
             </button>
@@ -727,6 +804,40 @@ export function PositionDetails() {
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: 8 }}>
               {copy.errors.needMore(principal.symbol)}
             </p>
+          ) : null}
+          {confirmingPartial && partialInputWei !== null ? (
+            <div style={{ marginTop: 16 }}>
+              <ReviewReceipt
+                data={{
+                  youReceive: 'Nothing now — a smaller debt.',
+                  youLock: 'Nothing.',
+                  youMayOwe: `${partialInput} ${principal.symbol} now, plus the interest accrued so far (pulled together in this payment). The due date doesn’t move.`,
+                  youCanLose: 'Nothing beyond the payment.',
+                  fees: 'The protocol’s cut of the accrued interest settles inside the payment.',
+                  whenThisEnds: 'Your remaining principal drops immediately; interest keeps accruing on the smaller amount.',
+                }}
+              />
+              <div className="cluster" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmingPartial(false)}
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={busy}
+                  onClick={() => void runPartialRepay()}
+                >
+                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                  {busy ? 'Waiting for wallet…' : 'Confirm — repay part'}
+                </button>
+              </div>
+            </div>
           ) : null}
         </section>
       ) : null}

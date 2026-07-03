@@ -39,6 +39,23 @@ function RewardsCard() {
   const [error, setError] = useState<string | null>(null);
 
   const snapshot = rewards.data;
+  // Transport failure ≠ "no rewards" — say we couldn't check rather
+  // than silently hiding possibly-claimable VPFI (the hook maps a
+  // genuinely absent rewards facet to a quiet zero snapshot instead).
+  if (!snapshot && rewards.isError) {
+    return (
+      <section className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title">
+          <Sparkles aria-hidden />
+          <h2 style={{ margin: 0 }}>{copy.rewards.title}</h2>
+        </div>
+        <p className="muted" style={{ margin: 0 }}>
+          We couldn’t check your rewards right now — please try again in a
+          moment.
+        </p>
+      </section>
+    );
+  }
   if (!snapshot) return null;
 
   async function claim() {
@@ -47,14 +64,18 @@ function RewardsCard() {
     try {
       // The button gate is a CACHED read, and this is the one payout
       // with NO on-chain screen — the live re-read here is the last
-      // line of enforcement.
-      if (address && walletChain && publicClient) {
-        await assertWalletNotSanctionedLive(
-          publicClient,
-          walletChain.diamondAddress,
-          address,
-        );
+      // line of enforcement, so it fails CLOSED: an unreadable oracle
+      // blocks the claim instead of waving it through. (Everywhere
+      // else fail-open is fine because the contract screens too.)
+      if (!address || !walletChain || !publicClient) {
+        throw new Error(copy.wallet.connectFirst);
       }
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+        { failClosed: true },
+      );
       await write('claimInteractionRewards', []);
       void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
     } catch (err) {

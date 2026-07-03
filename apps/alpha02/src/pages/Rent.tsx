@@ -30,7 +30,12 @@ import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
-import { ensureNftApproval, useNftOwnership, useNftRentalSupport } from '../contracts/nft';
+import {
+  ensureNftApproval,
+  readNftOwnershipLive,
+  useNftOwnership,
+  useNftRentalSupport,
+} from '../contracts/nft';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import {
   readRentalBufferBps,
@@ -287,6 +292,20 @@ function ListNftFlow() {
         })) as string;
       if (liveVpfiToken.toLowerCase() === prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayNotAllowed);
+      }
+      // Ownership was checked from a CACHED read — re-read live so an
+      // NFT transferred/sold since review fails BEFORE the
+      // collection-wide setApprovalForAll can mine.
+      const stillOwns = await readNftOwnershipLive({
+        publicClient,
+        contract: contract as `0x${string}`,
+        standard: standardEnum,
+        tokenId,
+        quantity,
+        owner: address,
+      });
+      if (!stillOwns) {
+        throw new Error(copy.rent.checkNotOwner);
       }
       await ensureNftApproval({
         publicClient,
@@ -735,28 +754,33 @@ function RentNftFlow() {
       if (ownerFlagged) {
         throw new Error(copy.match.counterpartyBlocked);
       }
-      const { terms, signature } = await signAcceptTerms({
-        offerId: BigInt(selected.offerId),
-        consent,
-      });
-      // Canonical terms must still match what was reviewed (the owner
-      // can edit the listing in place; the indexer row can lag).
-      const reviewedMatchesSigned =
-        terms.lendingAsset.toLowerCase() === selected.lendingAsset.toLowerCase() &&
-        terms.prepayAsset.toLowerCase() === selected.prepayAsset.toLowerCase() &&
-        terms.amount === BigInt(selected.amount) &&
-        Number(terms.durationDays) === selected.durationDays &&
-        terms.tokenId === BigInt(selected.tokenId) &&
-        // ERC-1155 edits can change ONLY the quantity — without these
-        // the renter would sign for a different edition count than the
-        // listing they reviewed.
-        terms.quantity === BigInt(selected.quantity || '1') &&
-        terms.assetType === selected.assetType;
-      if (!reviewedMatchesSigned) {
-        void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
-        void queryClient.invalidateQueries({ queryKey: ['offer'] });
-        throw new Error(copy.match.termsChanged);
+      // Reviewed terms go INTO the signer — the canonical-vs-reviewed
+      // comparison (incl. ERC-1155 quantity and asset type) runs
+      // before the wallet is asked to sign, so the renter never signs
+      // terms that differ from the reviewed listing.
+      let signed: Awaited<ReturnType<typeof signAcceptTerms>>;
+      try {
+        signed = await signAcceptTerms({
+          offerId: BigInt(selected.offerId),
+          consent,
+          expected: {
+            lendingAsset: selected.lendingAsset,
+            prepayAsset: selected.prepayAsset,
+            amount: BigInt(selected.amount),
+            durationDays: selected.durationDays,
+            tokenId: BigInt(selected.tokenId),
+            quantity: BigInt(selected.quantity || '1'),
+            assetType: selected.assetType,
+          },
+        });
+      } catch (err) {
+        if (err instanceof Error && err.message === copy.match.termsChanged) {
+          void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
+          void queryClient.invalidateQueries({ queryKey: ['offer'] });
+        }
+        throw err;
       }
+      const { terms, signature } = signed;
       // Renter's pull is dailyFee × days × (1 + buffer) in prepayAsset.
       // Fee terms come from the SIGNED canonical terms; the buffer is
       // read LIVE right now — never a default that may lag governance.

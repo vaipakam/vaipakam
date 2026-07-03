@@ -59,15 +59,30 @@ export async function assertWalletNotSanctionedLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   wallet: `0x${string}`,
+  opts?: {
+    /** Fail CLOSED on read errors. Use for paths where this UI check
+     *  is the ONLY enforcement (no on-chain screen — e.g. the
+     *  interaction-rewards claim): an unreadable oracle must block,
+     *  not wave through. Default false = fail-open, matching the
+     *  contract's own posture for paths it screens itself. */
+    failClosed?: boolean;
+  },
 ): Promise<void> {
-  const flagged = await publicClient
-    .readContract({
+  let flagged: boolean;
+  try {
+    flagged = (await publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'isSanctionedAddress',
       args: [wallet],
-    })
-    .catch(() => false);
+    })) as boolean;
+  } catch (err) {
+    if (opts?.failClosed) {
+      throw new Error(copy.errors.sanctionsCheckRetry);
+    }
+    flagged = false; // fail-open: contract still screens this path
+    void err;
+  }
   if (flagged) {
     throw new Error(copy.errors.sanctionsBlocked);
   }

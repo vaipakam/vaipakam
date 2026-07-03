@@ -242,6 +242,10 @@ export const copy = {
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',
     sanctionsBlocked:
       'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
+    sanctionsCheckRetry:
+      'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
+    lenderBlockedPartial:
+      'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },
 
   fees: {

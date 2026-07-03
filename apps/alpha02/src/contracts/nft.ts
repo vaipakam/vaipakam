@@ -110,6 +110,38 @@ export function useNftRentalSupport(contract: string, standard: NftStandard) {
   });
 }
 
+/** LIVE ownership re-read for submit paths — the checklist's cached
+ *  query can be stale if the NFT was transferred/sold after review.
+ *  Throws on transport failure (fail closed: nothing has been sent
+ *  yet, so blocking on an unreadable chain is free). */
+export async function readNftOwnershipLive(opts: {
+  publicClient: PublicClient;
+  contract: `0x${string}`;
+  standard: NftStandard;
+  tokenId: string;
+  quantity: string;
+  owner: `0x${string}`;
+}): Promise<boolean> {
+  const { publicClient, contract, standard, tokenId, quantity, owner } = opts;
+  if (standard === AssetType.ERC721) {
+    const current = await publicClient.readContract({
+      address: contract,
+      abi: NFT_ABI,
+      functionName: 'ownerOf',
+      args: [BigInt(tokenId)],
+    });
+    return current.toLowerCase() === owner.toLowerCase();
+  }
+  const balance = await publicClient.readContract({
+    address: contract,
+    abi: NFT_ABI,
+    functionName: 'balanceOf',
+    args: [owner, BigInt(tokenId)],
+  });
+  const needed = BigInt(quantity || '1');
+  return balance >= (needed > 0n ? needed : 1n);
+}
+
 /** Grant the Diamond collection-level transfer approval when it
  *  doesn't already have it (both 721 and 1155 use the same surface). */
 export async function ensureNftApproval(opts: {

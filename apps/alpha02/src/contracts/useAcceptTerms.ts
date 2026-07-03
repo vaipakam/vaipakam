@@ -125,6 +125,24 @@ export function useAcceptTermsSigning() {
       offerId: bigint;
       /** The single mandatory risk-and-terms consent checkbox. */
       consent: boolean;
+      /** The terms the user REVIEWED (from the indexer row). Compared
+       *  against the canonical terms BEFORE the wallet is asked to
+       *  sign — the signature is the acknowledgement, so the user must
+       *  never sign terms that differ from what they reviewed, even if
+       *  the transaction would be aborted afterwards. Only provided
+       *  fields are compared. */
+      expected?: {
+        lendingAsset?: string;
+        collateralAsset?: string;
+        amount?: bigint;
+        interestRateBps?: bigint;
+        collateralAmount?: bigint;
+        durationDays?: number;
+        tokenId?: bigint;
+        prepayAsset?: string;
+        quantity?: bigint;
+        assetType?: number;
+      };
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
         throw new Error('Connect a wallet on a supported network first.');
@@ -135,13 +153,20 @@ export function useAcceptTermsSigning() {
       const diamondAddr = walletChain.diamondAddress;
 
       // Read the canonical offer so the signed terms match the stored
-      // offer field-for-field (avoids `OfferTermsMismatch`).
-      const o = (await publicClient.readContract({
-        address: diamondAddr,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getOffer',
-        args: [input.offerId],
-      })) as Record<string, unknown>;
+      // offer field-for-field (avoids `OfferTermsMismatch`), plus the
+      // CHAIN clock — expiry and the signature deadline are judged by
+      // block.timestamp on-chain, so a skewed local clock must not
+      // decide either.
+      const [o, latestBlock] = await Promise.all([
+        publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOffer',
+          args: [input.offerId],
+        }) as Promise<Record<string, unknown>>,
+        publicClient.getBlock({ blockTag: 'latest' }),
+      ]);
+      const chainNow = latestBlock.timestamp;
 
       // Refuse STALE accepts before any signature or approval: an
       // already-accepted, expired, or cancelled (storage-deleted →
@@ -156,7 +181,7 @@ export function useAcceptTermsSigning() {
         throw new Error(copy.match.offerGone);
       }
       const expiresAt = o.expiresAt as bigint;
-      if (expiresAt !== 0n && expiresAt <= BigInt(Math.floor(Date.now() / 1000))) {
+      if (expiresAt !== 0n && expiresAt <= chainNow) {
         throw new Error(copy.match.offerGone);
       }
       // A partially matched offer can only be consumed by the matcher
@@ -285,11 +310,33 @@ export function useAcceptTermsSigning() {
         acknowledgedIlliquidLendingAsset: lendingAsset,
         acknowledgedIlliquidCollateralAsset: collateralAsset,
         nonce: randomNonce(),
-        deadline:
-          BigInt(Math.floor(Date.now() / 1000)) +
-          BigInt(ACCEPT_DEADLINE_SECONDS),
+        deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
       };
+
+      // Reviewed-vs-canonical comparison happens BEFORE the wallet is
+      // asked to sign — the signature IS the acknowledgement, so terms
+      // the user never reviewed must never receive one.
+      if (input.expected) {
+        const e = input.expected;
+        const mismatch =
+          (e.lendingAsset !== undefined &&
+            e.lendingAsset.toLowerCase() !== terms.lendingAsset.toLowerCase()) ||
+          (e.collateralAsset !== undefined &&
+            e.collateralAsset.toLowerCase() !== terms.collateralAsset.toLowerCase()) ||
+          (e.amount !== undefined && e.amount !== terms.amount) ||
+          (e.interestRateBps !== undefined && e.interestRateBps !== terms.interestRateBps) ||
+          (e.collateralAmount !== undefined && e.collateralAmount !== terms.collateralAmount) ||
+          (e.durationDays !== undefined && BigInt(e.durationDays) !== terms.durationDays) ||
+          (e.tokenId !== undefined && e.tokenId !== terms.tokenId) ||
+          (e.prepayAsset !== undefined &&
+            e.prepayAsset.toLowerCase() !== terms.prepayAsset.toLowerCase()) ||
+          (e.quantity !== undefined && e.quantity !== terms.quantity) ||
+          (e.assetType !== undefined && e.assetType !== terms.assetType);
+        if (mismatch) {
+          throw new Error(copy.match.termsChanged);
+        }
+      }
 
       const signature = (await walletClient.signTypedData({
         account: address,
