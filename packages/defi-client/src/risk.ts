@@ -36,6 +36,7 @@ export function isHealthFactorAtRisk(
   hf18: bigint | null | undefined,
   minHf1e18: bigint = MIN_HEALTH_FACTOR_1E18,
 ): boolean {
-  if (hf18 == null || hf18 === 0n) return false;
+  if (hf18 == null) return false;
+  if (hf18 === 0n) return true;
   return hf18 < minHf1e18;
 }

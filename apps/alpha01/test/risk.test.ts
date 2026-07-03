@@ -22,6 +22,7 @@ describe('risk formatters', () => {
     expect(isHealthFactorAtRisk(MIN_HEALTH_FACTOR_1E18)).toBe(false);
     expect(isHealthFactorAtRisk(MIN_HEALTH_FACTOR_1E18 - 1n)).toBe(true);
     expect(isHealthFactorAtRisk(null)).toBe(false);
+    expect(isHealthFactorAtRisk(0n)).toBe(true);
     expect(isHealthFactorAtRisk(2n * 10n ** 18n, 25n * 10n ** 17n)).toBe(true);
   });
 
