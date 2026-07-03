@@ -56,6 +56,7 @@ import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
+import { LoanKeeperCard } from '../components/LoanKeeperCard';
 import { useLoanSalePending } from '../data/loanSalePending';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
@@ -1396,6 +1397,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           setBusy={setBusy}
           onCleared={refi.clear}
         />
+      ) : null}
+
+      {/* Per-loan keeper enables — third leg of the keeper trio
+          (Settings holds the master switch + whitelist). Either
+          confirmed position holder can flip it; hidden entirely when
+          the viewer has no approved keepers. */}
+      {isAdvanced &&
+      (role === 'borrower' || role === 'lender') &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !soldThisSession ? (
+        <LoanKeeperCard loanId={row.loanId} busy={busy} setBusy={setBusy} />
       ) : null}
 
       {doneMessage ? (

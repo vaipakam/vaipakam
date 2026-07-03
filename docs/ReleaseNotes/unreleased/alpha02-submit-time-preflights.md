@@ -109,3 +109,16 @@ or cancelled elsewhere) is announced once instead of silently
 disappearing. On the buyer's side, accepting an offer that is really
 a position sale is clearly disclosed before signing: the review names
 the running loan being bought and waits for that check to resolve.
+
+Advanced mode also gains keeper permissions — the protocol's fully
+opt-in way to let a third-party service (or your own bot) run
+specific loan actions for you. The Settings surface pairs a master
+switch with per-keeper grants explained action by action in plain
+language, and every loan page gets the per-loan switch that actually
+arms a keeper for that loan; all three must agree, everything is off
+by default, and the page states the safety facts up front: a keeper
+can never receive your money, every grant is instantly revocable,
+the protocol can pause all keepers at once, and permissions follow
+whoever holds the position. The editor never overwrites permissions
+it couldn't read, preserves grants it doesn't render, and routes
+"remove everything" to a full revoke.

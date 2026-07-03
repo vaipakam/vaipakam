@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useTheme, type ThemePreference } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
+import { KeeperSettingsCard } from '../components/KeeperSettingsCard';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -27,7 +28,7 @@ const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
 
 export function Settings() {
   const { preference, setPreference } = useTheme();
-  const { mode, setMode } = useMode();
+  const { mode, setMode, isAdvanced } = useMode();
 
   return (
     <div className="stack">
@@ -88,6 +89,8 @@ export function Settings() {
           protocol are identical in both.
         </p>
       </section>
+
+      {isAdvanced ? <KeeperSettingsCard /> : null}
 
       <section className="card">
         <div className="card-title">

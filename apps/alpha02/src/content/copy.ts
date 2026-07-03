@@ -274,6 +274,49 @@ export const copy = {
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
 
+  keepers: {
+    title: 'Keeper permissions',
+    blurb:
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, finish a refinance you set up, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+    safetyNote:
+      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
+    masterLabel:
+      'Allow my approved keepers to act (master switch — nothing runs while this is off)',
+    enabledOn:
+      'Keeper access enabled. Keepers can now act where you granted permissions AND the loan’s own switch is on.',
+    enabledOff:
+      'Keeper access disabled — no keeper can act for you anywhere while this stays off.',
+    addTitle: 'Approve a keeper',
+    add: 'Approve keeper',
+    added: 'Keeper approved. Remember: it can only act on loans where you also flip that loan’s keeper switch.',
+    alreadyListed:
+      'That keeper is already approved — edit its permissions above instead.',
+    save: 'Save permissions',
+    updated: 'Keeper permissions updated.',
+    revoke: 'Revoke',
+    revoked: 'Keeper revoked — it can no longer act for you anywhere.',
+    maskUnreadable:
+      'We couldn’t read this keeper’s current permissions, so editing is disabled (saving now could silently overwrite them). Retry in a moment; revoking still works.',
+    extraBitsNote:
+      'This keeper also holds advanced permissions not shown here — they are preserved unchanged when you save.',
+    atCap: (max: number) =>
+      `You’ve reached the maximum of ${max} approved keepers — revoke one to add another.`,
+    perLoanReminder:
+      'Approving a keeper here is not enough by itself: each loan’s page has a per-loan keeper switch that must also be on.',
+    loading: 'Loading your keeper settings…',
+    unavailable:
+      'We couldn’t load your keeper settings right now — please try again in a moment.',
+    loanTitle: 'Keepers for this loan',
+    loanBlurb:
+      'Your approved keepers can act on this loan only while its switch is on. Actions stay bounded by the permissions you granted in Settings.',
+    loanToggleOn: 'Keeper enabled for this loan.',
+    loanToggleOff: 'Keeper disabled for this loan.',
+    loanNoKeepers:
+      'You haven’t approved any keepers yet — set them up under Settings → Keeper permissions.',
+    loanMasterOff:
+      'Your keeper master switch is off, so nothing can run even with this loan’s switch on — turn it on under Settings → Keeper permissions.',
+  },
+
   earlyExit: {
     title: 'Exit this loan early',
     blurb:

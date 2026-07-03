@@ -791,6 +791,26 @@ converge. Its intended behaviour (the test oracle for that surface):
   before signing — the review names the linked loan, signing waits
   until the link check resolves, and an acknowledgement given before
   the disclosure appeared is voided.
+- Advanced mode surfaces keeper permissions as the protocol's
+  three-switch opt-in: a master switch, per-keeper action grants,
+  and a per-loan switch on each loan's page — all off by default,
+  and all three must agree before any third party can act. The
+  settings surface explains each grantable action in plain language
+  with whose side it drives, states the safety facts (a keeper can
+  never receive funds — payouts always go to the position holder;
+  everything is revocable instantly; the protocol can pause all
+  keepers; refinances stay bounded by the per-loan guardrails; the
+  permissions belong to whoever holds the position), and encodes the
+  protocol's edit rules: editing starts from the fetched permissions
+  and is refused while they can't be read (saving a synthesized
+  default could silently overwrite real grants), permissions the
+  surface doesn't render are preserved on save, clearing every
+  permission revokes the keeper, and the whitelist's size cap is
+  stated. Capital-deployment permissions (standing-intent fills,
+  auto-roll) are not offered here at all. Granting alone is inert
+  and the surface says so — the per-loan switch is presented on the
+  loan page for either confirmed position holder, with a visible
+  reminder when the master switch is off.
 
 ## Key UX Requirements
 
