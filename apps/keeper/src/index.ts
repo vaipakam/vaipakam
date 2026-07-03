@@ -100,6 +100,7 @@ import { runLiquidityConfidence } from './liquidityConfidence';
 import { runLiquidator } from './liquidator';
 import { runAutoLifecycle } from './autoLifecycle';
 import { runPreGraceWatcher } from './preGraceWatcher';
+import { runRewardBudgetRemit } from './rewardBudgetRemit';
 
 export default {
   async scheduled(
@@ -164,6 +165,16 @@ export default {
       runPreGraceWatcher(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[keeper] runPreGraceWatcher pass failed:', err);
+      }),
+    );
+    // #925 — reward-budget remittance. On Base only, funds each mirror's
+    // interaction-reward VPFI budget on demand (RewardRemittanceFacet). Dark
+    // until KEEPER_ENABLED + REWARD_REMIT_ENABLED are both set and the keeper
+    // EOA is authorized on-chain (setRewardRemittanceKeeper / ADMIN).
+    ctx.waitUntil(
+      runRewardBudgetRemit(resolved).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[keeper] runRewardBudgetRemit pass failed:', err);
       }),
     );
   },

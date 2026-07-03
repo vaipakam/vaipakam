@@ -50,6 +50,9 @@ Cloudflare Worker secrets (set via `wrangler secret put`):
 | `KEEPER_PRIVATE_KEY` | The signing key. Holds funds; rotate per the AdminKeysAndPause runbook. |
 | `RPC_*` | Per-chain RPC URLs (carry API keys). |
 | `KEEPER_ENABLED` | Master kill-switch; set to `false` to disable autonomous actions. |
+| `REWARD_REMIT_ENABLED` | Arms the #776 reward-budget remittance pass (in addition to `KEEPER_ENABLED`). Keep off until the keeper EOA is authorized on-chain via `setRewardRemittanceKeeper` (or is ADMIN). |
+| `REWARD_REMIT_LOOKBACK_DAYS` | Recent-day window the remit pass re-scans for un-remitted budget each tick (default `45`). |
+| `REWARD_REMIT_LANE_CAP` | Per-send VPFI ceiling (wei) — the `perRemittanceCap` + greedy batch bound. Must be ≤ the provisioned reward-budget CCIP lane bucket and ≥ the largest single-day slice (#918). Default `50000e18` (matches the on-chain lane default). |
 | `ZEROEX_API_KEY` / `ONEINCH_API_KEY` | Liquidation swap aggregator credentials. |
 | `TG_BOT_TOKEN` / `PUSH_CHANNEL_PK` | Alert dispatcher credentials. |
 

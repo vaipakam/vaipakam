@@ -57,6 +57,14 @@ interface BaseEnv {
   // on-chain submit paths. A plain var (not a secret).
   KEEPER_ENABLED?: string;
 
+  // #925 — reward-budget remittance pass knobs (plain vars, not secrets).
+  /** 'true' arms the reward-budget remit pass (in addition to KEEPER_ENABLED). */
+  REWARD_REMIT_ENABLED?: string;
+  /** recent-day window re-scanned for un-remitted budget each tick (default 45). */
+  REWARD_REMIT_LOOKBACK_DAYS?: string;
+  /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 50000e18, matches the on-chain lane default). */
+  REWARD_REMIT_LANE_CAP?: string;
+
   // Depth-tiered-LTV liquidity-confidence relay knobs
   // (`liquidityConfidence.ts`, §4.4 step 5). Both default
   // conservatively when unset; demotion is always immediate.
@@ -229,6 +237,9 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     TG_BOT_USERNAME: raw.TG_BOT_USERNAME,
     FRONTEND_ORIGIN: raw.FRONTEND_ORIGIN,
     KEEPER_ENABLED: raw.KEEPER_ENABLED,
+    REWARD_REMIT_ENABLED: raw.REWARD_REMIT_ENABLED,
+    REWARD_REMIT_LOOKBACK_DAYS: raw.REWARD_REMIT_LOOKBACK_DAYS,
+    REWARD_REMIT_LANE_CAP: raw.REWARD_REMIT_LANE_CAP,
     LIQ_CONFIDENCE_MIN_CHECKS: raw.LIQ_CONFIDENCE_MIN_CHECKS,
     LIQ_CONFIDENCE_MIN_WINDOW_DAYS: raw.LIQ_CONFIDENCE_MIN_WINDOW_DAYS,
     LIQ_TIER3_MIN_TVL_USD: raw.LIQ_TIER3_MIN_TVL_USD,
