@@ -7,6 +7,8 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { readGraceSecondsLive } from '../contracts/preflights';
+import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
 
 /** Deploy default (5%) — display fallback only. Money paths must use
  *  {@link readRentalBufferBps} or gate on `ready`. */
@@ -44,6 +46,28 @@ export function useRentalBufferBps(): { bps: number; ready: boolean } {
   });
 
   return { bps: data ?? RENTAL_BUFFER_BPS_DEFAULT, ready: data !== undefined };
+}
+
+/** LIVE grace label for receipts — governance can override the
+ *  default schedule with buckets, and the shown grace must match the
+ *  window repayment is actually judged against. Falls back to the
+ *  default-schedule label while loading (identical on deploys with no
+ *  buckets configured). */
+export function useGraceLabel(durationDays: number): string {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data } = useQuery({
+    queryKey: ['graceSeconds', readChain.chainId, durationDays],
+    enabled: Boolean(publicClient) && durationDays > 0,
+    staleTime: 5 * 60_000,
+    queryFn: () =>
+      readGraceSecondsLive({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        durationDays,
+      }),
+  });
+  return formatGraceSeconds(data ?? defaultGraceSeconds(durationDays));
 }
 
 /** Renter's total up-front payment for a rental:

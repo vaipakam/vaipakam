@@ -35,12 +35,19 @@ export async function assertErc20BalanceLive(opts: {
   amount: bigint;
   symbol?: string;
 }): Promise<void> {
-  const held = await opts.publicClient.readContract({
-    address: opts.token,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [opts.owner],
-  });
+  let held: bigint;
+  try {
+    held = await opts.publicClient.readContract({
+      address: opts.token,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [opts.owner],
+    });
+  } catch {
+    // Fail closed, in words the user can act on — a raw viem
+    // transport message is not a next step.
+    throw new Error(copy.errors.checkRetry);
+  }
   if (held < opts.amount) {
     throw new Error(copy.errors.needMore(opts.symbol ?? 'the required asset'));
   }

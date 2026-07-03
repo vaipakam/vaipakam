@@ -19,6 +19,7 @@ import {
   ContractFunctionZeroDataError,
 } from 'viem';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -102,12 +103,12 @@ export function useVpfiTierTable(): VpfiTierRow[] {
  *  rotation. One helper so address casing, the zero-address meaning,
  *  and the error copy can't drift across call sites. */
 export async function readVpfiTokenLive(
-  publicClient: { readContract: (args: never) => Promise<unknown> },
+  publicClient: PublicClient,
   diamondAddress: `0x${string}`,
   retryMessage: string,
 ): Promise<string> {
   try {
-    return (await (publicClient.readContract as (a: unknown) => Promise<unknown>)({
+    return (await publicClient.readContract({
       address: diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'getVPFIToken',

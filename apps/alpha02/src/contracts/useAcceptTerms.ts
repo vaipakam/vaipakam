@@ -330,7 +330,10 @@ export function useAcceptTermsSigning() {
       // forgets the flag gets a loud abort on illiquid pairs, never a
       // silently skipped disclosure. Reads fail CLOSED — an unknown
       // must not sign as "liquid".
-      if (input.expected && input.expected.illiquidWarned !== true) {
+      // Note: gated on the FLAG only, not on `expected` being present
+      // — a caller that omits expected entirely still gets the loud
+      // abort on an illiquid pair, never a silent skip.
+      if (input.expected?.illiquidWarned !== true) {
         const [lendingIlliquid, collateralIlliquid] = await Promise.all([
           isAssetIlliquidLive({
             publicClient,

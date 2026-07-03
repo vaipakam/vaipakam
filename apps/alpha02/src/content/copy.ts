@@ -118,6 +118,12 @@ export const copy = {
       'Interest is full-term: the whole term’s interest applies even if the loan is repaid early.',
     interestModeProRata:
       'Interest accrues day by day — repaying early costs less.',
+    interestModeProRataLender:
+      'Interest accrues day by day — if the borrower repays early, you earn less.',
+    liquidityChecking:
+      'Checking how these assets are priced by the protocol…',
+    liquidityCheckFailed:
+      'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
   },
 
   borrow: {

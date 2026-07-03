@@ -301,11 +301,15 @@ export function PositionDetails() {
             tokenId: row.borrowerTokenId,
             expectedOwner: address,
           }),
-          readGraceSecondsLive({
-            publicClient,
-            diamondAddress: walletChain.diamondAddress,
-            durationDays: row.durationDays,
-          }),
+          // Grace only gates ERC-20 repays — don't spend a read on
+          // rental closes.
+          row.assetType === AssetType.ERC20
+            ? readGraceSecondsLive({
+                publicClient,
+                diamondAddress: walletChain.diamondAddress,
+                durationDays: row.durationDays,
+              })
+            : Promise.resolve(0n),
         ]);
         // repayLoan reverts RepaymentPastGracePeriod once past the
         // grace window — fail BEFORE the approval.
