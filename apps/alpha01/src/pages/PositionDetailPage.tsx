@@ -10,6 +10,7 @@ import {
   isLoanSideClaimable,
   isNftRentalLoan,
   nftAssetKindLabel,
+  MIN_HEALTH_FACTOR_1E18,
   plainHealthLabel,
   loanRoleForWallet,
   rentalDailyFeeWei,
@@ -20,11 +21,16 @@ import { AssetAmount } from '../components/AssetAmount';
 import { HelpLink } from '../components/HelpLink';
 import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
+import { TechnicalRiskPanel } from '../components/TechnicalRiskPanel';
+import { useMode } from '../context/ModeContext';
 import { useLoanHealth } from '../hooks/useLoanHealth';
+import { useLoanRisks } from '../hooks/useLoanRisks';
+import { useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
+import { DEFI_CLASSIC_LINKS } from '../lib/defiClassicLinks';
 
 export function PositionDetailPage() {
   const { loanId } = useParams();
@@ -35,7 +41,10 @@ export function PositionDetailPage() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const origin = useIndexerOrigin();
+  const { mode } = useMode();
   const { data: hf } = useLoanHealth(id);
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
+  const { data: riskMap, isLoading: riskLoading } = useLoanRisks(Number.isFinite(id) ? [id] : []);
 
   const { data: loan, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['loan', chain.chainId, id, origin],
@@ -97,7 +106,7 @@ export function PositionDetailPage() {
 
   const rental = loan ? isNftRentalLoan(loan) : false;
   const isBorrower = role === 'borrower' || role === 'both';
-  const health = plainHealthLabel(isBorrower && !rental ? hf : null);
+  const health = plainHealthLabel(isBorrower && !rental ? hf : null, minHf1e18);
   const rolesForAction: ('borrower' | 'lender')[] =
     role === 'both'
       ? ['borrower', 'lender']
@@ -155,9 +164,11 @@ export function PositionDetailPage() {
 
   const statusLabel =
     loan.status === 'active'
-      ? isBorrower
-        ? health.label
-        : 'Active'
+      ? rental
+        ? 'Active'
+        : isBorrower
+          ? health.label
+          : 'Active'
       : loan.status === 'repaid'
         ? 'Repaid — ready to claim'
         : loan.status;
@@ -241,6 +252,9 @@ export function PositionDetailPage() {
               <strong>Interest:</strong> {formatBpsAsPercent(loan.interestRateBps)} over {loan.durationDays} days
             </div>
             {isBorrower ? <div style={{ color: 'var(--text-secondary)' }}>{health.detail}</div> : null}
+            {mode === 'advanced' && isBorrower ? (
+              <TechnicalRiskPanel risk={riskMap?.get(loan.loanId)} loading={riskLoading} />
+            ) : null}
             <details>
               <summary>What happens if I do nothing?</summary>
               <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
@@ -286,6 +300,24 @@ export function PositionDetailPage() {
           </button>
         ) : null}
       </div>
+
+      {mode === 'advanced' && !rental && loan.status === 'active' ? (
+        <div className="card" style={{ marginTop: 16 }}>
+          <strong>More protocol actions</strong>
+          <p style={{ margin: '8px 0 12px', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
+            Add collateral, partial repay, preclose, refinance, and early withdrawal live in the classic app
+            until alpha01 catches up.
+          </p>
+          <a
+            href={DEFI_CLASSIC_LINKS.loan(loan.loanId)}
+            className="btn btn-secondary"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open loan in classic app →
+          </a>
+        </div>
+      ) : null}
 
       <div style={{ marginTop: 16 }}>
         <HelpLink anchor="manage-loan" />

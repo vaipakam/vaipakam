@@ -7,6 +7,7 @@ import {
   acceptOfferFlow,
   createBorrowerOffer,
   formatBpsAsPercent,
+  MIN_HEALTH_FACTOR_1E18,
   matchOffersToBorrowIntent,
   netBorrowProceedsWei,
   offerPrincipalWei,
@@ -24,12 +25,18 @@ import { HelpLink } from '../components/HelpLink';
 import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
 import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
-import { useLoanInitiationFeeBps } from '../hooks/useProtocolConfig';
+import { useLoanInitiationFeeBps, useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
+import { AdvancedPanel } from '../components/AdvancedPanel';
 import { useMode } from '../context/ModeContext';
+import {
+  borrowAcceptTechnicalDetails,
+  borrowRequestTechnicalDetails,
+  offerBrowseTechnicalRows,
+} from '../lib/advancedReceipt';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import { assessCollateralBalance, parseHumanAmount } from '../lib/balanceCheck';
@@ -50,6 +57,7 @@ function borrowReceipt(
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
   lifBps: number,
+  minHf1e18: bigint,
 ): ReviewReceiptView {
   const principalWei = offerPrincipalWei(offer);
   const lifBpsBig = BigInt(lifBps);
@@ -107,6 +115,7 @@ function borrowReceipt(
       label: 'When this ends',
       value: `After ${offer.durationDays} days, or when you fully repay.`,
     },
+    technicalDetails: borrowAcceptTechnicalDetails(offer, lifBps, minHf1e18),
   };
 }
 
@@ -119,6 +128,8 @@ function requestReceipt(
   collateralAsset: string,
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
+  lifBps: number,
+  minHf1e18: bigint,
 ): ReviewReceiptView {
   return {
     youReceive: {
@@ -152,6 +163,7 @@ function requestReceipt(
     },
     fees: { label: 'Fees', value: 'Protocol fees at settlement (separate from network gas).' },
     whenEnds: { label: 'When this ends', value: 'When cancelled, matched, or the loan closes.' },
+    technicalDetails: borrowRequestTechnicalDetails({ maxRate: rate, duration, lifBps }, minHf1e18),
   };
 }
 
@@ -165,6 +177,7 @@ export function BorrowWizard() {
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
   const { data: lifBps = 10 } = useLoanInitiationFeeBps();
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const { data: offers, isLoading, isError: offersError, error: offersErr } = useLenderOffersForBorrow();
 
   const lendingDefault = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
@@ -348,7 +361,7 @@ export function BorrowWizard() {
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (mode === 'accept' && selected) {
-      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta, lifBps);
+      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta, lifBps, minHf1e18);
     }
     return requestReceipt(
       amount,
@@ -359,6 +372,8 @@ export function BorrowWizard() {
       collateralAsset,
       lendingMeta,
       collateralMeta,
+      lifBps,
+      minHf1e18,
     );
   }, [
     amount,
@@ -374,6 +389,7 @@ export function BorrowWizard() {
     selectedCollateralMeta,
     selectedLendingMeta,
     lifBps,
+    minHf1e18,
   ]);
 
   async function handleAccept() {
@@ -519,6 +535,18 @@ export function BorrowWizard() {
 
       {step === 'match' ? (
         <>
+          {uiMode === 'advanced' ? (
+            <AdvancedPanel title="Your borrow bounds" testId="borrow-bounds-panel" defaultOpen={false}>
+              <div>
+                Borrow up to <strong>{amount || '—'}</strong>{' '}
+                {resolveSymbol(lendingMeta, lendingAsset)} · max {maxRate}% APR · {duration} days
+              </div>
+              <div>
+                Collateral: {resolveSymbol(collateralMeta, collateralAsset)}
+                {matched.length > 0 ? ` · ${matched.length} offer${matched.length === 1 ? '' : 's'} in range` : ''}
+              </div>
+            </AdvancedPanel>
+          ) : null}
           {offersError ? (
             <div className="banner banner-error">
               Could not load offers: {offersErr instanceof Error ? offersErr.message : 'Indexer request failed'}
@@ -546,6 +574,15 @@ export function BorrowWizard() {
                   Borrow {resolveSymbol(peekTokenMeta(o.lendingAsset, chain.chainId), o.lendingAsset)} · Lock{' '}
                   {resolveSymbol(peekTokenMeta(o.collateralAsset, chain.chainId), o.collateralAsset)}
                 </div>
+                {uiMode === 'advanced' ? (
+                  <div style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {offerBrowseTechnicalRows(o).map((r) => (
+                      <span key={r.label} style={{ marginRight: 12 }}>
+                        {r.label}: {r.value}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </button>
             ))}
           </div>

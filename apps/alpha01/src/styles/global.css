@@ -481,3 +481,116 @@ button, input, select, textarea { font: inherit; }
   background: color-mix(in srgb, var(--accent-red) 12%, transparent);
   border: 1px solid var(--accent-red);
 }
+
+.portfolio-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+}
+
+@media (min-width: 768px) {
+  .portfolio-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+    align-items: end;
+  }
+}
+
+.portfolio-strip-metric {
+  display: grid;
+  gap: 2px;
+}
+
+.portfolio-strip-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.portfolio-strip-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.portfolio-strip-link {
+  font-size: 0.9rem;
+  align-self: center;
+}
+
+.position-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.position-filters label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.position-filters select {
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.technical-risk-panel {
+  margin-top: 8px;
+}
+
+.technical-risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin-top: 10px;
+}
+
+.technical-risk-grid dt {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.technical-risk-grid dd {
+  font-weight: 600;
+  margin: 0;
+}
+
+.advanced-panel {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-card) 88%, var(--brand) 12%);
+}
+
+.advanced-panel-body {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.advanced-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.advanced-shortcuts a {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  font-size: 0.9rem;
+}

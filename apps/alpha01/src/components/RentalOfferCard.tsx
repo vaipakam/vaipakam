@@ -11,11 +11,12 @@ import { useTokenMeta } from '../lib/tokenMeta';
 interface Props {
   offer: IndexedOffer;
   rentalBufferBps: number;
+  advanced?: boolean;
   selected?: boolean;
   onSelect?: () => void;
 }
 
-export function RentalOfferCard({ offer, rentalBufferBps, selected, onSelect }: Props) {
+export function RentalOfferCard({ offer, rentalBufferBps, advanced = false, selected, onSelect }: Props) {
   const prepayMeta = useTokenMeta(offer.prepayAsset || null);
   const dailyWei = rentalDailyFeeWei(offer);
   const totalPrepay = computeRentalPrepayWei(dailyWei, offer.durationDays, rentalBufferBps);
@@ -42,6 +43,11 @@ export function RentalOfferCard({ offer, rentalBufferBps, selected, onSelect }: 
       <p style={{ margin: '8px 0 0', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
         You receive temporary use rights only — not ownership.
       </p>
+      {advanced ? (
+        <div style={{ marginTop: 8, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+          Buffer {(rentalBufferBps / 100).toFixed(1)}% · Prepay wei {totalPrepay.toString()} · Rights: temporary use
+        </div>
+      ) : null}
     </>
   );
 

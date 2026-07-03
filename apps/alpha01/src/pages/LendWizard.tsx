@@ -26,6 +26,13 @@ import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 import { assessCollateralBalance } from '../lib/balanceCheck';
 import { resolveSymbol } from '../lib/formatAsset';
+import { AdvancedPanel } from '../components/AdvancedPanel';
+import { useMode } from '../context/ModeContext';
+import {
+  lendCreateTechnicalDetails,
+  lendFundTechnicalDetails,
+  offerBrowseTechnicalRows,
+} from '../lib/advancedReceipt';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import {
@@ -81,6 +88,7 @@ function fundReceipt(
     },
     fees: { label: 'Fees', value: 'Treasury yield fee at settlement. Network gas is separate.' },
     whenEnds: { label: 'When this ends', value: `After ${offer.durationDays} days or borrower repayment.` },
+    technicalDetails: lendFundTechnicalDetails(offer),
   };
 }
 
@@ -117,11 +125,13 @@ function createReceipt(
       label: 'When this ends',
       value: `The open offer stays live until a borrower accepts or you cancel — no automatic expiry. After acceptance, the loan term is ${duration} days.`,
     },
+    technicalDetails: lendCreateTechnicalDetails(rate, duration),
   };
 }
 
 export function LendWizard() {
   const navigate = useNavigate();
+  const { mode: uiMode } = useMode();
   const { address, isCorrectChain, connect, switchToAppChain, activeChain } = useWallet();
   const chain = useReadChain();
   const diamond = useDiamondContract();
@@ -428,6 +438,15 @@ export function LendWizard() {
                   Collateral:{' '}
                   {resolveSymbol(peekTokenMeta(o.collateralAsset, chain.chainId), o.collateralAsset)}
                 </div>
+                {uiMode === 'advanced' ? (
+                  <div style={{ marginTop: 6, fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                    {offerBrowseTechnicalRows(o).map((r) => (
+                      <span key={r.label} style={{ marginRight: 12 }}>
+                        {r.label}: {r.value}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </button>
             ))}
           </div>
@@ -492,6 +511,18 @@ export function LendWizard() {
             Pair: <AssetSymbolLink address={lendingAsset} meta={lendingMeta} /> lent against{' '}
             <AssetSymbolLink address={collateralAsset} meta={peekTokenMeta(collateralAsset, chain.chainId)} /> collateral.
           </p>
+          {uiMode === 'advanced' ? (
+            <AdvancedPanel title="Offer construction" testId="lend-construction-panel" defaultOpen={false}>
+              <div>
+                Principal <strong>{amount || '—'}</strong> · APR <strong>{rate}%</strong> ·{' '}
+                <strong>{duration}</strong> days
+              </div>
+              <div>
+                Required collateral <strong>{collateralAmount || '—'}</strong> · open until accepted or cancelled
+              </div>
+              <div>On-chain LTV and health-factor checks run when a borrower accepts.</div>
+            </AdvancedPanel>
+          ) : null}
           <div className="wizard-actions">
             <button type="button" className="btn btn-secondary" onClick={() => setStep('choose')}>Back</button>
             <button

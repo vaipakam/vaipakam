@@ -1,6 +1,15 @@
 import { Link } from 'react-router-dom';
 import type { IndexedLoan } from '@vaipakam/defi-client';
-import { formatBpsAsPercent, isNftRentalLoan, loanRoleForWallet, nftAssetKindLabel } from '@vaipakam/defi-client';
+import {
+  formatBpsAsPercent,
+  formatHealthFactor,
+  formatLtvBps,
+  isNftRentalLoan,
+  loanRoleForWallet,
+  nftAssetKindLabel,
+} from '@vaipakam/defi-client';
+import type { LoanRiskSnapshot } from '../hooks/useLoanRisks';
+import { useMode } from '../context/ModeContext';
 import { shortenAddr } from '@vaipakam/lib/address';
 import { resolveSymbol } from '../lib/formatAsset';
 import { useTokenMeta } from '../lib/tokenMeta';
@@ -8,9 +17,11 @@ import { useWallet } from '../context/WalletContext';
 
 interface Props {
   loan: IndexedLoan;
+  risk?: LoanRiskSnapshot;
 }
 
-export function PositionCard({ loan }: Props) {
+export function PositionCard({ loan, risk }: Props) {
+  const { mode } = useMode();
   const { address } = useWallet();
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
@@ -52,6 +63,12 @@ export function PositionCard({ loan }: Props) {
       <div style={{ fontSize: '0.85rem' }}>
         Counterparty: {shortenAddr(counterparty)}
       </div>
+      {mode === 'advanced' && !rental && risk?.healthFactor != null ? (
+        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+          HF {formatHealthFactor(risk.healthFactor)}
+          {risk.ltvBps != null && risk.ltvBps > 0n ? ` · LTV ${formatLtvBps(risk.ltvBps)}` : null}
+        </div>
+      ) : null}
     </Link>
   );
 }

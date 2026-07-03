@@ -1,17 +1,22 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import {
   claimAsBorrower,
   claimAsLender,
   formatBpsAsPercent,
   type IndexedLoan,
 } from '@vaipakam/defi-client';
+import type { Address } from 'viem';
+import { AdvancedPanel } from '../components/AdvancedPanel';
+import { useMode } from '../context/ModeContext';
 import { AssetSymbolLink } from '../components/AssetSymbolLink';
 import { HelpLink } from '../components/HelpLink';
 import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
 import { useClaimables } from '../hooks/useClaimables';
-import { useDiamondContract } from '../hooks/useDiamond';
+import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 
 export function ClaimsPage() {
   const { address, connect, isCorrectChain } = useWallet();
@@ -97,6 +102,9 @@ function ClaimLoanCard({
   canClaim: boolean;
   onClaim: () => void;
 }) {
+  const { mode } = useMode();
+  const chain = useReadChain();
+  const publicClient = useDiamondPublicClient();
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const lenderDefaulted =
@@ -105,6 +113,21 @@ function ClaimLoanCard({
     side === 'borrower' || lenderDefaulted ? loan.collateralAsset : loan.lendingAsset;
   const claimMeta =
     side === 'borrower' || lenderDefaulted ? collateralMeta : lendingMeta;
+
+  const { data: lifRebate } = useQuery({
+    queryKey: ['borrower-lif-rebate', chain.chainId, loan.loanId, chain.diamondAddress],
+    enabled: mode === 'advanced' && side === 'borrower' && Boolean(chain.diamondAddress),
+    queryFn: async () => {
+      const rebate = (await publicClient.readContract({
+        address: chain.diamondAddress as Address,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getBorrowerLifRebate',
+        args: [BigInt(loan.loanId)],
+      })) as readonly [bigint, bigint];
+      return rebate[0] ?? 0n;
+    },
+    staleTime: 30_000,
+  });
 
   return (
     <div className="position-card">
@@ -123,6 +146,20 @@ function ClaimLoanCard({
             ? 'You can claim collateral or liquidation proceeds after default.'
             : 'You can claim principal plus interest after the borrower repaid.'}
       </p>
+      {mode === 'advanced' ? (
+        <AdvancedPanel title="Settlement breakdown" defaultOpen={false}>
+          <div>Status: {loan.status}</div>
+          <div>
+            Claim asset: <AssetSymbolLink address={claimAsset} meta={claimMeta} />
+          </div>
+          {side === 'borrower' && lifRebate != null && lifRebate > 0n ? (
+            <div>VPFI LIF rebate: {lifRebate.toString()} wei (paid with borrower claim)</div>
+          ) : null}
+          {side === 'lender' && !lenderDefaulted ? (
+            <div>Treasury yield fee was deducted at settlement before this claim.</div>
+          ) : null}
+        </AdvancedPanel>
+      ) : null}
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button type="button" className="btn btn-primary" disabled={busy || !canClaim} onClick={onClaim}>
           Claim

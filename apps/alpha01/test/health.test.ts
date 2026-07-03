@@ -1,5 +1,14 @@
-import { borrowerPrimaryAction } from '@vaipakam/defi-client';
+import { borrowerPrimaryAction, plainHealthLabel } from '@vaipakam/defi-client';
 import { describe, expect, it } from 'vitest';
+
+describe('plainHealthLabel', () => {
+  it('uses the live min HF floor for the healthy band', () => {
+    const min2 = 2n * 10n ** 18n;
+    expect(plainHealthLabel(2n * 10n ** 18n, min2).label).toBe('Healthy');
+    expect(plainHealthLabel(15n * 10n ** 17n, min2).label).toBe('Needs attention');
+    expect(plainHealthLabel(15n * 10n ** 17n).label).toBe('Healthy');
+  });
+});
 
 describe('borrowerPrimaryAction', () => {
   it('offers borrower claim on terminal recoverable statuses', () => {
