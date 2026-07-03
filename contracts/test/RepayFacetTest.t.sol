@@ -1272,6 +1272,34 @@ contract RepayFacetTest is Test {
         RepayFacet(address(diamond)).repayPartial(1, 50);
     }
 
+    /// @dev #956 (Codex #978) — a configured minPartialBps floor must NOT block
+    ///      an NFT-rental partial. The floor is denominated in ERC-20 principal
+    ///      units, but a rental partial's `partialAmount` is a DAY count. For
+    ///      loan 2 (NFT rental, daily fee 10) a 50% floor computes
+    ///      `minPartial = 5` in token units; before the ERC-20 scoping this
+    ///      compared `1 day < 5` and wrongly reverted `InsufficientPartialAmount`.
+    ///      Now the floor is skipped for non-ERC20 loans and a 1-day reduction
+    ///      succeeds (durationDays 30 → 29).
+    function testRepayPartialNFTSkipsMinPartialFloor() public {
+        helperOfferLoan();
+        // Codex #978 — LoanFacet copies the offer's lending asset (the NFT
+        // collection `mockNft721`) into `loan.principalAsset` for a rental, and
+        // the floor is read as `assetRiskParams[loan.principalAsset]`. Set the
+        // floor on THAT asset (not the unrelated `mockERC20`) or the test would
+        // pass even with the ERC-20 guard removed. Assert the asset first.
+        LibVaipakam.Loan memory nftLoan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(nftLoan.principalAsset, mockNft721, "loan 2 principal asset is the NFT");
+        // 50% floor: minPartial = principal(10) * 5000 / 10000 = 5 token units.
+        // A 1-DAY rental partial is `1`, which the pre-scoping check compared as
+        // `1 < 5` and wrongly reverted `InsufficientPartialAmount`.
+        TestMutatorFacet(address(diamond)).setMinPartialBpsRaw(mockNft721, 5000);
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(2, 1);
+
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(2);
+        assertEq(loan.durationDays, 29, "NFT rental day-reduction not blocked by the floor");
+    }
+
     /// @dev Tests repayPartial NFT "Treasury share failed" path.
     ///      First vaultWithdrawERC20 (lender share) succeeds; second (treasury share) fails.
     function testRepayPartialNFTTreasuryShareFails() public {

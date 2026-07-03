@@ -88,6 +88,13 @@ contract ConfigFacet is DiamondAccessControl {
     /// @custom:event-category informational/config
     event GraceBucketsUpdated(uint256 bucketCount);
 
+    /// @notice #956 (#921 item 5) — emitted when the per-asset minimum
+    ///         partial-repayment floor changes.
+    /// @param asset          Principal asset the floor applies to.
+    /// @param minPartialBps  New floor in bps of remaining principal.
+    /// @custom:event-category informational/config
+    event AssetMinPartialBpsUpdated(address indexed asset, uint256 minPartialBps);
+
     /// @notice Reverts when {setGraceBuckets} is called with an invalid
     ///         shape (empty / over-cap / non-monotonic / missing
     ///         catch-all marker / out-of-range values).
@@ -1669,6 +1676,60 @@ contract ConfigFacet is DiamondAccessControl {
         uint8 oldTier = LibVaipakam.storageSlot().keeperTier[asset];
         LibVaipakam.storageSlot().keeperTier[asset] = tier;
         emit KeeperTierSet(asset, oldTier, tier);
+    }
+
+    /**
+     * @notice #956 (#921 item 5) — set the per-asset minimum partial-repayment
+     *         floor, in bps of remaining principal.
+     * @dev    Enforced by {RepayFacet.repayPartial} and {SwapToRepayFacet}: a
+     *         partial must be `>= principal * minPartialBps / BASIS_POINTS`. The
+     *         field was enforced but had no production setter (only the test
+     *         mutator wrote it), so in production it was permanently 0 — a no-op
+     *         floor. This adds the bounded setter, `ADMIN_ROLE`-gated to match
+     *         its ConfigFacet risk-config sibling {setTierLiquidationLtvBps}
+     *         (RiskFacet is at the EIP-170 size ceiling, so the setter is hosted
+     *         here rather than next to {RiskFacet.updateRiskParams}).
+     * @param asset          Principal asset the floor applies to.
+     * @param minPartialBps  Floor in bps (0 disables it; must be < BASIS_POINTS).
+     * @dev    #956 (Codex #978) — the ceiling is `BASIS_POINTS - 1`, not
+     *         `BASIS_POINTS`. A 100% floor requires every partial to be at least
+     *         the entire remaining principal, but both {RepayFacet.repayPartial}
+     *         and {SwapToRepayFacet} independently reject a partial that would
+     *         retire the full principal (`PartialWouldRetireFullPrincipal`), so
+     *         `minPartialBps == BASIS_POINTS` would make ERC-20 partial repayment
+     *         impossible for the asset — a silent kill-switch. Reject it; use
+     *         `0` to disable the floor deliberately.
+     */
+    function setAssetMinPartialBps(address asset, uint256 minPartialBps)
+        external
+        onlyRole(LibAccessControl.ADMIN_ROLE)
+    {
+        if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
+        if (minPartialBps >= LibVaipakam.BASIS_POINTS) {
+            revert IVaipakamErrors.ParameterOutOfRange(
+                "minPartialBps",
+                minPartialBps,
+                0,
+                LibVaipakam.BASIS_POINTS - 1
+            );
+        }
+        LibVaipakam.storageSlot().assetRiskParams[asset].minPartialBps = minPartialBps;
+        emit AssetMinPartialBpsUpdated(asset, minPartialBps);
+    }
+
+    /**
+     * @notice #956 (#921 item 5) — read the full per-asset {RiskParams} (max
+     *         init LTV, liquidation-bonus ceiling, reserve factor, and the
+     *         min-partial floor). Previously none of these were exposed via a
+     *         view, so the enforced `minPartialBps` was unreadable on-chain.
+     * @param asset The asset whose risk params to read.
+     */
+    function getAssetRiskParams(address asset)
+        external
+        view
+        returns (LibVaipakam.RiskParams memory)
+    {
+        return LibVaipakam.storageSlot().assetRiskParams[asset];
     }
 
     /// ─── Getters (effective values: override OR default) ────────────

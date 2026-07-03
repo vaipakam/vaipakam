@@ -671,10 +671,20 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
         // no explicit opt-in cannot be partial-repaid.
         if (!loan.allowsPartialRepay) revert PartialRepayNotAllowed();
         if (partialAmount == 0) revert InsufficientPartialAmount();
-        uint256 minPartial = (loan.principal *
-            s.assetRiskParams[loan.principalAsset].minPartialBps) /
-            LibVaipakam.BASIS_POINTS;
-        if (partialAmount < minPartial) revert InsufficientPartialAmount();
+        // #956 (Codex #978) — the asset-level minimum-partial floor is denominated
+        // in ERC-20 principal units (`loan.principal * bps`). For an NFT rental
+        // `partialAmount` is a DAY count while `loan.principal` is the daily fee in
+        // token base units, so applying the floor there would compare days against
+        // token units and wrongly revert legitimate rental-day reductions. Scope
+        // the floor to ERC-20 loans; the NFT-rental path below has its own
+        // day-based validation. (SwapToRepayFacet needs no such guard — its
+        // `partialPrincipal` is always a swapped token amount.)
+        if (loan.assetType == LibVaipakam.AssetType.ERC20) {
+            uint256 minPartial = (loan.principal *
+                s.assetRiskParams[loan.principalAsset].minPartialBps) /
+                LibVaipakam.BASIS_POINTS;
+            if (partialAmount < minPartial) revert InsufficientPartialAmount();
+        }
 
         uint256 endTime = loan.startTime +
             loan.durationDays *
