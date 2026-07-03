@@ -150,6 +150,32 @@ surfaces friendly messages instead of raw selectors:
 
 **Status:** design → implementation (PR #959, redesign pass 2). **Owner-approved.**
 
+## Implementation sequencing — #980 is a hard prerequisite
+
+The core of v2 adds the sale-vehicle live-binding branch to
+`OfferAcceptFacet._bindTermsToOffer`. That facet is **at the EIP-170 24,576-byte
+ceiling** (24,564 B before this change; #980 tracks it), and the binding branch
+adds ~140 B → the facet compiles at ~24,725 B and fails `FacetSizeLimit`. A
+compact inline-ternary rewrite did not help (ternaries over storage reads are no
+smaller). So **v2 cannot land until `previewAccept` is extracted into its own
+facet (#980)**, which frees ~2.5 KB of OfferAcceptFacet headroom AND is where v2
+needs to move the "preview reads live" work anyway. Order of work:
+
+1. **#980 first** — extract `previewAccept` (+ `AcceptPreview` / `AcceptError`)
+   into a new `OfferPreviewFacet`; full facet-addition checklist (DiamondFacetNames,
+   SelectorCoverage ×2, FacetSizeLimit, DeployDiamond, HelperTest, RedeployFacets,
+   exportFrontendAbis + barrel) and re-cut every test that cuts OfferAcceptFacet +
+   calls `previewAccept` (PreviewAccept / OfferPrincipalLock / OfferExpiry /
+   RiskAccessAcceptGate / EarlyWithdrawalFacet tests).
+2. **Then v2** — the `_bindTermsToOffer` live-binding (below), the LoanFacet
+   freshness-check removal + current-holder self-buy/compliance, drop the
+   `saleListingCollateral` snapshot, the listing-teardown-on-exit hook, and the
+   live previews.
+
+(The v2 code was prototyped and reverted at this checkpoint precisely because it
+overflowed the ceiling; the branch stays at its functional round-7 state until
+#980 lands.)
+
 ## The second root cause
 
 After the v1 redesign made the flow *run*, Codex rounds 4→8 surfaced a steady
