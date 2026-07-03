@@ -286,7 +286,12 @@ export function RefinanceFlow({
           (liveLoan.principal * BigInt(liveFees.loanInitiationFeeBps)) / 10_000n,
         symbol: sym,
       });
-      await ensureAllowance({
+      // Only a MINED approve tx arms the unwind — when the wallet
+      // already held a sufficient allowance (ensureAllowance returns
+      // null), that allowance belongs to some other live arrangement
+      // (a prior request, a sale listing, a user-managed grant) and a
+      // failed step 3 must not zero it out from under that flow.
+      const approvalTx = await ensureAllowance({
         publicClient,
         walletClient,
         token: liveLoan.principalAsset,
@@ -294,7 +299,7 @@ export function RefinanceFlow({
         spender: walletChain.diamondAddress,
         amount: livePayoff,
       });
-      approvalGranted = true;
+      approvalGranted = approvalTx !== null;
       approvalToken = liveLoan.principalAsset;
       const payload = toRefinanceOfferPayload(liveLoan, row.loanId, {
         rateBpsMax: rateBps,

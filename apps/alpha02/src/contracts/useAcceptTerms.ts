@@ -143,6 +143,11 @@ export function useAcceptTermsSigning() {
         prepayAsset?: string;
         quantity?: bigint;
         assetType?: number;
+        /** The interest MODE the review's copy described (full-term
+         *  floor vs pro-rata). It changes what an early repayment
+         *  costs, so a stale indexer flag must abort BEFORE the
+         *  wallet prompt like any other reviewed term. */
+        useFullTermInterest?: boolean;
         /** True when the review DISCLOSED the in-kind (illiquid)
          *  default path. Anything else (false OR omitted) makes the
          *  signer re-read liquidity live and abort on an illiquid leg
@@ -371,7 +376,9 @@ export function useAcceptTermsSigning() {
           (e.prepayAsset !== undefined &&
             e.prepayAsset.toLowerCase() !== terms.prepayAsset.toLowerCase()) ||
           (e.quantity !== undefined && e.quantity !== terms.quantity) ||
-          (e.assetType !== undefined && e.assetType !== terms.assetType);
+          (e.assetType !== undefined && e.assetType !== terms.assetType) ||
+          (e.useFullTermInterest !== undefined &&
+            e.useFullTermInterest !== terms.useFullTermInterest);
         if (mismatch) {
           throw new Error(copy.match.termsChanged);
         }

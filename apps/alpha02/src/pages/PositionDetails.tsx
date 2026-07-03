@@ -54,10 +54,10 @@ import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
 import { EarlyExitFlow } from '../components/EarlyExitFlow';
-import { LoanSaleFlow } from '../components/LoanSaleFlow';
+import { LOAN_SALE_LISTING_ENABLED, LoanSaleFlow } from '../components/LoanSaleFlow';
 import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
 import { LoanKeeperCard } from '../components/LoanKeeperCard';
-import { useLoanSalePending } from '../data/loanSalePending';
+import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
@@ -286,7 +286,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     staleTime: 30_000,
     refetchInterval: 60_000,
     queryFn: async () => {
-      const [live, calcDue, latestBlock] = await Promise.all([
+      const [live, calcDue, latestBlock, saleLock] = await Promise.all([
         readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
         readRepaymentDueLive(
           readClient!,
@@ -294,8 +294,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           loan.data!.loanId,
         ),
         readClient!.getBlock({ blockTag: 'latest' }),
+        // The lender NFT's position lock — a live sale listing
+        // (EarlyWithdrawalSale) freezes the listing's economics at the
+        // CURRENT principal, so the borrower's partial-repay surface
+        // must know about it too, not just the lender's exit block.
+        // null = unknown (read failed) — the submit-time gate is the
+        // authoritative check; this render copy is best-effort.
+        (readClient!
+          .readContract({
+            address: readChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(loan.data!.lenderTokenId)],
+          })
+          .then((v) => Number(v))
+          .catch(() => null)) as Promise<number | null>,
       ]);
-      return { live, calcDue, chainNow: latestBlock.timestamp };
+      return { live, calcDue, chainNow: latestBlock.timestamp, saleLock };
     },
   });
 
@@ -618,12 +633,51 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock] = await Promise.all([
+      const [live, latestBlock, graceSec, saleLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
+        // repayPartial enforces the SAME grace window as repayLoan
+        // (RepaymentPastGracePeriod) — judge it by chain time against
+        // the live buckets, before any approval.
+        readGraceSecondsLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          durationDays: row.durationDays,
+        }),
+        // A live sale listing freezes the sale price at the CURRENT
+        // principal — a partial repay under it would make the next
+        // buyer overpay for a smaller claim. This read failing THROWS
+        // (fail closed): unknown lock state must not wave a partial
+        // through.
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.lenderTokenId)],
+          })
+          .then((v) => Number(v)),
       ]);
+      // The indexer row said Active — but another tab/device may have
+      // settled the loan inside its lag window, and repayPartial
+      // reverts InvalidLoanStatus after the approval already mined.
+      if (live.status !== LOAN_STATUS_ACTIVE) {
+        setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      if (
+        latestBlock.timestamp >
+        live.startTime + live.durationDays * 86_400n + graceSec
+      ) {
+        setError(copy.errors.pastGrace);
+        return;
+      }
+      if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
+        setError(copy.loanSale.partialBlockedByListing);
+        return;
+      }
       // A partial equal to the FULL remaining principal is accepted by
       // the contract but leaves the loan Active at principal 0 —
       // settlement (and collateral release) needs the real repay path.
@@ -1131,6 +1185,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 {copy.refinance.partialBlockedByPending}
               </span>
             </div>
+          ) : loanLive.data?.saleLock === LOCK_EARLY_WITHDRAWAL_SALE ? (
+            // Same freeze from the LENDER's side: a live sale listing
+            // charges buyers the current outstanding amount, so a
+            // partial under it would mislead the buyer. (Best-effort
+            // render copy — the submit path re-checks the lock live
+            // and fails closed.)
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.loanSale.partialBlockedByListing}
+              </span>
+            </div>
           ) : (
           <>
           <div className="cluster">
@@ -1361,23 +1426,35 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             setBusy={setBusy}
           />
           <section className="card">
-            <LoanSaleFlow
-              row={row}
-              live={loanLive.data.live}
-              chainNow={loanLive.data.chainNow}
-              principalMeta={principal}
-              confirmOpen={confirmingSurface === 'loan-sale'}
-              onOpenConfirm={() => setConfirmingSurface('loan-sale')}
-              onCloseConfirm={() =>
-                setConfirmingSurface((s) => (s === 'loan-sale' ? null : s))
-              }
-              onListed={(offerId) => {
-                sale.remember(offerId);
-                setDoneMessage(copy.loanSale.done);
-              }}
-              busy={busy}
-              setBusy={setBusy}
-            />
+            {LOAN_SALE_LISTING_ENABLED ? (
+              <LoanSaleFlow
+                row={row}
+                live={loanLive.data.live}
+                chainNow={loanLive.data.chainNow}
+                principalMeta={principal}
+                confirmOpen={confirmingSurface === 'loan-sale'}
+                onOpenConfirm={() => setConfirmingSurface('loan-sale')}
+                onCloseConfirm={() =>
+                  setConfirmingSurface((s) => (s === 'loan-sale' ? null : s))
+                }
+                onListed={(offerId) => {
+                  sale.remember(offerId);
+                  setDoneMessage(copy.loanSale.done);
+                }}
+                busy={busy}
+                setBusy={setBusy}
+              />
+            ) : (
+              // Issue #951 — the on-chain listing entry point reverts
+              // today; an honest note beats a form whose final wallet
+              // step can never succeed.
+              <>
+                <h3 style={{ marginBottom: 4 }}>{copy.loanSale.title}</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  {copy.loanSale.listingUnavailable}
+                </p>
+              </>
+            )}
           </section>
           </>
         ) : null
@@ -1424,6 +1501,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           busy={busy}
           setBusy={setBusy}
           onCleared={refi.clear}
+          onDone={setDoneMessage}
         />
       ) : null}
 

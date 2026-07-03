@@ -158,3 +158,31 @@ liquidation begins (derived from the health factor and framed as
 approximate), and the NFT verifier shows a holder's ENS name next to
 their address when one exists on Ethereum mainnet — display sugar
 only, never part of a verdict.
+
+A follow-up review round hardened the batch further. The biggest
+change: the "list your position at your own price" form is withheld
+for now — the protocol step it depends on cannot complete on-chain
+today (tracked separately as a contracts bug), so the page shows an
+honest "not available yet" note pointing at the working instant exit
+instead of a form whose final wallet step could never succeed. On the
+buyer side, an offer that is really tied to an already-running loan (a
+position sale or an offset vehicle) can no longer be accepted here at
+all: the review named the linked loan before, but its money rows still
+described a fresh loan — and a review that can't show the real terms
+must block signing, not warn past it. Partial repayment now re-checks
+the loan live at submit (still active, still inside the grace window)
+before any approval, and is held off — with an explanation — while the
+lender has the position listed for sale, since a listing sells the
+claim at its frozen outstanding amount. The reviewed interest mode
+(full-term vs day-by-day) is now verified against the protocol's
+canonical record before the wallet is asked to sign, and signing waits
+until the live repayment-grace schedule is confirmed rather than
+letting an acknowledgement cover a fallback label. Cancelling a
+pending refinance request now finishes its whole story before the
+card closes — the approval clean-up prompt arrives while the
+explanation is still on screen, and the outcome lands in the page
+banner. And the automatic clean-up that removes a just-granted
+spending approval when a posting sequence fails now fires only when
+that approval was actually granted by the failed attempt — a
+pre-existing approval that another live request or listing depends on
+is left untouched.

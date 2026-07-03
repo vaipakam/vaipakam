@@ -50,13 +50,21 @@ export function useRentalBufferBps(): { bps: number; ready: boolean } {
 
 /** LIVE grace label for receipts — governance can override the
  *  default schedule with buckets, and the shown grace must match the
- *  window repayment is actually judged against. Falls back to the
- *  default-schedule label while loading (identical on deploys with no
- *  buckets configured). */
-export function useGraceLabel(durationDays: number): string {
+ *  window repayment is actually judged against. The label falls back
+ *  to the default-schedule wording while loading (identical on
+ *  deploys with no buckets configured) so DISPLAY can proceed, but
+ *  `ready` stays false until the live bucket answer lands — SIGNING
+ *  must gate on it, exactly like {@link useRentalBufferBps}: on a
+ *  chain with retuned buckets the fallback label is a wrong term. */
+export function useGraceLabel(durationDays: number): {
+  label: string;
+  ready: boolean;
+  isError: boolean;
+  refetch: () => void;
+} {
   const { readChain } = useActiveChain();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
-  const { data } = useQuery({
+  const { data, isError, refetch } = useQuery({
     queryKey: ['graceSeconds', readChain.chainId, durationDays],
     enabled: Boolean(publicClient) && durationDays > 0,
     staleTime: 5 * 60_000,
@@ -67,7 +75,12 @@ export function useGraceLabel(durationDays: number): string {
         durationDays,
       }),
   });
-  return formatGraceSeconds(data ?? defaultGraceSeconds(durationDays));
+  return {
+    label: formatGraceSeconds(data ?? defaultGraceSeconds(durationDays)),
+    ready: data !== undefined,
+    isError,
+    refetch: () => void refetch(),
+  };
 }
 
 /** Renter's total up-front payment for a rental:

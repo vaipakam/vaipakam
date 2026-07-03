@@ -22,7 +22,7 @@
  * directly on Review with that offer selected, when it is still open
  * and on this flow's side of the market.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -567,9 +567,24 @@ export function OfferFlow({ side }: { side: Side }) {
   const liquidityKnown = legLiquidity.data !== undefined;
   // Receipts must show the grace window repayment is actually judged
   // against — governance buckets can override the default schedule.
+  // While the LIVE bucket read is in flight the label is the default
+  // schedule's wording, which is wrong on a retuned chain — display
+  // may proceed, signing gates on `ready` (like the liquidity check).
   const activeDurationDays =
     mode === 'accept' ? (selected?.durationDays ?? 0) : Number(form.durationDays) || 0;
-  const graceLabel = useGraceLabel(activeDurationDays);
+  const grace = useGraceLabel(activeDurationDays);
+  // If the label MOVES after the user already ticked consent (the
+  // live bucket read resolving to a non-default window), that consent
+  // predates the corrected term — same re-consent rule as the late
+  // illiquid/linked-loan disclosures.
+  const prevGraceLabel = useRef(grace.label);
+  useEffect(() => {
+    if (prevGraceLabel.current === grace.label) return;
+    prevGraceLabel.current = grace.label;
+    setForm((f) =>
+      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+    );
+  }, [grace.label]);
   const reviewIsIlliquid = indexerSaysIlliquid || legLiquidity.data === true;
 
   // The liquidity query resolves asynchronously — if the illiquid
@@ -638,7 +653,7 @@ export function OfferFlow({ side }: { side: Side }) {
         const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
         const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
         const durationStr = formatDurationDays(selected.durationDays);
-        const grace = graceLabel;
+        const graceStr = grace.label;
         const illiquidSuffix = reviewIsIlliquid
           ? ` ${copy.match.illiquidWarning}`
           : '';
@@ -653,7 +668,7 @@ export function OfferFlow({ side }: { side: Side }) {
             youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${acceptModeNote}`,
             youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${illiquidSuffix}`,
             fees: copy.fees.borrowerLIF(lifPct),
-            whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
+            whenThisEnds: `Repay within ${durationStr} (grace period: ${graceStr}), then claim your collateral back.`,
           };
         }
         return {
@@ -662,7 +677,7 @@ export function OfferFlow({ side }: { side: Side }) {
           youMayOwe: 'Nothing — the borrower owes you.',
           youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${grace}). You then claim your funds.`,
+          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${graceStr}). You then claim your funds.`,
         };
       }
 
@@ -681,7 +696,7 @@ export function OfferFlow({ side }: { side: Side }) {
       const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
       const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
       const durationStr = formatDurationDays(payload.durationDays);
-      const grace = graceLabel;
+      const graceStr = grace.label;
       // The interest MODE changes what an early repayment costs — the
       // consent text must state it explicitly (ProjectDetailsREADME).
       const modeNote = interestModeNote(form.useFullTermInterest, side);
@@ -696,7 +711,7 @@ export function OfferFlow({ side }: { side: Side }) {
           youMayOwe: 'Nothing — the borrower owes you.',
           youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.${postIlliquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
+          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${graceStr}). You then claim your funds.`,
         };
       }
       return {
@@ -705,7 +720,7 @@ export function OfferFlow({ side }: { side: Side }) {
         youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${modeNote}`,
         youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${postIlliquidSuffix}`,
         fees: copy.fees.borrowerLIF(lifPct),
-        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
+        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${graceStr}), then claim your collateral back.`,
       };
     } catch {
       return null;
@@ -714,7 +729,7 @@ export function OfferFlow({ side }: { side: Side }) {
     mode,
     selected,
     reviewIsIlliquid,
-    graceLabel,
+    grace.label,
     side,
     form,
     postDetailsComplete,
@@ -736,9 +751,15 @@ export function OfferFlow({ side }: { side: Side }) {
     receipt !== null &&
     !isOwnSelectedOffer &&
     liquidityKnown &&
-    // The loan-sale-vehicle answer gates a disclosure the same way
-    // liquidity does — signing waits until it is known.
+    // The reviewed grace window must be the LIVE one — the fallback
+    // label can be wrong on a chain with retuned buckets.
+    grace.ready &&
+    // The linked-loan answer gates a BLOCK, not just a disclosure: a
+    // linked offer settles/transfers a running loan and the fresh-loan
+    // receipt above does not describe those terms — so signing waits
+    // until the answer is known, and a linked offer never signs here.
     linkedLoanKnown &&
+    !acceptIsLoanSale &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -913,6 +934,10 @@ export function OfferFlow({ side }: { side: Side }) {
           interestRateBps: BigInt(offerRateBps(selected)),
           collateralAmount: BigInt(selected.collateralAmount),
           durationDays: selected.durationDays,
+          // The interest MODE the reviewed consent line described — a
+          // stale indexer flag must abort before the wallet prompt
+          // like any other reviewed term.
+          useFullTermInterest: selected.useFullTermInterest,
           // What the review actually SHOWED (indexer flags ∪ live
           // read). If a leg flips illiquid between review and sign,
           // the signer aborts and the re-review — live-driven — now
@@ -1239,7 +1264,7 @@ export function OfferFlow({ side }: { side: Side }) {
           {acceptIsLoanSale ? (
             <div className="banner banner-warn" role="alert">
               <span className="banner-body">
-                {copy.match.loanSaleVehicleWarning(linkedLoan.data ?? '')}
+                {copy.match.linkedLoanAcceptBlocked(linkedLoan.data ?? '')}
               </span>
             </div>
           ) : null}
@@ -1278,6 +1303,28 @@ export function OfferFlow({ side }: { side: Side }) {
             ) : (
               <p className="muted" style={{ margin: 0 }}>
                 {copy.match.liquidityChecking}
+              </p>
+            )
+          ) : null}
+          {!grace.ready ? (
+            grace.isError ? (
+              // Same dead-Sign-button rule: the blocked check names
+              // itself and offers the retry.
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">
+                  {copy.match.graceCheckFailed}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => grace.refetch()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.match.graceChecking}
               </p>
             )
           ) : null}

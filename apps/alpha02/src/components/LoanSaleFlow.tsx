@@ -13,6 +13,18 @@
  * cancelled — disclosed before confirmation, per the FunctionalSpecs
  * lock-disclosure rule.
  */
+/**
+ * Feature gate — issue #951: `createLoanSaleOffer` cannot currently
+ * succeed on-chain (its cross-facet `createOffer` hop trips the
+ * diamond-shared nonReentrant lock, and the collateral=0 borrower
+ * validation rejects the vehicle; see the P-T SKIPPED scenario in
+ * contracts/script/AnvilNewPartialFlows.s.sol). Every listing attempt
+ * would revert at the wallet step, AFTER the standing settlement
+ * approval mined. The page renders an honest "not available yet" note
+ * instead of this form until the contract fix lands — flip this flag
+ * back on WITH that fix, never before.
+ */
+export const LOAN_SALE_LISTING_ENABLED: boolean = false;
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -165,7 +177,12 @@ export function LoanSaleFlow({
         BigInt(rateBps),
         latestBlock.timestamp,
       );
-      await ensureAllowance({
+      // Only a MINED approve tx arms the unwind — when the wallet
+      // already held a sufficient allowance (ensureAllowance returns
+      // null), that allowance belongs to some other live arrangement
+      // (a pending refinance, a user-managed grant) and a failed
+      // listing step must not zero it out from under that flow.
+      const approvalTx = await ensureAllowance({
         publicClient,
         walletClient,
         token: liveLoan.principalAsset,
@@ -173,7 +190,7 @@ export function LoanSaleFlow({
         spender: walletChain.diamondAddress,
         amount: liveBound,
       });
-      approvalGranted = true;
+      approvalGranted = approvalTx !== null;
       approvalToken = liveLoan.principalAsset;
       const { receipt } = await write('createLoanSaleOffer', [
         BigInt(row.loanId),

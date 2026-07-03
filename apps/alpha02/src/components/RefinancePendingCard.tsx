@@ -39,6 +39,7 @@ export function RefinancePendingCard({
   busy,
   setBusy,
   onCleared,
+  onDone,
 }: {
   loanId: number;
   offerId: string;
@@ -51,6 +52,10 @@ export function RefinancePendingCard({
   busy: boolean;
   setBusy: (b: boolean) => void;
   onCleared: () => void;
+  /** Routes the cancel outcome to the PAGE banner — clearing the
+   *  marker unmounts this card, so a message set locally after the
+   *  clear would never be seen. */
+  onDone: (message: string) => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -73,11 +78,15 @@ export function RefinancePendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(offerId)]);
-      onCleared();
       void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
       // Unwind the standing payoff approval too — "continues
       // unchanged" must include the wallet's authorizations. Failure
-      // here is non-fatal (the cancel already landed): say so.
+      // here is non-fatal (the cancel already landed): say so. This
+      // runs BEFORE the marker clear on purpose: clearing unmounts
+      // this card, so the revoke's wallet prompt would otherwise
+      // arrive context-free after the explanatory UI vanished, and a
+      // rejected revoke would surface nowhere.
+      let outcome: string;
       try {
         await revokeAllowance({
           publicClient,
@@ -86,10 +95,14 @@ export function RefinancePendingCard({
           owner: address,
           spender: walletChain.diamondAddress,
         });
-        setDone(copy.refinance.cancelled);
+        outcome = copy.refinance.cancelled;
       } catch {
-        setDone(copy.refinance.cancelledRevokeFailed);
+        outcome = copy.refinance.cancelledRevokeFailed;
       }
+      // Page banner, then clear — the local `done` state dies with
+      // the card.
+      onDone(outcome);
+      onCleared();
     } catch (err) {
       setError(submitErrorText(err));
     } finally {

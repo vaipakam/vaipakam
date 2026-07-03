@@ -120,14 +120,23 @@ export const copy = {
       'Interest accrues day by day — repaying early costs less.',
     interestModeProRataLender:
       'Interest accrues day by day — if the borrower repays early, you earn less.',
-    loanSaleVehicleWarning: (loanId: string) =>
-      `This is a POSITION SALE, not a fresh loan: accepting buys the lender side of already-running loan #${loanId}. Your funds pay out the exiting lender, part of the loan's term has already passed, and the collateral shown lives on that loan. Only proceed if that's what you want.`,
+    // Linked-loan offers (position sales, preclose offsets) settle or
+    // transfer an already-running loan — the fresh-loan review above
+    // does NOT describe their real terms (a sale vehicle shows 0
+    // collateral and a term that already partly elapsed), so accepting
+    // them here is BLOCKED, not warned-past. See issue #951 / #927.
+    linkedLoanAcceptBlocked: (loanId: string) =>
+      `This offer is tied to already-running loan #${loanId} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
     liquidityChecking:
       'Checking how these assets are priced by the protocol…',
     liquidityCheckFailed:
       'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
     linkedLoanCheckFailed:
       'We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.',
+    graceChecking:
+      'Confirming the repayment grace window this deal is judged against…',
+    graceCheckFailed:
+      'We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.',
   },
 
   borrow: {
@@ -491,6 +500,12 @@ export const copy = {
       'We couldn’t identify this listing’s offer record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous approval and balance in place.',
     ended:
       'Your sale listing is no longer active. If a buyer accepted it, the payout is already in your wallet and the settlement was pulled via the standing approval; any remaining approval can be revoked from your wallet’s token-approvals view.',
+    // Issue #951 — the on-chain listing entry point is broken; the
+    // form is feature-gated off until the contract fix lands.
+    listingUnavailable:
+      'Listing your position at your own price isn’t available yet — the on-chain step it needs is being fixed. The instant exit above works: it sells into a matching open offer right away.',
+    partialBlockedByListing:
+      'The lender has this position listed for sale at its current outstanding amount. Partial repayment is paused while the listing stands — it would change that amount and mislead a buyer. You can still repay in full or close early at any time.',
   },
 
   positions: {

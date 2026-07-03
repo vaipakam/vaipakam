@@ -654,9 +654,16 @@ converge. Its intended behaviour (the test oracle for that surface):
   given all require a fresh acknowledgement.
 - Review receipts state the loan's interest mode in plain language:
   full-term interest applies even when the loan is repaid early;
-  day-by-day (pro-rata) loans cost less when repaid early. The grace
+  day-by-day (pro-rata) loans cost less when repaid early. The stated
+  mode is part of the reviewed terms: it is compared against the
+  protocol's canonical record before the wallet is asked to sign, and
+  a mismatch aborts like any other changed term. The grace
   period shown in receipts and the grace window enforced at
-  repayment come from the same schedule.
+  repayment come from the same schedule, and signing waits until the
+  live schedule answer is known — while it is loading the receipt may
+  show the default schedule's wording for display, but no
+  acknowledgement can be signed against it, and a failed schedule
+  read shows a visible retry rather than silently passing.
 - Advanced mode offers close-early (direct preclose) to the borrower
   of an active, not-yet-matured ERC-20 loan from the loan detail
   page. Maturity is judged by chain time, never the device clock. The
@@ -785,12 +792,23 @@ converge. Its intended behaviour (the test oracle for that surface):
   though the listing card closes. When a listing ends off-page (a
   buyer accepted, or it was cancelled elsewhere), the page states
   that outcome once instead of letting the card silently vanish.
-  While a listing stands, the sell-into-offer exit is not offered.
-  On the BUYER side, an offer that is really a position sale (its
-  acceptance buys a running loan's lender side) is disclosed as such
-  before signing — the review names the linked loan, signing waits
-  until the link check resolves, and an acknowledgement given before
-  the disclosure appeared is voided.
+  While a listing stands, the sell-into-offer exit is not offered,
+  and the borrower's partial-repayment surface is held off with an
+  explanation — the listing sells the claim at its frozen outstanding
+  amount, and a partial repayment under it would make the buyer
+  overpay for a smaller claim (full repayment and close-early remain
+  open to the borrower). Until the protocol's listing entry point
+  works end-to-end (it currently cannot complete on-chain), the
+  listing form itself is withheld and replaced by a plain note
+  pointing at the working instant exit; every standing-surface rule
+  above still applies to any listing that exists.
+  On the BUYER side, an offer tied to an already-running loan (a
+  position sale, or an offset vehicle) is not acceptable in this app
+  version: the review flags the link, names the loan, and blocks
+  signing entirely — the fresh-loan receipt does not describe what
+  accepting such an offer really does, and a wrong receipt must never
+  be signable. Signing also waits until the link check resolves, and
+  a failed check shows a visible retry rather than silently passing.
 - Advanced mode shows the role-relevant position-NFT id on the loan
   page (the lender-side id to lender-side users, the borrower-side
   id to borrower-side users), linking to a verifier page that any
