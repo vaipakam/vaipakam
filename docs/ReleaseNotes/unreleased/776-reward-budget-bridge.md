@@ -30,9 +30,12 @@ cause an over-send. Every cross-chain contract in the flow carries the
 guardian pause lever and rotates to the governance timelock at mainnet
 handover.
 
-Delivered across four PRs: the design (#888), the Base-side sender (#889), the
-per-mirror receiver plus deploy/CCIP wiring (#916), and this end-to-end proof
-+ documentation (#… PR3). An end-to-end test demonstrates the fix directly —
+Delivered across six PRs: the design (#888), the Base-side sender (#889), the
+per-mirror receiver plus deploy/CCIP wiring (#916), the end-to-end proof +
+documentation (#923), a fee-quote helper that dry-runs a batch's exact
+cross-chain fee (#924), and the keeper automation that drives remittance without
+operator intervention (card #925, merged as PR #929). An end-to-end test
+demonstrates the fix directly —
 a claim on an unfunded mirror reverts, and the identical claim succeeds once
 the budget has been remitted and received.
 
@@ -45,5 +48,6 @@ custody and treasury) and #918 (a deploy-time pre-flight that asserts the
 reward-budget CCIP lane capacity clears the largest single-day slice, since a
 day is remitted atomically).
 
-Closes #776. Remaining epic item: the keeper automation loop that drives
-remittance without operator intervention (PR4).
+Closes #776. The bridge is code-complete but stays dark until an operator
+provisions the reward-budget CCIP lane, deploys and registers the per-mirror
+receiver, authorizes the keeper on-chain, and turns the automation on.

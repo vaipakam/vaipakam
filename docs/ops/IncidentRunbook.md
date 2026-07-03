@@ -162,8 +162,13 @@ recoverable back-pressure — not a fund-loss event.
 
 ### Guard rails / recovery
 - **Ordering:** remit a day **before** its broadcast opens the claim gate on the
-  mirror, so users never hit the empty-balance revert. The keeper loop (#925)
-  enforces this cadence.
+  mirror, so users never hit the empty-balance revert. Note this is **not
+  automatically synchronized**: `broadcastGlobal(dayId)` is a separate
+  permissionless call that can fire immediately after `finalizeDay`, whereas the
+  keeper (#925) remits on its own cron cadence — so a gap can still open the gate
+  before the budget lands. That gap is the recoverable back-pressure this section
+  handles; the keeper narrows it on a best-effort basis but does not guarantee
+  remit-before-broadcast. If you are manually broadcasting a day, remit it first.
 - **Delivery accepted on Base but reverted on the mirror** (e.g. paused
   receiver): the days are **already marked remitted** on Base and the VPFI is in
   the CCIP pipeline — so **do NOT re-run `remitRewardBudget`** (it would skip
@@ -178,6 +183,46 @@ recoverable back-pressure — not a fund-loss event.
   commingled with LIF custody + treasury). Tracked: #917.
 - **Lane capacity:** a single day is remitted atomically, so the reward-budget
   lane capacity must exceed the largest single-day slice. Tracked: #918.
+
+### Automated remittance (keeper, #925)
+The steps above are the **manual** fallback. In normal operation the `apps/keeper`
+Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
+against Base, it re-scans a bounded recent-day window per mirror, batches the
+finalized-but-un-remitted days under the lane cap, quotes the exact fee, and
+remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
+synchronize with broadcasts; see the Ordering caveat above). It is **dark by
+default** and requires all of:
+1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
+   (dedicated flag) in the keeper Worker's vars.
+2. `KEEPER_PRIVATE_KEY` set (the pass shares the keeper's signing key — without it
+   the whole keeper stays disabled) **and** that EOA funded with native Base for
+   gas plus each remit's quoted CCIP `msg.value`. An unfunded key arms the pass
+   but every remit reverts / fails to submit.
+3. That signing EOA authorized on-chain — either ADMIN, or granted the
+   reward-remittance keeper role via `RewardRemittanceFacet.setRewardRemittanceKeeper(<keeperEOA>)`.
+4. The `RewardRemittanceReceiver` deployed + registered on every mirror and the
+   `vpfi-reward-budget` CCIP lane provisioned. This wiring is performed by the
+   deploy scripts — `DeployCrosschain.s.sol` deploys the receiver (and writes it
+   to the deployments artifact), and `ConfigureCcip.s.sol` registers the
+   `vpfi-reward-budget` channel + calls the Diamond's `setRewardRemittanceReceiver`
+   for each mirror; the lane's rate limits are set per the mainnet-deploy gates in
+   CLAUDE.md § "Cross-Chain Security Policy".
+
+Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
+`REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
+lane bucket; a day whose slice exceeds it is skipped with a loud log until the
+lane + cap are raised together, #918). **Caveat:** the keeper only re-scans the
+last `REWARD_REMIT_LOOKBACK_DAYS`, so a skipped over-cap day is auto-retried only
+while it is still inside that window. If the lane + cap are raised *after* the day
+has aged past the lookback, widen `REWARD_REMIT_LOOKBACK_DAYS` to re-include it or
+remit it with the manual §2b procedure — it will not be picked up otherwise.
+
+**To disable in an incident** (e.g. a misconfigured lane, or to hand back to
+manual control): set `REWARD_REMIT_ENABLED=false` (leaves the rest of the keeper
+running) or `KEEPER_ENABLED=false` (stops all keeper actions), then redeploy the
+Worker. The pass is idempotent and bounds its receipt waits, so stopping it never
+strands funds — any in-flight day simply re-evaluates on the next armed tick or
+via the manual procedure above.
 
 ---
 
