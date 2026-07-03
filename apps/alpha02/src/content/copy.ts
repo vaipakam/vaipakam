@@ -108,6 +108,8 @@ export const copy = {
       'The other side of this offer can’t transact right now (compliance flag), so it can’t be accepted. Nothing was sent.',
     offerNotFound:
       'We couldn’t find that offer — the link may be old, or the data source is catching up. Browse current offers below.',
+    wrongChainLink: (chainName: string) =>
+      `That link points to an offer on ${chainName}. Switch to that network (top of the page), then open the link again — offer numbers repeat across networks, so we won’t guess.`,
     termsChanged:
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
     illiquidWarning:
@@ -175,6 +177,8 @@ export const copy = {
       'This listing asks to be paid in VPFI, which rentals don’t allow — it can’t be accepted. Please pick a different listing.',
     vpfiCheckRetry:
       'We couldn’t verify this listing’s payment asset just now — nothing was sent or approved. Please try again in a moment.',
+    vpfiPrepayNotAllowed:
+      'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
   positions: {

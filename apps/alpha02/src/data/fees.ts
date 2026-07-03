@@ -11,6 +11,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -63,4 +64,24 @@ export function useProtocolFees(): ProtocolFees {
 
 export function bpsToPercentText(bps: number): string {
   return `${Number((bps / 100).toFixed(2))}%`;
+}
+
+/** Direct LIVE read for submit paths — the hook above caches for five
+ *  minutes, which is fine for display but not for the moment of
+ *  signing/approving: governance can retune fees or lower the duration
+ *  cap inside that window. Throws on read failure (fail closed). */
+export async function readLiveProtocolFees(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+): Promise<Pick<ProtocolFees, 'treasuryFeeBps' | 'loanInitiationFeeBps' | 'maxOfferDurationDays'>> {
+  const bundle = (await publicClient.readContract({
+    address: diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getProtocolConfigBundle',
+  })) as readonly unknown[];
+  return {
+    treasuryFeeBps: Number(bundle[0] as bigint),
+    loanInitiationFeeBps: Number(bundle[1] as bigint),
+    maxOfferDurationDays: Number(bundle[14] as bigint),
+  };
 }

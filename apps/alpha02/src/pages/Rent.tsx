@@ -26,6 +26,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { getSupportedChain } from '../chain/chains';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
 import { ensureAllowance, isAddressLike, useTokenBalance, useTokenMeta } from '../contracts/erc20';
@@ -36,7 +37,7 @@ import {
   totalRentalPrepay,
   useRentalBufferBps,
 } from '../data/protocol';
-import { useProtocolFees, bpsToPercentText } from '../data/fees';
+import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
 import { useVpfi } from '../data/vpfi';
 import type { IndexedOffer } from '../data/indexer';
 import {
@@ -170,7 +171,7 @@ function ListNftFlow() {
       {
         id: 'prepay-token',
         label: prepayIsVpfi
-          ? 'VPFI can’t be used as the rental payment asset — pick another token.'
+          ? copy.rent.vpfiPrepayNotAllowed
           : vpfiCheckFailed
             ? 'We couldn’t verify the payment asset just now — please retry in a moment.'
             : prepayMeta.isError
@@ -249,6 +250,36 @@ function ListNftFlow() {
     setBusy(true);
     setError(null);
     try {
+      // The receipt quoted the CACHED fee config and the duration was
+      // validated against the cached cap — re-read live and force a
+      // re-review on any move, BEFORE the NFT approval can mine.
+      const liveFees = await readLiveProtocolFees(
+        publicClient,
+        walletChain.diamondAddress,
+      );
+      if (
+        liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
+        liveFees.maxOfferDurationDays !== fees.maxOfferDurationDays
+      ) {
+        void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+        throw new Error(copy.match.termsChanged);
+      }
+      // The checklist ruled VPFI out from a CACHED read — re-read the
+      // live token (fail closed) so a registration/rotation since
+      // review can't let a VPFI prepay through to a wasted
+      // setApprovalForAll (createOffer: VpfiNotAllowedAsRentalPrepay).
+      const liveVpfiToken = (await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getVPFIToken',
+        })
+        .catch(() => {
+          throw new Error(copy.rent.vpfiCheckRetry);
+        })) as string;
+      if (liveVpfiToken.toLowerCase() === prepayAsset.toLowerCase()) {
+        throw new Error(copy.rent.vpfiPrepayNotAllowed);
+      }
       await ensureNftApproval({
         publicClient,
         walletClient,
@@ -509,7 +540,7 @@ function RentalListingRow({
 }
 
 function RentNftFlow() {
-  const { address, walletChain } = useActiveChain();
+  const { address, walletChain, readChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
@@ -545,6 +576,18 @@ function RentNftFlow() {
       clear(copy.match.offerNotFound);
       return;
     }
+    // Offer ids repeat across chains — refuse a link minted for a
+    // different network instead of resolving a same-id stranger.
+    const chainParam = searchParams.get('chain');
+    if (chainParam !== null && Number(chainParam) !== readChain.chainId) {
+      const target = getSupportedChain(Number(chainParam));
+      clear(
+        copy.match.wrongChainLink(
+          target ? target.name : `network #${chainParam}`,
+        ),
+      );
+      return;
+    }
     if (deepLinkQuery.isLoading) return;
     const row = deepLinkQuery.data;
     if (row === null || row === undefined) {
@@ -574,6 +617,8 @@ function RentNftFlow() {
     selected,
     step,
     address,
+    searchParams,
+    readChain.chainId,
     setSearchParams,
   ]);
 
@@ -686,7 +731,12 @@ function RentNftFlow() {
         terms.prepayAsset.toLowerCase() === selected.prepayAsset.toLowerCase() &&
         terms.amount === BigInt(selected.amount) &&
         Number(terms.durationDays) === selected.durationDays &&
-        terms.tokenId === BigInt(selected.tokenId);
+        terms.tokenId === BigInt(selected.tokenId) &&
+        // ERC-1155 edits can change ONLY the quantity — without these
+        // the renter would sign for a different edition count than the
+        // listing they reviewed.
+        terms.quantity === BigInt(selected.quantity || '1') &&
+        terms.assetType === selected.assetType;
       if (!reviewedMatchesSigned) {
         void queryClient.invalidateQueries({ queryKey: ['activeOffers'] });
         void queryClient.invalidateQueries({ queryKey: ['offer'] });

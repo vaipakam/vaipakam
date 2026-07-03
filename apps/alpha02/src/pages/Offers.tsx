@@ -46,11 +46,15 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     (isRentalListing ||
       (offer.assetType === AssetType.ERC20 &&
         offer.collateralAssetType === AssetType.ERC20));
+  // Offer ids are PER-CHAIN — a link without the chain can resolve to
+  // a different offer with the same id on another network. The deep-
+  // link consumers refuse to select when this doesn't match the
+  // active read chain.
   const acceptHref = isRentalListing
-    ? `/rent?offer=${offer.offerId}`
+    ? `/rent?offer=${offer.offerId}&chain=${offer.chainId}`
     : isLending
-      ? `/borrow?offer=${offer.offerId}`
-      : `/lend?offer=${offer.offerId}`;
+      ? `/borrow?offer=${offer.offerId}&chain=${offer.chainId}`
+      : `/lend?offer=${offer.offerId}&chain=${offer.chainId}`;
 
   const title = isRentalListing
     ? `NFT rental · ${shortAddress(offer.lendingAsset)} #${offer.tokenId}${

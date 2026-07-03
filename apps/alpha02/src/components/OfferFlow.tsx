@@ -29,6 +29,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
+import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { useAcceptTermsSigning } from '../contracts/useAcceptTerms';
@@ -39,7 +40,7 @@ import {
   useTokenMeta,
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
-import { useProtocolFees, bpsToPercentText } from '../data/fees';
+import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -185,7 +186,7 @@ function MatchOfferRow({
 export function OfferFlow({ side }: { side: Side }) {
   const text = SIDE_COPY[side];
   const { isAdvanced } = useMode();
-  const { address, walletChain } = useActiveChain();
+  const { address, walletChain, readChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
@@ -228,6 +229,19 @@ export function OfferFlow({ side }: { side: Side }) {
       clear(copy.match.offerNotFound);
       return;
     }
+    // Offer ids repeat across chains — a link minted on one network
+    // must never resolve against another. Old links without the param
+    // pass through (they predate multi-chain deep links).
+    const chainParam = searchParams.get('chain');
+    if (chainParam !== null && Number(chainParam) !== readChain.chainId) {
+      const target = getSupportedChain(Number(chainParam));
+      clear(
+        copy.match.wrongChainLink(
+          target ? target.name : `network #${chainParam}`,
+        ),
+      );
+      return;
+    }
     if (deepLinkQuery.isLoading) return; // genuinely still loading
     const row = deepLinkQuery.data;
     if (row === null || row === undefined) {
@@ -268,6 +282,8 @@ export function OfferFlow({ side }: { side: Side }) {
     step,
     side,
     address,
+    searchParams,
+    readChain.chainId,
     setSearchParams,
   ]);
 
@@ -593,6 +609,23 @@ export function OfferFlow({ side }: { side: Side }) {
     if (!receipt || !address || !walletChain || !walletClient || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
+    // The receipt quoted the CACHED fee config (5-min staleTime) — a
+    // governance retune inside that window would have the user approve
+    // against a stale receipt, or mine an approval ahead of an
+    // OfferDurationExceedsCap revert. Re-read live and force a
+    // re-review when anything the receipt/validation used moved.
+    const liveFees = await readLiveProtocolFees(
+      publicClient,
+      walletChain.diamondAddress,
+    );
+    if (
+      liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
+      liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps ||
+      liveFees.maxOfferDurationDays !== fees.maxOfferDurationDays
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+      throw new Error(copy.match.termsChanged);
+    }
     const payload = toCreateOfferPayload(form, {
       lending: lendingMeta.data?.decimals,
       collateral: collateralMeta.data?.decimals,
@@ -641,6 +674,19 @@ export function OfferFlow({ side }: { side: Side }) {
       .catch(() => false);
     if (creatorFlagged) {
       throw new Error(copy.match.counterpartyBlocked);
+    }
+    // The reviewed receipt quoted fee percentages from the CACHED
+    // config — refuse to sign against a stale fee quote.
+    const liveFees = await readLiveProtocolFees(
+      publicClient,
+      walletChain.diamondAddress,
+    );
+    if (
+      liveFees.treasuryFeeBps !== fees.treasuryFeeBps ||
+      liveFees.loanInitiationFeeBps !== fees.loanInitiationFeeBps
+    ) {
+      void queryClient.invalidateQueries({ queryKey: ['protocolFees'] });
+      throw new Error(copy.match.termsChanged);
     }
     // Sign canonical terms; approval amounts come from the SIGNED
     // terms (canonical), not the indexer row.

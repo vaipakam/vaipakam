@@ -9,7 +9,7 @@ import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useMyClaimables } from '../data/hooks';
+import { useMyClaimables, useMyLoans } from '../data/hooks';
 import { useInteractionRewards } from '../data/rewards';
 import { useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -121,6 +121,10 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
         ? `${formatTokenAmount(loan.principal, principalMeta.data.decimals)} ${principalMeta.data.symbol} + interest`
         : 'Repaid funds';
       why = 'The borrower repaid this loan.';
+    } else if (loan.status === 'fallback_pending') {
+      what = `${collateralStr} collateral`;
+      why =
+        'An automatic liquidation didn’t complete — claiming finalizes the recovery yourself.';
     } else {
       what = `${collateralStr} collateral`;
       why = 'The loan defaulted — the collateral is yours to claim.';
@@ -153,6 +157,36 @@ export function Claims() {
   const { isConnected } = useActiveChain();
   const { setOpen } = useModal();
   const claimables = useMyClaimables();
+  // The indexer's /claimables endpoint lists only terminal statuses —
+  // a lender's fallback_pending loan is ALSO claimable (ClaimFacet
+  // runs the claim-time fallback resolution), so merge those in from
+  // the wallet's loan list. Either source failing → unavailable; a
+  // list missing a live claim is exactly the partial-as-complete
+  // dishonesty the null contract exists to prevent.
+  const loans = useMyLoans();
+  const rowsLoading =
+    claimables.isLoading ||
+    claimables.data === undefined ||
+    loans.isLoading ||
+    loans.data === undefined;
+  const rowsUnavailable =
+    claimables.data === null || loans.data === null;
+  const rows: PositionLoan[] =
+    rowsLoading || rowsUnavailable
+      ? []
+      : [
+          ...claimables.data!,
+          ...loans
+            .data!.filter(
+              (l) => l.role === 'lender' && l.status === 'fallback_pending',
+            )
+            .filter(
+              (l) =>
+                !claimables.data!.some(
+                  (c) => c.loanId === l.loanId && c.role === 'lender',
+                ),
+            ),
+        ];
 
   return (
     <div>
@@ -172,15 +206,15 @@ export function Claims() {
       ) : (
         <>
           <RewardsCard />
-          {claimables.isLoading || claimables.data === undefined ? (
+          {rowsLoading ? (
             <EmptyState icon={LoaderCircle} title="Checking for claims…" />
-          ) : claimables.data === null ? (
+          ) : rowsUnavailable ? (
             <UnavailableState body={copy.claims.unavailable} />
-          ) : claimables.data.length === 0 ? (
+          ) : rows.length === 0 ? (
             <EmptyState icon={Gift} title={copy.claims.empty} />
           ) : (
             <div className="row-list">
-              {claimables.data.map((loan) => (
+              {rows.map((loan) => (
                 <ClaimRow key={`${loan.loanId}-${loan.role}`} loan={loan} />
               ))}
             </div>
