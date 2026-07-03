@@ -1,0 +1,21 @@
+{
+  // Root-level Cloudflare Git Integration config for the legacy
+  // vaipakam-alpha Worker. Cloudflare's hosted build for this Worker
+  // runs `wrangler deploy` from the repository root, so this file points
+  // that root deploy at the apps/alpha Vite build output.
+  //
+  // Package-local deploys may still use apps/alpha/wrangler.jsonc.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-alpha",
+  "compatibility_date": "2026-04-23",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./apps/alpha/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}
