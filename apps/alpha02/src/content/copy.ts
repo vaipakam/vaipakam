@@ -270,6 +270,29 @@ export const copy = {
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
 
+  earlyExit: {
+    title: 'Exit this loan early',
+    blurb:
+      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds — nothing to approve, nothing to claim afterwards — and the borrower’s terms don’t change at all.',
+    pickerLead: 'Open lending offers that can buy you out:',
+    none:
+      'No matching lending offers right now. An offer must match this loan’s assets, cover its remaining amount, and fit inside its remaining time — check back later.',
+    unavailable:
+      'We couldn’t load matching offers right now — please try again in a moment.',
+    rowReceive: (amount: string) => `you’d receive ~${amount} now`,
+    shortfallWarn:
+      'This buyer expects a higher rate than your loan pays — the difference for the remaining term comes out of your payout.',
+    forfeitNote:
+      'Exiting early forfeits the interest accrued so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
+    action: 'Review exit',
+    confirm: 'Confirm — sell my position',
+    done:
+      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.',
+    checking: 'Checking whether this loan can be exited early…',
+    checkFailed:
+      'We couldn’t read this loan’s exit details right now — retrying.',
+  },
+
   positions: {
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',

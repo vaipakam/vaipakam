@@ -53,6 +53,7 @@ import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
 import { RefinancePendingCard } from '../components/RefinancePendingCard';
+import { EarlyExitFlow } from '../components/EarlyExitFlow';
 import { useRefinancePending } from '../data/refinancePending';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
@@ -60,7 +61,13 @@ import { AssetType } from '../lib/types';
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
 /** The page's inline confirm surfaces — ONE open at a time, so two
  *  review receipts can never invite conflicting signatures at once. */
-type ConfirmSurface = 'action' | 'collateral' | 'partial' | 'preclose' | 'refinance';
+type ConfirmSurface =
+  | 'action'
+  | 'collateral'
+  | 'partial'
+  | 'preclose'
+  | 'refinance'
+  | 'early-exit';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -230,15 +237,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // `chainNow` rides along so time gates never trust the local clock.
   const loanLive = useQuery({
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
-    // Only the close-early card consumes this — don't burn three RPC
-    // reads a minute for lenders, viewers, or basic mode.
+    // Only the advanced strategy cards consume this (borrower:
+    // close-early/refinance; lender: early exit) — don't burn three
+    // RPC reads a minute for viewers or basic mode.
     enabled:
       Boolean(readClient) &&
       Boolean(loan.data) &&
       loan.data?.status === 'active' &&
       !loanIsRental &&
       isAdvanced &&
-      role === 'borrower',
+      (role === 'borrower' || role === 'lender'),
     staleTime: 30_000,
     refetchInterval: 60_000,
     queryFn: async () => {
@@ -1239,6 +1247,47 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         ) : null}
         </>
         )
+      ) : null}
+
+      {/* Lender strategy — early exit by selling the position into a
+          matching open lending offer. Same gate conventions as the
+          borrower block: flagged wallets see nothing (Tier-1),
+          checking/error states are visible, the full card requires
+          the live loan and pre-maturity by chain time. The done
+          message goes to the PAGE banner (the role flips to viewer
+          as soon as the ownership read refreshes, unmounting this
+          block). */}
+      {isAdvanced &&
+      role === 'lender' &&
+      row.status === 'active' &&
+      !isRental &&
+      principal &&
+      !(sanctions.ready && sanctions.flagged) ? (
+        !loanLive.data || !sanctions.ready ? (
+          <section className="card">
+            <h3>{copy.earlyExit.title}</h3>
+            <p className="muted">
+              {loanLive.isError
+                ? copy.earlyExit.checkFailed
+                : copy.earlyExit.checking}
+            </p>
+          </section>
+        ) : loanLive.data.chainNow <
+          loanLive.data.live.startTime +
+            loanLive.data.live.durationDays * 86_400n ? (
+          <EarlyExitFlow
+            row={row}
+            live={loanLive.data.live}
+            chainNow={loanLive.data.chainNow}
+            principalMeta={principal}
+            confirmOpen={confirmingSurface === 'early-exit'}
+            onOpenConfirm={() => setConfirmingSurface('early-exit')}
+            onCloseConfirm={() =>
+              setConfirmingSurface((s) => (s === 'early-exit' ? null : s))
+            }
+            onSold={() => setDoneMessage(copy.earlyExit.done)}
+          />
+        ) : null
       ) : null}
 
       {/* The live request's standing surface — rendered on the MARKER

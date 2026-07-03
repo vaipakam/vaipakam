@@ -718,6 +718,24 @@ converge. Its intended behaviour (the test oracle for that surface):
   request for the same loan is possible and each device tracks only
   its own. Loans on a periodic interest schedule carry a visible
   warning that an overdue period blocks completion until settled.
+- Advanced mode offers the lender of an active, not-yet-matured
+  ERC-20 loan an early exit: selling the position into a matching
+  open lending offer. The picker lists only offers the sale can
+  actually complete against (matching assets, single-value and
+  unfilled, duration within the loan's remaining term, collateral
+  demand within the pledged collateral, amount covering the
+  principal, and cost within the principal), best payout first. The
+  review states the payout plainly: the seller receives the
+  principal minus the LARGER of the interest accrued so far or the
+  rate difference for the remaining term (when the buyer expects a
+  higher rate — flagged before review), paid straight to the wallet
+  in the same transaction with nothing to approve and nothing to
+  claim afterwards; the borrower's rate and due date do not change.
+  Because a consumed buy offer can linger as available in off-chain
+  data, confirmation always re-verifies the offer live (still open,
+  unchanged terms, not expired) and re-reads the payout with chain
+  time, re-reviewing on material drift. The protocol's cut comes out
+  of the forfeited interest, never beyond the shown figure.
 
 ## Key UX Requirements
 

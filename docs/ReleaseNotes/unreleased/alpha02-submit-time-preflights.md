@@ -72,3 +72,16 @@ the request survives settlement until cancelled, and cancels in place
 cooldown (judged by chain time) and also removes the standing payoff
 approval. Abandoning the posting sequence partway automatically
 unwinds an already-granted payoff approval.
+
+Lenders get their own advanced-mode exit: selling an active loan
+position into a matching open lending offer. The picker shows only
+offers the sale can really complete against and leads with what the
+seller would receive — principal minus the forfeited accrued interest
+or, if larger, the rate difference the higher-rate buyer expects for
+the remaining term (flagged clearly before review). Payment lands in
+the seller's wallet in the same transaction: nothing to approve,
+nothing to claim, and the borrower's terms don't change. Because a
+bought-out offer can briefly linger as available in off-chain data,
+confirming always re-verifies the chosen offer live and re-reads the
+payout with chain time, asking for a fresh review if anything
+material moved.
