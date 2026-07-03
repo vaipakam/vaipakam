@@ -108,6 +108,71 @@ function listReceipt(opts: {
   };
 }
 
+function requestReceipt(opts: {
+  dailyFee: string;
+  duration: string;
+  prepayAsset: string;
+  prepayMeta: TokenMeta | null;
+  rentalBufferBps: number;
+  prepayDecimals: number;
+}): ReviewReceiptView {
+  const dailyWei = dailyFeeWeiFromHuman(opts.dailyFee, opts.prepayDecimals);
+  const days = Number(opts.duration) || 0;
+  const totalPrepay = computeRentalPrepayWei(dailyWei, days, opts.rentalBufferBps);
+  const bufferWei = totalPrepay - dailyWei * BigInt(Math.max(days, 0));
+
+  return {
+    youReceive: {
+      label: 'You receive',
+      value: 'Nothing yet — temporary use rights only when an NFT owner accepts your request.',
+      hint: 'You never gain ownership; rights start only after a lender matches.',
+    },
+    youLock: {
+      label: 'You lock',
+      value: (
+        <>
+          <AssetAmount
+            mode="raw"
+            amount={totalPrepay.toString()}
+            address={opts.prepayAsset}
+            meta={opts.prepayMeta}
+          />{' '}
+          prepay (rental fees + buffer) now.
+        </>
+      ),
+      hint: 'Prepay locks when you post the request, before any lender accepts.',
+    },
+    youMayOwe: {
+      label: 'You may owe',
+      value: (
+        <>
+          Up to{' '}
+          <AssetAmount mode="raw" amount={dailyWei.toString()} address={opts.prepayAsset} meta={opts.prepayMeta} /> per
+          day for {opts.duration} days once matched.
+        </>
+      ),
+    },
+    youCanLose: {
+      label: 'You can lose',
+      value: 'Prepaid fees if the rental ends by default. You never gain ownership of the NFT.',
+    },
+    fees: {
+      label: 'Fees',
+      value: (
+        <>
+          Includes {(opts.rentalBufferBps / 100).toFixed(1)}% prepay buffer (
+          <AssetAmount mode="raw" amount={bufferWei.toString()} address={opts.prepayAsset} meta={opts.prepayMeta} />
+          ). Protocol treasury may take a cut of rental fees. Gas is separate.
+        </>
+      ),
+    },
+    whenEnds: {
+      label: 'When this ends',
+      value: 'When you cancel, a lender accepts, or the rental term closes after a match.',
+    },
+  };
+}
+
 function acceptReceipt(
   offer: IndexedOffer,
   prepayMeta: TokenMeta | null,
@@ -560,15 +625,24 @@ export function RentWizard() {
     const receipt =
       path === 'browse' && selectedOffer
         ? acceptReceipt(selectedOffer, selectedPrepayMeta, rentalBufferBps)
-        : listReceipt({
-            dailyFee,
-            duration: durationDays,
-            prepayAsset,
-            prepayMeta,
-            nftLabel: `${nftKind === 'erc1155' ? 'ERC-1155' : 'ERC-721'} #${tokenId}`,
-            rentalBufferBps,
-            prepayDecimals,
-          });
+        : path === 'request'
+          ? requestReceipt({
+              dailyFee,
+              duration: durationDays,
+              prepayAsset,
+              prepayMeta,
+              rentalBufferBps,
+              prepayDecimals,
+            })
+          : listReceipt({
+              dailyFee,
+              duration: durationDays,
+              prepayAsset,
+              prepayMeta,
+              nftLabel: `${nftKind === 'erc1155' ? 'ERC-1155' : 'ERC-721'} #${tokenId}`,
+              rentalBufferBps,
+              prepayDecimals,
+            });
 
     return (
       <div>
