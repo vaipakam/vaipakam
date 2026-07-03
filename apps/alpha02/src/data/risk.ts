@@ -75,6 +75,12 @@ export interface HealthView {
   ratio: string;
   /** e.g. "55%" */
   ltvPct: string;
+  /** How far the collateral's VALUE can fall before liquidation
+   *  (health factor 1.0) — e.g. "45%". Health scales linearly with
+   *  collateral value, so the drop is 1 − 1/HF; null when already
+   *  at/below the liquidation line. Derived, no price feed needed —
+   *  and therefore approximate if the LOAN side's value also moves. */
+  dropToLiquidationPct: string | null;
 }
 
 /** Plain-language health labels; thresholds mirror the protocol:
@@ -96,5 +102,7 @@ export function healthView(risk: LoanRisk): HealthView {
     badge,
     ratio: (Number(hf) / 1e18).toFixed(2),
     ltvPct: `${Math.round(Number(risk.ltv) / 1e16)}%`,
+    dropToLiquidationPct:
+      hf > WAD ? `${Math.round((1 - 1e18 / Number(hf)) * 100)}%` : null,
   };
 }

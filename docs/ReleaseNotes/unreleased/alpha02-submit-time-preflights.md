@@ -145,3 +145,10 @@ The list names its own limits (it covers known tokens on the current
 network, not the wallet's whole approval history), and warns that
 revoking an approval a live request or listing depends on makes that
 flow fail until restored from its own card.
+
+Two smaller advanced-mode touches: the loan-health detail now also
+says roughly how far the collateral's value can fall before
+liquidation begins (derived from the health factor and framed as
+approximate), and the NFT verifier shows a holder's ENS name next to
+their address when one exists on Ethereum mainnet — display sugar
+only, never part of a verdict.

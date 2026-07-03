@@ -979,7 +979,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                         {' '}
                         <span className="muted">
                           (health factor {healthView(risk.data).ratio}, loan-to-value{' '}
-                          {healthView(risk.data).ltvPct}; liquidation below 1.00)
+                          {healthView(risk.data).ltvPct}; liquidation below 1.00
+                          {healthView(risk.data).dropToLiquidationPct
+                            ? ` — roughly, liquidation begins if the collateral's value falls about ${healthView(risk.data).dropToLiquidationPct}`
+                            : ''}
+                          )
                         </span>
                       </>
                     ) : null}

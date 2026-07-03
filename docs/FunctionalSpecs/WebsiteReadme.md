@@ -809,6 +809,14 @@ converge. Its intended behaviour (the test oracle for that surface):
   an offer that hasn't become a loan yet names that offer. The
   verdict is always scoped to the current network, with a visible
   reminder that token ids repeat across networks.
+- Advanced mode's loan-health detail states, alongside the health
+  factor and loan-to-value, roughly how far the collateral's value
+  can fall before liquidation begins — explicitly framed as
+  approximate (it is derived from the health factor, not a price
+  feed, and assumes the loan side holds still). Where a holder
+  address has an ENS name on Ethereum mainnet, surfaces may show it
+  alongside the address as display sugar — never as part of any
+  verdict or check.
 - Advanced mode lists the wallet's standing token approvals to the
   protocol contract for tokens seen in the user's own loans and
   offers, each with a one-click revoke. The surface states its scope

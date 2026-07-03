@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { usePublicClient } from 'wagmi';
+import { useEnsName, usePublicClient } from 'wagmi';
 import {
   BaseError,
   ContractFunctionRevertedError,
@@ -128,6 +128,14 @@ export function NftVerifier() {
     },
   });
 
+  // Human-readable owner where one exists: ENS lives on Ethereum
+  // mainnet regardless of which network the token is verified on —
+  // display-only sugar, never part of the verdict.
+  const ensName = useEnsName({
+    address: result.data?.exists ? result.data.owner : undefined,
+    chainId: 1,
+  });
+
   return (
     <div className="stack">
       <div>
@@ -176,7 +184,11 @@ export function NftVerifier() {
           <dl className="receipt" style={{ margin: 0 }}>
             <div className="receipt-row">
               <dt>{copy.nftVerifier.ownerLabel}</dt>
-              <dd>{shortAddress(result.data.owner!)}</dd>
+              <dd>
+                {ensName.data
+                  ? `${ensName.data} (${shortAddress(result.data.owner!)})`
+                  : shortAddress(result.data.owner!)}
+              </dd>
             </div>
             <div className="receipt-row">
               <dt>{copy.nftVerifier.roleLabel}</dt>
