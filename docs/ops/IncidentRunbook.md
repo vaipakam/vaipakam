@@ -124,6 +124,55 @@ Once `finalizeDay` has been called for `dayId`, **late reports are rejected on-c
 
 ---
 
+## 2b. Funding a mirror — reward-budget remittance (#776)
+
+### Context
+Finalizing a day and broadcasting its denominator opens the claim gate on every
+mirror, but the VPFI that pays those claims is bridged **separately and
+on-demand** from Base via `RewardRemittanceFacet.remitRewardBudget`. A mirror
+whose gate is open but whose reward-budget has not yet been remitted will have
+claims **revert at the token transfer** (funded balance empty). This is normal,
+recoverable back-pressure — not a fund-loss event.
+
+### Symptom
+- Mirror users report interaction-reward claims failing/reverting while the
+  rewards page shows a claimable amount.
+- The mirror Diamond's VPFI balance is at or near zero for the days in question.
+
+### Detect
+- `quoteRewardBudget(mirrorChainId, dayIds)` on Base returns a non-zero total
+  for finalized days that have not been remitted.
+- `getRewardBudgetRemitted(mirrorChainId, dayId) == 0` for the affected days.
+- On the mirror, `getRewardBudgetReceivedTotal()` lags the claimable demand.
+
+### Execute (fund the mirror)
+1. On **Base**, an ADMIN (or the configured `rewardRemittanceKeeper`) calls
+   `remitRewardBudget(mirrorChainId, dayIds, perRemittanceCap)` with `msg.value`
+   covering the CCIP fee (overpay is refunded). Size `perRemittanceCap` **and**
+   the `dayIds` batch so the total stays under the live reward-budget CCIP lane
+   bucket — early-schedule days are large; use `quoteRewardBudget` to confirm.
+2. Sends are **idempotent**: re-running a batch that partially failed skips the
+   already-sent days, so retry freely.
+3. CCIP delivers the VPFI to the mirror's `RewardRemittanceReceiver`, which
+   forwards it into the mirror Diamond; claims then succeed from balance. Watch
+   the mirror's `RewardBudgetReceived(dayIds…)` event for confirmation.
+
+### Guard rails / recovery
+- **Ordering:** remit a day **before** its broadcast opens the claim gate on the
+  mirror, so users never hit the empty-balance revert. The keeper loop (PR4)
+  enforces this cadence.
+- **Delivery failure:** a paused receiver (or other dest revert) makes CCIP mark
+  the message re-executable — funds are never lost; re-execute once unpaused.
+- **Over-fund:** if the §4 per-user cap makes a mirror's users claim less than
+  the remitted slice, the surplus is a shared, fungible balance that pre-funds
+  later days' claims. Any true terminal-wind-down residual is a governance
+  action (there is no permissionless Diamond-balance sweep — the mirror VPFI is
+  commingled with LIF custody + treasury). Tracked: #917.
+- **Lane capacity:** a single day is remitted atomically, so the reward-budget
+  lane capacity must exceed the largest single-day slice. Tracked: #918.
+
+---
+
 ## 3. Emergency pause
 
 ### Trigger criteria (pause **immediately**, decide later)
@@ -154,6 +203,14 @@ This halts every `whenNotPaused` facet entry. What remains callable while paused
 - Every `whenNotPaused`-less getter
 
 See `PauseGatingTest` for the canonical list.
+
+**Cross-chain contracts pause separately.** `AdminFacet.pause()` only freezes
+the Diamond's own facets. The stand-alone `GuardianPausable` cross-chain
+contracts — `CcipMessenger`, the buyback receiver, the mirror
+`RewardRemittanceReceiver` (#776), the mirror VPFI token — are frozen with
+`script/pause-all-chains.sh` (guardian-signed), which enumerates all of them.
+Run it alongside the Diamond pause to freeze the Base→mirror reward-budget
+ingress too; the receiver can be kept paused while other CCIP channels resume.
 
 ### Decide (post-pause triage)
 1. Is the issue a bad config (oracle/0x proxy/rewardOApp)? → Admin fix, unpause.
