@@ -212,6 +212,22 @@ separate so branch protection and attribution stay clean:
   comments/checks about every five minutes. Do not add a notification workflow
   unless the user explicitly asks to revisit that approach.
 
+## Grok workspace — standing poller rule (VaipakamGrok clone)
+
+In the **VaipakamGrok** working clone, after **every push + `@codex review …`
+trigger comment** (or when opening a PR that already carries the trigger in its
+body), **always** start the persistent poller before ending the turn:
+
+```bash
+[ -f /tmp/pr-poll-<PR>.pid ] && kill "$(cat /tmp/pr-poll-<PR>.pid)" 2>/dev/null; rm -f /tmp/pr-poll-<PR>.pid
+bash ~/.codex/scripts/pr-poll-watch.sh <PR> --interval 120 --initial-wait 60
+```
+
+Run in background. The VaipakamGrok clone may also carry a workspace-local copy at
+`.grok/scripts/pr-poll-watch.sh` (gitignored); the canonical operator scripts live
+under `~/.codex/scripts/`. Use `--no-initial-wait` only when re-arming
+mid-session after the trigger already has a 👀 reaction.
+
 ## Verification history — what we know about AGENTS.md being read
 
 | Date | Evidence | Conclusion |

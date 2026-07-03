@@ -1,0 +1,39 @@
+.activity-feed {
+  display: grid;
+  gap: 12px;
+}
+
+.activity-card {
+  display: grid;
+  gap: 6px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.activity-card-title {
+  font-weight: 600;
+}
+
+.activity-card-meta {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.activity-card-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 0.85rem;
+}
+
+.activity-card-detail {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-tertiary);
+  font-size: 0.8rem;
+  display: grid;
+  gap: 4px;
+}

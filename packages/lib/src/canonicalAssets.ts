@@ -69,6 +69,14 @@ const CANONICAL: Record<number, string[]> = {
     '0x4200000000000000000000000000000000000006', // WETH
     '0x036CbD53842c5426634e7929541eC2318f3dCF7e', // USDC (Circle testnet)
   ],
+  // Arbitrum Sepolia (421614)
+  421614: [
+    '0x980B62Da83eFf3D4576C647993b0c1D7faf17c73', // WETH9
+  ],
+  // BNB Smart Chain Testnet (97)
+  97: [
+    '0xae13d989daC2f0dEbFf460aC112a837C89BAa7cd', // WBNB
+  ],
 };
 
 export function getCanonicalAssetsForChain(chainId: number): string[] {

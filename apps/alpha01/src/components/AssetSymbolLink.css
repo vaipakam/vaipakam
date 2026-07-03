@@ -1,0 +1,16 @@
+.asset-symbol-link {
+  color: var(--brand);
+  font-weight: 600;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.asset-symbol-link:hover {
+  text-decoration: underline;
+}
+
+.asset-symbol-link-icon {
+  opacity: 0.75;
+}

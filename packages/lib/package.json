@@ -29,6 +29,10 @@
       "types": "./src/canonicalAssets.ts",
       "default": "./src/canonicalAssets.ts"
     },
+    "./coingecko": {
+      "types": "./src/coingecko.ts",
+      "default": "./src/coingecko.ts"
+    },
     "./crossDomainPref": {
       "types": "./src/crossDomainPref.ts",
       "default": "./src/crossDomainPref.ts"
