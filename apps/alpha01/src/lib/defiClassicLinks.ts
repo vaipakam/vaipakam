@@ -8,5 +8,5 @@ export const DEFI_CLASSIC_LINKS = {
   allowances: `${CLASSIC_ORIGIN}/allowances`,
   analytics: `${CLASSIC_ORIGIN}/analytics`,
   nftVerifier: `${CLASSIC_ORIGIN}/nft-verifier`,
-  vault: `${CLASSIC_ORIGIN}/vault`,
+  vpfiVault: `${CLASSIC_ORIGIN}/vpfi-vault`,
 } as const;

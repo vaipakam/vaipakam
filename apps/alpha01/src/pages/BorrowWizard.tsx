@@ -7,6 +7,7 @@ import {
   acceptOfferFlow,
   createBorrowerOffer,
   formatBpsAsPercent,
+  MIN_HEALTH_FACTOR_1E18,
   matchOffersToBorrowIntent,
   netBorrowProceedsWei,
   offerPrincipalWei,
@@ -24,7 +25,7 @@ import { HelpLink } from '../components/HelpLink';
 import { ReviewReceipt, type ReviewReceiptView } from '../components/ReviewReceipt';
 import { RiskConsentLabel } from '../components/RiskConsentLabel';
 import { useWallet } from '../context/WalletContext';
-import { useLoanInitiationFeeBps } from '../hooks/useProtocolConfig';
+import { useLoanInitiationFeeBps, useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 import { useSanctionsCheck } from '../hooks/useSanctionsCheck';
 import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
@@ -56,6 +57,7 @@ function borrowReceipt(
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
   lifBps: number,
+  minHf1e18: bigint,
 ): ReviewReceiptView {
   const principalWei = offerPrincipalWei(offer);
   const lifBpsBig = BigInt(lifBps);
@@ -113,7 +115,7 @@ function borrowReceipt(
       label: 'When this ends',
       value: `After ${offer.durationDays} days, or when you fully repay.`,
     },
-    technicalDetails: borrowAcceptTechnicalDetails(offer, lifBps),
+    technicalDetails: borrowAcceptTechnicalDetails(offer, lifBps, minHf1e18),
   };
 }
 
@@ -127,6 +129,7 @@ function requestReceipt(
   lendingMeta: TokenMeta | null,
   collateralMeta: TokenMeta | null,
   lifBps: number,
+  minHf1e18: bigint,
 ): ReviewReceiptView {
   return {
     youReceive: {
@@ -160,7 +163,7 @@ function requestReceipt(
     },
     fees: { label: 'Fees', value: 'Protocol fees at settlement (separate from network gas).' },
     whenEnds: { label: 'When this ends', value: 'When cancelled, matched, or the loan closes.' },
-    technicalDetails: borrowRequestTechnicalDetails({ maxRate: rate, duration, lifBps }),
+    technicalDetails: borrowRequestTechnicalDetails({ maxRate: rate, duration, lifBps }, minHf1e18),
   };
 }
 
@@ -174,6 +177,7 @@ export function BorrowWizard() {
   const { data: walletClient } = useWalletClient();
   const sanctions = useSanctionsCheck(address);
   const { data: lifBps = 10 } = useLoanInitiationFeeBps();
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const { data: offers, isLoading, isError: offersError, error: offersErr } = useLenderOffersForBorrow();
 
   const lendingDefault = chain.predominantStableAddress ?? activeChain?.predominantStableAddress ?? '';
@@ -357,7 +361,7 @@ export function BorrowWizard() {
 
   const receiptData = useMemo((): ReviewReceiptView => {
     if (mode === 'accept' && selected) {
-      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta, lifBps);
+      return borrowReceipt(selected, selectedLendingMeta, selectedCollateralMeta, lifBps, minHf1e18);
     }
     return requestReceipt(
       amount,
@@ -369,6 +373,7 @@ export function BorrowWizard() {
       lendingMeta,
       collateralMeta,
       lifBps,
+      minHf1e18,
     );
   }, [
     amount,
@@ -384,6 +389,7 @@ export function BorrowWizard() {
     selectedCollateralMeta,
     selectedLendingMeta,
     lifBps,
+    minHf1e18,
   ]);
 
   async function handleAccept() {

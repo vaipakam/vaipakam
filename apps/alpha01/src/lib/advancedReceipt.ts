@@ -11,11 +11,12 @@ import type { ReviewReceiptRow } from '../components/ReviewReceipt';
 export function borrowAcceptTechnicalDetails(
   offer: IndexedOffer,
   lifBps: number,
+  minHf1e18: bigint = MIN_HEALTH_FACTOR_1E18,
 ): ReviewReceiptRow[] {
   return [
     {
       label: 'Min health factor at open',
-      value: formatHealthFactor(MIN_HEALTH_FACTOR_1E18),
+      value: formatHealthFactor(minHf1e18),
       hint: 'Loans must initiate at or above this floor; liquidation risk rises as HF falls toward 1.0.',
     },
     {
@@ -28,7 +29,7 @@ export function borrowAcceptTechnicalDetails(
     },
     {
       label: 'Collateral liquidity class',
-      value: collateralLiquidityLabel(offer.collateralAssetType),
+      value: collateralLiquidityLabel(offer.collateralLiquidity, offer.collateralAssetType),
     },
     {
       label: 'Principal asset type',
@@ -49,7 +50,7 @@ export function lendFundTechnicalDetails(offer: IndexedOffer): ReviewReceiptRow[
     },
     {
       label: 'Collateral liquidity class',
-      value: collateralLiquidityLabel(offer.collateralAssetType),
+      value: collateralLiquidityLabel(offer.collateralLiquidity, offer.collateralAssetType),
     },
     {
       label: 'Partial repay',
@@ -69,18 +70,21 @@ export function lendCreateTechnicalDetails(rate: string, duration: string): Revi
   ];
 }
 
-export function borrowRequestTechnicalDetails(opts: {
-  maxRate: string;
-  duration: string;
-  lifBps: number;
-}): ReviewReceiptRow[] {
+export function borrowRequestTechnicalDetails(
+  opts: {
+    maxRate: string;
+    duration: string;
+    lifBps: number;
+  },
+  minHf1e18: bigint = MIN_HEALTH_FACTOR_1E18,
+): ReviewReceiptRow[] {
   return [
     { label: 'Max APR', value: `${opts.maxRate}%` },
     { label: 'Term', value: `${opts.duration} days` },
     { label: 'Loan initiation fee (at match)', value: formatBpsAsPercent(opts.lifBps) },
     {
       label: 'Min health factor at open',
-      value: formatHealthFactor(MIN_HEALTH_FACTOR_1E18),
+      value: formatHealthFactor(minHf1e18),
     },
     {
       label: 'Matching',
@@ -97,7 +101,7 @@ export function offerBrowseTechnicalRows(offer: IndexedOffer): { label: string; 
     { label: 'Offer ID', value: `#${offer.offerId}` },
     {
       label: 'Collateral class',
-      value: collateralLiquidityLabel(offer.collateralAssetType),
+      value: collateralLiquidityLabel(offer.collateralLiquidity, offer.collateralAssetType),
     },
     {
       label: 'Partial repay',

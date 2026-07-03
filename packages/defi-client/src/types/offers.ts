@@ -32,6 +32,9 @@ export interface IndexedOffer {
   useFullTermInterest: boolean;
   creatorRiskAndTermsConsent: boolean;
   allowsPartialRepay: boolean;
+  /** 0 = liquid, 1 = illiquid (indexer oracle/AMM classification). */
+  principalLiquidity?: number;
+  collateralLiquidity?: number;
   createdAt?: number;
   expiresAt?: number;
   fillMode?: number;

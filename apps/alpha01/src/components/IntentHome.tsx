@@ -47,7 +47,7 @@ export function IntentHome() {
       {mode === 'advanced' ? (
         <nav className="advanced-shortcuts" aria-label="Advanced shortcuts" data-testid="advanced-shortcuts">
           <Link to="/claims">Claims</Link>
-          <a href={DEFI_CLASSIC_LINKS.vault} target="_blank" rel="noreferrer">
+          <a href={DEFI_CLASSIC_LINKS.vpfiVault} target="_blank" rel="noreferrer">
             VPFI vault
           </a>
           <a href={DEFI_CLASSIC_LINKS.allowances} target="_blank" rel="noreferrer">

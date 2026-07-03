@@ -1,4 +1,5 @@
 import {
+  collateralLiquidityLabel,
   formatHealthFactor,
   formatLtvBps,
   isHealthFactorAtRisk,
@@ -21,5 +22,12 @@ describe('risk formatters', () => {
     expect(isHealthFactorAtRisk(MIN_HEALTH_FACTOR_1E18)).toBe(false);
     expect(isHealthFactorAtRisk(MIN_HEALTH_FACTOR_1E18 - 1n)).toBe(true);
     expect(isHealthFactorAtRisk(null)).toBe(false);
+    expect(isHealthFactorAtRisk(2n * 10n ** 18n, 25n * 10n ** 17n)).toBe(true);
+  });
+
+  it('labels collateral liquidity from indexer classification', () => {
+    expect(collateralLiquidityLabel(0)).toContain('Liquid');
+    expect(collateralLiquidityLabel(1)).toContain('Illiquid');
+    expect(collateralLiquidityLabel(undefined, 1)).toContain('Illiquid');
   });
 });

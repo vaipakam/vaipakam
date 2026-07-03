@@ -18,13 +18,24 @@ export function formatLtvBps(ltvBps: bigint): string {
   return `${n.toFixed(2)}%`;
 }
 
-export function collateralLiquidityLabel(collateralAssetType: number): string {
-  return collateralAssetType === 0
-    ? 'Liquid (oracle + AMM checks when configured)'
-    : 'Illiquid (NFT / no oracle)';
+/** Label collateral liquidity from indexer classification (preferred) or asset type fallback. */
+export function collateralLiquidityLabel(
+  collateralLiquidity: number | undefined,
+  collateralAssetType?: number,
+): string {
+  if (collateralLiquidity === 0) return 'Liquid (oracle + AMM checks when configured)';
+  if (collateralLiquidity === 1) return 'Illiquid (no oracle / AMM gate)';
+  if (collateralAssetType === 0) return 'Liquid (ERC-20; liquidity not indexed)';
+  if (collateralAssetType != null && collateralAssetType !== 0) {
+    return 'Illiquid (NFT / no oracle)';
+  }
+  return 'Unknown';
 }
 
-export function isHealthFactorAtRisk(hf18: bigint | null | undefined): boolean {
+export function isHealthFactorAtRisk(
+  hf18: bigint | null | undefined,
+  minHf1e18: bigint = MIN_HEALTH_FACTOR_1E18,
+): boolean {
   if (hf18 == null || hf18 === 0n) return false;
-  return hf18 < MIN_HEALTH_FACTOR_1E18;
+  return hf18 < minHf1e18;
 }

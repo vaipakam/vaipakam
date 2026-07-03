@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import {
   cancelOffer,
+  formatHealthFactor,
   isHealthFactorAtRisk,
   isNftRentalLoan,
   loanRoleForWallet,
+  MIN_HEALTH_FACTOR_1E18,
 } from '@vaipakam/defi-client';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { HelpLink } from '../components/HelpLink';
@@ -16,6 +18,7 @@ import { useMyOffers } from '../hooks/useMyOffers';
 import { useDiamondContract } from '../hooks/useDiamond';
 import { useMode } from '../context/ModeContext';
 import { useLoanRisks } from '../hooks/useLoanRisks';
+import { useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 
 type RoleFilter = 'all' | 'borrower' | 'lender';
 type RiskFilter = 'all' | 'at-risk';
@@ -33,6 +36,7 @@ export function PositionsPage() {
     error: offersErr,
     refetch: refetchOffers,
   } = useMyOffers();
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
@@ -40,7 +44,18 @@ export function PositionsPage() {
 
   const loanList = loans ?? [];
   const offerList = offers ?? [];
-  const { data: riskMap } = useLoanRisks(loanList.map((l) => l.loanId));
+
+  const riskLoanIds = useMemo(
+    () =>
+      mode === 'advanced'
+        ? loanList
+            .filter((l) => l.status === 'active' && !isNftRentalLoan(l))
+            .map((l) => l.loanId)
+        : [],
+    [loanList, mode],
+  );
+
+  const { data: riskMap, isLoading: risksLoading } = useLoanRisks(riskLoanIds);
 
   const filteredLoans = useMemo(() => {
     if (mode !== 'advanced') return loanList;
@@ -50,12 +65,13 @@ export function PositionsPage() {
       if (roleFilter === 'lender' && role !== 'lender' && role !== 'both') return false;
       if (riskFilter === 'at-risk') {
         if (isNftRentalLoan(loan) || loan.status !== 'active') return false;
+        if (risksLoading) return true;
         const hf = riskMap?.get(loan.loanId)?.healthFactor;
-        if (!isHealthFactorAtRisk(hf)) return false;
+        if (!isHealthFactorAtRisk(hf, minHf1e18)) return false;
       }
       return true;
     });
-  }, [address, loanList, mode, riskFilter, riskMap, roleFilter]);
+  }, [address, loanList, minHf1e18, mode, riskFilter, riskMap, risksLoading, roleFilter]);
 
   if (!address) {
     return (
@@ -75,7 +91,15 @@ export function PositionsPage() {
     (loansErr instanceof Error ? loansErr.message : null) ??
     (offersErr instanceof Error ? offersErr.message : null) ??
     'Indexer request failed';
-  const empty = !loading && !indexerError && filteredLoans.length === 0 && offerList.length === 0;
+
+  const filterActive = mode === 'advanced' && (roleFilter !== 'all' || riskFilter !== 'all');
+  const hasLoans = loanList.length > 0;
+  const hasOffers = offerList.length > 0;
+  const trulyEmpty = !loading && !indexerError && !hasLoans && !hasOffers;
+  const noFilterMatches =
+    !loading && !indexerError && filteredLoans.length === 0 && hasLoans && filterActive;
+
+  const minHfLabel = formatHealthFactor(minHf1e18);
 
   async function handleCancelOffer(offerId: number) {
     setCancellingId(offerId);
@@ -131,13 +155,19 @@ export function PositionsPage() {
             Risk
             <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value as RiskFilter)}>
               <option value="all">All loans</option>
-              <option value="at-risk">HF below 1.5</option>
+              <option value="at-risk">HF below {minHfLabel}</option>
             </select>
           </label>
         </div>
       ) : null}
 
       {loading ? <p>Loading positions…</p> : null}
+
+      {mode === 'advanced' && riskFilter === 'at-risk' && risksLoading ? (
+        <p className="form-hint" style={{ marginBottom: 12 }}>
+          Loading health factors for risk filter…
+        </p>
+      ) : null}
 
       {!loading && filteredLoans.length > 0 ? (
         <section style={{ marginBottom: 24 }}>
@@ -175,9 +205,15 @@ export function PositionsPage() {
         </section>
       ) : null}
 
-      {empty ? (
+      {trulyEmpty ? (
         <p style={{ color: 'var(--text-secondary)' }}>
           No active loans or open offers on this chain yet.
+        </p>
+      ) : null}
+
+      {noFilterMatches ? (
+        <p style={{ color: 'var(--text-secondary)' }}>
+          No loans match the selected filters. Try a different role or risk setting.
         </p>
       ) : null}
     </div>
