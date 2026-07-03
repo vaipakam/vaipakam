@@ -1802,7 +1802,10 @@ phase_pause_rehearsal() {
   # with the known-pauseable set. Skip null / missing entries cleanly
   # so canonical chains skip the mirror keys and vice versa.
   local PAUSE_TARGETS=()
-  for KEY in diamond ccipMessenger rewardMessenger; do
+  # #776 — the mirror rewardRemittanceReceiver is GuardianPausable; include it
+  # so the rehearsal exercises the same pause surface production uses (missing
+  # keys are skipped by the `// empty` filter below, so Base is unaffected).
+  for KEY in diamond ccipMessenger rewardMessenger rewardRemittanceReceiver; do
     local ADDR=$(jq -r --arg k "$KEY" '.[$k] // empty' "$DEPLOY_DIR/addresses.json" 2>/dev/null)
     # Legacy fallback: pre-PR #272 artifacts stored the reward messenger
     # under the LayerZero-era key `rewardOApp`. Same pattern as

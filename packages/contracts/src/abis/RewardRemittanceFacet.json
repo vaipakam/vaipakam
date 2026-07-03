@@ -254,7 +254,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "dayCount",
+        "name": "fundedDayCount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -980,6 +980,17 @@
         "name": "remaining",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RewardReceiverNotContract",
+    "inputs": [
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
       }
     ]
   },

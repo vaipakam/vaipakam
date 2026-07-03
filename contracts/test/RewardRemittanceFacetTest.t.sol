@@ -290,16 +290,48 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertGt(afterQ, 0, "slice still remittable");
     }
 
+    function test_Remit_PayloadCarriesOnlyFundedDays() public {
+        _finalizeDay1();
+        // Day 1 passed twice — the second occurrence is skipped, so the payload
+        // (the mirror's reconciliation record) must name day 1 exactly once, not
+        // echo the caller's raw [1, 1].
+        uint256[] memory dup = new uint256[](2);
+        dup[0] = 1;
+        dup[1] = 1;
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, dup, CAP);
+        (uint256[] memory sentDays, uint256 sentTotal) =
+            abi.decode(ccip.sentPayload(0), (uint256[], uint256));
+        assertEq(sentDays.length, 1, "payload carries only the funded day");
+        assertEq(sentDays[0], 1, "funded day is day 1");
+        assertGt(sentTotal, 0, "non-zero total");
+    }
+
     // ─── mirror-side ingress: onRewardBudgetReceived (#776 PR2) ────────────
+
+    // A code-bearing stand-in for the registered receiver — `setRewardRemittance
+    // Receiver` rejects EOAs, so the gate test needs a contract address.
+    function _rcv() internal view returns (address) {
+        return address(ccip);
+    }
 
     function test_SetReceiver_RequiresAdmin() public {
         vm.prank(stranger);
         vm.expectRevert();
-        remit.setRewardRemittanceReceiver(address(0x4EC7));
+        remit.setRewardRemittanceReceiver(_rcv());
+    }
+
+    function test_SetReceiver_RejectsEOA() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RewardReceiverNotContract.selector,
+                address(0xEEEE)
+            )
+        );
+        remit.setRewardRemittanceReceiver(address(0xEEEE));
     }
 
     function test_Ingress_RecordsReceivedFromRegisteredReceiver() public {
-        address rcv = address(0x4EC7);
+        address rcv = _rcv();
         remit.setRewardRemittanceReceiver(rcv);
         assertEq(remit.getRewardRemittanceReceiver(), rcv, "receiver set");
         vm.prank(rcv);
@@ -308,7 +340,7 @@ contract RewardRemittanceFacetTest is SetupTest {
     }
 
     function test_Ingress_RevertsForNonReceiver() public {
-        remit.setRewardRemittanceReceiver(address(0x4EC7));
+        remit.setRewardRemittanceReceiver(_rcv());
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(
@@ -320,7 +352,7 @@ contract RewardRemittanceFacetTest is SetupTest {
     }
 
     function test_Ingress_RevertsOnTokenMismatch() public {
-        address rcv = address(0x4EC7);
+        address rcv = _rcv();
         remit.setRewardRemittanceReceiver(rcv);
         vm.prank(rcv);
         vm.expectRevert(

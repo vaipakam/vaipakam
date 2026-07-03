@@ -68,6 +68,12 @@ contract MockCrossChainMessenger is ICrossChainMessenger {
         return sent[index].tokens;
     }
 
+    /// @notice The raw payload captured for a given send (the auto-getter omits
+    ///         the dynamic `bytes` member).
+    function sentPayload(uint256 index) external view returns (bytes memory) {
+        return sent[index].payload;
+    }
+
     // ─── ICrossChainMessenger ───────────────────────────────────────────────
 
     function sendMessage(

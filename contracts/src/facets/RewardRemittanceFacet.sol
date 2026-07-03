@@ -65,13 +65,15 @@ contract RewardRemittanceFacet is
     /// @notice Emitted when a reward-budget remittance is sent to a mirror.
     /// @param dstChainId Mirror funded.
     /// @param total      VPFI remitted in this batch (sum of un-remitted slices).
-    /// @param dayCount   Number of day ids the caller passed (incl. skipped).
+    /// @param fundedDayCount Number of days that ACTUALLY funded VPFI in this
+    ///                   batch (skipped/duplicate/zero-slice days excluded) —
+    ///                   matches the day set carried in the CCIP payload.
     /// @param messageId  CCIP message id, for tracing.
     /// @custom:event-category informational/reward-transport
     event RewardBudgetRemitted(
         uint32 indexed dstChainId,
         uint256 total,
-        uint256 dayCount,
+        uint256 fundedDayCount,
         bytes32 messageId
     );
 
@@ -127,6 +129,9 @@ contract RewardRemittanceFacet is
     error NotRewardRemittanceReceiver(address caller);
     /// @notice The credited token is not this Diamond's VPFI token.
     error RewardBudgetTokenMismatch(address expected, address delivered);
+    /// @notice A non-zero mirror-side receiver was set to an address with no
+    ///         code (likely an EOA typo) — the ingress trusts the receiver.
+    error RewardReceiverNotContract(address receiver);
 
     // ─── Modifiers ────────────────────────────────────────────────────────
 
@@ -207,7 +212,13 @@ contract RewardRemittanceFacet is
 
         // Sum the un-remitted slices and mark each (chain, day) to block a
         // re-send. Every day must be finalized (its denominator is immutable).
+        // Collect ONLY the days that actually contribute VPFI into `fundedDays`
+        // (skipping already-remitted, zero-slice, and duplicate days) — that
+        // filtered set, not the caller's raw `dayIds`, rides the payload so the
+        // mirror's reconciliation events name exactly the funded days.
         uint256 total;
+        uint256[] memory fundedDays = new uint256[](dayIds.length);
+        uint256 fundedCount;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
             if (!s.dailyGlobalFinalized[dayId]) {
@@ -222,6 +233,10 @@ contract RewardRemittanceFacet is
                 if (slice > 0) {
                     s.rewardBudgetRemitted[dstChainId][dayId] = slice;
                     total += slice;
+                    fundedDays[fundedCount] = dayId;
+                    unchecked {
+                        ++fundedCount;
+                    }
                 }
             }
             unchecked {
@@ -229,6 +244,11 @@ contract RewardRemittanceFacet is
             }
         }
         if (total == 0) revert NothingToRemit();
+        // Trim `fundedDays` to the days that actually funded (shrink the memory
+        // array's length in place — safe, we only ever reduce it).
+        assembly {
+            mstore(fundedDays, fundedCount)
+        }
         if (total > perRemittanceCap) {
             revert RemittanceExceedsCap(total, perRemittanceCap);
         }
@@ -252,7 +272,7 @@ contract RewardRemittanceFacet is
         // `total` in the payload.
         IERC20(vpfi).forceApprove(messenger, total);
 
-        bytes memory payload = abi.encode(dayIds, total);
+        bytes memory payload = abi.encode(fundedDays, total);
         ICrossChainMessenger.TokenAmount[] memory tokens =
             new ICrossChainMessenger.TokenAmount[](1);
         tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
@@ -278,7 +298,7 @@ contract RewardRemittanceFacet is
             if (!ok) revert RemittanceRefundFailed();
         }
 
-        emit RewardBudgetRemitted(dstChainId, total, dayIds.length, messageId);
+        emit RewardBudgetRemitted(dstChainId, total, fundedCount, messageId);
     }
 
     // ─── Admin ────────────────────────────────────────────────────────────
@@ -299,11 +319,18 @@ contract RewardRemittanceFacet is
      * @notice Set (or clear, with `address(0)`) the mirror-side
      *         {RewardRemittanceReceiver} authorized to call
      *         {onRewardBudgetReceived} on this (mirror) Diamond.
-     * @dev    ADMIN-only. Base leaves this unset.
+     * @dev    ADMIN-only. Base leaves this unset. A non-zero receiver MUST have
+     *         code — the ingress trusts this address (it inflates
+     *         `rewardBudgetReceivedTotal` + emits the reconciliation record
+     *         without a balance-delta check), so an EOA typo'd here would let
+     *         that EOA fabricate funded-day events. `address(0)` clears it.
      */
     function setRewardRemittanceReceiver(
         address receiver
     ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
+        if (receiver != address(0) && receiver.code.length == 0) {
+            revert RewardReceiverNotContract(receiver);
+        }
         LibVaipakam.storageSlot().rewardRemittanceReceiver = receiver;
         emit RewardRemittanceReceiverUpdated(receiver);
     }
