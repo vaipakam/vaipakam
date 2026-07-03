@@ -472,10 +472,17 @@ export function OfferFlow({ side }: { side: Side }) {
     isPositiveDecimal(form.amount) &&
     durationValid;
   const formError = validateOfferForm(form);
+  // createOffer rejects lendingAsset == collateralAsset
+  // (SelfCollateralizedOffer) — catch it before any approval can mine.
+  const selfCollateral =
+    isAddressLike(form.lendingAsset) &&
+    isAddressLike(form.collateralAsset) &&
+    form.lendingAsset.toLowerCase() === form.collateralAsset.toLowerCase();
   const postDetailsComplete =
     detailsComplete &&
     isAddressLike(form.collateralAsset) &&
     isPositiveDecimal(form.collateralAmount) &&
+    !selfCollateral &&
     rateValid;
 
   // ---- Review receipt ----------------------------------------------------
@@ -594,7 +601,9 @@ export function OfferFlow({ side }: { side: Side }) {
     allChecksPass(checks) &&
     receipt !== null &&
     !isOwnSelectedOffer &&
-    (mode === 'accept' ? selected !== null : formError === null && durationValid) &&
+    (mode === 'accept'
+      ? selected !== null
+      : formError === null && durationValid && !selfCollateral) &&
     // The wallet client hydrates asynchronously after `isConnected`
     // flips true — without this gate a click in that window would
     // no-op silently.
@@ -916,6 +925,12 @@ export function OfferFlow({ side }: { side: Side }) {
             value={form.collateralAsset}
             onChange={(v) => set({ collateralAsset: v })}
           />
+          {selfCollateral ? (
+            <p className="field-hint" style={{ color: 'var(--danger)', marginTop: -8 }}>
+              The collateral must be a different asset than the one being
+              borrowed — the protocol rejects same-asset offers.
+            </p>
+          ) : null}
           <div className="field">
             <label htmlFor="collateral-amount">Collateral amount</label>
             <input
@@ -940,7 +955,11 @@ export function OfferFlow({ side }: { side: Side }) {
                 <input
                   type="checkbox"
                   checked={form.allowsPartialRepay}
-                  onChange={(e) => set({ allowsPartialRepay: e.target.checked })}
+                  onChange={(e) =>
+                    // Disclosure-driving term — changing it voids any
+                    // consent already given (ProjectDetailsREADME §consent).
+                    set({ allowsPartialRepay: e.target.checked, riskAndTermsConsent: false })
+                  }
                 />
                 Allow the borrower to repay in parts
               </label>
@@ -948,7 +967,9 @@ export function OfferFlow({ side }: { side: Side }) {
                 <input
                   type="checkbox"
                   checked={!form.useFullTermInterest}
-                  onChange={(e) => set({ useFullTermInterest: !e.target.checked })}
+                  onChange={(e) =>
+                    set({ useFullTermInterest: !e.target.checked, riskAndTermsConsent: false })
+                  }
                 />
                 Charge interest only for time used (pro-rata) instead of the full term
               </label>

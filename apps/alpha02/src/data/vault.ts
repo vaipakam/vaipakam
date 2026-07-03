@@ -36,6 +36,10 @@ export interface VaultAssetRow {
 export interface VaultSnapshot {
   vaultAddress: `0x${string}` | null; // null = not created yet
   assets: VaultAssetRow[];
+  /** Tokens whose reads FAILED this scan (transient RPC/metadata
+   *  errors). Non-empty means the list may be missing real balances —
+   *  the page must say so instead of looking complete. */
+  unreadable: `0x${string}`[];
 }
 
 export function useVaultAssets() {
@@ -89,7 +93,7 @@ export function useVaultAssets() {
         args: [address!],
       })) as `0x${string}`;
       if (vault.toLowerCase() === ZERO_ADDRESS) {
-        return { vaultAddress: null, assets: [] };
+        return { vaultAddress: null, assets: [], unreadable: [] };
       }
 
       // VPFI deposits arrive via the VPFI page, not via any loan or
@@ -120,6 +124,7 @@ export function useVaultAssets() {
         if (!isRevert) throw err;
       }
 
+      const unreadable: `0x${string}`[] = [];
       const rows = await Promise.all(
         scanTokens.map(async (tokenLower): Promise<VaultAssetRow | null> => {
           const token = tokenLower as `0x${string}`;
@@ -159,7 +164,12 @@ export function useVaultAssets() {
             if (total === 0n && locked === 0n) return null; // hide empty rows
             return { token, symbol, decimals, total, locked, free };
           } catch {
-            return null; // unreadable token — skip, don't sink the page
+            // Don't sink the whole page on one bad token, but don't
+            // pretend the scan was complete either — a transient read
+            // failure on an asset backing a live position would make
+            // locked funds silently vanish from "where my assets sit".
+            unreadable.push(token);
+            return null;
           }
         }),
       );
@@ -167,7 +177,7 @@ export function useVaultAssets() {
       const assets = rows
         .filter((r): r is VaultAssetRow => r !== null)
         .sort((a, b) => (b.total > a.total ? 1 : b.total < a.total ? -1 : 0));
-      return { vaultAddress: vault, assets };
+      return { vaultAddress: vault, assets, unreadable };
     },
   });
 

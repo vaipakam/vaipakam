@@ -75,6 +75,9 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
     !address || offer.creator.toLowerCase() !== address.toLowerCase();
   const acceptable =
     notMine &&
+    // Partially-filled offers are matcher-only — direct acceptOffer
+    // reverts OfferPartiallyFilled, so never offer the button.
+    BigInt(offer.amountFilled || '0') === 0n &&
     (isRentalListing ||
       (offer.assetType === AssetType.ERC20 &&
         offer.collateralAssetType === AssetType.ERC20));

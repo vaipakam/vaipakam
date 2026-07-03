@@ -39,6 +39,7 @@ import {
 } from '../lib/format';
 import { loanStateView } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
+import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
 import { AssetType } from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
@@ -63,6 +64,8 @@ export function PositionDetails() {
   // without this latch the button would re-enable and invite a
   // second, reverting claim.
   const [claimed, setClaimed] = useState(false);
+  // Position writes show the six-row receipt BEFORE any wallet prompt.
+  const [confirming, setConfirming] = useState(false);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -336,6 +339,7 @@ export function PositionDetails() {
         setClaimed(true);
         setDoneMessage(copy.claims.claimed);
       }
+      setConfirming(false);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
@@ -490,6 +494,54 @@ export function PositionDetails() {
             : row.status === 'repaid'
               ? 'Claim my funds'
               : 'Claim the collateral'
+          : null;
+
+  // Six-row receipt for the pending position write — same shape and
+  // rows as every create/accept flow (WebsiteReadme intended-behaviour).
+  const actionReceipt: ReceiptData | null =
+    action === 'repay'
+      ? {
+          youReceive: isRental
+            ? 'Any refundable buffer back — claimable right after closing.'
+            : `${collateralStr} collateral back — claimable right after repayment settles.`,
+          youLock: 'Nothing new.',
+          youMayOwe: isRental
+            ? 'Nothing more — fees were prepaid (late fees only if past the due date).'
+            : `${principalStr} + interest accrued to now. The exact amount is read live when you confirm; the approval carries small day-boundary headroom that is never spent.`,
+          youCanLose: 'Nothing beyond what you owe.',
+          fees: 'No extra Vaipakam fee to repay — the protocol’s cut comes out of the lender’s interest.',
+          whenThisEnds: 'Immediately — the loan settles and your side is released.',
+        }
+      : action === 'claim-borrower'
+        ? {
+            youReceive: isRental
+              ? 'Your refundable buffer back.'
+              : row.status === 'repaid'
+                ? `${collateralStr} collateral back.`
+                : 'Anything left after liquidation (may be zero).',
+            youLock: 'Nothing.',
+            youMayOwe: 'Nothing.',
+            youCanLose: 'Nothing.',
+            fees: 'None.',
+            whenThisEnds: 'The claim pays out immediately and this position closes for you.',
+          }
+        : action === 'claim-lender'
+          ? {
+              youReceive: isRental
+                ? 'Your earned rental fees, plus your NFT back.'
+                : row.status === 'repaid'
+                  ? `${principalStr} plus the earned interest.`
+                  : `${collateralStr} collateral.`,
+              youLock: 'Nothing.',
+              youMayOwe: 'Nothing.',
+              youCanLose: 'Nothing.',
+              fees: row.status === 'repaid' && !isRental
+                ? 'The protocol’s yield fee comes out of the interest before payout.'
+                : isRental
+                  ? 'The protocol’s cut comes out of the rental fees before payout.'
+                  : 'None.',
+              whenThisEnds: 'The claim pays out immediately and this position closes for you.',
+            }
           : null;
 
   return (
@@ -691,25 +743,58 @@ export function PositionDetails() {
         </div>
       ) : null}
 
-      {actionLabel ? (
-        <button
-          type="button"
-          className="btn btn-primary btn-block"
-          disabled={
-            busy ||
-            !onSupportedChain ||
-            // wallet/public client hydrate async after connect — without
-            // this the first click lands in run()'s early return and
-            // silently does nothing.
-            !walletClient ||
-            !publicClient ||
-            (action !== 'repay' && !sanctionsClear)
-          }
-          onClick={() => action && void run(action)}
-        >
-          {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-          {busy ? 'Waiting for wallet…' : actionLabel}
-        </button>
+      {actionLabel && action ? (
+        confirming ? (
+          // Position writes go through the SAME six-row review surface
+          // as every other write flow — the wallet prompt is never the
+          // first place the user sees what a click will do.
+          <section className="card">
+            <h3>Before you confirm</h3>
+            {actionReceipt ? <ReviewReceipt data={actionReceipt} /> : null}
+            <div className="cluster" style={{ marginTop: 16 }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setConfirming(false)}
+                disabled={busy}
+              >
+                Back
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ flex: 1 }}
+                disabled={
+                  busy ||
+                  !onSupportedChain ||
+                  // wallet/public client hydrate async after connect —
+                  // without this the first click lands in run()'s early
+                  // return and silently does nothing.
+                  !walletClient ||
+                  !publicClient ||
+                  (action !== 'repay' && !sanctionsClear)
+                }
+                onClick={() => void run(action)}
+              >
+                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                {busy ? 'Waiting for wallet…' : `Confirm — ${actionLabel}`}
+              </button>
+            </div>
+          </section>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary btn-block"
+            disabled={
+              busy ||
+              !onSupportedChain ||
+              (action !== 'repay' && !sanctionsClear)
+            }
+            onClick={() => setConfirming(true)}
+          >
+            {actionLabel}
+          </button>
+        )
       ) : role === 'unverified' ? (
         <div className="banner banner-warn" role="alert">
           <ShieldQuestion aria-hidden />

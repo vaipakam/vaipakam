@@ -54,12 +54,28 @@ export function Vault() {
             </p>
           </section>
 
+          {vault.data.unreadable.length > 0 ? (
+            // A token whose reads failed this scan may hold REAL locked
+            // funds — never let the list look complete without it.
+            <div className="banner banner-warn" role="status">
+              <span className="banner-body">
+                We couldn’t read {vault.data.unreadable.length === 1 ? 'one asset' : `${vault.data.unreadable.length} assets`} just now (
+                {vault.data.unreadable.map((t) => shortAddress(t)).join(', ')}
+                ) — the list below may be missing balances. This usually
+                clears on the next refresh.
+              </span>
+            </div>
+          ) : null}
           {vault.data.assets.length === 0 ? (
-            <EmptyState
-              icon={Landmark}
-              title="Nothing in your vault yet"
-              body="Assets appear here when you post offers, open loans, or deposit VPFI."
-            />
+            vault.data.unreadable.length > 0 ? (
+              <UnavailableState body={copy.vault.unavailable} />
+            ) : (
+              <EmptyState
+                icon={Landmark}
+                title="Nothing in your vault yet"
+                body="Assets appear here when you post offers, open loans, or deposit VPFI."
+              />
+            )
           ) : (
             <section className="card">
               <div className="row-list">
