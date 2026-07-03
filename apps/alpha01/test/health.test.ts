@@ -59,6 +59,25 @@ describe('borrowerPrimaryAction', () => {
     ).toBe('none');
   });
 
+  it('uses rental copy for active NFT rentals', () => {
+    expect(
+      borrowerPrimaryAction({
+        role: 'borrower',
+        loanStatus: 'active',
+        healthTone: 'ok',
+        isRental: true,
+      }).label,
+    ).toBe('Close rental early');
+    expect(
+      borrowerPrimaryAction({
+        role: 'lender',
+        loanStatus: 'repaid',
+        healthTone: 'ok',
+        isRental: true,
+      }).label,
+    ).toBe('Claim fees and NFT');
+  });
+
   it('offers lender claim on terminal recoverable statuses', () => {
     expect(
       borrowerPrimaryAction({ role: 'lender', loanStatus: 'defaulted', healthTone: 'ok' }).action,

@@ -40,10 +40,16 @@ export function borrowerPrimaryAction(opts: {
   healthTone: 'ok' | 'warn' | 'risk';
   /** When set for terminal borrower claim paths, gates the CTA on on-chain claimability. */
   borrowerClaimable?: boolean;
+  /** NFT rental positions use close-rental copy instead of debt-loan repay. */
+  isRental?: boolean;
 }): { action: 'repay' | 'claim-collateral' | 'claim-lender' | 'add-collateral' | 'none'; label: string } {
+  const rental = opts.isRental === true;
   if (opts.role === 'borrower') {
     if (opts.loanStatus === 'repaid') {
-      return { action: 'claim-collateral', label: 'Claim collateral' };
+      return {
+        action: 'claim-collateral',
+        label: rental ? 'Claim unused prepay' : 'Claim collateral',
+      };
     }
     if (
       opts.loanStatus === 'internal_matched' ||
@@ -56,6 +62,9 @@ export function borrowerPrimaryAction(opts: {
       return { action: 'none', label: 'No action available' };
     }
     if (opts.loanStatus === 'active') {
+      if (rental) {
+        return { action: 'repay', label: 'Close rental early' };
+      }
       if (opts.healthTone === 'risk' || opts.healthTone === 'warn') {
         return { action: 'repay', label: 'Repay now' };
       }
@@ -70,7 +79,10 @@ export function borrowerPrimaryAction(opts: {
       opts.loanStatus === 'fallback_pending' ||
       opts.loanStatus === 'internal_matched'
     ) {
-      return { action: 'claim-lender', label: 'Claim lender proceeds' };
+      return {
+        action: 'claim-lender',
+        label: rental ? 'Claim fees and NFT' : 'Claim lender proceeds',
+      };
     }
   }
   return { action: 'none', label: 'No action available' };

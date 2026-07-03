@@ -8,10 +8,14 @@ import {
   fetchLoanById,
   formatBpsAsPercent,
   isLoanSideClaimable,
+  isNftRentalLoan,
+  nftAssetKindLabel,
   plainHealthLabel,
   loanRoleForWallet,
+  rentalDailyFeeWei,
   repayLoanFull,
 } from '@vaipakam/defi-client';
+import { shortenAddr } from '@vaipakam/lib/address';
 import { AssetAmount } from '../components/AssetAmount';
 import { HelpLink } from '../components/HelpLink';
 import { useTokenMeta } from '../lib/tokenMeta';
@@ -91,8 +95,9 @@ export function PositionDetailPage() {
   }
   if (!loan) return <p>Loan not found.</p>;
 
+  const rental = loan ? isNftRentalLoan(loan) : false;
   const isBorrower = role === 'borrower' || role === 'both';
-  const health = plainHealthLabel(isBorrower ? hf : null);
+  const health = plainHealthLabel(isBorrower && !rental ? hf : null);
   const rolesForAction: ('borrower' | 'lender')[] =
     role === 'both'
       ? ['borrower', 'lender']
@@ -108,6 +113,7 @@ export function PositionDetailPage() {
       role: actionRole,
       loanStatus: loan.status,
       healthTone: actionRole === 'borrower' ? health.tone : 'ok',
+      isRental: rental,
       borrowerClaimable:
         actionRole === 'borrower' &&
         (loan.status === 'defaulted' ||
@@ -159,13 +165,19 @@ export function PositionDetailPage() {
   return (
     <div>
       <Link to="/positions" style={{ fontSize: '0.9rem' }}>← Back to positions</Link>
-      <h1 className="page-title" style={{ marginTop: 12 }}>Loan #{loan.loanId}</h1>
+      <h1 className="page-title" style={{ marginTop: 12 }}>
+        {rental ? `Rental #${loan.loanId}` : `Loan #${loan.loanId}`}
+      </h1>
       <p className="page-subtitle">
         Role:{' '}
         {role === 'borrower'
-          ? 'Borrower'
+          ? rental
+            ? 'Renter'
+            : 'Borrower'
           : role === 'lender'
-            ? 'Lender'
+            ? rental
+              ? 'NFT owner'
+              : 'Lender'
             : role === 'both'
               ? 'Borrower & lender'
               : 'Viewer'}{' '}
@@ -173,36 +185,71 @@ export function PositionDetailPage() {
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 10 }}>
-        <div>
-          <strong>Locked collateral:</strong>{' '}
-          <AssetAmount
-            mode="raw"
-            amount={loan.collateralAmount}
-            address={loan.collateralAsset}
-            meta={collateralMeta}
-            assetType={loan.collateralAssetType}
-            tokenId={loan.collateralTokenId}
-          />
-        </div>
-        <div>
-          <strong>Principal:</strong>{' '}
-          <AssetAmount
-            mode="raw"
-            amount={loan.principal}
-            address={loan.lendingAsset}
-            meta={lendingMeta}
-            assetType={loan.assetType}
-            tokenId={loan.tokenId}
-          />
-        </div>
-        <div><strong>Interest:</strong> {formatBpsAsPercent(loan.interestRateBps)} over {loan.durationDays} days</div>
-        {isBorrower ? <div style={{ color: 'var(--text-secondary)' }}>{health.detail}</div> : null}
-        <details>
-          <summary>What happens if I do nothing?</summary>
-          <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
-            If you are the borrower and do not repay by the due date, the lender may receive your collateral after the grace period.
-          </p>
-        </details>
+        {rental ? (
+          <>
+            <div>
+              <strong>NFT:</strong> {nftAssetKindLabel(loan.assetType)} #{loan.tokenId} ({shortenAddr(loan.lendingAsset)})
+            </div>
+            <div>
+              <strong>Daily fee:</strong>{' '}
+              <AssetAmount
+                mode="raw"
+                amount={rentalDailyFeeWei({ amount: loan.principal }).toString()}
+                address={loan.collateralAsset}
+                meta={collateralMeta}
+              />{' '}
+              · {loan.durationDays} days
+            </div>
+            <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+              {isBorrower
+                ? 'You have temporary use rights only. The NFT stays in vault custody.'
+                : 'Your NFT stays in vault custody while the renter holds temporary use rights.'}
+            </p>
+            <details>
+              <summary>What happens if I do nothing?</summary>
+              <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
+                If the renter does not close before the term ends, rights reset through the rental expiry path and
+                settlement follows the protocol rental rules.
+              </p>
+            </details>
+          </>
+        ) : (
+          <>
+            <div>
+              <strong>Locked collateral:</strong>{' '}
+              <AssetAmount
+                mode="raw"
+                amount={loan.collateralAmount}
+                address={loan.collateralAsset}
+                meta={collateralMeta}
+                assetType={loan.collateralAssetType}
+                tokenId={loan.collateralTokenId}
+              />
+            </div>
+            <div>
+              <strong>Principal:</strong>{' '}
+              <AssetAmount
+                mode="raw"
+                amount={loan.principal}
+                address={loan.lendingAsset}
+                meta={lendingMeta}
+                assetType={loan.assetType}
+                tokenId={loan.tokenId}
+              />
+            </div>
+            <div>
+              <strong>Interest:</strong> {formatBpsAsPercent(loan.interestRateBps)} over {loan.durationDays} days
+            </div>
+            {isBorrower ? <div style={{ color: 'var(--text-secondary)' }}>{health.detail}</div> : null}
+            <details>
+              <summary>What happens if I do nothing?</summary>
+              <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>
+                If you are the borrower and do not repay by the due date, the lender may receive your collateral after
+                the grace period.
+              </p>
+            </details>
+          </>
+        )}
       </div>
 
       {msg ? <div className="banner banner-warn" style={{ marginTop: 16 }}>{msg}</div> : null}

@@ -1,5 +1,12 @@
 import type { ActiveOffersPage, CreatorOffersPage, IndexedOffer } from '../types/offers.js';
-import { ASSET_TYPE_ERC20, OFFER_TYPE_BORROWER, OFFER_TYPE_LENDER } from '../types/offers.js';
+import {
+  ASSET_TYPE_ERC20,
+  ASSET_TYPE_ERC721,
+  ASSET_TYPE_ERC1155,
+  OFFER_TYPE_BORROWER,
+  OFFER_TYPE_LENDER,
+} from '../types/offers.js';
+import { isNftRentalOffer } from '../offers/rental.js';
 import { fetchIndexerJson } from './client.js';
 
 export interface HolderOffersPage {
@@ -147,6 +154,36 @@ export function isHealedIndexerOffer(o: IndexedOffer): boolean {
   const amountMax = o.amountMax?.trim() ?? '';
   if (amount === '0' && (!amountMax || amountMax === '0')) return false;
   return true;
+}
+
+/** Lender NFT listings a renter can accept (N2 journey). */
+export function filterLenderNftOffersForRent(offers: IndexedOffer[]): IndexedOffer[] {
+  return offers.filter(
+    (o) =>
+      o.status === 'active' &&
+      o.offerType === OFFER_TYPE_LENDER &&
+      isNftRentalOffer(o) &&
+      isDirectAcceptableOffer(o) &&
+      isHealedIndexerOffer(o),
+  );
+}
+
+/** Renter-posted NFT rental demand offers (PF-044). */
+export function filterBorrowerNftRentalDemands(offers: IndexedOffer[]): IndexedOffer[] {
+  return offers.filter(
+    (o) =>
+      o.status === 'active' &&
+      o.offerType === OFFER_TYPE_BORROWER &&
+      isNftRentalOffer(o) &&
+      isDirectAcceptableOffer(o) &&
+      isHealedIndexerOffer(o),
+  );
+}
+
+export function nftAssetKindLabel(assetType: number): string {
+  if (assetType === ASSET_TYPE_ERC721) return 'ERC-721';
+  if (assetType === ASSET_TYPE_ERC1155) return 'ERC-1155';
+  return 'NFT';
 }
 
 /** Borrower requests a lender can fund (L1 journey). */
