@@ -630,6 +630,15 @@ converge. Its intended behaviour (the test oracle for that surface):
   residual claim after default or liquidation.
 - Wallet-rejection messages appear only for genuine user rejections;
   contract reverts are decoded to plain-language causes.
+- Advanced mode reveals power controls in place, never as a different
+  product: the Offer Book gains a side filter (lending offers, borrow
+  requests, NFT rentals), rate and duration sorting, an asset-address
+  filter that matches any leg of an offer, and a per-row detail line
+  with the exact basis points, offer id, expiry, range bounds and the
+  partial-repay flag. Basic mode keeps the plain newest-first list.
+  When active filters match nothing, the empty state must say the
+  FILTERS matched nothing (with a clear-filters action) — never that
+  the market is empty.
 
 ## Key UX Requirements
 

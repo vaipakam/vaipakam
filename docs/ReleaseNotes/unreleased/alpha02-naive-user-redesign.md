@@ -105,6 +105,18 @@ is included. The defi rental daily-fee unit divergence was filed in
 docs/FunctionalSpecs/_CodeVsDocsAudit.md and the alpha02 intended
 behaviour was added to docs/FunctionalSpecs/WebsiteReadme.md.
 
+With the naive-user surface converged (Codex review rounds dropped
+from repeated correctness findings to only narrow race-window polish),
+the first Advanced-mode reveal landed on the Offer Book: a side
+filter (lending offers / borrow requests / NFT rentals), rate and
+duration sorting, an any-leg asset-address filter, and a per-row
+detail line with the exact basis points, offer id, expiry, range
+bounds (size band on lender offers, rate band on borrow requests) and
+the partial-repay flag. Basic mode keeps the plain newest-first list;
+a filter that matches nothing says so explicitly instead of claiming
+the market is empty. Loan details already showed exact health-factor
+and loan-to-value numbers in Advanced mode.
+
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
 Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT
