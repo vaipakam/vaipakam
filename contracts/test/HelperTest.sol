@@ -80,7 +80,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](83);
+        selectors = new bytes4[](86);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -247,6 +247,10 @@ contract HelperTest {
         // residual tests (drain-block + claimability).
         selectors[81] = TestMutatorFacet.setLoanCollateralLienRaw.selector;
         selectors[82] = TestMutatorFacet.getLoanCollateralLienAmount.selector;
+        // #953 — sale-forfeit sweep-reachability test scaffolding.
+        selectors[83] = TestMutatorFacet.setLoanActiveLenderEntryId.selector;
+        selectors[84] = TestMutatorFacet.callTransferLenderEntry.selector;
+        selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed

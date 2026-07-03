@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "../../src/libraries/LibVaipakam.sol";
+import {LibInteractionRewards} from "../../src/libraries/LibInteractionRewards.sol";
 import {LibMetricsHooks} from "../../src/libraries/LibMetricsHooks.sol";
 import {LibERC721} from "../../src/libraries/LibERC721.sol";
 import {LibCollateralSettlement} from "../../src/libraries/LibCollateralSettlement.sol";
@@ -589,6 +590,31 @@ contract TestMutatorFacet {
             perDayNumeraire18: perDayNumeraire18
         });
         s.userRewardEntryIds[user].push(id);
+    }
+
+    // ─── #953 test-only — sale-forfeit sweep-reachability scaffolding ───────
+
+    /// @notice Set the per-loan active lender entry pointer so a test can then
+    ///         drive {callTransferLenderEntry} (production sets it in
+    ///         {LibInteractionRewards.registerLoan} at loan init).
+    function setLoanActiveLenderEntryId(uint256 loanId, uint256 entryId) external {
+        LibVaipakam.storageSlot().loanActiveLenderEntryId[loanId] = entryId;
+    }
+
+    /// @notice Invoke the internal {LibInteractionRewards.transferLenderEntry} to
+    ///         simulate a position sale forfeiting the exiting lender's entry and
+    ///         advancing the active pointer off it.
+    function callTransferLenderEntry(uint256 loanId, address newLender) external {
+        LibInteractionRewards.transferLenderEntry(loanId, newLender);
+    }
+
+    /// @notice Read the #953 orphaned-forfeited-lender-entry list for a loan.
+    function getForfeitedLenderEntryIds(uint256 loanId)
+        external
+        view
+        returns (uint256[] memory)
+    {
+        return LibVaipakam.storageSlot().loanForfeitedLenderEntryIds[loanId];
     }
 
     // ─── LibERC721 lock-state direct manipulators (test-only) ───────────

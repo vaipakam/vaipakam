@@ -22,12 +22,12 @@
  * directly on Review with that offer selected, when it is still open
  * and on this flow's side of the market.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
-import { erc20Abi, parseUnits } from 'viem';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -41,11 +41,16 @@ import {
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
+import { useGraceLabel } from '../data/protocol';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import {
+  assertAssetNotPausedLive,
+  assertErc20BalanceLive,
+  isAssetIlliquidLive,
+} from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
-  gracePeriodLabel,
   initialOfferForm,
   toCreateOfferPayload,
   validateOfferForm,
@@ -142,6 +147,20 @@ function offerRateBps(offer: IndexedOffer): number {
   return offer.offerType === 0 ? offer.interestRateBps : offer.interestRateBpsMax;
 }
 
+/** One source for the interest-mode consent line (accept + post).
+ *  The pro-rata phrasing is audience-specific: "repaying early costs
+ *  less" is the borrower's frame; the lender's is "early repayment
+ *  earns less". */
+function interestModeNote(
+  useFullTermInterest: boolean,
+  audience: 'borrower' | 'lender',
+): string {
+  if (useFullTermInterest) return copy.match.interestModeFullTerm;
+  return audience === 'borrower'
+    ? copy.match.interestModeProRata
+    : copy.match.interestModeProRataLender;
+}
+
 function MatchOfferRow({
   offer,
   side,
@@ -208,8 +227,16 @@ export function OfferFlow({ side }: { side: Side }) {
   const [deepLinkNotice, setDeepLinkNotice] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
 
+  // ANY form edit is potentially disclosure-driving — the central rule
+  // voids prior consent on every patch that doesn't itself set the
+  // consent field. New inputs get the reset for free; forgetting it at
+  // a call site is impossible.
   const set = (patch: Partial<OfferFormState>) =>
-    setForm((f) => ({ ...f, ...patch }));
+    setForm((f) => ({
+      ...f,
+      ...('riskAndTermsConsent' in patch ? {} : { riskAndTermsConsent: false }),
+      ...patch,
+    }));
 
   // ---- Deep link (?offer=<id>) from the Offer Book -------------------
   // Validates the SAME rules as the browse path (side, open, ERC-20
@@ -270,7 +297,7 @@ export function OfferFlow({ side }: { side: Side }) {
       clear(copy.match.offerGone);
       return;
     }
-    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset }));
+    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset, riskAndTermsConsent: false }));
     setSelected(row);
     setMode('accept');
     setStep('review');
@@ -488,10 +515,122 @@ export function OfferFlow({ side }: { side: Side }) {
   // ---- Review receipt ----------------------------------------------------
   // One side of the deal being unpriced (illiquid) changes the default
   // outcome to a direct in-kind transfer — the receipt must say so.
-  const selectedIsIlliquid =
+  // The warning is the UNION of the indexer row's flags (accept mode)
+  // and a LIVE checkLiquidity read of the deal's legs in BOTH modes:
+  // live because the indexer can lag an on-chain flip (without the
+  // live read, the signer's pre-sign re-check would abort to a
+  // re-review that still shows no warning — an inescapable loop), and
+  // indexer-united because a live blip must not hide a warning the
+  // row already carries.
+  const indexerSaysIlliquid =
     mode === 'accept' &&
     selected !== null &&
     (selected.principalLiquidity === 1 || selected.collateralLiquidity === 1);
+  const liqLegA = mode === 'post' ? form.lendingAsset : (selected?.lendingAsset ?? '');
+  const liqLegB =
+    mode === 'post' ? form.collateralAsset : (selected?.collateralAsset ?? '');
+  const readClient = usePublicClient({ chainId: readChain.chainId });
+  const legLiquidity = useQuery({
+    queryKey: [
+      'legLiquidity',
+      readChain.chainId,
+      liqLegA.toLowerCase(),
+      liqLegB.toLowerCase(),
+    ],
+    enabled:
+      Boolean(readClient) && isAddressLike(liqLegA) && isAddressLike(liqLegB),
+    staleTime: 60_000,
+    queryFn: async () => {
+      // failClosed: an unreadable liquidity status must land the query
+      // in error/retry — silently rendering "no warning" would let the
+      // user consent without the in-kind-default disclosure.
+      const [lending, collateral] = await Promise.all([
+        isAssetIlliquidLive({
+          publicClient: readClient!,
+          diamondAddress: readChain.diamondAddress,
+          asset: liqLegA,
+          failClosed: true,
+        }),
+        isAssetIlliquidLive({
+          publicClient: readClient!,
+          diamondAddress: readChain.diamondAddress,
+          asset: liqLegB,
+          failClosed: true,
+        }),
+      ]);
+      return lending || collateral;
+    },
+  });
+  // The liquidity answer gates a DISCLOSURE — signing waits until it
+  // is known (in accept mode the indexer flags alone don't count:
+  // they can lag the chain in BOTH directions).
+  const liquidityKnown = legLiquidity.data !== undefined;
+  // Receipts must show the grace window repayment is actually judged
+  // against — governance buckets can override the default schedule.
+  // While the LIVE bucket read is in flight the label is the default
+  // schedule's wording, which is wrong on a retuned chain — display
+  // may proceed, signing gates on `ready` (like the liquidity check).
+  const activeDurationDays =
+    mode === 'accept' ? (selected?.durationDays ?? 0) : Number(form.durationDays) || 0;
+  const grace = useGraceLabel(activeDurationDays);
+  // If the label MOVES after the user already ticked consent (the
+  // live bucket read resolving to a non-default window), that consent
+  // predates the corrected term — same re-consent rule as the late
+  // illiquid/linked-loan disclosures.
+  const prevGraceLabel = useRef(grace.label);
+  useEffect(() => {
+    if (prevGraceLabel.current === grace.label) return;
+    prevGraceLabel.current = grace.label;
+    setForm((f) =>
+      f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+    );
+  }, [grace.label]);
+  const reviewIsIlliquid = indexerSaysIlliquid || legLiquidity.data === true;
+
+  // The liquidity query resolves asynchronously — if the illiquid
+  // warning appears AFTER the user already ticked consent, that
+  // consent predates the disclosure and must be re-given.
+  useEffect(() => {
+    if (reviewIsIlliquid) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+  }, [reviewIsIlliquid]);
+
+  // A Borrower-type offer can be a LOAN-SALE VEHICLE (lender Option-2
+  // listing): accepting it buys a RUNNING loan position — principal
+  // goes to the exiting lender, the acceptor steps in as lender of a
+  // part-elapsed loan whose collateral lives on the linked loan. The
+  // indexer has no column for this, so the review reads the link
+  // live and must DISCLOSE it before signing (the signed AcceptTerms
+  // binds linkedLoanId either way).
+  const linkedLoan = useQuery({
+    queryKey: ['offerLinkedLoan', readChain.chainId, selected?.offerId],
+    enabled: mode === 'accept' && Boolean(readClient) && Boolean(selected),
+    staleTime: 60_000,
+    queryFn: async () => {
+      const linked = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOfferLinkedLoanId',
+        args: [BigInt(selected!.offerId)],
+      })) as bigint;
+      return linked.toString();
+    },
+  });
+  const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
+  const acceptIsLoanSale =
+    mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
+  // Same late-disclosure rule as the illiquid warning: consent given
+  // before the sale-vehicle banner appeared must be re-given.
+  useEffect(() => {
+    if (acceptIsLoanSale) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+  }, [acceptIsLoanSale]);
 
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
@@ -514,28 +653,31 @@ export function OfferFlow({ side }: { side: Side }) {
         const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
         const collateralStr = `${formatTokenAmount(selected.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
         const durationStr = formatDurationDays(selected.durationDays);
-        const grace = gracePeriodLabel(selected.durationDays);
-        const illiquidSuffix = selectedIsIlliquid
+        const graceStr = grace.label;
+        const illiquidSuffix = reviewIsIlliquid
           ? ` ${copy.match.illiquidWarning}`
           : '';
+        // The offer's interest MODE changes what early repayment costs
+        // — state it in the consent text (ProjectDetailsREADME).
+        const acceptModeNote = interestModeNote(selected.useFullTermInterest, side);
 
         if (side === 'borrower') {
           return {
             youReceive: `${principalStr} now (minus the ${lifPct} initiation fee).`,
             youLock: `${collateralStr} as collateral, now.`,
-            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
+            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${acceptModeNote}`,
             youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${illiquidSuffix}`,
             fees: copy.fees.borrowerLIF(lifPct),
-            whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
+            whenThisEnds: `Repay within ${durationStr} (grace period: ${graceStr}), then claim your collateral back.`,
           };
         }
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${acceptModeNote}`,
           youLock: `${principalStr} lent to the borrower, now.`,
           youMayOwe: 'Nothing — the borrower owes you.',
           youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${grace}). You then claim your funds.`,
+          whenThisEnds: `Repayment is due within ${durationStr} (grace period: ${graceStr}). You then claim your funds.`,
         };
       }
 
@@ -554,25 +696,31 @@ export function OfferFlow({ side }: { side: Side }) {
       const interestStr = `${formatTokenAmount(interest, lending.decimals)} ${lending.symbol}`;
       const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
       const durationStr = formatDurationDays(payload.durationDays);
-      const grace = gracePeriodLabel(payload.durationDays);
+      const graceStr = grace.label;
+      // The interest MODE changes what an early repayment costs — the
+      // consent text must state it explicitly (ProjectDetailsREADME).
+      const modeNote = interestModeNote(form.useFullTermInterest, side);
+      const postIlliquidSuffix = reviewIsIlliquid
+        ? ` ${copy.match.illiquidWarning}`
+        : '';
 
       if (side === 'lender') {
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${modeNote}`,
           youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
           youMayOwe: 'Nothing — the borrower owes you.',
-          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.`,
+          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.${postIlliquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
-          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
+          whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${graceStr}). You then claim your funds.`,
         };
       }
       return {
         youReceive: `${principalStr} when a lender accepts your request.`,
         youLock: `${collateralStr} as collateral, starting now.`,
-        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
-        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
+        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${modeNote}`,
+        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${postIlliquidSuffix}`,
         fees: copy.fees.borrowerLIF(lifPct),
-        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
+        whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${graceStr}), then claim your collateral back.`,
       };
     } catch {
       return null;
@@ -580,7 +728,8 @@ export function OfferFlow({ side }: { side: Side }) {
   }, [
     mode,
     selected,
-    selectedIsIlliquid,
+    reviewIsIlliquid,
+    grace.label,
     side,
     form,
     postDetailsComplete,
@@ -601,6 +750,16 @@ export function OfferFlow({ side }: { side: Side }) {
     allChecksPass(checks) &&
     receipt !== null &&
     !isOwnSelectedOffer &&
+    liquidityKnown &&
+    // The reviewed grace window must be the LIVE one — the fallback
+    // label can be wrong on a chain with retuned buckets.
+    grace.ready &&
+    // The linked-loan answer gates a BLOCK, not just a disclosure: a
+    // linked offer settles/transfers a running loan and the fresh-loan
+    // receipt above does not describe those terms — so signing waits
+    // until the answer is known, and a linked offer never signs here.
+    linkedLoanKnown &&
+    !acceptIsLoanSale &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -626,6 +785,28 @@ export function OfferFlow({ side }: { side: Side }) {
       walletChain.diamondAddress,
       address,
     );
+    // Liquidity can flip between review and submit (and a stale cached
+    // "liquid" can survive a failed refetch) — re-read live, fail
+    // closed, and force a re-review if the in-kind-default warning
+    // was never shown for what is now an unpriced pair.
+    const [postLendingIlliquid, postCollateralIlliquid] = await Promise.all([
+      isAssetIlliquidLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: form.lendingAsset,
+        failClosed: true,
+      }),
+      isAssetIlliquidLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: form.collateralAsset,
+        failClosed: true,
+      }),
+    ]);
+    if ((postLendingIlliquid || postCollateralIlliquid) && !reviewIsIlliquid) {
+      void queryClient.invalidateQueries({ queryKey: ['legLiquidity'] });
+      throw new Error(copy.match.termsChanged);
+    }
     // The receipt quoted the CACHED fee config (5-min staleTime) — a
     // governance retune inside that window would have the user approve
     // against a stale receipt, or mine an approval ahead of an
@@ -651,23 +832,30 @@ export function OfferFlow({ side }: { side: Side }) {
       ? payload.lendingAsset
       : payload.collateralAsset) as `0x${string}`;
     const amount = side === 'lender' ? payload.amountMax : payload.collateralAmount;
-    // The checklist's balance item is a CACHED read — approve() would
-    // succeed even for a wallet that moved the funds after review, so
-    // re-read live and fail BEFORE the approval.
-    const heldNow = (await publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [address],
-    })) as bigint;
-    if (heldNow < amount) {
-      throw new Error(
-        copy.errors.needMore(
-          (side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol) ??
-            'the locked asset',
-        ),
-      );
-    }
+    // Paused legs make createOffer revert (requireAssetNotPaused), and
+    // the checklist's balance item is a CACHED read — re-check all
+    // three live, in ONE round-trip (they're independent), before the
+    // approval can mine.
+    await Promise.all([
+      assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: payload.lendingAsset as `0x${string}`,
+      }),
+      assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: payload.collateralAsset as `0x${string}`,
+      }),
+      assertErc20BalanceLive({
+        publicClient,
+        token,
+        owner: address,
+        amount,
+        symbol:
+          side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol,
+      }),
+    ]);
     await ensureAllowance({
       publicClient,
       walletClient,
@@ -746,6 +934,15 @@ export function OfferFlow({ side }: { side: Side }) {
           interestRateBps: BigInt(offerRateBps(selected)),
           collateralAmount: BigInt(selected.collateralAmount),
           durationDays: selected.durationDays,
+          // The interest MODE the reviewed consent line described — a
+          // stale indexer flag must abort before the wallet prompt
+          // like any other reviewed term.
+          useFullTermInterest: selected.useFullTermInterest,
+          // What the review actually SHOWED (indexer flags ∪ live
+          // read). If a leg flips illiquid between review and sign,
+          // the signer aborts and the re-review — live-driven — now
+          // renders the warning, so consent can be re-given against it.
+          illiquidWarned: reviewIsIlliquid,
         },
       });
     } catch (err) {
@@ -761,13 +958,43 @@ export function OfferFlow({ side }: { side: Side }) {
       ? terms.collateralAssetType === AssetType.ERC20
       : terms.assetType === AssetType.ERC20;
     if (paysErc20) {
+      const payToken = acceptorPaysCollateral
+        ? terms.collateralAsset
+        : terms.lendingAsset;
+      const payAmount = acceptorPaysCollateral
+        ? terms.collateralAmount
+        : terms.amount;
+      // acceptOffer enforces requireAssetNotPaused on both legs, and
+      // approve() succeeds regardless of balance — re-check all three
+      // live, in ONE round-trip, before the approval can mine.
+      await Promise.all([
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.lendingAsset,
+        }),
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.collateralAsset,
+        }),
+        assertErc20BalanceLive({
+          publicClient,
+          token: payToken,
+          owner: address,
+          amount: payAmount,
+          symbol: acceptorPaysCollateral
+            ? selectedCollateralMeta.data?.symbol
+            : lendingMeta.data?.symbol,
+        }),
+      ]);
       await ensureAllowance({
         publicClient,
         walletClient,
-        token: acceptorPaysCollateral ? terms.collateralAsset : terms.lendingAsset,
+        token: payToken,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: acceptorPaysCollateral ? terms.collateralAmount : terms.amount,
+        amount: payAmount,
       });
     }
     const { hash } = await write('acceptOffer', [
@@ -892,6 +1119,9 @@ export function OfferFlow({ side }: { side: Side }) {
                       onChoose={() => {
                         setSelected(o);
                         setMode('accept');
+                        // A DIFFERENT deal needs a fresh acknowledgement
+                        // — never carry consent across selections.
+                        set({ riskAndTermsConsent: false });
                         setStep('review');
                       }}
                     />
@@ -981,7 +1211,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   onChange={(e) =>
                     // Disclosure-driving term — changing it voids any
                     // consent already given (ProjectDetailsREADME §consent).
-                    set({ allowsPartialRepay: e.target.checked, riskAndTermsConsent: false })
+                    set({ allowsPartialRepay: e.target.checked })
                   }
                 />
                 Allow the borrower to repay in parts
@@ -991,7 +1221,7 @@ export function OfferFlow({ side }: { side: Side }) {
                   type="checkbox"
                   checked={!form.useFullTermInterest}
                   onChange={(e) =>
-                    set({ useFullTermInterest: !e.target.checked, riskAndTermsConsent: false })
+                    set({ useFullTermInterest: !e.target.checked })
                   }
                 />
                 Charge interest only for time used (pro-rata) instead of the full term
@@ -1026,10 +1256,77 @@ export function OfferFlow({ side }: { side: Side }) {
               </span>
             </div>
           ) : null}
-          {selectedIsIlliquid ? (
+          {reviewIsIlliquid ? (
             <div className="banner banner-warn" role="alert">
               <span className="banner-body">{copy.match.illiquidWarning}</span>
             </div>
+          ) : null}
+          {acceptIsLoanSale ? (
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.match.linkedLoanAcceptBlocked(linkedLoan.data ?? '')}
+              </span>
+            </div>
+          ) : null}
+          {mode === 'accept' && !linkedLoanKnown && linkedLoan.isError ? (
+            // Same dead-Sign-button rule as the liquidity gate: a
+            // blocked check must name itself and offer the retry.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.match.linkedLoanCheckFailed}
+              </span>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => void linkedLoan.refetch()}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {!liquidityKnown ? (
+            legLiquidity.isError ? (
+              // A dead Sign button with no reason reads as broken —
+              // name the blocked check and offer the retry.
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">
+                  {copy.match.liquidityCheckFailed}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => void legLiquidity.refetch()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.match.liquidityChecking}
+              </p>
+            )
+          ) : null}
+          {!grace.ready ? (
+            grace.isError ? (
+              // Same dead-Sign-button rule: the blocked check names
+              // itself and offers the retry.
+              <div className="banner banner-warn" role="alert">
+                <span className="banner-body">
+                  {copy.match.graceCheckFailed}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => grace.refetch()}
+                >
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <p className="muted" style={{ margin: 0 }}>
+                {copy.match.graceChecking}
+              </p>
+            )
           ) : null}
           <div className="card">
             <h3>Before you sign</h3>

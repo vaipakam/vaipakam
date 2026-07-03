@@ -258,6 +258,17 @@ Reward pool funding on mirrors:
 - once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
 - mirror-side `claimInteractionRewards()` draws from the mirror Diamond's local VPFI balance, credited by the remittance above, after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops. A mirror whose claim gate is open but whose budget has not yet been remitted has claims revert (empty balance) until the operator/keeper funds it — recoverable back-pressure, never lost value.
 
+Reward-budget remittance automation:
+
+- the production keeper may run a canonical-chain reward-remittance pass that keeps mirror chains funded ahead of ordinary claim traffic
+- the pass should scan a bounded window of recent finalized days for each mirror chain and identify days whose mirror budget has finalized but has not yet been remitted
+- remittance should be batched by mirror chain and bounded by the live lane availability, not only the nominal configured capacity, so a partially drained cross-chain bucket causes the keeper to wait or reduce later batches instead of repeatedly submitting sends that are expected to hit the rate limit
+- discovery should be idempotent: non-finalized days, zero-budget days, and already-remitted days are skipped without changing state, and retrying a failed or interrupted pass must not double-send a finalized day
+- before a send, the keeper should quote the exact cross-chain fee needed for that batch and submit only when it can pay that fee through the configured funding path
+- the automation is off by default and may run only when the general keeper switch, the dedicated reward-remittance switch, and the on-chain keeper authorization for the signer are all active
+- if a single day's mirror slice is larger than the configured lane ceiling, the keeper should skip that day and surface an operator-visible capacity warning rather than splitting the day across multiple sends, because a day's budget is remitted atomically. If the day fits the configured ceiling but the live bucket is temporarily depleted, the keeper should back off until refill or operator intervention rather than treating the revert as a permanent day-level failure.
+- the keeper is a convenience automation, not the source of accounting truth: on-chain remittance guards remain authoritative, and an operator may still perform a manual remittance when automation is disabled or unavailable
+
 Accounting identity:
 
 - because each chain's VPFI slice is scaled by `chainInterest / globalInterest`, the uncapped per-user payout `½ × (userInterest / globalInterest) × dailyPool` is mathematically identical to `½ × (userInterest / localChainInterest) × chainSlice`
@@ -279,7 +290,8 @@ Diamond surface (Phase 1 to add):
 - `InteractionRewardsFacet` (on every chain): `claimInteractionRewards()` — the argument-less pull-model claim entry point. In one call it pays the caller both (a) their per-loan interaction-reward entries and (b) any newly-finalized daily rewards they are owed, using `knownGlobalInterest[dayId]` as each day's denominator. Observable behaviour that the spec fixes (the exact return tuple and error selectors are implementation detail):
   - a caller is never paid for a `dayId` before that day's global denominator has been finalized/broadcast, and the per-day claim only ever advances over the **contiguous finalized prefix** — a later still-unfinalized day pauses the daily catch-up without discarding the earlier finalized days;
   - the daily catch-up is **bounded per call**, so a user who has been away for a long stretch of finalized days may need to call `claimInteractionRewards()` more than once to fully catch up; nothing is lost — the caller's cursor persists between calls, so each call resumes where the last stopped. Claim Center / integrator UX should surface "more rewards still pending" after a bounded claim rather than implying a single call always clears everything;
-  - the surface is deliberately cursor/entry driven rather than a caller-supplied `dayId[]`, so integrators do not select days explicitly.
+  - the surface is deliberately cursor/entry driven rather than a caller-supplied `dayId[]`, so integrators do not select days explicitly;
+  - the claim is a value transfer to the caller, so it is a **Tier-1 sanctions entry point**: a caller flagged by the sanctions oracle is refused the claim entirely, consistent with every other protocol payout path. This gate lives at the contract level, not only in any one client, so keeper bots, third-party frontends, and direct callers are all screened. The sibling forfeited-reward sweep, which routes value to treasury rather than the caller, is intentionally **not** caller-gated.
 
 Testing requirements beyond §9:
 

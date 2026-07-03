@@ -799,6 +799,11 @@
   },
   {
     "type": "error",
+    "name": "PartialWouldRetireFullPrincipal",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PeriodicInterestDisabled",
     "inputs": []
   },

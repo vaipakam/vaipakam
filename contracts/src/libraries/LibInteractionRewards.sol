@@ -382,6 +382,12 @@ library LibInteractionRewards {
             s.lenderFrontierDay
         );
 
+        // #953 (Codex) — the pointer below is about to move off `oldId`, orphaning
+        // this now-forfeited entry from `sweepForfeitedByLoanId`. Record it so the
+        // permissionless sweep can still route its forfeit to treasury even if the
+        // exiting holder is later sanctioned (and thus blocked from claiming).
+        s.loanForfeitedLenderEntryIds[loanId].push(oldId);
+
         uint256 newStart = today + 1;
         if (newStart >= originalEnd) {
             // No residual window for the new lender — clear the pointer.
@@ -723,6 +729,25 @@ library LibInteractionRewards {
                 /* mutate */ true
             );
             treasuryTotal += t;
+        }
+
+        // #953 (Codex) — also drain lender entries that a position sale orphaned
+        // from the active pointer (see `transferLenderEntry`). Each is forfeited,
+        // so `_processEntry` routes it to treasury; it is idempotent, so an entry
+        // already processed by a prior sweep or a later un-flagged claim adds 0.
+        uint256[] storage orphaned = s.loanForfeitedLenderEntryIds[loanId];
+        uint256 olen = orphaned.length;
+        for (uint256 i = 0; i < olen; ) {
+            (, uint256 t) = _processEntry(
+                s,
+                orphaned[i],
+                capRatio,
+                ethPriceRaw,
+                ethPriceDec,
+                /* mutate */ true
+            );
+            treasuryTotal += t;
+            unchecked { ++i; }
         }
     }
 
