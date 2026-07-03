@@ -607,6 +607,28 @@ also produced a set of concretely deep-verified-safe negative results
 
 ---
 
+## Round 3 — verification + economic modeling (2026-07-03)
+
+PoC + invariant tests (authored-not-executed drafts in
+`round3-poc-tests/`) and the economic/parameter model
+(`Findings20260703-EconomicParameterModeling.md`). Two new severity findings:
+
+- **#919 (M8)** — the interaction-reward per-ETH cap **fails open** on a
+  zero/missing ETH feed (and via the `uint256.max` disable sentinel):
+  `_capVpfiForInterestUsd` returns `uint256.max`, removing the cap, so
+  wash/self-dealing reward-farming becomes an effectively unbounded drain of
+  the reward pool during any ETH-feed outage. `LibInteractionRewards.sol:1092`.
+  Fix: fail closed to a fixed fallback cap; add a minimum-interest eligibility
+  floor; timelock the disable sentinel.
+- **#920 (L13)** — the Diamond commingles VPFI across accounting buckets
+  (interaction pool, borrower-LIF `vpfiHeld` custody, rebates, keeper/reward
+  budgets) with **no on-chain `balance ≥ Σ obligations` invariant**, so an
+  under-seeded reward pool creates first-come insolvency between reward
+  claimants and custody/rebate claimants (demonstrated by an invariant test).
+  Fix: add a monitored invariant + the missing view helpers
+  (`getTotalVpfiCustody`, `previewPreclose`, status enumeration, liquidation
+  entitlement breakdown).
+
 ## Round 4 — deploy/init, governance/timelock, DoS, under-covered facets (2026-07-03)
 
 Ground the per-domain runtime audits never covered. 13 findings (2 High, 5

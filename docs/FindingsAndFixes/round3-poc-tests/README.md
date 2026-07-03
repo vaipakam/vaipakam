@@ -20,6 +20,26 @@ break the `contracts-fast` / deploy-sanity CI gate.
    already fixed (`partial` is a reserved Solidity keyword → renamed
    `allowPartial`); expect others (facet signatures, struct field names, helper
    names) that only a compiler run can catch.
+4. If you place them under `contracts/test/audit/`, add `audit` to the
+   `SUBDIRS=(...)` chunk list in `contracts/script/run-regression.sh` — its
+   exhaustiveness guard errors on any non-invariant `*.t.sol` under an unlisted
+   subdirectory, so the local full-regression gate would otherwise fail before
+   the PoCs run. (Flagged by Codex on PR #976.)
+
+### Known assertion issues to fix before trusting a green run (Codex, PR #976)
+
+- **`Round3CrossFacetInvariants.t.sol` (refinance sequence, ~line 338):**
+  `lender1Before` is sampled *after* loan1 is accepted, so the old lender's
+  balance is already down by the 1000-ether principal. After refinance the
+  lender receives principal + interest, so `lender1After - lender1Before ≈
+  PRINCIPAL + coupon` — comparing that whole delta to only `_fullTermCoupon(...)`
+  makes the test fail even when interest is correct. Subtract the returned
+  principal from the delta, or sample before loan1 acceptance.
+- **`Round3CrossFacetInvariants.t.sol` (~line 440):** the post-terminal
+  `claimAsBorrower` is wrapped in a bare `catch` that accepts *any* revert, so a
+  genuine ownership/accounting/transfer regression would still pass the
+  invariant (false confidence). Catch the expected no-claim selector explicitly
+  and fail on any other error.
 
 ## What each file covers
 
