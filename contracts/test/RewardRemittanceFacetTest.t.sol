@@ -15,6 +15,7 @@ import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {MockRewardMessenger} from "./mocks/MockRewardMessenger.sol";
 import {MockCrossChainMessenger} from "./mocks/MockCrossChainMessenger.sol";
+import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 
 /**
  * @title RewardRemittanceFacetTest — #776 PR1 (Base sender) unit coverage.
@@ -126,6 +127,56 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(total, single, "duplicate day counted once");
         assertEq(perDay[0], single, "first occurrence carries the slice");
         assertEq(perDay[1], 0, "repeat contributes zero");
+    }
+
+    function test_QuoteRemittanceFee_ReturnsFeeAndTotal() public {
+        _finalizeDay1();
+        (uint256 expectedTotal, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        assertEq(total, expectedTotal, "total matches quoteRewardBudget");
+        assertEq(fee, ccip.fee(), "fee routed through the messenger");
+        assertGt(total, 0, "non-zero remittable total");
+    }
+
+    function test_QuoteRemittanceFee_ZeroWhenNothingRemittable() public {
+        _finalizeDay1();
+        // Remit day 1, then re-quote it — nothing left to send → (0, 0).
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        assertEq(total, 0, "already-remitted day contributes 0");
+        assertEq(fee, 0, "no fee when nothing to remit");
+    }
+
+    function test_QuoteRemittanceFee_RevertsOnUnfinalizedDay() public {
+        _finalizeDay1();
+        // Batch mixes finalized day 1 + unfinalized day 2 — must revert exactly
+        // like remitRewardBudget, not silently drop day 2 and quote a fee.
+        uint256[] memory d = new uint256[](2);
+        d[0] = 1;
+        d[1] = 2;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RewardDayNotFinalized.selector,
+                uint256(2)
+            )
+        );
+        remit.quoteRemittanceFee(CHAIN_ARB, d);
+    }
+
+    function test_QuoteRemittanceFee_RevertsWhenPoolNearlyExhausted() public {
+        _finalizeDay1();
+        (uint256 total, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        // Leave only (total - 1) of the pool → the quote's cap guard must fire,
+        // matching remitRewardBudget's RewardPoolCapExceeded.
+        TestMutatorFacet(address(diamond)).setInteractionPoolPaidOut(CAP - total + 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardRemittanceFacet.RewardPoolCapExceeded.selector,
+                total,
+                total - 1
+            )
+        );
+        remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
     }
 
     function test_Slices_SumToFullDayEmission() public {

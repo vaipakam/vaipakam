@@ -1681,7 +1681,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](11);
+        selectors = new bytes4[](12);
         selectors[0] = RewardRemittanceFacet.remitRewardBudget.selector;
         selectors[1] = RewardRemittanceFacet.setRewardRemittanceKeeper.selector;
         selectors[2] = RewardRemittanceFacet.quoteRewardBudget.selector;
@@ -1693,6 +1693,7 @@ contract HelperTest {
         selectors[8] = RewardRemittanceFacet.onRewardBudgetReceived.selector;
         selectors[9] = RewardRemittanceFacet.getRewardRemittanceReceiver.selector;
         selectors[10] = RewardRemittanceFacet.getRewardBudgetReceivedTotal.selector;
+        selectors[11] = RewardRemittanceFacet.quoteRemittanceFee.selector;
         return selectors;
     }
 
