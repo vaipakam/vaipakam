@@ -68,7 +68,9 @@ below.**
 Critical.** All filed as individual GitHub issues (#893–#973) under umbrella
 tracker #892. Informational items are listed at the end and in the umbrella.
 Round 3 added no new severity findings beyond M8 (#919) / L13 (#920) — it was
-verification (PoC + invariant tests, `contracts/test/audit/`) and economic
+verification (PoC + invariant tests — authored-not-executed drafts in
+`docs/FindingsAndFixes/round3-poc-tests/`; move to `contracts/test/audit/` and
+run `forge test` to verify) and economic
 modeling (`Findings20260703-EconomicParameterModeling.md`).
 
 ---
