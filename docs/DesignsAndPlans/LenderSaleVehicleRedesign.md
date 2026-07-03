@@ -144,6 +144,124 @@ surfaces friendly messages instead of raw selectors:
 7. Cancel: links + lock cleared, no collateral-refund attempt, re-list works.
 8. Duplicate listing reverts `SaleOfferAlreadyExists`.
 
+---
+
+# v2 — Bind-to-live (dissolves the round-4→8 finding class)
+
+**Status:** design → implementation (PR #959, redesign pass 2). **Owner-approved.**
+
+## The second root cause
+
+After the v1 redesign made the flow *run*, Codex rounds 4→8 surfaced a steady
+stream of P1/P2 findings that are **all one class: snapshot-vs-live divergence.**
+`createLoanSaleOffer` copies the live loan's state into an **immutable** sale
+offer (`amount = loan.principal`, `durationDays = remaining-at-listing`, the
+seller's sale `interestRateBps`) plus a side snapshot (`saleListingCollateral`).
+The buyer signs those copied values via the #662 `AcceptTerms` equality checks,
+but `completeLoanSale` settles them into the **live** loan. So every loan field
+that can drift between listing and accept becomes its own freshness patch:
+
+| Field | Drifts on | Patch it forced |
+|-------|-----------|-----------------|
+| principal | partial repay | R4 freshness `offer.amount == loan.principal` |
+| collateral | withdraw / periodic auto-liq / add | R6 `saleListingCollateral` snapshot + check; R7 `<` refinement |
+| remaining term | **every block** (continuous) | R8 — can't be patched with equality |
+| borrower identity | position-NFT transfer | R8 P1 — stale `linked.borrower` |
+| loan status | repay / default before sale | R8 P2 — stale links not torn down |
+| preview parity | all of the above | R8 P2/P3 — preview didn't mirror the checks |
+
+Term-drift is the tell: it changes every block, so no equality check against a
+snapshot can converge. Patching per field is an open-ended tail.
+
+## The fix — bind the accept to the live loan's IMMUTABLE facts
+
+The #662 machinery already binds the buyer to per-field values via equality, and
+`AcceptTerms` already carries `linkedLoanId`. So **for a sale vehicle, point the
+equality checks at the live loan instead of the stale offer snapshot** — the
+buyer signs the live position and the anti-phishing guarantee now protects
+against loan drift, not offer-copy drift. Crucially, bind to facts that are
+*immutable or discrete*, never the continuously-shrinking remaining term:
+
+`_verifyAndBindAccept`, sale-vehicle branch (`saleOfferToLoanId[offerId] != 0`),
+binds the buyer's `AcceptTerms` against `s.loans[linkedLoanId]`:
+
+- **principal** (`t.amount`) `==` live `loan.principal` — discrete (changes only
+  on repay); a repay between view and mine forces a re-sign (correct: the buyer
+  pays for exactly the principal they accept).
+- **duration** (`t.durationDays`) `==` live `loan.durationDays` — the loan's
+  **original, immutable** duration, NOT remaining-days. Fixed for the loan's life
+  → no drift. The buyer is buying a position that matures at the fixed
+  `startTime + durationDays`; the remaining term is derived and shown live in the
+  UI, never bound. (Bind `startTime` too so the fixed maturity is pinned.)
+- **collateral** (`t.collateralAmount`) `>=`-style: require live
+  `loan.collateralAmount >= t.collateralAmount`. A reduction (withdraw / auto-liq)
+  fails the buyer's floor → revert; a harmless top-up (`addCollateral`, still
+  permitted) only improves the position and passes (R7's exact concern, now
+  structural). The buyer signs the collateral they reviewed as a **minimum**.
+- **rate** (`t.interestRateBps`) `==` the **seller's** sale rate on the offer —
+  this one genuinely IS the seller's immutable ask, so it correctly binds to the
+  offer (unchanged).
+
+## What this removes vs. keeps vs. adds
+
+**Removes** (now enforced structurally by the live-binding, or moot):
+- The LoanFacet `initiateLoan` sale-vehicle freshness checks (principal, collateral).
+- The `saleListingCollateral` storage mapping + its write/cleanup (collateral is
+  bound `>=` live at accept; no snapshot to store or drift).
+- The term-staleness patch that R8 asked for (duration binds to the immutable
+  loan duration; no window needed).
+
+**Keeps** (not snapshot-drift — real invariants):
+- Linked loan must be **Active** at accept (else the position doesn't exist).
+- **Self-buy** guard — buyer ≠ the loan's **current** borrower, resolved via
+  `ownerOf(borrowerTokenId)` (R8 P1 fix: current holder, not stored `borrower`).
+- Sanctions (both parties) + **buyer-vs-current-borrower** compliance recheck.
+- D1–D4 (consolidate-at-listing, uniform completion, non-matchable, immutable).
+
+**Adds** (clean lifecycle hooks, not drift-patches):
+- **Listing teardown on loan exit** (R8 P2): when a listed loan reaches a terminal
+  state without a sale (repay / default), clear both link directions, unlock the
+  lender NFT, and mark the sale offer cancelled — so a stale listing can't linger
+  with a locked NFT. Hook into the repay / default terminal paths (or a shared
+  `LibSaleListing.teardown(loanId)` helper called from them).
+- **Preview reads live** (R8 P2/P3): `previewAccept` computes its sale-vehicle
+  projection + blockers from the live loan (mirroring the bind), and
+  `previewIntent` / `_previewMatchCore` gains the sale-vehicle non-matchable
+  check that `previewMatch` has.
+
+## Findings dissolved (round → mechanism)
+
+- R4 principal freshness, R6/R7 collateral snapshot, R8 term-staleness →
+  **gone**: the buyer binds to live principal/duration/collateral directly.
+- R8 P1 stale borrower → self-buy/compliance resolve the **current** holder.
+- R8 P2 stale links → explicit **teardown-on-exit** hook.
+- R8 P2/P3 preview parity → preview reads live + gains the intent check.
+
+## Migration / compatibility notes
+
+- The sale offer no longer needs to store loan-derived `amount` / `durationDays`
+  as load-bearing values (they're re-read live at accept). Keep them populated
+  for display/back-compat, but the **verifier** reads the live loan.
+- Pre-live platform: no deployed state to migrate; the `saleListingCollateral`
+  mapping is removed from `LibVaipakam.Storage` (append-only discipline: it was
+  the last field added; removing it is safe pre-deploy, or leave it unread/dead
+  if strict append-only is preferred — decide at implementation).
+
+## Test matrix (v2 additions)
+
+9.  Repay-then-accept-stale: partial-repay after listing → buyer signing the old
+    principal reverts on the live-binding; signing the new live principal succeeds.
+10. Collateral top-up after listing → accept still succeeds (`>=`); reduction →
+    reverts.
+11. Time passes after listing → accept still succeeds (duration binds to the
+    immutable loan duration, not remaining).
+12. Borrower NFT transferred after listing → self-buy guard checks the current
+    holder; the new holder buying reverts, a third party succeeds.
+13. Loan repaid/defaulted while listed → listing torn down (links cleared, NFT
+    unlocked, offer Cancelled); a later accept reverts as terminal, not as a
+    dangling link.
+14. `previewAccept` and `previewIntent` mirror the live-bound blockers.
+
 ## Out of scope / follow-ups
 
 - #974 — NFT-collateral lender-sale (complete/cancel collateral handling).
