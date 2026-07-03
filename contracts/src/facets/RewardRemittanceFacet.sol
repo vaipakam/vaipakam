@@ -432,10 +432,18 @@ contract RewardRemittanceFacet is
      *         authorizes quotes by `channelOf[msg.sender]` and only the Diamond
      *         is a registered reward-budget handler. This view runs the quote
      *         AS the Diamond, building the exact same funded-day payload +
-     *         token list the send would (same finalized / not-already-remitted /
+     *         token list the send would (same not-already-remitted /
      *         non-duplicate / non-zero-slice filter), so `fee` is what to pass
-     *         as `msg.value` (overpayment is refunded anyway). Returns (0, 0)
-     *         when nothing is remittable or the messenger/VPFI is unset.
+     *         as `msg.value` (overpayment is refunded anyway).
+     *
+     *         It is a faithful DRY-RUN of the send's intrinsic guards: it
+     *         reverts `RewardDayNotFinalized` on an unfinalized day and
+     *         `RewardPoolCapExceeded` when the batch would breach the 69M pool,
+     *         exactly like {remitRewardBudget} — so a keeper that gets a
+     *         successful quote knows the same send won't be rejected by those
+     *         guards (the caller-supplied `perRemittanceCap` is the keeper's own
+     *         concern, sized from the returned `total`). Returns (0, 0) when
+     *         nothing is remittable, or the messenger/VPFI is unset.
      * @return fee   CCIP native fee for the send (0 if nothing to remit).
      * @return total VPFI the send would move (0 if nothing to remit).
      */
@@ -452,6 +460,11 @@ contract RewardRemittanceFacet is
         uint256 fundedCount;
         for (uint256 i; i < dayIds.length; ) {
             uint256 dayId = dayIds[i];
+            // Mirror remit's revert on any unfinalized day so this quote never
+            // reports a valid fee for a batch remit would reject.
+            if (!s.dailyGlobalFinalized[dayId]) {
+                revert RewardDayNotFinalized(dayId);
+            }
             bool seen;
             for (uint256 j; j < i; ) {
                 if (dayIds[j] == dayId) {
@@ -462,11 +475,7 @@ contract RewardRemittanceFacet is
                     ++j;
                 }
             }
-            if (
-                !seen &&
-                s.dailyGlobalFinalized[dayId] &&
-                s.rewardBudgetRemitted[dstChainId][dayId] == 0
-            ) {
+            if (!seen && s.rewardBudgetRemitted[dstChainId][dayId] == 0) {
                 uint256 slice = LibInteractionRewards.chainRewardBudgetForDay(
                     s,
                     dstChainId,
@@ -485,6 +494,13 @@ contract RewardRemittanceFacet is
             }
         }
         if (total == 0) return (0, 0);
+        // Mirror remit's 69M pool-cap guard so a quote can't succeed for a batch
+        // remit would reject near pool exhaustion.
+        uint256 used = s.rewardBudgetRemittedGlobal + s.interactionPoolPaidOut;
+        uint256 remaining = used >= LibVaipakam.VPFI_INTERACTION_POOL_CAP
+            ? 0
+            : LibVaipakam.VPFI_INTERACTION_POOL_CAP - used;
+        if (total > remaining) revert RewardPoolCapExceeded(total, remaining);
         assembly {
             mstore(fundedDays, fundedCount)
         }
