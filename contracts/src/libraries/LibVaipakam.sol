@@ -4693,6 +4693,18 @@ library LibVaipakam {
         // Cumulative VPFI reward budget received from Base on this mirror.
         // Monitoring/reconciliation only — claims draw from the raw balance.
         uint256 rewardBudgetReceivedTotal;
+        // ─── #953 (Codex) — forfeited lender entries orphaned by a sale ────
+        // `transferLenderEntry` forfeits the exiting lender's reward entry and
+        // advances `loanActiveLenderEntryId` to the buyer's entry, so the
+        // forfeited entry is no longer reachable by `sweepForfeitedByLoanId`
+        // (which reads only the active pointer). Its sole remaining processing
+        // path was the old holder's `claimInteractionRewards` — now Tier-1
+        // sanctions-gated (#921 item 1), which would strand the forfeit if that
+        // holder is flagged. Recording the orphaned id here lets the
+        // permissionless, sanctions-open sweep still route it to treasury.
+        // Append-only per loan; `_processEntry` is idempotent so a re-sweep (or a
+        // later un-flagged claim) double-counts nothing.
+        mapping(uint256 => uint256[]) loanForfeitedLenderEntryIds;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
