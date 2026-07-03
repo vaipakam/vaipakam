@@ -1519,42 +1519,46 @@ contract OfferAcceptFacet is
     ///      `offer.amount` (which under Phase 2 is the lender's
     ///      `minPartialFillAmount` for lender offers, NOT the lent
     ///      amount). KYC must gate on real value at risk.
+    /// @dev 1e18-scaled numeraire value of `amount` units of `asset`, or 0 when
+    ///      the asset is illiquid (unpriced). Shared by both legs of
+    ///      {_calculateTransactionValueNumeraire}; kept as a single private helper
+    ///      so the (oracle price + decimals + scale) sequence isn't emitted twice
+    ///      — the dedup keeps OfferAcceptFacet under the EIP-170 runtime ceiling
+    ///      (#951 Codex #959 round-5). An illiquid NFT-rental leg is worth 0 here,
+    ///      matching the prior explicit `+= 0`.
+    function _liquidNumeraireValue(address asset, uint256 amount)
+        private
+        view
+        returns (uint256)
+    {
+        if (
+            OracleFacet(address(this)).checkLiquidity(asset)
+                != LibVaipakam.LiquidityStatus.Liquid
+        ) return 0;
+        (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
+            .getAssetPrice(asset);
+        uint8 tokenDecimals = IERC20Metadata(asset).decimals();
+        return (amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
+    }
+
     function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer,
         uint256 lendingAmount
     ) internal view returns (uint256 valueNumeraire) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
 
-        // Lent asset value if liquid
-        LibVaipakam.LiquidityStatus lentLiquidity = OracleFacet(address(this))
-            .checkLiquidity(offer.lendingAsset);
-        if (lentLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                .getAssetPrice(offer.lendingAsset);
-            uint8 tokenDecimals = IERC20Metadata(offer.lendingAsset).decimals();
-            valueNumeraire += (lendingAmount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        } else if (offer.assetType != LibVaipakam.AssetType.ERC20) {
-            // For NFT rentals: Rental value = amount (fee) * durationDays, but since illiquid, ≡ 0
-            valueNumeraire += 0;
-        }
+        // Lent asset value if liquid (illiquid / NFT-rental leg ≡ 0).
+        valueNumeraire = _liquidNumeraireValue(offer.lendingAsset, lendingAmount);
 
-        // Collateral value if liquid.
-        // For lender-sale vehicle offers (collateralAmount == 0), use the live
-        // loan's actual collateral amount so KYC is not undercounted.
+        // Collateral value if liquid. For lender-sale vehicle offers
+        // (collateralAmount == 0) use the live loan's actual collateral amount so
+        // KYC is not undercounted.
         uint256 effectiveCollateral = offer.collateralAmount;
         uint256 linkedLoanId = s.saleOfferToLoanId[offer.id];
         if (linkedLoanId != 0 && effectiveCollateral == 0) {
             effectiveCollateral = s.loans[linkedLoanId].collateralAmount;
         }
-
-        LibVaipakam.LiquidityStatus collLiquidity = OracleFacet(address(this))
-            .checkLiquidity(offer.collateralAsset);
-        if (collLiquidity == LibVaipakam.LiquidityStatus.Liquid) {
-            (uint256 price, uint8 feedDecimals) = OracleFacet(address(this))
-                .getAssetPrice(offer.collateralAsset);
-            uint8 tokenDecimals = IERC20Metadata(offer.collateralAsset).decimals();
-            valueNumeraire += (effectiveCollateral * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
-        }
+        valueNumeraire += _liquidNumeraireValue(offer.collateralAsset, effectiveCollateral);
     }
 
     /// @notice #627 — public view exposing the canonical KYC transaction value
@@ -1770,7 +1774,13 @@ contract OfferAcceptFacet is
         // The borrower address depends on the offer side (lender offer
         // → acceptor; borrower offer → creator), same as the loan-init
         // resolution.
-        if (_isErc20) {
+        //
+        // #951 (Codex #959 round-5) — a lender-sale-vehicle accept is a
+        // secondary-market position transfer and `_acceptOffer` skips the LIF
+        // entirely for it (the underlying loan already paid its LIF at
+        // origination). Mirror that carve-out here so the preview doesn't quote a
+        // phantom fee the execution won't charge; `lifEstimate` stays 0.
+        if (_isErc20 && s.saleOfferToLoanId[offerId] == 0) {
             address _borrower = _isLender ? acceptor : offer.creator;
             bool _vpfiDiscountApplies;
             if (

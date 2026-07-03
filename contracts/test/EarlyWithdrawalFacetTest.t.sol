@@ -704,6 +704,18 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #951 (Codex #959 round-5, P3) — `previewAccept` must mirror the
+    ///      fee-free sale-vehicle accept: a listed position sale quotes NO LIF
+    ///      (secondary-market transfer; the underlying loan already paid its LIF
+    ///      at origination), matching `_acceptOffer`. Without the carve-out the
+    ///      UI would show a phantom initiation fee the execution never charges.
+    function testPreviewAcceptSaleVehicleIsFeeFree() public {
+        uint256 saleOfferId = _listSaleOffer();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferAcceptFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(p.lifEstimate, 0, "sale-vehicle accept quotes no LIF");
+    }
+
     // ─── _getTreasury coverage via accrued interest ───────────────────────────
 
     function testSellLoanWithAccruedInterestCoversGetTreasury() public {

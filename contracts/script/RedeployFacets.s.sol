@@ -307,10 +307,16 @@ contract RedeployFacets is Script {
     }
 
     function _earlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        // #951 (Codex #959 round-5) — the internal, address(this)-gated
+        // auto-complete entry `acceptOffer` routes to. MUST be routed on the
+        // upgrade path too, or a buyer accepting a listed position on a
+        // redeployed diamond hits an unrouted `address(this).call` and reverts
+        // instead of auto-completing. Mirrors DeployDiamond `_getEarlyWithdrawalSelectors` s[3].
+        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors
