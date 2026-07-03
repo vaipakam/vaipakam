@@ -225,6 +225,44 @@ contract EnumerationTest is SetupTest {
         assertEq(cancelled[0], 3);
     }
 
+    /// @dev #955 (#921 item 4) — the single-offer `getOfferState` view surfaces
+    ///      every canonical terminal, including the Scenario-A `ConsumedBySale`
+    ///      one that `getOffer`/`getOfferDetails` can't distinguish (the raw
+    ///      Offer row still reads open). Covers all four states + the
+    ///      never-existed → Cancelled legacy-compat branch, and asserts the
+    ///      accepted-beats-consumed precedence.
+    function testGetOfferState() public {
+        _seedOpenOffer(1, u1);
+        _seedAcceptedOffer(2, u1);
+        _seedCancelledOffer(3, u1);
+        // Scenario A: a sale fill closed an UNACCEPTED offer — row exists, not
+        // accepted, not cancelled, consumed-by-sale marker set.
+        _seedOpenOffer(4, u1);
+        TestMutatorFacet(address(diamond)).setOfferConsumedBySaleRaw(4, true);
+
+        MetricsFacet m = MetricsFacet(address(diamond));
+        assertEq(uint8(m.getOfferState(1)), uint8(MetricsFacet.OfferState.Open), "open");
+        assertEq(uint8(m.getOfferState(2)), uint8(MetricsFacet.OfferState.Accepted), "accepted");
+        assertEq(uint8(m.getOfferState(3)), uint8(MetricsFacet.OfferState.Cancelled), "cancelled");
+        assertEq(
+            uint8(m.getOfferState(4)),
+            uint8(MetricsFacet.OfferState.ConsumedBySale),
+            "consumed-by-sale surfaced where raw Offer row reads open"
+        );
+        // Never-existed id → Cancelled (legacy-compat, per the derivation).
+        assertEq(uint8(m.getOfferState(999)), uint8(MetricsFacet.OfferState.Cancelled), "never-existed");
+
+        // Precedence: an accepted offer that was ALSO consumed by a parallel
+        // sale reports Accepted (the loan exists; that's the primary state).
+        _seedAcceptedOffer(5, u1);
+        TestMutatorFacet(address(diamond)).setOfferConsumedBySaleRaw(5, true);
+        assertEq(
+            uint8(m.getOfferState(5)),
+            uint8(MetricsFacet.OfferState.Accepted),
+            "accepted beats consumed-by-sale"
+        );
+    }
+
     // ─── getAllLoansPaginated / getAllOffersPaginated ───────────────────────
 
     function testAllLoansPaginatedSkipsEmptySlots() public {

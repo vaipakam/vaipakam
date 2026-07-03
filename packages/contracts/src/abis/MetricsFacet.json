@@ -1047,6 +1047,25 @@
   },
   {
     "type": "function",
+    "name": "getOfferState",
+    "inputs": [
+      {
+        "name": "offerId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "state",
+        "type": "uint8",
+        "internalType": "enum MetricsFacet.OfferState"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getOffersByStatePaginated",
     "inputs": [
       {
