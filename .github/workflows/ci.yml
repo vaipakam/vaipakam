@@ -769,6 +769,9 @@ jobs:
       - name: Typecheck — apps/www
         run: pnpm --filter @vaipakam/www typecheck
 
+      - name: Typecheck — apps/alpha02
+        run: pnpm --filter @vaipakam/alpha02 typecheck
+
       # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
       # intentionally NOT wired into this required-check workflow. apps/defi
       # has pre-existing test-setup failures (Issue #85 — PublicDashboard +

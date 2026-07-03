@@ -40,7 +40,7 @@ copying what the code does.
 
 | Date | Divergent symbol | Spec section | One-line summary | Status |
 |------|------------------|--------------|------------------|--------|
-| _(none open)_ | | | | |
+| 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 
 ## Resolved findings
 

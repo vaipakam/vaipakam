@@ -591,6 +591,46 @@ Advanced-only or advanced-disclosure fields may include:
 - add-collateral actions
 - keeper whitelist / keeper-management configuration
 
+## Naive-User Connected App (alpha02 surface)
+
+A second connected-app surface exists for first-time and non-expert
+users, served separately from the primary connected app while the two
+converge. Its intended behaviour (the test oracle for that surface):
+
+- The first screen asks what the user wants to do — borrow, lend, rent
+  or lend an NFT, or manage existing positions — before showing any
+  protocol construct.
+- Guided borrow and lend flows surface MATCHING OPEN OFFERS first;
+  accepting one opens the loan immediately at the offer's full amount
+  and terms (offers are taken whole), and posting the user's own offer
+  is the explicit fallback. Before signing an accept, the app must
+  verify the on-chain terms still match what was reviewed (an edited
+  offer or lagging cache must abort with a plain explanation) and that
+  the offer belongs to the network the wallet will transact on.
+- Every write flow shows one review receipt with six fixed rows —
+  what you receive, what you lock, what you may owe, what you can
+  lose, fees, and when this ends — plus a fixable-items eligibility
+  checklist (wallet, network, sanctions status, token validity on both
+  legs, balance, consent). Fee and buffer percentages in receipts and
+  help copy are read from the live protocol configuration.
+- When either side of a deal is not priced by the protocol, the review
+  must say plainly that default means the entire collateral transfers
+  directly, with no price-based liquidation.
+- Empty states are honest: "nothing here" is only shown when the data
+  source positively returned zero; a failed or partial load shows an
+  unavailable state. A user's positions list must never silently omit
+  one side of their positions.
+- NFT rentals are never presented as debt: nothing says "repay", the
+  NFT stays in the owner's vault, the renter receives temporary use
+  rights, and the renter's total up-front payment (fees plus the live
+  refundable buffer) is shown before signing.
+- Loan actions follow the CURRENT position-NFT holder, not the
+  original addresses; every claimable listed in the Claim Center has a
+  working claim action on its detail page, including a borrower's
+  residual claim after default or liquidation.
+- Wallet-rejection messages appear only for genuine user rejections;
+  contract reverts are decoded to plain-language causes.
+
 ## Key UX Requirements
 
 The website/app should clearly communicate:

@@ -1,0 +1,21 @@
+{
+  // Vaipakam alpha02 Worker — Cloudflare Workers Static Assets deploy
+  // of the apps/alpha02 Vite SPA build. Bound to `alpha02.vaipakam.com`.
+  //
+  // alpha02 is the naive-user-first redesign of the connected app.
+  // It runs alongside `vaipakam-defi` (defi.vaipakam.com) until the
+  // redesign reaches feature parity; apps/defi is frozen (no new
+  // features) and will be retired after cutover.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-alpha02",
+  "compatibility_date": "2026-04-23",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "not_found_handling": "single-page-application"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}
