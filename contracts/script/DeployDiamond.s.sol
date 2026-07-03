@@ -2026,7 +2026,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](73);
+        s = new bytes4[](75);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2187,6 +2187,9 @@ contract DeployDiamond is Script {
         // #671 — progressive risk-access gate master kill-switch + getter.
         s[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         s[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        s[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        s[74] = ConfigFacet.getAssetRiskParams.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config
@@ -2280,7 +2283,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](51);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2374,6 +2377,10 @@ contract DeployDiamond is Script {
         // balanceOf-loop `eth_call` revert and break the holder's reads.
         s[48] = MetricsFacet.getUserPositionLoansPaginated.selector;
         s[49] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        // #955 (#921 item 4) — single-offer canonical lifecycle state, so a
+        // Scenario-A consumed-by-sale terminal is visible to integrators without
+        // the `ownerOf`-liveness heuristic.
+        s[50] = MetricsFacet.getOfferState.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

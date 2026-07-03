@@ -80,7 +80,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](88);
+        selectors = new bytes4[](89);
         selectors[0] = TestMutatorFacet.setLoan.selector;
         selectors[1] = TestMutatorFacet.setOffer.selector;
         selectors[2] = TestMutatorFacet.setNextLoanId.selector;
@@ -251,8 +251,9 @@ contract HelperTest {
         selectors[83] = TestMutatorFacet.setLoanActiveLenderEntryId.selector;
         selectors[84] = TestMutatorFacet.callTransferLenderEntry.selector;
         selectors[85] = TestMutatorFacet.getForfeitedLenderEntryIds.selector;
-        selectors[86] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
-        selectors[87] = TestMutatorFacet.setSaleListingCollateralRaw.selector; // #951 (Codex #959 r6)
+        selectors[86] = TestMutatorFacet.setOfferConsumedBySaleRaw.selector; // #955
+        selectors[87] = TestMutatorFacet.setLoanToSaleOfferIdRaw.selector; // #951 (Codex #959 r5)
+        selectors[88] = TestMutatorFacet.setSaleListingCollateralRaw.selector; // #951 (Codex #959 r6)
         // #687-B: the former tail entries ([83]-[87]: setBackstopAbsorbCashRaw,
         // pushUserLoanIdRaw, vpfiTokenRaw, setLenderProceedsEncumberedRaw,
         // setVpfiTokenRaw) were relocated into the slots freed by the removed
@@ -1215,7 +1216,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](49);
+        selectors = new bytes4[](50);
         selectors[0] = MetricsFacet.getProtocolTVL.selector;
         selectors[1] = MetricsFacet.getProtocolStats.selector;
         selectors[2] = MetricsFacet.getUserCount.selector;
@@ -1289,6 +1290,7 @@ contract HelperTest {
         // #769 — paginated position views (exercised by MetricsPositionPaginatedTest).
         selectors[47] = MetricsFacet.getUserPositionLoansPaginated.selector;
         selectors[48] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        selectors[49] = MetricsFacet.getOfferState.selector; // #955 (#921 item 4)
         return selectors;
     }
 
@@ -1418,7 +1420,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](73);
+        selectors = new bytes4[](75);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1545,6 +1547,9 @@ contract HelperTest {
         // access-control tests in RiskAccessFacetTest exercise these).
         selectors[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         selectors[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        selectors[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        selectors[74] = ConfigFacet.getAssetRiskParams.selector;
         return selectors;
     }
 
