@@ -100,6 +100,14 @@ contract InteractionRewardsFacet is
         returns (uint256 paid, uint256 fromDay, uint256 toDay)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // #921 item 1 — Tier-1 sanctions gate. This is a direct VPFI payout to
+        // `msg.sender`; every other payout/claim path screens the caller, but
+        // this one did not, leaving the "payouts blocked while flagged" policy
+        // enforced only by the alpha02 UI. Arrest it at the contract level so
+        // every integrator (keeper bots, third-party frontends, direct callers)
+        // gets the same protection. (The sibling `sweepForfeitedInteractionRewards`
+        // routes to treasury, not the caller, so it stays ungated by design.)
+        LibVaipakam._assertNotSanctioned(msg.sender);
         if (s.interactionLaunchTimestamp == 0) {
             revert InteractionEmissionsNotStarted();
         }
