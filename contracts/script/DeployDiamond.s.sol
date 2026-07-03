@@ -2280,7 +2280,7 @@ contract DeployDiamond is Script {
     }
 
     function _getMetricsSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](50);
+        s = new bytes4[](51);
         s[0] = MetricsFacet.getProtocolTVL.selector;
         s[1] = MetricsFacet.getProtocolStats.selector;
         s[2] = MetricsFacet.getUserCount.selector;
@@ -2374,6 +2374,10 @@ contract DeployDiamond is Script {
         // balanceOf-loop `eth_call` revert and break the holder's reads.
         s[48] = MetricsFacet.getUserPositionLoansPaginated.selector;
         s[49] = MetricsFacet.getUserPositionOffersPaginated.selector;
+        // #955 (#921 item 4) — single-offer canonical lifecycle state, so a
+        // Scenario-A consumed-by-sale terminal is visible to integrators without
+        // the `ownerOf`-liveness heuristic.
+        s[50] = MetricsFacet.getOfferState.selector;
     }
 
     /// AnalyticalGettersDesign §3.1 — per-user dashboard surface. One

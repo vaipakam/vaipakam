@@ -466,6 +466,13 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().offerCancelled[offerId] = cancelled;
     }
 
+    /// @notice Flip the Scenario-A consumed-by-sale terminal marker directly.
+    ///         Used by `EnumerationTest.testGetOfferState` to exercise the
+    ///         `ConsumedBySale` branch of `MetricsFacet.getOfferState` (#955).
+    function setOfferConsumedBySaleRaw(uint256 offerId, bool consumed) external {
+        LibVaipakam.storageSlot().offerConsumedBySale[offerId] = consumed;
+    }
+
     // ─── Metrics-counter read-through (invariant-suite accessors) ──────────
     //
     // Expose the fields that LibMetricsHooks maintains but that aren't

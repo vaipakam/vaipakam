@@ -2204,6 +2204,7 @@ These functions are especially useful for treasury transparency, tokenomics repo
 Loan and offer analytics helpers should include:
 
 - full loan and full offer detail reads by identifier
+- the canonical lifecycle state of a single offer by identifier — Open, Accepted, Cancelled, or Consumed-by-sale — with the same terminal precedence the state-filtered list views use (an accepted offer that a parallel sale later consumed still reads Accepted, since the loan exists). This is the single-id companion to the paginated state-filtered views, and it exists because the raw offer-detail read cannot by itself distinguish a consumed-by-sale terminal (whose offer row still looks open) from a genuinely open offer; integrators read the state directly rather than inferring it from a burned-position-NFT liveness probe. A never-existed or cancel-deleted identifier reports Cancelled.
 - paginated active-loan and active-offer discovery for scalable public lists
 - active-offer filtering by individual asset and by lending/collateral asset pair
 - detailed per-user offer rows with pagination so user tables do not need one read per offer
