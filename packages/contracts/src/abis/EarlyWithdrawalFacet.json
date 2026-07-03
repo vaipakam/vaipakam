@@ -926,6 +926,11 @@
   },
   {
     "type": "error",
+    "name": "SaleOfferAlreadyExists",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleOfferNotAccepted",
     "inputs": []
   },

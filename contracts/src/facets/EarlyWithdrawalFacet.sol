@@ -107,6 +107,13 @@ contract EarlyWithdrawalFacet is
     error RateShortfallTooHigh();
     error SaleNotLinked();
     error SaleOfferNotAccepted();
+    /// @notice #951 (Codex #959) — a loan already has a live sale listing. Only
+    ///         one listing per loan at a time: `loanToSaleOfferId` is cleared on
+    ///         cancel (OfferCancelFacet) and on completion, so a re-list after
+    ///         either is allowed; a second concurrent listing would overwrite the
+    ///         forward link and strand the reverse link, splitting accept/cancel
+    ///         authority across two offers.
+    error SaleOfferAlreadyExists();
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -489,11 +496,30 @@ contract EarlyWithdrawalFacet is
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidSaleOffer();
 
+        // #951 (Codex #959) — one live listing per loan. Without this, a second
+        // `createLoanSaleOffer` for the same loan mints another sale offer,
+        // overwrites `loanToSaleOfferId` and strands the first `saleOfferToLoanId`,
+        // so accepting one listing completes through the other and cancelling
+        // either unlinks both. The link is cleared on cancel + completion, so a
+        // genuine re-list is still allowed.
+        if (s.loanToSaleOfferId[loanId] != 0) revert SaleOfferAlreadyExists();
+
         // Calculate remaining days — revert if loan is past maturity
         uint256 elapsed = block.timestamp - loan.startTime;
         uint256 elapsedDays = elapsed / 1 days;
         if (elapsedDays >= loan.durationDays) revert InvalidSaleOffer();
         uint256 remainingDays = loan.durationDays - elapsedDays;
+
+        // #951 (Codex #959) — native-lock the lender position NFT BEFORE the
+        // cross-facet create hop, not after. Otherwise, if the seller is a
+        // contract, a callback fired during offer creation could transfer the
+        // still-unlocked lender NFT after auth/sanctions were checked but before
+        // the lock lands, splitting cancel/proceeds authority (`saleOffer.creator`
+        // stays the pre-callback seller) from the now-relocked position. Locking
+        // first closes that window. Lock is released (and the NFT burned) in
+        // completeLoanSale via migrateLenderPosition → LibERC721._burn, or
+        // released in OfferFacet.cancelOffer. See LibERC721.LockReason.
+        LibERC721._lock(loan.lenderTokenId, LibERC721.LockReason.EarlyWithdrawalSale);
 
         // Create mimicking Borrower Offer via cross-facet call.
         // collateralAmount is set to 0 because this is a lender-position sale,
@@ -516,15 +542,6 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = false;
         s.loanToSaleOfferId[loanId] = saleOfferId;
         s.saleOfferToLoanId[saleOfferId] = loanId;
-
-        // Native lock the lender-side position NFT for the duration of the
-        // sale flow. The NFT stays with the initiator, but ERC-721
-        // transfer/approve is blocked at the library level — this prevents
-        // keeper front-running via a mid-flow secondary sale. Lock is
-        // released (and the NFT burned) in completeLoanSale via
-        // migrateLenderPosition → LibERC721._burn, or released in
-        // OfferFacet.cancelOffer. See LibERC721.LockReason.
-        LibERC721._lock(loan.lenderTokenId, LibERC721.LockReason.EarlyWithdrawalSale);
 
         emit LoanSaleOfferLinked(loanId, saleOfferId);
     }
@@ -939,6 +956,14 @@ contract EarlyWithdrawalFacet is
             quantity: 0,
             claimed: true
         });
+
+        // #951 (Codex #959) — the sale offer is consumed; clear both link
+        // directions so the loan is no longer marked as having a live listing.
+        // The loan stays Active (the buyer is now its lender), so without this the
+        // new owner could never list their freshly-acquired position (the
+        // one-listing-per-loan guard in createLoanSaleOffer would reject it).
+        delete s.loanToSaleOfferId[loanId];
+        delete s.saleOfferToLoanId[saleOfferId];
 
         emit LoanSaleCompleted(loanId, originalLender, newLender);
     }

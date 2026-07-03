@@ -539,6 +539,40 @@ contract EarlyWithdrawalFacetTest is Test {
         assertFalse(o.accepted, "not yet accepted");
     }
 
+    /// @dev #951 (Codex #959) — one live listing per loan. A second
+    ///      createLoanSaleOffer for the same loan (while the first is live)
+    ///      reverts instead of minting a duplicate that strands the link.
+    function testCreateLoanSaleOfferRevertsOnDuplicate() public {
+        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+    }
+
+    /// @dev #951 (Codex #959) — a sale vehicle for an NFT-collateral loan must NOT
+    ///      pull the collateral from the exiting lender (who doesn't own it; the
+    ///      collateral stays on the linked live loan). Mutate the loan's collateral
+    ///      type to ERC721: without the borrower-pull skip the create reverts on the
+    ///      NFT `safeTransferFrom`; with it, the listing posts.
+    function testCreateLoanSaleOfferSkipsCollateralPullForNftCollateral() public {
+        _setLoanCollateralAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
+
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
+        uint256 saleOfferId;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == sig) saleOfferId = uint256(logs[i].topics[2]);
+        }
+        assertGt(saleOfferId, 0, "NFT-collateral sale vehicle posts without pulling the NFT");
+    }
+
     // ─── _getTreasury coverage via accrued interest ───────────────────────────
 
     function testSellLoanWithAccruedInterestCoversGetTreasury() public {
