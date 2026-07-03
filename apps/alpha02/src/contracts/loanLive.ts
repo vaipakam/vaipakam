@@ -54,6 +54,19 @@ export function interestRemainingDaysOf(live: LoanLive): bigint {
     : live.durationDays;
 }
 
+/** The refinance old-lender payoff — principal + FULL-TERM interest
+ *  on the remaining committed term (RefinanceFacet pays the exiting
+ *  lender their maximum entitlement; no late fee, no shortfall). ONE
+ *  definition — the review quote, the submit approval, the pending
+ *  watch, and the restore action must never drift apart. */
+export function refinancePayoffOf(live: LoanLive): bigint {
+  const days = interestRemainingDaysOf(live);
+  return (
+    live.principal +
+    (live.principal * live.interestRateBps * days) / (365n * 10_000n)
+  );
+}
+
 export async function readLoanLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,

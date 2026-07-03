@@ -52,6 +52,9 @@ import { EmptyState, UnavailableState } from '../components/EmptyState';
 import { type ReceiptData } from '../components/ReviewReceipt';
 import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { RefinanceFlow } from '../components/RefinanceFlow';
+import { RefinancePendingCard } from '../components/RefinancePendingCard';
+import { useRefinancePending } from '../data/refinancePending';
+import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
@@ -93,10 +96,6 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay button and the close-early card would re-appear and invite
   // a second, reverting submit (LoanNotActive).
   const [closedThisSession, setClosedThisSession] = useState(false);
-  // Reported up by RefinanceFlow: a live refinance request freezes
-  // the offer at the CURRENT principal, so a partial repayment would
-  // make it permanently unacceptable — the partial surface holds off.
-  const [refinancePending, setRefinancePending] = useState(false);
   // Position writes show the six-row receipt BEFORE any wallet prompt.
   // One slot (not one flag per surface) — opening a surface closes any
   // other, so two receipts never invite conflicting signatures.
@@ -208,6 +207,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // wind-down is deliberately unscreened).
   const sanctions = useSanctionsCheck();
   const sanctionsClear = sanctions.ready && !sanctions.flagged;
+
+  // Page-owned pending-refinance state — deliberately independent of
+  // the strategy cards' mount gates. A live request interlocks the
+  // repay-family surfaces (a changed principal or a settled loan
+  // strands the frozen-amount request) and keeps its own card below.
+  const refi = useRefinancePending(
+    loanId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+  );
+  const refinancePending = refi.offerId !== null;
 
   // Live loan snapshot — interest MODE and the re-stampable accrual
   // clock live only on-chain (the indexer row lacks them). The quoted
@@ -740,8 +751,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // fungible `collateralAmount` is normally ZERO, so amount alone must
   // not decide "no collateral" (that would hide a real NFT pledge).
   const hasCollateral =
-    row.collateralAsset.toLowerCase() !==
-      '0x0000000000000000000000000000000000000000' &&
+    row.collateralAsset.toLowerCase() !== ZERO_ADDRESS &&
     (BigInt(row.collateralAmount) > 0n ||
       row.collateralAssetType !== AssetType.ERC20);
   const collateralStr = !hasCollateral
@@ -1148,7 +1158,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.preclose.fullTermNote
               : copy.preclose.proRataNote}
           </p>
-          {confirmingSurface !== 'preclose' ? (
+          {refinancePending ? (
+            // A live refinance request is frozen against THIS loan —
+            // settling it early would strand the request forever.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.refinance.precloseBlockedByPending}
+              </span>
+            </div>
+          ) : confirmingSurface !== 'preclose' ? (
             <button
               type="button"
               className="btn btn-secondary"
@@ -1193,16 +1211,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // longer applies — the plain Repay path below is the one
           // that settles a matured loan, late fees included.
           null}
-        {/* Refinance shares the strategy gates with close-early
-            (advanced borrower, live-verified Active, sanctions-clear
-            — Tier-1 at accept), PLUS: only the ORIGINAL borrower
-            (carry-over binds to the borrower stored at init; a
-            transferred position would silently re-pledge fresh
-            collateral). Maturity is handled INSIDE the component so a
-            pending request's banner and cancel affordance survive
-            crossing maturity. Keyed by chain so a chain switch
-            re-seeds the locally stored pending marker. */}
-        {address &&
+        {/* Refinance FORM — shares the strategy gates with
+            close-early (advanced borrower, live-verified Active,
+            sanctions-clear — Tier-1 at accept), PLUS: only the
+            ORIGINAL borrower (carry-over binds to the borrower
+            stored at init; a transferred position would silently
+            re-pledge fresh collateral), and only while NO request is
+            already live (the pending surface is the page-owned card
+            below, which outlives these gates). Keyed by chain so a
+            chain switch re-seeds per-chain state. */}
+        {!refinancePending &&
+        address &&
         address.toLowerCase() === row.borrower.toLowerCase() ? (
           <RefinanceFlow
             key={readChain.chainId}
@@ -1215,11 +1234,32 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             onCloseConfirm={() =>
               setConfirmingSurface((s) => (s === 'refinance' ? null : s))
             }
-            onPendingChange={setRefinancePending}
+            onPosted={refi.remember}
           />
         ) : null}
         </>
         )
+      ) : null}
+
+      {/* The live request's standing surface — rendered on the MARKER
+          alone, outside every strategy gate (mode, loanLive
+          readiness, sanctions, loan status, maturity): the banner,
+          funding watch, and cancel affordance must survive all of
+          those windows, including the loan settling another way. */}
+      {refi.offerId &&
+      !isRental &&
+      address &&
+      address.toLowerCase() === row.borrower.toLowerCase() ? (
+        <RefinancePendingCard
+          loanId={row.loanId}
+          offerId={refi.offerId}
+          state={refi.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={refi.clear}
+        />
       ) : null}
 
       {doneMessage ? (
@@ -1255,7 +1295,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 (action !== 'repay' && !sanctionsClear)
               }
               data={actionReceipt}
-            />
+            >
+              {action === 'repay' && refinancePending && !isRental ? (
+                // Repay stays open with a pending refinance request
+                // (it's the safety valve — never block it), but the
+                // request's fate must be stated before signing.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.refinance.repayWarnPending}
+                  </span>
+                </div>
+              ) : null}
+            </ConfirmReceipt>
           </section>
         ) : (
           <button

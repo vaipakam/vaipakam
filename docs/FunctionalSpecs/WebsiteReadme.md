@@ -688,25 +688,36 @@ converge. Its intended behaviour (the test oracle for that surface):
   the request is open (payoff interest plus the new loan's initiation
   fee — the new principal arrives in the same transaction); that a
   short balance only makes the acceptance fail, taking nothing; that
-  posting takes multiple wallet confirmations whose earlier steps
-  persist if abandoned partway; and, for a loan on a periodic
-  interest schedule, that the replacement loan will not carry a
-  payment schedule. The request carries its own on-chain expiry
-  matching the reviewed lifetime — acceptance past it fails safely
-  regardless of any wider pre-existing guardrails — plus guardrails
-  bounding completion to the reviewed rate ceiling. The page tracks
-  the pending request, verifies it against the chain (a cancelled or
-  replaced request clears itself), shows its state and expiry — the
-  pending view and its cancel action must survive the loan crossing
-  maturity — and warns when the standing payoff approval or wallet
-  balance no longer covers completion, with a way to restore it.
-  Cancellation is offered from the same page (it becomes available a
-  few minutes after posting, per the protocol's cancel cooldown) and
-  also removes the standing payoff approval. While a request is
-  live, partial repayment is held off with an explanation — changing
-  the amount would make the request permanently unacceptable. Loans
-  on a periodic interest schedule carry a visible warning that an
-  overdue period blocks completion until settled.
+  posting takes multiple wallet confirmations; and, for a loan on a
+  periodic interest schedule, that the replacement loan will not
+  carry a payment schedule. If the posting sequence is abandoned
+  after the payoff approval was granted but before the request was
+  posted, the approval is unwound automatically (best effort). The
+  request carries its own on-chain expiry matching the reviewed
+  lifetime — acceptance past it fails safely regardless of any wider
+  pre-existing guardrails — plus guardrails bounding completion to
+  the reviewed rate ceiling. The pending request's view — its state,
+  expiry, funding warnings, and cancel action — must outlive every
+  gate on the posting form: it stays present through data-source
+  errors, unresolved compliance checks, mode switches, the loan
+  crossing maturity, and the loan settling some other way (where it
+  states the request can no longer complete and offers cancel as the
+  cleanup). The page verifies the request against the chain (a
+  cancelled or replaced request clears itself) and warns distinctly
+  when the standing payoff approval no longer covers completion
+  (with a restore action, which first re-verifies the request is
+  still completable) or when the wallet balance is short (top up or
+  cancel — no false remedy). Cancellation is offered from that view
+  (it becomes available a few minutes after posting, per the
+  protocol's cancel cooldown, judged by chain time) and also removes
+  the standing payoff approval. While a request is live, partial
+  repayment and close-early are held off with an explanation —
+  either would strand the request — and the full-repayment review
+  warns that the request survives settlement until cancelled. The
+  pending marker is device-local: another device posting a second
+  request for the same loan is possible and each device tracks only
+  its own. Loans on a periodic interest schedule carry a visible
+  warning that an overdue period blocks completion until settled.
 
 ## Key UX Requirements
 

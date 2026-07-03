@@ -233,10 +233,14 @@ export const copy = {
       'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
     pending: (offerId: string) =>
       `Refinance request #${offerId} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
+    pendingChecking: (offerId: string) =>
+      `Checking the state of refinance request #${offerId}…`,
     pendingExpires: (date: string) =>
       `The request expires on ${date} if nobody accepts it.`,
     pendingAccepted:
       'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
+    pendingLoanClosed:
+      'This loan has since closed another way, so the request can no longer complete — cancel it to also remove its standing payoff approval.',
     cancel: 'Cancel refinance request',
     cancelSoon:
       'Cancellation opens a few minutes after posting — try again shortly.',
@@ -245,9 +249,13 @@ export const copy = {
     cancelledRevokeFailed:
       'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
     allowanceShort:
-      'The payoff approval or your wallet balance no longer covers this request — a lender’s acceptance would fail right now. Restore it below or cancel the request.',
+      'The payoff approval no longer covers this request — a lender’s acceptance would fail right now. Restore it below or cancel the request.',
+    balanceShort: (topUp: string) =>
+      `Your wallet holds less than the ~${topUp} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
     reapprove: 'Restore the payoff approval',
     reapproved: 'Payoff approval restored — the request can complete again.',
+    reapproveAborted:
+      'This request is no longer completable (accepted, cancelled, or the loan closed) — nothing was approved. Refresh to see the latest state.',
     guardrailNote:
       'Your request carries its own expiry and on-chain guardrails: it can only complete at or below the rate you set here, and never after the expiry you see in this review.',
     cadenceChangeNote:
@@ -256,6 +264,10 @@ export const copy = {
       'Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.',
     partialBlockedByPending:
       'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
+    precloseBlockedByPending:
+      'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
+    repayWarnPending:
+      'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
 
   positions: {

@@ -59,10 +59,16 @@ and — for loans on a periodic payment schedule — that the replacement
 loan won't carry one. The request expires on-chain at the reviewed
 lifetime, so a forgotten request can't be accepted months later, and
 completion is additionally bounded to the reviewed rate ceiling. The
-page remembers and live-verifies the pending request (its view and
-cancel action survive the loan crossing maturity), warns when the
-standing payoff approval or balance no longer covers completion and
-offers to restore it, holds off partial repayment while the request
-is live (a changed amount would strand the request), and cancels in
-place — cancellation opens a few minutes after posting per the
-protocol's cooldown, and also removes the standing payoff approval.
+page remembers and live-verifies the pending request in a standing
+card that outlives every other gate — it stays through data hiccups,
+mode switches, maturity, and even the loan settling another way. That
+card warns distinctly when the standing payoff approval no longer
+covers completion (with a restore action that first re-verifies the
+request is still completable) or when the wallet balance is short,
+holds off partial repayment and close-early while the request is live
+(either would strand it), warns inside the full-repayment review that
+the request survives settlement until cancelled, and cancels in place
+— cancellation opens a few minutes after posting per the protocol's
+cooldown (judged by chain time) and also removes the standing payoff
+approval. Abandoning the posting sequence partway automatically
+unwinds an already-granted payoff approval.
