@@ -51,8 +51,18 @@ accounting / operational edges.
 | L7 | Low | `OwnershipFacet.transferOwnership` — no zero-address / two-step guard, desyncs `DEFAULT_ADMIN_ROLE` | `OwnershipFacet.sol:24` |
 | L8 | Low | Interaction-reward pool-exhaustion truncation silently burns the remainder | `InteractionRewardsFacet.sol:114` |
 | L9 | Low | Committing a buyback with both top-up targets zero bricks the fill | `LibTreasuryBuyback.sol:599` |
+| H4 | High | `useFullTermInterest` coupon guarantee evadable by draining principal via `repayPartial` | `RepayFacet.sol:680` |
+| M5 | Medium | Diamond owner can drain every vault / rewrite claims via `diamondCut` (distinct from M2) | `DiamondCutFacet.sol:35` |
+| M6 | Medium | Core VPFI staking/loan-init on Base freezes if any single cross-chain lane is down (broader than M3) | `VPFIDiscountAccumulatorFacet.sol:106` |
+| M7 | Medium | `interestSettled` not netted in transfer/offset/refinance/default/liquidation (M1 class broader) | `PrecloseFacet.sol:617` |
+| L10 | Low | Discount-liquidation seizure inflatable by manipulating the collateral's live liquidity tier | `RiskFacet.sol:1479` |
+| L11 | Low | `broadcastGlobal`/`sendVersionBumped` all-or-nothing across lanes + docstring mismatch | `VaipakamRewardMessenger.sol:380` |
+| L12 | Low | `claimInteractionRewards`/`sweep` lack the Tier-1 sanctions gate | `InteractionRewardsFacet.sol:96` |
 
-Informational items are listed at the end.
+Totals: **4 High, 7 Medium, 12 Low.** Rows H4/M5/M6/M7/L10/L11/L12 are
+round-2 additions from the second independent deep pass (2026-07-03); each
+has full detail in the "Round 2" section below. Informational items are
+listed at the end. Filed as GitHub issues #893–#915 under umbrella #892.
 
 ---
 
@@ -466,7 +476,141 @@ Informational items are listed at the end.
 
 ---
 
+## Round 2 — second independent deep pass (2026-07-03)
+
+A second, independent adversarial pass over all seven domains, each told
+round-1's findings and directed to go deeper/different-angle. It added
+one High, three Medium, and three Low, plus two scope-extensions of
+existing findings and several informational items. Each round-2 domain
+also produced a set of concretely deep-verified-safe negative results
+(folded into the "Verified sound" section below).
+
+### H4 — `useFullTermInterest` coupon guarantee evadable via `repayPartial`
+- **Location:** `RepayFacet.sol:680` (interest calc), `:685` (`partialAmount == principal` allowed), `:732` (`principal -= partialAmount`); floor helper `LibEntitlement.sol:152-163`
+- **Confidence:** Confirmed (mechanism); Plausible vs. intended semantics
+- The full-term-interest floor is applied only in proper-close paths;
+  `repayPartial` uses raw pro-rata `accruedInterestToTime` with no floor
+  and no `useFullTermInterest` branch, and allows `partialAmount ==
+  principal`. Draining principal to 0 (loan stays Active) collapses the
+  final-settlement floor (`proRata(principal=0, …) = 0`) and the
+  principal-scaled late fee. A borrower on a `useFullTermInterest = true`
+  + `allowsPartialRepay = true` loan pays ~10/365 of the promised coupon
+  → ~97% lender interest loss.
+- **Fix:** charge full-term interest on the repaid slice in `repayPartial`
+  when `useFullTermInterest`, or forbid `repayPartial` taking principal to
+  0 on a full-term loan (require `repayLoan` for the terminal slice).
+
+### M5 — Diamond owner can drain vaults / rewrite claims via `diamondCut`
+- **Location:** `DiamondCutFacet.sol:35-42`; `LibDiamond.initializeDiamondCut` delegatecall; trust claim `docs/AuditIntake.md:79-82`
+- **Confidence:** Confirmed
+- Distinct authority/mechanism from M2 (this is `LibDiamond.contractOwner`
+  via `diamondCut`, not `VAULT_ADMIN_ROLE`). The owner can `delegatecall`
+  an arbitrary `_init` into diamond storage (write `lenderClaims` /
+  `borrowerClaims` / treasury / roles) or cut a facet calling
+  `withdrawERC20/721/1155` on any user's proxy (diamond is owner of every
+  vault). Not pause-gated, no timelock. The AuditIntake invariant is false
+  for this path too.
+- **Fix:** correct the trust doc (upgradeability ⇒ owner can move funds),
+  or place `contractOwner` / the `diamondCut` surface behind the
+  governance timelock at launch.
+
+### M6 — Core VPFI staking/loan-init on Base freezes if any cross-chain lane is down
+- **Location:** `VPFIDiscountAccumulatorFacet.sol:106-118` → `ProtocolBroadcastFacet.sol:238-262` → `VaipakamRewardMessenger.sol:455-509` → `CcipMessenger.sol:294-321,389-399`
+- **Confidence:** Confirmed
+- Broader-blast-radius sibling of M3. `rollupUserDiscount` hard-reverts,
+  and the tier broadcast loops over every destination calling
+  `quoteMessageFee` → `IRouterClient.isChainSupported`. A single down /
+  unsupported / mis-wired lane (or a paused messenger) reverts **every**
+  tier-changing stake/unstake/loan-init on Base for all users. The pause
+  lever aggravates it (`EnforcedPause` bubbles up).
+- **Fix:** decouple the broadcast from the user critical path
+  (`try/catch` + later poke, keeping fail-closed only for
+  `ProtocolBudgetExhausted`), or skip individually-failing lanes.
+
+### M7 — `interestSettled` not netted across non-proper-close exits (M1 broader)
+- **Location:** `PrecloseFacet.sol:617` (transfer-obligation), `:1095` (offset); `RefinanceFacet.sol:323`; `DefaultedFacet.sol:398`; `RiskFacet.sol:770,1167,1508` (`currentBorrowBalance`)
+- **Confidence:** Confirmed
+- The M1 root cause is present on every ERC-20 settlement entry point
+  except the two proper-close paths: preclose Options 2/3 and refinance
+  double-charge periodic-settled interest to the lender; time-default and
+  HF-liquidation over-state debt, shrinking the borrower's surplus.
+- **Fix:** route all exits through a single `settlementInterestNet`-
+  equivalent (subtract `min(interest, interestSettled)`).
+
+### L10 — Discount-liquidation seizure inflatable by manipulating live liquidity tier
+- **Location:** `RiskFacet.sol:1479-1550`; tier `OracleFacet.sol:1225-1231,1751-1789,1602-1622`
+- **Confidence:** Plausible
+- Thinner tier ⇒ wider discount ⇒ more collateral seized. The AMM
+  manipulation guards *exclude* pools when tripped, which lowers the
+  measured tier — the wrong fail-safe direction for this path. A liquidator
+  nudges spot to drop tier 3→1 and seizes extra from borrower surplus.
+  Mitigated: discount path off by default; keeper tier defaults to 1.
+- **Fix:** snapshot the collateral's tier at loan-init for the discount, or
+  floor the discount to the keeper-attested tier. Address before enabling
+  `discountPathEnabled`.
+
+### L11 — `broadcastGlobal`/`sendVersionBumped` all-or-nothing across lanes
+- **Location:** `VaipakamRewardMessenger.sol:380-429,516-546`; docstring `RewardAggregatorFacet.sol:42-43,372-376`
+- **Confidence:** Confirmed
+- One unsupported lane reverts the whole fan-out, stalling reward
+  denominator propagation to every mirror (claims stall, not lost). The
+  docstring claims per-destination retry the code doesn't support.
+- **Fix:** support per-destination broadcast / skip failing lanes; correct
+  the docstring.
+
+### L12 — `claimInteractionRewards`/`sweep` lack the Tier-1 sanctions gate
+- **Location:** `InteractionRewardsFacet.sol:96` (paid `:178`), `:198`
+- **Confidence:** Confirmed
+- Every other VPFI-outflow path gates on `_assertNotSanctioned`; this facet
+  has none, so a flagged wallet blocked from unstaking could still receive
+  pool VPFI to its EOA once the sanctions oracle is wired.
+- **Fix:** add `LibVaipakam._assertNotSanctioned(msg.sender)` (or document
+  a deliberate Tier-2 make-whole exemption).
+
+### Scope-extensions of existing findings (round 2)
+- **H1 (#893) also occurs in `RepayFacet.repayPartial`'s NFT branch**
+  (`RepayFacet.sol:887-906`) — scope the expiry-anchor fix to all three
+  deduction sites, not just `autoDeductDaily`.
+- **M4 (#899) also occurs on the mid-life `setUser` forward**
+  (`VaipakamVaultImplementation.sol:521-523`, reached by
+  `autoDeductDaily`/`repayPartial`) — a lender revoking operator approval
+  bricks the deduction stream, not only the terminal reset. Wrap the
+  mid-life forward in try/catch too.
+
+### Additional informational (round 2)
+- Dead duplicate `StuckERC20Recovered` event overload
+  (`VaultFactoryFacet.sol:171` vs `:632`).
+- Vault `__gap` off-by-one (`VaipakamVaultImplementation.sol:738` — should
+  be 48, not 49, after two tail vars added). Not a live hazard.
+- Dead `!partialFillEnabled` branch in `_executeMatch`
+  (`OfferMatchFacet.sol:1011-1048`).
+- Range-match rate landing point is matcher-selected within each party's
+  signed band (by design; document the expectation).
+- Interaction-reward wash/self-dealing is bounded only by the per-ETH cap
+  parameter, which **fails open** (→ `uint256.max`) if the ETH feed is
+  unavailable (`LibInteractionRewards.sol:1092`). Treat cap tuning as a
+  launch-gating economic control; fall back to a fixed cap on feed failure.
+- `VPFIMirrorToken.setTokenPool` (`crosschain/VPFIMirrorToken.sol:108-113`)
+  lacks the `code.length > 0` sanity check its sibling setters apply.
+- Broadcast-fee surplus refunded to the Diamond is not re-credited to
+  `protocolBroadcastBudget` (`ProtocolBroadcastFacet.sol:249-262`); dust
+  accounting drift.
+
+---
+
 ## Verified sound (negative results)
+
+Round 2 additionally deep-verified (concretely, by reading the code paths):
+adapter output recipient/token pinning; feed decimals read (not assumed)
+across Chainlink/Tellor/API3/DIA/peg; AMM Q96/tick math; partial-liquidation
+bonus math; SwapToRepay relayer pinning; the discount-accumulator ring-buffer
+(no aliasing, rounds down); the full borrower-LIF terminal-coverage census;
+buyback/Fusion protections; VPFI mint gating; backstop authorization; CCIP
+idempotency under manual re-execution; reward-mesh denominator lifecycle;
+CCIP message construction/authorization; ERC-7201 storage-slot enumeration
+(no collision); vault call-target resolution; Seaport Dutch/atomic/parallel-
+sale/encumbrance/proceeds-routing/conduit-residue; Permit2 witness binding;
+intent-lien double-spend prevention.
 
 - **Diamond / access:** `diamondCut` is strictly owner-gated; UUPS
   `_authorizeUpgrade` is Diamond-only; vault→owner binding written once
