@@ -1690,19 +1690,27 @@ contract ConfigFacet is DiamondAccessControl {
      *         (RiskFacet is at the EIP-170 size ceiling, so the setter is hosted
      *         here rather than next to {RiskFacet.updateRiskParams}).
      * @param asset          Principal asset the floor applies to.
-     * @param minPartialBps  Floor in bps (0 disables it; must be ≤ BASIS_POINTS).
+     * @param minPartialBps  Floor in bps (0 disables it; must be < BASIS_POINTS).
+     * @dev    #956 (Codex #978) — the ceiling is `BASIS_POINTS - 1`, not
+     *         `BASIS_POINTS`. A 100% floor requires every partial to be at least
+     *         the entire remaining principal, but both {RepayFacet.repayPartial}
+     *         and {SwapToRepayFacet} independently reject a partial that would
+     *         retire the full principal (`PartialWouldRetireFullPrincipal`), so
+     *         `minPartialBps == BASIS_POINTS` would make ERC-20 partial repayment
+     *         impossible for the asset — a silent kill-switch. Reject it; use
+     *         `0` to disable the floor deliberately.
      */
     function setAssetMinPartialBps(address asset, uint256 minPartialBps)
         external
         onlyRole(LibAccessControl.ADMIN_ROLE)
     {
         if (asset == address(0)) revert IVaipakamErrors.InvalidAsset();
-        if (minPartialBps > LibVaipakam.BASIS_POINTS) {
+        if (minPartialBps >= LibVaipakam.BASIS_POINTS) {
             revert IVaipakamErrors.ParameterOutOfRange(
                 "minPartialBps",
                 minPartialBps,
                 0,
-                LibVaipakam.BASIS_POINTS
+                LibVaipakam.BASIS_POINTS - 1
             );
         }
         LibVaipakam.storageSlot().assetRiskParams[asset].minPartialBps = minPartialBps;
