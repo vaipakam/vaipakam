@@ -27,6 +27,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useMode } from '../app/ModeContext';
 import { useActiveChain } from '../chain/useActiveChain';
+import { LiveChainSync } from '../chain/LiveChainSync';
 import { ConnectButton } from './ConnectButton';
 import { NetworkBanner } from './NetworkBanner';
 import { SanctionsBanner } from './SanctionsBanner';
@@ -89,6 +90,9 @@ export function AppShell() {
 
   return (
     <div className="shell">
+      {/* Block-driven live refresh of transaction caches (WS push when
+          configured, HTTP block-poll otherwise). Renders nothing. */}
+      <LiveChainSync />
       <header className="shell-topbar">
         <NavLink to="/" className="shell-brand" style={{ textDecoration: 'none' }}>
           <span className="brand-mark" aria-hidden>
