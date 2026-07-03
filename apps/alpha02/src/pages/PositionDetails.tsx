@@ -939,7 +939,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             // to the verifier so its holder can prove (or a buyer can
             // check) exactly what it controls.
             <div className="receipt-row">
-              <dt>Your position NFT</dt>
+              <dt>{copy.nftVerifier.positionRowLabel}</dt>
               <dd>
                 <Link
                   to={`/nft/${role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}`}
@@ -947,8 +947,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   #{role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}
                 </Link>{' '}
                 <span className="muted">
-                  — holds this loan's {role} rights; verify any position NFT
-                  before trusting it.
+                  {copy.nftVerifier.positionRowNote(role)}
                 </span>
               </dd>
             </div>

@@ -12,10 +12,15 @@
  * in docs/FunctionalSpecs/_CodeVsDocsAudit.md — the spec wants the
  * three-way distinction; that needs a contract view.)
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
 import { BadgeCheck, ShieldQuestion } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -36,7 +41,8 @@ interface VerifierResult {
   loanId?: string;
   offerId?: string;
   isLender?: boolean;
-  lock?: number;
+  /** null = the lock read FAILED — unknown is not "unlocked". */
+  lock?: number | null;
 }
 
 export function NftVerifier() {
@@ -45,6 +51,12 @@ export function NftVerifier() {
   const { readChain } = useActiveChain();
   const readClient = usePublicClient({ chainId: readChain.chainId });
   const [input, setInput] = useState(tokenIdParam ?? '');
+  // The route element is reused across /nft/:id transitions
+  // (back/forward, in-page links) — keep the input in step with the
+  // verdict being shown.
+  useEffect(() => {
+    if (tokenIdParam !== undefined) setInput(tokenIdParam);
+  }, [tokenIdParam]);
 
   const validId = tokenIdParam !== undefined && /^[1-9]\d*$/.test(tokenIdParam);
 
@@ -63,9 +75,19 @@ export function NftVerifier() {
           functionName: 'ownerOf',
           args: [id],
         })) as `0x${string}`;
-      } catch {
-        // Burned OR never minted — indistinguishable on-chain today.
-        return { exists: false };
+      } catch (err) {
+        // Only a REVERT proves non-existence (burned OR never minted
+        // — indistinguishable on-chain today). A transport error is
+        // NOT knowledge: rethrow so the query lands in the visible
+        // check-failed state instead of caching a false "worthless"
+        // verdict (same revert-vs-transport split as the ownership
+        // preflights).
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) return { exists: false };
+        throw err;
       }
       // Summary + lock are best-effort embellishments; owner alone
       // already proves live existence.
@@ -82,6 +104,8 @@ export function NftVerifier() {
           offerId: bigint;
           isLender: boolean;
         } | null>,
+        // A failed lock read is UNKNOWN, never "not locked" — the
+        // lock is exactly what a prospective transferee checks.
         readClient!
           .readContract({
             address: diamond,
@@ -89,7 +113,7 @@ export function NftVerifier() {
             functionName: 'positionLock',
             args: [id],
           })
-          .catch(() => 0) as Promise<number | bigint>,
+          .catch(() => null) as Promise<number | bigint | null>,
       ]);
       return {
         exists: true,
@@ -99,7 +123,7 @@ export function NftVerifier() {
         offerId:
           summary && summary.offerId !== 0n ? summary.offerId.toString() : undefined,
         isLender: summary?.isLender,
-        lock: Number(lock),
+        lock: lock === null ? null : Number(lock),
       };
     },
   });
@@ -173,8 +197,20 @@ export function NftVerifier() {
                   </Link>
                 </dd>
               </div>
+            ) : result.data.offerId ? (
+              // Offer-stage mint: the token isn't attached to a loan
+              // yet — say what it IS attached to.
+              <div className="receipt-row">
+                <dt>{copy.nftVerifier.offerLabel}</dt>
+                <dd>{copy.nftVerifier.offerValue(result.data.offerId)}</dd>
+              </div>
             ) : null}
-            {result.data.lock && LOCK_LABELS[result.data.lock] ? (
+            {result.data.lock === null ? (
+              <div className="receipt-row receipt-risk">
+                <dt>{copy.nftVerifier.lockLabel}</dt>
+                <dd>{copy.nftVerifier.lockUnknown}</dd>
+              </div>
+            ) : result.data.lock && LOCK_LABELS[result.data.lock] ? (
               <div className="receipt-row receipt-risk">
                 <dt>{copy.nftVerifier.lockLabel}</dt>
                 <dd>{LOCK_LABELS[result.data.lock]}</dd>

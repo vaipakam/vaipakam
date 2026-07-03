@@ -291,6 +291,14 @@ export const copy = {
     roleBorrower: 'Borrower side — its holder repays and reclaims the collateral.',
     roleUnknown: 'We couldn’t read this token’s role details right now.',
     loanLabel: 'Linked loan',
+    offerLabel: 'Created for offer',
+    offerValue: (offerId: string) =>
+      `#${offerId} — this token was minted for an offer that hasn’t become a loan yet.`,
+    lockUnknown:
+      'We couldn’t read whether this token is transfer-locked right now — don’t rely on it being transferable until this reads clean.',
+    positionRowLabel: 'Your position NFT',
+    positionRowNote: (role: string) =>
+      `— holds this loan’s ${role} rights; verify any position NFT before trusting it.`,
     lockLabel: 'Transfer lock',
     lockPrecloseOffset:
       'Locked for a preclose-by-offset — it can’t be transferred until that completes or is cancelled.',
