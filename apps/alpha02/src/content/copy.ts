@@ -629,6 +629,9 @@ export const copy = {
     notTestnetTitle: 'Test assets aren’t available here',
     notTestnetBody: (chainName: string) =>
       `The faucet only works on our test networks. You’re on ${chainName}, which uses real assets — switch to a test network to mint practice tokens.`,
+    // A testnet we support but haven't seeded with faucet assets yet.
+    noMocksBody: (chainName: string) =>
+      `Test assets haven’t been set up on ${chainName} yet. Try a different test network, or check back soon.`,
     backHome: 'Back to home',
     testnetNote: (chainName: string) =>
       `You’re on ${chainName}, a test network. These tokens exist only for testing and have no real value.`,

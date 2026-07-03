@@ -86,7 +86,11 @@ export function Faucet() {
         <EmptyState
           icon={TestTube}
           title={copy.faucet.notTestnetTitle}
-          body={copy.faucet.notTestnetBody(readChain.name)}
+          body={
+            readChain.testnet
+              ? copy.faucet.noMocksBody(readChain.name)
+              : copy.faucet.notTestnetBody(readChain.name)
+          }
           action={
             <Link to="/" className="btn btn-secondary">
               {copy.faucet.backHome}
