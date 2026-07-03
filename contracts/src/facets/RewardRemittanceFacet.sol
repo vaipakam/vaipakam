@@ -424,6 +424,82 @@ contract RewardRemittanceFacet is
         }
     }
 
+    /**
+     * @notice Quote the CCIP native fee a {remitRewardBudget} over `dayIds`
+     *         would cost, plus the VPFI total it would send.
+     * @dev    The keeper/operator EOA cannot call
+     *         `CcipMessenger.quoteMessageFee` directly — the messenger
+     *         authorizes quotes by `channelOf[msg.sender]` and only the Diamond
+     *         is a registered reward-budget handler. This view runs the quote
+     *         AS the Diamond, building the exact same funded-day payload +
+     *         token list the send would (same finalized / not-already-remitted /
+     *         non-duplicate / non-zero-slice filter), so `fee` is what to pass
+     *         as `msg.value` (overpayment is refunded anyway). Returns (0, 0)
+     *         when nothing is remittable or the messenger/VPFI is unset.
+     * @return fee   CCIP native fee for the send (0 if nothing to remit).
+     * @return total VPFI the send would move (0 if nothing to remit).
+     */
+    function quoteRemittanceFee(
+        uint32 dstChainId,
+        uint256[] calldata dayIds
+    ) external view returns (uint256 fee, uint256 total) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        address vpfi = s.vpfiToken;
+        address messenger = s.crossChainMessenger;
+        if (vpfi == address(0) || messenger == address(0)) return (0, 0);
+
+        uint256[] memory fundedDays = new uint256[](dayIds.length);
+        uint256 fundedCount;
+        for (uint256 i; i < dayIds.length; ) {
+            uint256 dayId = dayIds[i];
+            bool seen;
+            for (uint256 j; j < i; ) {
+                if (dayIds[j] == dayId) {
+                    seen = true;
+                    break;
+                }
+                unchecked {
+                    ++j;
+                }
+            }
+            if (
+                !seen &&
+                s.dailyGlobalFinalized[dayId] &&
+                s.rewardBudgetRemitted[dstChainId][dayId] == 0
+            ) {
+                uint256 slice = LibInteractionRewards.chainRewardBudgetForDay(
+                    s,
+                    dstChainId,
+                    dayId
+                );
+                if (slice > 0) {
+                    fundedDays[fundedCount] = dayId;
+                    unchecked {
+                        ++fundedCount;
+                    }
+                    total += slice;
+                }
+            }
+            unchecked {
+                ++i;
+            }
+        }
+        if (total == 0) return (0, 0);
+        assembly {
+            mstore(fundedDays, fundedCount)
+        }
+
+        ICrossChainMessenger.TokenAmount[] memory tokens =
+            new ICrossChainMessenger.TokenAmount[](1);
+        tokens[0] = ICrossChainMessenger.TokenAmount({token: vpfi, amount: total});
+        fee = ICrossChainMessenger(messenger).quoteMessageFee(
+            dstChainId,
+            abi.encode(fundedDays, total),
+            tokens,
+            REWARD_BUDGET_DEST_GAS_LIMIT
+        );
+    }
+
     /// @notice VPFI already remitted for `(chainId, dayId)` (0 = not sent).
     function getRewardBudgetRemitted(
         uint32 chainId,

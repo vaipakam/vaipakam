@@ -128,6 +128,24 @@ contract RewardRemittanceFacetTest is SetupTest {
         assertEq(perDay[1], 0, "repeat contributes zero");
     }
 
+    function test_QuoteRemittanceFee_ReturnsFeeAndTotal() public {
+        _finalizeDay1();
+        (uint256 expectedTotal, ) = remit.quoteRewardBudget(CHAIN_ARB, _days(1));
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        assertEq(total, expectedTotal, "total matches quoteRewardBudget");
+        assertEq(fee, ccip.fee(), "fee routed through the messenger");
+        assertGt(total, 0, "non-zero remittable total");
+    }
+
+    function test_QuoteRemittanceFee_ZeroWhenNothingRemittable() public {
+        _finalizeDay1();
+        // Remit day 1, then re-quote it — nothing left to send → (0, 0).
+        remit.remitRewardBudget{value: 1 ether}(CHAIN_ARB, _days(1), CAP);
+        (uint256 fee, uint256 total) = remit.quoteRemittanceFee(CHAIN_ARB, _days(1));
+        assertEq(total, 0, "already-remitted day contributes 0");
+        assertEq(fee, 0, "no fee when nothing to remit");
+    }
+
     function test_Slices_SumToFullDayEmission() public {
         _finalizeDay1();
         uint256 half = LibInteractionRewards.halfPoolForDay(1);
