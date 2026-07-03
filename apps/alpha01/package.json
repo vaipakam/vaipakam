@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite --port 5175",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b --noEmit",
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
     "test": "vitest run",

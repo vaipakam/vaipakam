@@ -42,7 +42,7 @@ function mergeActivityEvents(...lists: IndexedActivityEvent[][]): IndexedActivit
   });
 }
 
-/** Keep every actor row; fill remaining slots with participant-only events. */
+/** Keep every actor row for this page; fill leftover slots with participant-only events. */
 export function mergeWalletActivityEvents(
   actorEvents: IndexedActivityEvent[],
   participantEvents: IndexedActivityEvent[],
@@ -51,17 +51,9 @@ export function mergeWalletActivityEvents(
   const actorKeys = new Set(actorEvents.map(activityKey));
   const participantOnly = participantEvents.filter((event) => !actorKeys.has(activityKey(event)));
   const sortedExtras = mergeActivityEvents(participantOnly);
-
-  // Reserve slots for participant-only rows so a full actor page does not hide them.
-  const participantReserve =
-    sortedExtras.length > 0
-      ? Math.min(Math.max(1, Math.floor(limit / 4)), sortedExtras.length, Math.max(0, limit - 1))
-      : 0;
-  const actorBudget = Math.max(1, limit - participantReserve);
-  const actorSlice =
-    actorEvents.length > actorBudget ? actorEvents.slice(0, actorBudget) : actorEvents;
-  const room = limit - actorSlice.length;
-  return mergeActivityEvents(actorSlice, sortedExtras.slice(0, room));
+  const room = Math.max(0, limit - actorEvents.length);
+  if (room === 0) return mergeActivityEvents(actorEvents);
+  return mergeActivityEvents(actorEvents, sortedExtras.slice(0, room));
 }
 
 /**

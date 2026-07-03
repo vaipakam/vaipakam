@@ -25,3 +25,5 @@ Round 8: Open offers list is current-holder only so transferred-away positions c
 Round 9: Borrow/lend offer pickers exclude self-authored offers and render plain symbols inside selectable rows; raw amount formatting no longer assumes 18 decimals; canonical asset labels use lowercase keys; loan detail and activity pages surface indexer errors instead of empty/not-found states.
 
 Round 10: Raw formatting uses cache-resolved decimals only; offer pickers require wallet connect and clear stale selections; unhealed indexer stubs filtered from lend picker; loan detail warns when indexer origin is missing; lender active loans show Active status; activity merge reserves participant slots; defaulted lender claims show collateral; claim buttons respect wallet chain.
+
+Round 11: Root `alpha:dev`/`alpha:build` target `@vaipakam/alpha01`; alpha01 adds `typecheck` script; Claims unions holder loans in resolution paths and filters empty borrower defaults via on-chain `getClaimable`; activity merge never drops actor rows from a cursor page; borrow matching requires a parsed amount before listing offers.

@@ -4,6 +4,7 @@ export * from './indexer/client.js';
 export * from './indexer/offers.js';
 export * from './indexer/loans.js';
 export * from './indexer/claimables.js';
+export * from './claims/scanClaimables.js';
 export * from './indexer/activity.js';
 export * from './types/activity.js';
 export * from './preflight/sanctions.js';

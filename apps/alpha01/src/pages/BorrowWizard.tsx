@@ -207,10 +207,14 @@ export function BorrowWizard() {
     }
   }, [address, mode, offers, selected]);
 
+  const borrowAmountWei = useMemo(() => {
+    if (!hasResolvedTokenDecimals(lendingMeta, lendingAsset, chain.chainId)) return null;
+    return parseHumanAmount(amount, lendingMeta!.decimals);
+  }, [amount, lendingAsset, lendingMeta, chain.chainId]);
+
   const matched = useMemo(() => {
+    if (borrowAmountWei == null) return [];
     const pool = offers ?? [];
-    const lendingDecimals = lendingMeta?.decimals ?? 18;
-    const minBorrowAmountWei = parseHumanAmount(amount, lendingDecimals) ?? undefined;
     const parsedRate = Number(maxRate);
     const maxRateBps = Number.isFinite(parsedRate) ? Math.round(parsedRate * 100) : undefined;
     return matchOffersToBorrowIntent(pool, {
@@ -218,9 +222,9 @@ export function BorrowWizard() {
       collateralAsset: collateralAsset || undefined,
       durationDays: Number(duration) || undefined,
       maxRateBps,
-      minBorrowAmountWei,
+      minBorrowAmountWei: borrowAmountWei,
     });
-  }, [amount, offers, lendingAsset, collateralAsset, duration, lendingMeta, maxRate]);
+  }, [borrowAmountWei, offers, lendingAsset, collateralAsset, duration, maxRate]);
 
   const collateralToken =
     mode === 'accept' && selected ? selected.collateralAsset : collateralAsset;
@@ -501,7 +505,12 @@ export function BorrowWizard() {
             </div>
           </div>
           <div className="wizard-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setStep('match')}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={borrowAmountWei == null}
+              onClick={() => setStep('match')}
+            >
               Find matching offers
             </button>
           </div>
