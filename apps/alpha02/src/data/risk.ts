@@ -102,7 +102,13 @@ export function healthView(risk: LoanRisk): HealthView {
     badge,
     ratio: (Number(hf) / 1e18).toFixed(2),
     ltvPct: `${Math.round(Number(risk.ltv) / 1e16)}%`,
-    dropToLiquidationPct:
-      hf > WAD ? `${Math.round((1 - 1e18 / Number(hf)) * 100)}%` : null,
+    // Suppressed below 1% — "falls about 0%" next to a non-liquidatable
+    // badge reads as a contradiction exactly for the borrower hovering
+    // at the line, who needs clarity most.
+    dropToLiquidationPct: (() => {
+      if (hf <= WAD) return null;
+      const pct = Math.round((1 - 1e18 / Number(hf)) * 100);
+      return pct >= 1 ? `${pct}%` : null;
+    })(),
   };
 }

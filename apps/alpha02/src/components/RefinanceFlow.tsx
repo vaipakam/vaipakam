@@ -87,6 +87,8 @@ export function RefinanceFlow({
   onOpenConfirm,
   onCloseConfirm,
   onPosted,
+  busy,
+  setBusy,
 }: {
   row: IndexedLoan;
   live: LoanLive;
@@ -100,6 +102,11 @@ export function RefinanceFlow({
   onCloseConfirm: () => void;
   /** Hands the created offer id to the page-owned pending state. */
   onPosted: (offerId: string) => void;
+  /** The PAGE's shared write lock — the posting sequence spans up to
+   *  three wallet confirmations, and the sibling repay-family
+   *  buttons must not stay live underneath it. */
+  busy: boolean;
+  setBusy: (b: boolean) => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -108,7 +115,6 @@ export function RefinanceFlow({
   const queryClient = useQueryClient();
   const fees = useProtocolFees();
 
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   // Defaults seed from the loan being replaced — the natural starting

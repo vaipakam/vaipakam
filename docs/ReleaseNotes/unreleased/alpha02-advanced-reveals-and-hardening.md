@@ -1,4 +1,10 @@
-# alpha02 — submit-time preflights, consent integrity, disclosure accuracy
+# alpha02 — advanced-mode strategy flows, hardening, and trust surfaces
+
+One batch, eight features: submit-time preflight hardening and
+consent integrity; borrower close-early and refinance; lender early
+exit and sale listing; keeper permissions; the position-NFT verifier;
+standing-approvals cleanup; and smaller health/ENS touches. Details
+below in order.
 
 The naive-user connected app now re-checks every fact that matters at
 the moment of signing, not just at review time. Immediately before any

@@ -101,8 +101,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const [partialInput, setPartialInput] = useState('');
   // A successful claim doesn't change the indexer row's status, so
   // without this latch the button would re-enable and invite a
-  // second, reverting claim.
-  const [claimed, setClaimed] = useState(false);
+  // second, reverting claim. PER SIDE: one wallet can hold BOTH
+  // position NFTs, and claiming one side must not hide the other
+  // side's still-unclaimed action after the role flips.
+  const [claimed, setClaimed] = useState({ borrower: false, lender: false });
   // Same indexer lag after a full repay or preclose: the row stays
   // "active" until the indexer catches up, so without this latch the
   // repay button and the close-early card would re-appear and invite
@@ -355,7 +357,9 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   );
 
   const action: Action = (() => {
-    if (claimed) return null; // claim already made this session
+    // Side-scoped: a claim on one side must not suppress the other.
+    if (role === 'borrower' && claimed.borrower) return null;
+    if (role === 'lender' && claimed.lender) return null;
     // fallback_pending is CURABLE: the contracts still accept full
     // repayment (and add-collateral) while a failed liquidation waits
     // for retry — never leave the borrower without the cure action.
@@ -510,7 +514,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         await write('claimAsBorrower', [BigInt(row.loanId)]);
-        setClaimed(true);
+        setClaimed((c) => ({ ...c, borrower: true }));
         setDoneMessage(copy.claims.claimed);
       } else {
         await assertWalletNotSanctionedLive(
@@ -519,7 +523,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           address,
         );
         await write('claimAsLender', [BigInt(row.loanId)]);
-        setClaimed(true);
+        setClaimed((c) => ({ ...c, lender: true }));
         setDoneMessage(copy.claims.claimed);
       }
       setConfirmingSurface(null);
@@ -1299,6 +1303,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               setConfirmingSurface((s) => (s === 'refinance' ? null : s))
             }
             onPosted={refi.remember}
+            busy={busy}
+            setBusy={setBusy}
           />
         ) : null}
         </>
