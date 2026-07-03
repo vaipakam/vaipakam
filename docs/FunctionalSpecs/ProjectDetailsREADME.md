@@ -1663,6 +1663,8 @@ The offsetting offer flow should represent:
 
 This option is implemented through standard offer flows rather than through a separate specialized sale-offer primitive. In Phase 1, Liam uses the borrower-style offer creation path.
 
+The sale vehicle posts **no fresh collateral**: the exiting lender is transferring an existing position, and the collateral already securing the underlying live loan continues to back it after the sale — so the exiting lender is not required to lock new capital to list. The protocol must therefore accept a sale-vehicle offer that carries zero collateral, and must not reject it under the ordinary borrower-offer rule that caps borrowing against posted collateral (that ceiling does not apply to a protocol-authored position sale, whose real collateral lives on the linked loan, not on the offer). The exiting lender is the offer's creator, so the sale proceeds and the right to cancel the listing bind to that seller — even when the listing is submitted on their behalf by an authorised keeper.
+
 #### Required Documentation in the Protocol
 
 For this option to be implementation-ready, the following must be explicit:

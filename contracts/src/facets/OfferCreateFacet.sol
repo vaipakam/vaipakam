@@ -948,7 +948,18 @@ contract OfferCreateFacet is
                     params.lendingAsset,
                     params.collateralAsset
                 );
-                if (ceiling != type(uint256).max && offer.amountMax > ceiling) {
+                // #951 — exempt the protocol-authored lender-sale vehicle. It
+                // mimics a Borrower offer with `collateralAmount == 0` (the real
+                // collateral stays on the linked live loan, not re-posted here),
+                // so the collateral-derived ceiling is 0 and any non-zero amount
+                // would revert. The exemption mirrors the risk-access-gate
+                // exemption above; both key off the same `saleVehicleCreate`
+                // transient set only by `EarlyWithdrawalFacet.createLoanSaleOffer`.
+                if (
+                    !s.saleVehicleCreate
+                    && ceiling != type(uint256).max
+                    && offer.amountMax > ceiling
+                ) {
                     revert MaxLendingAboveCeiling(offer.amountMax, ceiling);
                 }
             }

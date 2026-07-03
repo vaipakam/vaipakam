@@ -3,6 +3,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {EarlyWithdrawalFacet} from "../src/facets/EarlyWithdrawalFacet.sol";
@@ -491,11 +492,51 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCreateLoanSaleOfferSuccess() public {
         // createLoanSaleOffer calls createOffer cross-facet to create a Borrower-type offer
         // Mock the createOffer call to avoid setup complexity
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(3)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(3)));
 
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         // If no revert, the sale offer was created
+    }
+
+    /// @dev #951 — UNMOCKED post of the lender sale offer. The mocked success test
+    ///      above stubs the cross-facet hop, so it never exercised the two on-chain
+    ///      blockers the Anvil P-T scenario was SKIPPED for:
+    ///        (1) shared-`nonReentrant` collision — `createLoanSaleOffer` holds the
+    ///            diamond guard and the OLD external `createOffer` hop re-entered it
+    ///            (`ReentrancyGuardReentrantCall`); fixed by routing through
+    ///            `createOfferInternal`.
+    ///        (2) collateral=0 `MaxLendingAboveCeiling` — the vehicle posts a Borrower
+    ///            offer with zero collateral (real collateral stays on the live loan);
+    ///            fixed by the `saleVehicleCreate` ceiling exemption.
+    ///      Range-amount is enabled so the ceiling branch (Part B) actually runs,
+    ///      matching the deploy bootstrap (`rangeAmountEnabled=true`).
+    function testCreateLoanSaleOfferSuccessUnmocked() public {
+        ConfigFacet(address(diamond)).setRangeAmountEnabled(true);
+
+        vm.recordLogs();
+        vm.prank(lender);
+        EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+
+        // Recover the linked sale-offer id from
+        // LoanSaleOfferLinked(loanId, saleOfferId) — both indexed, so
+        // topics[2] carries the id.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
+        uint256 saleOfferId;
+        for (uint256 i; i < logs.length; i++) {
+            if (logs[i].topics[0] == sig) saleOfferId = uint256(logs[i].topics[2]);
+        }
+        assertGt(saleOfferId, 0, "real sale offer created + linked (no revert)");
+
+        // The offer is a REAL Borrower-type sale vehicle owned by the exiting
+        // lender — proving both the reentrancy fix and the ceiling exemption, and
+        // that the explicit `creator` arg landed (not the diamond/keeper).
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        assertEq(o.creator, lender, "creator is the exiting lender, not the diamond/keeper");
+        assertEq(uint8(o.offerType), uint8(LibVaipakam.OfferType.Borrower), "borrower-type vehicle");
+        assertEq(o.amount, PRINCIPAL, "amount == remaining principal");
+        assertFalse(o.accepted, "not yet accepted");
     }
 
     // ─── _getTreasury coverage via accrued interest ───────────────────────────
@@ -728,7 +769,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCreateLoanSaleOfferCrossFacetFails() public {
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector),
+            abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector),
             "offer fail"
         );
 
@@ -1052,7 +1093,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Set up a linked, accepted sale so link/accepted checks pass and
         // the keeper auth check is the one under test. Without setup,
         // SaleNotLinked would fire first and mask the auth rejection.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1072,7 +1113,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testCompleteLoanSaleBorrowerRejected() public {
         // Same rationale: seed a linked, accepted sale so the auth check
         // is the one exercised rather than SaleNotLinked.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1428,7 +1469,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers SaleOfferNotAccepted in completeLoanSale
     function testCompleteLoanSaleRevertsSaleOfferNotAccepted() public {
         // Create a sale offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1442,7 +1483,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers completeLoanSale success path with shortfall (higher sale rate)
     function testCompleteLoanSaleSuccessWithShortfall() public {
         // Create a sale offer with higher rate
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true);
         vm.clearMockedCalls();
@@ -1478,7 +1519,7 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      screened; the vault-lock receive-side exemption lets the completion
     ///      finish and parks the buyer's share frozen behind the #821 freeze.
     function test_completeLoanSale_FlaggedBuyer_CompletesNotBricked() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 1000, true);
         vm.clearMockedCalls();
@@ -1516,7 +1557,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale no-shortfall path (lower rate)
     function testCompleteLoanSaleNoShortfall() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true);
         vm.clearMockedCalls();
@@ -1541,7 +1582,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("New lender not found") when tempLoanId=0
     function testCompleteLoanSaleRevertsNewLenderNotFound() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1556,7 +1597,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale burn temp lender NFT failure
     function testCompleteLoanSaleBurnTempLenderNFTFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1583,7 +1624,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale where accrued < shortfall (pays remaining shortfall from lender)
     function testCompleteLoanSaleShortfallExceedsAccrued() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 2000, true);
         vm.clearMockedCalls();
@@ -1606,7 +1647,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale no-shortfall with accrued > 0 (all to treasury)
     function testCompleteLoanSaleNoShortfallAccruedToTreasury() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 300, true);
         vm.clearMockedCalls();
@@ -1664,7 +1705,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers CrossFacetCallFailed("New lender not found") when tempLoanId > 0 but newLender == address(0).
     function testCompleteLoanSaleRevertsNewLenderZeroAddress() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1687,7 +1728,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers completeLoanSale with accrued == 0 and no shortfall (tests the accrued == 0 early path
     ///      where safeTransferFrom is skipped because `accrued > 0` is false)
     function testCompleteLoanSaleNoShortfallAccruedZero() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1725,7 +1766,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers completeLoanSale where the live loan burn NFT succeeds but mint NFT succeeds,
     ///      then the completeLoanSale burn of old lender NFT on live loan fails.
     function testCompleteLoanSaleBurnOldLenderNFTFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1749,7 +1790,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale with accrued >= shortfall (excess accrued to treasury)
     function testCompleteLoanSaleShortfallCoveredByAccrued() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true);
         vm.clearMockedCalls();
@@ -1807,7 +1848,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale burn temp borrower NFT fails (line 507)
     function testCompleteLoanSaleBurnTempBorrowerNFTFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1842,7 +1883,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale mint new NFT fails (line 487)
     function testCompleteLoanSaleMintNewNFTFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1865,7 +1906,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale with tempLoan.collateralAmount > 0 and release success
     function testCompleteLoanSaleReleaseTempCollateral() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1887,7 +1928,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale release temp collateral fails (line 522)
     function testCompleteLoanSaleReleaseTempCollateralFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1920,7 +1961,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale with priorHeldSale > 0 migration path (line 431)
     function testCompleteLoanSaleWithPriorHeldMigration() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1946,7 +1987,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale heldForLender migration failure
     function testCompleteLoanSalePriorHeldMigrationFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -1975,7 +2016,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers createLoanSaleOffer cross-facet call failure (line 332)
     function testCreateSaleOfferCrossFacetFails() public {
-        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), "fail");
+        vm.mockCallRevert(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), "fail");
         vm.prank(lender);
         vm.expectRevert(bytes("fail"));
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
@@ -1990,7 +2031,7 @@ contract EarlyWithdrawalFacetTest is Test {
         _setLoanKeeperAccessEnabled(activeLoanId, true);
 
         // Create sale offer
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2061,7 +2102,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // so the ERC721 branch was never exercised (tempLoan.collateralAssetType stayed ERC20 with
         // collateralAmount=0, hitting the early-return). Preserving the passing behavior without
         // the ineffective writes.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2093,7 +2134,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // collateralAssetType/collateralTokenId hit the wrong slots (tokenId/quantity) and were
         // no-ops. The ERC1155 branch was never exercised. Preserving the passing behavior
         // without the ineffective writes.
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2122,7 +2163,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers the accrued >= shortfall branch inside completeLoanSale
     ///      where the shortfall is covered by accrued interest.
     function testCompleteLoanSaleHigherRateAccruedCoversShortfall() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 600, true);
         vm.clearMockedCalls();
@@ -2267,7 +2308,7 @@ contract EarlyWithdrawalFacetTest is Test {
         // Set heldForLender[activeLoanId] > 0 via vm.store
         TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 30 ether);
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2295,7 +2336,7 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev Covers _transferToNewLenderVault get vault failure (line 766).
     ///      Exercises the CrossFacetCallFailed path when getOrCreateUserVault fails for the new lender.
     function testCompleteLoanSaleTransferToNewLenderVaultFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2328,7 +2369,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale ERC721 temp collateral release failure.
     function testCompleteLoanSaleERC721CollateralReleaseFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2363,7 +2404,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale ERC1155 temp collateral release failure.
     function testCompleteLoanSaleERC1155CollateralReleaseFails() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
         vm.clearMockedCalls();
@@ -2399,7 +2440,7 @@ contract EarlyWithdrawalFacetTest is Test {
 
     /// @dev Covers completeLoanSale shortfall branch where accrued < shortfall.
     function testCompleteLoanSaleAccruedLessThanShortfall() public {
-        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOffer.selector), abi.encode(uint256(50)));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(OfferCreateFacet.createOfferInternal.selector), abi.encode(uint256(50)));
         vm.prank(lender);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 5000, true); // high rate
         vm.clearMockedCalls();

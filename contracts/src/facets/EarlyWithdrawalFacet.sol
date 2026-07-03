@@ -477,7 +477,12 @@ contract EarlyWithdrawalFacet is
         // buyer is committed yet, so an atomic revert strands no counterparty.
         // (The flagged-after-listing residual on `completeLoanSale` is the
         // deferred-proceeds liveness case tracked under #821.)
-        LibVaipakam._assertNotSanctioned(LibERC721.ownerOf(loan.lenderTokenId));
+        // The exiting lender (current lender-NFT holder) is the sale offer's
+        // real creator — proceeds and cancel authority bind to them, NOT to a
+        // keeper caller. Capture once: used for the screen here and passed as
+        // the `creator` into the internal offer-create hop below (#951).
+        address seller = LibERC721.ownerOf(loan.lenderTokenId);
+        LibVaipakam._assertNotSanctioned(seller);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
         // NFT rental lender-sale not supported in Phase 1
@@ -503,6 +508,7 @@ contract EarlyWithdrawalFacet is
         s.saleVehicleCreate = true;
         uint256 saleOfferId = _submitSaleOffer(
             loan,
+            seller,
             remainingDays,
             interestRateBps,
             creatorRiskAndTermsConsent
@@ -531,6 +537,7 @@ contract EarlyWithdrawalFacet is
      */
     function _submitSaleOffer(
         LibVaipakam.Loan storage loan,
+        address creator,
         uint256 remainingDays,
         uint256 interestRateBps,
         bool creatorRiskAndTermsConsent
@@ -541,8 +548,21 @@ contract EarlyWithdrawalFacet is
             interestRateBps,
             creatorRiskAndTermsConsent
         );
+        // #951 — call the INTERNAL create entry, not the external `createOffer`.
+        // `createLoanSaleOffer` already holds the diamond-shared `nonReentrant`
+        // guard, and the external `createOffer` re-enters that same guard via the
+        // `address(this).call` hop → `ReentrancyGuardReentrantCall` every time.
+        // `createOfferInternal` is `msg.sender == address(this)`-gated and takes
+        // no reentrancy modifier (same pattern as `PrecloseFacet._submitOffsetOffer`).
+        // The explicit `creator` is required because under `address(this).call`
+        // `msg.sender` is the diamond — without it `offer.creator` would be
+        // corrupted to the diamond instead of the exiting lender.
         bytes memory result = LibFacet.crossFacetCallReturn(
-            abi.encodeWithSelector(OfferCreateFacet.createOffer.selector, params),
+            abi.encodeWithSelector(
+                OfferCreateFacet.createOfferInternal.selector,
+                creator,
+                params
+            ),
             OfferCreationFailed.selector
         );
         saleOfferId = abi.decode(result, (uint256));
