@@ -2023,7 +2023,7 @@ contract DeployDiamond is Script {
     }
 
     function _getConfigSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](73);
+        s = new bytes4[](75);
         // Setters
         s[0] = ConfigFacet.setFeesConfig.selector;
         s[1] = ConfigFacet.setLiquidationConfig.selector;
@@ -2184,6 +2184,9 @@ contract DeployDiamond is Script {
         // #671 — progressive risk-access gate master kill-switch + getter.
         s[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         s[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        s[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        s[74] = ConfigFacet.getAssetRiskParams.selector;
     }
 
     /// T-034 / T-048 numeraire / PAD / periodic-interest config

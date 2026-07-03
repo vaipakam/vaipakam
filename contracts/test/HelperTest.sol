@@ -1414,7 +1414,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](73);
+        selectors = new bytes4[](75);
         selectors[0] = ConfigFacet.setFeesConfig.selector;
         selectors[1] = ConfigFacet.setLiquidationConfig.selector;
         selectors[2] = ConfigFacet.setRiskConfig.selector;
@@ -1541,6 +1541,9 @@ contract HelperTest {
         // access-control tests in RiskAccessFacetTest exercise these).
         selectors[71] = ConfigFacet.setRiskAccessGateEnabled.selector;
         selectors[72] = ConfigFacet.getRiskAccessGateEnabled.selector;
+        // #956 (#921 item 5) — per-asset min-partial floor setter + RiskParams view.
+        selectors[73] = ConfigFacet.setAssetMinPartialBps.selector;
+        selectors[74] = ConfigFacet.getAssetRiskParams.selector;
         return selectors;
     }
 
