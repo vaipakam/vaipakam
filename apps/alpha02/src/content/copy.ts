@@ -278,6 +278,8 @@ export const copy = {
       'This loan’s collateral isn’t currently priced by the protocol, so collateral top-ups aren’t available for it. Nothing was sent.',
     pastGrace:
       'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
+    loanAlreadySettled:
+      'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

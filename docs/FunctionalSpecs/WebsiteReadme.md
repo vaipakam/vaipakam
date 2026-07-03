@@ -657,6 +657,18 @@ converge. Its intended behaviour (the test oracle for that surface):
   day-by-day (pro-rata) loans cost less when repaid early. The grace
   period shown in receipts and the grace window enforced at
   repayment come from the same schedule.
+- Advanced mode offers close-early (direct preclose) to the borrower
+  of an active, not-yet-matured ERC-20 loan from the loan detail
+  page. Maturity is judged by chain time, never the device clock. The
+  review quotes the settlement figure from the protocol's own
+  settlement math — honouring the loan's interest mode and any
+  interest already settled by partial repayments — never a locally
+  derived estimate, and states the interest-mode implication before
+  signing. After a successful close or full repayment the page must
+  not re-offer close-early or repay while off-chain data still shows
+  the loan active. A compliance-flagged wallet is not shown
+  close-early at all; its open path remains the wind-down repayment.
+  Only one pending-action review can be open on the page at a time.
 
 ## Key UX Requirements
 

@@ -30,6 +30,7 @@ import {
   isAssetIlliquidLive,
   readGraceSecondsLive,
 } from '../contracts/preflights';
+import { readLoanLive, readRepaymentDueLive } from '../contracts/loanLive';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -44,10 +45,14 @@ import {
 } from '../lib/format';
 import { loanStateView } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
-import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
+import { type ReceiptData } from '../components/ReviewReceipt';
+import { ConfirmReceipt } from '../components/ConfirmReceipt';
 import { AssetType } from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
+/** The page's inline confirm surfaces — ONE open at a time, so two
+ *  review receipts can never invite conflicting signatures at once. */
+type ConfirmSurface = 'action' | 'collateral' | 'partial' | 'preclose';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
@@ -69,12 +74,16 @@ export function PositionDetails() {
   // without this latch the button would re-enable and invite a
   // second, reverting claim.
   const [claimed, setClaimed] = useState(false);
-  // Position writes show the six-row receipt BEFORE any wallet prompt
-  // — one flag per write surface on this page.
-  const [confirming, setConfirming] = useState(false);
-  const [confirmingCollateral, setConfirmingCollateral] = useState(false);
-  const [confirmingPartial, setConfirmingPartial] = useState(false);
-  const [confirmingPreclose, setConfirmingPreclose] = useState(false);
+  // Same indexer lag after a full repay or preclose: the row stays
+  // "active" until the indexer catches up, so without this latch the
+  // repay button and the close-early card would re-appear and invite
+  // a second, reverting submit (LoanNotActive).
+  const [closedThisSession, setClosedThisSession] = useState(false);
+  // Position writes show the six-row receipt BEFORE any wallet prompt.
+  // One slot (not one flag per surface) — opening a surface closes any
+  // other, so two receipts never invite conflicting signatures.
+  const [confirmingSurface, setConfirmingSurface] =
+    useState<ConfirmSurface | null>(null);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -183,8 +192,13 @@ export function PositionDetails() {
   const sanctionsClear = sanctions.ready && !sanctions.flagged;
 
   // Live loan snapshot — interest MODE and the re-stampable accrual
-  // clock live only on-chain (the indexer row lacks them), and the
-  // preclose estimate/mode note must not guess.
+  // clock live only on-chain (the indexer row lacks them). The quoted
+  // preclose figure is the contract's OWN settlement math
+  // (`calculateRepaymentAmount` routes through the same
+  // settlementInterestNet as `computePreclose`: full-term floor,
+  // interest already settled by partials, chain time) — never a
+  // hand-derived formula that can drift from what is pulled.
+  // `chainNow` rides along so time gates never trust the local clock.
   const loanLive = useQuery({
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
     enabled:
@@ -193,45 +207,20 @@ export function PositionDetails() {
       loan.data?.status === 'active' &&
       !loanIsRental,
     staleTime: 30_000,
+    refetchInterval: 60_000,
     queryFn: async () => {
-      const live = (await readClient!.readContract({
-        address: readChain.diamondAddress,
-        abi: DIAMOND_ABI_VIEM,
-        functionName: 'getLoanDetails',
-        args: [BigInt(loan.data!.loanId)],
-      })) as {
-        principal: bigint;
-        interestRateBps: bigint;
-        startTime: bigint;
-        interestAccrualStart: bigint;
-        interestRemainingDays: number;
-        useFullTermInterest: boolean;
-      };
-      return live;
+      const [live, calcDue, latestBlock] = await Promise.all([
+        readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+        readRepaymentDueLive(
+          readClient!,
+          readChain.diamondAddress,
+          loan.data!.loanId,
+        ),
+        readClient!.getBlock({ blockTag: 'latest' }),
+      ]);
+      return { live, calcDue, chainNow: latestBlock.timestamp };
     },
   });
-
-  // Display-only preclose estimate (submit recomputes with CHAIN time
-  // and approves with headroom): principal + full-term interest on the
-  // remaining committed term, or pro-rata accrued for day-by-day loans.
-  const precloseEstimate = useMemo(() => {
-    const live = loanLive.data;
-    if (!live || !loan.data) return null;
-    const remainingDays =
-      live.interestAccrualStart !== 0n
-        ? BigInt(live.interestRemainingDays)
-        : BigInt(loan.data.durationDays);
-    const accrualStart =
-      live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
-    const elapsedDays = BigInt(
-      Math.max(0, Math.floor(Date.now() / 1000) - Number(accrualStart)),
-    ) / 86_400n;
-    const days = live.useFullTermInterest ? remainingDays : elapsedDays + 1n;
-    return (
-      live.principal +
-      (live.principal * live.interestRateBps * days) / (365n * 10_000n)
-    );
-  }, [loanLive.data, loan.data]);
 
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
@@ -297,6 +286,7 @@ export function PositionDetails() {
     // for retry — never leave the borrower without the cure action.
     if (
       role === 'borrower' &&
+      !closedThisSession &&
       (row.status === 'active' || row.status === 'fallback_pending')
     ) {
       return 'repay';
@@ -384,12 +374,11 @@ export function PositionDetails() {
           row.status === 'fallback_pending' &&
           row.assetType === AssetType.ERC20
         ) {
-          const live = (await publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getLoanDetails',
-            args: [BigInt(row.loanId)],
-          })) as { principal: bigint; interestRateBps: bigint; startTime: bigint };
+          const live = await readLoanLive(
+            publicClient,
+            walletChain.diamondAddress,
+            row.loanId,
+          );
           const elapsedDays =
             chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
           const interestEst =
@@ -436,6 +425,7 @@ export function PositionDetails() {
           });
         }
         await write('repayLoan', [BigInt(row.loanId)]);
+        setClosedThisSession(true);
         setDoneMessage(
           isRental
             ? 'Rental closed. Any refundable buffer is ready — claim it from the Claim Center.'
@@ -462,7 +452,7 @@ export function PositionDetails() {
         setClaimed(true);
         setDoneMessage(copy.claims.claimed);
       }
-      setConfirming(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
@@ -532,7 +522,7 @@ export function PositionDetails() {
       await write('addCollateral', [BigInt(row.loanId), wei]);
       setDoneMessage('Collateral added — the loan is safer now.');
       setCollateralInput('');
-      setConfirmingCollateral(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
     } catch (err) {
@@ -554,17 +544,7 @@ export function PositionDetails() {
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
       const [live, latestBlock] = await Promise.all([
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getLoanDetails',
-          args: [BigInt(row.loanId)],
-        }) as Promise<{
-          principal: bigint;
-          interestRateBps: bigint;
-          startTime: bigint;
-          interestAccrualStart: bigint;
-        }>,
+        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
@@ -639,7 +619,7 @@ export function PositionDetails() {
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage('Partial repayment confirmed — you now owe less.');
       setPartialInput('');
-      setConfirmingPartial(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
@@ -665,48 +645,32 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
-      const [, live, latestBlock] = await Promise.all([
+      const [, live, calcDue] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
           tokenId: row.borrowerTokenId,
           expectedOwner: address,
         }),
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getLoanDetails',
-          args: [BigInt(row.loanId)],
-        }) as Promise<{
-          principal: bigint;
-          interestRateBps: bigint;
-          startTime: bigint;
-          interestAccrualStart: bigint;
-          interestRemainingDays: number;
-          useFullTermInterest: boolean;
-        }>,
-        publicClient.getBlock({ blockTag: 'latest' }),
+        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
+        readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
       ]);
-      // computePreclose charges principal + FULL-TERM interest on the
-      // remaining committed term for full-term loans, pro-rata accrued
-      // for day-by-day loans. Approve with day-boundary headroom — the
-      // contract pulls only what it recomputes.
-      const remainingDays =
-        live.interestAccrualStart !== 0n
-          ? BigInt(live.interestRemainingDays)
-          : BigInt(row.durationDays);
-      const accrualStart =
-        live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
-      const elapsedDays =
-        latestBlock.timestamp > accrualStart
-          ? (latestBlock.timestamp - accrualStart) / 86_400n
-          : 0n;
-      const interestDays = live.useFullTermInterest
-        ? remainingDays + 2n
-        : elapsedDays + 2n;
+      // `calculateRepaymentAmount` IS the preclose figure — it and
+      // `computePreclose` route through the same settlementInterestNet
+      // (full-term floor max(elapsed, remaining), interest already
+      // settled by partials, CHAIN time). It returns 0 for a
+      // non-Active loan: treat that as "already settled" instead of
+      // approving 0 and burning gas on a LoanNotActive revert.
+      if (calcDue === 0n) {
+        setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      // The owed amount steps up at each elapsed-day boundary while
+      // the tx is pending — pad by ~2 days of interest; precloseDirect
+      // pulls only what it recomputes, so the pad is never spent.
       const due =
-        live.principal +
-        (live.principal * live.interestRateBps * interestDays) / (365n * 10_000n);
+        calcDue +
+        (live.principal * live.interestRateBps * 2n) / (365n * 10_000n);
       await assertErc20BalanceLive({
         publicClient,
         token: row.lendingAsset as `0x${string}`,
@@ -723,8 +687,9 @@ export function PositionDetails() {
         amount: due,
       });
       await write('precloseDirect', [BigInt(row.loanId)]);
+      setClosedThisSession(true);
       setDoneMessage(copy.preclose.done);
-      setConfirmingPreclose(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
@@ -777,7 +742,9 @@ export function PositionDetails() {
       ? {
           youReceive: isRental
             ? 'Any refundable buffer back — claimable right after closing.'
-            : `${collateralStr} collateral back — claimable right after repayment settles.`,
+            : hasCollateral
+              ? `${collateralStr} collateral back — claimable right after repayment settles.`
+              : 'Nothing extra back — this loan has no collateral to release.',
           youLock: 'Nothing new.',
           youMayOwe: isRental
             ? 'Nothing more — fees were prepaid (late fees only if past the due date).'
@@ -791,7 +758,9 @@ export function PositionDetails() {
             youReceive: isRental
               ? 'Your refundable buffer back.'
               : row.status === 'repaid'
-                ? `${collateralStr} collateral back.`
+                ? hasCollateral
+                  ? `${collateralStr} collateral back.`
+                  : 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).'
                 : 'Anything left after liquidation (may be zero).',
             youLock: 'Nothing.',
             youMayOwe: 'Nothing.',
@@ -810,7 +779,9 @@ export function PositionDetails() {
                     // not the collateral itself. Only in-kind (illiquid)
                     // paths hand over the raw collateral, so promise
                     // neither specifically.
-                    `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`,
+                    hasCollateral
+                    ? `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`
+                    : 'Whatever this loan recovered (it had no collateral, so there may be nothing).',
               youLock: 'Nothing.',
               youMayOwe: 'Nothing.',
               youCanLose: 'Nothing.',
@@ -962,7 +933,7 @@ export function PositionDetails() {
                 collateralBalance.data === undefined ||
                 collateralOverBalance
               }
-              onClick={() => setConfirmingCollateral(true)}
+              onClick={() => setConfirmingSurface('collateral')}
             >
               Add
             </button>
@@ -972,25 +943,13 @@ export function PositionDetails() {
               {copy.errors.needMore(collateral.symbol)}
             </p>
           ) : null}
-          {confirmingCollateral && collateralInputWei !== null ? (
+          {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
             <div style={{ marginTop: 16 }}>
-              {row.status === 'fallback_pending' ? (
-                // A fallback-pending top-up CURES only if it restores
-                // the loan's required health thresholds — a partial
-                // top-up leaves the lender able to claim AND puts the
-                // added collateral at stake. Never let the generic
-                // "safer now" copy stand alone here.
-                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-                  <span className="banner-body">
-                    This loan is in a failed-liquidation state. Adding
-                    collateral only brings it back to Active if the top-up
-                    restores the required health level — otherwise the lender
-                    can still claim, and the added collateral is at stake too.
-                    Repaying in full always cures. If unsure, repay instead.
-                  </span>
-                </div>
-              ) : null}
-              <ReviewReceipt
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel="Confirm — add collateral"
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runAddCollateral()}
                 data={{
                   youReceive:
                     row.status === 'fallback_pending'
@@ -1005,27 +964,24 @@ export function PositionDetails() {
                   fees: 'None.',
                   whenThisEnds: 'The top-up applies immediately.',
                 }}
-              />
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmingCollateral(false)}
-                  disabled={busy}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => void runAddCollateral()}
-                >
-                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                  {busy ? 'Waiting for wallet…' : 'Confirm — add collateral'}
-                </button>
-              </div>
+              >
+                {row.status === 'fallback_pending' ? (
+                  // A fallback-pending top-up CURES only if it restores
+                  // the loan's required health thresholds — a partial
+                  // top-up leaves the lender able to claim AND puts the
+                  // added collateral at stake. Never let the generic
+                  // "safer now" copy stand alone here.
+                  <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                    <span className="banner-body">
+                      This loan is in a failed-liquidation state. Adding
+                      collateral only brings it back to Active if the top-up
+                      restores the required health level — otherwise the lender
+                      can still claim, and the added collateral is at stake too.
+                      Repaying in full always cures. If unsure, repay instead.
+                    </span>
+                  </div>
+                ) : null}
+              </ConfirmReceipt>
             </div>
           ) : null}
         </section>
@@ -1065,7 +1021,7 @@ export function PositionDetails() {
                 principalBalance.data === undefined ||
                 partialOverBalance
               }
-              onClick={() => setConfirmingPartial(true)}
+              onClick={() => setConfirmingSurface('partial')}
             >
               Repay part
             </button>
@@ -1075,9 +1031,13 @@ export function PositionDetails() {
               {copy.errors.needMore(principal.symbol)}
             </p>
           ) : null}
-          {confirmingPartial && partialInputWei !== null ? (
+          {confirmingSurface === 'partial' && partialInputWei !== null ? (
             <div style={{ marginTop: 16 }}>
-              <ReviewReceipt
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel="Confirm — repay part"
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runPartialRepay()}
                 data={{
                   youReceive: 'Nothing now — a smaller debt.',
                   youLock: 'Nothing.',
@@ -1087,77 +1047,61 @@ export function PositionDetails() {
                   whenThisEnds: 'Your remaining principal drops immediately; interest keeps accruing on the smaller amount.',
                 }}
               />
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmingPartial(false)}
-                  disabled={busy}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => void runPartialRepay()}
-                >
-                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                  {busy ? 'Waiting for wallet…' : 'Confirm — repay part'}
-                </button>
-              </div>
             </div>
           ) : null}
         </section>
       ) : null}
 
+      {/* Card appears only when the live loan read has landed: the
+          quoted figure and mode note come from it, the pre-maturity
+          gate is judged by CHAIN time (a wrong local clock must not
+          show close-early on a matured loan), and a flagged wallet
+          sees no card at all rather than a dead button — their open
+          path is the Tier-2 repay above. */}
       {isAdvanced &&
       role === 'borrower' &&
       row.status === 'active' &&
+      !closedThisSession &&
       !isRental &&
       principal &&
-      Date.now() / 1000 < row.startTime + row.durationDays * 86_400 ? (
+      sanctionsClear &&
+      loanLive.data &&
+      loanLive.data.chainNow <
+        BigInt(row.startTime) + BigInt(row.durationDays) * 86_400n ? (
         <section className="card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
             {copy.preclose.blurb}{' '}
-            {loanLive.data
-              ? loanLive.data.useFullTermInterest
-                ? copy.preclose.fullTermNote
-                : copy.preclose.proRataNote
-              : null}
+            {loanLive.data.live.useFullTermInterest
+              ? copy.preclose.fullTermNote
+              : copy.preclose.proRataNote}
           </p>
-          {!confirmingPreclose ? (
+          {confirmingSurface !== 'preclose' ? (
             <button
               type="button"
               className="btn btn-secondary"
-              disabled={
-                busy ||
-                !onSupportedChain ||
-                !walletClient ||
-                !publicClient ||
-                !sanctionsClear ||
-                // The estimate and mode note come from the live loan —
-                // don't open a review that can't state the cost.
-                !loanLive.data
-              }
-              onClick={() => setConfirmingPreclose(true)}
+              disabled={busy || !onSupportedChain || !walletClient || !publicClient}
+              onClick={() => setConfirmingSurface('preclose')}
             >
               {copy.preclose.action}
             </button>
-          ) : loanLive.data ? (
+          ) : (
             <div style={{ marginTop: 8 }}>
-              <ReviewReceipt
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel={copy.preclose.confirm}
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runPreclose()}
                 data={{
-                  youReceive: `${collateralStr} collateral back — claimable right after closing.`,
+                  youReceive: hasCollateral
+                    ? `${collateralStr} collateral back — claimable right after closing.`
+                    : 'Nothing extra back — this loan has no collateral to release.',
                   youLock: 'Nothing new.',
-                  youMayOwe: `~${
-                    precloseEstimate !== null
-                      ? formatTokenAmount(precloseEstimate, principal.decimals)
-                      : '…'
-                  } ${principal.symbol}, paid now. ${
-                    loanLive.data.useFullTermInterest
+                  youMayOwe: `~${formatTokenAmount(
+                    loanLive.data.calcDue,
+                    principal.decimals,
+                  )} ${principal.symbol}, paid now. ${
+                    loanLive.data.live.useFullTermInterest
                       ? copy.preclose.fullTermNote
                       : copy.preclose.proRataNote
                   } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
@@ -1166,28 +1110,8 @@ export function PositionDetails() {
                   whenThisEnds: 'Immediately — the loan settles today and your collateral is released.',
                 }}
               />
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmingPreclose(false)}
-                  disabled={busy}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => void runPreclose()}
-                >
-                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                  {busy ? 'Waiting for wallet…' : copy.preclose.confirm}
-                </button>
-              </div>
             </div>
-          ) : null}
+          )}
         </section>
       ) : null}
 
@@ -1203,43 +1127,28 @@ export function PositionDetails() {
         </div>
       ) : null}
 
-      {actionLabel && action ? (
-        confirming ? (
+      {actionLabel && action && actionReceipt ? (
+        confirmingSurface === 'action' ? (
           // Position writes go through the SAME six-row review surface
           // as every other write flow — the wallet prompt is never the
           // first place the user sees what a click will do.
           <section className="card">
-            <h3>Before you confirm</h3>
-            {actionReceipt ? <ReviewReceipt data={actionReceipt} /> : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setConfirming(false)}
-                disabled={busy}
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={
-                  busy ||
-                  !onSupportedChain ||
-                  // wallet/public client hydrate async after connect —
-                  // without this the first click lands in run()'s early
-                  // return and silently does nothing.
-                  !walletClient ||
-                  !publicClient ||
-                  (action !== 'repay' && !sanctionsClear)
-                }
-                onClick={() => void run(action)}
-              >
-                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {busy ? 'Waiting for wallet…' : `Confirm — ${actionLabel}`}
-              </button>
-            </div>
+            <ConfirmReceipt
+              busy={busy}
+              confirmLabel={`Confirm — ${actionLabel}`}
+              onBack={() => setConfirmingSurface(null)}
+              onConfirm={() => void run(action)}
+              // wallet/public client hydrate async after connect —
+              // without this the first click lands in run()'s early
+              // return and silently does nothing.
+              disabled={
+                !onSupportedChain ||
+                !walletClient ||
+                !publicClient ||
+                (action !== 'repay' && !sanctionsClear)
+              }
+              data={actionReceipt}
+            />
           </section>
         ) : (
           <button
@@ -1250,7 +1159,7 @@ export function PositionDetails() {
               !onSupportedChain ||
               (action !== 'repay' && !sanctionsClear)
             }
-            onClick={() => setConfirming(true)}
+            onClick={() => setConfirmingSurface('action')}
           >
             {actionLabel}
           </button>
