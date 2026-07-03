@@ -177,6 +177,14 @@ contract EarlyWithdrawalFacet is
         LibAuth.requireLenderNftOwner(loan);
         if (loan.status != LibVaipakam.LoanStatus.Active)
             revert LoanNotActive();
+        // #951 (Codex #959 round-4) — a live Option-2 sale listing has already
+        // native-locked the lender NFT and pinned an immutable buyer-facing
+        // offer. Letting Option-1 (direct swap-in) re-anchor `loan.lender` while
+        // that listing is open would double-sell the same position: the Option-2
+        // buyer could still accept the stale vehicle. Require the seller to cancel
+        // the listing first. See LenderSaleVehicleRedesign.md (D4).
+        if (s.loanToSaleOfferId[loanId] != 0)
+            revert SaleOfferAlreadyExists();
         // NFT rental lender-sale requires NFT custody transfer — not supported in Phase 1
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidSaleOffer();

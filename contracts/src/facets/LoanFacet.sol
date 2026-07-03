@@ -196,6 +196,16 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
             if (s.loans[linkedLoanId].status != LibVaipakam.LoanStatus.Active) {
                 revert InvalidOffer();
             }
+            // #951 (Codex #959 round-4) — the sale offer's `amount` was pinned to
+            // the loan's principal at listing and is immutable thereafter (D4). But
+            // the borrower can partial-repay while the listing is live, shrinking
+            // `loan.principal` and leaving the offer amount stale — the buyer would
+            // then pay the old principal for a smaller position. Reject a stale
+            // listing here (fail-safe, decoupled from RepayFacet); the seller
+            // re-lists at the new principal. See LenderSaleVehicleRedesign.md.
+            if (s.offers[offerId].amount != s.loans[linkedLoanId].principal) {
+                revert InvalidOffer();
+            }
         }
 
         LibVaipakam.LiquidityStatus lendingAssetLiquidity = OracleFacet(

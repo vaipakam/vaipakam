@@ -16,6 +16,7 @@ import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
+import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
@@ -652,6 +653,55 @@ contract EarlyWithdrawalFacetTest is Test {
 
         vm.expectRevert(OfferMatchFacet.SaleVehicleNotMatchable.selector);
         OfferMatchFacet(address(diamond)).matchOffers(lenderOfferId, saleOfferId);
+    }
+
+    /// @dev #951 (Codex #959 round-4, P1) — a partial-repay AFTER listing shrinks
+    ///      `loan.principal` while the sale offer's `amount` stays pinned to the
+    ///      old principal (the vehicle is immutable, D4). A later accept
+    ///      (→ `initiateLoan`) must reject the stale listing so the buyer never
+    ///      pays the old principal for a smaller position; the seller re-lists at
+    ///      the new principal. Exercises LoanFacet's freshness guard directly.
+    function testStaleSaleOfferRejectedOnAccept() public {
+        uint256 saleOfferId = _listSaleOffer();
+        // Simulate a post-listing partial repay: the live loan's principal
+        // shrinks, but the immutable sale offer still quotes the old principal.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.principal = ld.principal / 2;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+        // `initiateLoan` is `address(this)`-gated; prank as the diamond so the
+        // call reaches the sale-vehicle freshness branch.
+        vm.prank(address(diamond));
+        vm.expectRevert(LoanFacet.InvalidOffer.selector);
+        LoanFacet(address(diamond)).initiateLoan(saleOfferId, newLender, true);
+    }
+
+    /// @dev #951 (Codex #959 round-4, P1) — while an Option-2 sale listing is live
+    ///      (lender NFT native-locked, immutable buyer offer pinned), the Option-1
+    ///      direct swap-in path (`sellLoanViaBuyOffer`) must refuse to re-anchor
+    ///      the same position, else it could be double-sold (the Option-2 buyer
+    ///      could still accept the stale vehicle). Seller must cancel first.
+    function testDirectSaleBlockedWhileListed() public {
+        _listSaleOffer();
+        vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferAlreadyExists.selector);
+        EarlyWithdrawalFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+    }
+
+    /// @dev #951 (Codex #959 round-4, P3) — `previewMatch` must mirror the
+    ///      on-chain `SaleVehicleNotMatchable` revert so a matching bot never sees
+    ///      an `Ok` verdict for a sale vehicle that always reverts on submit.
+    function testPreviewMatchFlagsSaleVehicle() public {
+        uint256 saleOfferId = _listSaleOffer();
+        LibOfferMatch.MatchResult memory r =
+            OfferMatchFacet(address(diamond)).previewMatch(buyOfferId, saleOfferId);
+        assertEq(
+            uint8(r.errorCode),
+            uint8(LibOfferMatch.MatchError.SaleVehicleTagged),
+            "preview must flag a sale vehicle as non-matchable"
+        );
     }
 
     // ─── _getTreasury coverage via accrued interest ───────────────────────────

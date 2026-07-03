@@ -3257,10 +3257,13 @@ contract OfferFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
-        // Mock completeLoanSale to succeed
+        // Mock the auto-complete hop to succeed. #951 (Codex #959) — acceptOffer
+        // now routes the sale auto-complete through `completeLoanSaleInternal`
+        // (the address(this)-gated, guard-free entry) not `completeLoanSale`, so
+        // the mock must target that selector.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSale.selector, uint256(42)),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector, uint256(42)),
             ""
         );
         vm.mockCall(
@@ -3320,10 +3323,12 @@ contract OfferFacetTest is Test {
 
         TestMutatorFacet(address(diamond)).setSaleOfferToLoanIdRaw(offerId, 42);
 
-        // Mock completeLoanSale to revert
+        // Mock the auto-complete hop to revert. #951 (Codex #959) — the sale
+        // auto-complete now routes through `completeLoanSaleInternal`, so the
+        // revert mock must target that selector (see the success-path test).
         vm.mockCallRevert(
             address(diamond),
-            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSale.selector, uint256(42)),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector, uint256(42)),
             "sale fail"
         );
         vm.mockCall(
@@ -3523,10 +3528,11 @@ contract OfferFacetTest is Test {
         spoofed.collateralAmount = 5000;
         TestMutatorFacet(address(diamond)).setLoan(77, spoofed);
 
-        // Mock completeLoanSale to succeed (since saleOfferToLoanId != 0)
+        // Mock the auto-complete hop to succeed (since saleOfferToLoanId != 0).
+        // #951 (Codex #959) — routes through `completeLoanSaleInternal` now.
         vm.mockCall(
             address(diamond),
-            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSale.selector, uint256(77)),
+            abi.encodeWithSelector(EarlyWithdrawalFacet.completeLoanSaleInternal.selector, uint256(77)),
             ""
         );
         vm.mockCall(

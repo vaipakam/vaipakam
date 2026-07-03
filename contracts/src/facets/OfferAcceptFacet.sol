@@ -1075,8 +1075,19 @@ contract OfferAcceptFacet is
             // On any precondition failure tryApplyBorrowerLif returns
             // (false, 0) silently and we fall through to the normal 0.1%
             // lending-asset fee path — no rebate eligibility on that path.
+            // #951 (Codex #959 round-4) — a lender-sale-vehicle accept is a
+            // SECONDARY-MARKET position transfer, not a fresh origination: the
+            // underlying loan already paid its 0.1% LIF when it was first
+            // initiated. Charging LIF again here would haircut the seller's sale
+            // proceeds (or over-charge the buyer) for a fee the position already
+            // bore. Skip the whole LIF machinery — no VPFI custody, no fee split
+            // — and deliver the full sale principal to the seller. The buyer's
+            // real economics settle in `completeLoanSale`. See
+            // LenderSaleVehicleRedesign.md.
+            bool isSaleVehicleAccept = s.saleOfferToLoanId[offerId] != 0;
             bool discountApplied;
             if (
+                !isSaleVehicleAccept &&
                 s.vpfiDiscountConsent[borrower] &&
                 lendingAssetLiquidity == LibVaipakam.LiquidityStatus.Liquid
             ) {
@@ -1085,7 +1096,7 @@ contract OfferAcceptFacet is
             }
 
             uint256 netToBorrower;
-            if (discountApplied) {
+            if (isSaleVehicleAccept || discountApplied) {
                 netToBorrower = effectivePrincipal;
             } else {
                 uint256 initiationFee = (effectivePrincipal *
