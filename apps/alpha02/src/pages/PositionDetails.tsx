@@ -25,6 +25,11 @@ import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { useLoanRisk, healthView } from '../data/risk';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
+import {
+  assertErc20BalanceLive,
+  assertPositionNftHeldLive,
+  readGraceSecondsLive,
+} from '../contracts/preflights';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -284,26 +289,28 @@ export function PositionDetails() {
           publicClient.getBlock({ blockTag: 'latest' }),
         ]);
         const chainNow = latestBlock.timestamp;
+        // The role came from a CACHED ownerOf read and repayLoan is
+        // PERMISSIONLESS — a stale "borrower" view could pay off a
+        // position whose claim now belongs to someone else. Re-check
+        // the borrower position NFT live before anything moves.
+        await assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        });
         // repayLoan reverts RepaymentPastGracePeriod once past the
-        // grace window — fail BEFORE the approval. Grace is judged by
-        // the compile-time default schedule (storage buckets can only
-        // be configured by governance; on the deployed testnets none
-        // are). Judged by CHAIN time, never the browser clock.
+        // grace window — fail BEFORE the approval, judged by CHAIN
+        // time against the LIVE grace buckets (falls back to the
+        // compile-time default schedule when none are configured).
         if (row.assetType === AssetType.ERC20) {
           const endTime = BigInt(row.startTime + row.durationDays * 86_400);
-          const defaultGraceSec =
-            row.durationDays < 7
-              ? 3_600n
-              : row.durationDays < 30
-                ? 86_400n
-                : row.durationDays < 90
-                  ? 3n * 86_400n
-                  : row.durationDays < 180
-                    ? 7n * 86_400n
-                    : row.durationDays < 365
-                      ? 14n * 86_400n
-                      : 30n * 86_400n;
-          if (chainNow > endTime + defaultGraceSec) {
+          const graceSec = await readGraceSecondsLive({
+            publicClient,
+            diamondAddress: walletChain.diamondAddress,
+            durationDays: row.durationDays,
+          });
+          if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
             return;
           }
@@ -431,6 +438,24 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
+      // addCollateral authorizes the CURRENT borrower-position holder
+      // (requireBorrowerNftOwner) — the page's role is a cached read,
+      // so re-check live before the approval.
+      await assertPositionNftHeldLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        tokenId: row.borrowerTokenId,
+        expectedOwner: address,
+      });
+      // The button's balance gate is cached — re-read live so funds
+      // moved after the receipt opened fail before the approval.
+      await assertErc20BalanceLive({
+        publicClient,
+        token: row.collateralAsset as `0x${string}`,
+        owner: address,
+        amount: wei,
+        symbol: collateralMeta.data.symbol,
+      });
       // addCollateral rejects unless the collateral is currently
       // LIQUID (checkLiquidity == Liquid, enum 0) — fail before the
       // approval. Fail-open on read errors: the contract still guards.
@@ -501,6 +526,15 @@ export function PositionDetails() {
         setError(copy.errors.partialOverPrincipal);
         return;
       }
+      // repayPartial authorizes the CURRENT borrower-position holder
+      // (stored-anchor auth after consolidation) — re-check live so a
+      // stale role fails before the approval.
+      await assertPositionNftHeldLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        tokenId: row.borrowerTokenId,
+        expectedOwner: address,
+      });
       // repayPartial pays the CURRENT lender-position holder DIRECTLY
       // and reverts if that wallet is sanctioned — screen the resolved
       // holder before the approval (full repay stays open: it defers
@@ -617,7 +651,7 @@ export function PositionDetails() {
           youLock: 'Nothing new.',
           youMayOwe: isRental
             ? 'Nothing more — fees were prepaid (late fees only if past the due date).'
-            : `${principalStr} + interest accrued to now. The exact amount is read live when you confirm; the approval carries small day-boundary headroom that is never spent.`,
+            : `${principalStr} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
           youCanLose: 'Nothing beyond what you owe.',
           fees: 'No extra Vaipakam fee to repay — the protocol’s cut comes out of the lender’s interest.',
           whenThisEnds: 'Immediately — the loan settles and your side is released.',

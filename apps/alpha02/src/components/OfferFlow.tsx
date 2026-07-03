@@ -26,8 +26,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, Search } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
-import { useQueryClient } from '@tanstack/react-query';
-import { erc20Abi, parseUnits } from 'viem';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { parseUnits } from 'viem';
 import { useActiveChain } from '../chain/useActiveChain';
 import { getSupportedChain } from '../chain/chains';
 import { useMode } from '../app/ModeContext';
@@ -42,6 +42,11 @@ import {
 import { useActiveOffers, useOffer } from '../data/hooks';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import {
+  assertAssetNotPausedLive,
+  assertErc20BalanceLive,
+  isAssetIlliquidLive,
+} from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -270,7 +275,7 @@ export function OfferFlow({ side }: { side: Side }) {
       clear(copy.match.offerGone);
       return;
     }
-    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset }));
+    setForm((f) => ({ ...f, lendingAsset: row.lendingAsset, riskAndTermsConsent: false }));
     setSelected(row);
     setMode('accept');
     setStep('review');
@@ -492,6 +497,41 @@ export function OfferFlow({ side }: { side: Side }) {
     mode === 'accept' &&
     selected !== null &&
     (selected.principalLiquidity === 1 || selected.collateralLiquidity === 1);
+  // Post mode has no indexer row to read liquidity from — read it live
+  // for the typed legs so a self-posted unpriced pair gets the same
+  // in-kind-transfer warning before Review (createOffer allows it).
+  const readClient = usePublicClient({ chainId: readChain.chainId });
+  const postLiquidity = useQuery({
+    queryKey: [
+      'postLegLiquidity',
+      readChain.chainId,
+      form.lendingAsset.toLowerCase(),
+      form.collateralAsset.toLowerCase(),
+    ],
+    enabled:
+      mode === 'post' &&
+      Boolean(readClient) &&
+      isAddressLike(form.lendingAsset) &&
+      isAddressLike(form.collateralAsset),
+    staleTime: 60_000,
+    queryFn: async () => {
+      const [lending, collateral] = await Promise.all([
+        isAssetIlliquidLive({
+          publicClient: readClient!,
+          diamondAddress: readChain.diamondAddress,
+          asset: form.lendingAsset,
+        }),
+        isAssetIlliquidLive({
+          publicClient: readClient!,
+          diamondAddress: readChain.diamondAddress,
+          asset: form.collateralAsset,
+        }),
+      ]);
+      return lending || collateral;
+    },
+  });
+  const postIsIlliquid = mode === 'post' && postLiquidity.data === true;
+  const reviewIsIlliquid = selectedIsIlliquid || postIsIlliquid;
 
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
@@ -518,19 +558,24 @@ export function OfferFlow({ side }: { side: Side }) {
         const illiquidSuffix = selectedIsIlliquid
           ? ` ${copy.match.illiquidWarning}`
           : '';
+        // The offer's interest MODE changes what early repayment costs
+        // — state it in the consent text (ProjectDetailsREADME).
+        const acceptModeNote = selected.useFullTermInterest
+          ? copy.match.interestModeFullTerm
+          : copy.match.interestModeProRata;
 
         if (side === 'borrower') {
           return {
             youReceive: `${principalStr} now (minus the ${lifPct} initiation fee).`,
             youLock: `${collateralStr} as collateral, now.`,
-            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
+            youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${acceptModeNote}`,
             youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${illiquidSuffix}`,
             fees: copy.fees.borrowerLIF(lifPct),
             whenThisEnds: `Repay within ${durationStr} (grace period: ${grace}), then claim your collateral back.`,
           };
         }
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${acceptModeNote}`,
           youLock: `${principalStr} lent to the borrower, now.`,
           youMayOwe: 'Nothing — the borrower owes you.',
           youCanLose: `${copy.lend.defaultOutcome} They lock ${collateralStr}.${illiquidSuffix}`,
@@ -555,13 +600,21 @@ export function OfferFlow({ side }: { side: Side }) {
       const collateralStr = `${formatTokenAmount(payload.collateralAmount, collateral.decimals)} ${collateral.symbol}`;
       const durationStr = formatDurationDays(payload.durationDays);
       const grace = gracePeriodLabel(payload.durationDays);
+      // The interest MODE changes what an early repayment costs — the
+      // consent text must state it explicitly (ProjectDetailsREADME).
+      const modeNote = form.useFullTermInterest
+        ? copy.match.interestModeFullTerm
+        : copy.match.interestModeProRata;
+      const postIlliquidSuffix = postIsIlliquid
+        ? ` ${copy.match.illiquidWarning}`
+        : '';
 
       if (side === 'lender') {
         return {
-          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back.`,
+          youReceive: `Up to ~${interestStr} interest if the borrower repays on time, plus your ${principalStr} back. ${modeNote}`,
           youLock: `${principalStr} now, until your offer is accepted or you cancel it.`,
           youMayOwe: 'Nothing — the borrower owes you.',
-          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.`,
+          youCanLose: `${copy.lend.defaultOutcome} They must lock ${collateralStr}.${postIlliquidSuffix}`,
           fees: copy.fees.lenderYieldFee(yieldPct),
           whenThisEnds: `Repayment is due ${durationStr} after a borrower accepts (grace period: ${grace}). You then claim your funds.`,
         };
@@ -569,8 +622,8 @@ export function OfferFlow({ side }: { side: Side }) {
       return {
         youReceive: `${principalStr} when a lender accepts your request.`,
         youLock: `${collateralStr} as collateral, starting now.`,
-        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date.`,
-        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}`,
+        youMayOwe: `${principalStr} plus up to ~${interestStr} interest by the due date. ${modeNote}`,
+        youCanLose: `Your ${collateralStr} collateral if you do not repay on time. ${copy.borrow.collateralWarning}${postIlliquidSuffix}`,
         fees: copy.fees.borrowerLIF(lifPct),
         whenThisEnds: `Repay within ${durationStr} of acceptance (grace period: ${grace}), then claim your collateral back.`,
       };
@@ -581,6 +634,7 @@ export function OfferFlow({ side }: { side: Side }) {
     mode,
     selected,
     selectedIsIlliquid,
+    postIsIlliquid,
     side,
     form,
     postDetailsComplete,
@@ -651,23 +705,29 @@ export function OfferFlow({ side }: { side: Side }) {
       ? payload.lendingAsset
       : payload.collateralAsset) as `0x${string}`;
     const amount = side === 'lender' ? payload.amountMax : payload.collateralAmount;
+    // Paused legs make createOffer revert (requireAssetNotPaused) —
+    // check BOTH before the approval can mine.
+    await assertAssetNotPausedLive({
+      publicClient,
+      diamondAddress: walletChain.diamondAddress,
+      asset: payload.lendingAsset as `0x${string}`,
+    });
+    await assertAssetNotPausedLive({
+      publicClient,
+      diamondAddress: walletChain.diamondAddress,
+      asset: payload.collateralAsset as `0x${string}`,
+    });
     // The checklist's balance item is a CACHED read — approve() would
     // succeed even for a wallet that moved the funds after review, so
     // re-read live and fail BEFORE the approval.
-    const heldNow = (await publicClient.readContract({
-      address: token,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [address],
-    })) as bigint;
-    if (heldNow < amount) {
-      throw new Error(
-        copy.errors.needMore(
-          (side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol) ??
-            'the locked asset',
-        ),
-      );
-    }
+    await assertErc20BalanceLive({
+      publicClient,
+      token,
+      owner: address,
+      amount,
+      symbol:
+        side === 'lender' ? lendingMeta.data?.symbol : collateralMeta.data?.symbol,
+    });
     await ensureAllowance({
       publicClient,
       walletClient,
@@ -746,6 +806,10 @@ export function OfferFlow({ side }: { side: Side }) {
           interestRateBps: BigInt(offerRateBps(selected)),
           collateralAmount: BigInt(selected.collateralAmount),
           durationDays: selected.durationDays,
+          // The review only warned about the in-kind default path if
+          // the indexer row said so — if a leg flipped illiquid since,
+          // the signer must abort rather than sign an undisclosed ack.
+          illiquidWarned: selectedIsIlliquid,
         },
       });
     } catch (err) {
@@ -761,13 +825,41 @@ export function OfferFlow({ side }: { side: Side }) {
       ? terms.collateralAssetType === AssetType.ERC20
       : terms.assetType === AssetType.ERC20;
     if (paysErc20) {
+      const payToken = acceptorPaysCollateral
+        ? terms.collateralAsset
+        : terms.lendingAsset;
+      const payAmount = acceptorPaysCollateral
+        ? terms.collateralAmount
+        : terms.amount;
+      // acceptOffer enforces requireAssetNotPaused on both legs, and
+      // approve() succeeds regardless of balance — re-check both live
+      // before the approval can mine.
+      await assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: terms.lendingAsset,
+      });
+      await assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: terms.collateralAsset,
+      });
+      await assertErc20BalanceLive({
+        publicClient,
+        token: payToken,
+        owner: address,
+        amount: payAmount,
+        symbol: acceptorPaysCollateral
+          ? selectedCollateralMeta.data?.symbol
+          : lendingMeta.data?.symbol,
+      });
       await ensureAllowance({
         publicClient,
         walletClient,
-        token: acceptorPaysCollateral ? terms.collateralAsset : terms.lendingAsset,
+        token: payToken,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: acceptorPaysCollateral ? terms.collateralAmount : terms.amount,
+        amount: payAmount,
       });
     }
     const { hash } = await write('acceptOffer', [
@@ -817,7 +909,7 @@ export function OfferFlow({ side }: { side: Side }) {
             id="lending-asset"
             label={side === 'lender' ? 'Asset to lend' : 'Asset to borrow'}
             value={form.lendingAsset}
-            onChange={(v) => set({ lendingAsset: v })}
+            onChange={(v) => set({ lendingAsset: v, riskAndTermsConsent: false })}
           />
           <div className="field">
             <label htmlFor="amount">{text.amountLabel}</label>
@@ -827,7 +919,7 @@ export function OfferFlow({ side }: { side: Side }) {
               inputMode="decimal"
               placeholder="0.0"
               value={form.amount}
-              onChange={(e) => set({ amount: e.target.value.trim() })}
+              onChange={(e) => set({ amount: e.target.value.trim(), riskAndTermsConsent: false })}
             />
             <span className="field-hint">{text.amountHint}</span>
           </div>
@@ -837,7 +929,7 @@ export function OfferFlow({ side }: { side: Side }) {
               id="duration"
               className="input"
               value={form.durationDays}
-              onChange={(e) => set({ durationDays: e.target.value })}
+              onChange={(e) => set({ durationDays: e.target.value, riskAndTermsConsent: false })}
             >
               {durationOptions.map((d) => (
                 <option key={d} value={String(d)}>
@@ -892,6 +984,9 @@ export function OfferFlow({ side }: { side: Side }) {
                       onChoose={() => {
                         setSelected(o);
                         setMode('accept');
+                        // A DIFFERENT deal needs a fresh acknowledgement
+                        // — never carry consent across selections.
+                        set({ riskAndTermsConsent: false });
                         setStep('review');
                       }}
                     />
@@ -933,7 +1028,7 @@ export function OfferFlow({ side }: { side: Side }) {
               inputMode="decimal"
               placeholder="5"
               value={form.interestRate}
-              onChange={(e) => set({ interestRate: e.target.value.trim() })}
+              onChange={(e) => set({ interestRate: e.target.value.trim(), riskAndTermsConsent: false })}
             />
             <span className="field-hint">
               {form.interestRate !== '' && !rateValid
@@ -946,7 +1041,7 @@ export function OfferFlow({ side }: { side: Side }) {
             label={text.collateralLabel}
             hint={text.collateralHint}
             value={form.collateralAsset}
-            onChange={(v) => set({ collateralAsset: v })}
+            onChange={(v) => set({ collateralAsset: v, riskAndTermsConsent: false })}
           />
           {selfCollateral ? (
             <p className="field-hint" style={{ color: 'var(--danger)', marginTop: -8 }}>
@@ -962,7 +1057,7 @@ export function OfferFlow({ side }: { side: Side }) {
               inputMode="decimal"
               placeholder="0.0"
               value={form.collateralAmount}
-              onChange={(e) => set({ collateralAmount: e.target.value.trim() })}
+              onChange={(e) => set({ collateralAmount: e.target.value.trim(), riskAndTermsConsent: false })}
             />
           </div>
 
@@ -1026,7 +1121,7 @@ export function OfferFlow({ side }: { side: Side }) {
               </span>
             </div>
           ) : null}
-          {selectedIsIlliquid ? (
+          {reviewIsIlliquid ? (
             <div className="banner banner-warn" role="alert">
               <span className="banner-body">{copy.match.illiquidWarning}</span>
             </div>

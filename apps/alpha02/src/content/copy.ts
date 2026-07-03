@@ -114,6 +114,10 @@ export const copy = {
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
     illiquidWarning:
       'One side of this deal isn’t priced by the protocol. If it ends in default, the entire collateral transfers directly — there is no automatic price-based liquidation. Only proceed if you accept that.',
+    interestModeFullTerm:
+      'Interest is full-term: the whole term’s interest applies even if the loan is repaid early.',
+    interestModeProRata:
+      'Interest accrues day by day — repaying early costs less.',
   },
 
   borrow: {
@@ -244,6 +248,10 @@ export const copy = {
       'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
+    assetPaused:
+      'One of this deal’s assets is temporarily paused by the protocol, so this action can’t go through right now. Nothing was sent — please try again later.',
+    positionMoved:
+      'This position is no longer held by the connected wallet (it may have been transferred or already claimed). Nothing was sent — refresh to see the current state.',
     collateralNotPriced:
       'This loan’s collateral isn’t currently priced by the protocol, so collateral top-ups aren’t available for it. Nothing was sent.',
     pastGrace:

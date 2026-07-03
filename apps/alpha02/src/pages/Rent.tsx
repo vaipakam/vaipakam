@@ -45,6 +45,10 @@ import {
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
 import { useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import {
+  assertAssetNotPausedLive,
+  assertErc20BalanceLive,
+} from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -307,6 +311,13 @@ function ListNftFlow() {
       if (!stillOwns) {
         throw new Error(copy.rent.checkNotOwner);
       }
+      // createOffer rejects paused collections (requireAssetNotPaused)
+      // — check before the collection-wide approval can mine.
+      await assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: contract as `0x${string}`,
+      });
       await ensureNftApproval({
         publicClient,
         walletClient,
@@ -342,7 +353,10 @@ function ListNftFlow() {
               id="nft-standard"
               className="input"
               value={standard}
-              onChange={(e) => setStandard(e.target.value as 'erc721' | 'erc1155')}
+              onChange={(e) => {
+                setStandard(e.target.value as 'erc721' | 'erc1155');
+                setConsent(false);
+              }}
             >
               <option value="erc721">Single NFT (ERC-721)</option>
               <option value="erc1155">Multi-edition NFT (ERC-1155)</option>
@@ -355,7 +369,10 @@ function ListNftFlow() {
               className={`input ${contract !== '' && !isAddressLike(contract) ? 'input-invalid' : ''}`}
               placeholder="0x…"
               value={contract}
-              onChange={(e) => setContract(e.target.value.trim())}
+              onChange={(e) => {
+                setContract(e.target.value.trim());
+                setConsent(false);
+              }}
               spellCheck={false}
               autoComplete="off"
             />
@@ -372,7 +389,10 @@ function ListNftFlow() {
               inputMode="numeric"
               placeholder="1"
               value={tokenId}
-              onChange={(e) => setTokenId(e.target.value.trim())}
+              onChange={(e) => {
+                setTokenId(e.target.value.trim());
+                setConsent(false);
+              }}
             />
           </div>
           {standard === 'erc1155' ? (
@@ -384,7 +404,10 @@ function ListNftFlow() {
                 inputMode="numeric"
                 placeholder="1"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value.trim())}
+                onChange={(e) => {
+                  setQuantity(e.target.value.trim());
+                  setConsent(false);
+                }}
               />
             </div>
           ) : null}
@@ -393,7 +416,10 @@ function ListNftFlow() {
             label="Asset renters pay you in"
             hint="Renters prepay the whole rental in this token."
             value={prepayAsset}
-            onChange={setPrepayAsset}
+            onChange={(v) => {
+              setPrepayAsset(v);
+              setConsent(false);
+            }}
           />
           <div className="field">
             <label htmlFor="daily-fee">
@@ -405,7 +431,10 @@ function ListNftFlow() {
               inputMode="decimal"
               placeholder="10"
               value={dailyFee}
-              onChange={(e) => setDailyFee(e.target.value.trim())}
+              onChange={(e) => {
+                setDailyFee(e.target.value.trim());
+                setConsent(false);
+              }}
             />
             <span className="field-hint">
               {copy.rent.bufferNote(bufferPct(bufferBps))}
@@ -417,7 +446,10 @@ function ListNftFlow() {
               id="rent-duration"
               className="input"
               value={durationDays}
-              onChange={(e) => setDurationDays(e.target.value)}
+              onChange={(e) => {
+                setDurationDays(e.target.value);
+                setConsent(false);
+              }}
             >
               {durationOptions.map((d) => (
                 <option key={d} value={String(d)}>
@@ -635,6 +667,7 @@ function RentNftFlow() {
     }
     clear(null);
     setSelected(row);
+    setConsent(false);
     setStep('review');
   }, [
     offerParam,
@@ -819,6 +852,26 @@ function RentNftFlow() {
         Number(terms.durationDays),
         liveBufferBps,
       );
+      // acceptOffer enforces requireAssetNotPaused on the listed NFT
+      // (and the prepay leg), and approve() succeeds regardless of
+      // balance — re-check both live before the approval can mine.
+      await assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: terms.lendingAsset,
+      });
+      await assertAssetNotPausedLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        asset: terms.prepayAsset,
+      });
+      await assertErc20BalanceLive({
+        publicClient,
+        token: terms.prepayAsset,
+        owner: address,
+        amount: canonicalTotal,
+        symbol: prepayMeta.data?.symbol,
+      });
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -877,6 +930,8 @@ function RentNftFlow() {
                   bufferBps={bufferBps}
                   onChoose={() => {
                     setSelected(o);
+                    // A different listing needs a fresh acknowledgement.
+                    setConsent(false);
                     setStep('review');
                   }}
                 />

@@ -22,6 +22,7 @@ import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
+import { assertErc20BalanceLive } from '../contracts/preflights';
 import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
@@ -131,6 +132,16 @@ export function Vpfi() {
           refresh();
           throw new Error(copy.vpfi.tokenChanged);
         }
+        // The Max/over-max gates use the CACHED snapshot balance —
+        // re-read live so funds moved after review fail before the
+        // approval can mine.
+        await assertErc20BalanceLive({
+          publicClient,
+          token: snapshot.token,
+          owner: address,
+          amount: amountWei,
+          symbol: 'VPFI',
+        });
         await ensureAllowance({
           publicClient,
           walletClient,

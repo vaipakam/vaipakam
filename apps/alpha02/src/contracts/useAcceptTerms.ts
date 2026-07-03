@@ -142,6 +142,12 @@ export function useAcceptTermsSigning() {
         prepayAsset?: string;
         quantity?: bigint;
         assetType?: number;
+        /** True when the review DISCLOSED the in-kind (illiquid)
+         *  default path. The signed terms acknowledge both assets, so
+         *  if a leg reads illiquid live and the review never warned,
+         *  the signer aborts instead of collecting an undisclosed
+         *  acknowledgement. */
+        illiquidWarned?: boolean;
       };
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
@@ -313,6 +319,36 @@ export function useAcceptTermsSigning() {
         deadline: chainNow + BigInt(ACCEPT_DEADLINE_SECONDS),
         riskTermsHash,
       };
+
+      // The signed terms acknowledge BOTH assets as potentially
+      // illiquid — but the acknowledgement is only meaningful consent
+      // if the review disclosed the in-kind default path. When the
+      // caller says the review did NOT warn (both legs read liquid at
+      // review time), re-read liquidity live and abort before signing
+      // if a leg has flipped — the re-review then shows the warning.
+      if (input.expected && input.expected.illiquidWarned === false) {
+        const liquidityOf = async (asset: Address): Promise<number> =>
+          asset.toLowerCase() === '0x0000000000000000000000000000000000000000'
+            ? 0
+            : Number(
+                await publicClient.readContract({
+                  address: diamondAddr,
+                  abi: DIAMOND_ABI_VIEM,
+                  functionName: 'checkLiquidity',
+                  args: [asset],
+                }),
+              );
+        // Fail-open on read errors: this is a DISCLOSURE re-check, and
+        // the review's own (cached) liquidity data already ran; a
+        // transport blip must not block an accept the user reviewed.
+        const [lendingStatus, collateralStatus] = await Promise.all([
+          liquidityOf(lendingAsset).catch(() => 0),
+          liquidityOf(collateralAsset).catch(() => 0),
+        ]);
+        if (lendingStatus !== 0 || collateralStatus !== 0) {
+          throw new Error(copy.match.termsChanged);
+        }
+      }
 
       // Reviewed-vs-canonical comparison happens BEFORE the wallet is
       // asked to sign — the signature IS the acknowledgement, so terms

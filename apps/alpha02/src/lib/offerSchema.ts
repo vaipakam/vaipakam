@@ -510,5 +510,6 @@ export function gracePeriodLabel(days: number): string {
   if (days < 30) return '1 day';
   if (days < 90) return '3 days';
   if (days < 180) return '1 week';
-  return '2 weeks';
+  if (days < 365) return '2 weeks';
+  return '30 days'; // LibVaipakam.gracePeriod: >=365d falls in the 30-day bucket
 }
