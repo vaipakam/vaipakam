@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <script>
+      (function () {
+        function readCookie(name) {
+          var prefix = name + '=';
+          var parts = document.cookie ? document.cookie.split(';') : [];
+          for (var i = 0; i < parts.length; i++) {
+            var seg = parts[i].replace(/^\s+/, '');
+            if (seg.indexOf(prefix) === 0) {
+              try { return decodeURIComponent(seg.slice(prefix.length)); } catch (_) { return null; }
+            }
+          }
+          return null;
+        }
+        var theme;
+        try {
+          var cookieTheme = readCookie('vaipakam_theme');
+          if (cookieTheme === 'light' || cookieTheme === 'dark') {
+            theme = cookieTheme;
+          } else {
+            var stored = localStorage.getItem('vaipakam-theme');
+            theme = stored === 'light' || stored === 'dark'
+              ? stored
+              : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          }
+        } catch (_) {
+          theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+      })();
+    </script>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/icon-dark.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Vaipakam | Borrow, Lend &amp; Rent</title>
+    <meta name="description" content="Intent-first P2P lending and NFT rentals on Vaipakam." />
+    <meta name="theme-color" content="#4f46e5" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
