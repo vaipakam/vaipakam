@@ -256,6 +256,8 @@ export const copy = {
       'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
     pendingLoanClosed:
       'This loan has since closed another way, so the request can no longer complete — cancel it to also remove its standing payoff approval.',
+    pendingExpired: (date: string) =>
+      `This refinance request expired on ${date} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval; the loan continues unchanged.`,
     cancel: 'Cancel refinance request',
     cancelSoon:
       'Cancellation opens a few minutes after posting — try again shortly.',
@@ -340,6 +342,14 @@ export const copy = {
       'Locked for a position sale listing — it can’t be transferred until the sale completes or the listing is cancelled.',
     lockPrepayListing:
       'Locked for a collateral listing — it can’t be transferred while that listing stands.',
+    sanctionsLabel: 'Compliance status',
+    sanctionsFlagged:
+      'The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.',
+    sanctionsUnknown:
+      'We couldn’t check the holder’s compliance status right now — a flagged holder would mean the token can’t be transferred, so re-check before relying on it.',
+    inKindLabel: 'Default payout',
+    inKindNote:
+      'If the borrower of the linked loan defaults, this claim pays out the loan’s raw collateral in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this position.',
     liveNote:
       'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
     goneTitle: (id: string) => `Token #${id} does not currently exist on this network`,

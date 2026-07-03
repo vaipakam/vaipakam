@@ -206,3 +206,20 @@ request now carries the same reminder the sale-listing cancel already
 had: removing the standing approval also affects any other request or
 listing using the same token, each of which flags itself and offers a
 one-click restore.
+
+A final polish round tightened five more edges. The repayment
+pre-check for loans in the failed-liquidation state now mirrors the
+protocol's late-fee cap (fees stop growing at 5%) and judges maturity
+by the loan's live term, so a borrower holding exactly enough is no
+longer refused by an over-estimate. An expired refinance request stops
+holding up partial repayment and close-early (nobody can accept it any
+more), says plainly that it expired, and refuses to restore its
+standing approval — cancelling to clean up remains one click. The NFT
+verifier now warns when a token's current holder is compliance-flagged
+(the token is frozen — it cannot be transferred and its claims wait
+until the flag clears; a failed check shows as unknown, never as
+clean), and flags lender claims whose linked loan would pay out raw
+collateral in kind on default. And the standing-approvals list now
+sweeps the lending and collateral sides of past offers too, not just
+rental prepayments, so residue from cancelled offers can't hide behind
+an empty positions list.

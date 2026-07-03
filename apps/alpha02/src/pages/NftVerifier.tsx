@@ -25,6 +25,9 @@ import { BadgeCheck, ShieldQuestion } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { LOAN_STATUS_ACTIVE, readLoanLive } from '../contracts/loanLive';
+import { isAssetIlliquidLive } from '../contracts/preflights';
+import { AssetType } from '../lib/types';
 import { shortAddress } from '../lib/format';
 import { EmptyState } from '../components/EmptyState';
 
@@ -43,6 +46,16 @@ interface VerifierResult {
   isLender?: boolean;
   /** null = the lock read FAILED — unknown is not "unlocked". */
   lock?: number | null;
+  /** Holder's sanctions state: true = flagged (NFT frozen: transfers
+   *  screened, claims blocked), null = the check FAILED — unknown is
+   *  not "clean" on a trust surface. */
+  holderFlagged?: boolean | null;
+  /** True when the linked ACTIVE loan's collateral would transfer IN
+   *  KIND on default (NFT collateral, or a live-illiquid ERC-20) —
+   *  the main downside of buying a lender claim. Only ever asserted
+   *  positively; an unreadable answer renders nothing (liveNote
+   *  already disclaims vouching for the loan). */
+  inKindRisk?: boolean;
 }
 
 export function NftVerifier() {
@@ -115,6 +128,46 @@ export function NftVerifier() {
           })
           .catch(() => null) as Promise<number | bigint | null>,
       ]);
+      // Compliance freeze — a flagged holder can't move the NFT
+      // (transferFrom/safeTransferFrom screen from AND to) and its
+      // claims stay frozen while flagged. An OTC buyer relying on
+      // this page must see that; a failed check reads as UNKNOWN,
+      // never as clean.
+      const holderFlagged = (await readClient!
+        .readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'isSanctionedAddress',
+          args: [owner],
+        })
+        .catch(() => null)) as boolean | null;
+      // In-kind default disclosure for LENDER claims: if the linked
+      // loan is Active and its collateral is an NFT or a live-illiquid
+      // ERC-20, default hands over the raw collateral — not the lent
+      // asset. Positive assertion only (see VerifierResult).
+      let inKindRisk = false;
+      if (summary?.isLender && summary.loanId !== 0n) {
+        try {
+          const loan = await readLoanLive(
+            readClient!,
+            diamond,
+            Number(summary.loanId),
+          );
+          if (loan.status === LOAN_STATUS_ACTIVE) {
+            inKindRisk =
+              loan.collateralAssetType !== AssetType.ERC20 ||
+              (await isAssetIlliquidLive({
+                publicClient: readClient!,
+                diamondAddress: diamond,
+                asset: loan.collateralAsset,
+                failClosed: true,
+              }));
+          }
+        } catch {
+          // Unreadable — assert nothing (never a false alarm, never a
+          // false all-clear; liveNote carries the blanket disclaimer).
+        }
+      }
       return {
         exists: true,
         owner,
@@ -124,6 +177,8 @@ export function NftVerifier() {
           summary && summary.offerId !== 0n ? summary.offerId.toString() : undefined,
         isLender: summary?.isLender,
         lock: lock === null ? null : Number(lock),
+        holderFlagged,
+        inKindRisk,
       };
     },
   });
@@ -232,6 +287,23 @@ export function NftVerifier() {
                   {LOCK_LABELS[result.data.lock] ??
                     copy.nftVerifier.lockUnrecognized}
                 </dd>
+              </div>
+            ) : null}
+            {result.data.holderFlagged === true ? (
+              <div className="receipt-row receipt-risk">
+                <dt>{copy.nftVerifier.sanctionsLabel}</dt>
+                <dd>{copy.nftVerifier.sanctionsFlagged}</dd>
+              </div>
+            ) : result.data.holderFlagged === null ? (
+              <div className="receipt-row">
+                <dt>{copy.nftVerifier.sanctionsLabel}</dt>
+                <dd className="muted">{copy.nftVerifier.sanctionsUnknown}</dd>
+              </div>
+            ) : null}
+            {result.data.inKindRisk ? (
+              <div className="receipt-row receipt-risk">
+                <dt>{copy.nftVerifier.inKindLabel}</dt>
+                <dd>{copy.nftVerifier.inKindNote}</dd>
               </div>
             ) : null}
           </dl>

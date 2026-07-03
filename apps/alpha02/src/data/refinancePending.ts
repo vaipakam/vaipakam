@@ -42,6 +42,10 @@ export interface RefinancePendingState {
   accepted: boolean;
   /** Unix-seconds the request expires (its on-chain Good-Til-Time). */
   expiresAt: bigint;
+  /** Chain time is at/past expiresAt — acceptOffer rejects the
+   *  request, so it no longer blocks partial/preclose and the only
+   *  remaining action is cancel (which also unwinds the approval). */
+  expired: boolean;
   /** Chain time says the cancel cooldown has elapsed. */
   cancelUnlocked: boolean;
   /** Standing approval no longer covers the live payoff. */
@@ -141,14 +145,22 @@ export function useRefinancePending(
       // Disconnected wallet (address undefined) must not paint the
       // funding warnings red off zero placeholders.
       const fundingKnown = Boolean(address);
+      // Judged by CHAIN time — an expired request is unacceptable
+      // on-chain, so the funding warnings stop (there is nothing left
+      // to fund) and only cancel-to-unwind remains.
+      const expired =
+        offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt;
       return {
         loanActive: live.status === LOAN_STATUS_ACTIVE,
         accepted: offer.accepted,
         expiresAt: offer.expiresAt,
+        expired,
         cancelUnlocked:
           latestBlock.timestamp >= offer.createdAt + CANCEL_COOLDOWN_SECONDS,
-        allowanceShort: fundingKnown && !offer.accepted && allowance < payoff,
-        balanceShort: fundingKnown && !offer.accepted && balance < topUp,
+        allowanceShort:
+          fundingKnown && !offer.accepted && !expired && allowance < payoff,
+        balanceShort:
+          fundingKnown && !offer.accepted && !expired && balance < topUp,
         payoff,
         topUp,
       };

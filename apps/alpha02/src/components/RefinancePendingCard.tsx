@@ -119,18 +119,22 @@ export function RefinancePendingCard({
       // is STILL completable before re-granting a payoff-sized
       // approval (an accepted/cancelled request or a settled loan
       // must not get a fresh dangling authorization).
-      const [offer, liveLoan] = await Promise.all([
+      const [offer, liveLoan, latestBlock] = await Promise.all([
         publicClient.readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getOfferDetails',
           args: [BigInt(offerId)],
-        }) as Promise<{ creator: string; accepted: boolean }>,
+        }) as Promise<{ creator: string; accepted: boolean; expiresAt: bigint }>,
         readLoanLive(publicClient, walletChain.diamondAddress, loanId),
+        publicClient.getBlock({ blockTag: 'latest' }),
       ]);
       if (
         offer.creator === ZERO_ADDRESS ||
         offer.accepted ||
+        // An expired request is unacceptable on-chain — re-granting a
+        // payoff-sized approval for it is a pure dangling authorization.
+        (offer.expiresAt !== 0n && latestBlock.timestamp >= offer.expiresAt) ||
         liveLoan.status !== LOAN_STATUS_ACTIVE
       ) {
         setError(copy.refinance.reapproveAborted);
@@ -166,7 +170,11 @@ export function RefinancePendingCard({
             ? copy.refinance.pendingChecking(offerId)
             : state.accepted
               ? copy.refinance.pendingAccepted
-              : (
+              : state.expired
+                ? copy.refinance.pendingExpired(
+                    formatDate(Number(state.expiresAt)),
+                  )
+                : (
                 <>
                   {copy.refinance.pending(offerId)}{' '}
                   {copy.refinance.pendingExpires(

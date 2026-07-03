@@ -238,6 +238,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       : (loan.data.lendingAsset as `0x${string}`),
   );
   const refinancePending = refi.offerId !== null;
+  // The partial/preclose interlocks exist to protect an ACCEPTABLE
+  // request from being stranded by a changed principal or a settled
+  // loan. An EXPIRED request can't be accepted by anyone, so it stops
+  // blocking (while verification is still loading, keep blocking —
+  // the conservative side).
+  const refinanceBlocking = refinancePending && refi.state?.expired !== true;
 
   // Lender-side sibling: a live Option-2 sale listing. Existence is
   // the CHAIN's say-so (positionLock on the lender NFT), so a listing
@@ -473,12 +479,17 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           const interestEst =
             (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
             (365n * 10_000n);
-          // Late fees accrue 0.5%/day past maturity — cover them too.
+          // Late fees mirror LibVaipakam.calculateLateFee: 1% base +
+          // 0.5%/day past maturity, CAPPED at 5%. Judge maturity by the
+          // LIVE term (a keeper extend moves it), pad one day-step, and
+          // clamp — an uncapped estimate blocks a borrower who holds
+          // enough for the real capped pull once ~8 days late.
+          const endTimeLive = live.startTime + live.durationDays * 86_400n;
           const daysPastEnd =
-            chainNow > live.startTime + BigInt(row.durationDays) * 86_400n
-              ? (chainNow - (live.startTime + BigInt(row.durationDays) * 86_400n)) / 86_400n
-              : 0n;
-          const lateFeeEst = (live.principal * 50n * (daysPastEnd + 2n)) / 10_000n;
+            chainNow > endTimeLive ? (chainNow - endTimeLive) / 86_400n : 0n;
+          let lateFeeBps = 100n + (daysPastEnd + 2n) * 50n;
+          if (lateFeeBps > 500n) lateFeeBps = 500n;
+          const lateFeeEst = (live.principal * lateFeeBps) / 10_000n;
           totalDue = live.principal + interestEst + lateFeeEst;
         }
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
@@ -1176,7 +1187,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             This loan allows partial repayment. Payments go to interest first,
             then reduce the amount you owe — the due date never moves.
           </p>
-          {refinancePending ? (
+          {refinanceBlocking ? (
             // A live refinance request is frozen at the CURRENT
             // principal — a partial would strand it unacceptable
             // forever (the contract rejects any accept once amount >
@@ -1292,7 +1303,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               ? copy.preclose.fullTermNote
               : copy.preclose.proRataNote}
           </p>
-          {refinancePending ? (
+          {refinanceBlocking ? (
             // A live refinance request is frozen against THIS loan —
             // settling it early would strand the request forever.
             <div className="banner banner-warn" role="alert">

@@ -106,8 +106,20 @@ export function ApprovalsCard() {
       );
       if (history === null) throw new Error('offer history unavailable');
       for (const o of history) {
+        // Every ERC-20 leg a historical offer could have left an
+        // approval on: the rental prepay, the lending leg, and the
+        // collateral leg (a cancelled offer's approval residue
+        // outlives the offer record).
         const a = o.prepayAsset?.toLowerCase();
         if (a && a !== ZERO_ADDRESS) historyTokens.add(a);
+        if (o.assetType === AssetType.ERC20) {
+          const l = o.lendingAsset?.toLowerCase();
+          if (l && l !== ZERO_ADDRESS) historyTokens.add(l);
+        }
+        if (o.collateralAssetType === AssetType.ERC20) {
+          const c = o.collateralAsset?.toLowerCase();
+          if (c && c !== ZERO_ADDRESS) historyTokens.add(c);
+        }
       }
       const rows = await Promise.all(
         [...historyTokens].sort().map(async (t): Promise<ApprovalRow | null> => {
