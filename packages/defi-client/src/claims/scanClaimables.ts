@@ -125,9 +125,21 @@ export async function fetchWalletClaimables(
   const publicClient = opts.publicClient;
   const diamondAddress = opts.diamondAddress;
   if (publicClient && diamondAddress) {
+    const verifiedLender: IndexedLoan[] = [];
+    for (const loan of asLender) {
+      if (await isLoanSideClaimable(publicClient, diamondAddress, loan.loanId, true)) {
+        verifiedLender.push(loan);
+      }
+    }
+    asLender = verifiedLender;
+
     const verifiedBorrower: IndexedLoan[] = [];
     for (const loan of asBorrower) {
       if (loan.status === 'defaulted' || loan.status === 'liquidated') {
+        if (await isLoanSideClaimable(publicClient, diamondAddress, loan.loanId, false)) {
+          verifiedBorrower.push(loan);
+        }
+      } else if (loan.status === 'internal_matched') {
         if (await isLoanSideClaimable(publicClient, diamondAddress, loan.loanId, false)) {
           verifiedBorrower.push(loan);
         }

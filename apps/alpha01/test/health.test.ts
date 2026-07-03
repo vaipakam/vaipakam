@@ -23,9 +23,21 @@ describe('borrowerPrimaryAction', () => {
       }).action,
     ).toBe('none');
     expect(
-      borrowerPrimaryAction({ role: 'borrower', loanStatus: 'internal_matched', healthTone: 'ok' })
-        .action,
+      borrowerPrimaryAction({
+        role: 'borrower',
+        loanStatus: 'internal_matched',
+        healthTone: 'ok',
+        borrowerClaimable: true,
+      }).action,
     ).toBe('claim-collateral');
+    expect(
+      borrowerPrimaryAction({
+        role: 'borrower',
+        loanStatus: 'internal_matched',
+        healthTone: 'ok',
+        borrowerClaimable: false,
+      }).action,
+    ).toBe('none');
     expect(
       borrowerPrimaryAction({ role: 'borrower', loanStatus: 'settled', healthTone: 'ok' }).action,
     ).toBe('none');

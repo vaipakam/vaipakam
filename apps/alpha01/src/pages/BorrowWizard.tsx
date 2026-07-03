@@ -9,6 +9,7 @@ import {
   formatBpsAsPercent,
   matchOffersToBorrowIntent,
   netBorrowProceedsWei,
+  offerPrincipalWei,
   OFFER_DURATION_DEFAULT_DAYS,
 } from '@vaipakam/defi-client';
 
@@ -50,8 +51,7 @@ function borrowReceipt(
   collateralMeta: TokenMeta | null,
   lifBps: number,
 ): ReviewReceiptView {
-  const borrowAmount = offer.amountMax || offer.amount;
-  const principalWei = BigInt(borrowAmount || '0');
+  const principalWei = offerPrincipalWei(offer);
   const lifBpsBig = BigInt(lifBps);
   const netWei = netBorrowProceedsWei(principalWei, lifBpsBig);
   const lifBpsLabel = formatBpsAsPercent(lifBps);

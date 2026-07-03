@@ -405,6 +405,9 @@ export async function handleLoansByCurrentHolder(
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
   }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
+  }
   try {
     const stmt = before
       ? env.DB.prepare(

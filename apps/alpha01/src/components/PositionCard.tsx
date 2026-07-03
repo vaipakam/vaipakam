@@ -15,9 +15,16 @@ export function PositionCard({ loan }: Props) {
   const lendingMeta = useTokenMeta(loan.lendingAsset);
   const collateralMeta = useTokenMeta(loan.collateralAsset);
   const walletRole = loanRoleForWallet(loan, address);
-  const role = walletRole === 'lender' ? 'Lender' : walletRole === 'borrower' ? 'Borrower' : 'Holder';
+  const role =
+    walletRole === 'both'
+      ? 'Borrower & lender'
+      : walletRole === 'lender'
+        ? 'Lender'
+        : walletRole === 'borrower'
+          ? 'Borrower'
+          : 'Holder';
   const counterparty =
-    walletRole === 'lender'
+    walletRole === 'lender' || walletRole === 'both'
       ? loan.borrower
       : walletRole === 'borrower'
         ? loan.lender

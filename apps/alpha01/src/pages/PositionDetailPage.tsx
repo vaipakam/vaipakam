@@ -44,7 +44,9 @@ export function PositionDetailPage() {
 
   const role = loan ? loanRoleForWallet(loan, address) : 'other';
   const needsBorrowerClaimProbe =
-    role === 'borrower' && loan?.status === 'defaulted' && Boolean(chain.diamondAddress);
+    (role === 'borrower' || role === 'both') &&
+    (loan?.status === 'defaulted' || loan?.status === 'internal_matched') &&
+    Boolean(chain.diamondAddress);
   const { data: borrowerClaimable } = useQuery({
     queryKey: ['loan-borrower-claimable', chain.chainId, id, chain.diamondAddress],
     enabled: needsBorrowerClaimProbe,
@@ -87,14 +89,34 @@ export function PositionDetailPage() {
   }
   if (!loan) return <p>Loan not found.</p>;
 
-  const isBorrower = role === 'borrower';
+  const isBorrower = role === 'borrower' || role === 'both';
   const health = plainHealthLabel(isBorrower ? hf : null);
-  const primary = borrowerPrimaryAction({
-    role: role === 'other' ? 'other' : role,
-    loanStatus: loan.status,
-    healthTone: health.tone,
-    borrowerClaimable: loan.status === 'defaulted' ? borrowerClaimable : undefined,
-  });
+  const rolesForAction: ('borrower' | 'lender')[] =
+    role === 'both'
+      ? ['borrower', 'lender']
+      : role === 'borrower' || role === 'lender'
+        ? [role]
+        : [];
+  let primary: ReturnType<typeof borrowerPrimaryAction> = {
+    action: 'none',
+    label: 'No action available',
+  };
+  for (const actionRole of rolesForAction) {
+    const candidate = borrowerPrimaryAction({
+      role: actionRole,
+      loanStatus: loan.status,
+      healthTone: actionRole === 'borrower' ? health.tone : 'ok',
+      borrowerClaimable:
+        actionRole === 'borrower' &&
+        (loan.status === 'defaulted' || loan.status === 'internal_matched')
+          ? borrowerClaimable
+          : undefined,
+    });
+    if (candidate.action !== 'none') {
+      primary = candidate;
+      break;
+    }
+  }
 
   async function run(action: 'repay' | 'claim-lender' | 'claim-borrower') {
     setBusy(true);
@@ -135,7 +157,15 @@ export function PositionDetailPage() {
       <Link to="/positions" style={{ fontSize: '0.9rem' }}>← Back to positions</Link>
       <h1 className="page-title" style={{ marginTop: 12 }}>Loan #{loan.loanId}</h1>
       <p className="page-subtitle">
-        Role: {role === 'borrower' ? 'Borrower' : role === 'lender' ? 'Lender' : 'Viewer'} · {statusLabel}
+        Role:{' '}
+        {role === 'borrower'
+          ? 'Borrower'
+          : role === 'lender'
+            ? 'Lender'
+            : role === 'both'
+              ? 'Borrower & lender'
+              : 'Viewer'}{' '}
+        · {statusLabel}
       </p>
 
       <div className="card" style={{ display: 'grid', gap: 10 }}>

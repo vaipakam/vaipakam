@@ -27,7 +27,7 @@
  * gracefully handle the case where rows are inserted between requests.
  */
 
-import type { Env } from './env';
+import { type Env, getChainConfigs } from './env';
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 200;
@@ -48,6 +48,14 @@ function jsonResponse(body: unknown, status = 200): Response {
       ...corsHeaders(),
     },
   });
+}
+
+function chainConfigured(env: Env, chainId: number): boolean {
+  try {
+    return getChainConfigs(env).some((c) => c.id === chainId);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -333,6 +341,9 @@ export async function handleOffersByCurrentHolder(
   const addr = addrRaw.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(addr)) {
     return jsonResponse({ error: 'bad-address' }, 400);
+  }
+  if (!chainConfigured(env, chainId)) {
+    return jsonResponse({ error: 'chain-not-configured' }, 503);
   }
   try {
     const stmt = before
