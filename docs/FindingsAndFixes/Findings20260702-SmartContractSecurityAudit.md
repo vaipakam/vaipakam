@@ -59,10 +59,17 @@ accounting / operational edges.
 | L11 | Low | `broadcastGlobal`/`sendVersionBumped` all-or-nothing across lanes + docstring mismatch | `VaipakamRewardMessenger.sol:380` |
 | L12 | Low | `claimInteractionRewards`/`sweep` lack the Tier-1 sanctions gate | `InteractionRewardsFacet.sol:96` |
 
-Totals: **4 High, 7 Medium, 12 Low.** Rows H4/M5/M6/M7/L10/L11/L12 are
-round-2 additions from the second independent deep pass (2026-07-03); each
-has full detail in the "Round 2" section below. Informational items are
-listed at the end. Filed as GitHub issues #893–#915 under umbrella #892.
+The table above lists the round-1/2 findings in detail. Rows H4/M5/M6/M7/
+L10/L11/L12 are round-2 additions (see the "Round 2" section). **Rounds 4 and
+5 (issues #934–#973) are summarized in the "Round 4" and "Round 5" sections
+below.**
+
+**Full five-round total: 7 High, 18 Medium, 26 Low = 51 findings — no
+Critical.** All filed as individual GitHub issues (#893–#973) under umbrella
+tracker #892. Informational items are listed at the end and in the umbrella.
+Round 3 added no new severity findings beyond M8 (#919) / L13 (#920) — it was
+verification (PoC + invariant tests, `contracts/test/audit/`) and economic
+modeling (`Findings20260703-EconomicParameterModeling.md`).
 
 ---
 
@@ -595,6 +602,93 @@ also produced a set of concretely deep-verified-safe negative results
 - Broadcast-fee surplus refunded to the Diamond is not re-credited to
   `protocolBroadcastBudget` (`ProtocolBroadcastFacet.sol:249-262`); dust
   accounting drift.
+
+---
+
+## Round 4 — deploy/init, governance/timelock, DoS, under-covered facets (2026-07-03)
+
+Ground the per-domain runtime audits never covered. 13 findings (2 High, 5
+Medium, 6 Low); several reframe the earlier trust-model findings. Filed as
+GitHub issues under umbrella #892.
+
+- **#934 (H5)** — the 48h timelock is bypassable in one zero-delay tx by the
+  DEFAULT_ADMIN Safe (`transferAdmin` re-seizes ownership + all 11 roles;
+  `grantRole` hands a hot key `VAULT_ADMIN`), making the #897/#909 timelock
+  mitigations voluntary, not enforced. `AccessControlFacet.sol:212-237`.
+- **#944 (H6)** — the mandatory post-handover "zero-roles" exit gate
+  (`DeployerZeroRolesTest`) never inspects the live chain (throwaway in-memory
+  diamond + mock principals; `--fork-url` inert), so it passes unconditionally
+  and cannot catch a leftover root-admin on a hot EOA.
+- **#935 (M9)** — 48h-timelocked unpause freezes repay/liquidation/default,
+  contradicting the documented no-timelock rationale.
+- **#936 (M10)** — two contradictory handover scripts; CI validates the
+  topology that isn't shipped; the legacy one leaves `UNPAUSER` on the deployer
+  EOA.
+- **#937 (M11)** — canonical `VPFIToken` has no guardian; emergency pause needs
+  the 48h queue.
+- **#945 (M12)** — the diamond auto-unpauses at end of `--phase contracts`,
+  before oracle/sanctions/adapter config and while still owned by the hot Admin
+  EOA.
+- **#946 (M13)** — required `setSanctionsOracle` wiring is enforced nowhere in
+  the deploy pipeline (no setter, no `phase_verify` check, no reminder).
+- **#938 (L14)** timelock param hardening; **#939 (L15)** uncapped
+  `claimInteractionRewards` entry loop; **#940 (L16)** dashboard omits
+  FallbackPending loans (borrower may miss cure window); **#941 (L17)** dashboard
+  drops `amount==0` NFT claims; **#942 (L18)** paginated active-loan enumeration
+  can skip a loan under mutation; **#947 (L19)** deploy-time admin handover has
+  no zero-address guard.
+
+Round-4 verified sound: no attacker-bricks-victim DoS (swap-pop active lists,
+try/catch-per-element, `MAX_FEE_LEGS`, 30-iteration ring buffer, capped
+catch-up loops); facet-cut completeness, born-paused cut window, two-authority
+handover, UUPS `_disableInitializers` across all templates, upgrade
+`_init`-delegatecall (all committed scripts pass `address(0)`), CCIP gates,
+retail sanctions/KYC/country wiring, AutoLifecycle both-side-consent triggers,
+adapter-factory isolation, `VaipakamTimelock` extension correctness.
+
+## Round 5 — flash-loan/rate-model, treasury yield, arithmetic, event coverage (2026-07-03)
+
+The last un-audited surfaces (`keeper/`, `models/`, the Aave yield integration)
+plus arithmetic-safety and event/state-change coverage. 13 findings (1 High, 5
+Medium, 7 Low); corrected an earlier "verified clean" result.
+
+- **#966 (H7)** — a permissionless VPFI-dust donation to a lender's vault
+  underflow-reverts `tryApplyYieldFee`/`tryApplyBorrowerLif`
+  (`prevTracked - vpfiRequired`, guarded only on `vaultBal`). Because these
+  "silent fallbacks" are called by direct internal call (not try/catch), the
+  revert blocks `repayLoan` → forced default → borrower collateral loss. Fix:
+  saturating subtraction. `LibVPFIDiscount.sol:544,755`.
+- **#962 (M14)** treasury Aave yield unrealizable (no harvest; dead event);
+  **#963 (M15)** no shortfall write-off → Aave loss permanently deadlocks venue
+  reconfiguration.
+- **#967 (M16)** — all three HF-liquidation terminals emit no indexer-handled
+  event (`LoanLiquidated` declared-but-never-emitted) → loans stuck `active`
+  forever (May-2026 incident class; guardrail fooled by a stale allowlist).
+- **#968 (M17)** — `claimAsLender` out of FallbackPending skips
+  `forfeitBorrowerLif` + `closeLoan` → strands VPFI custody in the Diamond
+  (violates the mainnet invariant; the edge the round-1/2 borrower-LIF "clean"
+  check missed).
+- **#969 (M18)** — interaction-reward entries never closed on
+  preclose/refinance/prepay-sale/internal-match → full-term over-accrual and
+  refinance double-accrual.
+- **#961 (L20)** flash-loan liquidator profit guard subsidized by standing
+  balance; **#964 (L21)** venue routing no exhaustive else-revert; **#965 (L22)**
+  no balance-delta verify on Aave supply/withdraw; **#970 (L23)** NFT-rental
+  term-exhaustion stuck-active; **#971 (L24)** early-withdrawal temp-loan no
+  terminal event + stranded LIF; **#972 (L25)** `vpfiToken==0` branch
+  guaranteed-revert bricks close-out; **#973 (L26)** `LibNotificationFee` missing
+  discount restamp.
+
+Round-5 verified sound: flash-loan callback authentication (Aave + Balancer,
+triple-gated); `RiskPremiumRateModel` bounds/manipulation (δ-clamp fails
+closed); **no user/vault/LIF/backstop funds exposed to Aave** (only fee surplus,
+capped 70/80%); arithmetic (`LibSlippage` `mulDiv` intermediates, rounding
+directions, interest accrual, keeper/reward units, Pyth exponent bounds);
+`LibRevert` return-data-bomb (not exploitable — all `address(this)`); the
+reentrancy guard; `LibMetricsHooks` swap-pop; `LibLifecycle` allow-list.
+
+**Meta-fix that self-heals the stuck-active indexer class (M16/L23/L24):** add
+`'active'` to the `LoanSettled` handler's `WHERE status IN (...)` clause.
 
 ---
 
