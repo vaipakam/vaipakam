@@ -14,6 +14,7 @@ import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {LibOfferMatch} from "../src/libraries/LibOfferMatch.sol";
@@ -58,6 +59,7 @@ contract EarlyWithdrawalFacetTest is Test {
     DiamondCutFacet cutFacet;
     OfferCreateFacet offerCreateFacet;
     OfferAcceptFacet offerAcceptFacet;
+    OfferPreviewFacet offerPreviewFacet;
     OfferMutateFacet offerMutateFacet;
     OfferMatchFacet offerMatchFacet;
     OfferCancelFacet offerCancelFacet;
@@ -183,6 +185,7 @@ contract EarlyWithdrawalFacetTest is Test {
         diamond  = new VaipakamDiamond(owner, address(cutFacet));
         offerCreateFacet = new OfferCreateFacet();
         offerAcceptFacet = new OfferAcceptFacet();
+        offerPreviewFacet = new OfferPreviewFacet();
         offerMutateFacet = new OfferMutateFacet();
         offerMatchFacet = new OfferMatchFacet();
         offerCancelFacet = new OfferCancelFacet();
@@ -207,7 +210,7 @@ contract EarlyWithdrawalFacetTest is Test {
         ConfigFacet configFacet = new ConfigFacet();
         RiskAccessFacet riskAccessFacet = new RiskAccessFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](24);
         cuts[19] = IDiamondCut.FacetCut({
             facetAddress: address(configFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -217,6 +220,12 @@ contract EarlyWithdrawalFacetTest is Test {
             facetAddress: address(riskAccessFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getRiskAccessFacetSelectors()
+        });
+        // #980 — OfferPreviewFacet (previewAccept split out of OfferAcceptFacet).
+        cuts[23] = IDiamondCut.FacetCut({
+            facetAddress: address(offerPreviewFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferPreviewFacetSelectors()
         });
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
@@ -761,7 +770,7 @@ contract EarlyWithdrawalFacetTest is Test {
     function testPreviewAcceptSaleVehicleIsFeeFree() public {
         uint256 saleOfferId = _listSaleOffer();
         OfferAcceptFacet.AcceptPreview memory p =
-            OfferAcceptFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
         assertEq(p.lifEstimate, 0, "sale-vehicle accept quotes no LIF");
     }
 

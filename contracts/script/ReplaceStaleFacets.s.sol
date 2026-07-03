@@ -146,11 +146,14 @@ contract ReplaceStaleFacets is Script {
     ///      ({_offerAcceptMissingSelectors}) — a Replace of an unrouted selector
     ///      would revert.
     function _offerAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](4);
+        s = new bytes4[](3);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
         s[2] = OfferAcceptFacet.acceptOfferInternal.selector;
-        s[3] = OfferAcceptFacet.previewAccept.selector;
+        // #980 — `previewAccept` moved to the new `OfferPreviewFacet`. A facet
+        // MOVE is not a Replace on OfferAcceptFacet, and adding a brand-new facet
+        // is a fresh-deploy concern (DeployDiamond routes OfferPreviewFacet), so
+        // the selector deliberately leaves this curated replace list.
     }
 
     /// @dev OfferAccept selectors introduced after the live diamond was cut, so

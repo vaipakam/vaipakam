@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
@@ -311,7 +312,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         // #662 — `acceptOffer(uint256,AcceptTerms,bytes)` now binds the
         // acceptor's EIP-712-signed terms to every loan-affecting offer field
         // (anti-phishing; OfferAcceptTermBindingDesign.md).
@@ -321,18 +322,27 @@ contract HelperTest {
         // Cross-facet entry consumed by OfferMatchFacet.matchOffers
         // (Range Orders Phase 1 EIP-170 split) — address(this)-only.
         selectors[2] = OfferAcceptFacet.acceptOfferInternal.selector;
-        // #196 — contract-side dry-run for the frontend / indexer /
-        // keeper. Pure view; consumers `staticcall` it from the
-        // OfferDetails + AcceptOffer modal.
-        selectors[3] = OfferAcceptFacet.previewAccept.selector;
+        // #980 — `previewAccept` moved to OfferPreviewFacet
+        // (`getOfferPreviewFacetSelectors`).
         // #627 — public KYC-value view (aggregator adapter principal screen).
-        selectors[4] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
+        selectors[3] = OfferAcceptFacet.calculateTransactionValueNumeraire.selector;
         // #662 — gated cross-facet hop SignedOfferFacet uses to share the one
         // binding impl (`address(this)`-only). Must be cut so signed-offer
         // fills route to it. (The EIP-712 digest is computed off-chain — the
         // `hashAcceptTerms` view was removed for EIP-170 headroom, #730; the test
         // signer uses `LibAcceptTerms.digestFor`.)
-        selectors[5] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        selectors[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        return selectors;
+    }
+
+    /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of OfferAcceptFacet.
+    function getOfferPreviewFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
+        selectors[0] = OfferPreviewFacet.previewAccept.selector;
         return selectors;
     }
 
