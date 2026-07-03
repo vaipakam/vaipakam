@@ -103,6 +103,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // repay button and the close-early card would re-appear and invite
   // a second, reverting submit (LoanNotActive).
   const [closedThisSession, setClosedThisSession] = useState(false);
+  // Lender-side sibling of closedThisSession: after a successful
+  // position sale the indexer still shows this wallet as lender for
+  // a window — the latch lives on the PAGE so an EarlyExitFlow
+  // remount (mode toggle) can't resurrect the stale picker.
+  const [soldThisSession, setSoldThisSession] = useState(false);
   // Position writes show the six-row receipt BEFORE any wallet prompt.
   // One slot (not one flag per surface) — opening a surface closes any
   // other, so two receipts never invite conflicting signatures.
@@ -1260,6 +1265,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       {isAdvanced &&
       role === 'lender' &&
       row.status === 'active' &&
+      !soldThisSession &&
       !isRental &&
       principal &&
       !(sanctions.ready && sanctions.flagged) ? (
@@ -1285,7 +1291,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
             onCloseConfirm={() =>
               setConfirmingSurface((s) => (s === 'early-exit' ? null : s))
             }
-            onSold={() => setDoneMessage(copy.earlyExit.done)}
+            onSold={() => {
+              setSoldThisSession(true);
+              setDoneMessage(copy.earlyExit.done);
+            }}
           />
         ) : null
       ) : null}

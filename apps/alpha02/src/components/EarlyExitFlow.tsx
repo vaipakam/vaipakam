@@ -31,10 +31,12 @@ import {
   assertPositionNftHeldLive,
 } from '../contracts/preflights';
 import {
+  BASIS_POINTS,
   LOAN_STATUS_ACTIVE,
-  interestAccrualStartOf,
-  interestRemainingDaysOf,
+  SECONDS_PER_YEAR,
+  durationFitDays,
   readLoanLive,
+  sellerEconomics,
   type LoanLive,
 } from '../contracts/loanLive';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
@@ -49,50 +51,6 @@ import {
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
 
-const SECONDS_PER_YEAR = 365n * 86_400n;
-const BASIS_POINTS = 10_000n;
-
-/** Seller economics of selling into a buy offer — one definition for
- *  the picker rows, the review receipt, and the submit re-check.
- *  Mirrors EarlyWithdrawalFacet's net settlement TO THE WEI:
- *  seconds-precision, elapsed measured from the #641 interest clock,
- *  remaining = remaining-term seconds minus elapsed (floored at 0),
- *  and the shortfall computed as the DIFFERENCE OF THE TWO FLOORED
- *  remaining-interest figures (not one floored difference). The
- *  seller forfeits the LARGER of accrued or shortfall, never both. */
-export function sellerEconomics(
-  live: LoanLive,
-  buyRateBps: bigint,
-  chainNow: bigint,
-): { cost: bigint; toSeller: bigint; hasShortfall: boolean } {
-  const start = interestAccrualStartOf(live);
-  const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
-  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
-  const originalRemaining =
-    (live.principal * live.interestRateBps * remainingSecs) / denom;
-  const newRemaining = (live.principal * buyRateBps * remainingSecs) / denom;
-  const shortfall =
-    newRemaining > originalRemaining ? newRemaining - originalRemaining : 0n;
-  const cost = accrued > shortfall ? accrued : shortfall;
-  return {
-    cost,
-    toSeller: live.principal > cost ? live.principal - cost : 0n,
-    hasShortfall: shortfall > 0n,
-  };
-}
-
-/** The facet's duration-fit bound: the IMMUTABLE term minus whole
- *  days elapsed since the immutable start — NOT the interest clock
- *  (a partial re-stamps that; the borrower-favourability check does
- *  not care). */
-function durationFitDays(live: LoanLive, chainNow: bigint): bigint {
-  const elapsedDays =
-    chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
-  return live.durationDays > elapsedDays ? live.durationDays - elapsedDays : 0n;
-}
 
 export function EarlyExitFlow({
   row,
@@ -113,7 +71,10 @@ export function EarlyExitFlow({
   confirmOpen: boolean;
   onOpenConfirm: () => void;
   onCloseConfirm: () => void;
-  /** The position left this wallet — the page latches its actions. */
+  /** The position left this wallet — the PAGE latches (soldThisSession)
+   *  and carries the outcome banner, so a remount of this component
+   *  (mode toggle, gate flicker) can't resurrect the stale-indexer
+   *  picker inside the ownership-refresh window. */
   onSold: () => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
@@ -125,10 +86,6 @@ export function EarlyExitFlow({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // After a successful sale the position belongs to someone else —
-  // the card renders nothing (the PAGE banner carries the outcome,
-  // surviving this component's unmount when the role flips).
-  const [sold, setSold] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const fitDays = durationFitDays(live, chainNow);
@@ -313,7 +270,8 @@ export function EarlyExitFlow({
       }
       const reviewedToSeller = selectedEcon?.toSeller ?? 0n;
       const twoDaysInterest =
-        (liveLoan.principal * liveLoan.interestRateBps * 2n) / (365n * 10_000n);
+        (liveLoan.principal * liveLoan.interestRateBps * 2n * 86_400n) /
+        (SECONDS_PER_YEAR * BASIS_POINTS);
       if (liveEcon.toSeller + twoDaysInterest < reviewedToSeller) {
         throw new Error(copy.match.termsChanged);
       }
@@ -322,7 +280,6 @@ export function EarlyExitFlow({
         BigInt(selected.offerId),
       ]);
       onSold();
-      setSold(true);
       setSelectedId(null);
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['positionOwners'] });
@@ -340,10 +297,14 @@ export function EarlyExitFlow({
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
 
-  // Sold this session: the position belongs to someone else now. The
-  // PAGE banner carries the outcome; rendering the (stale-indexer)
-  // picker again would invite a doomed second sale.
-  if (sold) return null;
+  // The selected offer stays VISIBLE even when fresh candidates push
+  // it past the display cap — an open review must never belong to a
+  // row the user can't see (they'd confirm a hidden, worse-paying
+  // offer believing it's one of the shown ones).
+  const shown = candidates ? candidates.slice(0, 5) : [];
+  if (selected && !shown.some((o) => o.offerId === selected.offerId)) {
+    shown.push(selected);
+  }
 
   return (
     <section className="card">
@@ -363,7 +324,7 @@ export function EarlyExitFlow({
             {copy.earlyExit.pickerLead}
           </p>
           <div className="stack" style={{ gap: 8 }}>
-            {candidates.slice(0, 5).map((o) => {
+            {shown.map((o) => {
               const econ = sellerEconomics(
                 live,
                 BigInt(o.interestRateBps),
@@ -400,14 +361,19 @@ export function EarlyExitFlow({
             </p>
           ) : null}
 
+          {/* Rendered OUTSIDE the selected-guard: the one case where
+              the review vanishes entirely (the chosen offer dropped
+              out of the book) is exactly when the explanation matters
+              most. */}
+          {driftNotice ? (
+            <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
+              <span className="banner-body">{copy.earlyExit.figureMoved}</span>
+            </div>
+          ) : null}
+
           {selected && selectedEcon && toSellerStr ? (
             <div style={{ marginTop: 12 }}>
-              {driftNotice ? (
-                <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
-                  <span className="banner-body">{copy.earlyExit.figureMoved}</span>
-                </div>
-              ) : null}
-              {selectedEcon.hasShortfall ? (
+              {selectedEcon.shortfallBinding ? (
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">{copy.earlyExit.shortfallWarn}</span>
                 </div>
@@ -432,10 +398,13 @@ export function EarlyExitFlow({
                   onConfirm={() => void submit()}
                   disabled={!walletReady}
                   data={{
-                    youReceive: `~${toSellerStr}, paid straight to your wallet in the same transaction — nothing to claim afterwards.`,
+                    // Names the exact offer — an open review must
+                    // never be ambiguous about which row it binds.
+                    youReceive: `~${toSellerStr}, paid straight to your wallet in the same transaction — selling to offer #${selected.offerId} at ${formatBpsAsPercent(selected.interestRateBps)} yearly. Nothing to claim afterwards.`,
                     youLock: 'Nothing.',
                     youMayOwe: `Nothing — you approve nothing and pay nothing out of pocket. ${copy.earlyExit.forfeitNote}`,
-                    youCanLose: `The interest accrued so far${selectedEcon.hasShortfall ? ' and the rate difference for the remaining term' : ''} — already reflected in the figure above. The exact amount is re-read live when you confirm.`,
+                    // max(accrued, shortfall) — never the sum.
+                    youCanLose: `The LARGER of the interest accrued so far or the rate difference for the remaining term — never both. Already reflected in the figure above; the exact amount is re-read live when you confirm.`,
                     fees: 'The protocol’s cut comes out of the forfeited interest — never out of your payout beyond the figure shown.',
                     whenThisEnds:
                       'Immediately — your position transfers to the buyer and you’re done with this loan. The borrower’s rate and due date don’t change.',

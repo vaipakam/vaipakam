@@ -76,6 +76,54 @@ export function refinancePayoffOf(live: LoanLive): bigint {
   );
 }
 
+/** Mirror LibVaipakam.SECONDS_PER_YEAR / BASIS_POINTS. */
+export const SECONDS_PER_YEAR = 365n * 86_400n;
+export const BASIS_POINTS = 10_000n;
+
+/** Seller economics of selling a lender position into a buy offer —
+ *  one definition for the picker rows, the review receipt, and the
+ *  submit re-check. Mirrors EarlyWithdrawalFacet's net settlement TO
+ *  THE WEI: seconds-precision, elapsed measured from the #641
+ *  interest clock, remaining = remaining-term seconds minus elapsed
+ *  (floored at 0), and the shortfall computed as the DIFFERENCE OF
+ *  THE TWO FLOORED remaining-interest figures (not one floored
+ *  difference). The seller forfeits the LARGER of accrued or
+ *  shortfall, never both — `shortfallBinding` says which one is
+ *  actually setting the cost. */
+export function sellerEconomics(
+  live: LoanLive,
+  buyRateBps: bigint,
+  chainNow: bigint,
+): { cost: bigint; toSeller: bigint; shortfallBinding: boolean } {
+  const start = interestAccrualStartOf(live);
+  const elapsed = chainNow > start ? chainNow - start : 0n;
+  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
+  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
+  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  const originalRemaining =
+    (live.principal * live.interestRateBps * remainingSecs) / denom;
+  const newRemaining = (live.principal * buyRateBps * remainingSecs) / denom;
+  const shortfall =
+    newRemaining > originalRemaining ? newRemaining - originalRemaining : 0n;
+  const cost = accrued > shortfall ? accrued : shortfall;
+  return {
+    cost,
+    toSeller: live.principal > cost ? live.principal - cost : 0n,
+    shortfallBinding: shortfall > accrued,
+  };
+}
+
+/** The sale path's duration-fit bound: the IMMUTABLE term minus
+ *  whole days elapsed since the immutable start — NOT the interest
+ *  clock (a partial re-stamps that; the borrower-favourability check
+ *  does not care). */
+export function durationFitDays(live: LoanLive, chainNow: bigint): bigint {
+  const elapsedDays =
+    chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
+  return live.durationDays > elapsedDays ? live.durationDays - elapsedDays : 0n;
+}
+
 export async function readLoanLive(
   publicClient: PublicClient,
   diamondAddress: `0x${string}`,

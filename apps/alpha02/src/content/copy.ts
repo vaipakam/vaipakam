@@ -281,7 +281,7 @@ export const copy = {
       'We couldn’t load matching offers right now — please try again in a moment.',
     rowReceive: (amount: string) => `you’d receive ~${amount} now`,
     shortfallWarn:
-      'This buyer expects a higher rate than your loan pays — the difference for the remaining term comes out of your payout.',
+      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.',
     forfeitNote:
       'Exiting early forfeits the interest accrued so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
     action: 'Review exit',
