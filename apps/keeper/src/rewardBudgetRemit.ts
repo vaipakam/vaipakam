@@ -23,6 +23,7 @@ import { createPublicClient, http, type Abi, type Address, type PublicClient } f
 import {
   RewardRemittanceFacetABI,
   RewardReporterFacetABI,
+  RewardAggregatorFacetABI,
   InteractionRewardsFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
@@ -31,6 +32,7 @@ import { buildKeeperContext, isKeeperEnabled, type KeeperContext } from './keepe
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
+const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 const INTERACTION_ABI = InteractionRewardsFacetABI as Abi;
 
 /** How many recent days to re-scan for un-remitted budget each tick. */
@@ -89,6 +91,7 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
     abi: REPORTER_ABI,
     functionName: 'getRewardReporterConfig',
   })) as readonly [Address, number, number, boolean, bigint];
+  const localChainId = Number(cfg[1]);
   const isCanonical = cfg[3];
   if (!isCanonical) return;
 
@@ -102,19 +105,29 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   const ctx = buildKeeperContext(env, chain, publicClient);
   if (!ctx || !ctx.wallet.account) return;
 
-  // Base funds every OTHER configured chain.
-  const mirrors = getChainConfigs(env).filter((c) => c.id !== chain.id);
+  // Mirror list comes from the ON-CHAIN reward topology (the expected reward
+  // sources minus Base itself), NOT from getChainConfigs — funding a mirror is a
+  // Base-side call that never touches a mirror RPC, so a mirror must not be
+  // silently skipped just because its keeper RPC binding happens to be down.
+  const expected = (await publicClient.readContract({
+    address: diamond,
+    abi: AGGREGATOR_ABI,
+    functionName: 'getExpectedSourceChainIds',
+  })) as readonly number[];
+  const mirrorIds = expected.map(Number).filter((id) => id !== localChainId);
+  if (mirrorIds.length === 0) return;
+
   const lookback = readNumber(env, 'REWARD_REMIT_LOOKBACK_DAYS', DEFAULT_LOOKBACK_DAYS);
   const laneCap = readBigint(env, 'REWARD_REMIT_LANE_CAP', DEFAULT_LANE_CAP);
 
-  for (const mirror of mirrors) {
+  for (const mirrorId of mirrorIds) {
     try {
-      await remitToMirror(publicClient, ctx, diamond, mirror.id, currentDay, lookback, laneCap);
+      await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap);
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
       console.log(
-        `[keeper] rewardBudgetRemit skipped Base->${mirror.id}: ${(err as Error).message}`,
+        `[keeper] rewardBudgetRemit skipped Base->${mirrorId}: ${(err as Error).message}`,
       );
     }
   }
@@ -180,6 +193,11 @@ async function remitToMirror(
     chain: undefined,
     account: ctx.wallet.account ?? null,
   } as never);
+  // Wait for the tx to mine BEFORE returning: `remitRewardBudget` marks the
+  // (chain, day) pairs only when mined, so a still-pending tx would let the next
+  // cron tick re-quote the same state and submit a duplicate remit (which then
+  // reverts NothingToRemit and burns gas). Blocking here closes that window.
+  await publicClient.waitForTransactionReceipt({ hash });
   console.log(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );

@@ -134,6 +134,7 @@ FACETS=(
   "RepayPeriodicFacet"
   "PayrollFacet"
   "RewardReporterFacet"
+  "RewardAggregatorFacet"
   "RewardRemittanceFacet"
   "RiskFacet"
   "RiskMatchLiquidationFacet"
