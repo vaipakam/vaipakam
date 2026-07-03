@@ -16,6 +16,30 @@ testnet pass — drive the real UI with an injected wallet (Playwright,
 key never enters the page), then verify every assertion against direct
 chain reads.
 
+**This is the CONTINUATION of the first alpha02 testnet pass**, whose
+findings are in the companion doc
+[`Findings20260703-TestnetReviewAlpha02.md`](./Findings20260703-TestnetReviewAlpha02.md)
+(F-20260703-001 … 007 + the "What worked" matrix). That pass ran the
+full role-based sweep (connect/mode gates, offer post/cancel/repost,
+accept both directions, repay full/partial, add-collateral, claims,
+preclose, early-exit, offer-lifecycle) and verified everything up to the
+point where it was **blocked on missing oracle feeds** — the liquid-path
+suite (HF display, drop-to-liquidation, refinance completion) could not
+run because every mock asset classified illiquid (F-007). The Tier-1/2
+oracle+swap mocks in this PR are exactly what unblock that suite; the
+sections below pick up from there. Read the two docs together for the
+complete alpha02 live-testnet review.
+
+**Load-bearing cross-reference — the stalled indexer (F-001 / F-004):**
+the first pass documented that the staging/production indexer only
+advances in webhook-triggered bursts and can read a many-hour-old
+snapshot. That directly shapes this pass: a freshly-created offer (e.g.
+offer #15 below) is on-chain immediately but does not appear in the
+indexer-sourced offer book for a long time — which is precisely why the
+on-chain-authoritative claimables port (and, ideally, an on-chain offer
+read path) matters. Where a flow here depends on the indexer, that
+dependency is called out.
+
 ## On-chain infrastructure verification (precondition)
 
 | Check | Result |
