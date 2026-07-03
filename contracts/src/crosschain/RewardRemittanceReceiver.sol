@@ -87,7 +87,7 @@ contract RewardRemittanceReceiver is
         uint256 indexed sourceChainId,
         address indexed token,
         uint256 amount,
-        uint256 dayCount
+        uint256[] dayIds
     );
 
     // ─── Errors ───────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ contract RewardRemittanceReceiver is
             sourceChainId,
             deliveredToken,
             actualReceived,
-            dayIds.length
+            dayIds
         );
     }
 

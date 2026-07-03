@@ -83,13 +83,16 @@ contract RewardRemittanceFacet is
     /// @param sourceChainId Base chain id the budget came from.
     /// @param token         Local VPFI token credited.
     /// @param amount        VPFI credited to this Diamond.
-    /// @param dayCount      Number of day ids in the batch.
+    /// @param dayIds        The exact day ids the batch funded — the mirror
+    ///                      keeps only `rewardBudgetReceivedTotal`, so this is
+    ///                      the sole per-day reconciliation record (the design
+    ///                      dropped a per-day map in favour of this event).
     /// @custom:event-category informational/reward-transport
     event RewardBudgetReceived(
         uint256 indexed sourceChainId,
         address indexed token,
         uint256 amount,
-        uint256 dayCount
+        uint256[] dayIds
     );
 
     /// @notice Emitted when the mirror-side receiver address is set/cleared.
@@ -335,7 +338,7 @@ contract RewardRemittanceFacet is
             revert RewardBudgetTokenMismatch(s.vpfiToken, token);
         }
         s.rewardBudgetReceivedTotal += amount;
-        emit RewardBudgetReceived(sourceChainId, token, amount, dayIds.length);
+        emit RewardBudgetReceived(sourceChainId, token, amount, dayIds);
     }
 
     // ─── Views ────────────────────────────────────────────────────────────
