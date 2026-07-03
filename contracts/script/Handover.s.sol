@@ -176,6 +176,12 @@ contract Handover is Script {
         // T-087 Sub 3.A — Base-only handler for the buyback channel.
         address buybackReceiver =
             _readAddrOptional(addrJson, "buybackRemittanceReceiver");
+        // #776 — mirror-only inbound handler for the reward-budget channel
+        // (Ownable2Step / UUPS). Must rotate to the Timelock like the buyback
+        // receiver, else a post-handover ADMIN EOA could upgrade it or call
+        // `setDiamond` and divert future Base→mirror reward-budget VPFI.
+        address rewardReceiver =
+            _readAddrOptional(addrJson, "rewardRemittanceReceiver");
 
         // The VPFI token whose CCT admin is rotated below — the
         // pre-existing `vpfiToken` on canonical Base, the `vpfiMirror`
@@ -265,6 +271,7 @@ contract Handover is Script {
         _transferCrossChainOwnership(adminKey, rewardMessenger, "rewardMessenger",      timelock);
         _transferCrossChainOwnership(adminKey, mirror,          "vpfiMirror",           timelock);
         _transferCrossChainOwnership(adminKey, buybackReceiver, "buybackRemittanceReceiver", timelock);
+        _transferCrossChainOwnership(adminKey, rewardReceiver,  "rewardRemittanceReceiver",  timelock);
         // #853 Codex P2 — canonical VPFI token OZ ownership → Timelock. On
         // canonical Base the token is now DEPLOYED as part of the flow
         // (`DeployVPFIToken`) with owner = ADMIN (`Ownable2StepUpgradeable`).
@@ -310,6 +317,7 @@ contract Handover is Script {
         if (rewardMessenger != address(0)) console.log("    target: rewardMessenger      @", rewardMessenger);
         if (mirror != address(0)) console.log("    target: vpfiMirror           @", mirror);
         if (buybackReceiver != address(0)) console.log("    target: buybackRemittanceReceiver @", buybackReceiver);
+        if (rewardReceiver != address(0)) console.log("    target: rewardRemittanceReceiver @", rewardReceiver);
         if (canonical && vpfiToken != address(0)) console.log("    target: vpfiToken            @", vpfiToken);
         if (cctRotated) {
             console.log("  acceptAdminRole(address) on the CCIP TokenAdminRegistry:");

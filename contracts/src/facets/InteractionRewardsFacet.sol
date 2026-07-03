@@ -155,8 +155,12 @@ contract InteractionRewardsFacet is
         }
 
         uint256 paidOut = s.interactionPoolPaidOut;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > paidOut
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - paidOut
+        // #776 — reserve VPFI already remitted to mirrors: it funds mirror-side
+        // claims and must not be re-lent to Base claimants (Base-only counter;
+        // 0 on mirrors). Keeps the global 69M cap coherent across chains.
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
 
         uint256 grossSpend = pending + treasuryDelta;
@@ -212,8 +216,10 @@ contract InteractionRewardsFacet is
         if (treasuryDelta == 0) return 0;
 
         uint256 paidOut = s.interactionPoolPaidOut;
-        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > paidOut
-            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - paidOut
+        // #776 — reserve remitted-to-mirror VPFI (see {claimInteractionRewards}).
+        uint256 reserved = paidOut + s.rewardBudgetRemittedGlobal;
+        uint256 remaining = LibVaipakam.VPFI_INTERACTION_POOL_CAP > reserved
+            ? LibVaipakam.VPFI_INTERACTION_POOL_CAP - reserved
             : 0;
         if (remaining == 0) revert InteractionPoolExhausted();
 
@@ -510,7 +516,10 @@ contract InteractionRewardsFacet is
     /// @notice Interaction pool transparency snapshot.
     /// @return cap        69M VPFI hard cap.
     /// @return paidOut    Cumulative VPFI claimed so far.
-    /// @return remaining  `cap - paidOut`.
+    /// @return remaining  Reservable pool: `cap − paidOut −
+    ///                    rewardBudgetRemittedGlobal` (#776 — matches
+    ///                    {getInteractionPoolRemaining} and the live claim cap,
+    ///                    so the three never disagree).
     /// @return launch     Launch timestamp (0 if not started).
     /// @return today      Current day index (0 if not started).
     /// @return aprBps     Annual rate for today (from schedule).
@@ -529,7 +538,7 @@ contract InteractionRewardsFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         cap = LibVaipakam.VPFI_INTERACTION_POOL_CAP;
         paidOut = s.interactionPoolPaidOut;
-        remaining = cap > paidOut ? cap - paidOut : 0;
+        remaining = LibInteractionRewards.poolRemaining();
         launch = s.interactionLaunchTimestamp;
         (uint256 d, bool active) = LibInteractionRewards.currentDayOrZero();
         if (active) {

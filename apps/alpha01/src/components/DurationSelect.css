@@ -1,0 +1,108 @@
+.duration-select {
+  position: relative;
+}
+
+.duration-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: var(--touch-min);
+  min-height: var(--touch-min);
+  padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.duration-select-trigger:hover {
+  background: var(--bg-card-hover);
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--border));
+}
+
+.duration-select-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--brand) 55%, transparent);
+  outline-offset: 1px;
+  border-color: var(--brand);
+}
+
+.duration-select-value {
+  font-weight: 600;
+}
+
+.duration-select-chevron {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.duration-select-chevron.open {
+  transform: rotate(180deg);
+}
+
+.duration-select-panel {
+  position: absolute;
+  z-index: 40;
+  left: 0;
+  right: 0;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  box-shadow: var(--shadow-md);
+  padding: 4px;
+  display: grid;
+  gap: 2px;
+}
+
+.duration-select-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+}
+
+.duration-select-option:hover,
+.duration-select-option.selected {
+  background: var(--brand-bg);
+}
+
+.duration-select-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.duration-select-option-primary {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.duration-select-option-meta {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.duration-select-option-check {
+  color: var(--brand);
+  flex-shrink: 0;
+}
+
+.duration-select-hint {
+  min-height: 1.25rem;
+}

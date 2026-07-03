@@ -22,6 +22,7 @@ import VaultRecover from './pages/VaultRecover';
 import DataRights from './pages/DataRights';
 import VPFIVaultAndDiscounts from './pages/VPFIVaultAndDiscounts';
 import Activity from './pages/Activity';
+import AutoLend from './pages/AutoLend';
 import AdminDashboard from './pages/AdminDashboard';
 import { marketingUrl } from './lib/marketingUrl';
 import Navbar from './components/Navbar';
@@ -153,6 +154,9 @@ function pageRoutes(): ReactElement {
         <Route path="loans/:loanId/refinance" element={<Refinance />} />
         <Route path="claims" element={<ClaimCenter />} />
         <Route path="activity" element={<Activity />} />
+        {/* #878 — auto-lend (standing intent) lives on its own page; a
+            compact summary widget on the Dashboard links here. */}
+        <Route path="auto-lend" element={<AutoLend />} />
         <Route path="keepers" element={<KeeperSettings />} />
         <Route path="risk-access" element={<RiskAccessSettings />} />
         <Route path="alerts" element={<Alerts />} />

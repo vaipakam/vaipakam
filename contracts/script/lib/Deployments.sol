@@ -303,6 +303,9 @@ library Deployments {
     // T-087 Sub 3.A — Base-side inbound handler for the buyback channel.
     function writeBuybackRemittanceReceiver(address a)     internal { _writeAddr(".buybackRemittanceReceiver",     a); }
     function writeBuybackRemittanceReceiverImpl(address a) internal { _writeAddr(".buybackRemittanceReceiverImpl", a); }
+    // #776 — mirror-side inbound handler for the reward-budget channel.
+    function writeRewardRemittanceReceiver(address a)     internal { _writeAddr(".rewardRemittanceReceiver",     a); }
+    function writeRewardRemittanceReceiverImpl(address a) internal { _writeAddr(".rewardRemittanceReceiverImpl", a); }
     function writeFlashLoanLiquidator(address a) internal { _writeAddr(".flashLoanLiquidator", a); }
     function writeWeth(address a)            internal { _writeAddr(".weth",            a); }
     function writeTreasury(address a)        internal { _writeAddr(".treasury",        a); }

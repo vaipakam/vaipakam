@@ -1,0 +1,25 @@
+{
+  "name": "@vaipakam/defi-client",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Protocol orchestration for alpha01 — reimplemented from apps/defi patterns without importing defi.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "viem": "^2.0.0"
+  },
+  "dependencies": {
+    "@vaipakam/contracts": "workspace:*",
+    "@vaipakam/lib": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "viem": "^2.48.4",
+    "vitest": "^4.1.4"
+  }
+}

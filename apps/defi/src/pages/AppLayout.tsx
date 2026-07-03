@@ -32,6 +32,7 @@ import {
   Lock,
   Sliders,
   Vault,
+  Repeat,
 } from "lucide-react";
 import { useIsProtocolAdmin } from "../lib/useIsProtocolAdmin";
 import { IndexerStatusBadge } from "../components/app/IndexerStatusBadge";
@@ -139,6 +140,16 @@ const BASIC_NAV = [
 ];
 
 const ADVANCED_NAV = [
+  {
+    // #878 — standing lender-intent automation. Grouped with keepers (an
+    // auto-lend intent delegates a keeper to fill on the lender's behalf).
+    // Also surfaced via a compact summary widget on the Dashboard, so
+    // Basic-mode lenders still discover it without opening Advanced.
+    to: "/auto-lend",
+    icon: <Repeat size={20} />,
+    labelKey: "appNav.autoLend",
+    end: false,
+  },
   {
     to: "/keepers",
     icon: <ShieldCheck size={20} />,

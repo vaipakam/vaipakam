@@ -29,7 +29,25 @@ import {
   Trash2,
 } from 'lucide-react';
 import { NavLink, Route, Routes } from 'react-router-dom';
-import { Component, useEffect, useState } from 'react';
+import { encodeFunctionData, formatUnits, parseUnits, type Abi, type Address, type Hex } from 'viem';
+import OfferCreateFacetAbi from '@vaipakam/contracts/abis/OfferCreateFacet.json';
+import {
+  BASE_SEPOLIA_CHAIN_ID,
+  BASE_SEPOLIA_CHAIN_ID_DECIMAL,
+  BASE_SEPOLIA_DEPLOYMENT,
+  GUIDED_ASSET_OVERRIDE_STORAGE_KEY,
+  GUIDED_CONFIGURABLE_ASSETS,
+  guidedDefaultAssetDecimals,
+  isGuidedAssetAddress,
+  readGuidedAssetOverrides,
+  resolveGuidedAsset,
+  resolveGuidedAssetEnvOverride,
+  shortAddress,
+  writeGuidedAssetOverrides,
+  type GuidedAssetOverride,
+  type GuidedAssetResolution,
+} from './guidedAssets';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
 
 type Mode = 'guided' | 'advanced';
@@ -51,6 +69,10 @@ type WalletState = {
 type FlowKind = 'earn' | 'borrow' | 'rent';
 type OfferKind = 'lend' | 'borrow' | 'rent';
 type ActivityFilter = 'all' | 'wallet' | 'offer' | 'loan' | 'rental' | 'vault' | 'reward';
+type GuidedSimulationResult = { status: 'not-run' | 'running' | 'passed' | 'failed'; message: string };
+type GuidedWalletCheckResult = { status: 'not-run' | 'running' | 'passed' | 'failed' | 'unavailable'; message: string; balance?: string; allowance?: string; needsApproval?: boolean };
+type GuidedApprovalResult = { status: 'not-started' | 'pending' | 'submitted' | 'failed'; message: string; txHash?: string };
+type GuidedWalletCheckSpec = { asset: GuidedAssetResolution | null; requiredAmount: bigint | null; requiredLabel: string; spender: string | null; unavailableReason: string | null };
 
 declare global {
   interface Window {
@@ -97,7 +119,57 @@ type GuidedFlow = {
   steps: Step[];
 };
 
-const BASE_SEPOLIA_CHAIN_ID = '0x14a34';
+type GuidedTransactionPlan = {
+  intentTitle: string;
+  previewState: string;
+  deploymentTarget: string;
+  primaryAction: string;
+  contractDraft: GuidedContractDraft;
+  sequence: string[];
+  safetyCopy: string;
+  destination: string;
+};
+
+type GuidedContractDraft = {
+  call: string;
+  target: string;
+  offerType: string;
+  principalAsset: string;
+  collateralAsset: string;
+  amount: string;
+  collateralEstimate: string;
+  safetyIndicator: string;
+  interestRateBps: string;
+  durationDays: string;
+  fillMode: string;
+  assetSource: string;
+  calldataStatus: string;
+  calldata: Hex | null;
+  simulationStatus: string;
+  readiness: 'Ready for simulation' | 'Needs approved assets' | 'Needs pricing' | 'Uses rental path';
+  blockers: string[];
+};
+
+type PreparedGuidedAction = {
+  id: string;
+  kind: FlowKind;
+  title: string;
+  asset: string;
+  amount: string;
+  status: 'Prepared locally';
+  createdAtLabel: string;
+  nextStep: string;
+  sequence: string[];
+  contractCall: string;
+  collateralEstimate: string;
+  safetyIndicator: string;
+  readiness: GuidedContractDraft['readiness'];
+  preflightGapCount: number;
+  calldataStatus: string;
+  calldataPreview: string | null;
+  simulationStatus: string;
+};
+
 const BASE_SEPOLIA_PARAMS = {
   chainId: BASE_SEPOLIA_CHAIN_ID,
   chainName: 'Base Sepolia',
@@ -105,6 +177,38 @@ const BASE_SEPOLIA_PARAMS = {
   rpcUrls: [import.meta.env.VITE_BASE_SEPOLIA_RPC_URL ?? 'https://sepolia.base.org'],
   blockExplorerUrls: ['https://sepolia.basescan.org'],
 };
+const OFFER_CREATE_ABI = OfferCreateFacetAbi as Abi;
+const ERC20_VIEW_ABI = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'balance', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [{ name: 'owner', type: 'address' }, { name: 'spender', type: 'address' }],
+    outputs: [{ name: 'remaining', type: 'uint256' }],
+  },
+] as Abi;
+const ERC20_APPROVAL_ABI = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }],
+    outputs: [{ name: 'ok', type: 'bool' }],
+  },
+] as Abi;
+
+const BASE_SEPOLIA_EXPLORER_URL = 'https://sepolia.basescan.org';
+
+function shortTxHash(hash: string) {
+  return hash.length > 18 ? hash.slice(0, 10) + '...' + hash.slice(-6) : hash;
+}
 
 const tasks: Task[] = [
   {
@@ -144,7 +248,7 @@ const tasks: Task[] = [
 const earnSteps: Step[] = [
   {
     title: 'Pick the lending path',
-    body: 'Naive users should start with a token pair that Vaipakam can price and liquidate on the active chain. Advanced users can still create custom pairs after acknowledging the extra risk.',
+    body: 'Start with a token pair that Vaipakam can price and liquidate on the active chain. Advanced users can still create custom pairs after acknowledging the extra risk.',
     checks: ['Asset has a known price path', 'Collateral is not the same asset', 'Network has a live Diamond deployment'],
   },
   {
@@ -290,6 +394,11 @@ const RENT_RATES: Record<string, number> = {
   'Membership NFT': 8,
   'Utility NFT': 5,
 };
+const GUIDED_EARN_RATE_BPS = 650;
+const GUIDED_BORROW_RATE_BPS = 710;
+const GUIDED_EARN_DURATION_DAYS = 30;
+const GUIDED_BORROW_DURATION_DAYS = 21;
+const MAX_INTEREST_BPS = 10_000n;
 
 const marketOffers: MarketOffer[] = [
   { id: 'lend-musdc-weth', kind: 'lend', title: 'Lend mUSDC against mWETH', asset: 'mUSDC', counterAsset: 'mWETH', amount: '2,500', rate: '6.5% APR', term: '30 days', risk: 'Low', recommended: true, nextAction: 'Review lending receipt' },
@@ -329,6 +438,7 @@ const APP_STORAGE_KEYS = {
   analytics: 'vaipakam-app-analytics',
   lastError: 'vaipakam-app-last-error',
   actionsPaused: 'vaipakam-app-actions-paused',
+  assetOverrides: GUIDED_ASSET_OVERRIDE_STORAGE_KEY,
 } as const;
 
 function readAppStorage(key: keyof typeof APP_STORAGE_KEYS) {
@@ -379,6 +489,7 @@ function App() {
     return readAppStorage('mode') === 'advanced' ? 'advanced' : 'guided';
   });
   const [wallet, setWallet] = useState<WalletState>({ detected: false, account: null, chainId: null, error: null });
+  const [preparedActions, setPreparedActions] = useState<PreparedGuidedAction[]>([]);
   const [actionsPaused, setActionsPausedState] = useState(() => readAppStorage('actionsPaused') === 'true');
   const [riskGuardrail, setRiskGuardrailState] = useState<RiskGuardrail>(() => {
     const stored = readAppStorage('risk');
@@ -410,6 +521,14 @@ function App() {
     setModeState('guided');
     setRiskGuardrailState('guided');
     setActionsPausedState(false);
+    setPreparedActions([]);
+  };
+  const addPreparedAction = (action: Omit<PreparedGuidedAction, 'id' | 'createdAtLabel'>) => {
+    const id = action.kind + '-' + Date.now().toString(36);
+    setPreparedActions((current) => [
+      { ...action, id, createdAtLabel: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+      ...current.filter((item) => item.kind !== action.kind || item.asset !== action.asset || item.amount !== action.amount),
+    ]);
   };
 
   useEffect(() => {
@@ -418,6 +537,7 @@ function App() {
       writeLocalAppStorage('mode', 'guided');
     }
   }, [advancedAllowed, mode]);
+
 
   useEffect(() => {
     const ethereum = window.ethereum;
@@ -550,14 +670,14 @@ function App() {
         <RouteErrorBoundary>
           <Routes>
           <Route path="/" element={<Home mode={mode} riskGuardrail={riskGuardrail} />} />
-          <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
-          <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/earn" element={<FlowPage key="earn" flow={guidedFlows.earn} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
+          <Route path="/borrow" element={<FlowPage key="borrow" flow={guidedFlows.borrow} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
+          <Route path="/rent" element={<FlowPage key="rent" flow={guidedFlows.rent} mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} onPrepareAction={addPreparedAction} />} />
           <Route path="/offers" element={<OfferBook wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/claims" element={<Claims wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/vault" element={<VaultUtility wallet={wallet} />} />
-          <Route path="/activity" element={<Activity wallet={wallet} />} />
-          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
+          <Route path="/activity" element={<Activity wallet={wallet} preparedActions={preparedActions} />} />
+          <Route path="/manage" element={<Manage mode={mode} wallet={wallet} actionsPaused={actionsPaused} preparedActions={preparedActions} onConnectWallet={connectWallet} onSwitchNetwork={switchToBaseSepolia} />} />
           <Route path="/advanced" element={<Advanced wallet={wallet} riskGuardrail={riskGuardrail} />} />
           <Route path="/settings" element={<SettingsPanel riskGuardrail={riskGuardrail} actionsPaused={actionsPaused} onRiskGuardrailChange={setRiskGuardrail} onActionsPausedChange={setActionsPaused} />} />
           <Route path="/data-rights" element={<DataRights wallet={wallet} onStorageCleared={resetLocalAppState} />} />
@@ -747,6 +867,7 @@ function FlowPage({
   actionsPaused,
   onConnectWallet,
   onSwitchNetwork,
+  onPrepareAction,
 }: {
   flow: GuidedFlow;
   mode: Mode;
@@ -754,28 +875,83 @@ function FlowPage({
   actionsPaused: boolean;
   onConnectWallet: () => void;
   onSwitchNetwork: () => void;
+  onPrepareAction: (action: Omit<PreparedGuidedAction, 'id' | 'createdAtLabel'>) => void;
 }) {
   const [selectedAsset, setSelectedAsset] = useState(flow.defaultAsset);
   const [amount, setAmount] = useState(flow.defaultAmount);
-  const numericAmount = Number(amount.replace(/,/g, '')) || 0;
+  const normalizedAmount = normalizeGuidedAmountInput(amount);
+  const numericAmount = normalizedAmount ? Number(normalizedAmount) : 0;
   const isBaseSepolia = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const walletReady = Boolean(wallet.account);
-  const canProceed = walletReady && isBaseSepolia && numericAmount > 0;
+  const canProceed = walletReady && isBaseSepolia && Boolean(normalizedAmount) && Number.isFinite(numericAmount) && numericAmount > 0;
   const [reviewed, setReviewed] = useState(false);
+  const [planPrepared, setPlanPrepared] = useState(false);
+  const [simulationResult, setSimulationResult] = useState<GuidedSimulationResult>({ status: 'not-run', message: 'Not run yet' });
+  const [walletCheckResult, setWalletCheckResult] = useState<GuidedWalletCheckResult>({ status: 'not-run', message: 'Not checked yet' });
+  const [approvalResult, setApprovalResult] = useState<GuidedApprovalResult>({ status: 'not-started', message: 'No approval requested' });
+  const [assetOverrides] = useState<Record<string, GuidedAssetOverride>>(() => readGuidedAssetOverrides());
 
   useEffect(() => {
     setReviewed(false);
+    setPlanPrepared(false);
+    setSimulationResult({ status: 'not-run', message: 'Not run yet' });
+    setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
+    setApprovalResult({ status: 'not-started', message: 'No approval requested' });
   }, [flow.kind, selectedAsset, amount]);
 
   useEffect(() => {
     setReviewed(false);
+    setPlanPrepared(false);
+    setSimulationResult({ status: 'not-run', message: 'Not run yet' });
+    setWalletCheckResult({ status: 'not-run', message: 'Not checked yet' });
+    setApprovalResult({ status: 'not-started', message: 'No approval requested' });
   }, [walletReady, isBaseSepolia, wallet.account]);
 
   const receiptRows = buildReceiptRows(flow, selectedAsset, numericAmount);
-  const checklistRows = buildChecklistRows(flow, wallet, numericAmount);
+  const transactionPlan = useMemo(
+    () => buildGuidedTransactionPlan(flow, selectedAsset, numericAmount, normalizedAmount, assetOverrides),
+    [assetOverrides, flow, normalizedAmount, numericAmount, selectedAsset],
+  );
+  const checklistRows = buildChecklistRows(flow, wallet, numericAmount, walletCheckResult.status);
   const actionBlocked = actionsPaused && walletReady && isBaseSepolia;
   const reviewedOnReadyWallet = reviewed && walletReady && isBaseSepolia;
   const needsAmount = walletReady && isBaseSepolia && !canProceed;
+  const preflightGapCount = transactionPlan.contractDraft.blockers.length;
+  const walletCheckSpec = useMemo(
+    () => buildGuidedWalletCheckSpec(flow, selectedAsset, normalizedAmount, assetOverrides),
+    [assetOverrides, flow, normalizedAmount, selectedAsset],
+  );
+  const walletCheckContextKey = [flow.kind, selectedAsset, normalizedAmount ?? '', wallet.account ?? '', wallet.chainId ?? '', walletCheckSpec.asset?.address ?? '', walletCheckSpec.spender ?? '', walletCheckSpec.requiredAmount?.toString() ?? ''].join('|');
+  const walletCheckContextRef = useRef(walletCheckContextKey);
+  walletCheckContextRef.current = walletCheckContextKey;
+  const simulationContextKey = [walletCheckContextKey, transactionPlan.contractDraft.target, transactionPlan.contractDraft.calldata ?? ''].join('|');
+  const simulationContextRef = useRef(simulationContextKey);
+  simulationContextRef.current = simulationContextKey;
+  const simulationCanRun = reviewedOnReadyWallet && Boolean(transactionPlan.contractDraft.calldata) && walletCheckResult.status === 'passed' && !actionsPaused;
+  const simulationDisabledReason = simulationCanRun || simulationResult.status === 'running'
+    ? null
+    : !reviewedOnReadyWallet
+      ? 'Review the receipt with a connected Base Sepolia wallet before simulation.'
+      : !transactionPlan.contractDraft.calldata
+        ? transactionPlan.contractDraft.simulationStatus
+        : walletCheckResult.status !== 'passed'
+          ? walletCheckSpec.unavailableReason
+            ? 'Simulation requires a passed wallet check first. ' + walletCheckSpec.unavailableReason
+            : 'Run and pass wallet readiness before simulation.'
+          : actionsPaused
+            ? 'Actions are paused from Settings.'
+            : null;
+  const walletCheckCanRun = reviewedOnReadyWallet && !actionsPaused && !walletCheckSpec.unavailableReason;
+  const approvalCanRun = walletCheckCanRun && walletCheckResult.needsApproval === true && approvalResult.status !== 'pending' && approvalResult.status !== 'submitted';
+  const walletCheckMessage = walletCheckResult.status === 'not-run'
+    ? walletCheckSpec.unavailableReason ?? 'Ready to check balance and allowance'
+    : walletCheckResult.message;
+  const simulationMessage = simulationResult.status === 'not-run' ? transactionPlan.contractDraft.simulationStatus : simulationResult.message;
+  const prepareActionLabel = planPrepared
+    ? 'Saved in portfolio'
+    : preflightGapCount > 0
+      ? 'Save preflight draft'
+      : 'Prepare local action';
   const actionLabel = !walletReady
     ? 'Connect wallet'
     : !isBaseSepolia
@@ -802,6 +978,151 @@ function FlowPage({
     if (canProceed) {
       setReviewed(true);
     }
+  };
+  const runGuidedWalletCheck = async () => {
+    const ethereum = window.ethereum;
+    const asset = walletCheckSpec.asset;
+    if (!reviewedOnReadyWallet || !wallet.account || actionsPaused || walletCheckSpec.unavailableReason || !asset?.address || asset.decimals === null || !walletCheckSpec.requiredAmount || !walletCheckSpec.spender) {
+      setWalletCheckResult({ status: 'unavailable', message: walletCheckSpec.unavailableReason ?? 'Wallet readiness check is not available for this draft yet.' });
+      return;
+    }
+    if (!ethereum) {
+      setWalletCheckResult({ status: 'failed', message: 'No injected wallet provider is available for balance and allowance checks.' });
+      return;
+    }
+    setWalletCheckResult({ status: 'running', message: 'Checking wallet balance and allowance...' });
+    try {
+      const accountAtCheckTime = wallet.account;
+      const contextAtCheckTime = walletCheckContextRef.current;
+      const [balanceHex, allowanceHex] = await Promise.all([
+        ethereum.request({
+          method: 'eth_call',
+          params: [{
+            to: asset.address,
+            data: encodeFunctionData({ abi: ERC20_VIEW_ABI, functionName: 'balanceOf', args: [wallet.account as Address] }),
+          }, 'latest'],
+        }),
+        ethereum.request({
+          method: 'eth_call',
+          params: [{
+            to: asset.address,
+            data: encodeFunctionData({ abi: ERC20_VIEW_ABI, functionName: 'allowance', args: [wallet.account as Address, walletCheckSpec.spender as Address] }),
+          }, 'latest'],
+        }),
+      ]);
+      try {
+        const accountsAfterCheck = await ethereum.request({ method: 'eth_accounts' });
+        const nextAccounts = Array.isArray(accountsAfterCheck) ? accountsAfterCheck : [];
+        if (nextAccounts[0] !== accountAtCheckTime) return;
+      } catch {
+        // Balance and allowance reads succeeded; skip the stale-account probe if the wallet rejects it.
+      }
+      if (walletCheckContextRef.current !== contextAtCheckTime) return;
+      const balance = parseEthCallUint(balanceHex);
+      const allowance = parseEthCallUint(allowanceHex);
+      const balanceLabel = formatUnits(balance, asset.decimals) + ' ' + asset.symbol;
+      const allowanceLabel = formatUnits(allowance, asset.decimals) + ' ' + asset.symbol;
+      const hasBalance = balance >= walletCheckSpec.requiredAmount;
+      const hasAllowance = allowance >= walletCheckSpec.requiredAmount;
+      if (hasBalance && hasAllowance) {
+        setWalletCheckResult({ status: 'passed', message: 'Wallet has enough ' + asset.symbol + ' balance and approval for the guided amount.', balance: balanceLabel, allowance: allowanceLabel, needsApproval: false });
+        return;
+      }
+      setWalletCheckResult({
+        status: 'failed',
+        message: (!hasBalance ? 'Balance is below ' + walletCheckSpec.requiredLabel + '. ' : '') + (!hasAllowance ? 'Allowance is below ' + walletCheckSpec.requiredLabel + '.' : ''),
+        balance: balanceLabel,
+        allowance: allowanceLabel,
+        needsApproval: hasBalance && !hasAllowance,
+      });
+    } catch (error) {
+      setWalletCheckResult({ status: 'failed', message: 'Wallet readiness check failed: ' + formatSimulationError(error) });
+    }
+  };
+
+  const approveGuidedAsset = async () => {
+    const ethereum = window.ethereum;
+    const asset = walletCheckSpec.asset;
+    if (!reviewedOnReadyWallet || !wallet.account || actionsPaused || walletCheckSpec.unavailableReason || !asset?.address || !walletCheckSpec.requiredAmount || !walletCheckSpec.spender) {
+      setApprovalResult({ status: 'failed', message: walletCheckSpec.unavailableReason ?? 'Approval is not available for this draft yet.' });
+      return;
+    }
+    if (!ethereum) {
+      setApprovalResult({ status: 'failed', message: 'No injected wallet provider is available for approval.' });
+      return;
+    }
+    setApprovalResult({ status: 'pending', message: 'Waiting for wallet approval...' });
+    try {
+      const txHash = await ethereum.request({
+        method: 'eth_sendTransaction',
+        params: [{
+          from: wallet.account,
+          to: asset.address,
+          data: encodeFunctionData({ abi: ERC20_APPROVAL_ABI, functionName: 'approve', args: [walletCheckSpec.spender as Address, walletCheckSpec.requiredAmount] }),
+        }],
+      });
+      setApprovalResult({
+        status: 'submitted',
+        message: 'Approval submitted. Recheck wallet readiness after the transaction confirms. If the transaction fails, change the amount to reset and retry.',
+        txHash: typeof txHash === 'string' ? txHash : undefined,
+      });
+    } catch (error) {
+      setApprovalResult({ status: 'failed', message: 'Approval rejected or failed: ' + formatSimulationError(error) });
+    }
+  };
+
+  const runGuidedSimulation = async () => {
+    const calldata = transactionPlan.contractDraft.calldata;
+    const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
+    const ethereum = window.ethereum;
+    if (!reviewedOnReadyWallet || !calldata || !diamond || !wallet.account || actionsPaused) {
+      setSimulationResult({ status: 'failed', message: 'Simulation is unavailable until wallet, network, target, and calldata are ready.' });
+      return;
+    }
+    if (!ethereum) {
+      setSimulationResult({ status: 'failed', message: 'No injected wallet provider is available for eth_call simulation.' });
+      return;
+    }
+    const contextAtSimulationTime = simulationContextRef.current;
+    setSimulationResult({ status: 'running', message: 'Running eth_call simulation...' });
+    try {
+      if (walletCheckResult.status !== 'passed') {
+        if (simulationContextRef.current !== contextAtSimulationTime) return;
+        setSimulationResult({ status: 'failed', message: 'Check wallet readiness before running simulation so allowance and balance errors are explained first.' });
+        return;
+      }
+      await ethereum.request({
+        method: 'eth_call',
+        params: [{ from: wallet.account, to: diamond, data: calldata }, 'latest'],
+      });
+      if (simulationContextRef.current !== contextAtSimulationTime) return;
+      setSimulationResult({ status: 'passed', message: 'Simulation passed with eth_call. Wallet submission remains blocked until balance, allowance, and risk checks pass.' });
+    } catch (error) {
+      if (simulationContextRef.current !== contextAtSimulationTime) return;
+      setSimulationResult({ status: 'failed', message: 'Simulation failed: ' + formatSimulationError(error) });
+    }
+  };
+
+  const prepareGuidedAction = () => {
+    if (!reviewed || !canProceed || actionsPaused) return;
+    onPrepareAction({
+      kind: flow.kind,
+      title: transactionPlan.intentTitle,
+      asset: selectedAsset,
+      amount: formatFlowAmount(flow, numericAmount),
+      status: 'Prepared locally',
+      nextStep: transactionPlan.primaryAction,
+      sequence: transactionPlan.sequence,
+      contractCall: transactionPlan.contractDraft.call,
+      collateralEstimate: transactionPlan.contractDraft.collateralEstimate,
+      safetyIndicator: transactionPlan.contractDraft.safetyIndicator,
+      readiness: transactionPlan.contractDraft.readiness,
+      preflightGapCount,
+      calldataStatus: transactionPlan.contractDraft.calldataStatus,
+      calldataPreview: transactionPlan.contractDraft.calldata ? shortCalldata(transactionPlan.contractDraft.calldata) : null,
+      simulationStatus: simulationMessage,
+    });
+    setPlanPrepared(true);
   };
 
   return (
@@ -838,6 +1159,8 @@ function FlowPage({
           <label className="app-field">
             <span>{flow.amountLabel}</span>
             <input
+              id={flow.kind + '-amount'}
+              name={flow.kind + '-amount'}
               inputMode="decimal"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
@@ -878,11 +1201,145 @@ function FlowPage({
           <button className="primary-action wide" type="button" disabled={primaryDisabled} onClick={handlePrimaryAction}>
             {actionLabel} {showPrimaryArrow ? <ArrowRight size={18} /> : null}
           </button>
-          {reviewed ? <p className="inline-success">Receipt reviewed until page reload. Contract submission will be wired behind this review step.</p> : null}
+          {reviewed ? <p className="inline-success">Receipt reviewed. Prepare the transaction plan below before any wallet submission.</p> : null}
           {actionsPaused ? <p className="inline-error">New action CTAs are paused from Settings.</p> : null}
           {wallet.error ? <p className="inline-error">{wallet.error}</p> : null}
         </div>
       </section>
+
+      {reviewed ? (
+        <section className="transaction-plan panel-surface" aria-label="Guided transaction plan">
+          <div className="plan-heading">
+            <div>
+              <p className="eyebrow">Step 4</p>
+              <h2>{transactionPlan.intentTitle}</h2>
+              <p>{transactionPlan.safetyCopy}</p>
+            </div>
+            <div className="simulation-pill">
+              <Network size={16} />
+              <span>{transactionPlan.previewState}</span>
+            </div>
+          </div>
+          <div className="plan-grid">
+            <div>
+              <span className="position-kind">Selected terms</span>
+              <strong>{formatFlowAmount(flow, numericAmount)} · {selectedAsset}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Wallet action</span>
+              <strong>{transactionPlan.primaryAction}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Contract target</span>
+              <strong>{transactionPlan.deploymentTarget}</strong>
+            </div>
+            <div>
+              <span className="position-kind">Status</span>
+              <strong>{planPrepared ? 'Saved locally' : preflightGapCount > 0 ? preflightGapCount + ' preflight gap' + (preflightGapCount === 1 ? '' : 's') : 'Ready to prepare'}</strong>
+            </div>
+          </div>
+          <section className="contract-draft" aria-label="Contract draft">
+            <div className="contract-draft-heading">
+              <div>
+                <p className="eyebrow">{guidedSetupEyebrow(flow)}</p>
+                <h3>{guidedActionSummary(flow)}</h3>
+                <p className="guided-action-copy">Finish these checks before Vaipakam opens your wallet for this transaction.</p>
+              </div>
+              <span className="simulation-pill"><ReceiptText size={16} /> {guidedReadinessLabel(transactionPlan.contractDraft.readiness)}</span>
+            </div>
+            <div className="draft-grid guided-summary-grid">
+              <Metric label={flow.kind === 'borrow' ? 'You borrow' : flow.kind === 'earn' ? 'You lend' : 'Rental payment'} value={transactionPlan.contractDraft.amount} />
+              <Metric label={flow.kind === 'borrow' ? 'You lock' : flow.kind === 'earn' ? 'Borrower locks' : 'NFT or buffer'} value={transactionPlan.contractDraft.collateralAsset} />
+              <Metric label="Safety target" value={transactionPlan.contractDraft.safetyIndicator} />
+              <Metric label="Collateral estimate" value={transactionPlan.contractDraft.collateralEstimate} />
+              <Metric label="Interest" value={humanRateLabel(transactionPlan.contractDraft.interestRateBps) + guidedDefaultTermsSuffix(flow)} />
+              <Metric label="Duration" value={transactionPlan.contractDraft.durationDays + guidedDefaultTermsSuffix(flow)} />
+              <Metric label="Token setup" value={transactionPlan.contractDraft.assetSource} />
+              <Metric label="Wallet data" value={humanCalldataStatus(transactionPlan.contractDraft.calldataStatus)} />
+            </div>
+            {transactionPlan.contractDraft.blockers.length > 0 ? (
+              <ul className="blocker-list" aria-label="What still needs attention">
+                {transactionPlan.contractDraft.blockers.map((blocker) => {
+                  const action = blockerAction(blocker);
+                  return (
+                    <li key={blocker}>
+                      <AlertTriangle size={16} />
+                      <span>{humanBlockerText(blocker)}{action ? <NavLink className="inline-text-link" to={action.href}>{action.label}</NavLink> : null}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+            <details className="technical-details">
+              <summary>Technical details</summary>
+              <div className="draft-grid technical-grid">
+                <Metric label="Function" value={transactionPlan.contractDraft.call} />
+                <Metric label="Contract" value={transactionPlan.contractDraft.target} />
+                <Metric label="Offer type" value={transactionPlan.contractDraft.offerType} />
+                <Metric label="Principal token" value={transactionPlan.contractDraft.principalAsset} />
+                <Metric label="Fill mode" value={transactionPlan.contractDraft.fillMode} />
+                <Metric label="Transaction data" value={transactionPlan.contractDraft.calldataStatus} />
+                <Metric label="Simulation" value={simulationMessage} />
+              </div>
+              {transactionPlan.contractDraft.calldata ? (
+                <p className="calldata-preview">{transactionPlan.contractDraft.calldata.slice(0, 18)}...{transactionPlan.contractDraft.calldata.slice(-10)}</p>
+              ) : null}
+            </details>
+            <div className={walletCheckResult.status === 'failed' ? 'simulation-check failed' : walletCheckResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
+              <div>
+                <span className="position-kind">Wallet readiness</span>
+                <strong>{walletCheckMessage}</strong>
+                {walletCheckResult.balance || walletCheckResult.allowance ? (
+                  <p>{walletCheckResult.balance ? 'Balance: ' + walletCheckResult.balance : ''}{walletCheckResult.balance && walletCheckResult.allowance ? ' · ' : ''}{walletCheckResult.allowance ? 'Allowance: ' + walletCheckResult.allowance : ''}</p>
+                ) : null}
+              </div>
+              <div className="check-action-stack">
+                <button className="secondary-action" type="button" onClick={runGuidedWalletCheck} disabled={!walletCheckCanRun || walletCheckResult.status === 'running'}>
+                  {walletCheckResult.status === 'running' ? 'Checking...' : 'Check wallet'}
+                </button>
+                <button className="primary-action" type="button" onClick={approveGuidedAsset} disabled={!approvalCanRun}>
+                  {approvalResult.status === 'pending' ? 'Approving...' : 'Approve token'}
+                </button>
+              </div>
+            </div>
+            {approvalResult.status !== 'not-started' ? (
+              <p className={approvalResult.status === 'failed' ? 'inline-error' : 'inline-success'}>
+                {approvalResult.message}
+                {approvalResult.txHash ? (
+                  <>
+                    {' '}Tx:{' '}
+                    <a href={BASE_SEPOLIA_EXPLORER_URL + '/tx/' + approvalResult.txHash} target="_blank" rel="noreferrer">
+                      {shortTxHash(approvalResult.txHash)}
+                    </a>
+                  </>
+                ) : null}
+              </p>
+            ) : null}
+            <div className={simulationResult.status === 'failed' ? 'simulation-check failed' : simulationResult.status === 'passed' ? 'simulation-check passed' : 'simulation-check'}>
+              <div>
+                <span className="position-kind">No-send simulation</span>
+                <strong>{simulationMessage}</strong>
+              </div>
+              <div className="check-action-stack">
+                <button className="secondary-action" type="button" onClick={runGuidedSimulation} disabled={!simulationCanRun || simulationResult.status === 'running'} title={simulationDisabledReason ?? undefined}>
+                  {simulationResult.status === 'running' ? 'Simulating...' : 'Run simulation'}
+                </button>
+                {simulationDisabledReason ? <small>{simulationDisabledReason}</small> : null}
+              </div>
+            </div>
+          </section>
+          <ol className="plan-steps">
+            {transactionPlan.sequence.map((step) => <li key={step}>{step}</li>)}
+          </ol>
+          <div className="hero-actions">
+            <button className="primary-action" type="button" onClick={prepareGuidedAction} disabled={planPrepared || actionsPaused}>
+              {prepareActionLabel}
+            </button>
+            <NavLink className="secondary-action" to={transactionPlan.destination}>Open next workspace</NavLink>
+          </div>
+          <p className="field-hint">This stores a local prepared action only. Wallet submission stays unavailable until approved asset addresses, allowance checks, and simulation results are ready.</p>
+        </section>
+      ) : null}
 
       {mode === 'advanced' ? (
         <section className="advanced-settings panel-surface">
@@ -1305,6 +1762,392 @@ function OfferBook({ wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: 
 }
 
 
+function guidedSetupEyebrow(flow: GuidedFlow) {
+  if (flow.kind === 'earn') return 'Lending setup';
+  if (flow.kind === 'borrow') return 'Borrow setup';
+  return 'Rental setup';
+}
+
+function guidedActionSummary(flow: GuidedFlow) {
+  if (flow.kind === 'borrow') return 'Set up your borrow request';
+  if (flow.kind === 'earn') return 'Set up your lending offer';
+  return 'Set up the rental terms';
+}
+
+function guidedReadinessLabel(readiness: GuidedContractDraft['readiness']) {
+  if (readiness === 'Ready for simulation') return 'Ready for safety test';
+  if (readiness === 'Uses rental path') return 'Rental setup needed';
+  if (readiness === 'Needs pricing') return 'Amount or pricing needed';
+  return 'Needs token setup';
+}
+
+function guidedDefaultTermsSuffix(flow: GuidedFlow) {
+  return flow.kind === 'rent' ? '' : ' · guided default';
+}
+
+function humanRateLabel(value: string) {
+  if (value.endsWith(' bps')) return (Number(value.replace(' bps', '')) / 100).toFixed(2).replace(/\.00$/, '') + '% APR';
+  return value;
+}
+
+function humanCalldataStatus(value: string) {
+  if (value.includes('Encoded')) return 'Ready for safety test';
+  if (value.includes('Rental')) return 'Waiting for rental details';
+  return value;
+}
+
+function blockerAction(blocker: string) {
+  if (
+    blocker.startsWith('Approved token address must be confirmed for ') ||
+    blocker.startsWith('Approved collateral address must be confirmed for ') ||
+    blocker.startsWith('Token decimals must be confirmed for ') ||
+    blocker.startsWith('Collateral decimals must be confirmed for ')
+  ) {
+    return { href: '/settings', label: 'Open Settings' };
+  }
+  return null;
+}
+
+function humanBlockerText(blocker: string) {
+  if (blocker.startsWith('Approved token address must be confirmed for ')) {
+    const symbol = blocker.replace('Approved token address must be confirmed for ', '').replace('.', '');
+    return symbol + ' token address is missing. Add it under Base Sepolia assets. ';
+  }
+  if (blocker.startsWith('Approved collateral address must be confirmed for ')) {
+    const symbol = blocker.replace('Approved collateral address must be confirmed for ', '').replace('.', '');
+    return symbol + ' collateral token address is missing. Add it under Base Sepolia assets. ';
+  }
+  if (blocker.includes('Wallet balance, allowance, oracle price, and collateral safety')) return 'Run the wallet readiness check in Step 4 before wallet submission.';
+  if (blocker.includes('Funding balance, allowance, and borrower collateral safety')) return 'Run the wallet readiness check in Step 4 before wallet submission.';
+  return blocker;
+}
+
+function parseGuidedUnits(value: string, decimals: number) {
+  try {
+    return parseUnits(value, decimals);
+  } catch {
+    return null;
+  }
+}
+
+function parseEthCallUint(value: unknown) {
+  if (value === '0x') return 0n;
+  if (typeof value !== 'string' || !/^0x[0-9a-fA-F]+$/.test(value)) throw new Error('provider returned an invalid uint256 value');
+  return BigInt(value);
+}
+
+function normalizeGuidedAmountInput(value: string) {
+  const cleaned = value.replace(/,/g, '').trim();
+  if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(cleaned)) return null;
+  const normalized = cleaned.startsWith('.') ? '0' + cleaned : cleaned;
+  return normalized.replace(/^0+(?=\d)/, '') || '0';
+}
+
+function decimalFromNumber(value: number) {
+  if (!Number.isFinite(value)) return null;
+  return value.toFixed(12).replace(/\.?0+$/, '');
+}
+
+function guidedCollateralAmountInput(principalSymbol: string, collateralSymbol: string, principalAmountInput: string | null) {
+  if (!principalAmountInput) return null;
+  const principalAmount = Number(principalAmountInput);
+  if (!Number.isFinite(principalAmount) || principalAmount <= 0) return null;
+  if (principalSymbol === 'mUSDC' && collateralSymbol === 'mWETH') return decimalFromNumber(principalAmount / 1000);
+  return null;
+}
+
+function buildGuidedWalletCheckSpec(flow: GuidedFlow, selectedAsset: string, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedWalletCheckSpec {
+  const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond ?? null;
+  if (flow.kind === 'rent') {
+    return { asset: null, requiredAmount: null, requiredLabel: 'rental terms pending', spender: diamond, unavailableReason: 'Rental wallet checks need the selected NFT, prepay token, and refundable buffer first.' };
+  }
+
+  const isBorrow = flow.kind === 'borrow';
+  const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
+  const asset = resolveGuidedAsset(isBorrow ? collateralLabel : selectedAsset, assetOverrides);
+  const collateralAmountInput = guidedCollateralAmountInput(selectedAsset, collateralLabel, amountInput);
+  const requiredInput = isBorrow ? collateralAmountInput : amountInput;
+  const requiredLabel = (requiredInput ?? '0') + ' ' + asset.symbol;
+  if (isBorrow && guidedCollateralAmountInput(selectedAsset, collateralLabel, '1') === null) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode does not yet support ' + selectedAsset + ' as a borrow principal. Try mUSDC.' };
+  }
+  if (!diamond) return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Vaipakam contract address is missing for Base Sepolia.' };
+  if (!asset.address) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token address is missing. Open Settings, then add it under Base Sepolia assets.' };
+  if (asset.decimals === null) return { asset, requiredAmount: null, requiredLabel, spender: diamond, unavailableReason: asset.symbol + ' token decimals are missing. Open Settings, then add the decimals under Base Sepolia assets.' };
+  if (!amountInput) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
+  }
+  if (isBorrow && !collateralAmountInput) {
+    return {
+      asset,
+      requiredAmount: null,
+      requiredLabel,
+      spender: null,
+      unavailableReason: 'Guided mode needs oracle-priced collateral sizing for ' + selectedAsset + ' backed by ' + collateralLabel + ' before wallet checks can run.',
+    };
+  }
+  if (!requiredInput) {
+    // Defensive: prior guards should make this unreachable, but keep the user-facing error precise if flow logic changes.
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: 'Guided mode needs a valid decimal amount before wallet checks can run.' };
+  }
+  const requiredAmount = parseGuidedUnits(requiredInput, asset.decimals);
+  if (requiredAmount === null) {
+    return { asset, requiredAmount: null, requiredLabel, spender: null, unavailableReason: asset.symbol + ' supports at most ' + asset.decimals + ' decimal places. Shorten the amount before wallet checks can run.' };
+  }
+  if (isBorrow) {
+    return { asset, requiredAmount, requiredLabel, spender: diamond, unavailableReason: null };
+  }
+  return { asset, requiredAmount, requiredLabel, spender: diamond, unavailableReason: null };
+}
+
+function guidedCollateralEstimate(flow: GuidedFlow, numericAmount: number, principalSymbol: string, collateralSymbol: string, collateralAmountInput: string | null) {
+  if (flow.kind === 'rent') return 'Prepay and refundable buffer are set by the rental offer.';
+  if (collateralAmountInput) {
+    return 'About ' + collateralAmountInput + ' ' + collateralSymbol + ' on starter Base Sepolia sizing; live oracle checks still apply.';
+  }
+  const estimatedValue = numericAmount * 1.5;
+  const formattedValue = estimatedValue.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  if (flow.kind === 'borrow') return 'Collateral amount needs oracle-priced sizing before wallet submission.';
+  return 'Borrower should lock about ' + formattedValue + ' ' + collateralSymbol + '-equivalent of collateral value.';
+}
+
+function guidedSafetyIndicator(flow: GuidedFlow) {
+  if (flow.kind === 'rent') return 'Rental buffer pending';
+  if (flow.kind === 'borrow') return 'Healthy target: 150% collateral value before live checks';
+  return 'Healthy target: borrower collateral covers 150% of lent value';
+}
+
+function formatSimulationError(error: unknown) {
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return 'provider rejected the eth_call request';
+}
+
+function formatFlowAmount(flow: GuidedFlow, numericAmount: number) {
+  if (flow.kind === 'rent') return numericAmount.toLocaleString() + ' day' + (numericAmount === 1 ? '' : 's');
+  return numericAmount.toLocaleString();
+}
+
+function guidedDeploymentTarget() {
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond) return 'Base Sepolia deployment unavailable';
+  const offerCreateFacet = BASE_SEPOLIA_DEPLOYMENT.facets.offerCreateFacet;
+  if (!offerCreateFacet) return shortAddress(BASE_SEPOLIA_DEPLOYMENT.diamond) + ' · offer facet missing';
+  return shortAddress(BASE_SEPOLIA_DEPLOYMENT.diamond) + ' · OfferCreateFacet ready';
+}
+
+function guidedPreviewState() {
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond) return 'Deployment missing';
+  if (!BASE_SEPOLIA_DEPLOYMENT.facets.offerCreateFacet) return 'Facet target missing';
+  return 'Ready for simulation target';
+}
+
+function guidedAssetSourceLabel(...assets: GuidedAssetResolution[]) {
+  const sources = new Set(assets.map((asset) => asset.source));
+  if (sources.has('missing')) return 'Needs token address';
+  if (sources.has('environment')) return 'Configured in Settings';
+  return 'Ready from deployment';
+}
+
+function hasOnlyPricingOrAmountBlockers(encodingBlockers: string[]) {
+  return encodingBlockers.length > 0 && encodingBlockers.every((blocker) => blocker.includes('Oracle-priced collateral sizing') || blocker.includes('Enter a valid decimal amount'));
+}
+
+function guidedSimulationStatus(calldata: Hex | null, encodingBlockers: string[]) {
+  if (!calldata) {
+    if (encodingBlockers.length === 0) return 'Unavailable until calldata is ready';
+    return hasOnlyPricingOrAmountBlockers(encodingBlockers) ? 'Waiting for collateral pricing' : 'Waiting for token setup';
+  }
+  return 'Ready for eth_call simulation';
+}
+
+function encodeGuidedCreateOfferDraft({
+  flow,
+  principalAsset,
+  collateralAsset,
+  amountInput,
+  collateralAmountInput,
+  encodingBlockers,
+}: {
+  flow: GuidedFlow;
+  principalAsset: GuidedAssetResolution;
+  collateralAsset: GuidedAssetResolution;
+  amountInput: string | null;
+  collateralAmountInput: string | null;
+  encodingBlockers: string[];
+}): { calldata: Hex | null; status: string } {
+  if (flow.kind === 'rent') return { calldata: null, status: 'Rental path pending' };
+  if (encodingBlockers.length > 0) {
+    return { calldata: null, status: hasOnlyPricingOrAmountBlockers(encodingBlockers) ? 'Waiting for amount or collateral pricing' : 'Waiting for token setup' };
+  }
+  if (!amountInput || !collateralAmountInput) return { calldata: null, status: 'Waiting for priced collateral sizing' };
+  if (!BASE_SEPOLIA_DEPLOYMENT?.diamond || !principalAsset.address || !collateralAsset.address || principalAsset.decimals === null || collateralAsset.decimals === null) {
+    return { calldata: null, status: 'Withheld until assets resolve' };
+  }
+
+  const principalAmount = parseGuidedUnits(amountInput, principalAsset.decimals);
+  const collateralAmount = parseGuidedUnits(collateralAmountInput, collateralAsset.decimals);
+  if (principalAmount === null || collateralAmount === null) return { calldata: null, status: 'Waiting for valid token precision' };
+  const isBorrow = flow.kind === 'borrow';
+  const displayedRateBps = BigInt(isBorrow ? GUIDED_BORROW_RATE_BPS : GUIDED_EARN_RATE_BPS);
+  const interestRateBps = isBorrow ? 0n : displayedRateBps;
+  const interestRateBpsMax = isBorrow ? displayedRateBps : MAX_INTEREST_BPS;
+  const params = {
+    offerType: isBorrow ? 1 : 0,
+    lendingAsset: principalAsset.address as Address,
+    amount: principalAmount,
+    interestRateBps,
+    collateralAsset: collateralAsset.address as Address,
+    collateralAmount,
+    durationDays: BigInt(isBorrow ? GUIDED_BORROW_DURATION_DAYS : GUIDED_EARN_DURATION_DAYS),
+    assetType: 0,
+    tokenId: 0n,
+    quantity: 0n,
+    creatorRiskAndTermsConsent: true,
+    prepayAsset: '0x0000000000000000000000000000000000000000' as Address,
+    collateralAssetType: 0,
+    collateralTokenId: 0n,
+    collateralQuantity: 0n,
+    allowsPartialRepay: true,
+    amountMax: principalAmount,
+    interestRateBpsMax,
+    collateralAmountMax: collateralAmount,
+    periodicInterestCadence: 0,
+    expiresAt: 0n,
+    fillMode: 0,
+    allowsPrepayListing: false,
+    allowsParallelSale: false,
+    refinanceTargetLoanId: 0n,
+    useFullTermInterest: false,
+  };
+
+  return {
+    calldata: encodeFunctionData({
+      abi: OFFER_CREATE_ABI,
+      functionName: 'createOffer',
+      args: [params],
+    }) as Hex,
+    status: 'Encoded for simulation',
+  };
+}
+
+function buildGuidedContractDraft(flow: GuidedFlow, selectedAsset: string, numericAmount: number, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedContractDraft {
+  const diamond = BASE_SEPOLIA_DEPLOYMENT?.diamond;
+  const amountText = formatFlowAmount(flow, numericAmount);
+  if (flow.kind === 'rent') {
+    const prepayToken = resolveGuidedAsset('mUSDC', assetOverrides);
+    const blockers = ['Confirm the rental-specific action path before opening the wallet.', 'Resolve NFT collection, token standard, token id, and refundable buffer.'];
+    if (!prepayToken.address) blockers.push('Approved prepay token address must be confirmed for mUSDC.');
+    return {
+      call: 'Rental offer adapter pending',
+      target: diamond ? shortAddress(diamond) : 'Unavailable',
+      offerType: 'Rental',
+      principalAsset: prepayToken.display,
+      collateralAsset: selectedAsset + ' · NFT details needed',
+      amount: amountText,
+      collateralEstimate: guidedCollateralEstimate(flow, numericAmount, prepayToken.symbol, prepayToken.symbol, null),
+      safetyIndicator: guidedSafetyIndicator(flow),
+      interestRateBps: 'Not applicable',
+      durationDays: amountText,
+      fillMode: 'Rental terms',
+      assetSource: guidedAssetSourceLabel(prepayToken),
+      calldataStatus: 'Rental path pending',
+      calldata: null,
+      simulationStatus: 'Unavailable until rental path is selected',
+      readiness: 'Uses rental path',
+      blockers,
+    };
+  }
+
+  const isBorrow = flow.kind === 'borrow';
+  const collateralLabel = selectedAsset === 'mUSDC' ? 'mWETH' : 'mUSDC';
+  const principalAsset = resolveGuidedAsset(selectedAsset, assetOverrides);
+  const collateralAsset = resolveGuidedAsset(collateralLabel, assetOverrides);
+  const collateralAmountInput = guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, amountInput);
+  const borrowPairSupported = !isBorrow || guidedCollateralAmountInput(principalAsset.symbol, collateralAsset.symbol, '1') !== null;
+  const earnPairSupported = isBorrow || collateralAmountInput !== null;
+  const encodingBlockers = [];
+  const submissionBlockers = [];
+  if (!diamond) encodingBlockers.push('Base Sepolia Diamond address is not available in deployments.json.');
+  if (!BASE_SEPOLIA_DEPLOYMENT?.facets.offerCreateFacet) encodingBlockers.push('OfferCreateFacet is not present in the generated deployment bundle.');
+  if (!borrowPairSupported) {
+    encodingBlockers.push('Guided mode does not yet support ' + principalAsset.symbol + ' as a borrow principal. Try mUSDC.');
+  } else {
+    if (!principalAsset.address) encodingBlockers.push('Approved token address must be confirmed for ' + principalAsset.symbol + '.');
+    if (principalAsset.address && principalAsset.decimals === null) encodingBlockers.push('Token decimals must be confirmed for ' + principalAsset.symbol + '.');
+    if (!collateralAsset.address) encodingBlockers.push('Approved collateral address must be confirmed for ' + collateralAsset.symbol + '.');
+    if (collateralAsset.address && collateralAsset.decimals === null) encodingBlockers.push('Collateral decimals must be confirmed for ' + collateralAsset.symbol + '.');
+    if (!amountInput) encodingBlockers.push('Enter a valid decimal amount before Vaipakam prepares transaction data.');
+    if (amountInput && !collateralAmountInput) encodingBlockers.push('Oracle-priced collateral sizing is needed for the selected token pair before transaction data can be prepared.');
+  }
+  if (borrowPairSupported && earnPairSupported) {
+    submissionBlockers.push(isBorrow ? 'Wallet balance, allowance, oracle price, and collateral safety must pass before wallet submission.' : 'Funding balance, allowance, and borrower collateral safety must pass before wallet submission.');
+  }
+  const blockers = [...encodingBlockers, ...submissionBlockers];
+  const encoded = encodeGuidedCreateOfferDraft({ flow, principalAsset, collateralAsset, amountInput, collateralAmountInput, encodingBlockers });
+
+  return {
+    call: 'OfferCreateFacet.createOffer(params)',
+    target: diamond ? shortAddress(diamond) : 'Unavailable',
+    offerType: isBorrow ? 'Borrow request' : 'Lending offer',
+    principalAsset: principalAsset.display,
+    collateralAsset: collateralAsset.display,
+    amount: amountText + ' ' + selectedAsset,
+    collateralEstimate: guidedCollateralEstimate(flow, numericAmount, principalAsset.symbol, collateralAsset.symbol, collateralAmountInput),
+    safetyIndicator: guidedSafetyIndicator(flow),
+    interestRateBps: (isBorrow ? GUIDED_BORROW_RATE_BPS : GUIDED_EARN_RATE_BPS) + ' bps',
+    durationDays: (isBorrow ? GUIDED_BORROW_DURATION_DAYS : GUIDED_EARN_DURATION_DAYS) + ' days',
+    fillMode: 'Single fill',
+    assetSource: guidedAssetSourceLabel(principalAsset, collateralAsset),
+    calldataStatus: encoded.status,
+    calldata: encoded.calldata,
+    simulationStatus: guidedSimulationStatus(encoded.calldata, encodingBlockers),
+    readiness: encoded.calldata ? 'Ready for simulation' : encoded.status.includes('amount or collateral pricing') ? 'Needs pricing' : 'Needs approved assets',
+    blockers,
+  };
+}
+
+function buildGuidedTransactionPlan(flow: GuidedFlow, selectedAsset: string, numericAmount: number, amountInput: string | null, assetOverrides: Record<string, GuidedAssetOverride>): GuidedTransactionPlan {
+  const amountText = formatFlowAmount(flow, numericAmount);
+  const deploymentTarget = guidedDeploymentTarget();
+  const previewState = guidedPreviewState();
+  const contractDraft = buildGuidedContractDraft(flow, selectedAsset, numericAmount, amountInput, assetOverrides);
+  if (flow.kind === 'earn') {
+    return {
+      intentTitle: 'Prepare lending offer for ' + amountText + ' ' + selectedAsset,
+      previewState,
+      deploymentTarget,
+      primaryAction: 'Approve asset, then create offer',
+      contractDraft,
+      sequence: ['Check allowance', 'Approve only the selected amount if needed', 'Create offer from reviewed terms', 'Track offer NFT and cancellation path'],
+      safetyCopy: 'Guided lending should become a two-step wallet path only when allowance is missing. The generated deployment bundle supplies the Diamond target; approved asset checks and simulation are the remaining gates before wallet submission.',
+      destination: '/offers',
+    };
+  }
+  if (flow.kind === 'borrow') {
+    return {
+      intentTitle: 'Prepare borrow request for ' + amountText + ' ' + selectedAsset,
+      previewState,
+      deploymentTarget,
+      primaryAction: 'Approve collateral, then create or accept terms',
+      contractDraft,
+      sequence: ['Confirm collateral balance', 'Approve collateral token to Diamond if needed', 'Call createOffer; collateral deposits atomically in the same transaction', 'Track repayment, add-collateral, and claim paths'],
+      safetyCopy: 'Borrowing must keep collateral, repayment, and default consequences visible before any wallet prompt. The generated deployment bundle supplies the Diamond target; collateral sizing, approved asset checks, and simulation are the remaining gates before wallet submission.',
+      destination: '/manage',
+    };
+  }
+  return {
+    intentTitle: 'Prepare NFT rental for ' + amountText,
+    previewState,
+    deploymentTarget,
+    primaryAction: 'Prepay rental, then start rental rights',
+    contractDraft,
+    sequence: ['Confirm NFT standard support', 'Approve prepaid rental token if needed', 'Start rental with reviewed expiry', 'Track close, owner claim, and renter refund lanes'],
+    safetyCopy: 'NFT rental stays separate from borrowing: the renter receives time-limited use rights while custody and expiry rules remain explicit. The generated deployment bundle supplies the Diamond target; the rental-specific action path is the remaining gate before wallet submission.',
+    destination: '/offers',
+  };
+}
+
 function buildOfferReceiptRows(offer: MarketOffer) {
   if (offer.kind === 'borrow') {
     return [
@@ -1337,7 +2180,7 @@ function buildOfferReceiptRows(offer: MarketOffer) {
 }
 
 
-function Activity({ wallet }: { wallet: WalletState }) {
+function Activity({ wallet, preparedActions }: { wallet: WalletState; preparedActions: PreparedGuidedAction[] }) {
   const [filter, setFilter] = useState<ActivityFilter>('all');
   const [acknowledgedIds, setAcknowledgedIds] = useState<string[]>([]);
 
@@ -1347,11 +2190,22 @@ function Activity({ wallet }: { wallet: WalletState }) {
   const walletReady = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
   const canPreviewActivity = walletReady && baseReady;
-  const scopedActivityItems = canPreviewActivity ? activityItems : [];
+  const preparedActivityItems: ActivityItem[] = preparedActions.map((action) => ({
+    id: action.id,
+    source: action.kind === 'earn' ? 'offer' : action.kind === 'borrow' ? 'loan' : 'rental',
+    title: action.title,
+    detail: action.amount + ' ' + action.asset + ' prepared from Guided mode for ' + action.contractCall + '. Collateral: ' + action.collateralEstimate + '. Safety: ' + action.safetyIndicator + '. Calldata: ' + (action.calldataPreview ?? action.calldataStatus) + '. Simulation: ' + action.simulationStatus + '. No transaction has been submitted.',
+    status: 'Local queue',
+    when: action.createdAtLabel,
+    impact: action.readiness === 'Ready for simulation' ? 'Ready for simulation checks without claiming on-chain completion.' : preflightGapLabel(action.preflightGapCount, 'preflight gap') + ' must be resolved before wallet submission.',
+    nextAction: action.nextStep,
+    safeForGuided: true,
+  }));
+  const scopedActivityItems = [...preparedActivityItems, ...(canPreviewActivity ? activityItems : [])];
   const visibleItems = scopedActivityItems.filter((item) => filter === 'all' || item.source === filter);
   const reviewCount = scopedActivityItems.filter((item) => item.status === 'Needs review').length;
   const localCount = scopedActivityItems.filter((item) => item.status === 'Local queue').length;
-  const acknowledgedCount = canPreviewActivity ? acknowledgedIds.length : 0;
+  const acknowledgedCount = acknowledgedIds.length;
 
   const acknowledge = (id: string) => {
     setAcknowledgedIds((current) => current.includes(id) ? current : [...current, id]);
@@ -1387,7 +2241,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
         </div>
       </section>
 
-      {canPreviewActivity ? (
+      {canPreviewActivity || preparedActivityItems.length > 0 ? (
         <section className="portfolio-tools panel-surface" aria-label="Activity filters">
           {(['all', 'wallet', 'offer', 'loan', 'rental', 'vault', 'reward'] as ActivityFilter[]).map((option) => (
             <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
@@ -1400,8 +2254,8 @@ function Activity({ wallet }: { wallet: WalletState }) {
       <section className="activity-list panel-surface" aria-label="Readable activity timeline">
         {!canPreviewActivity ? (
           <div className="empty-state">
-            <h2>{walletReady ? 'Switch to Base Sepolia to review activity' : 'Connect wallet to review activity'}</h2>
-            <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account.</p>
+            <h2>{walletReady ? 'Switch to Base Sepolia to review wallet activity' : 'Connect wallet to review wallet activity'}</h2>
+            <p>Wallet-specific timeline rows stay hidden until Vaipakam can scope them to the connected Base Sepolia account. Local prepared drafts remain visible.</p>
           </div>
         ) : null}
         {visibleItems.map((item) => {
@@ -1420,7 +2274,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
               <div className="activity-action">
                 <span>{item.safeForGuided ? 'Guided-safe' : 'Advanced context'} · Next: {item.nextAction}</span>
                 <button type="button" onClick={() => acknowledge(item.id)} disabled={acknowledged}>
-                  {acknowledged ? 'Acknowledged until reload' : 'Mark acknowledged'}
+                  {acknowledged ? 'Acknowledged for this visit' : 'Mark acknowledged'}
                 </button>
               </div>
             </article>
@@ -1431,7 +2285,7 @@ function Activity({ wallet }: { wallet: WalletState }) {
   );
 }
 
-function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
+function Manage({ mode, wallet, actionsPaused, preparedActions, onConnectWallet, onSwitchNetwork }: { mode: Mode; wallet: WalletState; actionsPaused: boolean; preparedActions: PreparedGuidedAction[]; onConnectWallet: () => void; onSwitchNetwork: () => void }) {
   const [filter, setFilter] = useState<PositionFilter>('all');
   const [reviewedActions, setReviewedActions] = useState<string[]>([]);
 
@@ -1454,9 +2308,11 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
   const urgentCount = scopedPositions.filter((position) => position.urgency === 'urgent').length;
   const claimableCount = scopedPositions.filter((position) => position.claimable).length;
   const completedCount = canPreviewPositions ? reviewedActions.length : 0;
+  const preparedCount = preparedActions.length;
   const lanes = [
     { title: 'Urgent', body: urgentCount + ' item needs attention before it gets buried.', icon: <AlertTriangle /> },
     { title: 'Positions', body: scopedPositions.length + ' loans, offers, rentals, vault, and reward rows grouped by next action.', icon: <Landmark /> },
+    { title: 'Prepared', body: preparedCount + ' guided action draft' + (preparedCount === 1 ? '' : 's') + ' ready for the next workspace.', icon: <ReceiptText /> },
     { title: 'Vault', body: 'Locked and free balances are separated before any withdrawal or claim.', icon: <LockKeyhole /> },
     { title: 'Rewards', body: claimableCount + ' claimable item and VPFI utility status kept visible.', icon: <Coins /> },
   ];
@@ -1477,7 +2333,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
   return (
     <div className="manage-page">
       <SectionHeading eyebrow="Portfolio" title="Portfolio review for open obligations" />
-      <p className="page-intro compact">Sample rows show the intended management model until live wallet positions are wired. Wallet: {wallet.account ? shortAddress(wallet.account) : 'not connected'}.</p>
+      <p className="page-intro compact">Wallet-scoped rows stay grouped by the action they need next. Wallet: {wallet.account ? shortAddress(wallet.account) : 'not connected'}.</p>
       <div className="lane-grid">
         {lanes.map((lane) => <Principle key={lane.title} icon={lane.icon} title={lane.title} body={lane.body} />)}
       </div>
@@ -1492,6 +2348,7 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
               <button type="button" onClick={() => setFilter('claimable')}><ReceiptText size={16} /> Claimable ({claimableCount})</button>
               <button type="button" onClick={() => setFilter('urgent')}><Gauge size={16} /> Urgent ({urgentCount})</button>
               <button type="button" onClick={() => setFilter('reviewed')}><Coins size={16} /> Reviewed ({completedCount})</button>
+              <button type="button" onClick={() => setFilter('all')}><ReceiptText size={16} /> Show all</button>
             </>
           ) : null}
         </div>
@@ -1503,6 +2360,35 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
             <button className={filter === option ? 'selected' : ''} type="button" key={option} aria-pressed={filter === option} onClick={() => setFilter(option)}>
               {option}
             </button>
+          ))}
+        </section>
+      ) : null}
+
+      {preparedActions.length > 0 ? (
+        <section className="prepared-actions panel-surface" aria-label="Prepared guided actions">
+          <div className="plan-heading">
+            <div>
+              <p className="eyebrow">Prepared locally</p>
+              <h2>Guided actions ready for preflight review</h2>
+            </div>
+            <span className="simulation-pill"><ReceiptText size={16} /> {preparedActions.length} draft{preparedActions.length === 1 ? '' : 's'}</span>
+          </div>
+          {preparedActions.map((action) => (
+            <article className="activity-row" key={action.id} aria-label={action.title}>
+              <div className="activity-main">
+                <span className="position-kind">{action.kind} · {action.createdAtLabel}</span>
+                <h2>{action.title}</h2>
+                <p>{action.amount} {action.asset}. {action.contractCall} is {action.readiness.toLowerCase()} with {preflightGapLabel(action.preflightGapCount, 'gap')}. Collateral: {action.collateralEstimate}. Safety: {action.safetyIndicator}. Calldata: {action.calldataPreview ?? action.calldataStatus}. Simulation: {action.simulationStatus}. No transaction has been submitted.</p>
+              </div>
+              <div className="activity-impact">
+                <strong>{action.status}</strong>
+                <span>{action.sequence.join(' → ')}</span>
+              </div>
+              <div className="activity-action">
+                <span>Next: {action.nextStep}</span>
+                <NavLink className="secondary-action" to={action.kind === 'earn' ? '/offers' : action.kind === 'borrow' ? '/manage' : '/offers'}>Open workspace</NavLink>
+              </div>
+            </article>
           ))}
         </section>
       ) : null}
@@ -1546,10 +2432,17 @@ function Manage({ mode, wallet, actionsPaused, onConnectWallet, onSwitchNetwork 
 }
 
 
+function guidedDeploymentAssetAddress(symbol: string) {
+  if (symbol === 'mWETH') return BASE_SEPOLIA_DEPLOYMENT?.weth ?? null;
+  if (symbol === 'VPFI') return BASE_SEPOLIA_DEPLOYMENT?.vpfiToken ?? null;
+  return null;
+}
+
 function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, onActionsPausedChange }: { riskGuardrail: RiskGuardrail; actionsPaused: boolean; onRiskGuardrailChange: (guardrail: RiskGuardrail) => void; onActionsPausedChange: (paused: boolean) => void }) {
   const [language, setLanguage] = useState('English');
   const confirmReceipts = true;
   const [localAnalytics, setLocalAnalytics] = useState(() => readAppStorage('analytics') === 'true');
+  const [assetOverrides, setAssetOverrides] = useState<Record<string, GuidedAssetOverride>>(() => readGuidedAssetOverrides());
 
   const updateRisk = (value: RiskGuardrail) => {
     onRiskGuardrailChange(value);
@@ -1560,6 +2453,23 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
   const updateLocalAnalytics = (value: boolean) => {
     setLocalAnalytics(value);
     writeLocalAppStorage('analytics', String(value));
+  };
+  const updateAssetOverride = (symbol: string, field: keyof GuidedAssetOverride, value: string) => {
+    if (guidedDeploymentAssetAddress(symbol)) return;
+    const envEntry = resolveGuidedAssetEnvOverride(symbol);
+    const current = assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(guidedDefaultAssetDecimals(symbol) ?? '') };
+    if (field === 'decimals' && !current.address) return;
+    const nextEntry = { ...current, [field]: value.trim() };
+    const next = { ...assetOverrides, [symbol]: nextEntry };
+    if (!nextEntry.address) {
+      delete next[symbol];
+    }
+    setAssetOverrides(next);
+    writeGuidedAssetOverrides(next);
+  };
+  const clearAssetOverrides = () => {
+    setAssetOverrides({});
+    writeGuidedAssetOverrides({});
   };
 
   return (
@@ -1603,6 +2513,64 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
           </label>
         </article>
 
+
+        <article className="settings-card panel-surface asset-registry-card">
+          <p className="eyebrow">Base Sepolia assets</p>
+          <h2>Guided testnet registry</h2>
+          <p>Local overrides let guided checks resolve mock token balances and allowances without rebuilding the app.</p>
+          <div className="asset-registry-list">
+            {GUIDED_CONFIGURABLE_ASSETS.map((symbol) => {
+              const defaultDecimals = guidedDefaultAssetDecimals(symbol);
+              const deploymentAddress = guidedDeploymentAssetAddress(symbol);
+              const envEntry = resolveGuidedAssetEnvOverride(symbol);
+              const entry = deploymentAddress
+                ? { address: deploymentAddress, decimals: String(defaultDecimals ?? '') }
+                : assetOverrides[symbol] ?? envEntry ?? { address: '', decimals: String(defaultDecimals ?? '') };
+              const sourcedFromEnv = Boolean(envEntry && !deploymentAddress);
+              const envNote = assetOverrides[symbol]
+                ? 'Originally resolved from environment. Browser override is saved for this device.'
+                : 'Resolved from environment. Editing stores a browser override for this device.';
+              const addressValid = !entry.address || isGuidedAssetAddress(entry.address);
+              const decimalsDisabled = Boolean(deploymentAddress || !entry.address);
+              const decimalsValue = Number(entry.decimals);
+              const decimalsValid = !entry.decimals || (Number.isInteger(decimalsValue) && decimalsValue >= 0 && decimalsValue <= 36);
+              return (
+                <div className="asset-registry-row" key={symbol}>
+                  <strong>{symbol}</strong>
+                  <label>
+                    <span>Token address</span>
+                    <input
+                      value={entry.address}
+                      onChange={(event) => updateAssetOverride(symbol, 'address', event.target.value)}
+                      placeholder="0x..."
+                      aria-invalid={!addressValid}
+                      readOnly={Boolean(deploymentAddress)}
+                    />
+                  </label>
+                  <label>
+                    <span>Decimals</span>
+                    <input
+                      inputMode="numeric"
+                      value={entry.decimals}
+                      onChange={(event) => updateAssetOverride(symbol, 'decimals', event.target.value)}
+                      placeholder={defaultDecimals === null ? '18' : String(defaultDecimals)}
+                      readOnly={Boolean(deploymentAddress)}
+                      disabled={decimalsDisabled}
+                      aria-invalid={!decimalsValid}
+                    />
+                  </label>
+                  {deploymentAddress ? <small>Resolved from deployment. Settings overrides are disabled for this asset.</small> : null}
+                  {sourcedFromEnv ? <small>{envNote}</small> : null}
+                  {!deploymentAddress && !entry.address ? <small>Add a token address before changing decimals.</small> : null}
+                  {!deploymentAddress && !addressValid ? <small className="inline-error">Enter a 20-byte 0x token address.</small> : null}
+                  {!deploymentAddress && !decimalsValid ? <small className="inline-error">Enter a whole number between 0 and 36.</small> : null}
+                </div>
+              );
+            })}
+          </div>
+          <button className="secondary-action" type="button" onClick={clearAssetOverrides}>Clear asset overrides</button>
+        </article>
+
         <article className="settings-card panel-surface">
           <p className="eyebrow">Privacy</p>
           <h2>Browser data and support</h2>
@@ -1625,6 +2593,7 @@ function SettingsPanel({ riskGuardrail, actionsPaused, onRiskGuardrailChange, on
         <Metric label="Receipts required" value={confirmReceipts ? 'Yes' : 'No'} />
         <Metric label="Local analytics" value={localAnalytics ? 'Enabled' : 'Off'} />
         <Metric label="Emergency state" value={actionsPaused ? 'Paused' : 'Normal'} />
+        <Metric label="Asset overrides" value={Object.keys(assetOverrides).length ? Object.keys(assetOverrides).join(', ') : 'None'} />
       </section>
     </div>
   );
@@ -1696,7 +2665,7 @@ function DataRights({ wallet, onStorageCleared }: { wallet: WalletState; onStora
           <p>Removes Vaipakam preferences, analytics opt-in state, and session crash notes from this browser only.</p>
           {confirmClear ? (
             <div className="confirm-strip">
-              <span>Clear Vaipakam local settings and support notes from this browser?</span>
+              <span>Clear Vaipakam local settings, support notes, and any locally prepared action drafts from this browser?</span>
               <button className="danger-action" type="button" onClick={clearLocalData}>Confirm clear</button>
               <button className="secondary-action" type="button" onClick={() => setConfirmClear(false)}>Cancel</button>
             </div>
@@ -1888,15 +2857,25 @@ function Principle({ icon, title, body }: { icon: ReactNode; title: string; body
 }
 
 
-function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number) {
+function shortCalldata(value: Hex) {
+  return value.slice(0, 18) + '...' + value.slice(-10);
+}
+
+function preflightGapLabel(value: number | undefined, noun: string) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 'untracked ' + noun + 's';
+  return value + ' ' + noun + (value === 1 ? '' : 's');
+}
+
+function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount: number, walletCheckStatus: GuidedWalletCheckResult['status']) {
   const connected = Boolean(wallet.account);
   const baseReady = wallet.chainId === BASE_SEPOLIA_CHAIN_ID;
+  const walletCheckPassed = walletCheckStatus === 'passed';
   if (flow.kind === 'borrow') {
     return [
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Borrow amount entered' : 'Enter borrow amount', ready: numericAmount > 0 },
-      { label: 'Repay route preview pending contract wiring', ready: false },
+      { label: walletCheckPassed ? 'Collateral balance and approval passed in Step 4' : 'Check collateral balance and approval in Step 4', ready: walletCheckPassed },
     ];
   }
   if (flow.kind === 'rent') {
@@ -1904,25 +2883,27 @@ function buildChecklistRows(flow: GuidedFlow, wallet: WalletState, numericAmount
       { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
       { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
       { label: numericAmount > 0 ? 'Rental duration entered' : 'Enter rental duration', ready: numericAmount > 0 },
-      { label: 'Close and claim path pending contract wiring', ready: false },
+      { label: walletCheckPassed ? 'Rental funding checks passed in Step 4' : 'Check rental funding in Step 4', ready: walletCheckPassed },
     ];
   }
   return [
     { label: connected ? 'Wallet connected' : 'Connect wallet', ready: connected },
     { label: baseReady ? 'Base Sepolia selected' : 'Switch to Base Sepolia', ready: baseReady },
     { label: numericAmount > 0 ? 'Lend amount entered' : 'Enter lend amount', ready: numericAmount > 0 },
-    { label: 'Allowance check pending contract wiring', ready: false },
+    { label: walletCheckPassed ? 'Token balance and allowance passed in Step 4' : 'Check token balance and allowance in Step 4', ready: walletCheckPassed },
   ];
 }
 
 function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount: number) {
   const amount = numericAmount.toLocaleString(undefined, { maximumFractionDigits: 4 });
   if (flow.kind === 'borrow') {
-    const repay = (numericAmount * 1.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const interest = numericAmount * (GUIDED_BORROW_RATE_BPS / 10_000) * (GUIDED_BORROW_DURATION_DAYS / 365);
+    const repay = (numericAmount + interest).toLocaleString(undefined, { maximumFractionDigits: 4 });
+    const interestLabel = interest.toLocaleString(undefined, { maximumFractionDigits: 4 });
     return [
       ['You receive', amount + ' ' + selectedAsset],
       ['You lock', 'Collateral sized from the selected offer and safety buffer.'],
-      ['You may owe', repay + ' ' + selectedAsset + ' including example interest.'],
+      ['You may owe', repay + ' ' + selectedAsset + ', including about ' + interestLabel + ' ' + selectedAsset + ' term interest at the guided APR.'],
       ['You can lose', 'Collateral can be claimed or liquidated after default.'],
       ['Fees', 'Protocol fee, any VPFI discount, swap slippage if used, and gas.'],
       ['When this ends', 'Repay, preclose, refinance, add collateral, or settle after default.'],
@@ -1940,19 +2921,15 @@ function buildReceiptRows(flow: GuidedFlow, selectedAsset: string, numericAmount
       ['When this ends', 'Rental expires, renter closes, or owner claims per terms.'],
     ];
   }
-  const interest = (numericAmount * 0.065).toLocaleString(undefined, { maximumFractionDigits: 4 });
+  const interest = (numericAmount * (GUIDED_EARN_RATE_BPS / 10_000) * (GUIDED_EARN_DURATION_DAYS / 365)).toLocaleString(undefined, { maximumFractionDigits: 4 });
   return [
-    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' interest if repaid.'],
+    ['You receive', amount + ' ' + selectedAsset + ' principal plus about ' + interest + ' ' + selectedAsset + ' term interest if repaid at the guided APR.'],
     ['You lock', amount + ' ' + selectedAsset + ' until repay, cancel, or settlement.'],
     ['You may owe', 'No repayment obligation; gas is needed for offer actions.'],
     ['You can lose', 'Time value and settlement route risk if collateral cannot execute.'],
     ['Fees', 'Treasury fee after any VPFI discount, plus network gas.'],
     ['When this ends', 'Borrower repays, lender cancels before match, or lender claims collateral after default.'],
   ];
-}
-
-function shortAddress(address: string) {
-  return address.slice(0, 6) + '...' + address.slice(-4);
 }
 
 function chainLabel(chainId: string | null) {

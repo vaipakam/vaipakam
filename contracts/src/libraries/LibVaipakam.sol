@@ -4649,6 +4649,50 @@ library LibVaipakam {
         ///      rule (Codex #832 P1) — a transient single-slot field must never
         ///      shift an existing field's slot.
         address sanctionedDepositExemptUser;
+        // ─── #776 Cross-chain reward-budget remittance (Base→mirror) ──────
+        // APPENDED AT THE END per the append-only storage rule. On-demand
+        // Base→mirror VPFI reward-budget bridge (Option C — see
+        // docs/DesignsAndPlans/CrossChainRewardBudgetBridge.md). Base holds the
+        // 69M interaction pool; mirror claims draw from a locally-funded VPFI
+        // balance. `RewardRemittanceFacet.remitRewardBudget` computes each
+        // finalized day's per-chain slice and ships VPFI over the CCIP token
+        // path (the value-carrying `crossChainMessenger` on its own dedicated
+        // `vpfi-reward-budget` channel, NOT the data-only `rewardMessenger`),
+        // tracking what's been sent so a batch is idempotent and the global 69M
+        // cap is never exceeded.
+        //
+        // dstChainId => dayId => VPFI already remitted for that (chain, day).
+        // A non-zero entry blocks re-remittance, so re-running a partially-sent
+        // batch is safe (already-sent days are skipped).
+        mapping(uint32 => mapping(uint256 => uint256)) rewardBudgetRemitted;
+        // dstChainId => cumulative VPFI remitted to that mirror. Monitoring +
+        // reconciliation.
+        mapping(uint32 => uint256) rewardBudgetRemittedTotal;
+        // Σ across every mirror. Guarded together with `interactionPoolPaidOut`
+        // so Base can never remit more than `VPFI_INTERACTION_POOL_CAP`.
+        uint256 rewardBudgetRemittedGlobal;
+        // Optional automation role. `address(0)` (default) = owner-only; when
+        // set, this EOA may also call `remitRewardBudget` (the apps/keeper
+        // loop). Setter is ADMIN_ROLE-only.
+        address rewardRemittanceKeeper;
+        // #776 — dayId => chainId => was this chain's numerator INCLUDED in
+        // that day's finalized global denominator (i.e. expected AND reported
+        // at `finalizeDay`)? Set by `RewardAggregatorFacet._finalizeAndWrite`.
+        // The reward-budget slice (`LibInteractionRewards.chainRewardBudgetForDay`)
+        // gates on this so a chain that reported but was removed from the
+        // expected set before finalization — whose stale `chainDaily*` would
+        // otherwise divide by the smaller denominator and over-send — yields a
+        // zero slice. Immune to post-finalize expected-set edits (it snapshots
+        // participation AT finalize, not a live membership check).
+        mapping(uint256 => mapping(uint32 => bool)) chainDailyIncluded;
+        // ─── #776 receive side (mirror chains) ────────────────────────────
+        // The mirror-side `RewardRemittanceReceiver` authorized to call the
+        // Diamond's `onRewardBudgetReceived` ingress. `address(0)` = ingress
+        // disabled (Base, or an unconfigured mirror).
+        address rewardRemittanceReceiver;
+        // Cumulative VPFI reward budget received from Base on this mirror.
+        // Monitoring/reconciliation only — claims draw from the raw balance.
+        uint256 rewardBudgetReceivedTotal;
     }
 
     /// @notice #393 v1-b — the originating intent of a `matchIntent` loan,
