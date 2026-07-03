@@ -27,3 +27,11 @@ unpriced assets get the same in-kind-default warning as accepted ones,
 and one-year offers now show their correct 30-day grace window. The
 shown grace period and the enforced grace window are derived from the
 same schedule so they cannot drift apart.
+
+Advanced mode gains the first loan-strategy action: borrowers on an
+active, on-time ERC-20 loan can close it early from the loan's detail
+page. The review states the real cost up front — full-term loans (the
+protocol default) still pay the whole term's interest when closed
+early, day-by-day loans pay only what has accrued — with the exact
+amount read live at confirmation and collateral released immediately
+after closing.

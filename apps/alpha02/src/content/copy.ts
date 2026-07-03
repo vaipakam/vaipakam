@@ -191,6 +191,20 @@ export const copy = {
       'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
+  preclose: {
+    title: 'Close this loan early',
+    blurb:
+      'Pay everything now and close the loan today — your collateral is released immediately after.',
+    fullTermNote:
+      'This loan uses full-term interest, so closing early still pays the whole term’s interest.',
+    proRataNote:
+      'This loan accrues interest day by day, so closing early pays only what has accrued.',
+    action: 'Close early',
+    confirm: 'Confirm — pay and close now',
+    done:
+      'Loan closed early. Your collateral is ready — claim it below or from the Claim Center.',
+  },
+
   positions: {
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',

@@ -74,6 +74,7 @@ export function PositionDetails() {
   const [confirming, setConfirming] = useState(false);
   const [confirmingCollateral, setConfirmingCollateral] = useState(false);
   const [confirmingPartial, setConfirmingPartial] = useState(false);
+  const [confirmingPreclose, setConfirmingPreclose] = useState(false);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -180,6 +181,57 @@ export function PositionDetails() {
   // wind-down is deliberately unscreened).
   const sanctions = useSanctionsCheck();
   const sanctionsClear = sanctions.ready && !sanctions.flagged;
+
+  // Live loan snapshot — interest MODE and the re-stampable accrual
+  // clock live only on-chain (the indexer row lacks them), and the
+  // preclose estimate/mode note must not guess.
+  const loanLive = useQuery({
+    queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
+    enabled:
+      Boolean(readClient) &&
+      Boolean(loan.data) &&
+      loan.data?.status === 'active' &&
+      !loanIsRental,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const live = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoanDetails',
+        args: [BigInt(loan.data!.loanId)],
+      })) as {
+        principal: bigint;
+        interestRateBps: bigint;
+        startTime: bigint;
+        interestAccrualStart: bigint;
+        interestRemainingDays: number;
+        useFullTermInterest: boolean;
+      };
+      return live;
+    },
+  });
+
+  // Display-only preclose estimate (submit recomputes with CHAIN time
+  // and approves with headroom): principal + full-term interest on the
+  // remaining committed term, or pro-rata accrued for day-by-day loans.
+  const precloseEstimate = useMemo(() => {
+    const live = loanLive.data;
+    if (!live || !loan.data) return null;
+    const remainingDays =
+      live.interestAccrualStart !== 0n
+        ? BigInt(live.interestRemainingDays)
+        : BigInt(loan.data.durationDays);
+    const accrualStart =
+      live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
+    const elapsedDays = BigInt(
+      Math.max(0, Math.floor(Date.now() / 1000) - Number(accrualStart)),
+    ) / 86_400n;
+    const days = live.useFullTermInterest ? remainingDays : elapsedDays + 1n;
+    return (
+      live.principal +
+      (live.principal * live.interestRateBps * days) / (365n * 10_000n)
+    );
+  }, [loanLive.data, loan.data]);
 
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
@@ -601,6 +653,89 @@ export function PositionDetails() {
   // NFT collateral is identified by collateralTokenId/quantity — its
   // fungible `collateralAmount` is normally ZERO, so amount alone must
   // not decide "no collateral" (that would hide a real NFT pledge).
+  async function runPreclose() {
+    if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // precloseDirect is a Tier-1 entry point — live re-screen, plus
+      // the ownership/clock reads, one round-trip.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
+      const [, live, latestBlock] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        publicClient.readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getLoanDetails',
+          args: [BigInt(row.loanId)],
+        }) as Promise<{
+          principal: bigint;
+          interestRateBps: bigint;
+          startTime: bigint;
+          interestAccrualStart: bigint;
+          interestRemainingDays: number;
+          useFullTermInterest: boolean;
+        }>,
+        publicClient.getBlock({ blockTag: 'latest' }),
+      ]);
+      // computePreclose charges principal + FULL-TERM interest on the
+      // remaining committed term for full-term loans, pro-rata accrued
+      // for day-by-day loans. Approve with day-boundary headroom — the
+      // contract pulls only what it recomputes.
+      const remainingDays =
+        live.interestAccrualStart !== 0n
+          ? BigInt(live.interestRemainingDays)
+          : BigInt(row.durationDays);
+      const accrualStart =
+        live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
+      const elapsedDays =
+        latestBlock.timestamp > accrualStart
+          ? (latestBlock.timestamp - accrualStart) / 86_400n
+          : 0n;
+      const interestDays = live.useFullTermInterest
+        ? remainingDays + 2n
+        : elapsedDays + 2n;
+      const due =
+        live.principal +
+        (live.principal * live.interestRateBps * interestDays) / (365n * 10_000n);
+      await assertErc20BalanceLive({
+        publicClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        amount: due,
+        symbol: principalMeta.data.symbol,
+      });
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        spender: walletChain.diamondAddress,
+        amount: due,
+      });
+      await write('precloseDirect', [BigInt(row.loanId)]);
+      setDoneMessage(copy.preclose.done);
+      setConfirmingPreclose(false);
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+      void queryClient.invalidateQueries({ queryKey: ['claimables'] });
+    } catch (err) {
+      setError(submitErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const hasCollateral =
     row.collateralAsset.toLowerCase() !==
       '0x0000000000000000000000000000000000000000' &&
@@ -970,6 +1105,85 @@ export function PositionDetails() {
                 >
                   {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
                   {busy ? 'Waiting for wallet…' : 'Confirm — repay part'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
+      {isAdvanced &&
+      role === 'borrower' &&
+      row.status === 'active' &&
+      !isRental &&
+      principal &&
+      Date.now() / 1000 < row.startTime + row.durationDays * 86_400 ? (
+        <section className="card">
+          <h3>{copy.preclose.title}</h3>
+          <p className="muted">
+            {copy.preclose.blurb}{' '}
+            {loanLive.data
+              ? loanLive.data.useFullTermInterest
+                ? copy.preclose.fullTermNote
+                : copy.preclose.proRataNote
+              : null}
+          </p>
+          {!confirmingPreclose ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={
+                busy ||
+                !onSupportedChain ||
+                !walletClient ||
+                !publicClient ||
+                !sanctionsClear ||
+                // The estimate and mode note come from the live loan —
+                // don't open a review that can't state the cost.
+                !loanLive.data
+              }
+              onClick={() => setConfirmingPreclose(true)}
+            >
+              {copy.preclose.action}
+            </button>
+          ) : loanLive.data ? (
+            <div style={{ marginTop: 8 }}>
+              <ReviewReceipt
+                data={{
+                  youReceive: `${collateralStr} collateral back — claimable right after closing.`,
+                  youLock: 'Nothing new.',
+                  youMayOwe: `~${
+                    precloseEstimate !== null
+                      ? formatTokenAmount(precloseEstimate, principal.decimals)
+                      : '…'
+                  } ${principal.symbol}, paid now. ${
+                    loanLive.data.useFullTermInterest
+                      ? copy.preclose.fullTermNote
+                      : copy.preclose.proRataNote
+                  } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+                  youCanLose: 'Nothing beyond what you pay.',
+                  fees: 'No extra Vaipakam fee to close early — the protocol’s cut comes out of the lender’s interest.',
+                  whenThisEnds: 'Immediately — the loan settles today and your collateral is released.',
+                }}
+              />
+              <div className="cluster" style={{ marginTop: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setConfirmingPreclose(false)}
+                  disabled={busy}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  style={{ flex: 1 }}
+                  disabled={busy}
+                  onClick={() => void runPreclose()}
+                >
+                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
+                  {busy ? 'Waiting for wallet…' : copy.preclose.confirm}
                 </button>
               </div>
             </div>
