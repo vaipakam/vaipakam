@@ -1,5 +1,10 @@
-import { useState } from 'react';
-import { cancelOffer } from '@vaipakam/defi-client';
+import { useMemo, useState } from 'react';
+import {
+  cancelOffer,
+  isHealthFactorAtRisk,
+  isNftRentalLoan,
+  loanRoleForWallet,
+} from '@vaipakam/defi-client';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { HelpLink } from '../components/HelpLink';
 import { OfferCard } from '../components/OfferCard';
@@ -9,8 +14,14 @@ import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useMyLoans } from '../hooks/useIndexedLoans';
 import { useMyOffers } from '../hooks/useMyOffers';
 import { useDiamondContract } from '../hooks/useDiamond';
+import { useMode } from '../context/ModeContext';
+import { useLoanRisks } from '../hooks/useLoanRisks';
+
+type RoleFilter = 'all' | 'borrower' | 'lender';
+type RiskFilter = 'all' | 'at-risk';
 
 export function PositionsPage() {
+  const { mode } = useMode();
   const { address, connect } = useWallet();
   const indexerOrigin = useIndexerOrigin();
   const diamond = useDiamondContract();
@@ -24,6 +35,27 @@ export function PositionsPage() {
   } = useMyOffers();
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+  const [roleFilter, setRoleFilter] = useState<RoleFilter>('all');
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>('all');
+
+  const loanList = loans ?? [];
+  const offerList = offers ?? [];
+  const { data: riskMap } = useLoanRisks(loanList.map((l) => l.loanId));
+
+  const filteredLoans = useMemo(() => {
+    if (mode !== 'advanced') return loanList;
+    return loanList.filter((loan) => {
+      const role = loanRoleForWallet(loan, address);
+      if (roleFilter === 'borrower' && role !== 'borrower' && role !== 'both') return false;
+      if (roleFilter === 'lender' && role !== 'lender' && role !== 'both') return false;
+      if (riskFilter === 'at-risk') {
+        if (isNftRentalLoan(loan) || loan.status !== 'active') return false;
+        const hf = riskMap?.get(loan.loanId)?.healthFactor;
+        if (!isHealthFactorAtRisk(hf)) return false;
+      }
+      return true;
+    });
+  }, [address, loanList, mode, riskFilter, riskMap, roleFilter]);
 
   if (!address) {
     return (
@@ -43,9 +75,7 @@ export function PositionsPage() {
     (loansErr instanceof Error ? loansErr.message : null) ??
     (offersErr instanceof Error ? offersErr.message : null) ??
     'Indexer request failed';
-  const loanList = loans ?? [];
-  const offerList = offers ?? [];
-  const empty = !loading && !indexerError && loanList.length === 0 && offerList.length === 0;
+  const empty = !loading && !indexerError && filteredLoans.length === 0 && offerList.length === 0;
 
   async function handleCancelOffer(offerId: number) {
     setCancellingId(offerId);
@@ -87,15 +117,35 @@ export function PositionsPage() {
         </div>
       ) : null}
 
+      {mode === 'advanced' && loanList.length > 0 ? (
+        <div className="position-filters" data-testid="position-filters">
+          <label>
+            Role
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as RoleFilter)}>
+              <option value="all">All roles</option>
+              <option value="borrower">Borrower / renter</option>
+              <option value="lender">Lender / owner</option>
+            </select>
+          </label>
+          <label>
+            Risk
+            <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value as RiskFilter)}>
+              <option value="all">All loans</option>
+              <option value="at-risk">HF below 1.5</option>
+            </select>
+          </label>
+        </div>
+      ) : null}
+
       {loading ? <p>Loading positions…</p> : null}
 
-      {!loading && loanList.length > 0 ? (
+      {!loading && filteredLoans.length > 0 ? (
         <section style={{ marginBottom: 24 }}>
           <h2 className="section-title">Active loans</h2>
           <ErrorBoundary>
             <div className="position-list">
-              {loanList.map((loan) => (
-                <PositionCard key={loan.loanId} loan={loan} />
+              {filteredLoans.map((loan) => (
+                <PositionCard key={loan.loanId} loan={loan} risk={riskMap?.get(loan.loanId)} />
               ))}
             </div>
           </ErrorBoundary>

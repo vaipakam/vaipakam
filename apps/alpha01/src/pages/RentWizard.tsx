@@ -170,6 +170,11 @@ function requestReceipt(opts: {
       label: 'When this ends',
       value: 'When you cancel, a lender accepts, or the rental term closes after a match.',
     },
+    technicalDetails: [
+      { label: 'Demand locks prepay', value: 'Yes — at post time (PF-044)' },
+      { label: 'Rental buffer', value: `${(opts.rentalBufferBps / 100).toFixed(1)}%` },
+      { label: 'Max term', value: `${opts.duration} days` },
+    ],
   };
 }
 
@@ -232,6 +237,13 @@ function acceptReceipt(
       label: 'When this ends',
       value: `After ${offer.durationDays} days, or earlier if you close the rental.`,
     },
+    technicalDetails: [
+      { label: 'Listing offer ID', value: `#${offer.offerId}` },
+      { label: 'NFT contract', value: offer.lendingAsset },
+      { label: 'Rental buffer', value: `${(rentalBufferBps / 100).toFixed(1)}%` },
+      { label: 'Total prepay wei', value: totalPrepay.toString() },
+      { label: 'Rights model', value: 'Temporary use (vault custody); not ownership transfer' },
+    ],
   };
 }
 

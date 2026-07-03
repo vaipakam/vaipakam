@@ -6,6 +6,7 @@ import { useWallet } from '../context/WalletContext';
 import { useMyLoans } from '../hooks/useIndexedLoans';
 import { useMyOffers } from '../hooks/useMyOffers';
 import { HelpLink } from './HelpLink';
+import { PortfolioStrip } from './PortfolioStrip';
 
 const INTENTS = [
   { to: '/borrow', title: 'Borrow assets', body: 'Find a lender and lock collateral to borrow.', icon: ArrowDownLeft },
@@ -36,6 +37,10 @@ export function IntentHome() {
           <p style={{ marginBottom: 12 }}>Connect your wallet to borrow, lend, or manage positions.</p>
           <ConnectKitButton />
         </div>
+      ) : null}
+
+      {mode === 'advanced' && address && positionCount > 0 ? (
+        <PortfolioStrip loans={loans ?? []} offerCount={offers?.length ?? 0} />
       ) : null}
 
       {positionCount > 0 ? (

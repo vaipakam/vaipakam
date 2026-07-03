@@ -20,7 +20,10 @@ import { AssetAmount } from '../components/AssetAmount';
 import { HelpLink } from '../components/HelpLink';
 import { useTokenMeta } from '../lib/tokenMeta';
 import { useWallet } from '../context/WalletContext';
+import { TechnicalRiskPanel } from '../components/TechnicalRiskPanel';
+import { useMode } from '../context/ModeContext';
 import { useLoanHealth } from '../hooks/useLoanHealth';
+import { useLoanRisks } from '../hooks/useLoanRisks';
 import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
@@ -35,7 +38,9 @@ export function PositionDetailPage() {
   const publicClient = useDiamondPublicClient();
   const { data: walletClient } = useWalletClient();
   const origin = useIndexerOrigin();
+  const { mode } = useMode();
   const { data: hf } = useLoanHealth(id);
+  const { data: riskMap, isLoading: riskLoading } = useLoanRisks(Number.isFinite(id) ? [id] : []);
 
   const { data: loan, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['loan', chain.chainId, id, origin],
@@ -155,9 +160,11 @@ export function PositionDetailPage() {
 
   const statusLabel =
     loan.status === 'active'
-      ? isBorrower
-        ? health.label
-        : 'Active'
+      ? rental
+        ? 'Active'
+        : isBorrower
+          ? health.label
+          : 'Active'
       : loan.status === 'repaid'
         ? 'Repaid — ready to claim'
         : loan.status;
@@ -241,6 +248,9 @@ export function PositionDetailPage() {
               <strong>Interest:</strong> {formatBpsAsPercent(loan.interestRateBps)} over {loan.durationDays} days
             </div>
             {isBorrower ? <div style={{ color: 'var(--text-secondary)' }}>{health.detail}</div> : null}
+            {mode === 'advanced' && isBorrower ? (
+              <TechnicalRiskPanel risk={riskMap?.get(loan.loanId)} loading={riskLoading} />
+            ) : null}
             <details>
               <summary>What happens if I do nothing?</summary>
               <p style={{ marginTop: 8, color: 'var(--text-secondary)' }}>

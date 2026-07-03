@@ -26,6 +26,7 @@ import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 import { assessCollateralBalance } from '../lib/balanceCheck';
 import { resolveSymbol } from '../lib/formatAsset';
+import { lendCreateTechnicalDetails, lendFundTechnicalDetails } from '../lib/advancedReceipt';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import {
@@ -81,6 +82,7 @@ function fundReceipt(
     },
     fees: { label: 'Fees', value: 'Treasury yield fee at settlement. Network gas is separate.' },
     whenEnds: { label: 'When this ends', value: `After ${offer.durationDays} days or borrower repayment.` },
+    technicalDetails: lendFundTechnicalDetails(offer),
   };
 }
 
@@ -117,6 +119,7 @@ function createReceipt(
       label: 'When this ends',
       value: `The open offer stays live until a borrower accepts or you cancel — no automatic expiry. After acceptance, the loan term is ${duration} days.`,
     },
+    technicalDetails: lendCreateTechnicalDetails(rate, duration),
   };
 }
 

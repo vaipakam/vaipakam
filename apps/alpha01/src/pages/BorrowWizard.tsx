@@ -30,6 +30,7 @@ import { useLenderOffersForBorrow } from '../hooks/useIndexedOffers';
 import { useSpendableBalance } from '../hooks/useSpendableBalance';
 import { useDiamondContract, useDiamondPublicClient, useReadChain } from '../hooks/useDiamond';
 import { useMode } from '../context/ModeContext';
+import { borrowAcceptTechnicalDetails } from '../lib/advancedReceipt';
 import { baseEligibilityItems, sanctionsAllowsProceed } from '../lib/eligibility';
 
 import { assessCollateralBalance, parseHumanAmount } from '../lib/balanceCheck';
@@ -107,6 +108,7 @@ function borrowReceipt(
       label: 'When this ends',
       value: `After ${offer.durationDays} days, or when you fully repay.`,
     },
+    technicalDetails: borrowAcceptTechnicalDetails(offer, lifBps),
   };
 }
 
