@@ -1132,10 +1132,12 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](3);
+        selectors = new bytes4[](4);
         selectors[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         selectors[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         selectors[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        // #951 (Codex #959) — cross-facet completion entry.
+        selectors[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
         return selectors;
     }
 

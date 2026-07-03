@@ -1419,9 +1419,16 @@ contract OfferAcceptFacet is
             // Lender-sale vehicle (created by createLoanSaleOffer)
             uint256 saleLoanId = sCheck.saleOfferToLoanId[offerId];
             if (saleLoanId != 0) {
+                // Use `completeLoanSaleInternal` not `completeLoanSale`: this
+                // facet's `acceptOffer` already holds the diamond's `nonReentrant`
+                // lock, so a cross-facet call into `completeLoanSale` (also
+                // `nonReentrant`) would revert `ReentrancyGuardReentrantCall` and
+                // break the atomic accept-then-complete (#951 Codex #959). Same
+                // shape as the offset path below. Internal entry is gated on
+                // `msg.sender == address(this)`.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        EarlyWithdrawalFacet.completeLoanSale.selector,
+                        EarlyWithdrawalFacet.completeLoanSaleInternal.selector,
                         saleLoanId
                     ),
                     OfferAcceptFailed.selector

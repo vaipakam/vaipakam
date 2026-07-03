@@ -114,6 +114,13 @@ contract EarlyWithdrawalFacet is
     ///         forward link and strand the reverse link, splitting accept/cancel
     ///         authority across two offers.
     error SaleOfferAlreadyExists();
+    /// @notice #951 (Codex #959 round-2) — Phase 1 lender-sale is limited to loans
+    ///         with ERC-20 collateral. The sale vehicle escrows no fresh collateral
+    ///         (it stays on the live loan), so the downstream accept / complete /
+    ///         cancel paths would otherwise try to withdraw or refund an
+    ///         ERC-721/ERC-1155 the vehicle never held. NFT-collateral lender-sale
+    ///         is a tracked follow-up (#974); until then it is rejected at listing.
+    error SaleOfferCollateralMustBeERC20();
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -495,6 +502,13 @@ contract EarlyWithdrawalFacet is
         // NFT rental lender-sale not supported in Phase 1
         if (loan.assetType != LibVaipakam.AssetType.ERC20)
             revert InvalidSaleOffer();
+        // #951 (Codex #959 round-2) — Phase 1 lender-sale requires ERC-20
+        // collateral. The vehicle escrows no fresh collateral (it stays on the
+        // live loan), so an ERC-721/ERC-1155 collateral loan would make the
+        // downstream accept / complete / cancel paths try to move an NFT the
+        // vehicle never held. NFT-collateral lender-sale is tracked as #974.
+        if (loan.collateralAssetType != LibVaipakam.AssetType.ERC20)
+            revert SaleOfferCollateralMustBeERC20();
 
         // #951 (Codex #959) — one live listing per loan. Without this, a second
         // `createLoanSaleOffer` for the same loan mints another sale offer,
@@ -658,8 +672,32 @@ contract EarlyWithdrawalFacet is
     function completeLoanSale(
         uint256 loanId
     ) external nonReentrant whenNotPaused {
+        _completeLoanSaleImpl(loanId);
+    }
+
+    /// @notice #951 (Codex #959) — cross-facet completion entry consumed by
+    ///         `OfferAcceptFacet._acceptOffer`'s auto-link block after a buyer
+    ///         accepts the linked sale offer. Skips the outer `nonReentrant`
+    ///         modifier because `acceptOffer` already holds the diamond guard (a
+    ///         second `_enter()` would revert `ReentrancyGuardReentrantCall` and
+    ///         break the atomic accept-then-complete entirely). Same
+    ///         `address(this)`-only gate as `PrecloseFacet.completeOffsetInternal`
+    ///         / `createOfferInternal`.
+    function completeLoanSaleInternal(
+        uint256 loanId
+    ) external whenNotPaused {
+        if (msg.sender != address(this)) revert UnauthorizedCrossFacetCall();
+        _completeLoanSaleImpl(loanId);
+    }
+
+    /// @dev Shared body for `completeLoanSale` (external, `nonReentrant`) and
+    ///      `completeLoanSaleInternal` (cross-facet, no outer guard).
+    function _completeLoanSaleImpl(uint256 loanId) private {
         // Tier-1 sanctions gate — funds settle to msg.sender on
-        // successful sale; sanctioned recipient blocked.
+        // successful sale; sanctioned recipient blocked. (On the cross-facet
+        // auto-complete path `msg.sender` is the diamond — a no-op — but both
+        // settlement parties are already screened upstream: the buyer at
+        // `acceptOffer`, the exiting seller at `createLoanSaleOffer`.)
         LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Loan storage loan = s.loans[loanId];
@@ -681,7 +719,16 @@ contract EarlyWithdrawalFacet is
             /* lenderSide */ true
         );
 
-        address originalLender = loan.lender;
+        // #951 (Codex #959 round-2) — settle against the CURRENT lender-position
+        // holder (the seller), not the latched `loan.lender`. `createLoanSaleOffer`
+        // does not consolidate `loan.lender` to the current holder, so on a
+        // transferred-but-unconsolidated position `loan.lender` is stale — while
+        // the sale principal was paid by `acceptOffer` to the current holder (the
+        // offer creator). Using the stale field here would settle accrued /
+        // shortfall against the departed lender and split it from who was paid.
+        // The lender NFT is native-locked for the sale flow, so the holder cannot
+        // have changed since listing; `ownerOf` is the authoritative seller.
+        address originalLender = LibERC721.ownerOf(loan.lenderTokenId);
 
         // #393 v1-b — the seller EXITS the loan here (receives sale proceeds and
         // hands the position to the buyer), so release their standing-intent

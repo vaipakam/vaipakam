@@ -557,20 +557,25 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      collateral stays on the linked live loan). Mutate the loan's collateral
     ///      type to ERC721: without the borrower-pull skip the create reverts on the
     ///      NFT `safeTransferFrom`; with it, the listing posts.
-    function testCreateLoanSaleOfferSkipsCollateralPullForNftCollateral() public {
+    /// @dev #951 (Codex #959 round-2) — Phase 1 lender-sale is ERC-20-collateral
+    ///      only. A loan with ERC-721/ERC-1155 collateral is rejected at listing
+    ///      (the vehicle escrows no collateral, so the downstream accept/complete/
+    ///      cancel paths must not try to move an NFT that was never held).
+    ///      NFT-collateral lender-sale is tracked as #974.
+    function testCreateLoanSaleOfferRejectsNftCollateral() public {
         _setLoanCollateralAssetType(activeLoanId, LibVaipakam.AssetType.ERC721);
 
-        vm.recordLogs();
         vm.prank(lender);
+        vm.expectRevert(EarlyWithdrawalFacet.SaleOfferCollateralMustBeERC20.selector);
         EarlyWithdrawalFacet(address(diamond)).createLoanSaleOffer(activeLoanId, 500, true);
+    }
 
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("LoanSaleOfferLinked(uint256,uint256)");
-        uint256 saleOfferId;
-        for (uint256 i; i < logs.length; i++) {
-            if (logs[i].topics[0] == sig) saleOfferId = uint256(logs[i].topics[2]);
-        }
-        assertGt(saleOfferId, 0, "NFT-collateral sale vehicle posts without pulling the NFT");
+    /// @dev #951 (Codex #959 round-2) — the cross-facet completion entry is gated
+    ///      to the diamond itself; a direct external call must revert.
+    function testCompleteLoanSaleInternalRejectsExternalCaller() public {
+        vm.prank(lender);
+        vm.expectRevert(); // UnauthorizedCrossFacetCall (msg.sender != address(this))
+        EarlyWithdrawalFacet(address(diamond)).completeLoanSaleInternal(activeLoanId);
     }
 
     // ─── _getTreasury coverage via accrued interest ───────────────────────────

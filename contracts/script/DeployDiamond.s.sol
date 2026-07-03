@@ -1753,10 +1753,13 @@ contract DeployDiamond is Script {
     }
 
     function _getEarlyWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](3);
+        s = new bytes4[](4);
         s[0] = EarlyWithdrawalFacet.sellLoanViaBuyOffer.selector;
         s[1] = EarlyWithdrawalFacet.createLoanSaleOffer.selector;
         s[2] = EarlyWithdrawalFacet.completeLoanSale.selector;
+        // #951 (Codex #959) — cross-facet completion entry for the
+        // accept-then-complete auto-link (skips the outer nonReentrant guard).
+        s[3] = EarlyWithdrawalFacet.completeLoanSaleInternal.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {
