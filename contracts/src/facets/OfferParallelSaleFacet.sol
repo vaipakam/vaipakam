@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
 import {LibPrepayOrder} from "../libraries/LibPrepayOrder.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
+import {LibPrepayListingWiring} from "../libraries/LibPrepayListingWiring.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
@@ -184,6 +185,17 @@ contract OfferParallelSaleFacet is
         bytes32 conduitKey,
         FeeLeg[] calldata feeLegs
     ) external nonReentrant whenNotPaused returns (bytes32 orderHash) {
+        // #921 item 2 (sanctions sweep) — Tier-1 gate, mirroring the structurally
+        // identical per-loan siblings (`NFTPrepayListingFacet.postPrepayListing`
+        // et al., which screen both here). Posting a parallel-sale listing stages
+        // the offer's collateral for sale with a seller-baked fee schedule, i.e. a
+        // value-flow entry point. `createOffer` screened the creator at creation,
+        // but a wallet flagged AFTERWARDS could otherwise list here; and the
+        // fee-leg recipients must be screened so sale proceeds can't be routed to
+        // a sanctioned address. (Caller == the offer creator, enforced inside
+        // `_validatePostParallelSale`.)
+        LibVaipakam._assertNotSanctioned(msg.sender);
+        LibPrepayListingWiring.assertFeeLegRecipientsNotSanctioned(feeLegs);
         _validatePostParallelSale(offerId, askPrice, conduitKey, feeLegs);
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();

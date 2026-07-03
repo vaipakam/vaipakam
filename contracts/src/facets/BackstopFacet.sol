@@ -342,6 +342,14 @@ contract BackstopFacet is
         external
         whenNotPaused
     {
+        // #921 item 2 (sanctions sweep) — Tier-1 gate. Opting an offer into the
+        // treasury-backed backstop stages it for a fill funded by protocol
+        // (treasury) capital, i.e. a value-flow entry point. `createOffer`
+        // screened the creator at creation, but a wallet flagged AFTERWARDS could
+        // otherwise re-stage here; the downstream `backstopFill → matchIntent`
+        // screens only the vault (solver + lender), never the offer creator. Screen
+        // the caller (== the creator, enforced just below) at this opt-in.
+        LibVaipakam._assertNotSanctioned(msg.sender);
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage o = s.offers[offerId];
         if (o.creator != msg.sender) revert NotOfferCreator();

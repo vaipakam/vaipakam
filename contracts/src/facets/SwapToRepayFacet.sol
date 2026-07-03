@@ -20,6 +20,7 @@ import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {VaipakamNFTFacet} from "./VaipakamNFTFacet.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {DiamondReentrancyGuard} from "../libraries/LibReentrancyGuard.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
@@ -374,10 +375,31 @@ contract SwapToRepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         address currentBorrowerHolder = IERC721(address(this))
             .ownerOf(loan.borrowerTokenId);
         if (surplusPrincipal > 0) {
-            IERC20(loan.principalAsset).safeTransfer(
-                currentBorrowerHolder,
-                surplusPrincipal
-            );
+            // #921 item 2 (sanctions sweep) — swap-to-repay is a Tier-2 close-out
+            // that MUST complete (a flagged borrower must still be able to settle
+            // so the honest lender is made whole), so the call itself is never
+            // blocked. But the borrower's own surplus must not be handed to a
+            // SANCTIONED EOA. Freeze it at source instead: park it in the holder's
+            // vault under the sanctioned-lock (fires `SanctionedProceedsLocked`),
+            // exactly as every other close-out freezes a flagged party's proceeds
+            // (#821/#832). The unflagged path keeps the direct-EOA payout — a plain
+            // vault deposit would be unrealizable for a clean borrower (see the
+            // Codex round-4 note below), whereas the frozen case is intentionally
+            // withheld pending delisting / off-chain reconciliation.
+            if (LibVaipakam.isSanctionedAddress(currentBorrowerHolder)) {
+                LibSanctionedLock.depositLocked(
+                    s,
+                    currentBorrowerHolder,
+                    loanId,
+                    loan.principalAsset,
+                    surplusPrincipal
+                );
+            } else {
+                IERC20(loan.principalAsset).safeTransfer(
+                    currentBorrowerHolder,
+                    surplusPrincipal
+                );
+            }
         }
 
         // ── Claim slots ──────────────────────────────────────────────
