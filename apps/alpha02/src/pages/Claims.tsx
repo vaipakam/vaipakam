@@ -7,11 +7,12 @@ import { useState } from 'react';
 import { Gift, LoaderCircle, Sparkles } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
+import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
 import { useMyClaimables, useMyLoans } from '../data/hooks';
 import { useInteractionRewards } from '../data/rewards';
-import { useSanctionsCheck } from '../data/sanctions';
+import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from '../contracts/diamond';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
@@ -25,7 +26,8 @@ import type { PositionLoan } from '../data/hooks';
  *  so the source of funds is never confused (Journey C1). */
 function RewardsCard() {
   const rewards = useInteractionRewards();
-  const { onSupportedChain } = useActiveChain();
+  const { address, walletChain, onSupportedChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   // claimInteractionRewards has NO on-chain sanctions screen (unlike the
   // Tier-1 entry points), so this UI gate is load-bearing: a flagged
   // wallet must not be handed a working payout button.
@@ -43,6 +45,16 @@ function RewardsCard() {
     setBusy(true);
     setError(null);
     try {
+      // The button gate is a CACHED read, and this is the one payout
+      // with NO on-chain screen — the live re-read here is the last
+      // line of enforcement.
+      if (address && walletChain && publicClient) {
+        await assertWalletNotSanctionedLive(
+          publicClient,
+          walletChain.diamondAddress,
+          address,
+        );
+      }
       await write('claimInteractionRewards', []);
       void queryClient.invalidateQueries({ queryKey: ['interactionRewards'] });
     } catch (err) {

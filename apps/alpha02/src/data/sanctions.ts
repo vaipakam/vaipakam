@@ -12,8 +12,10 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { copy } from '../content/copy';
 
 export interface SanctionsState {
   flagged: boolean;
@@ -45,4 +47,28 @@ export function useSanctionsCheck(): SanctionsState {
 
   if (!address) return { flagged: false, ready: true };
   return { flagged: data ?? false, ready: isFetched };
+}
+
+/** LIVE submit-time re-read. The hook above caches for five minutes —
+ *  a wallet flagged inside that window would still see enabled buttons
+ *  and could mine an approval before the contract's SanctionedAddress
+ *  revert. Call this in submit paths BEFORE any approval; throws the
+ *  user-facing message when flagged. Fail-open on read errors, same
+ *  posture as the hook and the contract (oracle outage ≠ flagged). */
+export async function assertWalletNotSanctionedLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  wallet: `0x${string}`,
+): Promise<void> {
+  const flagged = await publicClient
+    .readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isSanctionedAddress',
+      args: [wallet],
+    })
+    .catch(() => false);
+  if (flagged) {
+    throw new Error(copy.errors.sanctionsBlocked);
+  }
 }

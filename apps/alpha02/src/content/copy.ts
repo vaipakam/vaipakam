@@ -225,17 +225,23 @@ export const copy = {
     withdrawWarning: 'Withdrawing VPFI can lower future fee discounts.',
     notOnThisChain: (chain: string) =>
       `VPFI deposits aren’t available on ${chain} yet. Everything else on Vaipakam works without VPFI.`,
+    tokenChanged:
+      'The VPFI token configuration changed since you reviewed. Nothing was approved — please check the updated numbers and try again.',
+    tokenCheckRetry:
+      'We couldn’t confirm the VPFI token just now — nothing was approved. Please try again in a moment.',
   },
 
   errors: {
     needMore: (asset: string) => `You need more ${asset} to continue.`,
     partialOverPrincipal:
-      'That’s more than the loan’s remaining principal. Enter a smaller amount, or use “Repay this loan” to close it fully.',
+      'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
     txRejected: 'You cancelled in your wallet. Nothing was sent.',
     txFailed:
       'The transaction didn’t go through. Nothing was taken beyond network gas. Please try again.',
+    sanctionsBlocked:
+      'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
   },
 
   fees: {

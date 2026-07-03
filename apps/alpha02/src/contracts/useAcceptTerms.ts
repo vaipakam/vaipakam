@@ -16,7 +16,13 @@
  * wastes the user's gas.
  */
 import { useCallback } from 'react';
-import { keccak256, encodeAbiParameters } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  encodeAbiParameters,
+  keccak256,
+} from 'viem';
 import type { Address, Hex } from 'viem';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -157,6 +163,26 @@ export function useAcceptTermsSigning() {
       // path — direct acceptOffer reverts OfferPartiallyFilled.
       if ((o.amountFilled as bigint) > 0n) {
         throw new Error(copy.match.offerGone);
+      }
+      // A Scenario-A parallel sale (markOfferConsumedBySale) is stamped
+      // in a side mapping getOffer doesn't expose — the storage row
+      // still reads open. But that terminal (like cancelOffer) BURNS
+      // the offer's position NFT, so a dead ownerOf is the reliable
+      // signal that acceptOffer would revert on the terminal bit.
+      try {
+        await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'ownerOf',
+          args: [o.positionTokenId as bigint],
+        });
+      } catch (e) {
+        const isRevert =
+          e instanceof BaseError &&
+          (e.walk((x) => x instanceof ContractFunctionRevertedError) !== null ||
+            e.walk((x) => x instanceof ContractFunctionZeroDataError) !== null);
+        if (isRevert) throw new Error(copy.match.offerGone);
+        throw e; // transport failure — surface, don't guess
       }
 
       // #725 — auto-linked sale/offset target loan id; 0 for a normal

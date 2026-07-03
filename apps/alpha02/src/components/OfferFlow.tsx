@@ -41,6 +41,7 @@ import {
 } from '../contracts/erc20';
 import { useActiveOffers, useOffer } from '../data/hooks';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
+import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -609,6 +610,13 @@ export function OfferFlow({ side }: { side: Side }) {
     if (!receipt || !address || !walletChain || !walletClient || !publicClient) {
       throw new Error(copy.wallet.connectFirst);
     }
+    // The checklist's sanctions item is a CACHED read — re-screen the
+    // wallet live before any approval can mine.
+    await assertWalletNotSanctionedLive(
+      publicClient,
+      walletChain.diamondAddress,
+      address,
+    );
     // The receipt quoted the CACHED fee config (5-min staleTime) — a
     // governance retune inside that window would have the user approve
     // against a stale receipt, or mine an approval ahead of an
@@ -661,6 +669,13 @@ export function OfferFlow({ side }: { side: Side }) {
     if (selected.creator.toLowerCase() === address.toLowerCase()) {
       throw new Error(copy.match.ownOffer);
     }
+    // Re-screen the CONNECTED wallet live — the checklist's sanctions
+    // item is a cached read and a flag can land inside its window.
+    await assertWalletNotSanctionedLive(
+      publicClient,
+      walletChain.diamondAddress,
+      address,
+    );
     // The contract screens the offer CREATOR too — if they were
     // flagged after posting, the accept is doomed; fail before any
     // signature or approval (fail-open on read errors).

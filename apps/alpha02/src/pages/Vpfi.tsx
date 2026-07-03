@@ -21,9 +21,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useSanctionsCheck } from '../data/sanctions';
+import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
-import { useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
@@ -106,7 +106,31 @@ export function Vpfi() {
     setBusy(true);
     setError(null);
     try {
+      // The page gates on a CACHED sanctions read — re-screen live
+      // before any approval/write (deposit AND withdraw are Tier-1).
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
       if (action === 'deposit') {
+        // depositVPFIToVault pulls the LIVE s.vpfiToken — if governance
+        // rotated the token after the cached snapshot, approving the
+        // stale address mines a useless approval and the deposit
+        // reverts. Re-read live (fail closed) and force a re-review.
+        const liveToken = (await publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'getVPFIToken',
+          })
+          .catch(() => {
+            throw new Error(copy.vpfi.tokenCheckRetry);
+          })) as string;
+        if (liveToken.toLowerCase() !== snapshot.token.toLowerCase()) {
+          refresh();
+          throw new Error(copy.vpfi.tokenChanged);
+        }
         await ensureAllowance({
           publicClient,
           walletClient,

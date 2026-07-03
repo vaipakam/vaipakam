@@ -24,7 +24,7 @@ import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { useLoanRisk, healthView } from '../data/risk';
-import { useSanctionsCheck } from '../data/sanctions';
+import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -73,7 +73,14 @@ export function PositionDetails() {
   const principalMeta = useTokenMeta(
     loanIsRental ? undefined : loan.data?.lendingAsset,
   );
-  const collateralMeta = useTokenMeta(loan.data?.collateralAsset ?? undefined);
+  // NFT collateral (ERC-721/1155) has no ERC-20 metadata to read.
+  const collateralIsNft =
+    loan.data !== null &&
+    loan.data !== undefined &&
+    loan.data.collateralAssetType !== AssetType.ERC20;
+  const collateralMeta = useTokenMeta(
+    collateralIsNft ? undefined : (loan.data?.collateralAsset ?? undefined),
+  );
 
   // Claim rights and role permissions travel with the POSITION NFTs,
   // not the original addresses — a wallet that bought/received a
@@ -166,7 +173,7 @@ export function PositionDetails() {
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
   const collateralBalance = useTokenBalance(
-    loanIsRental ? undefined : loan.data?.collateralAsset,
+    loanIsRental || collateralIsNft ? undefined : loan.data?.collateralAsset,
   );
   const principalBalance = useTokenBalance(
     loanIsRental ? undefined : loan.data?.lendingAsset,
@@ -309,10 +316,22 @@ export function PositionDetails() {
             : 'Repayment confirmed. Your collateral is ready — claim it below or from the Claim Center.',
         );
       } else if (kind === 'claim-borrower') {
+        // Claims screen msg.sender on-chain and the page's gate is a
+        // CACHED read — re-screen live before the wallet prompt.
+        await assertWalletNotSanctionedLive(
+          publicClient,
+          walletChain.diamondAddress,
+          address,
+        );
         await write('claimAsBorrower', [BigInt(row.loanId)]);
         setClaimed(true);
         setDoneMessage(copy.claims.claimed);
       } else {
+        await assertWalletNotSanctionedLive(
+          publicClient,
+          walletChain.diamondAddress,
+          address,
+        );
         await write('claimAsLender', [BigInt(row.loanId)]);
         setClaimed(true);
         setDoneMessage(copy.claims.claimed);
@@ -339,6 +358,13 @@ export function PositionDetails() {
     setError(null);
     try {
       const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
+      // addCollateral screens msg.sender — re-screen live before the
+      // approval (the page gate is a cached read).
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -381,7 +407,10 @@ export function PositionDetails() {
         startTime: bigint;
         interestAccrualStart: bigint;
       };
-      if (wei > live.principal) {
+      // A partial equal to the FULL remaining principal is accepted by
+      // the contract but leaves the loan Active at principal 0 —
+      // settlement (and collateral release) needs the real repay path.
+      if (wei >= live.principal) {
         setError(copy.errors.partialOverPrincipal);
         return;
       }
@@ -426,15 +455,21 @@ export function PositionDetails() {
     }
   }
 
+  // NFT collateral is identified by collateralTokenId/quantity — its
+  // fungible `collateralAmount` is normally ZERO, so amount alone must
+  // not decide "no collateral" (that would hide a real NFT pledge).
   const hasCollateral =
     row.collateralAsset.toLowerCase() !==
       '0x0000000000000000000000000000000000000000' &&
-    BigInt(row.collateralAmount) > 0n;
+    (BigInt(row.collateralAmount) > 0n ||
+      row.collateralAssetType !== AssetType.ERC20);
   const collateralStr = !hasCollateral
     ? 'No collateral'
-    : collateral
-      ? `${formatTokenAmount(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
-      : '…';
+    : row.collateralAssetType !== AssetType.ERC20
+      ? `NFT ${shortAddress(row.collateralAsset)} #${row.collateralTokenId}`
+      : collateral
+        ? `${formatTokenAmount(row.collateralAmount, collateral.decimals)} ${collateral.symbol}`
+        : '…';
   const nftStr = `NFT ${shortAddress(row.lendingAsset)} #${row.tokenId}`;
   const dueDate = formatDate(row.startTime + row.durationDays * 86_400);
 

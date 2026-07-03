@@ -39,6 +39,7 @@ import {
 } from '../data/protocol';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
 import { useVpfi } from '../data/vpfi';
+import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -250,6 +251,13 @@ function ListNftFlow() {
     setBusy(true);
     setError(null);
     try {
+      // The checklist's sanctions item is a CACHED read — re-screen
+      // the wallet live before setApprovalForAll can mine.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
       // The receipt quoted the CACHED fee config and the duration was
       // validated against the cached cap — re-read live and force a
       // re-review on any move, BEFORE the NFT approval can mine.
@@ -707,6 +715,13 @@ function RentNftFlow() {
       if (selected.creator.toLowerCase() === address.toLowerCase()) {
         throw new Error(copy.match.ownOffer);
       }
+      // Re-screen the CONNECTED wallet live — the checklist's
+      // sanctions item is a cached read.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
       // acceptOffer screens BOTH parties — if the owner was flagged
       // after listing, abort before any signature or prepay approval.
       const ownerFlagged = await publicClient
