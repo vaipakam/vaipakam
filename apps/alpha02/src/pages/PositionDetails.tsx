@@ -8,7 +8,7 @@
  *   lender  + repaid   → Claim principal + interest
  *   lender  + defaulted→ Claim the collateral
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -245,9 +245,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     loanIsRental || !loan.data
       ? undefined
       : (loan.data.lendingAsset as `0x${string}`),
-    !loanIsRental && Boolean(loan.data),
+    // Lender-side viewers only (the hook also self-enables on a
+    // device marker) — borrowers/spectators must not pay the polling
+    // cost for a watch their wallet can't answer.
+    !loanIsRental && Boolean(loan.data) && role === 'lender',
   );
   const salePending = sale.state?.listed === true;
+  // The listing ended off-page (a buyer accepted, or it was cancelled
+  // elsewhere) — surface the outcome once via the page banner.
+  useEffect(() => {
+    if (sale.endedNotice) {
+      setDoneMessage(copy.loanSale.ended);
+      sale.clearEndedNotice();
+    }
+  }, [sale, sale.endedNotice]);
 
   // Live loan snapshot — interest MODE and the re-stampable accrual
   // clock live only on-chain (the indexer row lacks them). The quoted
@@ -1355,6 +1366,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           busy={busy}
           setBusy={setBusy}
           onCleared={sale.clear}
+          onDone={setDoneMessage}
         />
       ) : null}
 

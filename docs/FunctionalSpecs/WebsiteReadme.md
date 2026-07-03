@@ -750,17 +750,34 @@ converge. Its intended behaviour (the test oracle for that surface):
   of interest accrued by acceptance or the rate difference for the
   remaining term — never both) is pulled from the seller's wallet
   inside the buyer's transaction, so listing sets a standing
-  approval sized to a bounded worst case that never grows with mere
-  passage of time, with only the actual amount ever pulled; and a
-  rate above the loan's own attracts buyers at the seller's cost.
+  approval sized to cover settlement through the loan's term plus a
+  stated headroom, with only the actual amount ever pulled — a
+  listing that somehow outlives the headroom is flagged by the
+  funding watch with a top-up action; and a rate above the loan's
+  own attracts buyers at the seller's cost. An explicit
+  risk-and-terms acknowledgement is required before listing and is
+  voided by any term change.
   The listing's standing surface is chain-authoritative (the lock on
   the position NFT), so a listing made on another device still
   shows, still warns when the standing approval or balance no
   longer covers settlement (with a verified restore action), and
-  still interlocks the sell-into-offer exit; cancellation (which
-  unlocks the NFT) is offered where the listing's identifier is
-  known and also removes the standing approval. While a listing
-  stands, the sell-into-offer exit is not offered.
+  still interlocks the sell-into-offer exit; where the listing's
+  identifier can't be recovered, the funding state is reported as
+  unverifiable — never a false all-clear. Cancellation (which
+  unlocks the NFT, becomes available after the protocol's cancel
+  cooldown judged by chain time, and also removes the standing
+  approval — with a note that other standing uses of the same token
+  then need their approvals restored) is offered where the listing's
+  identifier is known; its outcome is reported on the page even
+  though the listing card closes. When a listing ends off-page (a
+  buyer accepted, or it was cancelled elsewhere), the page states
+  that outcome once instead of letting the card silently vanish.
+  While a listing stands, the sell-into-offer exit is not offered.
+  On the BUYER side, an offer that is really a position sale (its
+  acceptance buys a running loan's lender side) is disclosed as such
+  before signing — the review names the linked loan, signing waits
+  until the link check resolves, and an acknowledgement given before
+  the disclosure appeared is voided.
 
 ## Key UX Requirements
 

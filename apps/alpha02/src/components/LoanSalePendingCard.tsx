@@ -35,6 +35,7 @@ export function LoanSalePendingCard({
   busy,
   setBusy,
   onCleared,
+  onDone,
 }: {
   loanId: number;
   /** For the restore-time lock re-check. */
@@ -45,6 +46,9 @@ export function LoanSalePendingCard({
   busy: boolean;
   setBusy: (b: boolean) => void;
   onCleared: () => void;
+  /** Page-level outcome sink — the card unmounts after cancel, so
+   *  its result must outlive it. */
+  onDone: (message: string) => void;
 }) {
   const { address, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -66,9 +70,10 @@ export function LoanSalePendingCard({
     setError(null);
     try {
       await write('cancelOffer', [BigInt(state.offerId)]);
-      onCleared();
-      void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
-      void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
+      // Revoke BEFORE clearing the marker: clearing unmounts this
+      // card, and the second wallet prompt (the revoke) must never
+      // appear context-free after its explaining UI vanished.
+      let message: string = copy.loanSale.cancelled;
       try {
         await revokeAllowance({
           publicClient,
@@ -77,10 +82,13 @@ export function LoanSalePendingCard({
           owner: address,
           spender: walletChain.diamondAddress,
         });
-        setDone(copy.loanSale.cancelled);
       } catch {
-        setDone(copy.loanSale.cancelledRevokeFailed);
+        message = copy.loanSale.cancelledRevokeFailed;
       }
+      onDone(message);
+      onCleared();
+      void queryClient.invalidateQueries({ queryKey: ['loanSalePending'] });
+      void queryClient.invalidateQueries({ queryKey: ['myOffers'] });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -142,6 +150,11 @@ export function LoanSalePendingCard({
             : copy.loanSale.pendingNoId}
         </span>
       </div>
+      {state.listed && !state.fundingKnown ? (
+        <div className="banner banner-warn" role="alert" style={{ marginTop: 12 }}>
+          <span className="banner-body">{copy.loanSale.fundingUnknown}</span>
+        </div>
+      ) : null}
       {underfunded ? (
         <div className="banner banner-danger" role="alert" style={{ marginTop: 12 }}>
           <span className="banner-body">
@@ -157,13 +170,15 @@ export function LoanSalePendingCard({
           <button
             type="button"
             className="btn btn-secondary"
-            disabled={busy || !walletReady}
+            // Chain-time cancel cooldown — a click before it elapses
+            // reverts CancelCooldownActive on-chain.
+            disabled={busy || !walletReady || !state.cancelUnlocked}
             onClick={() => void cancelListing()}
           >
             {copy.loanSale.cancel}
           </button>
         ) : null}
-        {underfunded ? (
+        {state.allowanceShort ? (
           <button
             type="button"
             className="btn btn-secondary"
@@ -174,6 +189,11 @@ export function LoanSalePendingCard({
           </button>
         ) : null}
       </div>
+      {state.offerId && !state.cancelUnlocked ? (
+        <p className="field-hint" style={{ marginTop: 8 }}>
+          {copy.refinance.cancelSoon}
+        </p>
+      ) : null}
       {done ? (
         <div className="banner banner-info" role="status" style={{ marginTop: 12 }}>
           <span className="banner-body">{done}</span>

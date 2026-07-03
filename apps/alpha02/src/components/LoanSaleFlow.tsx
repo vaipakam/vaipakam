@@ -13,15 +13,14 @@
  * cancelled — disclosed before confirmation, per the FunctionalSpecs
  * lock-disclosure rule.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseEventLogs } from 'viem';
 import { copy } from '../content/copy';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { useDiamondWrite } from '../contracts/diamond';
-import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -72,6 +71,10 @@ export function LoanSaleFlow({
   const [rateInput, setRateInput] = useState(
     () => String(Number(live.interestRateBps) / 100),
   );
+  // Explicit risk-and-terms attestation — recorded on-chain on the
+  // offer (creatorRiskAndTermsConsent), so it must be a real tick,
+  // voided whenever the reviewed terms change.
+  const [consent, setConsent] = useState(false);
 
   const rateBps = isPositiveDecimal(rateInput) ? percentToBps(rateInput) : null;
   const rateValid = rateBps !== null && rateBps > 0 && rateBps <= MAX_INTEREST_BPS;
@@ -88,12 +91,11 @@ export function LoanSaleFlow({
     bound !== null ? `${formatTokenAmount(bound, dec)} ${sym}` : null;
   const principalStr = `${formatTokenAmount(live.principal, dec)} ${sym}`;
 
-  // The quoted approval bound moves with the live loan — close an
-  // open review rather than let it silently drift.
-  useEffect(() => {
-    onCloseConfirm();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boundStr]);
+  // No review-void on the bound figure: it is quoted as an upper
+  // bound ("up to X") and only SHRINKS between reviews (the padded
+  // accrual leg is time-invariant; the shortfall leg decays), so a
+  // 60s refetch tick must not keep collapsing an open review the
+  // user is reading. Rate edits DO void it (below).
 
   async function submit() {
     if (!address || !walletChain || !walletClient || !publicClient) return;
@@ -141,10 +143,12 @@ export function LoanSaleFlow({
         setError(copy.errors.refinanceMatured);
         return;
       }
-      // The standing settlement approval, sized to the bounded worst
-      // case (never grows with time — see saleSettlementBound). Set
-      // BEFORE the listing exists so there is no window where a
-      // buyer's accept reverts on a short allowance.
+      // The standing settlement approval — full interest-window
+      // accrual plus a re-accrual pad, or the shortfall if larger
+      // (see saleSettlementBound; the pending card's watch + restore
+      // cover a listing that outlives the pad). Set BEFORE the
+      // listing exists so there is no window where a buyer's accept
+      // reverts on a short allowance.
       const liveBound = saleSettlementBound(
         liveLoan,
         BigInt(rateBps),
@@ -161,7 +165,7 @@ export function LoanSaleFlow({
       const { receipt } = await write('createLoanSaleOffer', [
         BigInt(row.loanId),
         rateBps,
-        true,
+        consent,
       ]);
       const linked = parseEventLogs({
         abi: DIAMOND_ABI_VIEM,
@@ -196,6 +200,7 @@ export function LoanSaleFlow({
             value={rateInput}
             onChange={(e) => {
               setRateInput(e.target.value.trim());
+              setConsent(false); // consent covers what was reviewed
               onCloseConfirm(); // edited terms void the open review
             }}
             aria-label={copy.loanSale.rateLabel}
@@ -219,12 +224,24 @@ export function LoanSaleFlow({
         </button>
       ) : boundStr && nowCost !== null ? (
         <div style={{ marginTop: 16 }}>
+          <label className="cluster" style={{ marginBottom: 12, alignItems: 'flex-start' }}>
+            <input
+              type="checkbox"
+              checked={consent}
+              onChange={(e) => setConsent(e.target.checked)}
+              style={{ marginTop: 4 }}
+            />
+            <span>
+              I understand the lock, the settlement pull, and the standing
+              approval below and agree to them.
+            </span>
+          </label>
           <ConfirmReceipt
             busy={busy}
             confirmLabel={copy.loanSale.confirm}
             onBack={onCloseConfirm}
             onConfirm={() => void submit()}
-            disabled={!walletReady}
+            disabled={!walletReady || !consent}
             data={{
               youReceive: `${principalStr} — the full outstanding amount, paid to your wallet the moment a buyer accepts.`,
               youLock:

@@ -94,7 +94,18 @@ export function sellerEconomics(
   live: LoanLive,
   buyRateBps: bigint,
   chainNow: bigint,
-): { cost: bigint; toSeller: bigint; shortfallBinding: boolean } {
+): {
+  cost: bigint;
+  toSeller: bigint;
+  shortfallBinding: boolean;
+  /** Components exposed so the sale-listing funding math (which
+   *  bounds them differently) reuses THESE definitions and can never
+   *  drift from the facet by a rounding path. `accrued` uses RAW
+   *  elapsed — the facet never clamps it to the interest window, so
+   *  past window end it keeps growing. */
+  accrued: bigint;
+  shortfall: bigint;
+} {
   const start = interestAccrualStartOf(live);
   const elapsed = chainNow > start ? chainNow - start : 0n;
   const totalSecs = interestRemainingDaysOf(live) * 86_400n;
@@ -111,6 +122,8 @@ export function sellerEconomics(
     cost,
     toSeller: live.principal > cost ? live.principal - cost : 0n,
     shortfallBinding: shortfall > accrued,
+    accrued,
+    shortfall,
   };
 }
 

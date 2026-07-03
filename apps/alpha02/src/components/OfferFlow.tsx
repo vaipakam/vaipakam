@@ -583,6 +583,40 @@ export function OfferFlow({ side }: { side: Side }) {
     }
   }, [reviewIsIlliquid]);
 
+  // A Borrower-type offer can be a LOAN-SALE VEHICLE (lender Option-2
+  // listing): accepting it buys a RUNNING loan position — principal
+  // goes to the exiting lender, the acceptor steps in as lender of a
+  // part-elapsed loan whose collateral lives on the linked loan. The
+  // indexer has no column for this, so the review reads the link
+  // live and must DISCLOSE it before signing (the signed AcceptTerms
+  // binds linkedLoanId either way).
+  const linkedLoan = useQuery({
+    queryKey: ['offerLinkedLoan', readChain.chainId, selected?.offerId],
+    enabled: mode === 'accept' && Boolean(readClient) && Boolean(selected),
+    staleTime: 60_000,
+    queryFn: async () => {
+      const linked = (await readClient!.readContract({
+        address: readChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getOfferLinkedLoanId',
+        args: [BigInt(selected!.offerId)],
+      })) as bigint;
+      return linked.toString();
+    },
+  });
+  const linkedLoanKnown = mode !== 'accept' || linkedLoan.data !== undefined;
+  const acceptIsLoanSale =
+    mode === 'accept' && linkedLoan.data !== undefined && linkedLoan.data !== '0';
+  // Same late-disclosure rule as the illiquid warning: consent given
+  // before the sale-vehicle banner appeared must be re-given.
+  useEffect(() => {
+    if (acceptIsLoanSale) {
+      setForm((f) =>
+        f.riskAndTermsConsent ? { ...f, riskAndTermsConsent: false } : f,
+      );
+    }
+  }, [acceptIsLoanSale]);
+
   const lifPct = bpsToPercentText(fees.loanInitiationFeeBps);
   const yieldPct = bpsToPercentText(fees.treasuryFeeBps);
 
@@ -702,6 +736,9 @@ export function OfferFlow({ side }: { side: Side }) {
     receipt !== null &&
     !isOwnSelectedOffer &&
     liquidityKnown &&
+    // The loan-sale-vehicle answer gates a disclosure the same way
+    // liquidity does — signing waits until it is known.
+    linkedLoanKnown &&
     (mode === 'accept'
       ? selected !== null
       : formError === null && durationValid && !selfCollateral) &&
@@ -1197,6 +1234,13 @@ export function OfferFlow({ side }: { side: Side }) {
           {reviewIsIlliquid ? (
             <div className="banner banner-warn" role="alert">
               <span className="banner-body">{copy.match.illiquidWarning}</span>
+            </div>
+          ) : null}
+          {acceptIsLoanSale ? (
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.match.loanSaleVehicleWarning(linkedLoan.data ?? '')}
+              </span>
             </div>
           ) : null}
           {!liquidityKnown ? (

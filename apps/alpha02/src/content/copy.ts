@@ -120,6 +120,8 @@ export const copy = {
       'Interest accrues day by day — repaying early costs less.',
     interestModeProRataLender:
       'Interest accrues day by day — if the borrower repays early, you earn less.',
+    loanSaleVehicleWarning: (loanId: string) =>
+      `This is a POSITION SALE, not a fresh loan: accepting buys the lender side of already-running loan #${loanId}. Your funds pay out the exiting lender, part of the loan's term has already passed, and the collateral shown lives on that loan. Only proceed if that's what you want.`,
     liquidityChecking:
       'Checking how these assets are priced by the protocol…',
     liquidityCheckFailed:
@@ -310,7 +312,7 @@ export const copy = {
     lockWarning:
       'Listing locks your lender position NFT — it can’t be transferred until the sale completes or you cancel the listing. Your claim rights are unaffected.',
     approvalNote: (amount: string) =>
-      `Listing sets a standing approval of up to ${amount} — the worst case of what settling the sale can pull from your wallet at acceptance (the larger of interest accrued by then or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction.`,
+      `Listing sets a standing approval of up to ${amount} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
     sweetenNote:
       'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term comes out of your wallet at completion.',
     done:
@@ -325,9 +327,13 @@ export const copy = {
     restored: 'Settlement approval restored — the listing can complete again.',
     cancel: 'Cancel listing',
     cancelled:
-      'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed. The loan continues unchanged.',
+      'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed (if you have other listings or requests using the same token, restore their approvals from their cards). The loan continues unchanged.',
     cancelledRevokeFailed:
       'Listing cancelled and your lender NFT unlocked. The standing settlement approval couldn’t be removed automatically — you can revoke it from your wallet’s token-approvals view.',
+    fundingUnknown:
+      'We couldn’t identify this listing’s offer record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous approval and balance in place.',
+    ended:
+      'Your sale listing is no longer active. If a buyer accepted it, the payout is already in your wallet and the settlement was pulled via the standing approval; any remaining approval can be revoked from your wallet’s token-approvals view.',
   },
 
   positions: {

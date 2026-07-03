@@ -29,30 +29,14 @@ import {
 } from '../contracts/loanLive';
 import { readLiveProtocolFees } from './fees';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
+import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
 
 /** Mirrors LibVaipakam.MIN_OFFER_CANCEL_DELAY — cancels inside this
  *  window revert CancelCooldownActive. */
 export const CANCEL_COOLDOWN_SECONDS = 300n;
 
-function storageKey(chainId: number, loanId: number): string {
-  return `alpha02.refinanceOffer.${chainId}.${loanId}`;
-}
-function readStored(chainId: number, loanId: number): string | null {
-  try {
-    return window.localStorage.getItem(storageKey(chainId, loanId));
-  } catch {
-    return null;
-  }
-}
-function writeStored(chainId: number, loanId: number, id: string | null): void {
-  try {
-    if (id === null) window.localStorage.removeItem(storageKey(chainId, loanId));
-    else window.localStorage.setItem(storageKey(chainId, loanId), id);
-  } catch {
-    // Private-browsing storage failures only cost the pending banner.
-  }
-}
+const marker = makePendingMarkerStore('alpha02.refinanceOffer');
 
 export interface RefinancePendingState {
   /** Loan still Active on-chain (a request on a settled loan is dead
@@ -83,18 +67,18 @@ export function useRefinancePending(
   // Re-seed whenever the chain (or loan) changes — a state initializer
   // would freeze the first chain's marker across a network switch.
   useEffect(() => {
-    setOfferId(readStored(readChain.chainId, loanId));
+    setOfferId(marker.read(readChain.chainId, loanId));
   }, [readChain.chainId, loanId]);
 
   const remember = useCallback(
     (id: string) => {
-      writeStored(readChain.chainId, loanId, id);
+      marker.write(readChain.chainId, loanId, id);
       setOfferId(id);
     },
     [readChain.chainId, loanId],
   );
   const clear = useCallback(() => {
-    writeStored(readChain.chainId, loanId, null);
+    marker.write(readChain.chainId, loanId, null);
     setOfferId(null);
   }, [readChain.chainId, loanId]);
 

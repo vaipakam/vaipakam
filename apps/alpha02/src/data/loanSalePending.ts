@@ -3,17 +3,23 @@
  * (createLoanSaleOffer). Unlike the refinance marker, EXISTENCE is a
  * pure chain read — `positionLock(lenderTokenId) ==
  * EarlyWithdrawalSale` is authoritative — so a listing made on
- * another device still shows here. The device-local marker only
- * remembers the offer id (needed for cancelOffer; there is no
- * on-chain loanId→saleOfferId view), verified live via
- * getOfferLinkedLoanId before it is trusted.
+ * another device still shows here. The device-local marker remembers
+ * the offer id (needed for cancel and for the shortfall leg of the
+ * funding watch; there is no on-chain loanId→saleOfferId view),
+ * verified live via getOfferLinkedLoanId before it is trusted; when
+ * it is missing the hook attempts RECOVERY by probing the connected
+ * wallet's own open offers for one linked to this loan, and if that
+ * fails the funding verdict is reported as UNKNOWN — never a false
+ * green computed from the wrong rate.
  *
- * The funding watch mirrors the completion pull: the buyer's accept
- * tx pulls max(accrued-at-acceptance, rate shortfall) from the
- * SELLER's wallet via the standing approval — if that approval or
- * the balance goes short, every accept reverts and the listing is
- * silently unfillable. `requiredNow` tracks the figure as of chain
- * time; the standing approval targets the bounded worst case.
+ * Funding watch: the buyer's accept pulls max(accrued-at-acceptance,
+ * rate shortfall) from the SELLER's wallet via the standing
+ * approval. `accrued` uses RAW elapsed seconds (the facet never
+ * clamps it), so a listing that outlives the interest window keeps
+ * needing more — the standing approval is sized generously
+ * (full-window interest + a re-accrual pad) and the watch + restore
+ * action cover the long tail. All money math is
+ * `sellerEconomics` — the single facet-exact mirror.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
@@ -23,39 +29,41 @@ import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import {
   BASIS_POINTS,
   SECONDS_PER_YEAR,
-  interestAccrualStartOf,
   interestRemainingDaysOf,
   readLoanLive,
+  sellerEconomics,
   type LoanLive,
 } from '../contracts/loanLive';
+import { fetchOffersByCreator } from './indexer';
+import { makePendingMarkerStore } from '../lib/pendingMarker';
 import { useActiveChain } from '../chain/useActiveChain';
+import { CANCEL_COOLDOWN_SECONDS } from './refinancePending';
 
 /** LibERC721.LockReason.EarlyWithdrawalSale. */
 export const LOCK_EARLY_WITHDRAWAL_SALE = 2;
 
-/** The bounded worst case of the completion pull: accrued can grow
- *  until acceptance but never past the interest window's total, and
- *  the shortfall only shrinks as the remaining term shortens. The
- *  standing approval covers max of both so it never needs topping up
- *  from mere passage of time. */
+/** Extra accrual headroom the standing approval carries past the
+ *  interest window's total — the listing never expires on-chain, so
+ *  an accept can land after the window ends and the (unclamped)
+ *  accrued keeps growing. Beyond this pad the funding watch + the
+ *  restore action are the safety net. */
+const REACCRUAL_PAD_DAYS = 30n;
+
+/** The standing-approval target: covers the whole interest window's
+ *  accrual PLUS the re-accrual pad, or the current shortfall if
+ *  larger. NOT a forever bound — see REACCRUAL_PAD_DAYS. */
 export function saleSettlementBound(
   live: LoanLive,
   saleRateBps: bigint,
   chainNow: bigint,
 ): bigint {
-  const start = interestAccrualStartOf(live);
-  const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  const econ = sellerEconomics(live, saleRateBps, chainNow);
   const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const fullWindowInterest =
-    (live.principal * live.interestRateBps * totalSecs) / denom;
-  const shortfallNow =
-    saleRateBps > live.interestRateBps
-      ? (live.principal * (saleRateBps - live.interestRateBps) * remainingSecs) /
-        denom
-      : 0n;
-  return fullWindowInterest > shortfallNow ? fullWindowInterest : shortfallNow;
+  const paddedWindowSecs =
+    (interestRemainingDaysOf(live) + REACCRUAL_PAD_DAYS) * 86_400n;
+  const paddedAccrual =
+    (live.principal * live.interestRateBps * paddedWindowSecs) / denom;
+  return paddedAccrual > econ.shortfall ? paddedAccrual : econ.shortfall;
 }
 
 /** What a buyer's acceptance would pull RIGHT NOW. */
@@ -64,50 +72,28 @@ export function saleSettlementNow(
   saleRateBps: bigint,
   chainNow: bigint,
 ): bigint {
-  const start = interestAccrualStartOf(live);
-  const elapsed = chainNow > start ? chainNow - start : 0n;
-  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
-  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
-  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
-  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
-  const shortfall =
-    saleRateBps > live.interestRateBps
-      ? (live.principal * (saleRateBps - live.interestRateBps) * remainingSecs) /
-        denom
-      : 0n;
-  return accrued > shortfall ? accrued : shortfall;
+  return sellerEconomics(live, saleRateBps, chainNow).cost;
 }
 
-function storageKey(chainId: number, loanId: number): string {
-  return `alpha02.loanSaleOffer.${chainId}.${loanId}`;
-}
-function readStored(chainId: number, loanId: number): string | null {
-  try {
-    return window.localStorage.getItem(storageKey(chainId, loanId));
-  } catch {
-    return null;
-  }
-}
-function writeStored(chainId: number, loanId: number, id: string | null): void {
-  try {
-    if (id === null) window.localStorage.removeItem(storageKey(chainId, loanId));
-    else window.localStorage.setItem(storageKey(chainId, loanId), id);
-  } catch {
-    // Losing the marker only costs the cancel affordance.
-  }
-}
+const marker = makePendingMarkerStore('alpha02.loanSaleOffer');
 
 export interface LoanSalePendingState {
   /** The lender NFT is lock-tagged for a sale — a listing exists. */
   listed: boolean;
-  /** Marker offer id, live-verified to link back to this loan
-   *  (null when listed from another device or marker stale). */
+  /** Live-verified listing offer id (marker or recovered); null when
+   *  unknown — cancel is unavailable and funding is UNKNOWN then. */
   offerId: string | null;
-  /** The listing's sale rate (bps) from the live offer record. */
+  /** The listing's sale rate (bps); null when the id is unknown. */
   saleRateBps: bigint | null;
-  /** What acceptance would pull right now / the standing bound. */
+  /** Chain time says the cancel cooldown has elapsed. */
+  cancelUnlocked: boolean;
+  /** What acceptance would pull right now / the approval target.
+   *  Zero + fundingKnown=false when the sale rate is unknown. */
   requiredNow: bigint;
   requiredBound: bigint;
+  /** False when the listing's rate couldn't be determined — the
+   *  watch must show "can't verify", never a false green. */
+  fundingKnown: boolean;
   allowanceShort: boolean;
   balanceShort: boolean;
 }
@@ -123,18 +109,18 @@ export function useLoanSalePending(
   const [markerId, setMarkerId] = useState<string | null>(null);
 
   useEffect(() => {
-    setMarkerId(readStored(readChain.chainId, loanId));
+    setMarkerId(marker.read(readChain.chainId, loanId));
   }, [readChain.chainId, loanId]);
 
   const remember = useCallback(
     (id: string) => {
-      writeStored(readChain.chainId, loanId, id);
+      marker.write(readChain.chainId, loanId, id);
       setMarkerId(id);
     },
     [readChain.chainId, loanId],
   );
   const clear = useCallback(() => {
-    writeStored(readChain.chainId, loanId, null);
+    marker.write(readChain.chainId, loanId, null);
     setMarkerId(null);
   }, [readChain.chainId, loanId]);
 
@@ -146,8 +132,12 @@ export function useLoanSalePending(
       markerId,
       address?.toLowerCase(),
     ],
+    // Runs for the LENDER-side viewer (the only audience of the
+    // card/watch) or whenever this device holds a marker — never for
+    // borrowers/spectators, whose wallets the funding legs would
+    // misread anyway.
     enabled:
-      enabled &&
+      (enabled || markerId !== null) &&
       Boolean(readClient) &&
       Boolean(lenderTokenId) &&
       Boolean(principalAsset) &&
@@ -155,92 +145,126 @@ export function useLoanSalePending(
     refetchInterval: 30_000,
     queryFn: async (): Promise<LoanSalePendingState> => {
       const diamond = readChain.diamondAddress;
-      const [lock, live, latestBlock, allowance, balance, linkedLoanId, offer] =
-        await Promise.all([
-          readClient!.readContract({
+      const [lock, live, latestBlock, allowance, balance] = await Promise.all([
+        readClient!.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'positionLock',
+          args: [BigInt(lenderTokenId!)],
+        }) as Promise<number | bigint>,
+        readLoanLive(readClient!, diamond, loanId),
+        readClient!.getBlock({ blockTag: 'latest' }),
+        address
+          ? (readClient!.readContract({
+              address: principalAsset!,
+              abi: erc20Abi,
+              functionName: 'allowance',
+              args: [address, diamond],
+            }) as Promise<bigint>)
+          : Promise.resolve(0n),
+        address
+          ? (readClient!.readContract({
+              address: principalAsset!,
+              abi: erc20Abi,
+              functionName: 'balanceOf',
+              args: [address],
+            }) as Promise<bigint>)
+          : Promise.resolve(0n),
+      ]);
+      const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
+
+      // Resolve the listing's offer id: marker first, else recover by
+      // probing the connected wallet's own open offers (the indexer
+      // has no linked-loan column; getOfferLinkedLoanId is the
+      // authoritative link).
+      let resolvedId: string | null = null;
+      if (listed) {
+        const candidateIds: string[] = [];
+        if (markerId !== null) candidateIds.push(markerId);
+        if (markerId === null && address) {
+          const page = await fetchOffersByCreator(readChain.chainId, address, {
+            limit: 50,
+          });
+          for (const o of page?.offers ?? []) {
+            if (o.status === 'active' && o.offerType === 1) {
+              candidateIds.push(String(o.offerId));
+            }
+          }
+        }
+        for (const id of candidateIds) {
+          const linked = (await readClient!.readContract({
             address: diamond,
             abi: DIAMOND_ABI_VIEM,
-            functionName: 'positionLock',
-            args: [BigInt(lenderTokenId!)],
-          }) as Promise<number | bigint>,
-          readLoanLive(readClient!, diamond, loanId),
-          readClient!.getBlock({ blockTag: 'latest' }),
-          address
-            ? (readClient!.readContract({
-                address: principalAsset!,
-                abi: erc20Abi,
-                functionName: 'allowance',
-                args: [address, diamond],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
-          address
-            ? (readClient!.readContract({
-                address: principalAsset!,
-                abi: erc20Abi,
-                functionName: 'balanceOf',
-                args: [address],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
-          markerId
-            ? (readClient!.readContract({
-                address: diamond,
-                abi: DIAMOND_ABI_VIEM,
-                functionName: 'getOfferLinkedLoanId',
-                args: [BigInt(markerId)],
-              }) as Promise<bigint>)
-            : Promise.resolve(0n),
-          markerId
-            ? (readClient!
-                .readContract({
-                  address: diamond,
-                  abi: DIAMOND_ABI_VIEM,
-                  functionName: 'getOfferDetails',
-                  args: [BigInt(markerId)],
-                })
-                .catch(() => null) as Promise<{ interestRateBps: number } | null>)
-            : Promise.resolve(null),
-        ]);
-      const listed = Number(lock) === LOCK_EARLY_WITHDRAWAL_SALE;
-      const markerValid =
-        markerId !== null && listed && linkedLoanId === BigInt(loanId);
-      // The sale rate comes from the live offer; without a valid
-      // marker the funding watch can't know the shortfall leg, so it
-      // conservatively watches the accrued leg alone (rate = loan's).
-      const saleRateBps = markerValid && offer
-        ? BigInt(offer.interestRateBps)
-        : null;
-      const watchRate = saleRateBps ?? live.interestRateBps;
-      const requiredNow = saleSettlementNow(live, watchRate, latestBlock.timestamp);
-      const requiredBound = saleSettlementBound(
-        live,
-        watchRate,
-        latestBlock.timestamp,
-      );
-      const fundingKnown = Boolean(address);
+            functionName: 'getOfferLinkedLoanId',
+            args: [BigInt(id)],
+          })) as bigint;
+          if (linked === BigInt(loanId)) {
+            resolvedId = id;
+            break;
+          }
+        }
+      }
+      let saleRateBps: bigint | null = null;
+      let createdAt = 0n;
+      if (resolvedId !== null) {
+        const offer = (await readClient!.readContract({
+          address: diamond,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getOfferDetails',
+          args: [BigInt(resolvedId)],
+        })) as { interestRateBps: number; createdAt: bigint };
+        saleRateBps = BigInt(offer.interestRateBps);
+        createdAt = offer.createdAt;
+      }
+
+      const fundingKnown = Boolean(address) && listed && saleRateBps !== null;
+      const requiredNow = fundingKnown
+        ? saleSettlementNow(live, saleRateBps!, latestBlock.timestamp)
+        : 0n;
+      const requiredBound = fundingKnown
+        ? saleSettlementBound(live, saleRateBps!, latestBlock.timestamp)
+        : 0n;
       return {
         listed,
-        offerId: markerValid ? markerId : null,
+        offerId: resolvedId,
         saleRateBps,
+        cancelUnlocked:
+          resolvedId !== null &&
+          latestBlock.timestamp >= createdAt + CANCEL_COOLDOWN_SECONDS,
         requiredNow,
         requiredBound,
-        allowanceShort: fundingKnown && listed && allowance < requiredNow,
-        balanceShort: fundingKnown && listed && balance < requiredNow,
+        fundingKnown,
+        allowanceShort: fundingKnown && allowance < requiredNow,
+        balanceShort: fundingKnown && balance < requiredNow,
       };
     },
   });
 
-  // A marker whose offer no longer links to this loan is stale
-  // (cancelled/completed elsewhere) — self-heal it once we know.
+  // Recovery found the id but the marker didn't have it — persist.
   useEffect(() => {
-    if (
-      markerId !== null &&
-      query.data !== undefined &&
-      query.data.offerId === null &&
-      !query.data.listed
-    ) {
+    const d = query.data;
+    if (d?.listed && d.offerId !== null && d.offerId !== markerId) {
+      remember(d.offerId);
+    }
+  }, [query.data, markerId, remember]);
+
+  // The listing ended (accepted or cancelled elsewhere) while our
+  // marker was set — surface the outcome once, then self-heal.
+  const [endedNotice, setEndedNotice] = useState(false);
+  useEffect(() => {
+    const d = query.data;
+    if (d !== undefined && !d.listed && markerId !== null) {
+      setEndedNotice(true);
       clear();
     }
-  }, [markerId, query.data, clear]);
+  }, [query.data, markerId, clear]);
+  const clearEndedNotice = useCallback(() => setEndedNotice(false), []);
 
-  return { state: query.data, remember, clear };
+  return {
+    state: query.data,
+    endedNotice,
+    clearEndedNotice,
+    remember,
+    clear,
+  };
 }
