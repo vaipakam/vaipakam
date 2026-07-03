@@ -274,6 +274,25 @@ export const copy = {
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
 
+  approvals: {
+    title: 'Standing token approvals',
+    blurb:
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (a refinance request’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
+    revokeWarning:
+      'Careful: if a live refinance request or sale listing depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
+    scopeNote:
+      'This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.',
+    none: 'No standing approvals to Vaipakam found for your known tokens.',
+    loading: 'Reading your standing approvals…',
+    unavailable:
+      'We couldn’t read your approvals right now — please try again in a moment.',
+    sourcesUnavailable:
+      'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
+    revoke: 'Revoke',
+    revoked: (symbol: string) =>
+      `Approval removed for ${symbol}. If a live request or listing needed it, its card will warn and offer a restore.`,
+  },
+
   nftVerifier: {
     title: 'Position NFT verifier',
     lede:

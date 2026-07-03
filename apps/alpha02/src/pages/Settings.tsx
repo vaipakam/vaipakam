@@ -19,6 +19,7 @@ import {
 import { useTheme, type ThemePreference } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { KeeperSettingsCard } from '../components/KeeperSettingsCard';
+import { ApprovalsCard } from '../components/ApprovalsCard';
 
 const THEME_OPTIONS: Array<{ value: ThemePreference; label: string }> = [
   { value: 'light', label: 'Light' },
@@ -91,6 +92,7 @@ export function Settings() {
       </section>
 
       {isAdvanced ? <KeeperSettingsCard /> : null}
+      {isAdvanced ? <ApprovalsCard /> : null}
 
       <section className="card">
         <div className="card-title">

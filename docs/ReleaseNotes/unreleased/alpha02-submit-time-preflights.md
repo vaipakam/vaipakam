@@ -136,3 +136,12 @@ connection failure shows a visible retry state instead of a false
 something this app version doesn't recognise reads as locked/unknown,
 never as transferable. Every verdict names the network it applies
 to.
+
+Advanced mode also gains a standing-approvals view in Settings: every
+spending permission the wallet has granted the protocol for tokens
+its loans and offers touch, with one-click revoke — the cleanup
+counterpart to the flows that deliberately set standing approvals.
+The list names its own limits (it covers known tokens on the current
+network, not the wallet's whole approval history), and warns that
+revoking an approval a live request or listing depends on makes that
+flow fail until restored from its own card.

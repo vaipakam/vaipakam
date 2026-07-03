@@ -809,6 +809,15 @@ converge. Its intended behaviour (the test oracle for that surface):
   an offer that hasn't become a loan yet names that offer. The
   verdict is always scoped to the current network, with a visible
   reminder that token ids repeat across networks.
+- Advanced mode lists the wallet's standing token approvals to the
+  protocol contract for tokens seen in the user's own loans and
+  offers, each with a one-click revoke. The surface states its scope
+  honestly (it is not the wallet's complete approvals picture), and
+  warns that revoking can break a live refinance request or sale
+  listing on the same token — whose own cards will flag it and offer
+  restore. When the loan/offer data sources are unavailable the list
+  says it can't be built completely rather than showing a partial
+  picture as complete.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,
