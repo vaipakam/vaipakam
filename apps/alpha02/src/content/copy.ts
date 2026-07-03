@@ -274,6 +274,37 @@ export const copy = {
       'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
   },
 
+  nftVerifier: {
+    title: 'Position NFT verifier',
+    lede:
+      'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
+    placeholder: 'Position NFT token id',
+    check: 'Check',
+    chainNote: (chain: string) =>
+      `Checked on ${chain}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+    checking: 'Checking this token on-chain…',
+    checkFailed: 'We couldn’t check this token right now — please try again in a moment.',
+    liveTitle: (id: string) => `Token #${id} is live on this network`,
+    ownerLabel: 'Current holder',
+    roleLabel: 'Side it controls',
+    roleLender: 'Lender side — its holder collects the repayment or recovery.',
+    roleBorrower: 'Borrower side — its holder repays and reclaims the collateral.',
+    roleUnknown: 'We couldn’t read this token’s role details right now.',
+    loanLabel: 'Linked loan',
+    lockLabel: 'Transfer lock',
+    lockPrecloseOffset:
+      'Locked for a preclose-by-offset — it can’t be transferred until that completes or is cancelled.',
+    lockSale:
+      'Locked for a position sale listing — it can’t be transferred until the sale completes or the listing is cancelled.',
+    lockPrepayListing:
+      'Locked for a collateral listing — it can’t be transferred while that listing stands.',
+    liveNote:
+      'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
+    goneTitle: (id: string) => `Token #${id} does not currently exist on this network`,
+    goneBody:
+      'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+  },
+
   keepers: {
     title: 'Keeper permissions',
     blurb:

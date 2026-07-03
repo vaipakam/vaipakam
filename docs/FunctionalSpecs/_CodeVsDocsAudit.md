@@ -40,6 +40,7 @@ copying what the code does.
 
 | Date | Divergent symbol | Spec section | One-line summary | Status |
 |------|------------------|--------------|------------------|--------|
+| 2026-07-03 | `VaipakamNFTFacet` (no mint-counter / existence view) vs WebsiteReadme "the Vaipakam NFT verifier must distinguish between a valid live NFT, a burned NFT, and a token ID that was never minted" | WebsiteReadme Key UX Requirements | `ownerOf` reverts identically for burned and never-minted ids and `nftStatuses` is deleted on burn, so no on-chain read distinguishes the two; alpha02's verifier (PR pending) states both possibilities honestly instead. Full three-way distinction needs a contract view (e.g. expose `s.nextTokenId`). | pending triage |
 | 2026-07-02 | `apps/defi` Create Offer NFT-rental daily fee (`offerSchema.toCreateOfferPayload` non-ERC20 amount path) | WebsiteReadme "Key UX Requirements" (amounts in human token units) | The form hint says the daily rental fee is entered "in whole tokens", but the NFT-leg payload passes the typed number through UNSCALED — a user typing "10" lists a daily fee of 10 wei of the prepay asset, mispricing every rental created through the form. apps/alpha02 scales by the payment asset's decimals instead (PR #887); the two live apps now diverge and defi's behaviour looks like the bug. | pending triage |
 
 ## Resolved findings

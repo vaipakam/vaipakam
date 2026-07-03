@@ -123,3 +123,11 @@ whoever holds the position. The editor never overwrites permissions
 it couldn't read, preserves grants it doesn't render, and treats
 "remove everything" as a full revoke whenever no unrendered grants
 remain.
+
+Position NFTs get their trust surface: advanced mode shows your
+position NFT's id on each loan, linking to a verifier where any token
+id can be checked — a live token shows its holder, the side it
+controls, its linked loan, and any transfer lock; a token that
+doesn't exist on the current network says plainly that it was either
+retired after its claim or never minted, and that the network doesn't
+record which. Every verdict names the network it applies to.

@@ -934,6 +934,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                 : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
             </dd>
           </div>
+          {isAdvanced && (role === 'borrower' || role === 'lender') ? (
+            // Position control travels with this NFT — the id links
+            // to the verifier so its holder can prove (or a buyer can
+            // check) exactly what it controls.
+            <div className="receipt-row">
+              <dt>Your position NFT</dt>
+              <dd>
+                <Link
+                  to={`/nft/${role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}`}
+                >
+                  #{role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}
+                </Link>{' '}
+                <span className="muted">
+                  — holds this loan's {role} rights; verify any position NFT
+                  before trusting it.
+                </span>
+              </dd>
+            </div>
+          ) : null}
           {!isRental && row.status === 'active' && !risk.data ? (
             // A missing risk read must LOOK missing — hiding the row
             // would render a possibly-liquidatable loan as complete.
