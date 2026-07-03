@@ -453,6 +453,27 @@ contract RepayFacetTest is Test {
         assertEq(loan.principal, 500);
     }
 
+    /// @dev #921 item 3 — a "partial" equal to the full remaining principal
+    ///      must revert (not decrement to a zombie Active-at-0 loan). The
+    ///      borrower must use `repayLoan` for a full close-out.
+    function testRepayPartialRevertsWhenRetiringFullPrincipal() public {
+        helperOfferLoan(); // loanId 1, ERC20 principal 1000, allowsPartialRepay
+        vm.prank(borrower);
+        vm.expectRevert(RepayFacet.PartialWouldRetireFullPrincipal.selector);
+        RepayFacet(address(diamond)).repayPartial(1, 1000);
+    }
+
+    /// @dev #921 item 3 — one wei below full principal is still a valid partial
+    ///      (guards against an off-by-one that would block legitimate partials).
+    function testRepayPartialAllowsOneWeiBelowPrincipal() public {
+        helperOfferLoan();
+        vm.prank(borrower);
+        RepayFacet(address(diamond)).repayPartial(1, 999);
+        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(1);
+        assertEq(loan.principal, 1);
+        assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Active));
+    }
+
     function testAutoDeductDailyNFT() public {
         // Assume NFT loanId 2, daily fee 10, prepay 300 (30 days)
         helperOfferLoan();
@@ -942,12 +963,15 @@ contract RepayFacetTest is Test {
         vm.clearMockedCalls();
     }
 
-    /// @dev Tests repayPartial revert when ERC20 partialAmount > loan.principal.
+    /// @dev #921 item 3 — an ERC20 partialAmount that exceeds the remaining
+    ///      principal retires the full balance (and more), so it now reverts with
+    ///      the dedicated `PartialWouldRetireFullPrincipal` (was
+    ///      `InsufficientPartialAmount` when the guard was `>` only).
     function testRepayPartialRevertsWhenAmountExceedsPrincipal() public {
         helperOfferLoan();
-        // loanId 1 principal = 1000; attempt to repay 1500 > 1000
+        // loanId 1 principal = 1000; attempt to repay 1001 > 1000
         vm.prank(borrower);
-        vm.expectRevert(RepayFacet.InsufficientPartialAmount.selector);
+        vm.expectRevert(RepayFacet.PartialWouldRetireFullPrincipal.selector);
         RepayFacet(address(diamond)).repayPartial(1, 1001);
     }
 

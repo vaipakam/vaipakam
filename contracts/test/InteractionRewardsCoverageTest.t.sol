@@ -10,6 +10,8 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
+import {MockSanctionsList} from "./mocks/MockSanctionsList.sol";
 
 /// @title InteractionRewardsCoverageTest
 /// @notice Exhaustive coverage for the platform-interaction reward surface
@@ -78,6 +80,32 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
 
     function _halfPool(uint256 day) internal view returns (uint256) {
         return _facet().getInteractionHalfPoolForDay(day);
+    }
+
+    // ─── #921 item 1 — Tier-1 sanctions gate ───────────────────────────────
+
+    /// @dev A flagged wallet cannot claim interaction rewards from ANY client;
+    ///      the gate lives on-chain, not just in the alpha02 UI. Clearing the
+    ///      flag restores the claim, proving the gate is the only blocker.
+    function testClaimRevertsWhenCallerSanctioned() public {
+        _mut().setDailyLenderInterest(1, alice, 100e18, 100e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(alice, true);
+
+        vm.prank(alice);
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, alice)
+        );
+        _facet().claimInteractionRewards();
+
+        // Un-flag → the identical claim now succeeds (gate was the only blocker).
+        m.setFlagged(alice, false);
+        vm.prank(alice);
+        (uint256 paid,,) = _facet().claimInteractionRewards();
+        assertGt(paid, 0, "clean wallet claims normally once un-flagged");
     }
 
     // ─── Happy paths ─────────────────────────────────────────────────────────

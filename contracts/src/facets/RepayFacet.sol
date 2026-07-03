@@ -168,6 +168,15 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
     error RepaymentPastGracePeriod();
     error InsufficientPrepay();
     error InsufficientPartialAmount();
+    /// @notice Reverted when {repayPartial} is asked to retire the full
+    ///         remaining ERC-20 principal (`partialAmount >= loan.principal`).
+    ///         #921 item 3 — the partial path only decrements principal; it does
+    ///         NOT run settlement, collateral release, or NFT burns, so accepting
+    ///         a full-principal "partial" left the loan Active at principal 0 (a
+    ///         zombie) with close-out stranded behind a separate {repayLoan}.
+    ///         Callers retiring the whole principal must use {repayLoan}. Mirrors
+    ///         `SwapToRepayFacet.PartialWouldRetireFullPrincipal`.
+    error PartialWouldRetireFullPrincipal();
     /// @notice Reverted when {repayPartial} is called on a loan whose
     ///         `allowsPartialRepay` flag is false. The flag is
     ///         lender-controlled — set on the offer at create-time
@@ -682,8 +691,14 @@ contract RepayFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErrors 
                 accrued
             );
 
-            if (partialAmount > loan.principal)
-                revert InsufficientPartialAmount();
+            // #921 item 3 — reject a "partial" that would retire the FULL
+            // remaining principal (`>=`, not just overshoot). This path only
+            // decrements `loan.principal`; it runs no settlement / collateral
+            // release / NFT burn, so `partialAmount == loan.principal` would
+            // leave the loan Active at principal 0 (a zombie) until a separate
+            // `repayLoan`. Force full retirement through `repayLoan`.
+            if (partialAmount >= loan.principal)
+                revert PartialWouldRetireFullPrincipal();
 
             // Pay accrued + partial to the CURRENT lender-position holder.
             //
