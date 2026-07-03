@@ -32,12 +32,10 @@ import {MetricsFacet} from "../../src/facets/MetricsFacet.sol";
 import {VPFITokenFacet} from "../../src/facets/VPFITokenFacet.sol";
 import {VPFIDiscountFacet} from "../../src/facets/VPFIDiscountFacet.sol";
 import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.sol";
-import {OracleFacet} from "../../src/facets/OracleFacet.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
 import {IZeroExProxy} from "../../src/interfaces/IZeroExProxy.sol";
 import {TestMutatorFacet} from "../mocks/TestMutatorFacet.sol";
 import {ERC20Mock} from "../mocks/ERC20Mock.sol";
-import {ZeroExProxyMock} from "../mocks/ZeroExProxyMock.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -71,6 +69,21 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /// @dev Inherits the full SetupTest production-superset diamond (37 facets +
 ///      TestMutatorFacet), so every cross-facet hop routes through the real
 ///      Diamond fallback exactly as on mainnet.
+///
+///      MISSING VIEW HELPERS (finding — each forces a weaker or O(n) check
+///      below):
+///        1. No aggregate `getTotalVpfiCustody()` (Σ vpfiHeld + Σ unclaimed
+///           rebateAmount) — solvency must be reconstructed by walking every
+///           loan id ever created.
+///        2. No `previewPreclose(loanId)` returning the exact
+///           principal / interest-net / treasury+preclose-fee decomposition —
+///           conservation here must use ≤-coupon bounds instead of equality.
+///        3. No public "loan ids by status" index keyed for tests
+///           (`getLoansByStatusPaginated` exists but returns summaries, not a
+///           cheap id enumeration for exhaustive sweeps).
+///        4. No view exposing whether a liquidation credited
+///           `interestSettled` (the entitlement breakdown is only observable
+///           via the recorded claim total).
 contract Round3CrossFacetInvariants is SetupTest {
     // Rounding slack for interest math (accrual is day-granular and
     // floor-divided; 1 gwei of ERC20 dust is far above any observed rounding
@@ -550,13 +563,18 @@ contract Round3CrossFacetInvariants is SetupTest {
         // Proceeds conservation: everything distributed out of the swap
         // (lender claim + borrower surplus claim + liquidator bonus) must
         // fit inside the realized proceeds. ZeroExProxyMock rate = 11/10.
-        (, uint256 borrowerClaim, ) =
+        // The borrower-side claim is only summed when it is denominated in
+        // the principal asset (a partial-liquidation residue can instead be
+        // returned as collateral, which must not be unit-mixed here).
+        (address bClaimAsset, uint256 borrowerClaim, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, false);
+        uint256 borrowerClaimInPrincipal =
+            bClaimAsset == mockERC20 ? borrowerClaim : 0;
         uint256 proceeds = (collateralAtLiq * 11) / 10;
         uint256 liquidatorBonus =
             IERC20(mockERC20).balanceOf(address(this)) - liquidatorBalBefore;
         assertLe(
-            lenderClaim + borrowerClaim + liquidatorBonus,
+            lenderClaim + borrowerClaimInPrincipal + liquidatorBonus,
             proceeds + DUST,
             "liquidation distributed more value than the swap produced"
         );
