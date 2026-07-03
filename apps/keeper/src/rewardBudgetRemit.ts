@@ -39,11 +39,14 @@ const INTERACTION_ABI = InteractionRewardsFacetABI as Abi;
 const DEFAULT_LOOKBACK_DAYS = 45;
 /**
  * Per-send VPFI ceiling (the `perRemittanceCap` arg + the greedy batch bound).
- * Must not exceed the provisioned reward-budget CCIP lane bucket, and the lane
- * must clear the largest single-day slice (#918). 100k VPFI is above the
- * ~2×halfPoolForDay(1) worst-case day slice.
+ * Defaults to the SAME 50k VPFI as `ConfigureCcip.s.sol`'s `CCIP_RATE_CAPACITY`
+ * default, so out-of-the-box the batch can never exceed the deployed lane
+ * bucket and wedge on a rate-limit revert. Early high-APR days can have a
+ * single-day slice above this (and above the 50k lane); the operator raises BOTH
+ * the on-chain lane capacity and `REWARD_REMIT_LANE_CAP` together for those (see
+ * #918). A day whose slice exceeds the cap is skipped with a loud log.
  */
-const DEFAULT_LANE_CAP = 100_000n * 10n ** 18n;
+const DEFAULT_LANE_CAP = 50_000n * 10n ** 18n;
 
 function flagOn(env: Env, key: string): boolean {
   const v = (env as unknown as Record<string, string | undefined>)[key];
@@ -57,11 +60,17 @@ function readNumber(env: Env, key: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+/**
+ * Parse a wei amount, accepting BOTH a plain integer string and the scientific
+ * `<mantissa>e<exp>` notation used in the README/wrangler docs (e.g. `50000e18`
+ * — `BigInt()` alone throws on that). Non-positive / unparseable → fallback.
+ */
 function readBigint(env: Env, key: string, fallback: bigint): bigint {
-  const raw = (env as unknown as Record<string, string | undefined>)[key];
+  const raw = (env as unknown as Record<string, string | undefined>)[key]?.trim();
   if (!raw) return fallback;
   try {
-    const v = BigInt(raw);
+    const m = raw.match(/^(\d+)e(\d+)$/i);
+    const v = m ? BigInt(m[1]) * 10n ** BigInt(m[2]) : BigInt(raw);
     return v > 0n ? v : fallback;
   } catch {
     return fallback;
@@ -194,10 +203,22 @@ async function remitToMirror(
     account: ctx.wallet.account ?? null,
   } as never);
   // Wait for the tx to mine BEFORE returning: `remitRewardBudget` marks the
-  // (chain, day) pairs only when mined, so a still-pending tx would let the next
-  // cron tick re-quote the same state and submit a duplicate remit (which then
-  // reverts NothingToRemit and burns gas). Blocking here closes that window.
-  await publicClient.waitForTransactionReceipt({ hash });
+  // (chain, day) pairs only when mined, so a still-pending tx would let a later
+  // remit (in this or a subsequent tick) re-quote the same state. Cross-tick
+  // overlap (a tx pending past the 1-min cron interval) can still race, but that
+  // is harmless by construction: the on-chain marks make a duplicate remit a
+  // safe no-op that reverts `NothingToRemit` — no double-fund, no loss — caught
+  // at info below. This is the same on-chain-idempotency safety model every
+  // other keeper pass relies on for cross-invocation dedup.
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    // Broadcast succeeded but the tx reverted on-chain (e.g. a manual/admin
+    // remit or a pool-cap change won the race between quote and inclusion).
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} REVERTED (status=${receipt.status}) — days re-evaluated next tick`,
+    );
+    return;
+  }
   console.log(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );
