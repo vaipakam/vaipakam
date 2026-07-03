@@ -17,7 +17,6 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
-  erc20Abi,
   parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
@@ -28,6 +27,7 @@ import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sancti
 import {
   assertErc20BalanceLive,
   assertPositionNftHeldLive,
+  isAssetIlliquidLive,
   readGraceSecondsLive,
 } from '../contracts/preflights';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -289,27 +289,28 @@ export function PositionDetails() {
           publicClient.getBlock({ blockTag: 'latest' }),
         ]);
         const chainNow = latestBlock.timestamp;
-        // The role came from a CACHED ownerOf read and repayLoan is
-        // PERMISSIONLESS — a stale "borrower" view could pay off a
-        // position whose claim now belongs to someone else. Re-check
-        // the borrower position NFT live before anything moves.
-        await assertPositionNftHeldLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          tokenId: row.borrowerTokenId,
-          expectedOwner: address,
-        });
-        // repayLoan reverts RepaymentPastGracePeriod once past the
-        // grace window — fail BEFORE the approval, judged by CHAIN
-        // time against the LIVE grace buckets (falls back to the
-        // compile-time default schedule when none are configured).
-        if (row.assetType === AssetType.ERC20) {
-          const endTime = BigInt(row.startTime + row.durationDays * 86_400);
-          const graceSec = await readGraceSecondsLive({
+        // Two more independent live reads, one round-trip: the role
+        // came from a CACHED ownerOf (repayLoan is PERMISSIONLESS — a
+        // stale "borrower" could pay off a position whose claim now
+        // belongs to someone else), and the grace window is judged by
+        // CHAIN time against the LIVE buckets.
+        const [, graceSec] = await Promise.all([
+          assertPositionNftHeldLive({
+            publicClient,
+            diamondAddress: walletChain.diamondAddress,
+            tokenId: row.borrowerTokenId,
+            expectedOwner: address,
+          }),
+          readGraceSecondsLive({
             publicClient,
             diamondAddress: walletChain.diamondAddress,
             durationDays: row.durationDays,
-          });
+          }),
+        ]);
+        // repayLoan reverts RepaymentPastGracePeriod once past the
+        // grace window — fail BEFORE the approval.
+        if (row.assetType === AssetType.ERC20) {
+          const endTime = BigInt(row.startTime + row.durationDays * 86_400);
           if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
             return;
@@ -362,16 +363,13 @@ export function PositionDetails() {
           // signature: a wallet holding exactly totalDue can still be
           // short when repayLoan recomputes across a boundary, which
           // would burn the approval on a doomed transferFrom.
-          const held = await publicClient.readContract({
-            address: row.lendingAsset as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [address],
+          await assertErc20BalanceLive({
+            publicClient,
+            token: row.lendingAsset as `0x${string}`,
+            owner: address,
+            amount: totalDue + pad,
+            symbol: principalMeta.data?.symbol,
           });
-          if (held < totalDue + pad) {
-            setError(copy.errors.needMore(principalMeta.data?.symbol ?? 'the repayment asset'));
-            return;
-          }
           await ensureAllowance({
             publicClient,
             walletClient,
@@ -438,36 +436,32 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
-      // addCollateral authorizes the CURRENT borrower-position holder
-      // (requireBorrowerNftOwner) — the page's role is a cached read,
-      // so re-check live before the approval.
-      await assertPositionNftHeldLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        tokenId: row.borrowerTokenId,
-        expectedOwner: address,
-      });
-      // The button's balance gate is cached — re-read live so funds
-      // moved after the receipt opened fail before the approval.
-      await assertErc20BalanceLive({
-        publicClient,
-        token: row.collateralAsset as `0x${string}`,
-        owner: address,
-        amount: wei,
-        symbol: collateralMeta.data.symbol,
-      });
-      // addCollateral rejects unless the collateral is currently
-      // LIQUID (checkLiquidity == Liquid, enum 0) — fail before the
-      // approval. Fail-open on read errors: the contract still guards.
-      const liquidity = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'checkLiquidity',
-          args: [row.collateralAsset as `0x${string}`],
-        })
-        .catch(() => 0)) as number;
-      if (Number(liquidity) !== 0) {
+      // Three independent live gates, one round-trip: addCollateral
+      // authorizes the CURRENT borrower-position holder
+      // (requireBorrowerNftOwner), approve() ignores balances, and the
+      // contract rejects top-ups on unpriced collateral
+      // (IlliquidAsset; fail-open read — the contract still guards).
+      const [, , collateralIlliquid] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        assertErc20BalanceLive({
+          publicClient,
+          token: row.collateralAsset as `0x${string}`,
+          owner: address,
+          amount: wei,
+          symbol: collateralMeta.data.symbol,
+        }),
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: row.collateralAsset,
+        }),
+      ]);
+      if (collateralIlliquid) {
         setError(copy.errors.collateralNotPriced);
         return;
       }
@@ -571,16 +565,13 @@ export function PositionDetails() {
         (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
         (365n * 10_000n);
       const required = wei + accrued;
-      const held = await publicClient.readContract({
-        address: row.lendingAsset as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [address],
+      await assertErc20BalanceLive({
+        publicClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        amount: required,
+        symbol: principalMeta.data.symbol,
       });
-      if (held < required) {
-        setError(copy.errors.needMore(principalMeta.data.symbol));
-        return;
-      }
       await ensureAllowance({
         publicClient,
         walletClient,

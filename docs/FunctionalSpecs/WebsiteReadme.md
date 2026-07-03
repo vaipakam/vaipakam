@@ -639,6 +639,24 @@ converge. Its intended behaviour (the test oracle for that surface):
   When active filters match nothing, the empty state must say the
   FILTERS matched nothing (with a clear-filters action) — never that
   the market is empty.
+- Immediately before any approval or signature, the app re-checks the
+  facts that decide the transaction live on-chain — balance of the
+  asset being locked or paid, asset pause status, current holdership
+  of the position being acted on, the live grace window, and (when
+  the review showed no unpriced-asset warning) current liquidity of
+  both legs. A stale fact aborts with a plain explanation before the
+  user pays for anything; where an answer gates a disclosure, an
+  unreadable answer blocks rather than silently passing.
+- A ticked risk-and-terms acknowledgement is void the moment any term
+  it covered changes: editing an offer or listing term, choosing a
+  different offer or listing, or a disclosure (such as the
+  unpriced-asset warning) appearing after the acknowledgement was
+  given all require a fresh acknowledgement.
+- Review receipts state the loan's interest mode in plain language:
+  full-term interest applies even when the loan is repaid early;
+  day-by-day (pro-rata) loans cost less when repaid early. The grace
+  period shown in receipts and the grace window enforced at
+  repayment come from the same schedule.
 
 ## Key UX Requirements
 

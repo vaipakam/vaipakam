@@ -23,8 +23,8 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
-import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
+import { useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
@@ -119,15 +119,11 @@ export function Vpfi() {
         // rotated the token after the cached snapshot, approving the
         // stale address mines a useless approval and the deposit
         // reverts. Re-read live (fail closed) and force a re-review.
-        const liveToken = (await publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getVPFIToken',
-          })
-          .catch(() => {
-            throw new Error(copy.vpfi.tokenCheckRetry);
-          })) as string;
+        const liveToken = await readVpfiTokenLive(
+          publicClient,
+          walletChain.diamondAddress,
+          copy.vpfi.tokenCheckRetry,
+        );
         if (liveToken.toLowerCase() !== snapshot.token.toLowerCase()) {
           refresh();
           throw new Error(copy.vpfi.tokenChanged);

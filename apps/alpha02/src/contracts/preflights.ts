@@ -15,8 +15,16 @@
  */
 import { erc20Abi } from 'viem';
 import type { PublicClient } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+} from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../content/copy';
+import { defaultGraceSeconds } from '../lib/grace';
+
+export { defaultGraceSeconds };
 
 /** Live ERC-20 balance gate. Throws `needMore` when short; throws the
  *  transport error when the read fails (fail closed). */
@@ -75,25 +83,20 @@ export async function assertPositionNftHeldLive(opts: {
       functionName: 'ownerOf',
       args: [BigInt(opts.tokenId)],
     })) as string;
-  } catch {
-    // Burned (claimed/terminal) or unreadable — either way this wallet
-    // can't be confirmed as the position holder right now.
-    throw new Error(copy.errors.positionMoved);
+  } catch (err) {
+    // Fail closed either way, but say the TRUE thing: a revert means
+    // the token is gone (burned/claimed → the position really moved);
+    // a transport failure means we couldn't check — "transferred"
+    // would be a false claim and "refresh" wouldn't help.
+    const isRevert =
+      err instanceof BaseError &&
+      (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+        err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+    throw new Error(isRevert ? copy.errors.positionMoved : copy.errors.checkRetry);
   }
   if (owner.toLowerCase() !== opts.expectedOwner.toLowerCase()) {
     throw new Error(copy.errors.positionMoved);
   }
-}
-
-/** Compile-time default grace schedule — mirrors
- *  LibVaipakam.gracePeriod's zero-bucket fallback. */
-export function defaultGraceSeconds(durationDays: number): bigint {
-  if (durationDays < 7) return 3_600n;
-  if (durationDays < 30) return 86_400n;
-  if (durationDays < 90) return 3n * 86_400n;
-  if (durationDays < 180) return 7n * 86_400n;
-  if (durationDays < 365) return 14n * 86_400n;
-  return 30n * 86_400n;
 }
 
 /** LIVE grace window for a duration — reads governance-configured
@@ -120,6 +123,9 @@ export async function readGraceSecondsLive(opts: {
         if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
         if (BigInt(opts.durationDays) < b.maxDurationDays) return b.graceSeconds;
       }
+      // No match and no catch-all (malformed set) — the contract's
+      // defensive fallback returns the LAST entry's grace; mirror it.
+      return buckets[buckets.length - 1].graceSeconds;
     }
   } catch {
     // fall through to the default schedule
@@ -138,6 +144,10 @@ export async function isAssetIlliquidLive(opts: {
   publicClient: PublicClient;
   diamondAddress: `0x${string}`;
   asset: string;
+  /** Throw on read failure instead of assuming liquid. Use wherever
+   *  the answer gates a DISCLOSURE (an unknown must not silently
+   *  render as "liquid, no warning needed"). */
+  failClosed?: boolean;
 }): Promise<boolean> {
   if (
     !opts.asset ||
@@ -145,13 +155,20 @@ export async function isAssetIlliquidLive(opts: {
   ) {
     return false;
   }
-  const status = await opts.publicClient
-    .readContract({
+  let status: unknown;
+  try {
+    status = await opts.publicClient.readContract({
       address: opts.diamondAddress,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'checkLiquidity',
       args: [opts.asset as `0x${string}`],
-    })
-    .catch(() => LIQUIDITY_LIQUID);
+    });
+  } catch (err) {
+    if (opts.failClosed) {
+      throw new Error(copy.errors.checkRetry);
+    }
+    status = LIQUIDITY_LIQUID;
+    void err;
+  }
   return Number(status) !== LIQUIDITY_LIQUID;
 }

@@ -28,6 +28,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
+import { isAssetIlliquidLive } from './preflights';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -143,10 +144,9 @@ export function useAcceptTermsSigning() {
         quantity?: bigint;
         assetType?: number;
         /** True when the review DISCLOSED the in-kind (illiquid)
-         *  default path. The signed terms acknowledge both assets, so
-         *  if a leg reads illiquid live and the review never warned,
-         *  the signer aborts instead of collecting an undisclosed
-         *  acknowledgement. */
+         *  default path. Anything else (false OR omitted) makes the
+         *  signer re-read liquidity live and abort on an illiquid leg
+         *  — omission is the safe side, never a silent skip. */
         illiquidWarned?: boolean;
       };
     }): Promise<AcceptTermsPayload> => {
@@ -322,30 +322,30 @@ export function useAcceptTermsSigning() {
 
       // The signed terms acknowledge BOTH assets as potentially
       // illiquid — but the acknowledgement is only meaningful consent
-      // if the review disclosed the in-kind default path. When the
-      // caller says the review did NOT warn (both legs read liquid at
-      // review time), re-read liquidity live and abort before signing
-      // if a leg has flipped — the re-review then shows the warning.
-      if (input.expected && input.expected.illiquidWarned === false) {
-        const liquidityOf = async (asset: Address): Promise<number> =>
-          asset.toLowerCase() === '0x0000000000000000000000000000000000000000'
-            ? 0
-            : Number(
-                await publicClient.readContract({
-                  address: diamondAddr,
-                  abi: DIAMOND_ABI_VIEM,
-                  functionName: 'checkLiquidity',
-                  args: [asset],
-                }),
-              );
-        // Fail-open on read errors: this is a DISCLOSURE re-check, and
-        // the review's own (cached) liquidity data already ran; a
-        // transport blip must not block an accept the user reviewed.
-        const [lendingStatus, collateralStatus] = await Promise.all([
-          liquidityOf(lendingAsset).catch(() => 0),
-          liquidityOf(collateralAsset).catch(() => 0),
+      // if the review disclosed the in-kind default path. Unless the
+      // caller POSITIVELY says the review warned (illiquidWarned:
+      // true), re-read liquidity live and abort before signing if a
+      // leg is illiquid — the re-review then shows the warning. The
+      // default is the SAFE side on purpose: a future caller that
+      // forgets the flag gets a loud abort on illiquid pairs, never a
+      // silently skipped disclosure. Reads fail CLOSED — an unknown
+      // must not sign as "liquid".
+      if (input.expected && input.expected.illiquidWarned !== true) {
+        const [lendingIlliquid, collateralIlliquid] = await Promise.all([
+          isAssetIlliquidLive({
+            publicClient,
+            diamondAddress: diamondAddr,
+            asset: lendingAsset,
+            failClosed: true,
+          }),
+          isAssetIlliquidLive({
+            publicClient,
+            diamondAddress: diamondAddr,
+            asset: collateralAsset,
+            failClosed: true,
+          }),
         ]);
-        if (lendingStatus !== 0 || collateralStatus !== 0) {
+        if (lendingIlliquid || collateralIlliquid) {
           throw new Error(copy.match.termsChanged);
         }
       }

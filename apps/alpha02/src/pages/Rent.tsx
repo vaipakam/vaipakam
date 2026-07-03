@@ -43,7 +43,7 @@ import {
   useRentalBufferBps,
 } from '../data/protocol';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
-import { useVpfi } from '../data/vpfi';
+import { readVpfiTokenLive, useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
   assertAssetNotPausedLive,
@@ -285,39 +285,37 @@ function ListNftFlow() {
       // live token (fail closed) so a registration/rotation since
       // review can't let a VPFI prepay through to a wasted
       // setApprovalForAll (createOffer: VpfiNotAllowedAsRentalPrepay).
-      const liveVpfiToken = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getVPFIToken',
-        })
-        .catch(() => {
-          throw new Error(copy.rent.vpfiCheckRetry);
-        })) as string;
+      const liveVpfiToken = await readVpfiTokenLive(
+        publicClient,
+        walletChain.diamondAddress,
+        copy.rent.vpfiCheckRetry,
+      );
       if (liveVpfiToken.toLowerCase() === prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayNotAllowed);
       }
       // Ownership was checked from a CACHED read — re-read live so an
       // NFT transferred/sold since review fails BEFORE the
       // collection-wide setApprovalForAll can mine.
-      const stillOwns = await readNftOwnershipLive({
-        publicClient,
-        contract: contract as `0x${string}`,
-        standard: standardEnum,
-        tokenId,
-        quantity,
-        owner: address,
-      });
+      const [stillOwns] = await Promise.all([
+        readNftOwnershipLive({
+          publicClient,
+          contract: contract as `0x${string}`,
+          standard: standardEnum,
+          tokenId,
+          quantity,
+          owner: address,
+        }),
+        // createOffer rejects paused collections (requireAssetNotPaused)
+        // — checked in the same round-trip, before setApprovalForAll.
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: contract as `0x${string}`,
+        }),
+      ]);
       if (!stillOwns) {
         throw new Error(copy.rent.checkNotOwner);
       }
-      // createOffer rejects paused collections (requireAssetNotPaused)
-      // — check before the collection-wide approval can mine.
-      await assertAssetNotPausedLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        asset: contract as `0x${string}`,
-      });
       await ensureNftApproval({
         publicClient,
         walletClient,
@@ -804,6 +802,10 @@ function RentNftFlow() {
             tokenId: BigInt(selected.tokenId),
             quantity: BigInt(selected.quantity || '1'),
             assetType: selected.assetType,
+            // Rentals disclose their own model up front (NFT custody,
+            // prepaid fees, no price-based liquidation) — the illiquid
+            // re-check is for ERC-20 loan pairs.
+            illiquidWarned: true,
           },
         });
       } catch (err) {
@@ -835,15 +837,11 @@ function RentNftFlow() {
       // CLOSED when the read itself fails: proceeding unchecked is
       // exactly the wasted-approval path this guard exists to prevent
       // (nothing has been sent yet — retrying is free).
-      const vpfiToken = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getVPFIToken',
-        })
-        .catch(() => {
-          throw new Error(copy.rent.vpfiCheckRetry);
-        })) as string;
+      const vpfiToken = await readVpfiTokenLive(
+        publicClient,
+        walletChain.diamondAddress,
+        copy.rent.vpfiCheckRetry,
+      );
       if (vpfiToken.toLowerCase() === terms.prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayListing);
       }
@@ -854,24 +852,27 @@ function RentNftFlow() {
       );
       // acceptOffer enforces requireAssetNotPaused on the listed NFT
       // (and the prepay leg), and approve() succeeds regardless of
-      // balance — re-check both live before the approval can mine.
-      await assertAssetNotPausedLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        asset: terms.lendingAsset,
-      });
-      await assertAssetNotPausedLive({
-        publicClient,
-        diamondAddress: walletChain.diamondAddress,
-        asset: terms.prepayAsset,
-      });
-      await assertErc20BalanceLive({
-        publicClient,
-        token: terms.prepayAsset,
-        owner: address,
-        amount: canonicalTotal,
-        symbol: prepayMeta.data?.symbol,
-      });
+      // balance — re-check all three live, in ONE round-trip, before
+      // the approval can mine.
+      await Promise.all([
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.lendingAsset,
+        }),
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.prepayAsset,
+        }),
+        assertErc20BalanceLive({
+          publicClient,
+          token: terms.prepayAsset,
+          owner: address,
+          amount: canonicalTotal,
+          symbol: prepayMeta.data?.symbol,
+        }),
+      ]);
       await ensureAllowance({
         publicClient,
         walletClient,

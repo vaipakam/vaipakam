@@ -248,6 +248,8 @@ export const copy = {
       'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
+    checkRetry:
+      'We couldn’t verify this on-chain just now — nothing was sent. Please try again in a moment.',
     assetPaused:
       'One of this deal’s assets is temporarily paused by the protocol, so this action can’t go through right now. Nothing was sent — please try again later.',
     positionMoved:

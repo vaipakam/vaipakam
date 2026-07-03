@@ -1,3 +1,4 @@
+import { defaultGraceSeconds, formatGraceSeconds } from './grace';
 import { parseUnits } from 'viem';
 import { AssetType } from './types';
 
@@ -506,10 +507,7 @@ export function toCreateOfferPayload(
  * buckets enforced by `LibVaipakam` on-chain.
  */
 export function gracePeriodLabel(days: number): string {
-  if (days < 7) return '1 hour';
-  if (days < 30) return '1 day';
-  if (days < 90) return '3 days';
-  if (days < 180) return '1 week';
-  if (days < 365) return '2 weeks';
-  return '30 days'; // LibVaipakam.gracePeriod: >=365d falls in the 30-day bucket
+  // Derived from the SAME table the submit-time grace gate uses — the
+  // shown grace and the enforced grace can't drift apart.
+  return formatGraceSeconds(defaultGraceSeconds(days));
 }
