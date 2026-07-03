@@ -1,3 +1,0 @@
-# Alpha01 Basic mode journey wiring (#869)
-
-Completes Basic-mode journeys B1, B2, L1, L2 (create path), M1, and C1 in alpha01: intent-first borrow/lend wizards with eligibility (wallet, chain, sanctions, terms), vault + allowance preflight in defi-client, review receipts with journey copy, loan command center with plain health labels and repay→claim CTAs, claim center backed by indexer `/claimables`, NFT rent intent chooser, and help links to the Basic user guide.
