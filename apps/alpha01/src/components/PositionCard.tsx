@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import type { IndexedLoan } from '@vaipakam/defi-client';
-import { formatBpsAsPercent, loanRoleForWallet } from '@vaipakam/defi-client';
+import { formatBpsAsPercent, isNftRentalLoan, loanRoleForWallet, nftAssetKindLabel } from '@vaipakam/defi-client';
 import { shortenAddr } from '@vaipakam/lib/address';
 import { resolveSymbol } from '../lib/formatAsset';
 import { useTokenMeta } from '../lib/tokenMeta';
@@ -29,17 +29,25 @@ export function PositionCard({ loan }: Props) {
       : walletRole === 'borrower'
         ? loan.lender
         : loan.lender;
+  const rental = isNftRentalLoan(loan);
 
   return (
     <Link to={`/positions/${loan.loanId}`} className="position-card">
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-        <strong>Loan #{loan.loanId}</strong>
+        <strong>{rental ? `Rental #${loan.loanId}` : `Loan #${loan.loanId}`}</strong>
         <span style={{ color: 'var(--text-secondary)' }}>{role}</span>
       </div>
       <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        {resolveSymbol(lendingMeta, loan.lendingAsset)} · {resolveSymbol(collateralMeta, loan.collateralAsset)}{' '}
-        collateral ·{' '}
-        {loan.durationDays} days · {formatBpsAsPercent(loan.interestRateBps)}
+        {rental ? (
+          <>
+            {nftAssetKindLabel(loan.assetType)} #{loan.tokenId} · {loan.durationDays} days · daily fee position
+          </>
+        ) : (
+          <>
+            {resolveSymbol(lendingMeta, loan.lendingAsset)} · {resolveSymbol(collateralMeta, loan.collateralAsset)}{' '}
+            collateral · {loan.durationDays} days · {formatBpsAsPercent(loan.interestRateBps)}
+          </>
+        )}
       </div>
       <div style={{ fontSize: '0.85rem' }}>
         Counterparty: {shortenAddr(counterparty)}
