@@ -289,6 +289,8 @@ export const copy = {
     sourcesUnavailable:
       'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
     revoke: 'Revoke',
+    staleNote:
+      'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
     revoked: (symbol: string) =>
       `Approval removed for ${symbol}. If a live request or listing needed it, its card will warn and offer a restore.`,
   },

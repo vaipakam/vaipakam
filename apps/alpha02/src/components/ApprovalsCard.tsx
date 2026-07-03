@@ -27,6 +27,7 @@ import { submitErrorText } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
 import { revokeAllowance } from '../contracts/erc20';
 import { useMyLoans, useMyOffers } from '../data/hooks';
+import { fetchOffersByCreator } from '../data/indexer';
 import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 import { formatTokenAmount, shortAddress } from '../lib/format';
@@ -39,9 +40,12 @@ interface ApprovalRow {
 }
 
 export function ApprovalsCard() {
-  const { address, readChain, onSupportedChain } = useActiveChain();
+  const { address, readChain, walletChain, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: readChain.chainId });
+  // Writes pair with a WALLET-chain client, like every write surface
+  // — the read client must not wait for a receipt on another chain.
+  const walletPublicClient = usePublicClient({ chainId: walletChain?.chainId });
   const queryClient = useQueryClient();
   const loans = useMyLoans();
   const offers = useMyOffers();
@@ -85,51 +89,63 @@ export function ApprovalsCard() {
     enabled: Boolean(publicClient) && Boolean(address) && tokens.length > 0,
     refetchInterval: 60_000,
     queryFn: async (): Promise<ApprovalRow[]> => {
+      // The rental-prepay approval (the Rent flow's money leg) only
+      // appears on OFFERS, and useMyOffers filters to active — pull
+      // the creator's full offer history for prepay legs so residue
+      // on a settled/cancelled rental stays visible.
+      const historyTokens = new Set<string>(tokens);
+      const page = await fetchOffersByCreator(readChain.chainId, address!, {
+        limit: 100,
+      });
+      for (const o of page?.offers ?? []) {
+        const a = o.prepayAsset?.toLowerCase();
+        if (a && a !== ZERO_ADDRESS) historyTokens.add(a);
+      }
       const rows = await Promise.all(
-        tokens.map(async (token): Promise<ApprovalRow | null> => {
-          try {
-            const [allowance, symbol, decimals] = await Promise.all([
-              publicClient!.readContract({
-                address: token,
-                abi: erc20Abi,
-                functionName: 'allowance',
-                args: [address!, readChain.diamondAddress],
-              }) as Promise<bigint>,
-              publicClient!.readContract({
-                address: token,
-                abi: erc20Abi,
-                functionName: 'symbol',
-              }) as Promise<string>,
-              publicClient!.readContract({
-                address: token,
-                abi: erc20Abi,
-                functionName: 'decimals',
-              }) as Promise<number>,
-            ]);
-            return { token, symbol, decimals: Number(decimals), allowance };
-          } catch {
-            // One unreadable token must not hide the others; it just
-            // drops from the list this round.
-            return null;
-          }
+        [...historyTokens].sort().map(async (t): Promise<ApprovalRow | null> => {
+          const token = t as `0x${string}`;
+          // The ALLOWANCE read failing is NOT knowledge — it must
+          // fail the round loudly (isError), never render as "no
+          // approvals". Metadata failures only degrade the label
+          // (bytes32-symbol tokens stay listed and revocable).
+          const allowance = (await publicClient!.readContract({
+            address: token,
+            abi: erc20Abi,
+            functionName: 'allowance',
+            args: [address!, readChain.diamondAddress],
+          })) as bigint;
+          if (allowance === 0n) return null;
+          const [symbol, decimals] = await Promise.all([
+            (publicClient!.readContract({
+              address: token,
+              abi: erc20Abi,
+              functionName: 'symbol',
+            }) as Promise<string>).catch(() => shortAddress(token)),
+            (publicClient!.readContract({
+              address: token,
+              abi: erc20Abi,
+              functionName: 'decimals',
+            }) as Promise<number>).catch(() => 18),
+          ]);
+          return { token, symbol, decimals: Number(decimals), allowance };
         }),
       );
-      return rows.filter((r): r is ApprovalRow => r !== null && r.allowance > 0n);
+      return rows.filter((r): r is ApprovalRow => r !== null);
     },
   });
 
   async function revoke(row: ApprovalRow) {
-    if (!address || !walletClient || !publicClient) return;
+    if (!address || !walletClient || !walletPublicClient || !walletChain) return;
     setBusy(true);
     setError(null);
     setDone(null);
     try {
       await revokeAllowance({
-        publicClient,
+        publicClient: walletPublicClient,
         walletClient,
         token: row.token,
         owner: address,
-        spender: readChain.diamondAddress,
+        spender: walletChain.diamondAddress,
       });
       setDone(copy.approvals.revoked(row.symbol));
       await queryClient.invalidateQueries({ queryKey: ['standingApprovals'] });
@@ -161,7 +177,7 @@ export function ApprovalsCard() {
         <p className="muted">{copy.approvals.sourcesUnavailable}</p>
       ) : tokens.length === 0 ? (
         <p className="muted">{copy.approvals.none}</p>
-      ) : approvals.isError ? (
+      ) : approvals.isError && !approvals.data ? (
         <p className="muted">{copy.approvals.unavailable}</p>
       ) : !approvals.data ? (
         <p className="muted">{copy.approvals.loading}</p>
@@ -169,6 +185,11 @@ export function ApprovalsCard() {
         <p className="muted">{copy.approvals.none}</p>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
+          {approvals.isError ? (
+            // Retained data on a failed background refetch — revoke
+            // must stay reachable; flag staleness instead of hiding.
+            <p className="muted">{copy.approvals.staleNote}</p>
+          ) : null}
           {approvals.data.map((row) => (
             <div key={row.token} className="spread">
               <span>
