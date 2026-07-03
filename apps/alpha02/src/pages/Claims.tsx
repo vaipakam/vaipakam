@@ -10,7 +10,7 @@ import { useModal } from 'connectkit';
 import { usePublicClient } from 'wagmi';
 import { useQueryClient } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useMyClaimables, useMyLoans } from '../data/hooks';
+import { useMyClaimables } from '../data/claimables';
 import { useInteractionRewards } from '../data/rewards';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { useActiveChain } from '../chain/useActiveChain';
@@ -192,37 +192,16 @@ function ClaimRow({ loan }: { loan: PositionLoan }) {
 export function Claims() {
   const { isConnected } = useActiveChain();
   const { setOpen } = useModal();
+  // On-chain-authoritative (issue #921 item 7 / #958): the hook confirms
+  // each candidate loan via `getClaimable`, so a lender's
+  // `fallback_pending` loan surfaces without a client-side merge, and a
+  // sold/settled position never shows a phantom claim. `undefined` =
+  // loading, `null` = unavailable (never a confident partial list).
   const claimables = useMyClaimables();
-  // The indexer's /claimables endpoint lists only terminal statuses —
-  // a lender's fallback_pending loan is ALSO claimable (ClaimFacet
-  // runs the claim-time fallback resolution), so merge those in from
-  // the wallet's loan list. Either source failing → unavailable; a
-  // list missing a live claim is exactly the partial-as-complete
-  // dishonesty the null contract exists to prevent.
-  const loans = useMyLoans();
-  const rowsLoading =
-    claimables.isLoading ||
-    claimables.data === undefined ||
-    loans.isLoading ||
-    loans.data === undefined;
-  const rowsUnavailable =
-    claimables.data === null || loans.data === null;
+  const rowsLoading = claimables.isLoading || claimables.data === undefined;
+  const rowsUnavailable = claimables.data === null;
   const rows: PositionLoan[] =
-    rowsLoading || rowsUnavailable
-      ? []
-      : [
-          ...claimables.data!,
-          ...loans
-            .data!.filter(
-              (l) => l.role === 'lender' && l.status === 'fallback_pending',
-            )
-            .filter(
-              (l) =>
-                !claimables.data!.some(
-                  (c) => c.loanId === l.loanId && c.role === 'lender',
-                ),
-            ),
-        ];
+    rowsLoading || rowsUnavailable ? [] : claimables.data!;
 
   return (
     <div>

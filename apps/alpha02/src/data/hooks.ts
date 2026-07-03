@@ -14,7 +14,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useActiveChain } from '../chain/useActiveChain';
 import {
   fetchActiveOffers,
-  fetchClaimables,
   fetchLoanById,
   fetchLoansByBorrower,
   fetchLoansByLender,
@@ -199,21 +198,8 @@ export function useMyOffers() {
   });
 }
 
-/** Claimable loans for the connected wallet, tagged with role. */
-export function useMyClaimables() {
-  const { readChain, address } = useActiveChain();
-  return useQuery({
-    queryKey: ['claimables', readChain.chainId, address?.toLowerCase()],
-    enabled: Boolean(address),
-    refetchInterval: REFRESH_MS,
-    queryFn: async (): Promise<PositionLoan[] | null> => {
-      if (!address) return [];
-      const res = await fetchClaimables(readChain.chainId, address);
-      if (res === null) return null;
-      return [
-        ...res.asLender.map((l) => ({ ...l, role: 'lender' as const })),
-        ...res.asBorrower.map((l) => ({ ...l, role: 'borrower' as const })),
-      ];
-    },
-  });
-}
+// `useMyClaimables` now lives in `./claimables` and is on-chain-
+// authoritative (issue #921 item 7 / #958): the indexer stays the fast
+// candidate layer via `useMyLoans`, and `getClaimable` is the authority.
+// Imported directly from `./claimables` by call sites (one-way dep, no
+// cycle with this module).
