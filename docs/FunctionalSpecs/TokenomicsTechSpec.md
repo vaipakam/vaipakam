@@ -258,6 +258,17 @@ Reward pool funding on mirrors:
 - once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
 - mirror-side `claimInteractionRewards()` draws from the mirror Diamond's local VPFI balance, credited by the remittance above, after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops. A mirror whose claim gate is open but whose budget has not yet been remitted has claims revert (empty balance) until the operator/keeper funds it — recoverable back-pressure, never lost value.
 
+Reward-budget remittance automation:
+
+- the production keeper may run a canonical-chain reward-remittance pass that keeps mirror chains funded ahead of ordinary claim traffic
+- the pass should scan a bounded window of recent finalized days for each mirror chain and identify days whose mirror budget has finalized but has not yet been remitted
+- remittance should be batched by mirror chain and bounded by the configured lane capacity so a single send cannot exceed the live cross-chain bucket
+- discovery should be idempotent: non-finalized days, zero-budget days, and already-remitted days are skipped without changing state, and retrying a failed or interrupted pass must not double-send a finalized day
+- before a send, the keeper should quote the exact cross-chain fee needed for that batch and submit only when it can pay that fee through the configured funding path
+- the automation is off by default and may run only when the general keeper switch, the dedicated reward-remittance switch, and the on-chain keeper authorization for the signer are all active
+- if a single day's mirror slice is larger than the configured lane ceiling, the keeper should skip that day and surface an operator-visible capacity warning rather than splitting the day across multiple sends, because a day's budget is remitted atomically
+- the keeper is a convenience automation, not the source of accounting truth: on-chain remittance guards remain authoritative, and an operator may still perform a manual remittance when automation is disabled or unavailable
+
 Accounting identity:
 
 - because each chain's VPFI slice is scaled by `chainInterest / globalInterest`, the uncapped per-user payout `½ × (userInterest / globalInterest) × dailyPool` is mathematically identical to `½ × (userInterest / localChainInterest) × chainSlice`
