@@ -5,6 +5,7 @@ import {
   plainHealthLabel,
 } from '@vaipakam/defi-client';
 import type { LoanRiskSnapshot } from '../hooks/useLoanRisks';
+import { useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 
 interface Props {
   risk: LoanRiskSnapshot | undefined;
@@ -12,6 +13,8 @@ interface Props {
 }
 
 export function TechnicalRiskPanel({ risk, loading }: Props) {
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
+
   if (loading) {
     return (
       <details className="technical-risk-panel" open>
@@ -31,15 +34,15 @@ export function TechnicalRiskPanel({ risk, loading }: Props) {
       <dl className="technical-risk-grid">
         <div>
           <dt>Health factor</dt>
-          <dd>{hf != null && hf > 0n ? formatHealthFactor(hf) : '—'}</dd>
+          <dd>{hf != null ? formatHealthFactor(hf) : '—'}</dd>
         </div>
         <div>
           <dt>Current LTV</dt>
-          <dd>{ltv != null && ltv > 0n ? formatLtvBps(ltv) : '—'}</dd>
+          <dd>{ltv != null ? formatLtvBps(ltv) : '—'}</dd>
         </div>
         <div>
           <dt>Min HF at initiation</dt>
-          <dd>{formatHealthFactor(MIN_HEALTH_FACTOR_1E18)}</dd>
+          <dd>{formatHealthFactor(minHf1e18)}</dd>
         </div>
         <div>
           <dt>Plain label</dt>

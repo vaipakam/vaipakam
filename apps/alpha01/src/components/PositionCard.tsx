@@ -63,7 +63,7 @@ export function PositionCard({ loan, risk }: Props) {
       <div style={{ fontSize: '0.85rem' }}>
         Counterparty: {shortenAddr(counterparty)}
       </div>
-      {mode === 'advanced' && !rental && risk?.healthFactor != null && risk.healthFactor > 0n ? (
+      {mode === 'advanced' && !rental && risk?.healthFactor != null ? (
         <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
           HF {formatHealthFactor(risk.healthFactor)}
           {risk.ltvBps != null && risk.ltvBps > 0n ? ` · LTV ${formatLtvBps(risk.ltvBps)}` : null}
