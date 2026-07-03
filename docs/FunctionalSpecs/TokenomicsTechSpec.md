@@ -255,8 +255,8 @@ Reward pool funding on mirrors:
 
 - the interaction-reward VPFI pool (`69,000,000` cap) is held on `Base` (canonical mint chain)
 - per-day per-chain VPFI payout budget = `(dailyChainInterest[D][chainId] / dailyGlobalInterestNumeraire[D]) × dailyPool[D]`
-- the `Base` treasury bridges that budget to each mirror through the configured cross-chain token path as part of finalization
-- mirror-side `claimInteractionRewards()` draws from the local VPFI reward vault after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops
+- once a day is finalized, `Base` computes that per-chain budget and **remits it on-demand** to each mirror over the configured cross-chain token path (Chainlink CCIP) — a permissioned, batched, retriable send, **decoupled from finalization** rather than bundled into it, so a single stuck lane, native-fee shortfall, or per-day delivery failure never blocks finalization or the other chains' funding (#776). The remittance is bounded so what `Base` has remitted plus what it has itself paid out never exceeds the 69M pool.
+- mirror-side `claimInteractionRewards()` draws from the mirror Diamond's local VPFI balance, credited by the remittance above, after the relevant loan has closed; no synthetic IOUs, no cross-chain claim hops. A mirror whose claim gate is open but whose budget has not yet been remitted has claims revert (empty balance) until the operator/keeper funds it — recoverable back-pressure, never lost value.
 
 Accounting identity:
 
