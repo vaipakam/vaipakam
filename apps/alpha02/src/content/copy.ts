@@ -173,6 +173,8 @@ export const copy = {
       'We couldn’t check whether this NFT collection supports the on-chain rental standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the renter — renting inside Vaipakam still works.',
     vpfiPrepayListing:
       'This listing asks to be paid in VPFI, which rentals don’t allow — it can’t be accepted. Please pick a different listing.',
+    vpfiCheckRetry:
+      'We couldn’t verify this listing’s payment asset just now — nothing was sent or approved. Please try again in a moment.',
   },
 
   positions: {

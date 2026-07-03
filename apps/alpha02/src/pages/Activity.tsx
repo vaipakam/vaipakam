@@ -74,7 +74,11 @@ export function Activity() {
       address?.toLowerCase(),
       myLoanIds.size,
     ],
-    enabled: Boolean(address),
+    // The participant filter NEEDS the wallet's loan-id set: with the
+    // positions query unavailable, actor-null events tied to the
+    // wallet only by loanId would be silently dropped and the feed
+    // would render confidently incomplete. Wait for a real loan list.
+    enabled: Boolean(address) && Array.isArray(loans.data),
     refetchInterval: 60_000,
     queryFn: async (): Promise<{
       events: IndexedActivityEvent[];
@@ -128,9 +132,15 @@ export function Activity() {
             </button>
           }
         />
-      ) : activity.isLoading ? (
+      ) : loans.isLoading || loans.data === undefined ? (
         <EmptyState icon={LoaderCircle} title="Loading your activity…" />
-      ) : activity.data === null || activity.data === undefined ? (
+      ) : loans.data === null ? (
+        // Positions unavailable → the participation filter can't run;
+        // an activity feed built without it would be silently partial.
+        <UnavailableState body={copy.activity.unavailable} />
+      ) : activity.isLoading || activity.data === undefined ? (
+        <EmptyState icon={LoaderCircle} title="Loading your activity…" />
+      ) : activity.data === null ? (
         <UnavailableState body={copy.activity.unavailable} />
       ) : activity.data.events.length === 0 ? (
         <EmptyState

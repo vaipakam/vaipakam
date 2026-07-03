@@ -174,7 +174,10 @@ export function PositionDetails() {
   const collateralInputWei = useMemo(() => {
     if (!collateralMeta.data || !isPositiveDecimal(collateralInput)) return null;
     try {
-      return parseUnits(collateralInput, collateralMeta.data.decimals);
+      const wei = parseUnits(collateralInput, collateralMeta.data.decimals);
+      // A positive decimal below the token's precision parses to 0 wei
+      // — the contract rejects zero amounts, so treat it as invalid.
+      return wei > 0n ? wei : null;
     } catch {
       return null;
     }
@@ -182,7 +185,8 @@ export function PositionDetails() {
   const partialInputWei = useMemo(() => {
     if (!principalMeta.data || !isPositiveDecimal(partialInput)) return null;
     try {
-      return parseUnits(partialInput, principalMeta.data.decimals);
+      const wei = parseUnits(partialInput, principalMeta.data.decimals);
+      return wei > 0n ? wei : null;
     } catch {
       return null;
     }
@@ -257,20 +261,6 @@ export function PositionDetails() {
           args: [BigInt(row.loanId)],
         })) as bigint;
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
-          // approve() succeeds no matter the balance — check the wallet
-          // actually holds the full amount due BEFORE asking for an
-          // approval signature, so a short wallet gets a plain "you
-          // need more X" instead of a doomed approve→revert pair.
-          const held = await publicClient.readContract({
-            address: row.lendingAsset as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [address],
-          });
-          if (held < totalDue) {
-            setError(copy.errors.needMore(principalMeta.data?.symbol ?? 'the repayment asset'));
-            return;
-          }
           // The owed amount STEPS UP at each elapsed-day boundary
           // (whole-day interest flooring) and by 0.5%/day late fee —
           // an exact-amount approval can be short by the time repayLoan
@@ -281,6 +271,21 @@ export function PositionDetails() {
           const pad =
             fullTermInterest(principal, row.interestRateBps, 2) +
             (principal * 50n) / 10_000n;
+          // approve() succeeds no matter the balance — check the wallet
+          // holds the PADDED amount before asking for an approval
+          // signature: a wallet holding exactly totalDue can still be
+          // short when repayLoan recomputes across a boundary, which
+          // would burn the approval on a doomed transferFrom.
+          const held = await publicClient.readContract({
+            address: row.lendingAsset as `0x${string}`,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [address],
+          });
+          if (held < totalDue + pad) {
+            setError(copy.errors.needMore(principalMeta.data?.symbol ?? 'the repayment asset'));
+            return;
+          }
           await ensureAllowance({
             publicClient,
             walletClient,

@@ -694,19 +694,20 @@ function RentNftFlow() {
       // A legacy listing can carry the (now-disallowed) VPFI token as
       // its prepay asset — acceptOffer reverts VpfiNotAllowedAsRental-
       // Prepay AFTER the approval would have been mined. Check the
-      // SIGNED terms against the live VPFI token first. Fail-open on
-      // transport errors: the contract guard still protects.
-      const vpfiToken = await publicClient
+      // SIGNED terms against the live VPFI token first, and fail
+      // CLOSED when the read itself fails: proceeding unchecked is
+      // exactly the wasted-approval path this guard exists to prevent
+      // (nothing has been sent yet — retrying is free).
+      const vpfiToken = (await publicClient
         .readContract({
           address: walletChain.diamondAddress,
           abi: DIAMOND_ABI_VIEM,
           functionName: 'getVPFIToken',
         })
-        .catch(() => null);
-      if (
-        typeof vpfiToken === 'string' &&
-        vpfiToken.toLowerCase() === terms.prepayAsset.toLowerCase()
-      ) {
+        .catch(() => {
+          throw new Error(copy.rent.vpfiCheckRetry);
+        })) as string;
+      if (vpfiToken.toLowerCase() === terms.prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayListing);
       }
       const canonicalTotal = totalRentalPrepay(

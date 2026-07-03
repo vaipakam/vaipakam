@@ -362,7 +362,18 @@ export function Vpfi() {
                 type="button"
                 className="btn btn-primary btn-block"
                 style={{ marginTop: 16 }}
-                disabled={busy || !onSupportedChain || !sanctionsClear || !amountWei || overMax}
+                disabled={
+                  busy ||
+                  !onSupportedChain ||
+                  !sanctionsClear ||
+                  // clients hydrate async after connect — without this
+                  // the click lands in runVaultAction's early return
+                  // and silently does nothing.
+                  !walletClient ||
+                  !publicClient ||
+                  !amountWei ||
+                  overMax
+                }
                 onClick={() => void runVaultAction()}
               >
                 {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}

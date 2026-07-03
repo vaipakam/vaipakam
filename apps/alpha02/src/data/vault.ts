@@ -9,7 +9,12 @@
  * ERC-20 leg of the wallet's loans and open offers.
  */
 import { useQuery } from '@tanstack/react-query';
-import { erc20Abi } from 'viem';
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ContractFunctionZeroDataError,
+  erc20Abi,
+} from 'viem';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { getCanonicalAssetsForChain } from '@vaipakam/lib';
@@ -103,8 +108,16 @@ export function useVaultAssets() {
         ) {
           scanTokens.push(vpfiToken.toLowerCase());
         }
-      } catch {
-        // VPFI facet absent — scan proceeds without it.
+      } catch (err) {
+        // Only a REVERT/zero-data means "VPFI facet absent on this
+        // chain" (skip the token, scan the rest). A transport failure
+        // is not knowledge — swallowing it would render a VPFI-only
+        // vault as "empty"; rethrow so the page shows unavailable.
+        const isRevert =
+          err instanceof BaseError &&
+          (err.walk((e) => e instanceof ContractFunctionRevertedError) !== null ||
+            err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
+        if (!isRevert) throw err;
       }
 
       const rows = await Promise.all(
