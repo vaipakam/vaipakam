@@ -35,7 +35,19 @@ export function LoanKeeperCard({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  if (!config.data) return null;
+  if (!config.data) {
+    // Initial-load failure must not be a silent absence — a user who
+    // set keepers up would read "gone" into a missing card.
+    if (config.isError) {
+      return (
+        <section className="card">
+          <h3>{copy.keepers.loanTitle}</h3>
+          <p className="muted">{copy.keepers.unavailable}</p>
+        </section>
+      );
+    }
+    return null;
+  }
   // Zero keepers: a one-line pointer keeps the third leg
   // discoverable from the loan page without nagging.
   if (config.data.keepers.length === 0) {
@@ -90,7 +102,15 @@ export function LoanKeeperCard({
               <input
                 type="checkbox"
                 checked={on}
-                disabled={busy || !walletReady || enables.data === undefined}
+                // isError with RETAINED data still pauses the
+                // toggles — the copy promises exactly that, and the
+                // retained snapshot may be stale.
+                disabled={
+                  busy ||
+                  !walletReady ||
+                  enables.data === undefined ||
+                  enables.isError
+                }
                 onChange={(e) => void toggle(entry.keeper, e.target.checked)}
               />
               <span>{shortAddress(entry.keeper)}</span>

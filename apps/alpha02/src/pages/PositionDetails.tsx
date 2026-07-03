@@ -1407,7 +1407,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       (role === 'borrower' || role === 'lender') &&
       row.status === 'active' &&
       !closedThisSession &&
-      !soldThisSession ? (
+      !soldThisSession &&
+      // Same scope as every lifecycle card keepers can drive here —
+      // alpha02 offers none of those flows on rentals, so arming
+      // keepers for one would be a switch with no in-app story.
+      !isRental ? (
         <LoanKeeperCard loanId={row.loanId} busy={busy} setBusy={setBusy} />
       ) : null}
 

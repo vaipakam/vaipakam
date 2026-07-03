@@ -139,12 +139,20 @@ export function KeeperSettingsCard() {
 
       {!address ? (
         <p className="muted">{copy.wallet.connectFirst}</p>
-      ) : config.isError ? (
+      ) : config.isError && !cfg ? (
         <p className="muted">{copy.keepers.unavailable}</p>
       ) : !cfg ? (
         <p className="muted">{copy.keepers.loading}</p>
       ) : (
         <div className="stack" style={{ gap: 16 }}>
+          {config.isError ? (
+            // A failed BACKGROUND refetch must never replace the
+            // manager (revoke has to stay reachable during degraded
+            // RPC) — flag the retained data as possibly stale instead.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">{copy.keepers.staleWarning}</span>
+            </div>
+          ) : null}
           <label className="cluster" style={{ alignItems: 'center' }}>
             <input
               type="checkbox"

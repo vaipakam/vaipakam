@@ -805,8 +805,12 @@ converge. Its intended behaviour (the test oracle for that surface):
   and is refused while they can't be read (saving a synthesized
   default could silently overwrite real grants), permissions the
   surface doesn't render are preserved on save, clearing every
-  permission revokes the keeper, and the whitelist's size cap is
-  stated. Capital-deployment permissions (standing-intent fills,
+  rendered permission revokes the keeper outright only when no
+  unrendered permissions remain (otherwise those are preserved and
+  the keeper stays approved), and the whitelist's size cap is
+  stated. A transient data failure never replaces the manager while
+  retained data exists — revoking must stay reachable — and is
+  flagged inline as possibly-stale instead. Capital-deployment permissions (standing-intent fills,
   auto-roll) are not offered here at all. Granting alone is inert
   and the surface says so — the per-loan switch is presented on the
   loan page for either confirmed position holder, with a visible

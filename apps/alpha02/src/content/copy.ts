@@ -344,6 +344,8 @@ export const copy = {
     perLoanReminder:
       'Approving a keeper here is not enough by itself: each loan’s page has a per-loan keeper switch that must also be on.',
     loading: 'Loading your keeper settings…',
+    staleWarning:
+      'We couldn’t refresh your keeper settings just now — what’s shown may be slightly stale. Revoking and saving still work.',
     unavailable:
       'We couldn’t load your keeper settings right now — please try again in a moment.',
     loanTitle: 'Keepers for this loan',
