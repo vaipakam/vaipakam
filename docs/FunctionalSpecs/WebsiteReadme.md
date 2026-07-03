@@ -639,6 +639,235 @@ converge. Its intended behaviour (the test oracle for that surface):
   When active filters match nothing, the empty state must say the
   FILTERS matched nothing (with a clear-filters action) — never that
   the market is empty.
+- Immediately before any approval or signature, the app re-checks the
+  facts that decide the transaction live on-chain — balance of the
+  asset being locked or paid, asset pause status, current holdership
+  of the position being acted on, the live grace window, and (when
+  the review showed no unpriced-asset warning) current liquidity of
+  both legs. A stale fact aborts with a plain explanation before the
+  user pays for anything; where an answer gates a disclosure, an
+  unreadable answer blocks rather than silently passing.
+- A ticked risk-and-terms acknowledgement is void the moment any term
+  it covered changes: editing an offer or listing term, choosing a
+  different offer or listing, or a disclosure (such as the
+  unpriced-asset warning) appearing after the acknowledgement was
+  given all require a fresh acknowledgement.
+- Review receipts state the loan's interest mode in plain language:
+  full-term interest applies even when the loan is repaid early;
+  day-by-day (pro-rata) loans cost less when repaid early. The stated
+  mode is part of the reviewed terms: it is compared against the
+  protocol's canonical record before the wallet is asked to sign, and
+  a mismatch aborts like any other changed term. The grace
+  period shown in receipts and the grace window enforced at
+  repayment come from the same schedule, and signing waits until the
+  live schedule answer is known — while it is loading the receipt may
+  show the default schedule's wording for display, but no
+  acknowledgement can be signed against it, and a failed schedule
+  read shows a visible retry rather than silently passing.
+- Advanced mode offers close-early (direct preclose) to the borrower
+  of an active, not-yet-matured ERC-20 loan from the loan detail
+  page. Maturity is judged by chain time, never the device clock. The
+  review quotes the settlement figure from the protocol's own
+  settlement math — honouring the loan's interest mode and any
+  interest already settled by partial repayments — never a locally
+  derived estimate, and states the interest-mode implication before
+  signing. After a successful close or full repayment the page must
+  not re-offer close-early, repay, partial repayment, or collateral
+  top-up while off-chain data still shows the loan active. While the
+  close-early eligibility reads are in flight or failing, the page
+  shows a visible checking/retrying state rather than silently
+  omitting the feature. A compliance-flagged wallet is not shown
+  close-early at all; its open path remains the wind-down repayment.
+  Only one pending-action review can be open on the page at a time.
+- Advanced mode offers refinancing on an active, not-yet-matured
+  ERC-20 loan — and only while the position still belongs to the
+  wallet that originally took the loan (collateral carry-over binds
+  to the original borrower; a transferred position is not offered
+  refinancing). The borrower posts a refinance request for exactly
+  the loan's outstanding amount at a chosen rate ceiling and
+  duration, and a lender's acceptance completes everything in one
+  transaction — new loan opened, old lender paid off from the
+  borrower's wallet, old loan closed, collateral moved across without
+  unlocking. Before posting, the review must state: the payoff is
+  always principal plus the full remaining term's interest (never
+  pro-rata, regardless of the loan's interest mode) plus the
+  protocol's cut inside it; the spare wallet balance to keep while
+  the request is open (payoff interest plus the new loan's initiation
+  fee — the new principal arrives in the same transaction); that a
+  short balance only makes the acceptance fail, taking nothing; that
+  posting takes multiple wallet confirmations; and, for a loan on a
+  periodic interest schedule, that the replacement loan will not
+  carry a payment schedule. If the posting sequence is abandoned
+  after the payoff approval was granted but before the request was
+  posted, the approval is unwound automatically (best effort). The
+  request carries its own on-chain expiry matching the reviewed
+  lifetime — acceptance past it fails safely regardless of any wider
+  pre-existing guardrails — plus guardrails bounding completion to
+  the reviewed rate ceiling. The pending request's view — its state,
+  expiry, funding warnings, and cancel action — must outlive every
+  gate on the posting form: it stays present through data-source
+  errors, unresolved compliance checks, mode switches, the loan
+  crossing maturity, and the loan settling some other way (where it
+  states the request can no longer complete and offers cancel as the
+  cleanup). The page verifies the request against the chain (a
+  cancelled or replaced request clears itself) and warns distinctly
+  when the standing payoff approval no longer covers completion
+  (with a restore action, which first re-verifies the request is
+  still completable) or when the wallet balance is short (top up or
+  cancel — no false remedy). Cancellation is offered from that view
+  (it becomes available a few minutes after posting, per the
+  protocol's cancel cooldown, judged by chain time) and also removes
+  the standing payoff approval. While a request is live, partial
+  repayment and close-early are held off with an explanation —
+  either would strand the request — and the full-repayment review
+  warns that the request survives settlement until cancelled. The
+  pending marker is device-local: another device posting a second
+  request for the same loan is possible and each device tracks only
+  its own. Loans on a periodic interest schedule carry a visible
+  warning that an overdue period blocks completion until settled.
+- Advanced mode offers the lender of an active, not-yet-matured
+  ERC-20 loan an early exit: selling the position into a matching
+  open lending offer. The picker lists only offers the sale can
+  actually complete against (matching assets, single-value and
+  unfilled, duration within the loan's remaining term, collateral
+  demand within the pledged collateral, amount covering the
+  principal, and cost within the principal), best payout first, with
+  any truncation of the list stated rather than silent; while the
+  offer search is loading it says so (loading and "no matches" never
+  look the same). The payout math mirrors the protocol's settlement
+  to the smallest unit (second-precision accrual, remaining term
+  reduced by time elapsed). If the quoted figure moves while a
+  review is open, the review closes with a visible explanation and
+  must be reopened against the current number. The
+  review states the payout plainly: the seller receives the
+  principal minus the LARGER of the interest accrued so far or the
+  rate difference for the remaining term (when the buyer expects a
+  higher rate — flagged before review), paid straight to the wallet
+  in the same transaction with nothing to approve and nothing to
+  claim afterwards; the borrower's rate and due date do not change.
+  Because a consumed buy offer can linger as available in off-chain
+  data, confirmation always re-verifies the offer live (still open,
+  unchanged terms, not expired) and re-reads the payout with chain
+  time, re-reviewing on material drift. The protocol's cut comes out
+  of the forfeited interest, never beyond the shown figure.
+- The lender can instead LIST the position for sale at a rate of
+  their choosing. Before confirming, the review must disclose: the
+  lender position NFT is locked for transfer until the sale
+  completes or the listing is cancelled; the settlement (the larger
+  of interest accrued by acceptance or the rate difference for the
+  remaining term — never both) is pulled from the seller's wallet
+  inside the buyer's transaction, so listing sets a standing
+  approval sized to cover settlement through the loan's term plus a
+  stated headroom, with only the actual amount ever pulled — a
+  listing that somehow outlives the headroom is flagged by the
+  funding watch with a top-up action; and a rate above the loan's
+  own attracts buyers at the seller's cost. An explicit
+  risk-and-terms acknowledgement is required before listing and is
+  voided by any term change.
+  The listing's standing surface is chain-authoritative (the lock on
+  the position NFT), so a listing made on another device still
+  shows, still warns when the standing approval or balance no
+  longer covers settlement (with a verified restore action that
+  always clears the CURRENT live requirement plus fresh headroom,
+  not just the original bound), and still interlocks the
+  sell-into-offer exit; where the listing's identifier can't be
+  recovered (the recovery search covers the wallet's recent offers
+  and retries a bounded number of times), the funding state is
+  reported as unverifiable — never a false all-clear. The funding
+  verdicts and the cancel/restore actions bind to the wallet that
+  currently HOLDS the lender position — any other wallet on the
+  same device sees the listing's existence but no funding verdicts
+  and no actions. A momentary data failure never hides the listing
+  surface while the lock stands, and a listing whose loan has since
+  settled says so plainly and steers to cancel-to-unlock instead of
+  nagging about funding. The two lender exits share one write lock
+  so their transactions can never race each other, and an exit
+  listing whose posting fails after the approval was granted unwinds
+  that approval best-effort. Cancellation (which
+  unlocks the NFT, becomes available after the protocol's cancel
+  cooldown judged by chain time, and also removes the standing
+  approval — with a note that other standing uses of the same token
+  then need their approvals restored) is offered where the listing's
+  identifier is known; its outcome is reported on the page even
+  though the listing card closes. When a listing ends off-page (a
+  buyer accepted, or it was cancelled elsewhere), the page states
+  that outcome once instead of letting the card silently vanish.
+  While a listing stands, the sell-into-offer exit is not offered,
+  and the borrower's partial-repayment surface is held off with an
+  explanation — the listing sells the claim at its frozen outstanding
+  amount, and a partial repayment under it would make the buyer
+  overpay for a smaller claim (full repayment and close-early remain
+  open to the borrower). Until the protocol's listing entry point
+  works end-to-end (it currently cannot complete on-chain), the
+  listing form itself is withheld and replaced by a plain note
+  pointing at the working instant exit; every standing-surface rule
+  above still applies to any listing that exists.
+  On the BUYER side, an offer tied to an already-running loan (a
+  position sale, or an offset vehicle) is not acceptable in this app
+  version: the review flags the link, names the loan, and blocks
+  signing entirely — the fresh-loan receipt does not describe what
+  accepting such an offer really does, and a wrong receipt must never
+  be signable. Signing also waits until the link check resolves, and
+  a failed check shows a visible retry rather than silently passing.
+- Advanced mode shows the role-relevant position-NFT id on the loan
+  page (the lender-side id to lender-side users, the borrower-side
+  id to borrower-side users), linking to a verifier page that any
+  token id can be checked on: a live token shows its current holder,
+  the side it controls, its linked loan, and any transfer lock; a
+  token that doesn't currently exist is stated as either retired
+  after its claim or never minted — the network doesn't record
+  which, and the verifier says so rather than guessing (the
+  three-way distinction the spec asks for is recorded as a
+  contract-level gap in the code-vs-docs audit). Only an on-chain
+  answer produces a verdict: a transport failure shows a visible
+  check-failed state, never a false "doesn't exist". A transfer-lock
+  read that fails — or returns a lock reason this build doesn't
+  recognise (the lock list is append-only on-chain) — is stated as
+  locked/unknown, never rendered as transferable. A token minted for
+  an offer that hasn't become a loan yet names that offer. The
+  verdict is always scoped to the current network, with a visible
+  reminder that token ids repeat across networks.
+- Advanced mode's loan-health detail states, alongside the health
+  factor and loan-to-value, roughly how far the collateral's value
+  can fall before liquidation begins — explicitly framed as
+  approximate (it is derived from the health factor, not a price
+  feed, and assumes the loan side holds still). Where a holder
+  address has an ENS name on Ethereum mainnet, surfaces may show it
+  alongside the address as display sugar — never as part of any
+  verdict or check.
+- Advanced mode lists the wallet's standing token approvals to the
+  protocol contract for tokens seen in the user's own loans and
+  offers, each with a one-click revoke. The surface states its scope
+  honestly (it is not the wallet's complete approvals picture), and
+  warns that revoking can break a live refinance request or sale
+  listing on the same token — whose own cards will flag it and offer
+  restore. When the loan/offer data sources are unavailable the list
+  says it can't be built completely rather than showing a partial
+  picture as complete.
+- Advanced mode surfaces keeper permissions as the protocol's
+  three-switch opt-in: a master switch, per-keeper action grants,
+  and a per-loan switch on each loan's page — all off by default,
+  and all three must agree before any third party can act. The
+  settings surface explains each grantable action in plain language
+  with whose side it drives, states the safety facts (a keeper can
+  never receive funds — payouts always go to the position holder;
+  everything is revocable instantly; the protocol can pause all
+  keepers; refinances stay bounded by the per-loan guardrails; the
+  permissions belong to whoever holds the position), and encodes the
+  protocol's edit rules: editing starts from the fetched permissions
+  and is refused while they can't be read (saving a synthesized
+  default could silently overwrite real grants), permissions the
+  surface doesn't render are preserved on save, clearing every
+  rendered permission revokes the keeper outright only when no
+  unrendered permissions remain (otherwise those are preserved and
+  the keeper stays approved), and the whitelist's size cap is
+  stated. A transient data failure never replaces the manager while
+  retained data exists — revoking must stay reachable — and is
+  flagged inline as possibly-stale instead. Capital-deployment permissions (standing-intent fills,
+  auto-roll) are not offered here at all. Granting alone is inert
+  and the surface says so — the per-loan switch is presented on the
+  loan page for either confirmed position holder, with a visible
+  reminder when the master switch is off.
 
 ## Key UX Requirements
 

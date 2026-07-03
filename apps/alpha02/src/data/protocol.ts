@@ -7,6 +7,8 @@ import { usePublicClient } from 'wagmi';
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
+import { readGraceSecondsLive } from '../contracts/preflights';
+import { defaultGraceSeconds, formatGraceSeconds } from '../lib/grace';
 
 /** Deploy default (5%) — display fallback only. Money paths must use
  *  {@link readRentalBufferBps} or gate on `ready`. */
@@ -44,6 +46,41 @@ export function useRentalBufferBps(): { bps: number; ready: boolean } {
   });
 
   return { bps: data ?? RENTAL_BUFFER_BPS_DEFAULT, ready: data !== undefined };
+}
+
+/** LIVE grace label for receipts — governance can override the
+ *  default schedule with buckets, and the shown grace must match the
+ *  window repayment is actually judged against. The label falls back
+ *  to the default-schedule wording while loading (identical on
+ *  deploys with no buckets configured) so DISPLAY can proceed, but
+ *  `ready` stays false until the live bucket answer lands — SIGNING
+ *  must gate on it, exactly like {@link useRentalBufferBps}: on a
+ *  chain with retuned buckets the fallback label is a wrong term. */
+export function useGraceLabel(durationDays: number): {
+  label: string;
+  ready: boolean;
+  isError: boolean;
+  refetch: () => void;
+} {
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  const { data, isError, refetch } = useQuery({
+    queryKey: ['graceSeconds', readChain.chainId, durationDays],
+    enabled: Boolean(publicClient) && durationDays > 0,
+    staleTime: 5 * 60_000,
+    queryFn: () =>
+      readGraceSecondsLive({
+        publicClient: publicClient!,
+        diamondAddress: readChain.diamondAddress,
+        durationDays,
+      }),
+  });
+  return {
+    label: formatGraceSeconds(data ?? defaultGraceSeconds(durationDays)),
+    ready: data !== undefined,
+    isError,
+    refetch: () => void refetch(),
+  };
 }
 
 /** Renter's total up-front payment for a rental:

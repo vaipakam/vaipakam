@@ -114,6 +114,31 @@ export const copy = {
       'This offer’s terms changed since you reviewed it. Nothing was sent — please review the updated offer.',
     illiquidWarning:
       'One side of this deal isn’t priced by the protocol. If it ends in default, the entire collateral transfers directly — there is no automatic price-based liquidation. Only proceed if you accept that.',
+    interestModeFullTerm:
+      'Interest is full-term: the whole term’s interest applies even if the loan is repaid early.',
+    interestModeProRata:
+      'Interest accrues day by day — repaying early costs less.',
+    interestModeProRataLender:
+      'Interest accrues day by day — if the borrower repays early, you earn less.',
+    // Linked-loan offers (position sales, preclose offsets) settle or
+    // transfer an already-running loan — the fresh-loan review above
+    // does NOT describe their real terms (a sale vehicle shows 0
+    // collateral and a term that already partly elapsed), so accepting
+    // them here is BLOCKED, not warned-past. See issue #951 / #927.
+    linkedLoanAcceptBlocked: (loanId: string) =>
+      `This offer is tied to already-running loan #${loanId} — accepting it would settle or transfer that loan's position, not start the fresh loan reviewed above. This app can't yet show you the real terms of that kind of deal, so accepting it here is disabled for now.`,
+    liquidityChecking:
+      'Checking how these assets are priced by the protocol…',
+    liquidityCheckFailed:
+      'We couldn’t check how these assets are priced, and that check decides an important warning — signing stays paused until it succeeds.',
+    linkedLoanCheckFailed:
+      'We couldn’t check whether this offer is a position sale of a running loan, and that check decides an important disclosure — signing stays paused until it succeeds.',
+    graceChecking:
+      'Confirming the repayment grace window this deal is judged against…',
+    graceCheckFailed:
+      'We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.',
+    riskGateBlocked:
+      'The protocol’s risk-access rules block this acceptance for your wallet right now — it needs a standing on-chain acknowledgement or access level this app can’t collect yet. Nothing was sent or approved.',
   },
 
   borrow: {
@@ -181,6 +206,320 @@ export const copy = {
       'VPFI can’t be used as the rental payment asset — pick another token.',
   },
 
+  preclose: {
+    title: 'Close this loan early',
+    blurb:
+      'Pay everything now and close the loan today — your collateral is released immediately after.',
+    fullTermNote:
+      'This loan uses full-term interest, so closing early still pays the whole term’s interest.',
+    proRataNote:
+      'This loan accrues interest day by day, so closing early pays only what has accrued.',
+    action: 'Close early',
+    confirm: 'Confirm — pay and close now',
+    done:
+      'Loan closed early. Your collateral is ready — claim it below or from the Claim Center.',
+    checking: 'Checking whether this loan can close early…',
+    checkFailed:
+      'We couldn’t read this loan’s close-early cost right now — retrying. Repaying normally stays available below.',
+  },
+
+  refinance: {
+    title: 'Refinance this loan',
+    blurb:
+      'Post a request for a new loan on better terms. The moment a lender accepts it, your current loan is paid off and closed automatically in the same transaction — your collateral moves to the new loan without ever unlocking.',
+    rateLabel: 'Highest yearly rate you’d accept',
+    durationLabel: 'New loan length (days)',
+    action: 'Review refinance request',
+    confirm: 'Confirm — post refinance request',
+    // The payoff wording is deliberately ALWAYS full-term: the
+    // contract pays the exiting lender principal + full-term interest
+    // on the remaining committed term REGARDLESS of the loan's stored
+    // interest mode, and no rate shortfall applies (it was removed —
+    // full-term is the lender's maximum entitlement).
+    payoffNote:
+      'The old loan’s payoff is always principal plus the full remaining term’s interest — even if the loan normally accrues day by day. That is the exiting lender’s fixed entitlement on an early exit.',
+    walletNote: (topUp: string) =>
+      `The payoff is pulled from your wallet automatically at the moment a lender accepts. The new loan’s money arrives in the same transaction, so keep about ${topUp} spare in your wallet (the interest portion plus the new loan’s initiation fee) while the request is open.`,
+    shortIsSafe:
+      'If your wallet is short when a lender tries to accept, the acceptance simply fails — nothing is taken and your current loan continues unchanged.',
+    periodicWarning:
+      'This loan pays interest on a periodic schedule. If a payment period becomes overdue while the request is open, a lender’s acceptance will fail until the period is settled — keep the loan’s payments current.',
+    done:
+      'Refinance request posted. When a lender accepts it, this loan closes automatically — you don’t need to do anything else. You can cancel the request below (cancellation opens a few minutes after posting).',
+    pending: (offerId: string) =>
+      `Refinance request #${offerId} is live. When a lender accepts it, this loan closes automatically in the same transaction.`,
+    pendingChecking: (offerId: string) =>
+      `Checking the state of refinance request #${offerId}…`,
+    pendingExpires: (date: string) =>
+      `The request expires on ${date} if nobody accepts it.`,
+    pendingAccepted:
+      'Your refinance request was accepted — this loan is being replaced by the new one. Refresh in a moment to see the final state.',
+    pendingLoanClosed:
+      'This loan has since closed another way, so the request can no longer complete — cancel it to also remove its standing payoff approval.',
+    pendingExpired: (date: string) =>
+      `This refinance request expired on ${date} — no lender can accept it any more, and it no longer holds up your other actions here. Cancel it below to also remove its standing payoff approval; the loan continues unchanged.`,
+    cancel: 'Cancel refinance request',
+    cancelSoon:
+      'Cancellation opens a few minutes after posting — try again shortly.',
+    cancelled:
+      'Refinance request cancelled and the payoff approval removed — this loan continues unchanged. If you have other listings or requests using the same token, restore their approvals from their cards.',
+    cancelledRevokeFailed:
+      'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
+    allowanceShort:
+      'The payoff approval no longer covers this request — a lender’s acceptance would fail right now. Restore it below or cancel the request.',
+    balanceShort: (topUp: string) =>
+      `Your wallet holds less than the ~${topUp} spare this request needs — a lender’s acceptance would fail right now. Top up your wallet or cancel the request.`,
+    reapprove: 'Restore the payoff approval',
+    reapproved: 'Payoff approval restored — the request can complete again.',
+    reapproveAborted:
+      'This request is no longer completable (accepted, cancelled, or the loan closed) — nothing was approved. Refresh to see the latest state.',
+    guardrailNote:
+      'Your request carries its own expiry and on-chain guardrails: it can only complete at or below the rate you set here, and never after the expiry you see in this review.',
+    cadenceChangeNote:
+      'Your current loan pays interest on a schedule. The replacement loan will NOT — its interest settles when it closes. Make sure that cash-flow change is what you want.',
+    multiStepNote:
+      'Posting takes up to three wallet confirmations (guardrails, payoff approval, the request itself). If you stop partway, the earlier steps stay in place on-chain until you finish posting or cancel — cancelling also removes the approval.',
+    partialBlockedByPending:
+      'A refinance request is live for this loan. A partial repayment would change the amount and make that request permanently unacceptable — cancel the refinance request first.',
+    precloseBlockedByPending:
+      'A refinance request is live for this loan. Closing early now would strand it — cancel the refinance request first.',
+    repayWarnPending:
+      'A refinance request is still live for this loan. Repaying settles the loan, after which the request can never complete — cancel it from its card afterwards (that also removes its standing payoff approval); until then it just sits until it expires.',
+  },
+
+  approvals: {
+    title: 'Standing token approvals',
+    blurb:
+      'These are the spending permissions your wallet has granted Vaipakam’s contract for tokens your loans and offers touch. Some flows set them on purpose (a refinance request’s payoff, a sale listing’s settlement); anything left over from an abandoned attempt can be removed here.',
+    revokeWarning:
+      'Careful: if a live refinance request or sale listing depends on a token’s approval, revoking it makes that flow fail until you restore it from its card — the card will warn you within moments.',
+    scopeNote:
+      'This list covers tokens seen in your Vaipakam loans and offers on this network. Approvals granted to other apps or for other tokens aren’t shown — your wallet’s own token-approvals view remains the complete picture.',
+    none: 'No standing approvals to Vaipakam found for your known tokens.',
+    loading: 'Reading your standing approvals…',
+    unavailable:
+      'We couldn’t read your approvals right now — please try again in a moment.',
+    sourcesUnavailable:
+      'We couldn’t load your loans and offers just now, so this list can’t be built completely — rather than show a partial picture, try again in a moment.',
+    revoke: 'Revoke',
+    staleNote:
+      'We couldn’t refresh this list just now — the rows shown may be slightly stale. Revoking still works.',
+    revoked: (symbol: string) =>
+      `Approval removed for ${symbol}. If a live request or listing needed it, its card will warn and offer a restore.`,
+  },
+
+  nftVerifier: {
+    title: 'Position NFT verifier',
+    lede:
+      'Vaipakam position NFTs carry real claim rights — whoever holds one controls that side of its loan. Check any token id before trusting it.',
+    placeholder: 'Position NFT token id',
+    check: 'Check',
+    chainNote: (chain: string) =>
+      `Checked on ${chain}. Token ids repeat across networks — a token that exists here says nothing about other networks.`,
+    checking: 'Checking this token on-chain…',
+    checkFailed: 'We couldn’t check this token right now — please try again in a moment.',
+    liveTitle: (id: string) => `Token #${id} is live on this network`,
+    ownerLabel: 'Current holder',
+    roleLabel: 'Side it controls',
+    roleLender: 'Lender side — its holder collects the repayment or recovery.',
+    roleBorrower: 'Borrower side — its holder repays and reclaims the collateral.',
+    roleUnknown: 'We couldn’t read this token’s role details right now.',
+    loanLabel: 'Linked loan',
+    offerLabel: 'Created for offer',
+    offerValue: (offerId: string) =>
+      `#${offerId} — this token was minted for an offer that hasn’t become a loan yet.`,
+    lockUnrecognized:
+      'Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is cancelled.',
+    lockUnknown:
+      'We couldn’t read whether this token is transfer-locked right now — don’t rely on it being transferable until this reads clean.',
+    positionRowLabel: 'Your position NFT',
+    positionRowNote: (role: string) =>
+      `— holds this loan’s ${role} rights; verify any position NFT before trusting it.`,
+    lockLabel: 'Transfer lock',
+    lockPrecloseOffset:
+      'Locked for a preclose-by-offset — it can’t be transferred until that completes or is cancelled.',
+    lockSale:
+      'Locked for a position sale listing — it can’t be transferred until the sale completes or the listing is cancelled.',
+    lockPrepayListing:
+      'Locked for a collateral listing — it can’t be transferred while that listing stands.',
+    sanctionsLabel: 'Compliance status',
+    sanctionsFlagged:
+      'The current holder is compliance-flagged: this NFT cannot be transferred in or out of their wallet, and its claims stay frozen until the flag clears. Do not buy this token expecting delivery.',
+    sanctionsUnknown:
+      'We couldn’t check the holder’s compliance status right now — a flagged holder would mean the token can’t be transferred, so re-check before relying on it.',
+    inKindLabel: 'Default payout',
+    inKindNote:
+      'If the borrower of the linked loan defaults, this claim pays out the loan’s raw collateral in kind — the protocol does not price or sell it for you. Value what you would actually receive before buying this position.',
+    liveNote:
+      'Live means exactly this: the token exists here and its holder controls the linked position. It does not vouch for the loan’s health or the other side’s behaviour.',
+    goneTitle: (id: string) => `Token #${id} does not currently exist on this network`,
+    goneBody:
+      'Either its claim was completed and the token was retired, or it was never minted here at all — the network doesn’t record which. Treat any offer to sell or transfer this token id as worthless on this network.',
+  },
+
+  keepers: {
+    title: 'Keeper permissions',
+    blurb:
+      'Keepers are third-party services (or your own bot) you can allow to run specific loan actions FOR you — start an early close, finish a refinance you set up, list a position for sale. Everything here is off until you turn it on, and three switches must all agree before a keeper can act: the master switch, the action on that keeper, and a per-loan switch on each loan’s page.',
+    safetyNote:
+      'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
+    masterLabel:
+      'Allow my approved keepers to act (master switch — nothing runs while this is off)',
+    addressPlaceholder: '0x… keeper address',
+    // One entry per grantable action, keyed by name so the bit table
+    // in data/keepers.ts can never drift by reordering.
+    actions: {
+      initPreclose: {
+        label: 'Start closing a loan early for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
+      },
+      refinance: {
+        label: 'Complete a refinance for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
+      },
+      completeOffset: {
+        label: 'Finish an offset close for me',
+        side: 'acts on loans you borrowed',
+        blurb: 'Complete a preclose-by-offset once its offer has been accepted.',
+      },
+      extend: {
+        label: 'Extend a loan in place for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Extend a loan without reopening it — only when BOTH sides have opted into extension limits.',
+      },
+      initEarlyWithdraw: {
+        label: 'List my loan position for sale',
+        side: 'acts on loans you funded',
+        blurb:
+          'Start a lender early exit by listing a loan you funded. The proceeds still pay only you.',
+      },
+      completeLoanSale: {
+        label: 'Finish a position sale for me',
+        side: 'acts on loans you funded',
+        blurb:
+          'Complete an accepted position sale, moving the loan to its buyer. The payment still routes only to you.',
+      },
+    },
+    enabledOn:
+      'Keeper access enabled. Keepers can now act where you granted permissions AND the loan’s own switch is on.',
+    enabledOff:
+      'Keeper access disabled — no keeper can act for you anywhere while this stays off.',
+    addTitle: 'Approve a keeper',
+    add: 'Approve keeper',
+    added: 'Keeper approved. Remember: it can only act on loans where you also flip that loan’s keeper switch.',
+    alreadyListed:
+      'That keeper is already approved — edit its permissions above instead.',
+    save: 'Save permissions',
+    updated: 'Keeper permissions updated.',
+    revoke: 'Revoke',
+    revoked: 'Keeper revoked — it can no longer act for you anywhere.',
+    maskUnreadable:
+      'We couldn’t read this keeper’s current permissions, so editing is disabled (saving now could silently overwrite them). Retry in a moment; revoking still works.',
+    extraBitsNote:
+      'This keeper also holds advanced permissions not shown here — they are preserved unchanged when you save.',
+    atCap: (max: number) =>
+      `You’ve reached the maximum of ${max} approved keepers — revoke one to add another.`,
+    perLoanReminder:
+      'Approving a keeper here is not enough by itself: each loan’s page has a per-loan keeper switch that must also be on.',
+    loading: 'Loading your keeper settings…',
+    staleWarning:
+      'We couldn’t refresh your keeper settings just now — what’s shown may be slightly stale. Revoking and saving still work.',
+    unavailable:
+      'We couldn’t load your keeper settings right now — please try again in a moment.',
+    loanTitle: 'Keepers for this loan',
+    loanBlurb:
+      'Your approved keepers can act on this loan only while its switch is on. Actions stay bounded by the permissions you granted in Settings.',
+    loanToggleOn: 'Keeper enabled for this loan.',
+    loanToggleOff: 'Keeper disabled for this loan.',
+    loanEnablesUnavailable:
+      'We couldn’t read this loan’s keeper switches right now — the toggles are paused until the read succeeds (their shown state may be stale).',
+    loanNoKeepers:
+      'You haven’t approved any keepers yet — set them up under Settings → Keeper permissions.',
+    loanMasterOff:
+      'Your keeper master switch is off, so nothing can run even with this loan’s switch on — turn it on under Settings → Keeper permissions.',
+  },
+
+  earlyExit: {
+    title: 'Exit this loan early',
+    blurb:
+      'Sell your side of this loan to another lender with a matching open lending offer. You’re paid immediately from their already-locked funds — nothing to approve, nothing to claim afterwards — and the borrower’s terms don’t change at all.',
+    pickerLead: 'Open lending offers that can buy you out:',
+    none:
+      'No matching lending offers right now. An offer must match this loan’s assets, cover its remaining amount, and fit inside its remaining time — check back later.',
+    unavailable:
+      'We couldn’t load matching offers right now — please try again in a moment.',
+    rowReceive: (amount: string) => `you’d receive ~${amount} now`,
+    shortfallWarn:
+      'This buyer expects a higher rate than your loan pays, and for this candidate that rate difference (not the accrued interest — you pay the larger of the two, never both) is what sets your payout.',
+    forfeitNote:
+      'Exiting early forfeits the interest accrued so far: it covers the protocol’s cut and, when the buyer’s rate is higher, helps bridge the difference. The figure shown already accounts for this.',
+    action: 'Review exit',
+    confirm: 'Confirm — sell my position',
+    done:
+      'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.',
+    loadingOffers: 'Looking for matching lending offers…',
+    figureMoved:
+      'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
+    moreOffers: (n: number) =>
+      `${n} more matching offer${n === 1 ? '' : 's'} pay${n === 1 ? 's' : ''} less than the ones shown.`,
+    checking: 'Checking whether this loan can be exited early…',
+    checkFailed:
+      'We couldn’t read this loan’s exit details right now — retrying.',
+  },
+
+  loanSale: {
+    title: 'List this position for sale',
+    blurb:
+      'Set the yearly rate a buyer would earn for the loan’s remaining time and list your position publicly. When a buyer accepts, you receive the full outstanding amount in that same transaction. (If a matching offer above already pays enough, the instant exit is simpler — listing is for naming your own price and waiting.)',
+    rateLabel: 'Yearly rate the buyer earns',
+    action: 'Review listing',
+    confirm: 'Confirm — list my position',
+    // Spec rule (WebsiteReadme "borrower preclose flow" analog): the
+    // NFT lock must be disclosed BEFORE confirmation.
+    lockWarning:
+      'Listing locks your lender position NFT — it can’t be transferred until the sale completes or you cancel the listing. Your claim rights are unaffected.',
+    approvalNote: (amount: string) =>
+      `Listing sets a standing approval of up to ${amount} — sized to cover settling the sale any time through the loan’s term plus a month’s headroom (the larger of interest accrued by acceptance or the rate difference). Only the actual amount is pulled, in the buyer’s own transaction; if the listing somehow outlives the headroom, the listing card warns and offers to top the approval up.`,
+    sweetenNote:
+      'A rate above the loan’s own rate attracts buyers faster, but the difference for the remaining term comes out of your wallet at completion.',
+    done:
+      'Position listed. When a buyer accepts, the sale settles automatically — keep the standing approval (and enough balance for the settlement figure) in place until then, or cancel the listing below.',
+    pending: (offerId: string) =>
+      `Sale listing #${offerId} is live and your lender NFT is locked while it stands. When a buyer accepts, you’re paid the outstanding amount and the settlement is pulled in the same transaction.`,
+    pendingNoId:
+      'This position is listed for sale (listed from another device, so cancelling here isn’t available — cancel where it was listed). Your lender NFT is locked while the listing stands.',
+    allowanceShort:
+      'The standing settlement approval (or your wallet balance) no longer covers what a buyer’s acceptance would pull — the sale would fail right now. Restore it below or cancel the listing.',
+    restore: 'Restore the settlement approval',
+    restored: 'Settlement approval restored — the listing can complete again.',
+    cancel: 'Cancel listing',
+    cancelled:
+      'Listing cancelled — your lender NFT is unlocked and the settlement approval was removed (if you have other listings or requests using the same token, restore their approvals from their cards). The loan continues unchanged.',
+    cancelledRevokeFailed:
+      'Listing cancelled and your lender NFT unlocked. The standing settlement approval couldn’t be removed automatically — you can revoke it from your wallet’s token-approvals view.',
+    cancelSoon:
+      'Cancellation opens a few minutes after listing — try again shortly.',
+    restoreAborted:
+      'This listing is no longer standing (sold, cancelled, or unlocked) — nothing was approved. Refresh to see the latest state.',
+    loanSettledWhileListed:
+      'This loan has settled, so the sale listing can never complete — cancel it to unlock your lender NFT and remove the standing approval.',
+    fundingUnknown:
+      'We couldn’t identify this listing’s offer record from this device, so we can’t verify its settlement funding here — manage it from the device that listed it, or keep a generous approval and balance in place.',
+    ended:
+      'Your sale listing is no longer active. If a buyer accepted it, the payout is already in your wallet and the settlement was pulled via the standing approval; any remaining approval can be revoked from your wallet’s token-approvals view.',
+    // Issue #951 — the on-chain listing entry point is broken; the
+    // form is feature-gated off until the contract fix lands.
+    listingUnavailable:
+      'Listing your position at your own price isn’t available yet — the on-chain step it needs is being fixed. The instant exit above works: it sells into a matching open offer right away.',
+    partialBlockedByListing:
+      'The lender has this position listed for sale at its current outstanding amount. Partial repayment is paused while the listing stands — it would change that amount and mislead a buyer. You can still repay in full or close early at any time.',
+  },
+
   positions: {
     title: 'My positions',
     lede: 'Your loans and rentals, with the one action each needs right now.',
@@ -244,10 +583,24 @@ export const copy = {
       'This wallet is flagged by the sanctions oracle, so new positions and payouts are blocked. Nothing was sent. Repaying and closing existing positions stays open.',
     sanctionsCheckRetry:
       'We couldn’t run the compliance check just now — nothing was sent. Please try again in a moment.',
+    checkRetry:
+      'We couldn’t verify this on-chain just now — nothing was sent. Please try again in a moment.',
+    assetPaused:
+      'One of this deal’s assets is temporarily paused by the protocol, so this action can’t go through right now. Nothing was sent — please try again later.',
+    positionMoved:
+      'This position is no longer held by the connected wallet (it may have been transferred or already claimed). Nothing was sent — refresh to see the current state.',
     collateralNotPriced:
       'This loan’s collateral isn’t currently priced by the protocol, so collateral top-ups aren’t available for it. Nothing was sent.',
     pastGrace:
       'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
+    loanAlreadySettled:
+      'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
+    precloseMatured:
+      'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
+    refinanceMatured:
+      'This loan is past its due date, so it can no longer be refinanced — nothing was sent. Use Repay to settle it, including any late fees.',
+    refinanceNotOriginalBorrower:
+      'This position changed hands since the loan began, so its collateral can’t carry over into a refinance — nothing was sent. Repaying or closing early stays available.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

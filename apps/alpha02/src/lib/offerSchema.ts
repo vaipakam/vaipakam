@@ -1,3 +1,4 @@
+import { defaultGraceSeconds, formatGraceSeconds } from './grace';
 import { parseUnits } from 'viem';
 import { AssetType } from './types';
 
@@ -16,8 +17,23 @@ import { AssetType } from './types';
  * stays focused on JSX and event wiring.
  */
 
-const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+export const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/** Mirrors `LibVaipakam.MAX_INTEREST_BPS` (10_000 = 100% APR) — the
+ *  protocol's upper-sanity cap on rates. Exported so every surface
+ *  that validates a rate input shares ONE ceiling; if the contract
+ *  ever raises it, this constant follows. */
+export const MAX_INTEREST_BPS = 10_000;
+
+/** Percent-string → BPS, the ONE rounding rule every rate input uses
+ *  ("7.5" → 750). Returns null for non-parseable input. */
+export function percentToBps(s: string): number | null {
+  if (s === '') return null;
+  const parsed = parseFloat(s);
+  if (!Number.isFinite(parsed)) return null;
+  return Math.round(parsed * 100);
+}
 
 /**
  * Loan-duration bounds. Single source of truth — both the Create-Offer
@@ -408,16 +424,10 @@ export function toCreateOfferPayload(
     ? parseUnits(s.amount, lendingDecimals)
     : BigInt(s.amount);
 
-  const rateBps = s.interestRate === ''
-    ? 0
-    : Math.round(parseFloat(s.interestRate) * 100);
+  const rateBps = percentToBps(s.interestRate) ?? 0;
 
   // #183 — canonical role-aware mapping. See doc-block above for the
-  // full mapping table. `MAX_INTEREST_BPS` mirrors
-  // `LibVaipakam.MAX_INTEREST_BPS` (10_000 = 100% APR) — the protocol's
-  // upper-sanity cap on rates. Hard-coded here for now; if the contract
-  // ever raises it, this constant follows.
-  const MAX_INTEREST_BPS = 10_000;
+  // full mapping table.
 
   const isLender = s.offerType === 'lender';
 
@@ -501,14 +511,92 @@ export function toCreateOfferPayload(
   };
 }
 
+/** The live-loan fields {@link toRefinanceOfferPayload} copies. Kept
+ *  structural (not the full LoanLive) so the schema module doesn't
+ *  import from contracts/. */
+export interface RefinanceSourceLoan {
+  principal: bigint;
+  principalAsset: `0x${string}`;
+  allowsPartialRepay: boolean;
+  useFullTermInterest: boolean;
+  collateralAsset: `0x${string}`;
+  /** LibVaipakam.AssetType as a number — copied verbatim, never
+   *  inferred from tokenId/quantity shapes. */
+  collateralAssetType: number;
+  collateralAmount: bigint;
+  collateralTokenId: bigint;
+  collateralQuantity: bigint;
+  prepayAsset: `0x${string}`;
+}
+
+/**
+ * Builds the createOffer payload for a refinance-tagged Borrower
+ * offer from the LIVE old loan (T-092-H atomic path). The wire rules
+ * this encodes, all contract-enforced:
+ *   - AON fill + `amount == amountMax == oldLoan.principal` exactly
+ *     (LibAutoRefinanceCheck requires `amount ≤ principal ≤ amountMax`
+ *     and AON requires a single-value amount).
+ *   - Asset continuity: lending/collateral/prepay assets and the
+ *     collateral asset type must equal the old loan's.
+ *   - Collateral identity repeated EXACTLY (amount/tokenId/quantity,
+ *     single-value) so the old collateral CARRIES OVER — nothing is
+ *     pulled at create and the lien re-tags old→new at accept.
+ *   - Borrower rate mapping: `interestRateBps = 0`,
+ *     `interestRateBpsMax = <ceiling>` — same shape as the standard
+ *     borrower post flow.
+ * Values come from the on-chain loan (wei-native), never from form
+ * strings — no decimals scaling here.
+ */
+export function toRefinanceOfferPayload(
+  oldLoan: RefinanceSourceLoan,
+  oldLoanId: number | bigint,
+  terms: {
+    rateBpsMax: number;
+    durationDays: number;
+    consent: boolean;
+    /** Unix-seconds Good-Til-Time — the request's OWN on-chain
+     *  expiry. Load-bearing: the reviewed "stays acceptable for ~N
+     *  days" promise is enforced HERE (accept refuses an expired
+     *  offer), not by the caps window, which may pre-exist looser. */
+    expiresAt: bigint;
+  },
+): CreateOfferPayload {
+  return {
+    offerType: 1,
+    lendingAsset: oldLoan.principalAsset,
+    amount: oldLoan.principal,
+    interestRateBps: 0,
+    collateralAsset: oldLoan.collateralAsset,
+    collateralAmount: oldLoan.collateralAmount,
+    durationDays: terms.durationDays,
+    assetType: AssetType.ERC20,
+    tokenId: 0n,
+    quantity: 1n,
+    creatorRiskAndTermsConsent: terms.consent,
+    prepayAsset: oldLoan.prepayAsset,
+    collateralAssetType: oldLoan.collateralAssetType as 0 | 1 | 2,
+    collateralTokenId: oldLoan.collateralTokenId,
+    collateralQuantity: oldLoan.collateralQuantity,
+    allowsPartialRepay: oldLoan.allowsPartialRepay,
+    amountMax: oldLoan.principal,
+    interestRateBpsMax: terms.rateBpsMax,
+    collateralAmountMax: oldLoan.collateralAmount,
+    periodicInterestCadence: 0,
+    allowsParallelSale: false,
+    fillMode: 1,
+    expiresAt: terms.expiresAt,
+    allowsPrepayListing: false,
+    refinanceTargetLoanId: BigInt(oldLoanId),
+    useFullTermInterest: oldLoan.useFullTermInterest,
+  };
+}
+
 /**
  * Human-readable grace period derived from loan duration. Matches the
  * buckets enforced by `LibVaipakam` on-chain.
  */
 export function gracePeriodLabel(days: number): string {
-  if (days < 7) return '1 hour';
-  if (days < 30) return '1 day';
-  if (days < 90) return '3 days';
-  if (days < 180) return '1 week';
-  return '2 weeks';
+  // Derived from the SAME table the submit-time grace gate uses — the
+  // shown grace and the enforced grace can't drift apart.
+  return formatGraceSeconds(defaultGraceSeconds(days));
 }

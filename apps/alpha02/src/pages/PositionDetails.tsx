@@ -8,7 +8,7 @@
  *   lender  + repaid   → Claim principal + interest
  *   lender  + defaulted→ Claim the collateral
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { CircleCheck, LoaderCircle, ShieldPlus, ShieldQuestion } from 'lucide-react';
 import { usePublicClient, useWalletClient } from 'wagmi';
@@ -17,7 +17,6 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   ContractFunctionZeroDataError,
-  erc20Abi,
   parseUnits,
 } from 'viem';
 import { copy } from '../content/copy';
@@ -25,6 +24,17 @@ import { isPositiveDecimal, submitErrorText } from '../lib/errors';
 import { useLoan } from '../data/hooks';
 import { useLoanRisk, healthView } from '../data/risk';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
+import {
+  assertErc20BalanceLive,
+  assertPositionNftHeldLive,
+  isAssetIlliquidLive,
+  readGraceSecondsLive,
+} from '../contracts/preflights';
+import {
+  LOAN_STATUS_ACTIVE,
+  readLoanLive,
+  readRepaymentDueLive,
+} from '../contracts/loanLive';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -39,13 +49,42 @@ import {
 } from '../lib/format';
 import { loanStateView } from '../lib/loanState';
 import { EmptyState, UnavailableState } from '../components/EmptyState';
-import { ReviewReceipt, type ReceiptData } from '../components/ReviewReceipt';
+import { type ReceiptData } from '../components/ReviewReceipt';
+import { ConfirmReceipt } from '../components/ConfirmReceipt';
+import { RefinanceFlow } from '../components/RefinanceFlow';
+import { RefinancePendingCard } from '../components/RefinancePendingCard';
+import { EarlyExitFlow } from '../components/EarlyExitFlow';
+import { LOAN_SALE_LISTING_ENABLED, LoanSaleFlow } from '../components/LoanSaleFlow';
+import { LoanSalePendingCard } from '../components/LoanSalePendingCard';
+import { LoanKeeperCard } from '../components/LoanKeeperCard';
+import { LOCK_EARLY_WITHDRAWAL_SALE, useLoanSalePending } from '../data/loanSalePending';
+import { useRefinancePending } from '../data/refinancePending';
+import { ZERO_ADDRESS } from '../lib/offerSchema';
 import { AssetType } from '../lib/types';
 
 type Action = 'repay' | 'claim-borrower' | 'claim-lender' | null;
+/** The page's inline confirm surfaces — ONE open at a time, so two
+ *  review receipts can never invite conflicting signatures at once. */
+type ConfirmSurface =
+  | 'action'
+  | 'collateral'
+  | 'partial'
+  | 'preclose'
+  | 'refinance'
+  | 'early-exit'
+  | 'loan-sale';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
+  // Remount the page per loan: React Router reuses the same element
+  // when only the :loanId param changes, and this page's latches
+  // (claimed, closedThisSession, doneMessage, typed inputs) describe
+  // ONE loan — leaking them onto the next would hide the repay button
+  // on a different, still-open loan.
+  return <PositionDetailsInner key={loanIdParam ?? 'none'} loanIdParam={loanIdParam} />;
+}
+
+function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined }) {
   const loanId = Number(loanIdParam);
   const loan = useLoan(Number.isFinite(loanId) ? loanId : undefined);
   const { address, walletChain, onSupportedChain } = useActiveChain();
@@ -62,13 +101,25 @@ export function PositionDetails() {
   const [partialInput, setPartialInput] = useState('');
   // A successful claim doesn't change the indexer row's status, so
   // without this latch the button would re-enable and invite a
-  // second, reverting claim.
-  const [claimed, setClaimed] = useState(false);
-  // Position writes show the six-row receipt BEFORE any wallet prompt
-  // — one flag per write surface on this page.
-  const [confirming, setConfirming] = useState(false);
-  const [confirmingCollateral, setConfirmingCollateral] = useState(false);
-  const [confirmingPartial, setConfirmingPartial] = useState(false);
+  // second, reverting claim. PER SIDE: one wallet can hold BOTH
+  // position NFTs, and claiming one side must not hide the other
+  // side's still-unclaimed action after the role flips.
+  const [claimed, setClaimed] = useState({ borrower: false, lender: false });
+  // Same indexer lag after a full repay or preclose: the row stays
+  // "active" until the indexer catches up, so without this latch the
+  // repay button and the close-early card would re-appear and invite
+  // a second, reverting submit (LoanNotActive).
+  const [closedThisSession, setClosedThisSession] = useState(false);
+  // Lender-side sibling of closedThisSession: after a successful
+  // position sale the indexer still shows this wallet as lender for
+  // a window — the latch lives on the PAGE so an EarlyExitFlow
+  // remount (mode toggle) can't resurrect the stale picker.
+  const [soldThisSession, setSoldThisSession] = useState(false);
+  // Position writes show the six-row receipt BEFORE any wallet prompt.
+  // One slot (not one flag per surface) — opening a surface closes any
+  // other, so two receipts never invite conflicting signatures.
+  const [confirmingSurface, setConfirmingSurface] =
+    useState<ConfirmSurface | null>(null);
 
   // For rentals the "principal" leg is the NFT contract — no ERC-20
   // metadata to read there.
@@ -176,6 +227,99 @@ export function PositionDetails() {
   const sanctions = useSanctionsCheck();
   const sanctionsClear = sanctions.ready && !sanctions.flagged;
 
+  // Page-owned pending-refinance state — deliberately independent of
+  // the strategy cards' mount gates. A live request interlocks the
+  // repay-family surfaces (a changed principal or a settled loan
+  // strands the frozen-amount request) and keeps its own card below.
+  const refi = useRefinancePending(
+    loanId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+  );
+  const refinancePending = refi.offerId !== null;
+  // The partial/preclose interlocks exist to protect an ACCEPTABLE
+  // request from being stranded by a changed principal or a settled
+  // loan. An EXPIRED request can't be accepted by anyone, so it stops
+  // blocking (while verification is still loading, keep blocking —
+  // the conservative side).
+  const refinanceBlocking = refinancePending && refi.state?.expired !== true;
+
+  // Lender-side sibling: a live Option-2 sale listing. Existence is
+  // the CHAIN's say-so (positionLock on the lender NFT), so a listing
+  // made on another device still shows and interlocks here.
+  const sale = useLoanSalePending(
+    loanId,
+    loan.data?.lenderTokenId,
+    loanIsRental || !loan.data
+      ? undefined
+      : (loan.data.lendingAsset as `0x${string}`),
+    // Lender-side viewers only (the hook also self-enables on a
+    // device marker) — borrowers/spectators must not pay the polling
+    // cost for a watch their wallet can't answer.
+    !loanIsRental && Boolean(loan.data) && role === 'lender',
+  );
+  const salePending = sale.state?.listed === true;
+  // The listing ended off-page (a buyer accepted, or it was cancelled
+  // elsewhere) — surface the outcome once via the page banner.
+  useEffect(() => {
+    if (sale.endedNotice) {
+      setDoneMessage(copy.loanSale.ended);
+      sale.clearEndedNotice();
+    }
+  }, [sale, sale.endedNotice]);
+
+  // Live loan snapshot — interest MODE and the re-stampable accrual
+  // clock live only on-chain (the indexer row lacks them). The quoted
+  // preclose figure is the contract's OWN settlement math
+  // (`calculateRepaymentAmount` routes through the same
+  // settlementInterestNet as `computePreclose`: full-term floor,
+  // interest already settled by partials, chain time) — never a
+  // hand-derived formula that can drift from what is pulled.
+  // `chainNow` rides along so time gates never trust the local clock.
+  const loanLive = useQuery({
+    queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
+    // Only the advanced strategy cards consume this (borrower:
+    // close-early/refinance; lender: early exit) — don't burn three
+    // RPC reads a minute for viewers or basic mode.
+    enabled:
+      Boolean(readClient) &&
+      Boolean(loan.data) &&
+      loan.data?.status === 'active' &&
+      !loanIsRental &&
+      isAdvanced &&
+      (role === 'borrower' || role === 'lender'),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    queryFn: async () => {
+      const [live, calcDue, latestBlock, saleLock] = await Promise.all([
+        readLoanLive(readClient!, readChain.diamondAddress, loan.data!.loanId),
+        readRepaymentDueLive(
+          readClient!,
+          readChain.diamondAddress,
+          loan.data!.loanId,
+        ),
+        readClient!.getBlock({ blockTag: 'latest' }),
+        // The lender NFT's position lock — a live sale listing
+        // (EarlyWithdrawalSale) freezes the listing's economics at the
+        // CURRENT principal, so the borrower's partial-repay surface
+        // must know about it too, not just the lender's exit block.
+        // null = unknown (read failed) — the submit-time gate is the
+        // authoritative check; this render copy is best-effort.
+        (readClient!
+          .readContract({
+            address: readChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(loan.data!.lenderTokenId)],
+          })
+          .then((v) => Number(v))
+          .catch(() => null)) as Promise<number | null>,
+      ]);
+      return { live, calcDue, chainNow: latestBlock.timestamp, saleLock };
+    },
+  });
+
   // Balance gates: approve() succeeds regardless of balance, so check
   // the wallet actually holds the typed amount before any approval.
   const collateralBalance = useTokenBalance(
@@ -234,12 +378,15 @@ export function PositionDetails() {
   );
 
   const action: Action = (() => {
-    if (claimed) return null; // claim already made this session
+    // Side-scoped: a claim on one side must not suppress the other.
+    if (role === 'borrower' && claimed.borrower) return null;
+    if (role === 'lender' && claimed.lender) return null;
     // fallback_pending is CURABLE: the contracts still accept full
     // repayment (and add-collateral) while a failed liquidation waits
     // for retry — never leave the borrower without the cure action.
     if (
       role === 'borrower' &&
+      !closedThisSession &&
       (row.status === 'active' || row.status === 'fallback_pending')
     ) {
       return 'repay';
@@ -274,36 +421,46 @@ export function PositionDetails() {
     setError(null);
     try {
       if (kind === 'repay') {
-        const [calcDue, latestBlock] = await Promise.all([
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateRepaymentAmount',
-            args: [BigInt(row.loanId)],
-          }) as Promise<bigint>,
+        const [calcDue, latestBlock, liveGate] = await Promise.all([
+          readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
           publicClient.getBlock({ blockTag: 'latest' }),
+          // The grace math must use the LIVE term — a keeper extend
+          // (extendLoanInPlace) moves durationDays under the indexer
+          // row, and the contract judges gracePeriod(loan.durationDays)
+          // on the live loan. (Rental closes don't gate on grace.)
+          row.assetType === AssetType.ERC20
+            ? readLoanLive(publicClient, walletChain.diamondAddress, row.loanId)
+            : Promise.resolve(null),
         ]);
         const chainNow = latestBlock.timestamp;
+        // Two more independent live reads, one round-trip: the role
+        // came from a CACHED ownerOf (repayLoan is PERMISSIONLESS — a
+        // stale "borrower" could pay off a position whose claim now
+        // belongs to someone else), and the grace window is judged by
+        // CHAIN time against the LIVE buckets.
+        const [, graceSec] = await Promise.all([
+          assertPositionNftHeldLive({
+            publicClient,
+            diamondAddress: walletChain.diamondAddress,
+            tokenId: row.borrowerTokenId,
+            expectedOwner: address,
+          }),
+          // Grace only gates ERC-20 repays — don't spend a read on
+          // rental closes.
+          liveGate
+            ? readGraceSecondsLive({
+                publicClient,
+                diamondAddress: walletChain.diamondAddress,
+                durationDays: Number(liveGate.durationDays),
+              })
+            : Promise.resolve(0n),
+        ]);
         // repayLoan reverts RepaymentPastGracePeriod once past the
-        // grace window — fail BEFORE the approval. Grace is judged by
-        // the compile-time default schedule (storage buckets can only
-        // be configured by governance; on the deployed testnets none
-        // are). Judged by CHAIN time, never the browser clock.
-        if (row.assetType === AssetType.ERC20) {
-          const endTime = BigInt(row.startTime + row.durationDays * 86_400);
-          const defaultGraceSec =
-            row.durationDays < 7
-              ? 3_600n
-              : row.durationDays < 30
-                ? 86_400n
-                : row.durationDays < 90
-                  ? 3n * 86_400n
-                  : row.durationDays < 180
-                    ? 7n * 86_400n
-                    : row.durationDays < 365
-                      ? 14n * 86_400n
-                      : 30n * 86_400n;
-          if (chainNow > endTime + defaultGraceSec) {
+        // grace window — fail BEFORE the approval, judged on the LIVE
+        // term fields (see the liveGate read above).
+        if (liveGate) {
+          const endTime = liveGate.startTime + liveGate.durationDays * 86_400n;
+          if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
             return;
           }
@@ -315,28 +472,24 @@ export function PositionDetails() {
         // estimate only over-approves (repayLoan pulls what it
         // recomputes) and the pad below is never spent.
         let totalDue = calcDue;
-        if (
-          totalDue === 0n &&
-          row.status === 'fallback_pending' &&
-          row.assetType === AssetType.ERC20
-        ) {
-          const live = (await publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getLoanDetails',
-            args: [BigInt(row.loanId)],
-          })) as { principal: bigint; interestRateBps: bigint; startTime: bigint };
+        if (totalDue === 0n && row.status === 'fallback_pending' && liveGate) {
+          const live = liveGate;
           const elapsedDays =
             chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
           const interestEst =
             (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
             (365n * 10_000n);
-          // Late fees accrue 0.5%/day past maturity — cover them too.
+          // Late fees mirror LibVaipakam.calculateLateFee: 1% base +
+          // 0.5%/day past maturity, CAPPED at 5%. Judge maturity by the
+          // LIVE term (a keeper extend moves it), pad one day-step, and
+          // clamp — an uncapped estimate blocks a borrower who holds
+          // enough for the real capped pull once ~8 days late.
+          const endTimeLive = live.startTime + live.durationDays * 86_400n;
           const daysPastEnd =
-            chainNow > live.startTime + BigInt(row.durationDays) * 86_400n
-              ? (chainNow - (live.startTime + BigInt(row.durationDays) * 86_400n)) / 86_400n
-              : 0n;
-          const lateFeeEst = (live.principal * 50n * (daysPastEnd + 2n)) / 10_000n;
+            chainNow > endTimeLive ? (chainNow - endTimeLive) / 86_400n : 0n;
+          let lateFeeBps = 100n + (daysPastEnd + 2n) * 50n;
+          if (lateFeeBps > 500n) lateFeeBps = 500n;
+          const lateFeeEst = (live.principal * lateFeeBps) / 10_000n;
           totalDue = live.principal + interestEst + lateFeeEst;
         }
         if (row.assetType === AssetType.ERC20 && totalDue > 0n) {
@@ -355,16 +508,13 @@ export function PositionDetails() {
           // signature: a wallet holding exactly totalDue can still be
           // short when repayLoan recomputes across a boundary, which
           // would burn the approval on a doomed transferFrom.
-          const held = await publicClient.readContract({
-            address: row.lendingAsset as `0x${string}`,
-            abi: erc20Abi,
-            functionName: 'balanceOf',
-            args: [address],
+          await assertErc20BalanceLive({
+            publicClient,
+            token: row.lendingAsset as `0x${string}`,
+            owner: address,
+            amount: totalDue + pad,
+            symbol: principalMeta.data?.symbol,
           });
-          if (held < totalDue + pad) {
-            setError(copy.errors.needMore(principalMeta.data?.symbol ?? 'the repayment asset'));
-            return;
-          }
           await ensureAllowance({
             publicClient,
             walletClient,
@@ -375,6 +525,7 @@ export function PositionDetails() {
           });
         }
         await write('repayLoan', [BigInt(row.loanId)]);
+        setClosedThisSession(true);
         setDoneMessage(
           isRental
             ? 'Rental closed. Any refundable buffer is ready — claim it from the Claim Center.'
@@ -389,7 +540,7 @@ export function PositionDetails() {
           address,
         );
         await write('claimAsBorrower', [BigInt(row.loanId)]);
-        setClaimed(true);
+        setClaimed((c) => ({ ...c, borrower: true }));
         setDoneMessage(copy.claims.claimed);
       } else {
         await assertWalletNotSanctionedLive(
@@ -398,11 +549,12 @@ export function PositionDetails() {
           address,
         );
         await write('claimAsLender', [BigInt(row.loanId)]);
-        setClaimed(true);
+        setClaimed((c) => ({ ...c, lender: true }));
         setDoneMessage(copy.claims.claimed);
       }
-      setConfirming(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
@@ -431,18 +583,32 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
-      // addCollateral rejects unless the collateral is currently
-      // LIQUID (checkLiquidity == Liquid, enum 0) — fail before the
-      // approval. Fail-open on read errors: the contract still guards.
-      const liquidity = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'checkLiquidity',
-          args: [row.collateralAsset as `0x${string}`],
-        })
-        .catch(() => 0)) as number;
-      if (Number(liquidity) !== 0) {
+      // Three independent live gates, one round-trip: addCollateral
+      // authorizes the CURRENT borrower-position holder
+      // (requireBorrowerNftOwner), approve() ignores balances, and the
+      // contract rejects top-ups on unpriced collateral
+      // (IlliquidAsset; fail-open read — the contract still guards).
+      const [, , collateralIlliquid] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        assertErc20BalanceLive({
+          publicClient,
+          token: row.collateralAsset as `0x${string}`,
+          owner: address,
+          amount: wei,
+          symbol: collateralMeta.data.symbol,
+        }),
+        isAssetIlliquidLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: row.collateralAsset,
+        }),
+      ]);
+      if (collateralIlliquid) {
         setError(copy.errors.collateralNotPriced);
         return;
       }
@@ -457,7 +623,7 @@ export function PositionDetails() {
       await write('addCollateral', [BigInt(row.loanId), wei]);
       setDoneMessage('Collateral added — the loan is safer now.');
       setCollateralInput('');
-      setConfirmingCollateral(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
     } catch (err) {
@@ -478,22 +644,52 @@ export function PositionDetails() {
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock] = await Promise.all([
-        publicClient.readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getLoanDetails',
-          args: [BigInt(row.loanId)],
-        }) as Promise<{
-          principal: bigint;
-          interestRateBps: bigint;
-          startTime: bigint;
-          interestAccrualStart: bigint;
-        }>,
+      const [live, latestBlock, saleLock] = await Promise.all([
+        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
+        // A live sale listing freezes the sale price at the CURRENT
+        // principal — a partial repay under it would make the next
+        // buyer overpay for a smaller claim. This read failing THROWS
+        // (fail closed): unknown lock state must not wave a partial
+        // through.
+        publicClient
+          .readContract({
+            address: walletChain.diamondAddress,
+            abi: DIAMOND_ABI_VIEM,
+            functionName: 'positionLock',
+            args: [BigInt(row.lenderTokenId)],
+          })
+          .then((v) => Number(v)),
       ]);
+      // The indexer row said Active — but another tab/device may have
+      // settled the loan inside its lag window, and repayPartial
+      // reverts InvalidLoanStatus after the approval already mined.
+      if (live.status !== LOAN_STATUS_ACTIVE) {
+        setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      // repayPartial enforces the SAME grace window as repayLoan
+      // (RepaymentPastGracePeriod) — judge it by chain time against
+      // the live buckets, keyed on the LIVE duration (a keeper extend
+      // moves it under the indexer row), before any approval.
+      const graceSec = await readGraceSecondsLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        durationDays: Number(live.durationDays),
+      });
+      if (
+        latestBlock.timestamp >
+        live.startTime + live.durationDays * 86_400n + graceSec
+      ) {
+        setError(copy.errors.pastGrace);
+        return;
+      }
+      if (saleLock === LOCK_EARLY_WITHDRAWAL_SALE) {
+        setError(copy.loanSale.partialBlockedByListing);
+        return;
+      }
       // A partial equal to the FULL remaining principal is accepted by
       // the contract but leaves the loan Active at principal 0 —
       // settlement (and collateral release) needs the real repay path.
@@ -501,6 +697,15 @@ export function PositionDetails() {
         setError(copy.errors.partialOverPrincipal);
         return;
       }
+      // repayPartial authorizes the CURRENT borrower-position holder
+      // (stored-anchor auth after consolidation) — re-check live so a
+      // stale role fails before the approval.
+      await assertPositionNftHeldLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        tokenId: row.borrowerTokenId,
+        expectedOwner: address,
+      });
       // repayPartial pays the CURRENT lender-position holder DIRECTLY
       // and reverts if that wallet is sanctioned — screen the resolved
       // holder before the approval (full repay stays open: it defers
@@ -537,16 +742,13 @@ export function PositionDetails() {
         (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
         (365n * 10_000n);
       const required = wei + accrued;
-      const held = await publicClient.readContract({
-        address: row.lendingAsset as `0x${string}`,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [address],
+      await assertErc20BalanceLive({
+        publicClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        amount: required,
+        symbol: principalMeta.data.symbol,
       });
-      if (held < required) {
-        setError(copy.errors.needMore(principalMeta.data.symbol));
-        return;
-      }
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -558,10 +760,98 @@ export function PositionDetails() {
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage('Partial repayment confirmed — you now owe less.');
       setPartialInput('');
-      setConfirmingPartial(false);
+      setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      // The close-early quote (loanLive.calcDue) changes with every
+      // partial — without this it keeps quoting the pre-partial figure.
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+    } catch (err) {
+      setError(submitErrorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runPreclose() {
+    if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // precloseDirect is a Tier-1 entry point — live re-screen, plus
+      // the ownership/clock reads, one round-trip.
+      await assertWalletNotSanctionedLive(
+        publicClient,
+        walletChain.diamondAddress,
+        address,
+      );
+      const [, live, calcDue, latestBlock] = await Promise.all([
+        assertPositionNftHeldLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          tokenId: row.borrowerTokenId,
+          expectedOwner: address,
+        }),
+        readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
+        readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
+        publicClient.getBlock({ blockTag: 'latest' }),
+      ]);
+      // The card's pre-maturity gate ran on a CACHED chain clock (a
+      // backgrounded tab stops refetching) — re-judge maturity live
+      // against the LIVE term fields. precloseDirect itself has NO
+      // maturity revert: past maturity it would settle WITHOUT the
+      // late fee the repay path charges, and the quoted calcDue
+      // (which includes late fees) would no longer match the pull.
+      if (
+        latestBlock.timestamp >=
+        live.startTime + live.durationDays * 86_400n
+      ) {
+        setError(copy.errors.precloseMatured);
+        return;
+      }
+      // `calculateRepaymentAmount` IS the preclose figure — it and
+      // `computePreclose` route through the same settlementInterestNet
+      // (full-term floor max(elapsed, remaining), interest already
+      // settled by partials, CHAIN time). It returns 0 for any
+      // non-Active loan — but 0 on a still-ACTIVE loan is the legal
+      // "principal fully paid down via partials" state, where
+      // precloseDirect is exactly the call that settles and releases
+      // the collateral (pulling nothing), so only a non-Active status
+      // aborts.
+      if (calcDue === 0n && live.status !== LOAN_STATUS_ACTIVE) {
+        setError(copy.errors.loanAlreadySettled);
+        return;
+      }
+      // The owed amount steps up at each elapsed-day boundary while
+      // the tx is pending — pad by ~2 days of interest; precloseDirect
+      // pulls only what it recomputes, so the pad is never spent.
+      const due =
+        calcDue +
+        (live.principal * live.interestRateBps * 2n) / (365n * 10_000n);
+      await assertErc20BalanceLive({
+        publicClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        amount: due,
+        symbol: principalMeta.data.symbol,
+      });
+      await ensureAllowance({
+        publicClient,
+        walletClient,
+        token: row.lendingAsset as `0x${string}`,
+        owner: address,
+        spender: walletChain.diamondAddress,
+        amount: due,
+      });
+      await write('precloseDirect', [BigInt(row.loanId)]);
+      setClosedThisSession(true);
+      setDoneMessage(copy.preclose.done);
+      setConfirmingSurface(null);
+      void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
+      void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
+      void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -573,8 +863,7 @@ export function PositionDetails() {
   // fungible `collateralAmount` is normally ZERO, so amount alone must
   // not decide "no collateral" (that would hide a real NFT pledge).
   const hasCollateral =
-    row.collateralAsset.toLowerCase() !==
-      '0x0000000000000000000000000000000000000000' &&
+    row.collateralAsset.toLowerCase() !== ZERO_ADDRESS &&
     (BigInt(row.collateralAmount) > 0n ||
       row.collateralAssetType !== AssetType.ERC20);
   const collateralStr = !hasCollateral
@@ -613,11 +902,13 @@ export function PositionDetails() {
       ? {
           youReceive: isRental
             ? 'Any refundable buffer back — claimable right after closing.'
-            : `${collateralStr} collateral back — claimable right after repayment settles.`,
+            : hasCollateral
+              ? `${collateralStr} collateral back — claimable right after repayment settles.`
+              : 'Nothing extra back — this loan has no collateral to release.',
           youLock: 'Nothing new.',
           youMayOwe: isRental
             ? 'Nothing more — fees were prepaid (late fees only if past the due date).'
-            : `${principalStr} + interest accrued to now. The exact amount is read live when you confirm; the approval carries small day-boundary headroom that is never spent.`,
+            : `${principalStr} + this loan's interest. For full-term loans (the protocol default) the whole term's interest applies even when repaying early; day-by-day loans charge only what has accrued. The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
           youCanLose: 'Nothing beyond what you owe.',
           fees: 'No extra Vaipakam fee to repay — the protocol’s cut comes out of the lender’s interest.',
           whenThisEnds: 'Immediately — the loan settles and your side is released.',
@@ -627,7 +918,9 @@ export function PositionDetails() {
             youReceive: isRental
               ? 'Your refundable buffer back.'
               : row.status === 'repaid'
-                ? `${collateralStr} collateral back.`
+                ? hasCollateral
+                  ? `${collateralStr} collateral back.`
+                  : 'Whatever this side is still owed (this loan had no collateral, so there may be nothing).'
                 : 'Anything left after liquidation (may be zero).',
             youLock: 'Nothing.',
             youMayOwe: 'Nothing.',
@@ -646,7 +939,9 @@ export function PositionDetails() {
                     // not the collateral itself. Only in-kind (illiquid)
                     // paths hand over the raw collateral, so promise
                     // neither specifically.
-                    `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`,
+                    hasCollateral
+                    ? `What this loan recovered: sale proceeds in ${principal?.symbol ?? 'the loan asset'}, or the ${collateralStr} collateral itself, depending on how the default settled.`
+                    : 'Whatever this loan recovered (it had no collateral, so there may be nothing).',
               youLock: 'Nothing.',
               youMayOwe: 'Nothing.',
               youCanLose: 'Nothing.',
@@ -709,6 +1004,24 @@ export function PositionDetails() {
                 : `${formatBpsAsPercent(row.interestRateBps)} yearly · ${formatDurationDays(row.durationDays)} · due ${dueDate}`}
             </dd>
           </div>
+          {isAdvanced && (role === 'borrower' || role === 'lender') ? (
+            // Position control travels with this NFT — the id links
+            // to the verifier so its holder can prove (or a buyer can
+            // check) exactly what it controls.
+            <div className="receipt-row">
+              <dt>{copy.nftVerifier.positionRowLabel}</dt>
+              <dd>
+                <Link
+                  to={`/nft/${role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}`}
+                >
+                  #{role === 'lender' ? row.lenderTokenId : row.borrowerTokenId}
+                </Link>{' '}
+                <span className="muted">
+                  {copy.nftVerifier.positionRowNote(role)}
+                </span>
+              </dd>
+            </div>
+          ) : null}
           {!isRental && row.status === 'active' && !risk.data ? (
             // A missing risk read must LOOK missing — hiding the row
             // would render a possibly-liquidatable loan as complete.
@@ -736,7 +1049,11 @@ export function PositionDetails() {
                         {' '}
                         <span className="muted">
                           (health factor {healthView(risk.data).ratio}, loan-to-value{' '}
-                          {healthView(risk.data).ltvPct}; liquidation below 1.00)
+                          {healthView(risk.data).ltvPct}; liquidation below 1.00
+                          {healthView(risk.data).dropToLiquidationPct
+                            ? ` — roughly, liquidation begins if the collateral's value falls about ${healthView(risk.data).dropToLiquidationPct}`
+                            : ''}
+                          )
                         </span>
                       </>
                     ) : null}
@@ -762,7 +1079,12 @@ export function PositionDetails() {
         </dl>
       </section>
 
-      {role === 'borrower' && (row.status === 'active' || row.status === 'fallback_pending') && !isRental && hasCollateral && collateral ? (
+      {role === 'borrower' &&
+      (row.status === 'active' || row.status === 'fallback_pending') &&
+      !closedThisSession &&
+      !isRental &&
+      hasCollateral &&
+      collateral ? (
         <section className="card">
           <div className="card-title">
             <ShieldPlus aria-hidden />
@@ -798,7 +1120,7 @@ export function PositionDetails() {
                 collateralBalance.data === undefined ||
                 collateralOverBalance
               }
-              onClick={() => setConfirmingCollateral(true)}
+              onClick={() => setConfirmingSurface('collateral')}
             >
               Add
             </button>
@@ -808,25 +1130,13 @@ export function PositionDetails() {
               {copy.errors.needMore(collateral.symbol)}
             </p>
           ) : null}
-          {confirmingCollateral && collateralInputWei !== null ? (
+          {confirmingSurface === 'collateral' && collateralInputWei !== null ? (
             <div style={{ marginTop: 16 }}>
-              {row.status === 'fallback_pending' ? (
-                // A fallback-pending top-up CURES only if it restores
-                // the loan's required health thresholds — a partial
-                // top-up leaves the lender able to claim AND puts the
-                // added collateral at stake. Never let the generic
-                // "safer now" copy stand alone here.
-                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
-                  <span className="banner-body">
-                    This loan is in a failed-liquidation state. Adding
-                    collateral only brings it back to Active if the top-up
-                    restores the required health level — otherwise the lender
-                    can still claim, and the added collateral is at stake too.
-                    Repaying in full always cures. If unsure, repay instead.
-                  </span>
-                </div>
-              ) : null}
-              <ReviewReceipt
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel="Confirm — add collateral"
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runAddCollateral()}
                 data={{
                   youReceive:
                     row.status === 'fallback_pending'
@@ -841,27 +1151,24 @@ export function PositionDetails() {
                   fees: 'None.',
                   whenThisEnds: 'The top-up applies immediately.',
                 }}
-              />
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmingCollateral(false)}
-                  disabled={busy}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => void runAddCollateral()}
-                >
-                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                  {busy ? 'Waiting for wallet…' : 'Confirm — add collateral'}
-                </button>
-              </div>
+              >
+                {row.status === 'fallback_pending' ? (
+                  // A fallback-pending top-up CURES only if it restores
+                  // the loan's required health thresholds — a partial
+                  // top-up leaves the lender able to claim AND puts the
+                  // added collateral at stake. Never let the generic
+                  // "safer now" copy stand alone here.
+                  <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                    <span className="banner-body">
+                      This loan is in a failed-liquidation state. Adding
+                      collateral only brings it back to Active if the top-up
+                      restores the required health level — otherwise the lender
+                      can still claim, and the added collateral is at stake too.
+                      Repaying in full always cures. If unsure, repay instead.
+                    </span>
+                  </div>
+                ) : null}
+              </ConfirmReceipt>
             </div>
           ) : null}
         </section>
@@ -870,6 +1177,7 @@ export function PositionDetails() {
       {isAdvanced &&
       role === 'borrower' &&
       row.status === 'active' &&
+      !closedThisSession &&
       !isRental &&
       row.allowsPartialRepay &&
       principal ? (
@@ -879,6 +1187,29 @@ export function PositionDetails() {
             This loan allows partial repayment. Payments go to interest first,
             then reduce the amount you owe — the due date never moves.
           </p>
+          {refinanceBlocking ? (
+            // A live refinance request is frozen at the CURRENT
+            // principal — a partial would strand it unacceptable
+            // forever (the contract rejects any accept once amount >
+            // live principal). Explain instead of failing later.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.refinance.partialBlockedByPending}
+              </span>
+            </div>
+          ) : loanLive.data?.saleLock === LOCK_EARLY_WITHDRAWAL_SALE ? (
+            // Same freeze from the LENDER's side: a live sale listing
+            // charges buyers the current outstanding amount, so a
+            // partial under it would mislead the buyer. (Best-effort
+            // render copy — the submit path re-checks the lock live
+            // and fails closed.)
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.loanSale.partialBlockedByListing}
+              </span>
+            </div>
+          ) : (
+          <>
           <div className="cluster">
             <input
               aria-label="Amount to repay now"
@@ -901,7 +1232,7 @@ export function PositionDetails() {
                 principalBalance.data === undefined ||
                 partialOverBalance
               }
-              onClick={() => setConfirmingPartial(true)}
+              onClick={() => setConfirmingSurface('partial')}
             >
               Repay part
             </button>
@@ -911,9 +1242,13 @@ export function PositionDetails() {
               {copy.errors.needMore(principal.symbol)}
             </p>
           ) : null}
-          {confirmingPartial && partialInputWei !== null ? (
+          {confirmingSurface === 'partial' && partialInputWei !== null ? (
             <div style={{ marginTop: 16 }}>
-              <ReviewReceipt
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel="Confirm — repay part"
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runPartialRepay()}
                 data={{
                   youReceive: 'Nothing now — a smaller debt.',
                   youLock: 'Nothing.',
@@ -923,29 +1258,279 @@ export function PositionDetails() {
                   whenThisEnds: 'Your remaining principal drops immediately; interest keeps accruing on the smaller amount.',
                 }}
               />
-              <div className="cluster" style={{ marginTop: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => setConfirmingPartial(false)}
-                  disabled={busy}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ flex: 1 }}
-                  disabled={busy}
-                  onClick={() => void runPartialRepay()}
-                >
-                  {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                  {busy ? 'Waiting for wallet…' : 'Confirm — repay part'}
-                </button>
-              </div>
             </div>
           ) : null}
+          </>
+          )}
         </section>
+      ) : null}
+
+      {/* A flagged wallet sees no close-early surface at all rather
+          than a dead button — its open path is the Tier-2 repay
+          above. Everyone else gets a visible checking/error state
+          while the live reads are in flight (never a silently absent
+          feature), and the full card only once the live loan has
+          landed: the quoted figure and mode note come from it, and
+          the pre-maturity gate is judged by CHAIN time against the
+          LIVE term fields (a wrong device clock or a stale indexer
+          row must not decide it). */}
+      {isAdvanced &&
+      role === 'borrower' &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !isRental &&
+      principal &&
+      !(sanctions.ready && sanctions.flagged) ? (
+        !loanLive.data || !sanctions.ready ? (
+          <section className="card">
+            <h3>{copy.preclose.title}</h3>
+            <p className="muted">
+              {loanLive.isError
+                ? copy.preclose.checkFailed
+                : copy.preclose.checking}
+            </p>
+          </section>
+        ) : (
+        <>
+        {loanLive.data.chainNow <
+        loanLive.data.live.startTime +
+          loanLive.data.live.durationDays * 86_400n ? (
+        <section className="card">
+          <h3>{copy.preclose.title}</h3>
+          <p className="muted">
+            {copy.preclose.blurb}{' '}
+            {loanLive.data.live.useFullTermInterest
+              ? copy.preclose.fullTermNote
+              : copy.preclose.proRataNote}
+          </p>
+          {refinanceBlocking ? (
+            // A live refinance request is frozen against THIS loan —
+            // settling it early would strand the request forever.
+            <div className="banner banner-warn" role="alert">
+              <span className="banner-body">
+                {copy.refinance.precloseBlockedByPending}
+              </span>
+            </div>
+          ) : confirmingSurface !== 'preclose' ? (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              disabled={busy || !onSupportedChain || !walletClient || !publicClient}
+              onClick={() => setConfirmingSurface('preclose')}
+            >
+              {copy.preclose.action}
+            </button>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <ConfirmReceipt
+                busy={busy}
+                confirmLabel={copy.preclose.confirm}
+                onBack={() => setConfirmingSurface(null)}
+                onConfirm={() => void runPreclose()}
+                // The wallet can disconnect or hop chains while this
+                // receipt is open — a click must land on a disabled
+                // button, not on runPreclose's silent early return.
+                disabled={!onSupportedChain || !walletClient || !publicClient}
+                data={{
+                  youReceive: hasCollateral
+                    ? `${collateralStr} collateral back — claimable right after closing.`
+                    : 'Nothing extra back — this loan has no collateral to release.',
+                  youLock: 'Nothing new.',
+                  youMayOwe: `~${formatTokenAmount(
+                    loanLive.data.calcDue,
+                    principal.decimals,
+                  )} ${principal.symbol}, paid now. ${
+                    loanLive.data.live.useFullTermInterest
+                      ? copy.preclose.fullTermNote
+                      : copy.preclose.proRataNote
+                  } The exact amount is read live when you confirm; the approval carries small headroom that is never spent.`,
+                  youCanLose: 'Nothing beyond what you pay.',
+                  fees: 'No extra Vaipakam fee to close early — the protocol’s cut comes out of the lender’s interest.',
+                  whenThisEnds: 'Immediately — the loan settles today and your collateral is released.',
+                }}
+              />
+            </div>
+          )}
+        </section>
+        ) : // Matured (by live chain time + live term): close-early no
+          // longer applies — the plain Repay path below is the one
+          // that settles a matured loan, late fees included.
+          null}
+        {/* Refinance FORM — shares the strategy gates with
+            close-early (advanced borrower, live-verified Active,
+            sanctions-clear — Tier-1 at accept), PLUS: only the
+            ORIGINAL borrower (carry-over binds to the borrower
+            stored at init; a transferred position would silently
+            re-pledge fresh collateral), and only while NO request is
+            already live (the pending surface is the page-owned card
+            below, which outlives these gates). Keyed by chain so a
+            chain switch re-seeds per-chain state. */}
+        {!refinancePending &&
+        address &&
+        address.toLowerCase() === row.borrower.toLowerCase() ? (
+          <RefinanceFlow
+            key={readChain.chainId}
+            row={row}
+            live={loanLive.data.live}
+            chainNow={loanLive.data.chainNow}
+            principalMeta={principal}
+            confirmOpen={confirmingSurface === 'refinance'}
+            onOpenConfirm={() => setConfirmingSurface('refinance')}
+            onCloseConfirm={() =>
+              setConfirmingSurface((s) => (s === 'refinance' ? null : s))
+            }
+            onPosted={refi.remember}
+            busy={busy}
+            setBusy={setBusy}
+          />
+        ) : null}
+        </>
+        )
+      ) : null}
+
+      {/* Lender strategy — early exit by selling the position into a
+          matching open lending offer. Same gate conventions as the
+          borrower block: flagged wallets see nothing (Tier-1),
+          checking/error states are visible, the full card requires
+          the live loan and pre-maturity by chain time. The done
+          message goes to the PAGE banner (the role flips to viewer
+          as soon as the ownership read refreshes, unmounting this
+          block). */}
+      {isAdvanced &&
+      role === 'lender' &&
+      row.status === 'active' &&
+      !soldThisSession &&
+      !isRental &&
+      principal &&
+      !(sanctions.ready && sanctions.flagged) ? (
+        !loanLive.data || !sanctions.ready ? (
+          <section className="card">
+            <h3>{copy.earlyExit.title}</h3>
+            <p className="muted">
+              {loanLive.isError
+                ? copy.earlyExit.checkFailed
+                : copy.earlyExit.checking}
+            </p>
+          </section>
+        ) : salePending ? (
+          // A live sale listing owns the lender's exit story — the
+          // pending card below explains and offers cancel/restore.
+          null
+        ) : loanLive.data.chainNow <
+          loanLive.data.live.startTime +
+            loanLive.data.live.durationDays * 86_400n ? (
+          <>
+          <EarlyExitFlow
+            row={row}
+            live={loanLive.data.live}
+            chainNow={loanLive.data.chainNow}
+            principalMeta={principal}
+            confirmOpen={confirmingSurface === 'early-exit'}
+            onOpenConfirm={() => setConfirmingSurface('early-exit')}
+            onCloseConfirm={() =>
+              setConfirmingSurface((s) => (s === 'early-exit' ? null : s))
+            }
+            onSold={() => {
+              setSoldThisSession(true);
+              setDoneMessage(copy.earlyExit.done);
+            }}
+            busy={busy}
+            setBusy={setBusy}
+          />
+          <section className="card">
+            {LOAN_SALE_LISTING_ENABLED ? (
+              <LoanSaleFlow
+                row={row}
+                live={loanLive.data.live}
+                chainNow={loanLive.data.chainNow}
+                principalMeta={principal}
+                confirmOpen={confirmingSurface === 'loan-sale'}
+                onOpenConfirm={() => setConfirmingSurface('loan-sale')}
+                onCloseConfirm={() =>
+                  setConfirmingSurface((s) => (s === 'loan-sale' ? null : s))
+                }
+                onListed={(offerId) => {
+                  sale.remember(offerId);
+                  setDoneMessage(copy.loanSale.done);
+                }}
+                busy={busy}
+                setBusy={setBusy}
+              />
+            ) : (
+              // Issue #951 — the on-chain listing entry point reverts
+              // today; an honest note beats a form whose final wallet
+              // step can never succeed.
+              <>
+                <h3 style={{ marginBottom: 4 }}>{copy.loanSale.title}</h3>
+                <p className="muted" style={{ margin: 0 }}>
+                  {copy.loanSale.listingUnavailable}
+                </p>
+              </>
+            )}
+          </section>
+          </>
+        ) : null
+      ) : null}
+
+      {/* The live sale listing's standing surface — chain-authoritative
+          (positionLock), outside the strategy gates so it survives
+          data hiccups, mode switches, and other-device listings. */}
+      {sale.state?.listed &&
+      !isRental &&
+      address &&
+      // Bound to the wallet the settlement pull binds to — a
+      // non-holder on the listing device must not see funding
+      // verdicts (or grant approvals) for someone else's sale.
+      (role === 'lender' || sale.state.isHolder) ? (
+        <LoanSalePendingCard
+          loanId={row.loanId}
+          lenderTokenId={row.lenderTokenId}
+          state={sale.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={sale.clear}
+          onDone={setDoneMessage}
+        />
+      ) : null}
+
+      {/* The live request's standing surface — rendered on the MARKER
+          alone, outside every strategy gate (mode, loanLive
+          readiness, sanctions, loan status, maturity): the banner,
+          funding watch, and cancel affordance must survive all of
+          those windows, including the loan settling another way. */}
+      {refi.offerId &&
+      !isRental &&
+      address &&
+      address.toLowerCase() === row.borrower.toLowerCase() ? (
+        <RefinancePendingCard
+          loanId={row.loanId}
+          offerId={refi.offerId}
+          state={refi.state}
+          principalAsset={row.lendingAsset as `0x${string}`}
+          principalMeta={principal ?? undefined}
+          busy={busy}
+          setBusy={setBusy}
+          onCleared={refi.clear}
+          onDone={setDoneMessage}
+        />
+      ) : null}
+
+      {/* Per-loan keeper enables — third leg of the keeper trio
+          (Settings holds the master switch + whitelist). Either
+          confirmed position holder can flip it; hidden entirely when
+          the viewer has no approved keepers. */}
+      {isAdvanced &&
+      (role === 'borrower' || role === 'lender') &&
+      row.status === 'active' &&
+      !closedThisSession &&
+      !soldThisSession &&
+      // Same scope as every lifecycle card keepers can drive here —
+      // alpha02 offers none of those flows on rentals, so arming
+      // keepers for one would be a switch with no in-app story.
+      !isRental ? (
+        <LoanKeeperCard loanId={row.loanId} busy={busy} setBusy={setBusy} />
       ) : null}
 
       {doneMessage ? (
@@ -960,43 +1545,39 @@ export function PositionDetails() {
         </div>
       ) : null}
 
-      {actionLabel && action ? (
-        confirming ? (
+      {actionLabel && action && actionReceipt ? (
+        confirmingSurface === 'action' ? (
           // Position writes go through the SAME six-row review surface
           // as every other write flow — the wallet prompt is never the
           // first place the user sees what a click will do.
           <section className="card">
-            <h3>Before you confirm</h3>
-            {actionReceipt ? <ReviewReceipt data={actionReceipt} /> : null}
-            <div className="cluster" style={{ marginTop: 16 }}>
-              <button
-                type="button"
-                className="btn btn-secondary"
-                onClick={() => setConfirming(false)}
-                disabled={busy}
-              >
-                Back
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ flex: 1 }}
-                disabled={
-                  busy ||
-                  !onSupportedChain ||
-                  // wallet/public client hydrate async after connect —
-                  // without this the first click lands in run()'s early
-                  // return and silently does nothing.
-                  !walletClient ||
-                  !publicClient ||
-                  (action !== 'repay' && !sanctionsClear)
-                }
-                onClick={() => void run(action)}
-              >
-                {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
-                {busy ? 'Waiting for wallet…' : `Confirm — ${actionLabel}`}
-              </button>
-            </div>
+            <ConfirmReceipt
+              busy={busy}
+              confirmLabel={`Confirm — ${actionLabel}`}
+              onBack={() => setConfirmingSurface(null)}
+              onConfirm={() => void run(action)}
+              // wallet/public client hydrate async after connect —
+              // without this the first click lands in run()'s early
+              // return and silently does nothing.
+              disabled={
+                !onSupportedChain ||
+                !walletClient ||
+                !publicClient ||
+                (action !== 'repay' && !sanctionsClear)
+              }
+              data={actionReceipt}
+            >
+              {action === 'repay' && refinancePending && !isRental ? (
+                // Repay stays open with a pending refinance request
+                // (it's the safety valve — never block it), but the
+                // request's fate must be stated before signing.
+                <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">
+                    {copy.refinance.repayWarnPending}
+                  </span>
+                </div>
+              ) : null}
+            </ConfirmReceipt>
           </section>
         ) : (
           <button
@@ -1007,7 +1588,7 @@ export function PositionDetails() {
               !onSupportedChain ||
               (action !== 'repay' && !sanctionsClear)
             }
-            onClick={() => setConfirming(true)}
+            onClick={() => setConfirmingSurface('action')}
           >
             {actionLabel}
           </button>

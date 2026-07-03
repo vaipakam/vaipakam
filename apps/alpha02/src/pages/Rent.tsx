@@ -43,8 +43,12 @@ import {
   useRentalBufferBps,
 } from '../data/protocol';
 import { useProtocolFees, bpsToPercentText, readLiveProtocolFees } from '../data/fees';
-import { useVpfi } from '../data/vpfi';
+import { readVpfiTokenLive, useVpfi } from '../data/vpfi';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
+import {
+  assertAssetNotPausedLive,
+  assertErc20BalanceLive,
+} from '../contracts/preflights';
 import type { IndexedOffer } from '../data/indexer';
 import {
   OFFER_DURATION_BUCKETS_DAYS,
@@ -281,29 +285,34 @@ function ListNftFlow() {
       // live token (fail closed) so a registration/rotation since
       // review can't let a VPFI prepay through to a wasted
       // setApprovalForAll (createOffer: VpfiNotAllowedAsRentalPrepay).
-      const liveVpfiToken = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getVPFIToken',
-        })
-        .catch(() => {
-          throw new Error(copy.rent.vpfiCheckRetry);
-        })) as string;
+      const liveVpfiToken = await readVpfiTokenLive(
+        publicClient,
+        walletChain.diamondAddress,
+        copy.rent.vpfiCheckRetry,
+      );
       if (liveVpfiToken.toLowerCase() === prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayNotAllowed);
       }
       // Ownership was checked from a CACHED read — re-read live so an
       // NFT transferred/sold since review fails BEFORE the
       // collection-wide setApprovalForAll can mine.
-      const stillOwns = await readNftOwnershipLive({
-        publicClient,
-        contract: contract as `0x${string}`,
-        standard: standardEnum,
-        tokenId,
-        quantity,
-        owner: address,
-      });
+      const [stillOwns] = await Promise.all([
+        readNftOwnershipLive({
+          publicClient,
+          contract: contract as `0x${string}`,
+          standard: standardEnum,
+          tokenId,
+          quantity,
+          owner: address,
+        }),
+        // createOffer rejects paused collections (requireAssetNotPaused)
+        // — checked in the same round-trip, before setApprovalForAll.
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: contract as `0x${string}`,
+        }),
+      ]);
       if (!stillOwns) {
         throw new Error(copy.rent.checkNotOwner);
       }
@@ -342,7 +351,10 @@ function ListNftFlow() {
               id="nft-standard"
               className="input"
               value={standard}
-              onChange={(e) => setStandard(e.target.value as 'erc721' | 'erc1155')}
+              onChange={(e) => {
+                setStandard(e.target.value as 'erc721' | 'erc1155');
+                setConsent(false);
+              }}
             >
               <option value="erc721">Single NFT (ERC-721)</option>
               <option value="erc1155">Multi-edition NFT (ERC-1155)</option>
@@ -355,7 +367,10 @@ function ListNftFlow() {
               className={`input ${contract !== '' && !isAddressLike(contract) ? 'input-invalid' : ''}`}
               placeholder="0x…"
               value={contract}
-              onChange={(e) => setContract(e.target.value.trim())}
+              onChange={(e) => {
+                setContract(e.target.value.trim());
+                setConsent(false);
+              }}
               spellCheck={false}
               autoComplete="off"
             />
@@ -372,7 +387,10 @@ function ListNftFlow() {
               inputMode="numeric"
               placeholder="1"
               value={tokenId}
-              onChange={(e) => setTokenId(e.target.value.trim())}
+              onChange={(e) => {
+                setTokenId(e.target.value.trim());
+                setConsent(false);
+              }}
             />
           </div>
           {standard === 'erc1155' ? (
@@ -384,7 +402,10 @@ function ListNftFlow() {
                 inputMode="numeric"
                 placeholder="1"
                 value={quantity}
-                onChange={(e) => setQuantity(e.target.value.trim())}
+                onChange={(e) => {
+                  setQuantity(e.target.value.trim());
+                  setConsent(false);
+                }}
               />
             </div>
           ) : null}
@@ -393,7 +414,10 @@ function ListNftFlow() {
             label="Asset renters pay you in"
             hint="Renters prepay the whole rental in this token."
             value={prepayAsset}
-            onChange={setPrepayAsset}
+            onChange={(v) => {
+              setPrepayAsset(v);
+              setConsent(false);
+            }}
           />
           <div className="field">
             <label htmlFor="daily-fee">
@@ -405,7 +429,10 @@ function ListNftFlow() {
               inputMode="decimal"
               placeholder="10"
               value={dailyFee}
-              onChange={(e) => setDailyFee(e.target.value.trim())}
+              onChange={(e) => {
+                setDailyFee(e.target.value.trim());
+                setConsent(false);
+              }}
             />
             <span className="field-hint">
               {copy.rent.bufferNote(bufferPct(bufferBps))}
@@ -417,7 +444,10 @@ function ListNftFlow() {
               id="rent-duration"
               className="input"
               value={durationDays}
-              onChange={(e) => setDurationDays(e.target.value)}
+              onChange={(e) => {
+                setDurationDays(e.target.value);
+                setConsent(false);
+              }}
             >
               {durationOptions.map((d) => (
                 <option key={d} value={String(d)}>
@@ -635,6 +665,7 @@ function RentNftFlow() {
     }
     clear(null);
     setSelected(row);
+    setConsent(false);
     setStep('review');
   }, [
     offerParam,
@@ -771,6 +802,10 @@ function RentNftFlow() {
             tokenId: BigInt(selected.tokenId),
             quantity: BigInt(selected.quantity || '1'),
             assetType: selected.assetType,
+            // Rentals disclose their own model up front (NFT custody,
+            // prepaid fees, no price-based liquidation) — the illiquid
+            // re-check is for ERC-20 loan pairs.
+            illiquidWarned: true,
           },
         });
       } catch (err) {
@@ -802,15 +837,11 @@ function RentNftFlow() {
       // CLOSED when the read itself fails: proceeding unchecked is
       // exactly the wasted-approval path this guard exists to prevent
       // (nothing has been sent yet — retrying is free).
-      const vpfiToken = (await publicClient
-        .readContract({
-          address: walletChain.diamondAddress,
-          abi: DIAMOND_ABI_VIEM,
-          functionName: 'getVPFIToken',
-        })
-        .catch(() => {
-          throw new Error(copy.rent.vpfiCheckRetry);
-        })) as string;
+      const vpfiToken = await readVpfiTokenLive(
+        publicClient,
+        walletChain.diamondAddress,
+        copy.rent.vpfiCheckRetry,
+      );
       if (vpfiToken.toLowerCase() === terms.prepayAsset.toLowerCase()) {
         throw new Error(copy.rent.vpfiPrepayListing);
       }
@@ -819,6 +850,29 @@ function RentNftFlow() {
         Number(terms.durationDays),
         liveBufferBps,
       );
+      // acceptOffer enforces requireAssetNotPaused on the listed NFT
+      // (and the prepay leg), and approve() succeeds regardless of
+      // balance — re-check all three live, in ONE round-trip, before
+      // the approval can mine.
+      await Promise.all([
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.lendingAsset,
+        }),
+        assertAssetNotPausedLive({
+          publicClient,
+          diamondAddress: walletChain.diamondAddress,
+          asset: terms.prepayAsset,
+        }),
+        assertErc20BalanceLive({
+          publicClient,
+          token: terms.prepayAsset,
+          owner: address,
+          amount: canonicalTotal,
+          symbol: prepayMeta.data?.symbol,
+        }),
+      ]);
       await ensureAllowance({
         publicClient,
         walletClient,
@@ -877,6 +931,8 @@ function RentNftFlow() {
                   bufferBps={bufferBps}
                   onChoose={() => {
                     setSelected(o);
+                    // A different listing needs a fresh acknowledgement.
+                    setConsent(false);
                     setStep('review');
                   }}
                 />

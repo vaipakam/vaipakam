@@ -19,6 +19,7 @@ import { Vault } from './pages/Vault';
 import { Activity } from './pages/Activity';
 import { Vpfi } from './pages/Vpfi';
 import { Settings } from './pages/Settings';
+import { NftVerifier } from './pages/NftVerifier';
 import { Help } from './pages/Help';
 import { NotFound } from './pages/NotFound';
 
@@ -37,6 +38,8 @@ export function App() {
         <Route path="/vault" element={<Vault />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/vpfi" element={<Vpfi />} />
+        <Route path="/nft" element={<NftVerifier />} />
+        <Route path="/nft/:tokenId" element={<NftVerifier />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/help" element={<Help />} />
 

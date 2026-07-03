@@ -120,3 +120,38 @@ export async function ensureAllowance(opts: {
   if (current > 0n) await approve(0n);
   return approve(amount);
 }
+
+/**
+ * Revoke a standing allowance (approve 0), skipping the tx when it is
+ * already zero. For flows that granted a long-lived approval (e.g. a
+ * refinance payoff) and are unwinding it.
+ */
+export async function revokeAllowance(opts: {
+  publicClient: PublicClient;
+  walletClient: WalletClient;
+  token: `0x${string}`;
+  owner: `0x${string}`;
+  spender: `0x${string}`;
+}): Promise<`0x${string}` | null> {
+  const { publicClient, walletClient, token, owner, spender } = opts;
+  const current = await publicClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'allowance',
+    args: [owner, spender],
+  });
+  if (current === 0n) return null;
+  const hash = await walletClient.writeContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: 'approve',
+    args: [spender, 0n],
+    account: owner,
+    chain: walletClient.chain,
+  });
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  if (receipt.status !== 'success') {
+    throw new Error(`Approval revoke failed (${hash})`);
+  }
+  return hash;
+}

@@ -83,10 +83,24 @@ for (const c of SUPPORTED_CHAINS) {
   transports[c.chainId] = http(c.rpcUrl, { batch: true });
 }
 
+// ENS-READ-ONLY mainnet client: alpha02 doesn't deploy on Ethereum
+// mainnet, but ENS reverse lookups (display sugar) resolve there —
+// without a registered client, useEnsName({chainId: 1}) throws
+// ChainNotConfiguredError and the feature is silently dead. The
+// app's own supported-network gates derive from SUPPORTED_CHAINS
+// (deployments) and are untouched: mainnet is not a working network
+// here, it just backs ENS reads.
+const chainsWithEns = chains.some((c) => c.id === mainnet.id)
+  ? chains
+  : [...chains, mainnet];
+if (!transports[mainnet.id]) {
+  transports[mainnet.id] = http(undefined, { batch: true });
+}
+
 type NonEmptyChains = readonly [Chain, ...Chain[]];
 
 const defaultConfig = getDefaultConfig({
-  chains: chains as unknown as NonEmptyChains,
+  chains: chainsWithEns as unknown as NonEmptyChains,
   transports,
   walletConnectProjectId: WC_PROJECT_ID,
   appName: APP_NAME,

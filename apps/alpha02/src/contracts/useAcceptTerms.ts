@@ -28,6 +28,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
+import { isAssetIlliquidLive } from './preflights';
 
 const ACCEPT_DEADLINE_SECONDS = 30 * 60; // 30 minutes, matching the Permit2 window.
 
@@ -142,6 +143,16 @@ export function useAcceptTermsSigning() {
         prepayAsset?: string;
         quantity?: bigint;
         assetType?: number;
+        /** The interest MODE the review's copy described (full-term
+         *  floor vs pro-rata). It changes what an early repayment
+         *  costs, so a stale indexer flag must abort BEFORE the
+         *  wallet prompt like any other reviewed term. */
+        useFullTermInterest?: boolean;
+        /** True when the review DISCLOSED the in-kind (illiquid)
+         *  default path. Anything else (false OR omitted) makes the
+         *  signer re-read liquidity live and abort on an illiquid leg
+         *  — omission is the safe side, never a silent skip. */
+        illiquidWarned?: boolean;
       };
     }): Promise<AcceptTermsPayload> => {
       if (!address || !walletChain) {
@@ -208,6 +219,37 @@ export function useAcceptTermsSigning() {
             e.walk((x) => x instanceof ContractFunctionZeroDataError) !== null);
         if (isRevert) throw new Error(copy.match.offerGone);
         throw e; // transport failure — surface, don't guess
+      }
+
+      // #729/#735 — the risk-access gate can reject the accept ON-CHAIN
+      // after every client check passed: acceptor tier too low, an
+      // illiquid pair needing a STANDING per-pair consent this app has
+      // no surface to collect (the canonical case: an NFT rental whose
+      // prepay token is illiquid — the gate keys the rental's lend leg
+      // off `prepayAsset`, while the #662 ack signed here names the
+      // rented NFT, so the ack can never cover it), or a strict-mode
+      // mid-tier ack. Preview the gate non-reverting BEFORE any
+      // signature or approval. 0 = clear, 4 = soft (THIS signature's
+      // own ack clears it at accept time) — anything else is a hard
+      // block the accept would revert on. A missing selector means an
+      // older deploy without the preview — proceed, the contract still
+      // enforces; a transport failure fails CLOSED (retrying is free,
+      // a wasted approval is not).
+      try {
+        const gateBlock = (await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'previewOfferAcceptBlock',
+          args: [input.offerId, address],
+        })) as number | bigint;
+        if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
+          throw new Error(copy.match.riskGateBlocked);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message === copy.match.riskGateBlocked) {
+          throw e;
+        }
+        if (!isMissingSelectorError(e)) throw e;
       }
 
       // #725 — auto-linked sale/offset target loan id; 0 for a normal
@@ -314,6 +356,39 @@ export function useAcceptTermsSigning() {
         riskTermsHash,
       };
 
+      // The signed terms acknowledge BOTH assets as potentially
+      // illiquid — but the acknowledgement is only meaningful consent
+      // if the review disclosed the in-kind default path. Unless the
+      // caller POSITIVELY says the review warned (illiquidWarned:
+      // true), re-read liquidity live and abort before signing if a
+      // leg is illiquid — the re-review then shows the warning. The
+      // default is the SAFE side on purpose: a future caller that
+      // forgets the flag gets a loud abort on illiquid pairs, never a
+      // silently skipped disclosure. Reads fail CLOSED — an unknown
+      // must not sign as "liquid".
+      // Note: gated on the FLAG only, not on `expected` being present
+      // — a caller that omits expected entirely still gets the loud
+      // abort on an illiquid pair, never a silent skip.
+      if (input.expected?.illiquidWarned !== true) {
+        const [lendingIlliquid, collateralIlliquid] = await Promise.all([
+          isAssetIlliquidLive({
+            publicClient,
+            diamondAddress: diamondAddr,
+            asset: lendingAsset,
+            failClosed: true,
+          }),
+          isAssetIlliquidLive({
+            publicClient,
+            diamondAddress: diamondAddr,
+            asset: collateralAsset,
+            failClosed: true,
+          }),
+        ]);
+        if (lendingIlliquid || collateralIlliquid) {
+          throw new Error(copy.match.termsChanged);
+        }
+      }
+
       // Reviewed-vs-canonical comparison happens BEFORE the wallet is
       // asked to sign — the signature IS the acknowledgement, so terms
       // the user never reviewed must never receive one.
@@ -332,7 +407,9 @@ export function useAcceptTermsSigning() {
           (e.prepayAsset !== undefined &&
             e.prepayAsset.toLowerCase() !== terms.prepayAsset.toLowerCase()) ||
           (e.quantity !== undefined && e.quantity !== terms.quantity) ||
-          (e.assetType !== undefined && e.assetType !== terms.assetType);
+          (e.assetType !== undefined && e.assetType !== terms.assetType) ||
+          (e.useFullTermInterest !== undefined &&
+            e.useFullTermInterest !== terms.useFullTermInterest);
         if (mismatch) {
           throw new Error(copy.match.termsChanged);
         }

@@ -72,7 +72,7 @@ const MY_PAGES_MAX = 5;
  *  runaway bound). Returns null on ANY page failure — a partial list
  *  rendered as complete is exactly the dishonesty the null contract
  *  exists to prevent. */
-async function fetchAllPages<T>(
+export async function fetchAllPages<T>(
   fetchPage: (
     before: number | undefined,
   ) => Promise<{ rows: T[]; nextBefore: number | null } | null>,

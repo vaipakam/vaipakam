@@ -19,6 +19,7 @@ import {
   ContractFunctionZeroDataError,
 } from 'viem';
 import { usePublicClient } from 'wagmi';
+import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 
@@ -95,6 +96,26 @@ export function useVpfiTierTable(): VpfiTierRow[] {
   });
 
   return data ?? DEFAULT_TIER_ROWS;
+}
+
+/** LIVE VPFI-token read for submit paths (fail closed with a retry
+ *  message) — the cached snapshot can lag a governance registration/
+ *  rotation. One helper so address casing, the zero-address meaning,
+ *  and the error copy can't drift across call sites. */
+export async function readVpfiTokenLive(
+  publicClient: PublicClient,
+  diamondAddress: `0x${string}`,
+  retryMessage: string,
+): Promise<string> {
+  try {
+    return (await publicClient.readContract({
+      address: diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'getVPFIToken',
+    })) as string;
+  } catch {
+    throw new Error(retryMessage);
+  }
 }
 
 export function useVpfi() {

@@ -22,8 +22,9 @@ import { parseUnits } from 'viem';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
-import { useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { assertErc20BalanceLive } from '../contracts/preflights';
+import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS } from '../data/vpfi';
+import { useDiamondWrite } from '../contracts/diamond';
 import { ensureAllowance } from '../contracts/erc20';
 import { exactAmountString, formatBpsAsPercent, formatTokenAmount } from '../lib/format';
 import { isPositiveDecimal, submitErrorText } from '../lib/errors';
@@ -118,19 +119,25 @@ export function Vpfi() {
         // rotated the token after the cached snapshot, approving the
         // stale address mines a useless approval and the deposit
         // reverts. Re-read live (fail closed) and force a re-review.
-        const liveToken = (await publicClient
-          .readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'getVPFIToken',
-          })
-          .catch(() => {
-            throw new Error(copy.vpfi.tokenCheckRetry);
-          })) as string;
+        const liveToken = await readVpfiTokenLive(
+          publicClient,
+          walletChain.diamondAddress,
+          copy.vpfi.tokenCheckRetry,
+        );
         if (liveToken.toLowerCase() !== snapshot.token.toLowerCase()) {
           refresh();
           throw new Error(copy.vpfi.tokenChanged);
         }
+        // The Max/over-max gates use the CACHED snapshot balance —
+        // re-read live so funds moved after review fail before the
+        // approval can mine.
+        await assertErc20BalanceLive({
+          publicClient,
+          token: snapshot.token,
+          owner: address,
+          amount: amountWei,
+          symbol: 'VPFI',
+        });
         await ensureAllowance({
           publicClient,
           walletClient,
