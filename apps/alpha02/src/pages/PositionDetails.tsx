@@ -30,7 +30,11 @@ import {
   isAssetIlliquidLive,
   readGraceSecondsLive,
 } from '../contracts/preflights';
-import { readLoanLive, readRepaymentDueLive } from '../contracts/loanLive';
+import {
+  LOAN_STATUS_ACTIVE,
+  readLoanLive,
+  readRepaymentDueLive,
+} from '../contracts/loanLive';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useMode } from '../app/ModeContext';
 import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
@@ -56,6 +60,15 @@ type ConfirmSurface = 'action' | 'collateral' | 'partial' | 'preclose';
 
 export function PositionDetails() {
   const { loanId: loanIdParam } = useParams();
+  // Remount the page per loan: React Router reuses the same element
+  // when only the :loanId param changes, and this page's latches
+  // (claimed, closedThisSession, doneMessage, typed inputs) describe
+  // ONE loan — leaking them onto the next would hide the repay button
+  // on a different, still-open loan.
+  return <PositionDetailsInner key={loanIdParam ?? 'none'} loanIdParam={loanIdParam} />;
+}
+
+function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined }) {
   const loanId = Number(loanIdParam);
   const loan = useLoan(Number.isFinite(loanId) ? loanId : undefined);
   const { address, walletChain, onSupportedChain } = useActiveChain();
@@ -201,11 +214,15 @@ export function PositionDetails() {
   // `chainNow` rides along so time gates never trust the local clock.
   const loanLive = useQuery({
     queryKey: ['loanLive', readChain.chainId, loan.data?.loanId],
+    // Only the close-early card consumes this — don't burn three RPC
+    // reads a minute for lenders, viewers, or basic mode.
     enabled:
       Boolean(readClient) &&
       Boolean(loan.data) &&
       loan.data?.status === 'active' &&
-      !loanIsRental,
+      !loanIsRental &&
+      isAdvanced &&
+      role === 'borrower',
     staleTime: 30_000,
     refetchInterval: 60_000,
     queryFn: async () => {
@@ -322,12 +339,7 @@ export function PositionDetails() {
     try {
       if (kind === 'repay') {
         const [calcDue, latestBlock] = await Promise.all([
-          publicClient.readContract({
-            address: walletChain.diamondAddress,
-            abi: DIAMOND_ABI_VIEM,
-            functionName: 'calculateRepaymentAmount',
-            args: [BigInt(row.loanId)],
-          }) as Promise<bigint>,
+          readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
           publicClient.getBlock({ blockTag: 'latest' }),
         ]);
         const chainNow = latestBlock.timestamp;
@@ -454,6 +466,7 @@ export function PositionDetails() {
       }
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
       void queryClient.invalidateQueries({ queryKey: ['claimables'] });
     } catch (err) {
@@ -621,6 +634,9 @@ export function PositionDetails() {
       setPartialInput('');
       setConfirmingSurface(null);
       void queryClient.invalidateQueries({ queryKey: ['loan'] });
+      // The close-early quote (loanLive.calcDue) changes with every
+      // partial — without this it keeps quoting the pre-partial figure.
+      void queryClient.invalidateQueries({ queryKey: ['loanLive'] });
       void queryClient.invalidateQueries({ queryKey: ['loanRisk'] });
       void queryClient.invalidateQueries({ queryKey: ['myLoans'] });
     } catch (err) {
@@ -630,9 +646,6 @@ export function PositionDetails() {
     }
   }
 
-  // NFT collateral is identified by collateralTokenId/quantity — its
-  // fungible `collateralAmount` is normally ZERO, so amount alone must
-  // not decide "no collateral" (that would hide a real NFT pledge).
   async function runPreclose() {
     if (!address || !walletChain || !walletClient || !publicClient || !principalMeta.data) return;
     setBusy(true);
@@ -645,7 +658,7 @@ export function PositionDetails() {
         walletChain.diamondAddress,
         address,
       );
-      const [, live, calcDue] = await Promise.all([
+      const [, live, calcDue, latestBlock] = await Promise.all([
         assertPositionNftHeldLive({
           publicClient,
           diamondAddress: walletChain.diamondAddress,
@@ -654,14 +667,31 @@ export function PositionDetails() {
         }),
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
+        publicClient.getBlock({ blockTag: 'latest' }),
       ]);
+      // The card's pre-maturity gate ran on a CACHED chain clock (a
+      // backgrounded tab stops refetching) — re-judge maturity live
+      // against the LIVE term fields. precloseDirect itself has NO
+      // maturity revert: past maturity it would settle WITHOUT the
+      // late fee the repay path charges, and the quoted calcDue
+      // (which includes late fees) would no longer match the pull.
+      if (
+        latestBlock.timestamp >=
+        live.startTime + live.durationDays * 86_400n
+      ) {
+        setError(copy.errors.precloseMatured);
+        return;
+      }
       // `calculateRepaymentAmount` IS the preclose figure — it and
       // `computePreclose` route through the same settlementInterestNet
       // (full-term floor max(elapsed, remaining), interest already
-      // settled by partials, CHAIN time). It returns 0 for a
-      // non-Active loan: treat that as "already settled" instead of
-      // approving 0 and burning gas on a LoanNotActive revert.
-      if (calcDue === 0n) {
+      // settled by partials, CHAIN time). It returns 0 for any
+      // non-Active loan — but 0 on a still-ACTIVE loan is the legal
+      // "principal fully paid down via partials" state, where
+      // precloseDirect is exactly the call that settles and releases
+      // the collateral (pulling nothing), so only a non-Active status
+      // aborts.
+      if (calcDue === 0n && live.status !== LOAN_STATUS_ACTIVE) {
         setError(copy.errors.loanAlreadySettled);
         return;
       }
@@ -701,6 +731,9 @@ export function PositionDetails() {
     }
   }
 
+  // NFT collateral is identified by collateralTokenId/quantity — its
+  // fungible `collateralAmount` is normally ZERO, so amount alone must
+  // not decide "no collateral" (that would hide a real NFT pledge).
   const hasCollateral =
     row.collateralAsset.toLowerCase() !==
       '0x0000000000000000000000000000000000000000' &&
@@ -897,7 +930,12 @@ export function PositionDetails() {
         </dl>
       </section>
 
-      {role === 'borrower' && (row.status === 'active' || row.status === 'fallback_pending') && !isRental && hasCollateral && collateral ? (
+      {role === 'borrower' &&
+      (row.status === 'active' || row.status === 'fallback_pending') &&
+      !closedThisSession &&
+      !isRental &&
+      hasCollateral &&
+      collateral ? (
         <section className="card">
           <div className="card-title">
             <ShieldPlus aria-hidden />
@@ -990,6 +1028,7 @@ export function PositionDetails() {
       {isAdvanced &&
       role === 'borrower' &&
       row.status === 'active' &&
+      !closedThisSession &&
       !isRental &&
       row.allowsPartialRepay &&
       principal ? (
@@ -1052,22 +1091,34 @@ export function PositionDetails() {
         </section>
       ) : null}
 
-      {/* Card appears only when the live loan read has landed: the
-          quoted figure and mode note come from it, the pre-maturity
-          gate is judged by CHAIN time (a wrong local clock must not
-          show close-early on a matured loan), and a flagged wallet
-          sees no card at all rather than a dead button — their open
-          path is the Tier-2 repay above. */}
+      {/* A flagged wallet sees no close-early surface at all rather
+          than a dead button — its open path is the Tier-2 repay
+          above. Everyone else gets a visible checking/error state
+          while the live reads are in flight (never a silently absent
+          feature), and the full card only once the live loan has
+          landed: the quoted figure and mode note come from it, and
+          the pre-maturity gate is judged by CHAIN time against the
+          LIVE term fields (a wrong device clock or a stale indexer
+          row must not decide it). */}
       {isAdvanced &&
       role === 'borrower' &&
       row.status === 'active' &&
       !closedThisSession &&
       !isRental &&
       principal &&
-      sanctionsClear &&
-      loanLive.data &&
-      loanLive.data.chainNow <
-        BigInt(row.startTime) + BigInt(row.durationDays) * 86_400n ? (
+      !(sanctions.ready && sanctions.flagged) ? (
+        !loanLive.data || !sanctions.ready ? (
+          <section className="card">
+            <h3>{copy.preclose.title}</h3>
+            <p className="muted">
+              {loanLive.isError
+                ? copy.preclose.checkFailed
+                : copy.preclose.checking}
+            </p>
+          </section>
+        ) : loanLive.data.chainNow <
+          loanLive.data.live.startTime +
+            loanLive.data.live.durationDays * 86_400n ? (
         <section className="card">
           <h3>{copy.preclose.title}</h3>
           <p className="muted">
@@ -1092,6 +1143,10 @@ export function PositionDetails() {
                 confirmLabel={copy.preclose.confirm}
                 onBack={() => setConfirmingSurface(null)}
                 onConfirm={() => void runPreclose()}
+                // The wallet can disconnect or hop chains while this
+                // receipt is open — a click must land on a disabled
+                // button, not on runPreclose's silent early return.
+                disabled={!onSupportedChain || !walletClient || !publicClient}
                 data={{
                   youReceive: hasCollateral
                     ? `${collateralStr} collateral back — claimable right after closing.`
@@ -1113,6 +1168,10 @@ export function PositionDetails() {
             </div>
           )}
         </section>
+        ) : // Matured (by live chain time + live term): close-early no
+          // longer applies — the plain Repay path below is the one
+          // that settles a matured loan, late fees included.
+          null
       ) : null}
 
       {doneMessage ? (

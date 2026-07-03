@@ -665,8 +665,11 @@ converge. Its intended behaviour (the test oracle for that surface):
   interest already settled by partial repayments — never a locally
   derived estimate, and states the interest-mode implication before
   signing. After a successful close or full repayment the page must
-  not re-offer close-early or repay while off-chain data still shows
-  the loan active. A compliance-flagged wallet is not shown
+  not re-offer close-early, repay, partial repayment, or collateral
+  top-up while off-chain data still shows the loan active. While the
+  close-early eligibility reads are in flight or failing, the page
+  shows a visible checking/retrying state rather than silently
+  omitting the feature. A compliance-flagged wallet is not shown
   close-early at all; its open path remains the wind-down repayment.
   Only one pending-action review can be open on the page at a time.
 

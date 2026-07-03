@@ -7,13 +7,21 @@
 import type { PublicClient } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
+/** LibVaipakam.LoanStatus.Active — first enum member. */
+export const LOAN_STATUS_ACTIVE = 0;
+
 /** The subset of LibVaipakam.Loan the UI reads live. */
 export interface LoanLive {
+  /** LibVaipakam.LoanStatus as a number (Active = 0). */
+  status: number;
   principal: bigint;
   interestRateBps: bigint;
   startTime: bigint;
+  /** Term fields come from HERE for any time gate — a term-resetting
+   *  position transfer re-stamps them on-chain while the indexer row
+   *  still carries the old values. */
+  durationDays: bigint;
   interestAccrualStart: bigint;
-  interestRemainingDays: number;
   useFullTermInterest: boolean;
 }
 
@@ -29,11 +37,12 @@ export async function readLoanLive(
     args: [BigInt(loanId)],
   })) as LoanLive;
   return {
+    status: Number(raw.status),
     principal: raw.principal,
     interestRateBps: raw.interestRateBps,
     startTime: raw.startTime,
+    durationDays: raw.durationDays,
     interestAccrualStart: raw.interestAccrualStart,
-    interestRemainingDays: Number(raw.interestRemainingDays),
     useFullTermInterest: Boolean(raw.useFullTermInterest),
   };
 }

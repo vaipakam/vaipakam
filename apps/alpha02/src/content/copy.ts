@@ -203,6 +203,9 @@ export const copy = {
     confirm: 'Confirm — pay and close now',
     done:
       'Loan closed early. Your collateral is ready — claim it below or from the Claim Center.',
+    checking: 'Checking whether this loan can close early…',
+    checkFailed:
+      'We couldn’t read this loan’s close-early cost right now — retrying. Repaying normally stays available below.',
   },
 
   positions: {
@@ -280,6 +283,8 @@ export const copy = {
       'This loan is past its due date and grace window, so repayment is closed on-chain — the default process applies now. Nothing was sent.',
     loanAlreadySettled:
       'This loan looks already settled on-chain — nothing was sent. Refresh in a moment to see its final state.',
+    precloseMatured:
+      'This loan is past its due date, so closing early no longer applies — nothing was sent. Use Repay instead; it settles the loan including any late fees.',
     lenderBlockedPartial:
       'The lender’s wallet can’t receive a direct partial payment right now (compliance flag). Repaying the loan in full stays open — that path holds the funds for a screened claim instead.',
   },

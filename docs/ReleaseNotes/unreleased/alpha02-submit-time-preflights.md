@@ -29,9 +29,14 @@ shown grace period and the enforced grace window are derived from the
 same schedule so they cannot drift apart.
 
 Advanced mode gains the first loan-strategy action: borrowers on an
-active, on-time ERC-20 loan can close it early from the loan's detail
-page. The review states the real cost up front — full-term loans (the
-protocol default) still pay the whole term's interest when closed
-early, day-by-day loans pay only what has accrued — with the exact
-amount read live at confirmation and collateral released immediately
-after closing.
+active, not-yet-matured ERC-20 loan can close it early from the loan's
+detail page. The review quotes the protocol's own settlement figure —
+never a locally derived estimate — and states the interest-mode
+implication up front: full-term loans (the protocol default) still pay
+the whole term's interest when closed early, day-by-day loans pay only
+what has accrued. The figure is re-read live at confirmation, maturity
+is judged by chain time at both display and confirmation, and
+collateral is released immediately after closing. After a successful
+close or repayment the page stops offering repay-family actions until
+fresh data confirms the loan's state, and only one pending-action
+review can be open at a time.
