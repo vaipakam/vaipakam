@@ -171,6 +171,8 @@ export const copy = {
       'Heads up: this NFT collection doesn’t support the on-chain rental standard (ERC-4907). Renting still works — Vaipakam tracks the renter’s use rights in your vault — but apps and games outside Vaipakam won’t recognise the renter.',
     no4907Unknown:
       'We couldn’t check whether this NFT collection supports the on-chain rental standard (ERC-4907). If it doesn’t, apps outside Vaipakam won’t recognise the renter — renting inside Vaipakam still works.',
+    vpfiPrepayListing:
+      'This listing asks to be paid in VPFI, which rentals don’t allow — it can’t be accepted. Please pick a different listing.',
   },
 
   positions: {
@@ -221,6 +223,8 @@ export const copy = {
 
   errors: {
     needMore: (asset: string) => `You need more ${asset} to continue.`,
+    partialOverPrincipal:
+      'That’s more than the loan’s remaining principal. Enter a smaller amount, or use “Repay this loan” to close it fully.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
     txRejected: 'You cancelled in your wallet. Nothing was sent.',

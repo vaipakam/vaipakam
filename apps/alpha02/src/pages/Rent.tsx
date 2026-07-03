@@ -134,10 +134,14 @@ function ListNftFlow() {
   // (VpfiNotAllowedAsRentalPrepay) — catch it BEFORE the user pays for
   // setApprovalForAll on the NFT.
   const vpfi = useVpfi();
-  // Until the VPFI-token read settles we can't rule the prepay asset
-  // in or out — hold the checklist PENDING rather than letting a VPFI
-  // prepay slip through and revert after the NFT approval.
-  const vpfiKnown = vpfi.data !== undefined || vpfi.isError;
+  // Until the VPFI-token read SUCCEEDS we can't rule the prepay asset
+  // in or out — a transport error is NOT knowledge (treating it as
+  // known would let a pasted VPFI token pass, spend setApprovalForAll,
+  // then revert VpfiNotAllowedAsRentalPrepay). react-query keeps the
+  // last good snapshot across refetch errors, so `data` present is
+  // enough even when `isError` flickers.
+  const vpfiKnown = vpfi.data !== undefined;
+  const vpfiCheckFailed = vpfi.data === undefined && vpfi.isError;
   const prepayIsVpfi =
     Boolean(vpfi.data?.token) &&
     prepayAsset.toLowerCase() === vpfi.data!.token!.toLowerCase();
@@ -160,18 +164,22 @@ function ListNftFlow() {
         id: 'prepay-token',
         label: prepayIsVpfi
           ? 'VPFI can’t be used as the rental payment asset — pick another token.'
-          : prepayMeta.isError
-            ? copy.errors.notAToken
-            : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
+          : vpfiCheckFailed
+            ? 'We couldn’t verify the payment asset just now — please retry in a moment.'
+            : prepayMeta.isError
+              ? copy.errors.notAToken
+              : `Payment asset recognised (${prepayMeta.data?.symbol ?? '…'})`,
         state: prepayIsVpfi
           ? 'fail'
-          : !vpfiKnown
-            ? 'pending'
-            : prepayMeta.isError
-              ? 'fail'
-              : prepayMeta.data
-                ? 'pass'
-                : 'pending',
+          : vpfiCheckFailed
+            ? 'fail'
+            : !vpfiKnown
+              ? 'pending'
+              : prepayMeta.isError
+                ? 'fail'
+                : prepayMeta.data
+                  ? 'pass'
+                  : 'pending',
       },
       {
         id: 'live-fees',
@@ -181,7 +189,7 @@ function ListNftFlow() {
     ];
     // wallet + network first, then the rental-specific facts, then consent.
     return [...baseChecks.slice(0, 2), ...extra, ...baseChecks.slice(2)];
-  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, vpfiKnown, fees.ready]);
+  }, [baseChecks, ownership.data, prepayMeta.isError, prepayMeta.data, prepayIsVpfi, vpfiKnown, vpfiCheckFailed, fees.ready]);
 
   const receipt = useMemo((): ReceiptData | null => {
     if (!form || !dailyFeeWei || !prepayMeta.data) return null;
@@ -682,6 +690,24 @@ function RentNftFlow() {
       if (liveBufferBps !== bufferBps) {
         void queryClient.invalidateQueries({ queryKey: ['rentalBufferBps'] });
         throw new Error(copy.match.termsChanged);
+      }
+      // A legacy listing can carry the (now-disallowed) VPFI token as
+      // its prepay asset — acceptOffer reverts VpfiNotAllowedAsRental-
+      // Prepay AFTER the approval would have been mined. Check the
+      // SIGNED terms against the live VPFI token first. Fail-open on
+      // transport errors: the contract guard still protects.
+      const vpfiToken = await publicClient
+        .readContract({
+          address: walletChain.diamondAddress,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'getVPFIToken',
+        })
+        .catch(() => null);
+      if (
+        typeof vpfiToken === 'string' &&
+        vpfiToken.toLowerCase() === terms.prepayAsset.toLowerCase()
+      ) {
+        throw new Error(copy.rent.vpfiPrepayListing);
       }
       const canonicalTotal = totalRentalPrepay(
         terms.amount,

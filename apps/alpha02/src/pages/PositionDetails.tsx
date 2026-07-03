@@ -123,32 +123,31 @@ export function PositionDetails() {
 
   // 'checking' while the owner reads are in flight — actions render
   // only once the role is CONFIRMED, so a transferred position never
-  // flashes controls at its previous holder.
-  const role: 'lender' | 'borrower' | 'viewer' | 'checking' = useMemo(() => {
-    const row = loan.data;
-    if (!row || !address) return 'viewer';
-    const me = address.toLowerCase();
-    const owners = nftOwners.data;
-    if (owners) {
-      if (owners.borrowerOwner !== 'burned' && owners.borrowerOwner.toLowerCase() === me) {
-        return 'borrower';
+  // flashes controls at its previous holder. 'unverified' when the
+  // owner reads FAILED: the historical addresses are NOT a safe
+  // fallback (full repay is permissionless — a stale "borrower" could
+  // spend real tokens closing a position that now belongs to someone
+  // else), so a failed read stays non-actionable instead.
+  const role: 'lender' | 'borrower' | 'viewer' | 'checking' | 'unverified' =
+    useMemo(() => {
+      const row = loan.data;
+      if (!row || !address) return 'viewer';
+      const me = address.toLowerCase();
+      const owners = nftOwners.data;
+      if (owners) {
+        if (owners.borrowerOwner !== 'burned' && owners.borrowerOwner.toLowerCase() === me) {
+          return 'borrower';
+        }
+        if (owners.lenderOwner !== 'burned' && owners.lenderOwner.toLowerCase() === me) {
+          return 'lender';
+        }
+        // Burned side = that claim was already made; the historical
+        // address gets NO actionable role from it.
+        return 'viewer';
       }
-      if (owners.lenderOwner !== 'burned' && owners.lenderOwner.toLowerCase() === me) {
-        return 'lender';
-      }
-      // Burned side = that claim was already made; the historical
-      // address gets NO actionable role from it.
-      return 'viewer';
-    }
-    if (nftOwners.isError) {
-      // Transport failure — can't verify live ownership. Fall back to
-      // the historical addresses (the wallet prompt still protects).
-      if (row.borrower.toLowerCase() === me) return 'borrower';
-      if (row.lender.toLowerCase() === me) return 'lender';
-      return 'viewer';
-    }
-    return 'checking';
-  }, [loan.data, address, nftOwners.data, nftOwners.isError]);
+      if (nftOwners.isError) return 'unverified';
+      return 'checking';
+    }, [loan.data, address, nftOwners.data, nftOwners.isError]);
 
   // HF/LTV apply only to active, priced (ERC-20) loans; the hook maps
   // the illiquid-leg revert to `priced: false`.
@@ -354,13 +353,53 @@ export function PositionDetails() {
     setError(null);
     try {
       const wei = parseUnits(partialInput, principalMeta.data.decimals);
+      // repayPartial pulls MORE than the typed amount: the accrued
+      // interest to now (lender + treasury split) rides along in the
+      // same transferFrom set. Approve and balance-check the full pull
+      // from the LIVE loan (row.principal / startTime go stale after a
+      // prior partial re-stamps the accrual clock).
+      const live = (await publicClient.readContract({
+        address: walletChain.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoanDetails',
+        args: [BigInt(row.loanId)],
+      })) as {
+        principal: bigint;
+        interestRateBps: bigint;
+        startTime: bigint;
+        interestAccrualStart: bigint;
+      };
+      if (wei > live.principal) {
+        setError(copy.errors.partialOverPrincipal);
+        return;
+      }
+      const accrualStart =
+        live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      const elapsedDays = nowSec > accrualStart ? (nowSec - accrualStart) / 86_400n : 0n;
+      // +2 days pad for day-boundary steps while the tx is pending —
+      // the contract pulls only the recomputed accrued, never the pad.
+      const accrued =
+        (live.principal * live.interestRateBps * (elapsedDays + 2n)) /
+        (365n * 10_000n);
+      const required = wei + accrued;
+      const held = await publicClient.readContract({
+        address: row.lendingAsset as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [address],
+      });
+      if (held < required) {
+        setError(copy.errors.needMore(principalMeta.data.symbol));
+        return;
+      }
       await ensureAllowance({
         publicClient,
         walletClient,
         token: row.lendingAsset as `0x${string}`,
         owner: address,
         spender: walletChain.diamondAddress,
-        amount: wei,
+        amount: required,
       });
       await write('repayPartial', [BigInt(row.loanId), wei]);
       setDoneMessage('Partial repayment confirmed — you now owe less.');
@@ -608,6 +647,11 @@ export function PositionDetails() {
           disabled={
             busy ||
             !onSupportedChain ||
+            // wallet/public client hydrate async after connect — without
+            // this the first click lands in run()'s early return and
+            // silently does nothing.
+            !walletClient ||
+            !publicClient ||
             (action !== 'repay' && !sanctionsClear)
           }
           onClick={() => action && void run(action)}
@@ -615,6 +659,14 @@ export function PositionDetails() {
           {busy ? <LoaderCircle className="spin" aria-hidden size={18} /> : null}
           {busy ? 'Waiting for wallet…' : actionLabel}
         </button>
+      ) : role === 'unverified' ? (
+        <div className="banner banner-warn" role="alert">
+          <ShieldQuestion aria-hidden />
+          <span className="banner-body">
+            We couldn’t verify who currently holds this position, so actions
+            are hidden for now. Please try again in a moment.
+          </span>
+        </div>
       ) : role === 'viewer' ? (
         <div className="banner banner-info">
           <ShieldQuestion aria-hidden />
