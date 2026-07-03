@@ -1,0 +1,87 @@
+/**
+ * First-run screen: four jobs, plain words, nothing competing with
+ * them (BasicUserUXSimplification.md "First-Run App Shape").
+ */
+import { Link } from 'react-router-dom';
+import { Coins, HandCoins, Images, ListChecks } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import { copy } from '../content/copy';
+import { useMyLoans } from '../data/hooks';
+import { useActiveChain } from '../chain/useActiveChain';
+
+const JOBS: Array<{
+  to: string;
+  icon: LucideIcon;
+  title: string;
+  blurb: string;
+}> = [
+  {
+    to: '/borrow',
+    icon: HandCoins,
+    title: copy.home.jobs.borrow.title,
+    blurb: copy.home.jobs.borrow.blurb,
+  },
+  {
+    to: '/lend',
+    icon: Coins,
+    title: copy.home.jobs.lend.title,
+    blurb: copy.home.jobs.lend.blurb,
+  },
+  {
+    to: '/rent',
+    icon: Images,
+    title: copy.home.jobs.rent.title,
+    blurb: copy.home.jobs.rent.blurb,
+  },
+  {
+    to: '/positions',
+    icon: ListChecks,
+    title: copy.home.jobs.manage.title,
+    blurb: copy.home.jobs.manage.blurb,
+  },
+];
+
+export function Home() {
+  const { isConnected } = useActiveChain();
+  const { data: loans } = useMyLoans();
+
+  const activeCount = Array.isArray(loans)
+    ? loans.filter((l) => l.status === 'active').length
+    : 0;
+
+  return (
+    <div>
+      <h1 className="page-title">{copy.home.title}</h1>
+      <p className="page-lede">{copy.home.lede}</p>
+
+      {isConnected && activeCount > 0 ? (
+        <Link to="/positions" className="banner banner-info" style={{ display: 'flex' }}>
+          <ListChecks aria-hidden />
+          <span className="banner-body">
+            You have {activeCount} active {activeCount === 1 ? 'position' : 'positions'}.
+            View them under My positions.
+          </span>
+        </Link>
+      ) : null}
+
+      <div className="intent-grid">
+        {JOBS.map((job) => (
+          <Link key={job.to} to={job.to} className="intent-card">
+            <span className="intent-icon">
+              <job.icon aria-hidden />
+            </span>
+            <span>
+              <h3>{job.title}</h3>
+              <p>{job.blurb}</p>
+            </span>
+          </Link>
+        ))}
+      </div>
+
+      <p className="muted" style={{ marginTop: 24 }}>
+        {copy.app.tagline} Your assets sit in your own on-chain vault — Vaipakam
+        never pools or holds them for you.
+      </p>
+    </div>
+  );
+}

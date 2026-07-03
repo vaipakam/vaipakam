@@ -1,0 +1,117 @@
+/*
+ * alpha02 design tokens.
+ *
+ * One place for every color, radius, shadow, and spacing step. Both
+ * themes define the SAME custom-property names so components never
+ * branch on theme — they read the token and the [data-theme] switch
+ * on <html> does the rest. Keep contrast AA-safe: body text pairs are
+ * chosen for >= 4.5:1 on their backgrounds in both themes.
+ */
+
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --surface-page: #f6f7f9;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef0f4;
+  --surface-hover: #f0f2f6;
+  --surface-nav: rgba(255, 255, 255, 0.92);
+
+  /* Text */
+  --text-strong: #101828;
+  --text-body: #374151;
+  --text-muted: #6b7280;
+  --text-faint: #9ca3af;
+  --text-on-brand: #ffffff;
+
+  /* Brand — indigo, carried over from the existing Vaipakam identity */
+  --brand: #4f46e5;
+  --brand-strong: #4338ca;
+  --brand-soft: #eef2ff;
+  --brand-soft-text: #3730a3;
+
+  /* Meaning colors (used sparingly: state, never decoration) */
+  --ok: #067647;
+  --ok-soft: #ecfdf3;
+  --warn: #b54708;
+  --warn-soft: #fffaeb;
+  --danger: #b42318;
+  --danger-soft: #fef3f2;
+  --info: #175cd3;
+  --info-soft: #eff8ff;
+
+  /* Lines + focus */
+  --border: #e4e7ec;
+  --border-strong: #d0d5dd;
+  --focus-ring: #4f46e5;
+
+  /* Elevation */
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.12);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --surface-page: #0c111d;
+  --surface-raised: #161b26;
+  --surface-sunken: #0f1420;
+  --surface-hover: #1f2634;
+  --surface-nav: rgba(12, 17, 29, 0.92);
+
+  --text-strong: #f5f7fa;
+  --text-body: #cdd5df;
+  --text-muted: #98a2b3;
+  --text-faint: #667085;
+  --text-on-brand: #ffffff;
+
+  --brand: #818cf8;
+  --brand-strong: #a5b4fc;
+  --brand-soft: #23274b;
+  --brand-soft-text: #c7d2fe;
+
+  --ok: #47cd89;
+  --ok-soft: #12261c;
+  --warn: #fdb022;
+  --warn-soft: #2a2113;
+  --danger: #f97066;
+  --danger-soft: #2d1715;
+  --info: #53b1fd;
+  --info-soft: #132437;
+
+  --border: #29303d;
+  --border-strong: #39414f;
+  --focus-ring: #a5b4fc;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+:root {
+  /* Shape + rhythm — theme-independent */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Layout breakpoints are used in media queries (can't read custom
+   * props there) — documented here as the single reference:
+   *   phone-first, >= 720px gains the sidebar, >= 1080px widens content. */
+  --content-max: 1080px;
+  --taptarget: 44px; /* minimum touch target on mobile */
+}

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Vaipakam — lend, borrow, and rent NFTs directly with other people. Your assets stay in your own on-chain vault."
+    />
+    <title>Vaipakam</title>
+    <script>
+      // Apply the persisted (or system) theme before first paint so the
+      // page never flashes the wrong background. Kept inline + tiny on
+      // purpose; the React ThemeProvider takes over after hydration.
+      (function () {
+        try {
+          var stored = localStorage.getItem('alpha02.theme');
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.dataset.theme = theme;
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
