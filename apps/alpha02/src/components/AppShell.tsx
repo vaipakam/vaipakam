@@ -22,9 +22,11 @@ import {
   Gift,
   Settings,
   BookOpen,
+  Droplets,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useMode } from '../app/ModeContext';
+import { useActiveChain } from '../chain/useActiveChain';
 import { ConnectButton } from './ConnectButton';
 import { NetworkBanner } from './NetworkBanner';
 import { SanctionsBanner } from './SanctionsBanner';
@@ -34,6 +36,8 @@ interface NavItem {
   label: string;
   icon: LucideIcon;
   advancedOnly?: boolean;
+  /** Shown only while reads target a test network (the faucet). */
+  testnetOnly?: boolean;
 }
 
 const PRIMARY_NAV: NavItem[] = [
@@ -47,6 +51,7 @@ const PRIMARY_NAV: NavItem[] = [
 
 const SECONDARY_NAV: NavItem[] = [
   { to: '/vault', label: 'My vault', icon: Landmark },
+  { to: '/faucet', label: 'Get test assets', icon: Droplets, testnetOnly: true },
   { to: '/offers', label: 'Offer Book', icon: BookOpen, advancedOnly: true },
   { to: '/vpfi', label: 'VPFI discounts', icon: Coins, advancedOnly: true },
   { to: '/activity', label: 'Activity', icon: History, advancedOnly: true },
@@ -65,9 +70,11 @@ const TABBAR: NavItem[] = [
 
 export function AppShell() {
   const { isAdvanced } = useMode();
+  const { readChain } = useActiveChain();
   const { pathname } = useLocation();
 
-  const visible = (item: NavItem) => !item.advancedOnly || isAdvanced;
+  const visible = (item: NavItem) =>
+    (!item.advancedOnly || isAdvanced) && (!item.testnetOnly || readChain.testnet);
 
   // On phones the "More" tab fronts every destination without a tab of
   // its own — highlight it on those pages so the user is never "nowhere".

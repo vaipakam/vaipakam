@@ -215,6 +215,38 @@ export interface Deployment {
 
   // ── Deploy metadata ─────────────────────────────────────────────
   deployedAt?: string;
+
+  /** Testnet-ONLY faucet + oracle mock assets, written by
+   *  `contracts/script/DeployTestnetMocks.s.sol`. Present exclusively
+   *  on testnet slugs (Base Sepolia, Arb Sepolia, …) and ABSENT on
+   *  every mainnet slug — the mock ERC-20s expose an unrestricted
+   *  `mint(to, amount)`, so the frontend faucet double-gates on the
+   *  chain's `testnet` flag AND on this field being present. Consumers
+   *  narrow: `if (chain.testnet && dep.testnetMocks) { … }`. */
+  testnetMocks?: TestnetMocks;
+}
+
+/** Addresses of the testnet-only mock assets + oracle wiring the
+ *  faucet + liquid-path testing use. All optional so a partial deploy
+ *  (faucet tokens first, oracle mocks later) type-checks. */
+export interface TestnetMocks {
+  /** Oracle-wired mock ERC-20 (18 dec) → classifies LIQUID. */
+  liquidToken?: HexAddress;
+  /** Unwired mock ERC-20 (18 dec) → classifies ILLIQUID (in-kind). */
+  illiquidToken?: HexAddress;
+  /** ERC-4907 rental NFT for the rental flows. */
+  rentalNft?: HexAddress;
+  /** MockChainlinkAggregator ETH/USD anchor. */
+  ethUsdFeed?: HexAddress;
+  /** MockChainlinkAggregator liquidToken/USD. */
+  liquidTokenUsdFeed?: HexAddress;
+  /** Mock Chainlink FeedRegistry resolving the above. */
+  feedRegistry?: HexAddress;
+  /** Mock Uniswap-V3 factory + liquidToken/WETH pool (liquidity gate). */
+  uniswapV3Factory?: HexAddress;
+  liquidTokenWethPool?: HexAddress;
+  /** ZeroExProxyMock swap venue for HF-liquidation (Tier 2). */
+  zeroExProxy?: HexAddress;
 }
 
 /**

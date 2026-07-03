@@ -69,5 +69,11 @@
   "vpfiPoolRateGovernor": "0x993A502A43EdCB9c497F4ae50569F94209C0A08E",
   "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
   "buybackRemittanceReceiver": "0x1bE16d5A49a22d26052FC70FEaF1E6e038F56e05",
-  "buybackRemittanceReceiverImpl": "0x808923B2Fd1b308Dd246C906DE28BF63165DAdd3"
+  "buybackRemittanceReceiverImpl": "0x808923B2Fd1b308Dd246C906DE28BF63165DAdd3",
+  "testnetMocks": {
+    "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+    "liquidToken": "0x9d2a1acf65ed12716ca67beb7d108890ccda49f8",
+    "illiquidToken": "0x2affacdea8119e38d9754b2c2c15ec79af360807",
+    "rentalNft": "0xe435bdcfb59c4026d1607c8d498ef3ecca51d837"
+  }
 }

@@ -27,6 +27,8 @@ export const copy = {
   home: {
     title: 'What would you like to do?',
     lede: 'Pick a job to get started. You can switch to Advanced mode any time in Settings.',
+    testnetNudge: (chainName: string) =>
+      `You’re on ${chainName}, a test network. Get free test assets to try things out →`,
     jobs: {
       borrow: {
         title: 'Borrow assets',
@@ -617,6 +619,46 @@ export const copy = {
     // setter), so a static string is accurate here.
     lateFee:
       'Late repayment adds 1% of the outstanding amount after day one, growing 0.5% per day, capped at 5%.',
+  },
+
+  faucet: {
+    title: 'Get test assets',
+    lede: 'Mint mock tokens and a test NFT so you can try borrowing, lending, and renting on a test network — no real value, no cost beyond gas.',
+    // Shown when someone lands on /faucet on a network without mocks
+    // (any mainnet, or a testnet we haven't seeded).
+    notTestnetTitle: 'Test assets aren’t available here',
+    notTestnetBody: (chainName: string) =>
+      `The faucet only works on our test networks. You’re on ${chainName}, which uses real assets — switch to a test network to mint practice tokens.`,
+    backHome: 'Back to home',
+    testnetNote: (chainName: string) =>
+      `You’re on ${chainName}, a test network. These tokens exist only for testing and have no real value.`,
+    switchTitle: (chainName: string) =>
+      `Switch your wallet to ${chainName} to mint test assets.`,
+    minting: 'Minting…',
+    viewTx: 'View transaction',
+    footer:
+      'Minted assets land in your wallet. Use “My vault” and the Borrow, Lend, and NFT Rental screens to put them to work.',
+    mintedTokens: (units: number, symbol: string) =>
+      `Minted ${units.toLocaleString()} ${symbol} to your wallet.`,
+    mintedNft: (tokenId: bigint) =>
+      `Minted test NFT #${tokenId.toString().slice(0, 8)}… to your wallet.`,
+    liquid: {
+      title: 'Liquid test token (tLIQ)',
+      blurb:
+        'Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tLIQ`,
+    },
+    illiquid: {
+      title: 'Illiquid test token (tILQ)',
+      blurb:
+        'No price feed, so it behaves like an illiquid asset — both sides must consent, and default transfers the collateral in kind.',
+      action: (units: number) => `Mint ${units.toLocaleString()} tILQ`,
+    },
+    nft: {
+      title: 'Rental test NFT (vRENT)',
+      blurb: 'An ERC-4907 rentable NFT for trying the NFT rental flows.',
+      action: 'Mint a test NFT',
+    },
   },
 
   vault: {

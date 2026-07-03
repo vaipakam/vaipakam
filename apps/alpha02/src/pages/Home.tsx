@@ -3,7 +3,7 @@
  * them (BasicUserUXSimplification.md "First-Run App Shape").
  */
 import { Link } from 'react-router-dom';
-import { Coins, HandCoins, Images, ListChecks } from 'lucide-react';
+import { Coins, HandCoins, Images, ListChecks, Droplets } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useMyLoans } from '../data/hooks';
@@ -42,7 +42,7 @@ const JOBS: Array<{
 ];
 
 export function Home() {
-  const { isConnected } = useActiveChain();
+  const { isConnected, readChain } = useActiveChain();
   const { data: loans } = useMyLoans();
 
   const activeCount = Array.isArray(loans)
@@ -61,6 +61,13 @@ export function Home() {
             You have {activeCount} active {activeCount === 1 ? 'position' : 'positions'}.
             View them under My positions.
           </span>
+        </Link>
+      ) : null}
+
+      {readChain.testnet ? (
+        <Link to="/faucet" className="banner banner-info" style={{ display: 'flex' }}>
+          <Droplets aria-hidden />
+          <span className="banner-body">{copy.home.testnetNudge(readChain.name)}</span>
         </Link>
       ) : null}
 

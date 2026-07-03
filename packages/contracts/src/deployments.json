@@ -135,6 +135,12 @@
     },
     "lzEid": 40245,
     "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
+    "testnetMocks": {
+      "illiquidToken": "0x2affacdea8119e38d9754b2c2c15ec79af360807",
+      "liquidToken": "0x9d2a1acf65ed12716ca67beb7d108890ccda49f8",
+      "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
+      "rentalNft": "0xe435bdcfb59c4026d1607c8d498ef3ecca51d837"
+    },
     "timelock": "0xA957C2F4b159d398e59e5BEf678486EbE915feB2",
     "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",
     "vaultImpl": "0x65e25ED9414Deb1Da41ef88Dd60A4D1af4561c39",
@@ -205,7 +211,11 @@
       "vpfiTokenFacet": "0xcD0AE37A581dDC7e09e775271F2b22a8a2fd5C40"
     },
     "lzEid": 40102,
+    "oracleTestnetMockWeth": "0x6D874ff9a55517c61cECE2936B8F457a3ad9102d",
     "rewardMessenger": "0xFf46546B0A6C5376ddE6c0936b0dd266f11A70c0",
+    "swapAdapters": {
+      "uniV3": "0x246b05E45e45B6eA5eb695c9E128aaD7519E0Adc"
+    },
     "timelock": "0x8EcD41ecE070f6B68ae35A495AA820E1bFC19AeC",
     "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",
     "vaultImpl": "0xE3c15E02A07A363310656969E0ef98303dd5910e",
