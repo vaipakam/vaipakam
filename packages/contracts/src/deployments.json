@@ -136,16 +136,17 @@
     "lzEid": 40245,
     "rewardMessenger": "0x1132055D90E9cFD77f30b6420a591781Ac3f10Fe",
     "testnetMocks": {
-      "ethUsdFeed": "0x69B61Ff792F9228499372a489a506BB5dFdE0D23",
-      "feedRegistry": "0x2062BF6743a0487617d946acc7A3617ee223e554",
+      "ethUsdFeed": "0xe40e1A700FEDFf587bd3D0b267e56bc26cD8cA9e",
+      "feedRegistry": "0x512DD10B6951A8246f19DA352352bc45C9C77D66",
       "illiquidToken": "0x2AffacDEA8119E38D9754b2C2c15EC79aF360807",
       "liquidToken": "0x9d2a1acF65Ed12716Ca67Beb7D108890ccDa49f8",
-      "liquidTokenUsdFeed": "0x072B5f6EB660d01852225364A8b0859CD3cfA5d8",
-      "liquidTokenWethPool": "0x2eF6Ab0c8FB2d569d141661Bc5f2f5bDc9Ef0c9c",
+      "liquidTokenUsdFeed": "0x534e488390520C595239A9157a6c19CCc3eBf87b",
+      "liquidTokenWethPool": "0x7Ef3a00810cA3F978B9A82f72cE22feAE310AE74",
+      "mockSwapAdapter": "0xad7f437b8f7183F6fF09f4b3504F56efbad60D47",
       "note": "Testnet-only faucet + oracle mock assets. NEVER present on mainnet slugs. Deployed by script/DeployTestnetMocks.s.sol.",
       "rentalNft": "0xE435bDcFb59c4026d1607c8D498EF3EcCa51D837",
-      "uniswapV3Factory": "0x2DC109C6B6FaD5beE532083aB9b88d167Ca5CA66",
-      "zeroExProxy": "0x03460a6F493383f59319D4E270A063cB1eE9526F"
+      "uniswapV3Factory": "0x29e4f9E58eF8652bc9E1421974da5c7cEe94f954",
+      "zeroExProxy": "0x873088E9Ae876C2aE645D8D8f443875b75F6ce92"
     },
     "timelock": "0xA957C2F4b159d398e59e5BEf678486EbE915feB2",
     "treasury": "0xca3E735C593088D2f5ea5AEAa553a6bDaa6E7413",
