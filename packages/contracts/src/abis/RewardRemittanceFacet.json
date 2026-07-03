@@ -1,6 +1,19 @@
 [
   {
     "type": "function",
+    "name": "getRewardBudgetReceivedTotal",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getRewardBudgetRemitted",
     "inputs": [
       {
@@ -67,6 +80,47 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getRewardRemittanceReceiver",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "onRewardBudgetReceived",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayIds",
+        "type": "uint256[]",
+        "internalType": "uint256[]"
+      },
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -140,6 +194,50 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "setRewardRemittanceReceiver",
+    "inputs": [
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "event",
+    "name": "RewardBudgetReceived",
+    "inputs": [
+      {
+        "name": "sourceChainId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "dayCount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "event",
     "name": "RewardBudgetRemitted",
     "inputs": [
@@ -176,6 +274,19 @@
     "inputs": [
       {
         "name": "keeper",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RewardRemittanceReceiverUpdated",
+    "inputs": [
+      {
+        "name": "receiver",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -575,6 +686,17 @@
   },
   {
     "type": "error",
+    "name": "NotRewardRemittanceReceiver",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "NotRewardRemitter",
     "inputs": [
       {
@@ -807,6 +929,22 @@
     "type": "error",
     "name": "RewardBudgetMessengerNotSet",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RewardBudgetTokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "delivered",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",
