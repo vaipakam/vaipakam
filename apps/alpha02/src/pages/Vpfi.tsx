@@ -160,7 +160,31 @@ export function Vpfi() {
     setBusy(true);
     setError(null);
     try {
+      // Tier-1 write — re-screen live (the page gate is a cached read;
+      // the setter itself doesn't re-read sanctions).
+      if (address && walletChain && publicClient) {
+        await assertWalletNotSanctionedLive(
+          publicClient,
+          walletChain.diamondAddress,
+          address,
+        );
+      }
+      const turningOff = snapshot.consent;
       await write('setVPFIDiscountConsent', [!snapshot.consent]);
+      if (turningOff) {
+        // Per VPFIDiscountFacet: consent-off is only PUSHED to
+        // mirror-chain tier caches by a following pokeMyTier() —
+        // without it, mirrors can keep applying discounts the user
+        // just opted out of. Best-effort: the opt-out itself already
+        // succeeded, and any later balance mutation also pushes.
+        try {
+          await write('pokeMyTier', []);
+        } catch {
+          setError(
+            'Your opt-out is saved on this network, but syncing it to other networks didn’t go through — it will sync with your next VPFI action, or try toggling again.',
+          );
+        }
+      }
       refresh();
     } catch (err) {
       setError(submitErrorText(err));
