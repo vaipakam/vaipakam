@@ -130,16 +130,18 @@ function OfferRow({ offer }: { offer: IndexedOffer }) {
           `size ${formatTokenAmount(offer.amount, meta.data.decimals)}–${formatTokenAmount(offer.amountMax, meta.data.decimals)} ${meta.data.symbol}`,
         );
       }
-      if (
-        !isLending &&
-        offer.interestRateBpsMax !== offer.interestRateBps &&
-        offer.interestRateBps > 0
-      ) {
+      // Borrow requests posted by this app carry floor 0 / ceiling Y by
+      // design — a zero floor is still a real band, so don't suppress it.
+      if (!isLending && offer.interestRateBpsMax !== offer.interestRateBps) {
         advancedBits.push(
           `rate band ${offer.interestRateBps}–${offer.interestRateBpsMax} bps`,
         );
       }
-      if (offer.allowsPartialRepay) advancedBits.push('partial repay OK');
+      // Always state the flag both ways — on rows where it's absent an
+      // advanced user can't tell "disabled" from "not rendered".
+      advancedBits.push(
+        offer.allowsPartialRepay ? 'partial repay OK' : 'no partial repay',
+      );
     }
     advancedBits.push(
       offer.expiresAt ? `expires ${formatDate(offer.expiresAt)}` : 'no expiry',
@@ -230,8 +232,12 @@ export function Offers() {
     return rows;
   }, [offers.data, activeSide, activeSort, activeAssetFilter]);
 
-  const filtersActive =
-    activeSide !== 'all' || activeSort !== 'newest' || activeAssetFilter !== '';
+  // Only ROW-REMOVING controls count (sort can never empty a list),
+  // and the filter-empty copy may only ever appear when the unfiltered
+  // book actually has rows — a truly empty market must say so even
+  // with filters set (empty-state honesty rule).
+  const filtersActive = activeSide !== 'all' || activeAssetFilter !== '';
+  const marketHasRows = Array.isArray(offers.data) && offers.data.length > 0;
 
   return (
     <div>
@@ -291,7 +297,7 @@ export function Offers() {
       ) : visible === null || visible === undefined ? (
         <UnavailableState body={copy.offers.unavailable} />
       ) : visible.length === 0 ? (
-        filtersActive ? (
+        filtersActive && marketHasRows ? (
           // The MARKET isn't empty — the filters matched nothing.
           <EmptyState
             icon={BookOpen}
