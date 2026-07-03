@@ -62,7 +62,7 @@ interface BaseEnv {
   REWARD_REMIT_ENABLED?: string;
   /** recent-day window re-scanned for un-remitted budget each tick (default 45). */
   REWARD_REMIT_LOOKBACK_DAYS?: string;
-  /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 100000e18). */
+  /** per-send VPFI ceiling in wei — perRemittanceCap + batch bound (default 50000e18, matches the on-chain lane default). */
   REWARD_REMIT_LANE_CAP?: string;
 
   // Depth-tiered-LTV liquidity-confidence relay knobs

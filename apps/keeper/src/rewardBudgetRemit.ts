@@ -186,12 +186,24 @@ async function remitToMirror(
 
   // Exact CCIP fee for THIS batch (the keeper EOA can't call the messenger's
   // quote directly — only the Diamond handler can; that's what this view wraps).
-  const [fee] = (await publicClient.readContract({
+  // `quotedTotal` is the VPFI the send would actually move.
+  const [fee, quotedTotal] = (await publicClient.readContract({
     address: diamond,
     abi: REMIT_ABI,
     functionName: 'quoteRemittanceFee',
     args: [mirrorId, batch],
   })) as readonly [bigint, bigint];
+  // A race (another tick / a manual-admin remit) can consume the selected days
+  // between `quoteRewardBudget` above and here, or the messenger/VPFI wiring can
+  // be unset — either way `quoteRemittanceFee` returns total 0. Submitting the
+  // now-stale batch would revert (NothingToRemit / config guard) and burn keeper
+  // gas every tick, so skip and re-evaluate on the next tick.
+  if (quotedTotal === 0n) {
+    console.log(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} batch=${batch.length} — quote total 0 (raced or wiring unset); skipping`,
+    );
+    return;
+  }
 
   const hash = await ctx.wallet.writeContract({
     address: diamond,
@@ -210,7 +222,20 @@ async function remitToMirror(
   // safe no-op that reverts `NothingToRemit` — no double-fund, no loss — caught
   // at info below. This is the same on-chain-idempotency safety model every
   // other keeper pass relies on for cross-invocation dedup.
-  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  // Bound the wait (viem defaults to 180s) — mirrors are processed sequentially
+  // and the cron fires every minute, so an unbounded wait on one slow/dropped tx
+  // would starve later mirrors and burn the invocation's wall-time. 30s matches
+  // the matcher pass. On timeout we bail this mirror; the on-chain marks make the
+  // next tick's re-quote safe (a duplicate reverts NothingToRemit).
+  let receipt;
+  try {
+    receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
+  } catch {
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} receipt wait timed out — continuing; next tick re-evaluates`,
+    );
+    return;
+  }
   if (receipt.status !== 'success') {
     // Broadcast succeeded but the tx reverted on-chain (e.g. a manual/admin
     // remit or a pool-cap change won the race between quote and inclusion).
