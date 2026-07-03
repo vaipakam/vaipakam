@@ -109,33 +109,32 @@ export async function assertPositionNftHeldLive(opts: {
 /** LIVE grace window for a duration — reads governance-configured
  *  buckets (ConfigFacet.getGraceBuckets) and mirrors the contract's
  *  walk (first bucket whose threshold strictly exceeds durationDays
- *  wins; a trailing maxDurationDays==0 entry is the catch-all). Falls
- *  back to the compile-time default schedule when no buckets are set
- *  or the read fails (matching the contract's own zero-bucket path;
- *  a read failure only risks a wasted approval, and the contract
- *  still enforces the real window). */
+ *  wins; a trailing maxDurationDays==0 entry is the catch-all). An
+ *  EMPTY bucket set resolves to the compile-time default schedule —
+ *  that IS the live config (the contract's own zero-bucket path). A
+ *  FAILED read THROWS: substituting the default there is not
+ *  knowledge — it can enable signing against a wrong grace label
+ *  (useGraceLabel's `ready` gate) or wrongly refuse a valid repay
+ *  when the configured window is longer than the default. Callers
+ *  surface a visible retry instead. */
 export async function readGraceSecondsLive(opts: {
   publicClient: PublicClient;
   diamondAddress: `0x${string}`;
   durationDays: number;
 }): Promise<bigint> {
-  try {
-    const buckets = (await opts.publicClient.readContract({
-      address: opts.diamondAddress,
-      abi: DIAMOND_ABI_VIEM,
-      functionName: 'getGraceBuckets',
-    })) as readonly { maxDurationDays: bigint; graceSeconds: bigint }[];
-    if (buckets.length > 0) {
-      for (const b of buckets) {
-        if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
-        if (BigInt(opts.durationDays) < b.maxDurationDays) return b.graceSeconds;
-      }
-      // No match and no catch-all (malformed set) — the contract's
-      // defensive fallback returns the LAST entry's grace; mirror it.
-      return buckets[buckets.length - 1].graceSeconds;
+  const buckets = (await opts.publicClient.readContract({
+    address: opts.diamondAddress,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'getGraceBuckets',
+  })) as readonly { maxDurationDays: bigint; graceSeconds: bigint }[];
+  if (buckets.length > 0) {
+    for (const b of buckets) {
+      if (b.maxDurationDays === 0n) return b.graceSeconds; // catch-all
+      if (BigInt(opts.durationDays) < b.maxDurationDays) return b.graceSeconds;
     }
-  } catch {
-    // fall through to the default schedule
+    // No match and no catch-all (malformed set) — the contract's
+    // defensive fallback returns the LAST entry's grace; mirror it.
+    return buckets[buckets.length - 1].graceSeconds;
   }
   return defaultGraceSeconds(opts.durationDays);
 }

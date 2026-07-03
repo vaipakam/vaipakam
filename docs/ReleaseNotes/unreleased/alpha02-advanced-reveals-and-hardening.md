@@ -186,3 +186,23 @@ spending approval when a posting sequence fails now fires only when
 that approval was actually granted by the failed attempt — a
 pre-existing approval that another live request or listing depends on
 is left untouched.
+
+A second follow-up round closed four more gaps. The live grace-window
+read no longer quietly substitutes the default schedule when the
+network call fails — a failed read now pauses signing with a visible
+retry (and a repayment gate that can't confirm the window says so
+instead of guessing either way); only a genuinely empty on-chain
+schedule resolves to the defaults, because that is the live
+configuration. Both repayment gates now judge the grace window against
+the loan's live term rather than the cached row, so a loan whose
+duration was extended in place is judged by its real dates. Before any
+acceptance signature, the app now also asks the protocol's own
+dry-run whether the risk-access gate would reject the acceptance —
+the canonical trap being an NFT rental priced in a token the protocol
+treats as unpriced, which needs a standing on-chain acknowledgement
+this app can't collect yet — and blocks with a plain explanation
+before anything is signed or approved. And cancelling a refinance
+request now carries the same reminder the sale-listing cancel already
+had: removing the standing approval also affects any other request or
+listing using the same token, each of which flags itself and offers a
+one-click restore.

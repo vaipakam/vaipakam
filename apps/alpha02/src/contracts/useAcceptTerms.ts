@@ -221,6 +221,37 @@ export function useAcceptTermsSigning() {
         throw e; // transport failure — surface, don't guess
       }
 
+      // #729/#735 — the risk-access gate can reject the accept ON-CHAIN
+      // after every client check passed: acceptor tier too low, an
+      // illiquid pair needing a STANDING per-pair consent this app has
+      // no surface to collect (the canonical case: an NFT rental whose
+      // prepay token is illiquid — the gate keys the rental's lend leg
+      // off `prepayAsset`, while the #662 ack signed here names the
+      // rented NFT, so the ack can never cover it), or a strict-mode
+      // mid-tier ack. Preview the gate non-reverting BEFORE any
+      // signature or approval. 0 = clear, 4 = soft (THIS signature's
+      // own ack clears it at accept time) — anything else is a hard
+      // block the accept would revert on. A missing selector means an
+      // older deploy without the preview — proceed, the contract still
+      // enforces; a transport failure fails CLOSED (retrying is free,
+      // a wasted approval is not).
+      try {
+        const gateBlock = (await publicClient.readContract({
+          address: diamondAddr,
+          abi: DIAMOND_ABI_VIEM,
+          functionName: 'previewOfferAcceptBlock',
+          args: [input.offerId, address],
+        })) as number | bigint;
+        if (Number(gateBlock) !== 0 && Number(gateBlock) !== 4) {
+          throw new Error(copy.match.riskGateBlocked);
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message === copy.match.riskGateBlocked) {
+          throw e;
+        }
+        if (!isMissingSelectorError(e)) throw e;
+      }
+
       // #725 — auto-linked sale/offset target loan id; 0 for a normal
       // offer. Read from chain so a sale-vehicle / preclose-offset offer
       // signs the right value.

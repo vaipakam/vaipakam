@@ -137,6 +137,8 @@ export const copy = {
       'Confirming the repayment grace window this deal is judged against…',
     graceCheckFailed:
       'We couldn’t confirm the repayment grace window, and the review must show the real one — signing stays paused until it succeeds.',
+    riskGateBlocked:
+      'The protocol’s risk-access rules block this acceptance for your wallet right now — it needs a standing on-chain acknowledgement or access level this app can’t collect yet. Nothing was sent or approved.',
   },
 
   borrow: {
@@ -258,7 +260,7 @@ export const copy = {
     cancelSoon:
       'Cancellation opens a few minutes after posting — try again shortly.',
     cancelled:
-      'Refinance request cancelled and the payoff approval removed — this loan continues unchanged.',
+      'Refinance request cancelled and the payoff approval removed — this loan continues unchanged. If you have other listings or requests using the same token, restore their approvals from their cards.',
     cancelledRevokeFailed:
       'Refinance request cancelled — this loan continues unchanged. The standing payoff approval couldn’t be removed automatically; you can revoke it from your wallet’s token-approvals view.',
     allowanceShort:

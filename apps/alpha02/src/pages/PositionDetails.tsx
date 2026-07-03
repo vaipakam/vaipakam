@@ -415,9 +415,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
     setError(null);
     try {
       if (kind === 'repay') {
-        const [calcDue, latestBlock] = await Promise.all([
+        const [calcDue, latestBlock, liveGate] = await Promise.all([
           readRepaymentDueLive(publicClient, walletChain.diamondAddress, row.loanId),
           publicClient.getBlock({ blockTag: 'latest' }),
+          // The grace math must use the LIVE term — a keeper extend
+          // (extendLoanInPlace) moves durationDays under the indexer
+          // row, and the contract judges gracePeriod(loan.durationDays)
+          // on the live loan. (Rental closes don't gate on grace.)
+          row.assetType === AssetType.ERC20
+            ? readLoanLive(publicClient, walletChain.diamondAddress, row.loanId)
+            : Promise.resolve(null),
         ]);
         const chainNow = latestBlock.timestamp;
         // Two more independent live reads, one round-trip: the role
@@ -434,18 +441,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           }),
           // Grace only gates ERC-20 repays — don't spend a read on
           // rental closes.
-          row.assetType === AssetType.ERC20
+          liveGate
             ? readGraceSecondsLive({
                 publicClient,
                 diamondAddress: walletChain.diamondAddress,
-                durationDays: row.durationDays,
+                durationDays: Number(liveGate.durationDays),
               })
             : Promise.resolve(0n),
         ]);
         // repayLoan reverts RepaymentPastGracePeriod once past the
-        // grace window — fail BEFORE the approval.
-        if (row.assetType === AssetType.ERC20) {
-          const endTime = BigInt(row.startTime + row.durationDays * 86_400);
+        // grace window — fail BEFORE the approval, judged on the LIVE
+        // term fields (see the liveGate read above).
+        if (liveGate) {
+          const endTime = liveGate.startTime + liveGate.durationDays * 86_400n;
           if (chainNow > endTime + graceSec) {
             setError(copy.errors.pastGrace);
             return;
@@ -458,16 +466,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // estimate only over-approves (repayLoan pulls what it
         // recomputes) and the pad below is never spent.
         let totalDue = calcDue;
-        if (
-          totalDue === 0n &&
-          row.status === 'fallback_pending' &&
-          row.assetType === AssetType.ERC20
-        ) {
-          const live = await readLoanLive(
-            publicClient,
-            walletChain.diamondAddress,
-            row.loanId,
-          );
+        if (totalDue === 0n && row.status === 'fallback_pending' && liveGate) {
+          const live = liveGate;
           const elapsedDays =
             chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
           const interestEst =
@@ -633,19 +633,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       // same transferFrom set. Approve and balance-check the full pull
       // from the LIVE loan (row.principal / startTime go stale after a
       // prior partial re-stamps the accrual clock).
-      const [live, latestBlock, graceSec, saleLock] = await Promise.all([
+      const [live, latestBlock, saleLock] = await Promise.all([
         readLoanLive(publicClient, walletChain.diamondAddress, row.loanId),
         // The contract accrues by block.timestamp — a slow browser
         // clock must not under-approve past the two-day pad.
         publicClient.getBlock({ blockTag: 'latest' }),
-        // repayPartial enforces the SAME grace window as repayLoan
-        // (RepaymentPastGracePeriod) — judge it by chain time against
-        // the live buckets, before any approval.
-        readGraceSecondsLive({
-          publicClient,
-          diamondAddress: walletChain.diamondAddress,
-          durationDays: row.durationDays,
-        }),
         // A live sale listing freezes the sale price at the CURRENT
         // principal — a partial repay under it would make the next
         // buyer overpay for a smaller claim. This read failing THROWS
@@ -667,6 +659,15 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         setError(copy.errors.loanAlreadySettled);
         return;
       }
+      // repayPartial enforces the SAME grace window as repayLoan
+      // (RepaymentPastGracePeriod) — judge it by chain time against
+      // the live buckets, keyed on the LIVE duration (a keeper extend
+      // moves it under the indexer row), before any approval.
+      const graceSec = await readGraceSecondsLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        durationDays: Number(live.durationDays),
+      });
       if (
         latestBlock.timestamp >
         live.startTime + live.durationDays * 86_400n + graceSec
