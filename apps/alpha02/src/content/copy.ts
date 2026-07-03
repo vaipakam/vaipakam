@@ -282,6 +282,46 @@ export const copy = {
       'A keeper can never receive your money — payouts always go to whoever holds the position. You can revoke any keeper (or flip the master switch off) at any time, the protocol can pause all keepers at once, and refinances are additionally bounded by the guardrails you set per loan. If a position changes hands, these permissions apply to the new holder’s settings, not yours.',
     masterLabel:
       'Allow my approved keepers to act (master switch — nothing runs while this is off)',
+    addressPlaceholder: '0x… keeper address',
+    // One entry per grantable action, keyed by name so the bit table
+    // in data/keepers.ts can never drift by reordering.
+    actions: {
+      initPreclose: {
+        label: 'Start closing a loan early for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
+      },
+      refinance: {
+        label: 'Complete a refinance for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
+      },
+      completeOffset: {
+        label: 'Finish an offset close for me',
+        side: 'acts on loans you borrowed',
+        blurb: 'Complete a preclose-by-offset once its offer has been accepted.',
+      },
+      extend: {
+        label: 'Extend a loan in place for me',
+        side: 'acts on loans you borrowed',
+        blurb:
+          'Extend a loan without reopening it — only when BOTH sides have opted into extension limits.',
+      },
+      initEarlyWithdraw: {
+        label: 'List my loan position for sale',
+        side: 'acts on loans you funded',
+        blurb:
+          'Start a lender early exit by listing a loan you funded. The proceeds still pay only you.',
+      },
+      completeLoanSale: {
+        label: 'Finish a position sale for me',
+        side: 'acts on loans you funded',
+        blurb:
+          'Complete an accepted position sale, moving the loan to its buyer. The payment still routes only to you.',
+      },
+    },
     enabledOn:
       'Keeper access enabled. Keepers can now act where you granted permissions AND the loan’s own switch is on.',
     enabledOff:
@@ -311,6 +351,8 @@ export const copy = {
       'Your approved keepers can act on this loan only while its switch is on. Actions stay bounded by the permissions you granted in Settings.',
     loanToggleOn: 'Keeper enabled for this loan.',
     loanToggleOff: 'Keeper disabled for this loan.',
+    loanEnablesUnavailable:
+      'We couldn’t read this loan’s keeper switches right now — the toggles are paused until the read succeeds (their shown state may be stale).',
     loanNoKeepers:
       'You haven’t approved any keepers yet — set them up under Settings → Keeper permissions.',
     loanMasterOff:

@@ -120,5 +120,6 @@ by default, and the page states the safety facts up front: a keeper
 can never receive your money, every grant is instantly revocable,
 the protocol can pause all keepers at once, and permissions follow
 whoever holds the position. The editor never overwrites permissions
-it couldn't read, preserves grants it doesn't render, and routes
-"remove everything" to a full revoke.
+it couldn't read, preserves grants it doesn't render, and treats
+"remove everything" as a full revoke whenever no unrendered grants
+remain.

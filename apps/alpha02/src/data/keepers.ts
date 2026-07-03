@@ -16,60 +16,26 @@ import { useQuery } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '../contracts/diamond';
 import { useActiveChain } from '../chain/useActiveChain';
+import { copy } from '../content/copy';
 
 export interface KeeperActionDef {
   bit: number;
   label: string;
-  /** Which side's position the action drives. */
-  side: 'borrower' | 'lender';
+  /** Display line for whose loans the action drives. */
+  side: string;
   blurb: string;
 }
 
-/** Mirrors LibVaipakam.KEEPER_ACTION_* (uint8 bits). Order = display
- *  order (borrower actions first). */
+/** Bits mirror LibVaipakam.KEEPER_ACTION_*; strings live in
+ *  copy.keepers.actions under the SAME keys, so neither side can
+ *  drift by reordering. Display order: borrower actions first. */
 export const KEEPER_ACTIONS: KeeperActionDef[] = [
-  {
-    bit: 0x08,
-    label: 'Start closing a loan early for me',
-    side: 'borrower',
-    blurb:
-      'Begin any early-close path on a loan where you are the borrower. The payoff still comes from your wallet under your standing approvals.',
-  },
-  {
-    bit: 0x10,
-    label: 'Complete a refinance for me',
-    side: 'borrower',
-    blurb:
-      'Finish a refinance you set up, bounded by the guardrails (rate ceiling, end date) you approved — and the protocol’s own keeper kill switch.',
-  },
-  {
-    bit: 0x02,
-    label: 'Finish an offset close for me',
-    side: 'borrower',
-    blurb:
-      'Complete a preclose-by-offset once its offer has been accepted.',
-  },
-  {
-    bit: 0x20,
-    label: 'Extend a loan in place for me',
-    side: 'borrower',
-    blurb:
-      'Extend a loan without reopening it — only when BOTH sides have opted into extension limits.',
-  },
-  {
-    bit: 0x04,
-    label: 'List my loan position for sale',
-    side: 'lender',
-    blurb:
-      'Start a lender early exit by listing a loan you funded. The proceeds still pay only you.',
-  },
-  {
-    bit: 0x01,
-    label: 'Finish a position sale for me',
-    side: 'lender',
-    blurb:
-      'Complete an accepted position sale, moving the loan to its buyer. The payment still routes only to you.',
-  },
+  { bit: 0x08, ...copy.keepers.actions.initPreclose },
+  { bit: 0x10, ...copy.keepers.actions.refinance },
+  { bit: 0x02, ...copy.keepers.actions.completeOffset },
+  { bit: 0x20, ...copy.keepers.actions.extend },
+  { bit: 0x04, ...copy.keepers.actions.initEarlyWithdraw },
+  { bit: 0x01, ...copy.keepers.actions.completeLoanSale },
 ];
 
 /** Sum of the bits alpha02 exposes. */

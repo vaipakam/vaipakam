@@ -35,18 +35,30 @@ export function LoanKeeperCard({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
 
-  // No approved keepers → nothing to manage; stay out of the way.
-  if (!config.data || config.data.keepers.length === 0) return null;
+  if (!config.data) return null;
+  // Zero keepers: a one-line pointer keeps the third leg
+  // discoverable from the loan page without nagging.
+  if (config.data.keepers.length === 0) {
+    return (
+      <section className="card">
+        <h3>{copy.keepers.loanTitle}</h3>
+        <p className="muted">{copy.keepers.loanNoKeepers}</p>
+      </section>
+    );
+  }
 
   const walletReady = onSupportedChain && Boolean(walletClient);
 
   async function toggle(keeper: `0x${string}`, next: boolean) {
     setBusy(true);
     setError(null);
+    setDone(null);
     try {
       await write('setLoanKeeperEnabled', [BigInt(loanId), keeper, next]);
       setDone(next ? copy.keepers.loanToggleOn : copy.keepers.loanToggleOff);
-      void queryClient.invalidateQueries({ queryKey: ['loanKeeperEnabled'] });
+      // Awaited so the checkbox never re-enables showing a stale
+      // value (a trusting second click would fire a duplicate tx).
+      await queryClient.invalidateQueries({ queryKey: ['loanKeeperEnabled'] });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -62,6 +74,9 @@ export function LoanKeeperCard({
         <div className="banner banner-warn" role="alert">
           <span className="banner-body">{copy.keepers.loanMasterOff}</span>
         </div>
+      ) : null}
+      {enables.isError ? (
+        <p className="muted">{copy.keepers.loanEnablesUnavailable}</p>
       ) : null}
       <div className="stack" style={{ gap: 8, marginTop: 8 }}>
         {config.data.keepers.map((entry) => {

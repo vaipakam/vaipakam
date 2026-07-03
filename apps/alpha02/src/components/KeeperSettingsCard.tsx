@@ -33,6 +33,39 @@ import { shortAddress } from '../lib/format';
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
+/** The per-action checkbox list — ONE rendering for the edit and
+ *  add surfaces, so the wording of what a grant means can't drift
+ *  between them. */
+function ActionChecklist({
+  bits,
+  disabled,
+  onToggle,
+}: {
+  bits: number;
+  disabled: boolean;
+  onToggle: (bit: number) => void;
+}) {
+  return (
+    <div className="stack" style={{ gap: 6 }}>
+      {KEEPER_ACTIONS.map((a) => (
+        <label key={a.bit} className="cluster" style={{ alignItems: 'flex-start' }}>
+          <input
+            type="checkbox"
+            checked={(bits & a.bit) !== 0}
+            disabled={disabled}
+            onChange={() => onToggle(a.bit)}
+            style={{ marginTop: 3 }}
+          />
+          <span>
+            {a.label}{' '}
+            <span className="muted">({a.side}) — {a.blurb}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 export function KeeperSettingsCard() {
   const { address, onSupportedChain } = useActiveChain();
   const { data: walletClient } = useWalletClient();
@@ -46,8 +79,12 @@ export function KeeperSettingsCard() {
   const [done, setDone] = useState<string | null>(null);
   const [addressInput, setAddressInput] = useState('');
   // Bits being edited, keyed by keeper (lowercase) or '' for the
-  // add-new form.
-  const [draftBits, setDraftBits] = useState<Record<string, number>>({});
+  // add-new form. Each draft records the BASE mask it derived from —
+  // if the live mask has moved since (a save landed, another device
+  // wrote), the draft is stale and is discarded rather than seeding
+  // new toggles from pre-save state (which could silently strip a
+  // just-granted bit on the next save).
+  const [drafts, setDrafts] = useState<Record<string, { base: number; bits: number }>>({});
 
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient) && Boolean(address);
@@ -59,7 +96,10 @@ export function KeeperSettingsCard() {
     try {
       await fn();
       setDone(doneMsg);
-      void queryClient.invalidateQueries({ queryKey: ['keeperConfig'] });
+      // AWAIT the refetch: the controls render from query data, so
+      // dropping busy before fresh data lands re-enables a checkbox
+      // still showing the pre-write value — inviting a duplicate tx.
+      await queryClient.invalidateQueries({ queryKey: ['keeperConfig'] });
     } catch (err) {
       setError(submitErrorText(err));
     } finally {
@@ -68,15 +108,24 @@ export function KeeperSettingsCard() {
   }
 
   function toggleDraft(key: string, bit: number, base: number) {
-    setDraftBits((d) => {
-      const current = d[key] ?? base;
-      return { ...d, [key]: current ^ bit };
+    setDrafts((d) => {
+      const entry = d[key];
+      // Stale draft (live base moved underneath it) starts over.
+      const bits = entry && entry.base === base ? entry.bits : base;
+      return { ...d, [key]: { base, bits: bits ^ bit } };
+    });
+  }
+
+  function dropDraft(key: string) {
+    setDrafts((d) => {
+      const { [key]: _removed, ...rest } = d;
+      return rest;
     });
   }
 
   const cfg = config.data;
   const atCap = (cfg?.keepers.length ?? 0) >= MAX_APPROVED_KEEPERS;
-  const addBits = draftBits[''] ?? 0;
+  const addBits = drafts['']?.bits ?? 0;
   const addValid = ADDRESS_RE.test(addressInput) && addBits !== 0 && !atCap;
 
   return (
@@ -114,7 +163,9 @@ export function KeeperSettingsCard() {
             const key = entry.keeper.toLowerCase();
             const unreadable = entry.actions === null;
             const base = entry.actions ?? 0;
-            const bits = draftBits[key] ?? base;
+            const draft = drafts[key];
+            // A draft based on an older mask is dead — render live.
+            const bits = draft && draft.base === base ? draft.bits : base;
             const dirty = bits !== base;
             return (
               <div key={key} className="card" style={{ padding: 12 }}>
@@ -127,6 +178,9 @@ export function KeeperSettingsCard() {
                     onClick={() =>
                       void run(async () => {
                         await write('revokeKeeper', [entry.keeper]);
+                        // An abandoned edit must not resurrect onto a
+                        // future re-approval of the same address.
+                        dropDraft(key);
                       }, copy.keepers.revoked)
                     }
                   >
@@ -140,21 +194,11 @@ export function KeeperSettingsCard() {
                   </p>
                 ) : (
                   <div className="stack" style={{ gap: 6, marginTop: 8 }}>
-                    {KEEPER_ACTIONS.map((a) => (
-                      <label key={a.bit} className="cluster" style={{ alignItems: 'flex-start' }}>
-                        <input
-                          type="checkbox"
-                          checked={(bits & a.bit) !== 0}
-                          disabled={busy || !walletReady}
-                          onChange={() => toggleDraft(key, a.bit, base)}
-                          style={{ marginTop: 3 }}
-                        />
-                        <span>
-                          {a.label}{' '}
-                          <span className="muted">({a.side}) — {a.blurb}</span>
-                        </span>
-                      </label>
-                    ))}
+                    <ActionChecklist
+                      bits={bits}
+                      disabled={busy || !walletReady}
+                      onToggle={(bit) => toggleDraft(key, bit, base)}
+                    />
                     {(base & ~EXPOSED_ACTIONS_MASK) !== 0 ? (
                       <p className="muted">{copy.keepers.extraBitsNote}</p>
                     ) : null}
@@ -175,10 +219,7 @@ export function KeeperSettingsCard() {
                             } else {
                               await write('setKeeperActions', [entry.keeper, next]);
                             }
-                            setDraftBits((d) => {
-                              const { [key]: _drop, ...rest } = d;
-                              return rest;
-                            });
+                            dropDraft(key);
                           }, copy.keepers.updated)
                         }
                       >
@@ -199,27 +240,17 @@ export function KeeperSettingsCard() {
               <input
                 className="input"
                 style={{ marginTop: 8 }}
-                placeholder="0x… keeper address"
+                placeholder={copy.keepers.addressPlaceholder}
                 value={addressInput}
                 onChange={(e) => setAddressInput(e.target.value.trim())}
                 aria-label={copy.keepers.addTitle}
               />
-              <div className="stack" style={{ gap: 6, marginTop: 8 }}>
-                {KEEPER_ACTIONS.map((a) => (
-                  <label key={a.bit} className="cluster" style={{ alignItems: 'flex-start' }}>
-                    <input
-                      type="checkbox"
-                      checked={(addBits & a.bit) !== 0}
-                      disabled={busy || !walletReady}
-                      onChange={() => toggleDraft('', a.bit, 0)}
-                      style={{ marginTop: 3 }}
-                    />
-                    <span>
-                      {a.label}{' '}
-                      <span className="muted">({a.side}) — {a.blurb}</span>
-                    </span>
-                  </label>
-                ))}
+              <div style={{ marginTop: 8 }}>
+                <ActionChecklist
+                  bits={addBits}
+                  disabled={busy || !walletReady}
+                  onToggle={(bit) => toggleDraft('', bit, 0)}
+                />
               </div>
               <button
                 type="button"
@@ -239,10 +270,7 @@ export function KeeperSettingsCard() {
                       addBits,
                     ]);
                     setAddressInput('');
-                    setDraftBits((d) => {
-                      const { ['']: _drop, ...rest } = d;
-                      return rest;
-                    });
+                    dropDraft('');
                   }, copy.keepers.added)
                 }
               >
