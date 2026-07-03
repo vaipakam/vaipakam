@@ -34,7 +34,8 @@ Delivered across six PRs: the design (#888), the Base-side sender (#889), the
 per-mirror receiver plus deploy/CCIP wiring (#916), the end-to-end proof +
 documentation (#923), a fee-quote helper that dry-runs a batch's exact
 cross-chain fee (#924), and the keeper automation that drives remittance without
-operator intervention (#925). An end-to-end test demonstrates the fix directly —
+operator intervention (card #925, merged as PR #929). An end-to-end test
+demonstrates the fix directly —
 a claim on an unfunded mirror reverts, and the identical claim succeeds once
 the budget has been remitted and received.
 

@@ -189,7 +189,8 @@ The steps above are the **manual** fallback. In normal operation the `apps/keepe
 Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
 against Base, it re-scans a bounded recent-day window per mirror, batches the
 finalized-but-un-remitted days under the lane cap, quotes the exact fee, and
-remits — keeping mirrors funded ahead of their claim gate. It is **dark by
+remits — keeping mirrors funded on a best-effort cron cadence (it does **not**
+synchronize with broadcasts; see the Ordering caveat above). It is **dark by
 default** and requires all of:
 1. `KEEPER_ENABLED=true` (master switch) **and** `REWARD_REMIT_ENABLED=true`
    (dedicated flag) in the keeper Worker's vars.
@@ -200,7 +201,12 @@ default** and requires all of:
 3. That signing EOA authorized on-chain — either ADMIN, or granted the
    reward-remittance keeper role via `RewardRemittanceFacet.setRewardRemittanceKeeper(<keeperEOA>)`.
 4. The `RewardRemittanceReceiver` deployed + registered on every mirror and the
-   `vpfi-reward-budget` CCIP lane provisioned (see the DeploymentRunbook).
+   `vpfi-reward-budget` CCIP lane provisioned. This wiring is performed by the
+   deploy scripts — `DeployCrosschain.s.sol` deploys the receiver (and writes it
+   to the deployments artifact), and `ConfigureCcip.s.sol` registers the
+   `vpfi-reward-budget` channel + calls the Diamond's `setRewardRemittanceReceiver`
+   for each mirror; the lane's rate limits are set per the mainnet-deploy gates in
+   CLAUDE.md § "Cross-Chain Security Policy".
 
 Optional tuning vars: `REWARD_REMIT_LOOKBACK_DAYS` (default 45) and
 `REWARD_REMIT_LANE_CAP` (wei, default `50000e18` — must stay ≤ the provisioned
