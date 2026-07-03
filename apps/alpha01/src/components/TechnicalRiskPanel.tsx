@@ -26,7 +26,7 @@ export function TechnicalRiskPanel({ risk, loading }: Props) {
 
   const hf = risk?.healthFactor ?? null;
   const ltv = risk?.ltvBps ?? null;
-  const plain = plainHealthLabel(hf);
+  const plain = plainHealthLabel(hf, minHf1e18);
 
   return (
     <details className="technical-risk-panel" open data-testid="technical-risk-panel">

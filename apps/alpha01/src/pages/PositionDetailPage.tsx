@@ -10,6 +10,7 @@ import {
   isLoanSideClaimable,
   isNftRentalLoan,
   nftAssetKindLabel,
+  MIN_HEALTH_FACTOR_1E18,
   plainHealthLabel,
   loanRoleForWallet,
   rentalDailyFeeWei,
@@ -24,6 +25,7 @@ import { TechnicalRiskPanel } from '../components/TechnicalRiskPanel';
 import { useMode } from '../context/ModeContext';
 import { useLoanHealth } from '../hooks/useLoanHealth';
 import { useLoanRisks } from '../hooks/useLoanRisks';
+import { useMinHealthFactor1e18 } from '../hooks/useProtocolConfig';
 import { useIndexerOrigin } from '../hooks/useIndexerOrigin';
 import { useWalletClient } from 'wagmi';
 import type { Address } from 'viem';
@@ -41,6 +43,7 @@ export function PositionDetailPage() {
   const origin = useIndexerOrigin();
   const { mode } = useMode();
   const { data: hf } = useLoanHealth(id);
+  const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const { data: riskMap, isLoading: riskLoading } = useLoanRisks(Number.isFinite(id) ? [id] : []);
 
   const { data: loan, isLoading, isError, error, refetch } = useQuery({
@@ -103,7 +106,7 @@ export function PositionDetailPage() {
 
   const rental = loan ? isNftRentalLoan(loan) : false;
   const isBorrower = role === 'borrower' || role === 'both';
-  const health = plainHealthLabel(isBorrower && !rental ? hf : null);
+  const health = plainHealthLabel(isBorrower && !rental ? hf : null, minHf1e18);
   const rolesForAction: ('borrower' | 'lender')[] =
     role === 'both'
       ? ['borrower', 'lender']

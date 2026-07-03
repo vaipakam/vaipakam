@@ -1,5 +1,10 @@
+import { LIQUIDATION_HEALTH_FACTOR_1E18, MIN_HEALTH_FACTOR_1E18 } from './risk.js';
+
 /** Plain-language health labels for Basic mode (HF scaled 1e18). */
-export function plainHealthLabel(healthFactor: bigint | null | undefined): {
+export function plainHealthLabel(
+  healthFactor: bigint | null | undefined,
+  minHealthy1e18: bigint = MIN_HEALTH_FACTOR_1E18,
+): {
   label: string;
   tone: 'ok' | 'warn' | 'risk';
   detail: string;
@@ -11,8 +16,8 @@ export function plainHealthLabel(healthFactor: bigint | null | undefined): {
       detail: 'Health data is still loading or unavailable for this loan.',
     };
   }
-  const minHealthy = 15n * 10n ** 17n; // 1.5e18
-  const liquidation = 10n ** 18n; // 1e18
+  const minHealthy = minHealthy1e18;
+  const liquidation = LIQUIDATION_HEALTH_FACTOR_1E18;
   if (healthFactor >= minHealthy) {
     return {
       label: 'Healthy',
