@@ -12,7 +12,7 @@ drives remittance without operator intervention.
 Alongside it, several threads move the testnet and frontend surfaces forward:
 **BNB testnet becomes a user-facing chain** (cross-chain stack deployed and
 indexed, oracle configured via PancakeSwap with no 0x dependency, WalletConnect
-+ liquidity-preflight support, and a public-RPC log-index recovery fix); a wave
+and liquidity-preflight support, and a public-RPC log-index recovery fix); a wave
 of **testnet deploy-flow and deploy-script hardening** (#853/#855/#856/#862);
 the **naive-user-first frontend redesign** (alpha01 basic-mode build-out and the
 alpha02 connected-app redesign) plus the **auto-lend dedicated page** (#878);
@@ -480,7 +480,7 @@ Replaces the `/rent` stub with full Basic-mode NFT rental flows inside `alpha01.
 - `pnpm --filter @vaipakam/alpha01 test`
 - `pnpm --filter @vaipakam/alpha01 exec tsc -b --noEmit`
 
-## Thread — alpha02: naive-user-first connected-app redesign (PR #TBD)
+## Thread — alpha02: naive-user-first connected-app redesign (PR #887)
 
 A new frontend surface, `apps/alpha02` (`@vaipakam/alpha02`, to serve at
 alpha02.vaipakam.com), begins the ground-up redesign of the connected app
@@ -601,10 +601,9 @@ and loan-to-value numbers in Advanced mode.
 
 apps/defi is untouched and stays the live app until alpha02 reaches
 parity; apps/alpha (the earlier static mock) is untouched and unused.
-Follow-ups tracked in apps/alpha02/README.md: accept-offer path, NFT
-rental flows, VPFI vault actions, on-chain fallback reads, HF display,
-cancel-offer, sanctions/ToS parity, i18n extraction, and Playwright
-journeys.
+The remaining parity milestones are tracked in `apps/alpha02/README.md`,
+which is the live source of truth as the redesign continues (the inline
+list is intentionally omitted here to avoid drift against that README).
 
 ## Frontend — BNB testnet log-index recovers from the public RPC's "limit exceeded"
 
