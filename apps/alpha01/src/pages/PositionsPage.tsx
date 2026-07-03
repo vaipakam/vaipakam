@@ -55,7 +55,14 @@ export function PositionsPage() {
     [loanList, mode],
   );
 
-  const { data: riskMap, isLoading: risksLoading } = useLoanRisks(riskLoanIds);
+  const {
+    data: riskMap,
+    isLoading: risksLoading,
+    isError: risksError,
+  } = useLoanRisks(riskLoanIds);
+
+  const riskFilterReady =
+    riskFilter !== 'at-risk' || (!risksLoading && !risksError && riskMap != null);
 
   const filteredLoans = useMemo(() => {
     if (mode !== 'advanced') return loanList;
@@ -63,15 +70,14 @@ export function PositionsPage() {
       const role = loanRoleForWallet(loan, address);
       if (roleFilter === 'borrower' && role !== 'borrower' && role !== 'both') return false;
       if (roleFilter === 'lender' && role !== 'lender' && role !== 'both') return false;
-      if (riskFilter === 'at-risk') {
+      if (riskFilter === 'at-risk' && riskFilterReady) {
         if (isNftRentalLoan(loan) || loan.status !== 'active') return false;
-        if (risksLoading) return true;
         const hf = riskMap?.get(loan.loanId)?.healthFactor;
         if (!isHealthFactorAtRisk(hf, minHf1e18)) return false;
       }
       return true;
     });
-  }, [address, loanList, minHf1e18, mode, riskFilter, riskMap, risksLoading, roleFilter]);
+  }, [address, loanList, minHf1e18, mode, riskFilter, riskFilterReady, riskMap, roleFilter]);
 
   if (!address) {
     return (
@@ -167,6 +173,12 @@ export function PositionsPage() {
         <p className="form-hint" style={{ marginBottom: 12 }}>
           Loading health factors for risk filter…
         </p>
+      ) : null}
+
+      {mode === 'advanced' && riskFilter === 'at-risk' && risksError ? (
+        <div className="banner banner-warn" style={{ marginBottom: 12 }}>
+          Could not load health factors — risk filter is paused until RPC data is available.
+        </div>
       ) : null}
 
       {!loading && filteredLoans.length > 0 ? (

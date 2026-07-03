@@ -20,7 +20,7 @@ export function PortfolioStrip({ loans, offerCount }: Props) {
   const { address } = useWallet();
   const { data: minHf1e18 = MIN_HEALTH_FACTOR_1E18 } = useMinHealthFactor1e18();
   const debtLoanIds = loans.filter((l) => !isNftRentalLoan(l) && l.status === 'active').map((l) => l.loanId);
-  const { data: risks, isLoading: risksLoading } = useLoanRisks(debtLoanIds);
+  const { data: risks, isLoading: risksLoading, isError: risksError } = useLoanRisks(debtLoanIds);
 
   const borrowerLoans = loans.filter(
     (l) => l.status === 'active' && (loanRoleForWallet(l, address) === 'borrower' || loanRoleForWallet(l, address) === 'both'),
@@ -28,10 +28,13 @@ export function PortfolioStrip({ loans, offerCount }: Props) {
   const lenderLoans = loans.filter(
     (l) => l.status === 'active' && (loanRoleForWallet(l, address) === 'lender' || loanRoleForWallet(l, address) === 'both'),
   );
-  const atRisk = debtLoanIds.filter((id) => {
-    const hf = risks?.get(id)?.healthFactor;
-    return isHealthFactorAtRisk(hf, minHf1e18);
-  }).length;
+  const atRisk =
+    risksError || !risks
+      ? null
+      : debtLoanIds.filter((id) => {
+          const hf = risks.get(id)?.healthFactor;
+          return isHealthFactorAtRisk(hf, minHf1e18);
+        }).length;
 
   const minHfLabel = formatHealthFactor(minHf1e18);
 
@@ -51,7 +54,7 @@ export function PortfolioStrip({ loans, offerCount }: Props) {
       </div>
       <div className="portfolio-strip-metric">
         <span className="portfolio-strip-value">
-          {risksLoading ? '…' : atRisk}
+          {risksLoading ? '…' : atRisk == null ? '—' : atRisk}
         </span>
         <span className="portfolio-strip-label">HF below {minHfLabel}</span>
       </div>
