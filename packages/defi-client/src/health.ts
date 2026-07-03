@@ -40,7 +40,11 @@ export function borrowerPrimaryAction(opts: {
   healthTone: 'ok' | 'warn' | 'risk';
 }): { action: 'repay' | 'claim-collateral' | 'claim-lender' | 'add-collateral' | 'none'; label: string } {
   if (opts.role === 'borrower') {
-    if (opts.loanStatus === 'repaid') {
+    if (
+      opts.loanStatus === 'repaid' ||
+      opts.loanStatus === 'defaulted' ||
+      opts.loanStatus === 'internal_matched'
+    ) {
       return { action: 'claim-collateral', label: 'Claim collateral' };
     }
     if (opts.loanStatus === 'active') {
@@ -54,7 +58,9 @@ export function borrowerPrimaryAction(opts: {
     if (
       opts.loanStatus === 'repaid' ||
       opts.loanStatus === 'defaulted' ||
-      opts.loanStatus === 'liquidated'
+      opts.loanStatus === 'liquidated' ||
+      opts.loanStatus === 'fallback_pending' ||
+      opts.loanStatus === 'internal_matched'
     ) {
       return { action: 'claim-lender', label: 'Claim lender proceeds' };
     }

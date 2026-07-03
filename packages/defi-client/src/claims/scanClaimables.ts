@@ -121,7 +121,11 @@ export async function fetchWalletClaimables(
   if (publicClient && diamondAddress) {
     const verifiedBorrower: IndexedLoan[] = [];
     for (const loan of asBorrower) {
-      if (loan.status === 'defaulted' || loan.status === 'liquidated') {
+      if (
+        loan.status === 'defaulted' ||
+        loan.status === 'liquidated' ||
+        loan.status === 'fallback_pending'
+      ) {
         if (await sideClaimActionable(publicClient, diamondAddress, loan.loanId, false)) {
           verifiedBorrower.push(loan);
         }

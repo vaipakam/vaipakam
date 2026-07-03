@@ -27,3 +27,5 @@ Round 9: Borrow/lend offer pickers exclude self-authored offers and render plain
 Round 10: Raw formatting uses cache-resolved decimals only; offer pickers require wallet connect and clear stale selections; unhealed indexer stubs filtered from lend picker; loan detail warns when indexer origin is missing; lender active loans show Active status; activity merge reserves participant slots; defaulted lender claims show collateral; claim buttons respect wallet chain.
 
 Round 11: Root `alpha:dev`/`alpha:build` target `@vaipakam/alpha01`; alpha01 adds `typecheck` script; Claims unions holder loans in resolution paths and filters empty borrower defaults via on-chain `getClaimable`; activity merge never drops actor rows from a cursor page; borrow matching requires a parsed amount before listing offers.
+
+Round 12: Borrower `fallback_pending` claims filtered via on-chain probe; accept-terms signing fails closed on RiskAccess deploy skew; loan detail surfaces claim CTAs for borrower defaulted/internal-matched and lender fallback/internal-match loans.

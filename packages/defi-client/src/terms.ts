@@ -98,12 +98,26 @@ export async function signAcceptTerms(opts: {
       functionName: 'getCurrentRiskTermsHash',
     })) as Hex;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (/function selector|not found|missing revert data/i.test(msg)) {
-      riskTermsHash =
-        '0x0000000000000000000000000000000000000000000000000000000000000000' as Hex;
-    } else {
-      throw new Error(`Could not read current risk terms hash: ${msg}`);
+    if (!isMissingSelectorError(e)) {
+      throw new Error(
+        `Could not read current risk terms hash: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    let riskFacetPresent = true;
+    try {
+      await opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getCurrentRiskTermsVersion',
+      });
+    } catch (probe) {
+      if (isMissingSelectorError(probe)) riskFacetPresent = false;
+      else throw probe;
+    }
+    if (riskFacetPresent) {
+      throw new Error(
+        'RiskAccessFacet is deployed without getCurrentRiskTermsHash — refusing to sign with a zero risk-terms anchor.',
+      );
     }
   }
 
@@ -173,4 +187,13 @@ export async function signAcceptTerms(opts: {
   });
 
   return { terms, signature };
+}
+
+function isMissingSelectorError(e: unknown): boolean {
+  const msg = String(
+    (e as { data?: string; message?: string })?.data ?? (e as Error)?.message ?? '',
+  );
+  return /function does not exist|functionnotfound|function selector|not found|missing revert data|0xa9ad62f8/i.test(
+    msg,
+  );
 }
