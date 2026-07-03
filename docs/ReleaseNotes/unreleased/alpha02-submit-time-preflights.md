@@ -130,4 +130,9 @@ id can be checked — a live token shows its holder, the side it
 controls, its linked loan, and any transfer lock; a token that
 doesn't exist on the current network says plainly that it was either
 retired after its claim or never minted, and that the network doesn't
-record which. Every verdict names the network it applies to.
+record which. Only a real on-chain answer produces a verdict — a
+connection failure shows a visible retry state instead of a false
+"doesn't exist", and a transfer-lock check that fails or returns
+something this app version doesn't recognise reads as locked/unknown,
+never as transferable. Every verdict names the network it applies
+to.

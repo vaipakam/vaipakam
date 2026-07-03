@@ -294,6 +294,8 @@ export const copy = {
     offerLabel: 'Created for offer',
     offerValue: (offerId: string) =>
       `#${offerId} — this token was minted for an offer that hasn’t become a loan yet.`,
+    lockUnrecognized:
+      'Transfer-locked for a reason this app version doesn’t recognise — it can’t be transferred until that flow completes or is cancelled.',
     lockUnknown:
       'We couldn’t read whether this token is transfer-locked right now — don’t rely on it being transferable until this reads clean.',
     positionRowLabel: 'Your position NFT',

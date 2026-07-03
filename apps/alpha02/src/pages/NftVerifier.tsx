@@ -210,10 +210,16 @@ export function NftVerifier() {
                 <dt>{copy.nftVerifier.lockLabel}</dt>
                 <dd>{copy.nftVerifier.lockUnknown}</dd>
               </div>
-            ) : result.data.lock && LOCK_LABELS[result.data.lock] ? (
+            ) : result.data.lock ? (
+              // LockReason is append-only on-chain — a value this
+              // build doesn't know is still LOCKED, never rendered
+              // as transferable.
               <div className="receipt-row receipt-risk">
                 <dt>{copy.nftVerifier.lockLabel}</dt>
-                <dd>{LOCK_LABELS[result.data.lock]}</dd>
+                <dd>
+                  {LOCK_LABELS[result.data.lock] ??
+                    copy.nftVerifier.lockUnrecognized}
+                </dd>
               </div>
             ) : null}
           </dl>

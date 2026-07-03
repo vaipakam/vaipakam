@@ -800,9 +800,15 @@ converge. Its intended behaviour (the test oracle for that surface):
   after its claim or never minted — the network doesn't record
   which, and the verifier says so rather than guessing (the
   three-way distinction the spec asks for is recorded as a
-  contract-level gap in the code-vs-docs audit). The verdict is
-  always scoped to the current network, with a visible reminder that
-  token ids repeat across networks.
+  contract-level gap in the code-vs-docs audit). Only an on-chain
+  answer produces a verdict: a transport failure shows a visible
+  check-failed state, never a false "doesn't exist". A transfer-lock
+  read that fails — or returns a lock reason this build doesn't
+  recognise (the lock list is append-only on-chain) — is stated as
+  locked/unknown, never rendered as transferable. A token minted for
+  an offer that hasn't become a loan yet names that offer. The
+  verdict is always scoped to the current network, with a visible
+  reminder that token ids repeat across networks.
 - Advanced mode surfaces keeper permissions as the protocol's
   three-switch opt-in: a master switch, per-keeper action grants,
   and a per-loan switch on each loan's page — all off by default,
