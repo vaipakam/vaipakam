@@ -262,11 +262,11 @@ Reward-budget remittance automation:
 
 - the production keeper may run a canonical-chain reward-remittance pass that keeps mirror chains funded ahead of ordinary claim traffic
 - the pass should scan a bounded window of recent finalized days for each mirror chain and identify days whose mirror budget has finalized but has not yet been remitted
-- remittance should be batched by mirror chain and bounded by the configured lane capacity so a single send cannot exceed the live cross-chain bucket
+- remittance should be batched by mirror chain and bounded by the live lane availability, not only the nominal configured capacity, so a partially drained cross-chain bucket causes the keeper to wait or reduce later batches instead of repeatedly submitting sends that are expected to hit the rate limit
 - discovery should be idempotent: non-finalized days, zero-budget days, and already-remitted days are skipped without changing state, and retrying a failed or interrupted pass must not double-send a finalized day
 - before a send, the keeper should quote the exact cross-chain fee needed for that batch and submit only when it can pay that fee through the configured funding path
 - the automation is off by default and may run only when the general keeper switch, the dedicated reward-remittance switch, and the on-chain keeper authorization for the signer are all active
-- if a single day's mirror slice is larger than the configured lane ceiling, the keeper should skip that day and surface an operator-visible capacity warning rather than splitting the day across multiple sends, because a day's budget is remitted atomically
+- if a single day's mirror slice is larger than the configured lane ceiling, the keeper should skip that day and surface an operator-visible capacity warning rather than splitting the day across multiple sends, because a day's budget is remitted atomically. If the day fits the configured ceiling but the live bucket is temporarily depleted, the keeper should back off until refill or operator intervention rather than treating the revert as a permanent day-level failure.
 - the keeper is a convenience automation, not the source of accounting truth: on-chain remittance guards remain authoritative, and an operator may still perform a manual remittance when automation is disabled or unavailable
 
 Accounting identity:
