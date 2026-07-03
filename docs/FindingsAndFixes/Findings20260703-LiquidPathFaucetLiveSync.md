@@ -93,5 +93,74 @@ shouldn't hit this. Flagged only so a future reviewer isn't surprised by
 429s on the default public endpoint. (Worth a spot-check that no
 first-paint frontend read falls back to a public endpoint under load.)
 
-<!-- Remaining sections (R-3 HF display, refinance, liquidation,
-     live-sync, claimables) appended as each flow is driven. -->
+## R-3 — Liquid loan END-TO-END (HF display / refinance / liquidation) — BLOCKED on the stalled indexer (F-001/F-004), contract path unblocked
+
+**Status: partially verified; the UI end-to-end is gated on a live
+indexer, not on this PR's code.**
+
+What IS verified for the liquid path:
+- The Tier-1 oracle wiring reaches the UI — the offer-review screen
+  correctly treats tLIQ as **liquid** (no illiquid disclosure), see R-2.
+- On-chain, `checkLiquidity(tLIQ) = Liquid`, so the contract-level
+  liquid path (HF math, drop-to-liquidation, refinance risk math) is
+  unblocked — this is exactly what the first pass's **F-007**
+  (`IlliquidLoanNoRiskMath`) was waiting on.
+
+What is BLOCKED, and why (not a PR-#982 defect):
+- To exercise HF display / refinance / liquidation in the UI you need an
+  **active liquid loan**, which needs the borrower to **accept** the
+  liquid offer. Offer #15 was created on-chain (R-2) but the
+  indexer-sourced offer book never surfaced it — the same **stalled
+  staging/production indexer** documented as F-20260703-001 / -004. With
+  no indexer entry, the guided borrow / offer-book accept path can't
+  reach the offer.
+- A purely scripted accept (bypassing the UI) reverts on a vault
+  free-balance guard (selector `0xfb8f41b2`, args `(diamond, 0, 1e18)`)
+  because acceptOffer expects the collateral already deposited in the
+  borrower's vault — the deposit is a step the UI accept flow performs.
+  Replicating the full vault-deposit dance off-UI was out of scope for a
+  UI review.
+
+Recommendation: complete the liquid-path UI verification once the
+indexer is advancing (or via a dedicated seeding script that performs
+the vault deposit + accept). The oracle mocks themselves are confirmed
+correct and UI-visible; the remaining gap is operational (indexer), not
+code.
+
+## R-4 — Branch features smoke (preview) — PASS ✅
+
+Read-only pass on the branch preview with the `borrower` wallet
+(no loan required):
+
+- **Home testnet nudge** — "Get test assets" nudge renders on testnet
+  and links to `/faucet`. ✅
+- **Nav** — testnet-only "Get test assets" sidebar entry present. ✅
+- **Claims (on-chain claimables port, #958)** — the page renders via the
+  new `useMyClaimables` on-chain hook: it is NOT stuck on "Checking for
+  claims…", and shows a clean empty/rows state (no "couldn't load"
+  error). Confirms the indexer→on-chain candidate+confirm path executes
+  against the live Diamond without throwing. ✅
+- **Positions** — renders. ✅
+- **Live-sync (WebSocket layer)** — after letting the block watcher run
+  several blocks: **zero non-429 console errors and no `LiveChainSync`
+  errors**. With no `VITE_*_WSS_URL` configured on the preview, the
+  layer degrades to HTTP block polling exactly as designed — no crash,
+  no error spam. ✅
+
+(429s from the public RPC still appear in the console under load —
+OBS-1; they are provider rate-limits, not app errors, and are filtered
+out above.)
+
+## Summary of this pass
+
+| Item | Result |
+| --- | --- |
+| Infra (tLIQ Liquid, adapter registered+funded) | ✅ verified on-chain |
+| R-1 Faucet mint tLIQ/tILQ/vRENT | ✅ PASS (balances confirmed) |
+| R-2 Liquid offer creation (illiquid warning absent) | ✅ PASS |
+| R-3 Liquid loan end-to-end (HF/refi/liquidation) UI | ⛔ blocked on stalled indexer (F-001/F-004); contract path unblocked |
+| R-4 Home nudge / faucet nav / Claims on-chain / live-sync | ✅ PASS |
+
+Net: everything in PR #982 that could be exercised without a live
+indexer is verified working. The one remaining item (liquid loan UI
+end-to-end) is gated on the indexer being revived, not on this PR.
