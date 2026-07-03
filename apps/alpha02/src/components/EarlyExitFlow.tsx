@@ -32,6 +32,7 @@ import {
 } from '../contracts/preflights';
 import {
   LOAN_STATUS_ACTIVE,
+  interestAccrualStartOf,
   interestRemainingDaysOf,
   readLoanLive,
   type LoanLive,
@@ -48,38 +49,49 @@ import {
 import { ConfirmReceipt } from './ConfirmReceipt';
 import type { TokenMeta } from '../contracts/erc20';
 
+const SECONDS_PER_YEAR = 365n * 86_400n;
+const BASIS_POINTS = 10_000n;
+
 /** Seller economics of selling into a buy offer — one definition for
  *  the picker rows, the review receipt, and the submit re-check.
- *  Mirrors EarlyWithdrawalFacet: accrued interest since the #641
- *  clock is forfeited; a higher buy-offer rate additionally costs
- *  the remaining-term difference; the seller pays the LARGER of the
- *  two (never both). */
-export function sellerEconomics(args: {
-  principal: bigint;
-  loanRateBps: bigint;
-  buyRateBps: bigint;
-  elapsedDays: bigint;
-  remainingDays: bigint;
-}): { cost: bigint; toSeller: bigint; hasShortfall: boolean } {
-  const { principal, loanRateBps, buyRateBps, elapsedDays, remainingDays } = args;
-  const accrued = (principal * loanRateBps * elapsedDays) / (365n * 10_000n);
+ *  Mirrors EarlyWithdrawalFacet's net settlement TO THE WEI:
+ *  seconds-precision, elapsed measured from the #641 interest clock,
+ *  remaining = remaining-term seconds minus elapsed (floored at 0),
+ *  and the shortfall computed as the DIFFERENCE OF THE TWO FLOORED
+ *  remaining-interest figures (not one floored difference). The
+ *  seller forfeits the LARGER of accrued or shortfall, never both. */
+export function sellerEconomics(
+  live: LoanLive,
+  buyRateBps: bigint,
+  chainNow: bigint,
+): { cost: bigint; toSeller: bigint; hasShortfall: boolean } {
+  const start = interestAccrualStartOf(live);
+  const elapsed = chainNow > start ? chainNow - start : 0n;
+  const totalSecs = interestRemainingDaysOf(live) * 86_400n;
+  const remainingSecs = totalSecs > elapsed ? totalSecs - elapsed : 0n;
+  const denom = SECONDS_PER_YEAR * BASIS_POINTS;
+  const accrued = (live.principal * live.interestRateBps * elapsed) / denom;
+  const originalRemaining =
+    (live.principal * live.interestRateBps * remainingSecs) / denom;
+  const newRemaining = (live.principal * buyRateBps * remainingSecs) / denom;
   const shortfall =
-    buyRateBps > loanRateBps
-      ? (principal * (buyRateBps - loanRateBps) * remainingDays) /
-        (365n * 10_000n)
-      : 0n;
+    newRemaining > originalRemaining ? newRemaining - originalRemaining : 0n;
   const cost = accrued > shortfall ? accrued : shortfall;
   return {
     cost,
-    toSeller: principal > cost ? principal - cost : 0n,
+    toSeller: live.principal > cost ? live.principal - cost : 0n,
     hasShortfall: shortfall > 0n,
   };
 }
 
-function elapsedDaysOf(live: LoanLive, chainNow: bigint): bigint {
-  const start =
-    live.interestAccrualStart !== 0n ? live.interestAccrualStart : live.startTime;
-  return chainNow > start ? (chainNow - start) / 86_400n : 0n;
+/** The facet's duration-fit bound: the IMMUTABLE term minus whole
+ *  days elapsed since the immutable start — NOT the interest clock
+ *  (a partial re-stamps that; the borrower-favourability check does
+ *  not care). */
+function durationFitDays(live: LoanLive, chainNow: bigint): bigint {
+  const elapsedDays =
+    chainNow > live.startTime ? (chainNow - live.startTime) / 86_400n : 0n;
+  return live.durationDays > elapsedDays ? live.durationDays - elapsedDays : 0n;
 }
 
 export function EarlyExitFlow({
@@ -113,11 +125,13 @@ export function EarlyExitFlow({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  // After a successful sale the position belongs to someone else —
+  // the card renders nothing (the PAGE banner carries the outcome,
+  // surviving this component's unmount when the role flips).
+  const [sold, setSold] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const remainingDays = interestRemainingDaysOf(live);
-  const elapsedDays = elapsedDaysOf(live, chainNow);
+  const fitDays = durationFitDays(live, chainNow);
 
   // The facet's admission rules, applied client-side so a doomed
   // candidate never reaches a wallet prompt. Every excluded shape
@@ -141,8 +155,9 @@ export function EarlyExitFlow({
         ) {
           return false;
         }
-        // Borrower-favourability + coverage.
-        if (BigInt(o.durationDays) > remainingDays) return false;
+        // Borrower-favourability + coverage. Duration fit uses the
+        // facet's bound: immutable term minus whole elapsed days.
+        if (BigInt(o.durationDays) > fitDays) return false;
         if (BigInt(o.collateralAmount) > live.collateralAmount) return false;
         if (amount < live.principal) return false;
         // Expired offers are refused at accept — don't list them.
@@ -150,31 +165,21 @@ export function EarlyExitFlow({
         // Buying out your own position is a no-op with fees.
         if (o.creator.toLowerCase() === me) return false;
         // RateShortfallTooHigh guard.
-        const econ = sellerEconomics({
-          principal: live.principal,
-          loanRateBps: live.interestRateBps,
-          buyRateBps: BigInt(o.interestRateBps),
-          elapsedDays,
-          remainingDays,
-        });
+        const econ = sellerEconomics(live, BigInt(o.interestRateBps), chainNow);
         return econ.cost <= live.principal;
       })
       .sort(
-        // Best payout first = lowest buy-offer rate first.
+        // Best payout first = lowest buy-offer rate first (the
+        // accrued part is identical across candidates; only the
+        // shortfall varies, monotonically with the rate).
         (a, b) => a.interestRateBps - b.interestRateBps,
       );
-  }, [offers.data, address, row, live, remainingDays, elapsedDays, chainNow]);
+  }, [offers.data, address, row, live, fitDays, chainNow]);
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
   const selectedEcon = selected
-    ? sellerEconomics({
-        principal: live.principal,
-        loanRateBps: live.interestRateBps,
-        buyRateBps: BigInt(selected.interestRateBps),
-        elapsedDays,
-        remainingDays,
-      })
+    ? sellerEconomics(live, BigInt(selected.interestRateBps), chainNow)
     : null;
 
   const sym = principalMeta.symbol;
@@ -186,13 +191,20 @@ export function EarlyExitFlow({
 
   // The reviewed payout drifts as interest accrues (and as the live
   // loan refreshes) — a stale open review must not stay confirmed.
+  // Closing silently reads as a glitch, so a visible notice explains
+  // it until the user re-opens the review.
+  const [driftNotice, setDriftNotice] = useState(false);
   useEffect(() => {
-    if (selectedId !== null) onCloseConfirm();
+    if (selectedId !== null) {
+      if (confirmOpen) setDriftNotice(true);
+      onCloseConfirm();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [toSellerStr]);
 
   function choose(offerId: number) {
     setSelectedId(offerId);
+    setDriftNotice(false);
     onCloseConfirm(); // a different candidate = a different review
   }
 
@@ -271,21 +283,31 @@ export function EarlyExitFlow({
         liveOffer.amountFilled !== 0n ||
         Number(liveOffer.interestRateBps) !== selected.interestRateBps ||
         Number(liveOffer.durationDays) !== selected.durationDays ||
+        // Collateral demand is mutable (setOfferCollateral) — a
+        // post-review bump past the pledge reverts InvalidSaleOffer.
+        liveOffer.collateralAmount !== BigInt(selected.collateralAmount) ||
+        liveOffer.collateralAmount > liveLoan.collateralAmount ||
         (liveOffer.expiresAt !== 0n && liveOffer.expiresAt <= latestBlock.timestamp)
       ) {
         throw new Error(copy.match.termsChanged);
       }
+      // The duration-fit bound moves with chain time — re-check it
+      // live (the picker judged it against a ≤60s-old clock).
+      if (
+        BigInt(liveOffer.durationDays) >
+        durationFitDays(liveLoan, latestBlock.timestamp)
+      ) {
+        throw new Error(copy.match.termsChanged);
+      }
       // Recompute the payout with LIVE state + chain time. The
-      // reviewed "~" figure shrinks as days elapse — allow up to two
+      // reviewed "~" figure shrinks as time elapses — allow up to two
       // days of drift (same pad convention as the repay paths); more
       // means something material moved (partial repay, rate change).
-      const liveEcon = sellerEconomics({
-        principal: liveLoan.principal,
-        loanRateBps: liveLoan.interestRateBps,
-        buyRateBps: BigInt(liveOffer.interestRateBps),
-        elapsedDays: elapsedDaysOf(liveLoan, latestBlock.timestamp),
-        remainingDays: interestRemainingDaysOf(liveLoan),
-      });
+      const liveEcon = sellerEconomics(
+        liveLoan,
+        BigInt(liveOffer.interestRateBps),
+        latestBlock.timestamp,
+      );
       if (liveEcon.cost > liveLoan.principal) {
         throw new Error(copy.match.termsChanged);
       }
@@ -300,7 +322,7 @@ export function EarlyExitFlow({
         BigInt(selected.offerId),
       ]);
       onSold();
-      setDone(copy.earlyExit.done);
+      setSold(true);
       setSelectedId(null);
       onCloseConfirm();
       void queryClient.invalidateQueries({ queryKey: ['positionOwners'] });
@@ -318,15 +340,19 @@ export function EarlyExitFlow({
   const walletReady =
     onSupportedChain && Boolean(walletClient) && Boolean(publicClient);
 
+  // Sold this session: the position belongs to someone else now. The
+  // PAGE banner carries the outcome; rendering the (stale-indexer)
+  // picker again would invite a doomed second sale.
+  if (sold) return null;
+
   return (
     <section className="card">
       <h3>{copy.earlyExit.title}</h3>
       <p className="muted">{copy.earlyExit.blurb}</p>
 
-      {done ? (
-        <div className="banner banner-info" role="status">
-          <span className="banner-body">{done}</span>
-        </div>
+      {offers.isPending ? (
+        // Loading and genuinely-empty must never look the same.
+        <p className="muted">{copy.earlyExit.loadingOffers}</p>
       ) : candidates === null ? (
         <p className="muted">{copy.earlyExit.unavailable}</p>
       ) : candidates.length === 0 ? (
@@ -338,13 +364,11 @@ export function EarlyExitFlow({
           </p>
           <div className="stack" style={{ gap: 8 }}>
             {candidates.slice(0, 5).map((o) => {
-              const econ = sellerEconomics({
-                principal: live.principal,
-                loanRateBps: live.interestRateBps,
-                buyRateBps: BigInt(o.interestRateBps),
-                elapsedDays,
-                remainingDays,
-              });
+              const econ = sellerEconomics(
+                live,
+                BigInt(o.interestRateBps),
+                chainNow,
+              );
               const isSelected = o.offerId === selectedId;
               return (
                 <button
@@ -368,9 +392,21 @@ export function EarlyExitFlow({
               );
             })}
           </div>
+          {candidates.length > 5 ? (
+            // Never a silent cap — the hidden ones pay less (sorted),
+            // but their existence is stated.
+            <p className="muted" style={{ marginTop: 8 }}>
+              {copy.earlyExit.moreOffers(candidates.length - 5)}
+            </p>
+          ) : null}
 
           {selected && selectedEcon && toSellerStr ? (
             <div style={{ marginTop: 12 }}>
+              {driftNotice ? (
+                <div className="banner banner-info" role="status" style={{ marginBottom: 12 }}>
+                  <span className="banner-body">{copy.earlyExit.figureMoved}</span>
+                </div>
+              ) : null}
               {selectedEcon.hasShortfall ? (
                 <div className="banner banner-warn" role="alert" style={{ marginBottom: 12 }}>
                   <span className="banner-body">{copy.earlyExit.shortfallWarn}</span>
@@ -381,7 +417,10 @@ export function EarlyExitFlow({
                   type="button"
                   className="btn btn-secondary"
                   disabled={busy || !walletReady}
-                  onClick={onOpenConfirm}
+                  onClick={() => {
+                    setDriftNotice(false);
+                    onOpenConfirm();
+                  }}
                 >
                   {copy.earlyExit.action}
                 </button>

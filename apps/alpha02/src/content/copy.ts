@@ -288,6 +288,11 @@ export const copy = {
     confirm: 'Confirm — sell my position',
     done:
       'Position sold — the payout is already in your wallet, and this loan now belongs to the new lender. Nothing more to do here.',
+    loadingOffers: 'Looking for matching lending offers…',
+    figureMoved:
+      'The payout figure moved with time, so the review closed — open it again to confirm against the current number.',
+    moreOffers: (n: number) =>
+      `${n} more matching offer${n === 1 ? '' : 's'} pay${n === 1 ? 's' : ''} less than the ones shown.`,
     checking: 'Checking whether this loan can be exited early…',
     checkFailed:
       'We couldn’t read this loan’s exit details right now — retrying.',

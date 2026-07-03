@@ -724,7 +724,14 @@ converge. Its intended behaviour (the test oracle for that surface):
   actually complete against (matching assets, single-value and
   unfilled, duration within the loan's remaining term, collateral
   demand within the pledged collateral, amount covering the
-  principal, and cost within the principal), best payout first. The
+  principal, and cost within the principal), best payout first, with
+  any truncation of the list stated rather than silent; while the
+  offer search is loading it says so (loading and "no matches" never
+  look the same). The payout math mirrors the protocol's settlement
+  to the smallest unit (second-precision accrual, remaining term
+  reduced by time elapsed). If the quoted figure moves while a
+  review is open, the review closes with a visible explanation and
+  must be reopened against the current number. The
   review states the payout plainly: the seller receives the
   principal minus the LARGER of the interest accrued so far or the
   rate difference for the remaining term (when the buyer expects a

@@ -54,6 +54,15 @@ export function interestRemainingDaysOf(live: LoanLive): bigint {
     : live.durationDays;
 }
 
+/** Mirrors LibVaipakam.interestAccrualStartOf: the #641 interest
+ *  clock's origin (re-stamped by partials), falling back to the
+ *  immutable start for pre-field loans. */
+export function interestAccrualStartOf(live: LoanLive): bigint {
+  return live.interestAccrualStart !== 0n
+    ? live.interestAccrualStart
+    : live.startTime;
+}
+
 /** The refinance old-lender payoff — principal + FULL-TERM interest
  *  on the remaining committed term (RefinanceFacet pays the exiting
  *  lender their maximum entitlement; no late fee, no shortfall). ONE
