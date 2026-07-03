@@ -15,6 +15,7 @@ import {
 } from "../src/crosschain/RewardRemittanceReceiver.sol";
 import {ICrossChainMessenger} from "../src/crosschain/ICrossChainMessenger.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
+import {IERC20Errors} from "@openzeppelin/contracts/interfaces/draft-IERC6093.sol";
 
 /// @dev Stand-in for the mirror's CCIP adapter — the receiver only checks
 ///      `msg.sender == messenger` and requires it to have code, so a thin relay
@@ -146,10 +147,13 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
         vm.warp(block.timestamp + 2 days + 1);
 
-        // 1. UNFUNDED: the Diamond holds zero VPFI → the payout reverts.
+        // 1. UNFUNDED: the Diamond holds zero VPFI → the payout reverts at the
+        //    ERC20 transfer SPECIFICALLY (not some other gate) — assert the
+        //    exact insufficient-balance selector so a regression that closes the
+        //    claim gate for another reason can't make this test pass hollow.
         assertEq(vpfi.balanceOf(address(diamond)), 0, "mirror starts empty");
         vm.prank(alice);
-        vm.expectRevert(); // ERC20 insufficient-balance on safeTransfer
+        vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
         _facet().claimInteractionRewards();
 
         // 2. Base remits the day-1 budget; the receiver credits the mirror.
@@ -192,5 +196,34 @@ contract RewardBudgetE2ETest is SetupTest, IVaipakamErrors {
         assertGt(paidB, 0, "bobby paid");
         assertEq(vpfi.balanceOf(alice), paidA, "alice balance");
         assertEq(vpfi.balanceOf(bobby), paidB, "bobby balance");
+    }
+
+    /// @notice A live mirror Diamond can already hold VPFI for other purposes
+    ///         (LIF custody, treasury) — and `claimInteractionRewards` pays from
+    ///         the RAW balance, not from `rewardBudgetReceivedTotal`. This proves
+    ///         the remittance is still load-bearing when such a commingled
+    ///         balance exists but is INSUFFICIENT to cover the reward claim: the
+    ///         claim reverts until the reward budget tops the balance up. (That
+    ///         the claim draws from whatever balance is present — including
+    ///         non-reward VPFI — is the commingling tradeoff tracked in #917.)
+    function test_E2E_CommingledNonRewardVpfiBelowClaimStillNeedsRemittance() public {
+        _mut().setDailyLenderInterest(1, alice, 1e18, 1e18);
+        vm.warp(block.timestamp + 2 days + 1);
+
+        // Simulate a tiny pre-existing non-reward balance (e.g. LIF custody),
+        // deliberately far below the reward claim.
+        vpfi.mint(address(diamond), 1e12);
+        assertGt(vpfi.balanceOf(address(diamond)), 0, "mirror holds some VPFI");
+
+        vm.prank(alice);
+        vm.expectPartialRevert(IERC20Errors.ERC20InsufficientBalance.selector);
+        _facet().claimInteractionRewards();
+
+        // The reward remittance tops the balance up → claim succeeds.
+        _fundViaReceiver(1_000e18);
+        vm.prank(alice);
+        (uint256 paid, , ) = _facet().claimInteractionRewards();
+        assertGt(paid, 0, "funded claim pays out");
+        assertEq(vpfi.balanceOf(alice), paid, "alice received the VPFI");
     }
 }

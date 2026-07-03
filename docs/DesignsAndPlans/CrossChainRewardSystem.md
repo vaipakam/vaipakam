@@ -273,7 +273,7 @@ In the pre-live transition:
 **`VPFIMirrorToken` is RETAINED on every mirror chain (Codex round-1 P1 #6)**: the original draft proposed deleting `VPFIMirrorToken` entirely, but `InteractionRewardsFacet.claimInteractionRewards()` transfers `s.vpfiToken` locally on every chain — the existing tokenomics (`TokenomicsTechSpec.md`) bridges each chain's interaction-reward slice to a local mirror VPFI vault for local claim. Dropping the mirror VPFI token would either break interaction reward claims on mirrors or force every claim to round-trip through Base via CCIP (a UX regression). The compromise:
 
 - Mirror chains continue to deploy `VPFIMirrorToken` + the CCT BurnMintTokenPool (T-068 path).
-- Mirror chains continue to receive interaction-reward VPFI slices via the existing `VaipakamRewardMessenger` BROADCAST path.
+- Mirror chains receive interaction-reward VPFI slices via the **#776 reward-budget bridge** — an on-demand CCIP **token** remittance (`RewardRemittanceFacet.remitRewardBudget` on Base → per-mirror `RewardRemittanceReceiver` → mirror Diamond balance). This is deliberately NOT the `VaipakamRewardMessenger` BROADCAST path, which is **data-only** and rejects attached tokens; that channel still carries only the finalized global denominator that opens the claim gate. (An earlier draft here wrongly assumed the broadcast path also moved the VPFI — see #776 / finding #00006.)
 - Mirror chains do NOT host a staking pool (no 5% APR accrual on mirror-held VPFI) — APR happens only on Base.
 - A user holding VPFI on a mirror chain can either: (a) claim it as part of their interaction-reward flow on that chain, (b) bridge it to Base via the standard `VPFIMirrorToken.burnAndMessage` → `VPFIToken.mint` CCT path to stake there.
 
